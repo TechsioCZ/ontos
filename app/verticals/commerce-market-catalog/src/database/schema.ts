@@ -7,6 +7,7 @@ import type { MarketRetirementImpactAssessment } from '../../shared/domain/marke
 export const COMMERCE_MARKET_CATALOG_SCHEMA_NAME = 'commerce_market_catalog';
 
 export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'market_catalog_completeness_generations',
   'market_definition_revisions',
   'market_lifecycle_periods',
@@ -16,6 +17,22 @@ export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
 ] as const;
 
 export const commerceMarketCatalogSchema = pgSchema(COMMERCE_MARKET_CATALOG_SCHEMA_NAME);
+
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
+export const gatewayAssertionRedemptions = commerceMarketCatalogSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('market_catalog_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('market_catalog_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 const periodEnd = () => timestamp('effective_to', { withTimezone: true });
@@ -245,6 +262,7 @@ export const marketCatalogCompletenessGenerations = commerceMarketCatalogSchema.
 );
 
 export const COMMERCE_MARKET_CATALOG_TABLES = [
+  gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,

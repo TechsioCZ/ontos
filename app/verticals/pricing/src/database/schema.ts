@@ -82,6 +82,7 @@ export const PRICING_TABLE_INVENTORY = [
   'price_source_assertion_deliveries',
   'price_source_assertions',
   'prices',
+  'pricing_commitment_confirmation_issuance_receipts',
   'pricing_commitment_confirmations',
   'pricing_quotations',
   'quantity_tier_action_result_receipts',
@@ -198,6 +199,39 @@ export const pricingCommitmentConfirmations = pricingSchema.table.withRLS(
     check('pricing_commitment_confirmations_payload_ck', sql`jsonb_typeof(${table.confirmation}) = 'object'`),
     ...appendOnlyTenantLegalEntityRlsPolicies(
       'pricing_commitment_confirmations_scope',
+      table.tenantId,
+      table.legalEntityId,
+    ),
+  ],
+);
+
+/** Exact successful Action issuance recovery; several invocations may retain one immutable proof. */
+export const pricingCommitmentConfirmationIssuanceReceipts = pricingSchema.table.withRLS(
+  'pricing_commitment_confirmation_issuance_receipts',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    confirmationRef: text('confirmation_ref').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.actionInvocationId],
+      name: 'pricing_confirmation_issuance_receipts_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.confirmationRef],
+      foreignColumns: [
+        pricingCommitmentConfirmations.tenantId,
+        pricingCommitmentConfirmations.legalEntityId,
+        pricingCommitmentConfirmations.confirmationRef,
+      ],
+      name: 'pricing_confirmation_issuance_receipts_confirmation_fk',
+    }),
+    ...appendOnlyTenantLegalEntityRlsPolicies(
+      'pricing_confirmation_issuance_receipts_scope',
       table.tenantId,
       table.legalEntityId,
     ),
@@ -3437,6 +3471,7 @@ export const PRICING_TABLES = [
   priceSourceAssertionDeliveries,
   priceSourceAssertions,
   prices,
+  pricingCommitmentConfirmationIssuanceReceipts,
   pricingCommitmentConfirmations,
   pricingQuotations,
   quantityTierActionResultReceipts,

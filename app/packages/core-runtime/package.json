@@ -36,10 +36,14 @@
     "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
     "./testing/reads": "./src/testing/reads.ts",
+    "./testing/native-reads": "./src/testing/native-reads.ts",
+    "./testing/isolated-native-database": "./src/testing/isolated-native-database.ts",
+    "./testing/scripted-pg-client": "./src/testing/scripted-pg-client.ts",
     "./testing/module-contract": "./src/testing/module-contract.ts",
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts",
-    "./testing/owner-evidence": "./src/testing/owner-evidence.ts"
+    "./testing/owner-evidence": "./src/testing/owner-evidence.ts",
+    "./legacy-completion-publication": "./src/modules/legacy-completion-publication.ts"
   },
   "imports": {
     "#database-runtime": {

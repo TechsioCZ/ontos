@@ -1,87 +1,35 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeCrypto } from '@effect/platform-node';
-import { and, eq, sql } from 'drizzle-orm';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { and, eq } from 'drizzle-orm';
+import { Crypto, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  makeTestDatabaseFromClient,
-  makeTestPgClient,
-} from '../../../../packages/core-runtime/tests/support/database.ts';
-import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
-import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
-import {
-  consentDecisions,
-  noticeProvisions,
-  noticeVersions,
-  privacyRelations,
-  privacySubjects,
-  processingPurposes,
-  purposeVersions,
-} from '../../src/database/schema.ts';
+import { consentDecisions, privacySubjects } from '../../src/database/schema.ts';
 import { noticeProvisionRepositoryForScope } from '../../src/persistence/notice-provision-postgres-repository.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
 import { processingPurposeRepositoryForScope } from '../../src/persistence/processing-purpose-postgres-repository.ts';
 
-const tenantId = 'd7000000-0000-4000-8000-000000000001';
-const otherTenantId = 'd7000000-0000-4000-8000-000000000009';
-const legalEntityId = 'd7000000-0000-4000-8000-000000000002';
-const principalId = 'd7000000-0000-4000-8000-000000000003';
-const subjectId = 'd7100000-0000-4000-8000-000000000001';
-
-const pool = makeTestPgClient;
-
-const trustedScope = (scopedTenantId = tenantId) => ({
-  authMethod: 'system' as const,
-  correlationId: 'privacy-consent-postgres',
-  legalEntityId,
-  principalId,
-  tenantId: scopedTenantId,
-});
-
 it.live(
   'proves web-collected EMAIL consent, channel isolation, replay, ordering, and immutability in PostgreSQL',
   Effect.fn('privacyConsentPostgresAcceptance')(
     function* privacyConsentPostgresAcceptance() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* pool(connections.admin.connectionString);
-      const runtimePool = yield* pool(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromClient(adminPool, privacyRelations);
-      const runtime = yield* makeTestDatabaseFromClient(runtimePool, privacyRelations);
-
-      const cleanup = () =>
-        admin.transaction(
-          Effect.fn('cleanPrivacyFixtures')(function* cleanPrivacyFixtures(
-            transaction: Parameters<Parameters<typeof admin.transaction>[0]>[0],
-          ) {
-            yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
-            yield* transaction.delete(consentDecisions).where(eq(consentDecisions.tenantId, tenantId));
-            yield* transaction.delete(noticeProvisions).where(eq(noticeProvisions.tenantId, tenantId));
-            yield* transaction.delete(noticeVersions).where(eq(noticeVersions.tenantId, tenantId));
-            yield* transaction.delete(purposeVersions).where(eq(purposeVersions.tenantId, tenantId));
-            yield* transaction.delete(processingPurposes).where(eq(processingPurposes.tenantId, tenantId));
-            yield* transaction.delete(privacySubjects).where(eq(privacySubjects.tenantId, tenantId));
-          }),
-        );
-
+      const native = yield* makeNativeReadTestContext({
+        contextPermissions: ['privacy.consent.read'],
+        moduleId: 'privacy.core',
+        ownerFixtureRetention: 'retain-complete-context',
+      });
+      const { principalId, tenantId } = native.principal;
+      const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
+      const crypto = yield* Crypto.Crypto;
+      const subjectId = yield* crypto.randomUUIDv4();
+      const trustedScope = () => ({ ...native.principal, correlationId: 'privacy-consent-postgres', legalEntityId });
       const inScope = <Value, Failure, Requirements>(
-        scopedTenantId: string,
+        _scopedTenantId: string,
         operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
-      ) =>
-        runtime.transaction(
-          Effect.fn('scopedOperation')(function* scopedOperation(
-            transaction: Parameters<Parameters<typeof runtime.transaction>[0]>[0],
-          ) {
-            const scoped = yield* installOperationalScope(transaction, trustedScope(scopedTenantId));
-            return yield* operation(scoped);
-          }),
-        );
-
-      yield* cleanup();
-      yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+      ) => native.prepareOwner((transaction) => operation(transaction)).pipe(Effect.provide(native.layer));
 
       const fixture = yield* inScope(
         tenantId,
@@ -108,13 +56,15 @@ it.live(
               subject: {
                 createdAt: '2026-01-01T00:00:00Z',
                 subject: {
-                  kind: 'DATA_SUBJECT',
-                  partyRef: Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
-                    moduleId: 'party.registry',
-                    resourceId: 'privacy-db-party',
-                    resourceType: 'party.registry.party',
-                    tenantId,
-                  }),
+                  anonymousContext: {
+                    addressability: 'SESSION',
+                    contextRef: `native-consent:${subjectId}`,
+                    createdAt: '2026-01-01T00:00:00Z',
+                    expiresAt: '2027-01-01T00:00:00Z',
+                    kind: 'ANONYMOUS_PRIVACY_CONTEXT',
+                    provenance: { method: 'SESSION', source: 'native-consent-owner' },
+                  },
+                  kind: 'ANONYMOUS',
                 },
                 subjectRef: {
                   moduleId: 'privacy.core',
@@ -128,7 +78,7 @@ it.live(
           );
           const purposeVersion = Option.getOrThrow(Option.fromUndefinedOr(purpose.versions.at(0)));
           yield* Effect.forEach(
-            ['scope:privacy-db:conflict', 'scope:privacy-db:ordered'],
+            [`scope:privacy-db:${tenantId}:conflict`, `scope:privacy-db:${tenantId}:ordered`],
             Effect.fn('createNoticeEvidence')(function* createNoticeEvidence(
               processingScopeRef: string,
               index: number,
@@ -218,7 +168,7 @@ it.live(
           impersonatedBy: null,
         },
         decision: kind,
-        decisionId,
+        decisionId: `${tenantId}:${decisionId}`,
         effectiveAt,
         flowEvidenceRefs: [],
         idempotencyKey,
@@ -245,21 +195,23 @@ it.live(
       });
 
       const write = (invocationId: string, consent: ConsentDecision) =>
-        inScope(tenantId, (transaction) =>
-          privacyOperationRepositoryForScope(transaction, trustedScope()).pipe(
-            Effect.flatMap((repository) =>
-              repository.recordConsentDecision(tenantId, legalEntityId, invocationId, consent),
-            ),
-          ),
+        inScope(
+          tenantId,
+          Effect.fn('writeRetainedConsent')(function* writeRetainedConsent(transaction) {
+            const repository = yield* privacyOperationRepositoryForScope(transaction, trustedScope());
+            return yield* repository.recordConsentDecision(tenantId, legalEntityId, invocationId, consent);
+          }),
         );
       const read = (scopeRef: string) =>
-        inScope(tenantId, (transaction) =>
-          privacyOperationRepositoryForScope(transaction, trustedScope()).pipe(
-            Effect.flatMap((repository) => repository.readCurrentConsent(tenantId, legalEntityId, scopeRef)),
-          ),
+        inScope(
+          tenantId,
+          Effect.fn('readRetainedConsent')(function* readRetainedConsent(transaction) {
+            const repository = yield* privacyOperationRepositoryForScope(transaction, trustedScope());
+            return yield* repository.readCurrentConsent(tenantId, legalEntityId, scopeRef);
+          }),
         );
 
-      const conflictScope = 'scope:privacy-db:conflict';
+      const conflictScope = `scope:privacy-db:${tenantId}:conflict`;
       const evidenceDecision = decision(
         'decision:evidence-negative',
         'GRANTED',
@@ -368,7 +320,7 @@ it.live(
       );
       expect((yield* read(conflictScope)).outcome).toBe('CONFLICT');
 
-      const orderedScope = 'scope:privacy-db:ordered';
+      const orderedScope = `scope:privacy-db:${tenantId}:ordered`;
       const withdrawal = decision(
         'decision:ordered:withdraw',
         'WITHDRAWN',
@@ -401,11 +353,17 @@ it.live(
       );
       expect(Exit.isFailure(conflictingReplay)).toBe(true);
 
-      const isolated = yield* inScope(otherTenantId, (transaction) =>
-        privacyOperationRepositoryForScope(transaction, trustedScope(otherTenantId)).pipe(
-          Effect.flatMap((repository) => repository.listSubjects(otherTenantId, legalEntityId)),
-        ),
-      );
+      // A separate genuinely validated Tenant cannot see the original Tenant's existing Subjects.
+      const foreign = yield* makeNativeReadTestContext({
+        contextPermissions: [],
+        moduleId: 'privacy.core',
+        ownerFixtureRetention: 'retain-complete-context',
+      });
+      const isolated = yield* foreign
+        .prepareOwner((transaction) =>
+          transaction.select().from(privacySubjects).where(eq(privacySubjects.tenantId, tenantId)),
+        )
+        .pipe(Effect.provide(foreign.layer));
       expect(isolated).toEqual([]);
 
       const immutableMutation = yield* Effect.exit(

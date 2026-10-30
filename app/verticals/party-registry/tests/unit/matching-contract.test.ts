@@ -4,14 +4,21 @@ import { expect, it } from 'effect-rstest';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
-import { evaluateExactClaims, sortClaimKeys } from '../../shared/domain/matching-contracts.ts';
+import { makePartyRef, PartySubjectEvidenceSchema } from '../../shared/domain/identity-contracts.ts';
+import {
+  PartyMatchDecisionRecordSchema,
+  committedCreateResult,
+  evaluateExactClaims,
+  sortClaimKeys,
+} from '../../shared/domain/matching-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import { confirmDuplicatePartiesAction } from '../../src/actions/confirm-duplicate-parties.action.ts';
 import { dismissDuplicateCandidateAction } from '../../src/actions/dismiss-duplicate-candidate.action.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from '../../src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
+import { partyGuestBindingFailure } from '../../src/policies/create-party-without-strong-identifier.policy.ts';
 import { tenantClaimLockKeys } from '../../src/services/party-identifier-claim.service.ts';
 
 const evidenceTenantId = Schema.decodeSync(TenantIdSchema)('10000000-0000-4000-8000-000000000001');
@@ -177,4 +184,147 @@ it('authoritative exact claims cannot be outvoted by weak evidence', () => {
       partyIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
     },
   );
+});
+
+it('review provenance is additive evidence and never a second MATCHED result reference', () => {
+  const reviewedCaseRef = evidencePayload.caseRef;
+  const record = {
+    caseRef: null,
+    committedCreateOutcome: 'MATCHED_EXISTING',
+    decidedAt: '2026-01-01T00:00:00.000Z',
+    decisionRef: makePartyMatchDecisionRef(evidenceTenantId, '40000000-0000-4000-8000-000000000001'),
+    evidenceEvaluation: null,
+    evidenceExplanation: [{ reason: 'Unchanged reviewed match', ruleKey: 'party-exact-claims.v1' }],
+    matchRuleVersion: 'party-exact-claims.v1',
+    operation: 'CREATE',
+    outcome: 'MATCHED',
+    partyRef: makePartyRef(evidenceTenantId, '50000000-0000-4000-8000-000000000001'),
+  };
+  const decode = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema);
+  expect(decode(record).caseRef).toBe(null);
+  const withProvenance = {
+    ...record,
+    evidenceExplanation: record.evidenceExplanation.map((item) => ({ ...item, reviewedCaseRef })),
+  };
+  const decoded = decode(withProvenance);
+  expect(Schema.encodeSync(PartyMatchDecisionRecordSchema)(decoded)).toEqual(withProvenance);
+  expect(committedCreateResult(decoded)).toMatchObject({ outcome: 'MATCHED_EXISTING', partyRef: record.partyRef });
+  expect(() => decode({ ...withProvenance, caseRef: reviewedCaseRef })).toThrow();
+  expect(() =>
+    decode({
+      ...withProvenance,
+      evidenceExplanation: [
+        {
+          ...withProvenance.evidenceExplanation[0],
+          reviewedCaseRef: { ...reviewedCaseRef, resourceType: 'party.registry.party' },
+        },
+      ],
+    }),
+  ).toThrow();
+});
+
+it('unchanged decision algebra accepts only the result references for each outcome', () => {
+  const partyRef = makePartyRef(evidenceTenantId, '50000000-0000-4000-8000-000000000001');
+  const { caseRef } = evidencePayload;
+  const base = {
+    committedCreateOutcome: null,
+    decidedAt: '2026-01-01T00:00:00.000Z',
+    decisionRef: makePartyMatchDecisionRef(evidenceTenantId, '40000000-0000-4000-8000-000000000001'),
+    evidenceEvaluation: null,
+    evidenceExplanation: [{ reason: 'Existing evidence without review provenance', ruleKey: 'party-exact-claims.v1' }],
+    matchRuleVersion: 'party-exact-claims.v1',
+    operation: 'MATCH',
+  };
+  const decode = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema);
+  for (const outcome of ['CREATED', 'MATCHED', 'AMBIGUOUS', 'NO_MATCH'] as const) {
+    const expectedParty = outcome === 'CREATED' || outcome === 'MATCHED' ? partyRef : null;
+    const expectedCase = outcome === 'AMBIGUOUS' ? caseRef : null;
+    const record = {
+      ...base,
+      committedCreateOutcome: outcome === 'CREATED' ? 'CREATED' : null,
+      operation: outcome === 'CREATED' ? 'CREATE' : 'MATCH',
+      outcome,
+      partyRef: expectedParty,
+      caseRef: expectedCase,
+    };
+    expect(decode(record)).toEqual(record);
+    expect(() => decode({ ...record, partyRef: expectedParty === null ? partyRef : null })).toThrow();
+    expect(() => decode({ ...record, caseRef: expectedCase === null ? caseRef : null })).toThrow();
+  }
+});
+
+it('retains the exact optional Guest binding on an authorized actor attestation', () => {
+  const attestation = {
+    basis: 'DIRECT_INTERACTION',
+    evidenceRef: 'guest-proof',
+    guestBinding: {
+      correlationRoot: 'purchase-1241',
+      legalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: '70000000-0000-4000-8000-000000000001',
+        resourceType: 'core.identity.legal-entity',
+        tenantId: evidenceTenantId,
+      },
+    },
+    kind: 'ACTOR_ATTESTATION',
+    observedSubject: 'PERSON',
+    statement: 'I attest this exact Guest purchase concerns this subject',
+    subjectKey: 'one-subject',
+  };
+  const decoded = Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(attestation);
+  expect(Schema.encodeSync(PartySubjectEvidenceSchema)(decoded)).toEqual(attestation);
+});
+
+it('Guest-bound attestations require one currently trusted selected LE without changing tenant-only evidence', () => {
+  const guestBinding = {
+    correlationRoot: 'purchase-1241',
+    legalEntityRef: {
+      moduleId: 'core.identity' as const,
+      resourceId: '70000000-0000-4000-8000-000000000001',
+      resourceType: 'core.identity.legal-entity' as const,
+      tenantId: evidenceTenantId,
+    },
+  };
+  const unbound = Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
+    basis: 'DIRECT_INTERACTION',
+    evidenceRef: 'guest-proof',
+    kind: 'ACTOR_ATTESTATION',
+    observedSubject: 'PERSON',
+    statement: 'I met this subject',
+    subjectKey: 'one-subject',
+  });
+  const bound = { ...unbound, guestBinding };
+  const scope = { legalEntityId: guestBinding.legalEntityRef.resourceId, tenantId: evidenceTenantId };
+  expect(partyGuestBindingFailure({ subjectEvidence: [unbound] }, { tenantId: evidenceTenantId })).toBeUndefined();
+  expect(partyGuestBindingFailure({ subjectEvidence: [bound] }, scope)).toBeUndefined();
+  for (const invalidScope of [
+    { tenantId: evidenceTenantId },
+    { ...scope, legalEntityId: '80000000-0000-4000-8000-000000000001' },
+    { ...scope, tenantId: '90000000-0000-4000-8000-000000000001' },
+  ]) {
+    expect(partyGuestBindingFailure({ subjectEvidence: [bound] }, invalidScope)).toBe(
+      'guest_binding_requires_trusted_legal_entity',
+    );
+  }
+  expect(partyGuestBindingFailure({ subjectEvidence: [bound, unbound] }, scope)).toBe(
+    'guest_binding_requires_one_exact_context',
+  );
+  expect(
+    partyGuestBindingFailure(
+      { subjectEvidence: [bound, { ...bound, guestBinding: { ...guestBinding, correlationRoot: 'different' } }] },
+      scope,
+    ),
+  ).toBe('guest_binding_requires_one_exact_context');
+  expect(
+    Schema.is(PartySubjectEvidenceSchema)({ ...bound, guestBinding: { ...guestBinding, correlationRoot: '' } }),
+  ).toBe(false);
+  expect(
+    Schema.is(PartySubjectEvidenceSchema)({
+      ...bound,
+      guestBinding: {
+        ...guestBinding,
+        legalEntityRef: { ...guestBinding.legalEntityRef, resourceType: 'party.registry.party' },
+      },
+    }),
+  ).toBe(false);
 });

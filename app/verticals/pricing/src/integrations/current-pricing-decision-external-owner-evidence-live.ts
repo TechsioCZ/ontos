@@ -143,8 +143,10 @@ const executeCatalog: CatalogExecutor = (payload, credential, correlation, optio
   executePricingPurposeEquivalenceWithAuthorization(payload, Redacted.value(credential), correlation, options);
 const executeCatalogCompatibility: CatalogCompatibilityExecutor = (payload, credential, correlation, options) =>
   executeQuantityBasisCompatibilityWithAuthorization(payload, Redacted.value(credential), correlation, options);
-const executeMarket: MarketExecutor = (payload, credential, correlation, options) =>
-  executePricingCurrentMarketEvidenceWithAuthorization(payload, Redacted.value(credential), correlation, options);
+export const executeMarket: MarketExecutor = (payload, credential, correlation, options) =>
+  executePricingCurrentMarketEvidenceWithAuthorization(payload, Redacted.value(credential), correlation, options).pipe(
+    Effect.flatMap(Schema.encodeEffect(PricingCurrentMarketEvidenceResponseSchema)),
+  );
 const executeCustomer: CustomerExecutor = (payload, credential, correlation, options) =>
   executeCustomerPriceGroupResolutionWithAuthorization(payload, Redacted.value(credential), correlation, options);
 
@@ -188,6 +190,10 @@ interface SourceInput {
   }[];
   readonly effectiveAt: SourceInstant;
   readonly family: 'COMMERCIAL_CONTEXT';
+  readonly ownerEvaluation?: {
+    readonly evaluatedAt: SourceInstant;
+    readonly evaluationMode: 'CURRENT_AT_OWNER_EVALUATION';
+  };
   readonly ownerModuleId: string;
   readonly ownerRootRef: string;
   readonly predicateRef: string;
@@ -205,8 +211,8 @@ const sourceEvidence = (input: SourceInput) => {
   };
   const temporalBase = {
     effectiveAt: input.effectiveAt,
-    evaluatedAt: input.effectiveAt,
-    evaluationMode: 'HISTORICAL_AS_OF' as const,
+    evaluatedAt: input.ownerEvaluation?.evaluatedAt ?? input.effectiveAt,
+    evaluationMode: input.ownerEvaluation?.evaluationMode ?? ('HISTORICAL_AS_OF' as const),
     observedAt: input.completeness.observedAt,
     requestedAt: input.requestedAt,
   };
@@ -259,180 +265,201 @@ const makeCatalogReader = (
   loadFresh: Effect.fn('CurrentPricingDecisionCatalogEvidence.loadFresh')(function* loadFresh(
     context: CurrentPricingDecisionExternalOwnerEvidenceReadContext,
   ) {
-    const [firstLine] = context.request.decision.lines;
-    if (firstLine === undefined) {
+    const [initialLine] = context.request.decision.lines;
+    if (initialLine === undefined) {
       return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog evidence requires at least one Pricing line');
     }
-    const request = yield* Schema.decodeEffect(PricingPurposeEquivalenceRequestSchema)({
-      anchorSelection: firstLine.catalog.selection,
-      effectiveAt: context.effectiveAt,
-      members: context.request.decision.lines.map((line) => ({
-        handoff: line.catalog,
-        occurrenceId: line.occurrenceId,
-      })),
-    }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence request is invalid')));
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
-        audience: 'catalog',
-        compositionRevision: environment.compositionRevision,
-        legalEntityId: environment.legalEntityId,
-        requestCorrelation: environment.requestCorrelation,
-      })
-      .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog owner credential is unavailable')));
-    const raw = yield* dependencies
-      .execute(request, credential, environment.requestCorrelation, {
-        baseUrl,
-        compositionRevision: environment.compositionRevision,
-      })
-      .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence read is unavailable')));
-    const response = yield* Schema.decodeUnknownEffect(PricingPurposeEquivalenceResponseSchema)(raw).pipe(
-      Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence response is unverifiable')),
-    );
-    if (response.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED') {
-      return yield* failed(
-        response.outcome === 'CATALOG_EQUIVALENCE_CONFLICT' ? 'CONFLICT' : 'UNVERIFIABLE',
-        CATALOG_OWNER,
-        `Catalog equivalence refused the exact Pricing candidate with ${response.outcome}`,
-      );
-    }
-    const memberAssessments = response.assessments.slice(1);
-    if (
-      memberAssessments.length !== request.members.length ||
-      memberAssessments.some(
-        (assessment, index) =>
-          assessment.role !== 'MEMBER' || assessment.occurrenceId !== request.members[index]?.occurrenceId,
-      )
-    ) {
-      return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog equivalence did not preserve ordered members');
-    }
-    const mapCatalogMember = Effect.fn('CurrentPricingDecisionCatalogEvidence.mapMember')(function* mapCatalogMember(
-      member: (typeof request.members)[number],
-      index: number,
-    ) {
-      const assessment = memberAssessments[index];
-      if (assessment === undefined || assessment.role !== 'MEMBER') {
-        return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog equivalence member is missing');
-      }
-      const { handoff } = assessment;
-      const basisFacts = handoff.evidence.basis.map(({ source }) => ({
-        effectiveFrom: handoff.evidence.assessedAt,
-        effectiveTo: handoff.evidence.validUntil ?? null,
-        factRef: source.resourceRef.resourceId,
-        factRevisionRef: source.revisionId ?? String(source.revision),
-        verificationRef: handoff.evidence.membership.attestationId,
-      }));
-      const evidence = yield* sourceEvidence({
-        completeness: handoff.completeness,
-        currentFacts: basisFacts,
-        effectiveAt: context.effectiveAt,
-        family: 'COMMERCIAL_CONTEXT',
-        ownerModuleId: CATALOG_OWNER,
-        ownerRootRef: handoff.equivalentSelectionKey,
-        predicateRef: handoff.completeness.scope.predicateRef,
-        requestedAt: context.requestedAt,
-        tenantId: environment.tenantId,
-        verificationRef: handoff.evidence.membership.attestationId,
-      }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog line source proof is unverifiable')));
-      const line = context.request.decision.lines[index];
-      const rawLine = context.commercialTotal.sourceEvidence.preRound.rawComposition.lines[index];
-      if (line === undefined) {
-        return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog line disappeared during evidence mapping');
-      }
-      if (rawLine === undefined || !('usedPrice' in rawLine.unitPriceCalculation.input.exactPrice.path)) {
-        return yield* failed(
-          'UNVERIFIABLE',
-          CATALOG_OWNER,
-          'Catalog compatibility replay requires the exact successful Price path',
-        );
-      }
-      const targetRef = handoff.selection.packageOption?.optionRef ?? handoff.selection.variantRef;
-      const compatibilityRequest = yield* Schema.decodeEffect(QuantityBasisCompatibilityRequestSchema)({
-        effectiveAt: context.effectiveAt,
-        handoff,
-        price: {
-          quantity: line.pricingBasis.quantity,
-          quantityBasis: { ...handoff.quantityBasis, targetRef, unitRef: line.pricingBasis.unitRef },
-        },
-      }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility request is invalid')));
-      const compatibilityRaw = yield* dependencies
-        .executeCompatibility(compatibilityRequest, credential, environment.requestCorrelation, {
-          baseUrl,
-          compositionRevision: environment.compositionRevision,
-        })
-        .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility replay is unavailable')));
-      const compatibilityResponse = yield* Schema.decodeUnknownEffect(QuantityBasisCompatibilityResponseSchema)(
-        compatibilityRaw,
-      ).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility replay is unverifiable')));
-      if (
-        compatibilityResponse.outcome !== 'NO_CONVERSION_REQUIRED' &&
-        compatibilityResponse.outcome !== 'COMPATIBLE_CONVERSION'
+    const groups = yield* Effect.forEach(
+      context.request.decision.lines,
+      Effect.fn('CurrentPricingDecisionCatalogEvidence.readOccurrence')(function* readOccurrence(
+        firstLine: CurrentPricingDecisionExternalOwnerEvidenceReadContext['request']['decision']['lines'][number],
+        index: number,
       ) {
-        return yield* failed(
-          'UNVERIFIABLE',
-          CATALOG_OWNER,
-          `Catalog compatibility replay refused the exact line with ${compatibilityResponse.outcome}`,
+        const request = yield* Schema.decodeEffect(PricingPurposeEquivalenceRequestSchema)({
+          anchorSelection: firstLine.catalog.selection,
+          effectiveAt: context.effectiveAt,
+          members: [{ handoff: firstLine.catalog, occurrenceId: firstLine.occurrenceId }],
+        }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence request is invalid')));
+        const { baseUrl, credential } = yield* dependencies.issuer
+          .issue({
+            audience: 'catalog',
+            compositionRevision: environment.compositionRevision,
+            legalEntityId: environment.legalEntityId,
+            requestCorrelation: environment.requestCorrelation,
+          })
+          .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog owner credential is unavailable')));
+        const raw = yield* dependencies
+          .execute(request, credential, environment.requestCorrelation, {
+            baseUrl,
+            compositionRevision: environment.compositionRevision,
+          })
+          .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence read is unavailable')));
+        const response = yield* Schema.decodeUnknownEffect(PricingPurposeEquivalenceResponseSchema)(raw).pipe(
+          Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence response is unverifiable')),
         );
-      }
-      const fenceSource = yield* Schema.decodeEffect(PricingSetBackedMaterialEvidenceFenceSourceSchema)({
-        sourceEvidence: evidence,
-        verificationMaterial: {
-          compatibilityRequest,
-          compatibilityResponse,
-          handoff,
-          kind: 'CATALOG_LINE_AUTHORITY',
-          line,
-          request: { amount: handoff.quantity.requested, purpose: 'PRICING', selection: handoff.selection },
-        },
-      }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog line fence material is unverifiable')));
-      return {
-        fenceSource,
-        occurrenceId: member.occurrenceId,
-        publication: {
-          assessment: handoff.evidence,
-          expectedEffectiveAt: context.effectiveAt,
-          expectedOwnerRootRef: handoff.equivalentSelectionKey,
-          expectedPredicateRef: handoff.completeness.scope.predicateRef,
-          expectedSelection: handoff.selection,
+        if (response.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED') {
+          return yield* failed(
+            response.outcome === 'CATALOG_EQUIVALENCE_CONFLICT' ? 'CONFLICT' : 'UNVERIFIABLE',
+            CATALOG_OWNER,
+            `Catalog equivalence refused the exact Pricing candidate with ${response.outcome}`,
+          );
+        }
+        const memberAssessments = response.assessments.slice(1);
+        if (
+          memberAssessments.length !== request.members.length ||
+          memberAssessments.some(
+            (assessment, assessmentIndex) =>
+              assessment.role !== 'MEMBER' ||
+              assessment.occurrenceId !== request.members[assessmentIndex]?.occurrenceId,
+          )
+        ) {
+          return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog equivalence did not preserve ordered members');
+        }
+        const [member] = request.members;
+        const [assessment] = memberAssessments;
+        if (member === undefined || assessment === undefined || assessment.role !== 'MEMBER') {
+          return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog equivalence member is missing');
+        }
+        const { handoff } = assessment;
+        const basisFacts = handoff.evidence.basis.map(({ source }) => ({
+          effectiveFrom: handoff.evidence.assessedAt,
+          effectiveTo: handoff.evidence.validUntil ?? null,
+          factRef: source.resourceRef.resourceId,
+          factRevisionRef: source.revisionId ?? String(source.revision),
+          verificationRef: handoff.evidence.membership.attestationId,
+        }));
+        const evidence = yield* sourceEvidence({
+          completeness: handoff.completeness,
+          currentFacts: basisFacts,
+          effectiveAt: context.effectiveAt,
+          family: 'COMMERCIAL_CONTEXT',
+          ownerEvaluation: { evaluatedAt: handoff.evidence.assessedAt, evaluationMode: 'CURRENT_AT_OWNER_EVALUATION' },
+          ownerModuleId: CATALOG_OWNER,
+          ownerRootRef: handoff.equivalentSelectionKey,
+          predicateRef: handoff.completeness.scope.predicateRef,
           requestedAt: context.requestedAt,
+          tenantId: environment.tenantId,
+          verificationRef: handoff.evidence.membership.attestationId,
+        }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog line source proof is unverifiable')));
+        const line = context.request.decision.lines[index];
+        const rawLine = context.commercialTotal.sourceEvidence.preRound.rawComposition.lines[index];
+        if (line === undefined) {
+          return yield* failed('UNVERIFIABLE', CATALOG_OWNER, 'Catalog line disappeared during evidence mapping');
+        }
+        if (rawLine === undefined || !('usedPrice' in rawLine.unitPriceCalculation.input.exactPrice.path)) {
+          return yield* failed(
+            'UNVERIFIABLE',
+            CATALOG_OWNER,
+            'Catalog compatibility replay requires the exact successful Price path',
+          );
+        }
+        const targetRef = handoff.selection.packageOption?.optionRef ?? handoff.selection.variantRef;
+        const compatibilityRequest = yield* Schema.decodeEffect(QuantityBasisCompatibilityRequestSchema)({
+          effectiveAt: handoff.evidence.assessedAt,
+          handoff,
+          price: {
+            quantity: line.pricingBasis.quantity,
+            quantityBasis: { ...handoff.quantityBasis, targetRef, unitRef: line.pricingBasis.unitRef },
+          },
+        }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility request is invalid')));
+        const compatibilityCredential = yield* dependencies.issuer
+          .issue({
+            audience: 'catalog',
+            compositionRevision: environment.compositionRevision,
+            legalEntityId: environment.legalEntityId,
+            requestCorrelation: environment.requestCorrelation,
+          })
+          .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog owner credential is unavailable')));
+        const compatibilityRaw = yield* dependencies
+          .executeCompatibility(
+            compatibilityRequest,
+            compatibilityCredential.credential,
+            environment.requestCorrelation,
+            {
+              baseUrl: compatibilityCredential.baseUrl,
+              compositionRevision: environment.compositionRevision,
+            },
+          )
+          .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility replay is unavailable')));
+        const compatibilityResponse = yield* Schema.decodeUnknownEffect(QuantityBasisCompatibilityResponseSchema)(
+          compatibilityRaw,
+        ).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility replay is unverifiable')));
+        if (
+          compatibilityResponse.outcome !== 'NO_CONVERSION_REQUIRED' &&
+          compatibilityResponse.outcome !== 'COMPATIBLE_CONVERSION'
+        ) {
+          return yield* failed(
+            'UNVERIFIABLE',
+            CATALOG_OWNER,
+            `Catalog compatibility replay refused the exact line with ${compatibilityResponse.outcome}`,
+          );
+        }
+        const fenceSource = yield* Schema.decodeEffect(PricingSetBackedMaterialEvidenceFenceSourceSchema)({
           sourceEvidence: evidence,
-        },
-      };
-    });
-    const members = yield* Effect.forEach(request.members, mapCatalogMember, { concurrency: 8 });
-    const receipt = response.verificationReceipt;
-    const equivalencePredicateRef = receipt.predicateRef;
-    const equivalenceEvidence = yield* sourceEvidence({
-      completeness: {
-        nextApplicabilityBoundary: response.currentnessEvidence.validThrough,
-        observedAt: response.currentnessEvidence.observedAt,
-        ownerRevision: receipt.ownerRevision,
-        scope: { kind: 'EXACT_PREDICATE', predicateRef: equivalencePredicateRef },
-      },
-      currentFacts: [
-        {
-          effectiveFrom: response.evidence.effectiveAt,
-          effectiveTo: response.evidence.validThrough,
-          factRef: response.evidence.assessmentId,
-          factRevisionRef: response.generation,
+          verificationMaterial: {
+            compatibilityRequest,
+            compatibilityResponse,
+            handoff,
+            kind: 'CATALOG_LINE_AUTHORITY',
+            line,
+            request: { amount: handoff.quantity.requested, purpose: 'PRICING', selection: handoff.selection },
+          },
+        }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog line fence material is unverifiable')));
+        const mappedMember = {
+          fenceSource,
+          occurrenceId: member.occurrenceId,
+          publication: {
+            assessment: handoff.evidence,
+            expectedEffectiveAt: context.effectiveAt,
+            expectedOwnerRootRef: handoff.equivalentSelectionKey,
+            expectedPredicateRef: handoff.completeness.scope.predicateRef,
+            expectedSelection: handoff.selection,
+            requestedAt: context.requestedAt,
+            sourceEvidence: evidence,
+          },
+        };
+        const members = [mappedMember];
+        const receipt = response.verificationReceipt;
+        const equivalencePredicateRef = receipt.predicateRef;
+        const equivalenceEvidence = yield* sourceEvidence({
+          completeness: {
+            nextApplicabilityBoundary: response.currentnessEvidence.validThrough,
+            observedAt: response.currentnessEvidence.observedAt,
+            ownerRevision: receipt.ownerRevision,
+            scope: { kind: 'EXACT_PREDICATE', predicateRef: equivalencePredicateRef },
+          },
+          currentFacts: [
+            {
+              effectiveFrom: response.evidence.effectiveAt,
+              effectiveTo: response.evidence.validThrough,
+              factRef: response.evidence.assessmentId,
+              factRevisionRef: response.generation,
+              verificationRef: receipt.verificationRef,
+            },
+          ],
+          effectiveAt: context.effectiveAt,
+          family: 'COMMERCIAL_CONTEXT',
+          ownerModuleId: CATALOG_OWNER,
+          ownerRootRef: response.evidence.assessmentId,
+          predicateRef: equivalencePredicateRef,
+          requestedAt: context.requestedAt,
+          tenantId: environment.tenantId,
           verificationRef: receipt.verificationRef,
-        },
-      ],
-      effectiveAt: context.effectiveAt,
-      family: 'COMMERCIAL_CONTEXT',
-      ownerModuleId: CATALOG_OWNER,
-      ownerRootRef: response.evidence.assessmentId,
-      predicateRef: equivalencePredicateRef,
-      requestedAt: context.requestedAt,
-      tenantId: environment.tenantId,
-      verificationRef: receipt.verificationRef,
-    }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence source proof is unverifiable')));
-    const equivalenceFenceSource = yield* Schema.decodeEffect(PricingSetBackedMaterialEvidenceFenceSourceSchema)({
-      sourceEvidence: equivalenceEvidence,
-      verificationMaterial: { kind: 'CATALOG_EQUIVALENCE_AUTHORITY', request, response },
-    }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence fence material is unverifiable')));
+        }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence source proof is unverifiable')));
+        const equivalenceFenceSource = yield* Schema.decodeEffect(PricingSetBackedMaterialEvidenceFenceSourceSchema)({
+          sourceEvidence: equivalenceEvidence,
+          verificationMaterial: { kind: 'CATALOG_EQUIVALENCE_AUTHORITY', request, response },
+        }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence fence material is unverifiable')));
+        return {
+          equivalenceFenceSource,
+          members,
+        };
+      }),
+      { concurrency: 8 },
+    );
     return {
-      equivalenceFenceSource,
-      members,
+      equivalenceFenceSources: groups.map(({ equivalenceFenceSource }) => equivalenceFenceSource),
+      members: groups.flatMap(({ members }) => members),
     } satisfies CurrentPricingDecisionCatalogEvidenceRead;
   }),
 });

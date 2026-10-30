@@ -26,17 +26,20 @@ const OUTBOX_WORKERS = [
   'pricegroupcatalogworker',
   'inventoryworker',
   'privacyworker',
+  'commerceorderworker',
 ];
 const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
 
-// The original nine IDs come from the backup bundle; Inventory, Assortment and Tax are newer additions.
+// The original nine IDs come from the backup bundle; newer additions use synthetic fixture IDs.
 const STAGE_SERVICE_IDS = new Map(
   Object.entries({
     assortment: 'assortment-id',
     availability: 'availability-id',
     catalog: 'IGOF5E9vQ7izD4ygQgoNiQ',
+    commercecart: 'commerce-cart-service-id',
     commercecustomercontext: 'omIBMTDCR7iARcXTt4SqJw',
     commercemarketcatalog: '7nJtt1fnQMKsGRDTl6Wv1w',
+    commerceorder: 'commerce-order-service-id',
     inventory: 'inventory-service-id',
     partyregistry: 'cxNTAHZJSbiJr3xTqkypOg',
     paymenttermcatalog: '2FgvrWn9RzCJrfbMapwM6Q',
@@ -181,8 +184,10 @@ it('retires exactly the application services zerops-import.yaml declares, each w
     'ZEROPS_ASSORTMENT_SERVICE_ID',
     'ZEROPS_AVAILABILITY_SERVICE_ID',
     'ZEROPS_CATALOG_SERVICE_ID',
+    'ZEROPS_COMMERCE_CART_SERVICE_ID',
     'ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID',
     'ZEROPS_COMMERCE_MARKET_CATALOG_SERVICE_ID',
+    'ZEROPS_COMMERCE_ORDER_SERVICE_ID',
     'ZEROPS_INVENTORY_SERVICE_ID',
     'ZEROPS_PARTY_REGISTRY_SERVICE_ID',
     'ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID',

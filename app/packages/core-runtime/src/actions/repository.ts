@@ -993,6 +993,8 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
               );
             }
             return Effect.succeed({
+              completionConsumerModuleKey: collected.completion?.consumerModuleKey ?? null,
+              completionOriginalRevision: collected.completion?.originalRevision ?? null,
               domainEventId: persistedDomainEvent.domainEventId,
               payloadJson: collected.message.payloadJson,
               producerModuleKey: collected.message.producerModuleKey,

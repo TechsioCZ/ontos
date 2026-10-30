@@ -257,7 +257,23 @@ describe('Pricing Current Market evidence owner boundary', () => {
       let routineKey = '';
       let input: unknown;
       const routineInvoker = scopedRoutineInvokerFromTransaction(
-        () => Effect.succeed([{ payload: presentSnapshot }]),
+        () =>
+          Effect.succeed([
+            {
+              payload: {
+                ...presentSnapshot,
+                effectivePeriod: Schema.encodeSync(EffectivePeriodSchema)(
+                  Schema.decodeUnknownSync(EffectivePeriodSchema)({
+                    endsAt: boundary,
+                    startsAt: '2026-01-01T00:00:00.000Z',
+                  }),
+                ),
+                market: Schema.encodeSync(MarketDefinitionSchema)(market),
+                nextApplicabilityBoundary: boundary,
+                observedAt,
+              },
+            },
+          ]),
         operationalScope,
       );
       const transactionService: OperationalScopeTransactionService = {

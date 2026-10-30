@@ -28,6 +28,7 @@ import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/
 import type { AresAppliedEvidence, AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type { PartySubjectEvidence, PartyEvidenceEvaluation } from '../../shared/domain/identity-contracts.ts';
 import type { MergeSelectionEvidenceStep, MergeSurvivorSelectionReason } from '../../shared/domain/merge-selection.ts';
+import type { DuplicateCandidateCaseRefSchema } from '../../shared/resources/duplicate-candidate-case.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 
 export const PARTY_SCHEMA_NAME = 'party';
@@ -172,6 +173,7 @@ export interface PartyEvidenceExplanation {
   };
   readonly outcome?: 'AMBIGUOUS' | 'MATCHED' | 'NO_MATCH';
   readonly reason: string;
+  readonly reviewedCaseRef?: typeof DuplicateCandidateCaseRefSchema.Type;
   readonly ruleKey: string;
   readonly verification?: 'REJECTED' | 'UNVERIFIED' | 'VERIFIED';
 }
@@ -291,6 +293,7 @@ export const partyOfficialIdentifiers = enableGovernedRls(
       namespace: text('namespace').notNull(),
       jurisdiction: text('jurisdiction').default('CZ').notNull(),
       normalizedValue: text('normalized_value').notNull(),
+      originalInputDigits: text('original_input_digits'),
       ...activePeriodColumns(),
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
@@ -326,6 +329,10 @@ export const partyOfficialIdentifiers = enableGovernedRls(
       check(
         'party_official_identifiers_normalized_value_ck',
         sql`(${table.identifierTypeKey} = 'ICO' and ${table.normalizedValue} ~ '^[0-9]{8}$') or (${table.identifierTypeKey} = 'CZ_DIC' and ${table.normalizedValue} ~ '^CZ[0-9]{8,10}$')`,
+      ),
+      check(
+        'party_official_identifiers_original_input_digits_ck',
+        sql`${table.originalInputDigits} is null or (${table.identifierTypeKey} = 'ICO' and ${table.originalInputDigits} ~ '^[0-9]{1,8}$' and lpad(${table.originalInputDigits}, 8, '0') = ${table.normalizedValue})`,
       ),
       ...activePeriodConstraints('party_official_identifiers', table),
       check(

@@ -152,7 +152,7 @@ const ownerFailure = (
     ),
   );
 
-const classifyObservation = (
+export const classifyPricingPurchaseContextOwnerObservation = (
   request: PricingPurchaseContextVerificationRequest,
   scope: {
     readonly callingPrincipalId: string;
@@ -262,7 +262,7 @@ export const makePricingPurchaseContextVerificationServices = (
                     request,
                     retryable: true,
                   }),
-                onSuccess: (observation) => classifyObservation(request, scope, observation),
+                onSuccess: (observation) => classifyPricingPurchaseContextOwnerObservation(request, scope, observation),
               }),
             );
           },

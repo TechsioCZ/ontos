@@ -10,6 +10,10 @@ import {
   applyDsrCaseLifecycleMutation,
   DsrResolverAssignmentSchema,
   DsrDeadlinePolicySchema,
+  DsrDeadlineSchema,
+  DsrDeadlineHistorySchema,
+  StoredDsrDeadlineSchema,
+  dsrDeadlineHistory,
   DsrOwnerTaskSchema,
   DsrOwnerInventoryAuthorityResultSchema,
   DsrResponseRequestSchema,
@@ -27,6 +31,7 @@ import {
   validateDsrResponseCoverage,
 } from '../../shared/domain/privacy-dsr.ts';
 import { DsrDeliveryEvidenceSchema } from '../../shared/domain/dsr-delivery-access.ts';
+import { DsrCasesResponseSchema } from '../../shared/privacy-queries.ts';
 import {
   arePrivacyInstantsEqual,
   isPrivacyInstantAfter,
@@ -198,6 +203,7 @@ describe('privacy DSR case lifecycle', () => {
     const deadline = calculateDsrDeadline({
       caseRef: 'dsr:1',
       controllerRef: 'controller:acme',
+      obligationRef: 'obligation:1',
       originalReceivedAt: receivedAt,
       policy: Schema.decodeUnknownSync(DsrDeadlinePolicySchema)({
         calendar: 'UTC_CALENDAR_MONTH',
@@ -217,6 +223,7 @@ describe('privacy DSR case lifecycle', () => {
     const deadline = calculateDsrDeadline({
       caseRef: 'dsr:1',
       controllerRef: 'controller:acme',
+      obligationRef: 'obligation:1',
       originalReceivedAt: '2026-01-31T10:00:00Z',
       policy: {
         calendar: 'UTC_CALENDAR_MONTH',
@@ -228,6 +235,59 @@ describe('privacy DSR case lifecycle', () => {
     });
 
     expect(deadline.deadlineAt).toBe('2026-02-28T10:00:00.000Z');
+  });
+
+  it('keeps exact new writes distinct from unresolved legacy history without guessing an obligation', () => {
+    const legacy = {
+      calendar: 'UTC_CALENDAR_MONTH',
+      caseRef: 'dsr:1',
+      controllerRef: 'controller:acme',
+      deadlineAt: '2026-10-14T10:00:00.000Z',
+      months: 1,
+      policyRef: 'policy:gdpr',
+      policyVersion: '2026-01',
+      receiptBasisRef: 'receipt:legacy',
+      receivedAt,
+    };
+    const before = JSON.stringify(legacy);
+    const retained = Schema.decodeUnknownSync(StoredDsrDeadlineSchema)(legacy);
+    const history = dsrDeadlineHistory(retained);
+    expect(history).toEqual({ ...legacy, identityStatus: 'LEGACY_UNRESOLVED', version: 1 });
+    expect(Schema.is(DsrDeadlineHistorySchema)(history)).toBe(true);
+    expect(Schema.is(DsrDeadlineSchema)(legacy)).toBe(false);
+    expect(JSON.stringify(legacy)).toBe(before);
+    const exact = Schema.decodeUnknownSync(DsrDeadlineSchema)({ ...legacy, obligationRef: 'obligation:2', version: 2 });
+    expect(dsrDeadlineHistory(exact)).toEqual({ ...exact, identityStatus: 'EXACT' });
+    const caseRecord = resolvedAccessCase();
+    const publicWorkflow = {
+      items: [
+        {
+          caseRecord,
+          deadlines: [history, dsrDeadlineHistory(exact)],
+          decisions: [],
+          ownerContributions: [],
+          resolverAssignments: [],
+          responses: [],
+          summary: summarizeDsrCase(caseRecord, [], []),
+          tasks: [],
+          verifications: [],
+        },
+      ],
+      metadata: { observedAt: receivedAt },
+    };
+    const publicWire = Schema.encodeSync(DsrCasesResponseSchema)(publicWorkflow);
+    expect(Schema.decodeUnknownSync(DsrCasesResponseSchema)(publicWire)).toEqual(publicWorkflow);
+    for (const invalid of [
+      { ...legacy, version: 2 },
+      { ...legacy, obligationRef: 'obligation:2' },
+      { ...legacy, version: 1 },
+      { ...legacy, obligationRef: 'obligation:2', version: 3 },
+      { ...legacy, receivedAt: 'bad' },
+      { ...legacy, months: 0 },
+      { ...legacy, obligationRef: '', version: 2 },
+    ]) {
+      expect(Schema.is(StoredDsrDeadlineSchema)(invalid)).toBe(false);
+    }
   });
 
   it('matches substantive decisions to the exact case, Controller, and right', () => {
@@ -545,6 +605,168 @@ describe('privacy DSR case lifecycle', () => {
         '2026-09-14T12:00:00Z',
       ),
     ).toEqual({ decisions: [unresolved], outcome: 'CONFLICT' });
+  });
+
+  it('accepts every independently required owner of one exact response obligation', () => {
+    const caseRecord = resolvedAccessCase();
+    const inventory = Schema.decodeUnknownSync(DsrOwnerInventoryAuthorityResultSchema)({
+      ...ownerInventory,
+      entries: [
+        ...ownerInventory.entries,
+        { ...ownerInventory.entries[0], ownerModuleId: 'commerce-customer-context' },
+      ],
+    });
+    const secondTask = ownerTask('SUCCEEDED', {
+      authorityProvenance: {
+        authorityRef: 'owner-authority:2',
+        evidenceRefs: ['owner-evidence:2'],
+        receiptRef: 'outcome:2',
+      },
+      idempotencyKey: 'idempotency:2',
+      outcomeRef: 'outcome:2',
+      ownerModuleId: 'commerce-customer-context',
+      taskRef: 'task:2',
+    });
+    for (const final of [false, true]) {
+      const response = Schema.decodeUnknownSync(DsrResponseSchema)({
+        caseRef: caseRecord.caseRef,
+        createdAt: '2026-09-14T12:03:00Z',
+        decisionRefs: ['decision:1'],
+        deliveryEvidenceRef: final ? 'delivery:1' : null,
+        final,
+        responseRef: 'response:multiple-owners',
+        scopeRefs: ['obligation:1'],
+      });
+      const input = {
+        caseRecord,
+        decisions: [grantedAccessDecision],
+        ownerInventory: inventory,
+        response,
+        tasks: [ownerTask('SUCCEEDED'), secondTask],
+      };
+      expect(
+        validateDsrResponseCoverage(final ? { ...input, deliveryEvidence: successfulDelivery } : input),
+      ).toBeUndefined();
+      if (final) {
+        expect(canFinalizeDsrResponse({ ...input, deliveryEvidence: successfulDelivery })).toBe(true);
+      }
+      expect(validateDsrResponseCoverage({ ...input, tasks: [ownerTask('SUCCEEDED')] })).toContain(
+        'trusted owner task',
+      );
+      expect(
+        validateDsrResponseCoverage({
+          ...input,
+          tasks: [...input.tasks, { ...secondTask, taskRef: 'task:competing' }],
+        }),
+      ).toContain('trusted owner task');
+      expect(
+        validateDsrResponseCoverage({
+          ...input,
+          tasks: [input.tasks[0], { ...secondTask, taskRef: input.tasks[0].taskRef }],
+        }),
+      ).toContain('trusted owner task');
+    }
+  });
+
+  it('retains truthful interim multi-owner coverage without claiming final completion', () => {
+    const caseRecord = resolvedAccessCase();
+    const inventory = Schema.decodeUnknownSync(DsrOwnerInventoryAuthorityResultSchema)({
+      ...ownerInventory,
+      entries: [
+        ...ownerInventory.entries,
+        { ...ownerInventory.entries[0], ownerModuleId: 'commerce-customer-context' },
+      ],
+    });
+    const response = Schema.decodeUnknownSync(DsrResponseSchema)({
+      caseRef: caseRecord.caseRef,
+      createdAt: '2026-09-14T12:03:00Z',
+      decisionRefs: ['decision:1'],
+      deliveryEvidenceRef: null,
+      final: false,
+      responseRef: 'response:interim-multiple-owners',
+      scopeRefs: ['obligation:1'],
+    });
+    for (const status of ['PENDING', 'IN_PROGRESS', 'PARTIAL', 'INDETERMINATE', 'FAILED'] as const) {
+      const tasks = [
+        ownerTask('SUCCEEDED'),
+        ownerTask(status, {
+          idempotencyKey: 'idempotency:2',
+          ownerModuleId: 'commerce-customer-context',
+          taskRef: 'task:2',
+        }),
+      ];
+      const input = { caseRecord, decisions: [grantedAccessDecision], ownerInventory: inventory, response, tasks };
+      expect(validateDsrResponseCoverage(input)).toBeUndefined();
+      expect(
+        canFinalizeDsrResponse({
+          ...input,
+          deliveryEvidence: successfulDelivery,
+          response: { ...response, deliveryEvidenceRef: Option.some('delivery:1'), final: true },
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('does not let another owners task or untrusted receipt satisfy multi-owner response coverage', () => {
+    const caseRecord = resolvedAccessCase();
+    const inventory = Schema.decodeUnknownSync(DsrOwnerInventoryAuthorityResultSchema)({
+      ...ownerInventory,
+      entries: [
+        ...ownerInventory.entries,
+        { ...ownerInventory.entries[0], ownerModuleId: 'commerce-customer-context' },
+      ],
+    });
+    const response = Schema.decodeUnknownSync(DsrResponseSchema)({
+      caseRef: caseRecord.caseRef,
+      createdAt: '2026-09-14T12:03:00Z',
+      decisionRefs: ['decision:1'],
+      deliveryEvidenceRef: null,
+      final: false,
+      responseRef: 'response:invalid-multiple-owners',
+      scopeRefs: ['obligation:1'],
+    });
+    const secondTask = ownerTask('SUCCEEDED', {
+      idempotencyKey: 'idempotency:2',
+      ownerModuleId: 'commerce-customer-context',
+      taskRef: 'task:2',
+    });
+    const { authorityProvenance, ...unprovenTask } = secondTask;
+    expect(authorityProvenance).toBeDefined();
+    for (const invalid of [
+      { ...secondTask, caseRef: 'dsr:foreign' },
+      { ...secondTask, controllerRef: 'controller:foreign' },
+      { ...secondTask, exactScopeRefs: ['scope:foreign'] },
+      { ...secondTask, right: 'ERASURE' as const },
+      ownerTask('SUCCEEDED', { ownerModuleId: 'foreign-owner', taskRef: 'task:2' }),
+      unprovenTask,
+      {
+        ...secondTask,
+        authorityProvenance: {
+          authorityRef: 'owner-authority:2',
+          evidenceRefs: ['owner-evidence:2'],
+          receiptRef: Option.none(),
+        },
+      },
+    ]) {
+      expect(
+        validateDsrResponseCoverage({
+          caseRecord,
+          decisions: [grantedAccessDecision],
+          ownerInventory: inventory,
+          response,
+          tasks: [ownerTask('SUCCEEDED'), invalid],
+        }),
+      ).toContain('trusted owner task');
+    }
+    expect(
+      validateDsrResponseCoverage({
+        caseRecord,
+        decisions: [grantedAccessDecision],
+        ownerInventory: { ...inventory, entries: [...inventory.entries, inventory.entries[0]] },
+        response,
+        tasks: [ownerTask('SUCCEEDED'), secondTask],
+      }),
+    ).toContain('entries must be unique');
   });
 
   it('accepts only an exact authoritative non-final obligation subset', () => {

@@ -1,0 +1,28 @@
+import { commerceCartApi } from '../shared/api.ts';
+import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+
+export const backendFederationContract = {
+  compatibility: {
+    build: ultramodernApiMarker.build,
+    contractVersion: 'microvertical-server-effect-v1',
+    nodeAdapterVersion: 'backend-mf-effect-v2',
+    packageName: '@app/commerce-cart',
+    sourceRevision: ultramodernApiMarker.sourceRevision,
+    unitId: ultramodernApiMarker.unitId,
+  },
+  executionSurfaces: ['node-mf-runtime'],
+  exposes: ['./effect-api'],
+  name: 'verticalCommerceCartBackend',
+  openapiPath: '/commerce-cart-api/openapi.json',
+  readinessPath: '/commerce-cart-api/commerce-cart/readiness',
+  role: 'microvertical-server',
+  runtimeFramework: 'effect',
+  strictEffectApproach: true,
+} as const;
+
+export { default, default as runtime } from './index.ts';
+export {
+  commerceCartApiContract as contract,
+  commerceCartOperationContexts as operationContexts,
+} from '../shared/api.ts';
+export const api: unknown = commerceCartApi;

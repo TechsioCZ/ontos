@@ -19,6 +19,10 @@ export const ProductAuditEvidenceSchema = Schema.Struct({
   evidenceRefs: Schema.optionalKey(Schema.Array(ProductEvidenceReferenceSchema)),
   reason: ProductReasonSchema,
 });
+export const CreateProductAuditEvidenceSchema = Schema.Struct({
+  evidenceRefs: Schema.optionalKey(Schema.Array(ProductEvidenceReferenceSchema)),
+  reason: Schema.optionalKey(ProductReasonSchema),
+});
 export const ProductRevisionSchema = Schema.Finite.check(
   Schema.isInt(),
   Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 }),
@@ -91,19 +95,29 @@ export type Product = typeof ProductSchema.Type;
 export const ProductChangeKindSchema = Schema.Literals(['CREATED', 'UPDATED', 'COSMETIC_CORRECTION', 'LIFECYCLE']);
 export type ProductChangeKind = typeof ProductChangeKindSchema.Type;
 
-export const ProductRevisionRecordSchema = Schema.Struct({
+const productRevisionRecordFields = {
   actionInvocationId: ProductActionInvocationIdSchema,
-  changeKind: ProductChangeKindSchema,
   description: Schema.optionalKey(ProductDescriptionSchema),
   evidenceRefs: Schema.Array(ProductEvidenceReferenceSchema),
   lifecycle: ProductLifecycleSchema,
   name: Schema.optionalKey(ProductNameSchema),
   productRef: ProductRefSchema,
-  reason: ProductReasonSchema,
   recordedAt: ProductInstantSchema,
   revision: ProductRevisionSchema,
   revisionReference: ProductRevisionReferenceSchema,
-});
+};
+export const ProductRevisionRecordSchema = Schema.Union([
+  Schema.Struct({
+    ...productRevisionRecordFields,
+    changeKind: Schema.Literal('CREATED'),
+    reason: Schema.optionalKey(ProductReasonSchema),
+  }),
+  Schema.Struct({
+    ...productRevisionRecordFields,
+    changeKind: Schema.Literals(['UPDATED', 'COSMETIC_CORRECTION', 'LIFECYCLE']),
+    reason: ProductReasonSchema,
+  }),
+]);
 export type ProductRevisionRecord = typeof ProductRevisionRecordSchema.Type;
 
 export const ProductLifecycleEventSchema = Schema.Struct({

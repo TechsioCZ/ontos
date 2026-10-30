@@ -1,4 +1,4 @@
-import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -9,6 +9,8 @@ import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
 import { OutboxPollerConfigError } from '../../src/outbox/errors.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
+import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
+import { makeOutboxRuntime, OutboxRuntime } from '../../src/outbox/runtime.ts';
 
 const registration = defineOutboxWorker(
   {
@@ -238,5 +240,60 @@ it.effect('does not claim during unavailable admission and marks the next admitt
     expect(admissions).toBe(3);
     expect(cycles).toBe(2);
     expect(healthTransitions).toEqual(['failed', 'ready', 'ready']);
+  }),
+);
+
+it.effect('the default poller preserves operation time across a slow sequential production runtime cycle', () =>
+  Effect.gen(function* defaultPollerOperationTimes() {
+    const start = (yield* DateTime.nowAsDate).getTime();
+    const claimedAt: number[] = [];
+    const completedAt: number[] = [];
+    const done = yield* Deferred.make<null>();
+    let remaining = 2;
+    const clockWorker = defineOutboxWorker(registration.descriptor, () => TestClock.adjust('8 seconds'));
+    const repository: OutboxRepositoryService = {
+      claimNext: (_registrations, _owner, now) =>
+        Effect.sync(() => {
+          if (remaining === 0) {
+            return Option.none();
+          }
+          remaining -= 1;
+          claimedAt.push(now.getTime() - start);
+          const claim: OutboxClaim = {
+            attemptId: `attempt-${remaining}`,
+            attemptNumber: 1,
+            claimId: `runtime:${remaining}`,
+            consumerModuleKey: 'consumer',
+            deliveryId: `delivery-${remaining}`,
+            domainEventId: `event-${remaining}`,
+            messageId: `message-${remaining}`,
+            payloadJson: { messageKey: `message-${remaining}` },
+            producerModuleKey: 'producer',
+            retryPolicy: registration.descriptor.retryPolicy,
+            tenantId: 'tenant-1',
+            tenantSequenceNo: BigInt(2 - remaining),
+            topic: 'producer.message-created',
+            workerKey: 'consumer.logger',
+          };
+          return Option.some(claim);
+        }),
+      complete: (_claim, now) =>
+        Effect.sync(() => completedAt.push(now.getTime() - start)).pipe(
+          Effect.andThen(() => (completedAt.length === 2 ? Deferred.succeed(done, null) : Effect.void)),
+          Effect.asVoid,
+        ),
+      fail: () => Effect.die(new Error('Unexpected failure in successful polling test')),
+      matchUnmatched: () => Effect.die(new Error('Owner polling must not match global messages')),
+    };
+    const running = yield* runOutboxPollingLoop({
+      admitComposition: Effect.succeed('a'.repeat(64)),
+      config: { claimOwner: 'consumer:clock', maxDeliveries: 2, pollIntervalMs: 1000 },
+      registrations: [clockWorker],
+      subscriptions: [clockWorker.descriptor],
+    }).pipe(Effect.provideService(OutboxRuntime, makeOutboxRuntime(repository)), Effect.forkChild);
+    yield* Deferred.await(done);
+    yield* Fiber.interrupt(running);
+    expect(claimedAt).toEqual([0, 8000]);
+    expect(completedAt).toEqual([8000, 16_000]);
   }),
 );

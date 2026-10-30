@@ -55,8 +55,6 @@ export class ProcessingActivityRegistryError extends Schema.TaggedError<Processi
 ) {}
 
 const privacyModuleId = 'privacy.core';
-const legalEntityModuleId = 'core.identity';
-const legalEntityResourceType = 'core.identity.legal-entity';
 const activityRef = (tenantId: string, resourceId: string): ProcessingActivityRef => ({
   moduleId: privacyModuleId,
   resourceId,
@@ -495,12 +493,10 @@ const policyPrerequisitesAreReady = (
       sameLegalBasisRef,
     ) &&
     sameRecordSet(
-      bases.map((assignment) => ({
-        moduleId: legalEntityModuleId,
-        resourceId: assignment.scope.controllerRef,
-        resourceType: legalEntityResourceType,
-        tenantId: activity.activityRef.tenantId,
-      })),
+      bases.flatMap((assignment) => {
+        const { authority } = assignment.applicabilityDecision;
+        return authority === undefined ? [] : [authority.controllerRef];
+      }),
       controllers,
       sameOwnerRef,
     ) &&

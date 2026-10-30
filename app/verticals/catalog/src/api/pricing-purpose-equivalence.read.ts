@@ -474,5 +474,5 @@ export const pricingPurposeEquivalenceRead = defineRead(
     return { evidence: { resultCount: result.outcome === 'CATALOG_EQUIVALENCE_CONFIRMED' ? 1 : 0 }, result };
   }),
   (transaction, scope) => Effect.succeed(catalogQuantityHandoffForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: 'commerce.catalog' }),
+  ({ anchorSelection }) => ({ kind: 'resource', resource: anchorSelection.productRef }),
 );

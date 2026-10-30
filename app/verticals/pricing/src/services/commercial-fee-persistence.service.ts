@@ -24,6 +24,9 @@ import type {
 import type { PricingCommercialScope } from '@app/pricing-contracts/domain/pricing-commercial-scope';
 import { Effect, Option, Schema } from 'effect';
 
+import { ManageProductCommercialFeeOperationSchema } from '../../shared/actions/manage-product-commercial-fees-bulk.ts';
+import type { ManageProductCommercialFeeOperation } from '../../shared/actions/manage-product-commercial-fees-bulk.ts';
+
 const ownerModuleKey = 'commerce.pricing';
 const schema = 'pricing';
 const scopeParameters = [
@@ -181,6 +184,21 @@ export const CommercialFeeActionResultLookupOutcomeSchema = Schema.Union([
 ]);
 export type CommercialFeeActionResultLookupOutcome = typeof CommercialFeeActionResultLookupOutcomeSchema.Type;
 
+/** Private bulk recovery proof. Ordinary public result lookup deliberately excludes this verdict. */
+export const CommercialFeeOriginalResultLookupOutcomeSchema = Schema.Union([
+  Schema.Struct({
+    actionInvocationId: CommercialFeeActionInvocationIdSchema,
+    originalIntentMatches: Schema.Boolean,
+    outcome: Schema.Literal('COMMERCIAL_FEE_ACTION_RESULT_FOUND'),
+    result: Schema.Union([DefineCommercialFeePersistenceOutcomeSchema, ReviseCommercialFeePersistenceOutcomeSchema]),
+  }),
+  Schema.Struct({
+    actionInvocationId: CommercialFeeActionInvocationIdSchema,
+    outcome: Schema.Literal('COMMERCIAL_FEE_ACTION_RESULT_ABSENT'),
+  }),
+]);
+export type CommercialFeeOriginalResultLookupOutcome = typeof CommercialFeeOriginalResultLookupOutcomeSchema.Type;
+
 const stableOwnerReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000), Schema.isTrimmed());
 
 export const CommercialFeeSetAuthoritySchema = Schema.Struct({
@@ -323,6 +341,13 @@ export class CommercialFeePersistenceUnavailable extends Schema.TaggedError<Comm
   { reason: Schema.String },
 ) {}
 
+export interface CommercialFeeOriginalResultLookupPersistence {
+  readonly lookupOriginalResult: (query: {
+    readonly actionInvocationId: string;
+    readonly operation: ManageProductCommercialFeeOperation;
+  }) => Effect.Effect<CommercialFeeOriginalResultLookupOutcome, CommercialFeePersistenceUnavailable>;
+}
+
 export interface CommercialFeeActionResultLookupPersistence {
   readonly lookupResult: (
     query: CommercialFeeActionResultLookupQuery,
@@ -373,12 +398,36 @@ type ScopedTransaction = Pick<Parameters<ReadServiceFactory<Readonly<Record<stri
 export const commercialFeePersistenceForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-): Effect.Effect<CommercialFeePersistence & CommercialFeeActionResultLookupPersistence> =>
+): Effect.Effect<
+  CommercialFeePersistence & CommercialFeeActionResultLookupPersistence & CommercialFeeOriginalResultLookupPersistence
+> =>
   Effect.succeed({
     define: (command) =>
       transaction.invoke(defineCommercialFeeRoutine, [command]).pipe(
         Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
         Effect.flatMap((rows) => decodePayload(DefineCommercialFeePersistenceOutcomeSchema, rows)),
+      ),
+    lookupOriginalResult: (query) =>
+      Schema.encodeEffect(ManageProductCommercialFeeOperationSchema)(query.operation).pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap((operation) =>
+          transaction
+            .invoke(lookupCommercialFeeActionResultRoutine, [
+              {
+                actingPrincipalId: scope.principalId,
+                actionInvocationId: query.actionInvocationId,
+                operation,
+              },
+            ])
+            .pipe(
+              Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
+              Effect.flatMap((rows) => decodePayload(CommercialFeeOriginalResultLookupOutcomeSchema, rows)),
+              Effect.filterOrFail(
+                (outcome) => outcome.actionInvocationId === query.actionInvocationId,
+                () => unavailable('Original CommercialFee intent lookup did not bind the owner invocation'),
+              ),
+            ),
+        ),
       ),
     lookupResult: (query) =>
       transaction

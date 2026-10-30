@@ -9,7 +9,7 @@ import { ConsentDecisionSchema } from './domain/privacy-consent-decision.ts';
 import {
   DsrCaseSchema,
   DsrCaseSummarySchema,
-  DsrDeadlineSchema,
+  DsrDeadlineHistorySchema,
   DsrOwnerTaskSchema,
   DsrResolverAssignmentSchema,
   DsrResponseSchema,
@@ -17,7 +17,7 @@ import {
   DsrVerificationSchema,
 } from './domain/privacy-dsr.ts';
 import { PrivacyLegalBasisAssignmentSchema } from './domain/privacy-legal-basis.ts';
-import { PrivacyNoticeVersionSchema } from './domain/privacy-notice-version.ts';
+import { PrivacyNoticeIsoTimestampSchema, PrivacyNoticeVersionSchema } from './domain/privacy-notice-version.ts';
 import {
   IntendedProcessingScopeSchema,
   PrivacyEligibilityEvidenceSchema,
@@ -83,7 +83,7 @@ export const LegalBasisAssignmentsResponseSchema = Schema.Struct({
 });
 
 export const NoticeVersionsRequestSchema = Schema.Struct({
-  asOf: PrivacyIsoTimestampSchema,
+  asOf: PrivacyNoticeIsoTimestampSchema,
   languages: Refs,
   noticeRefs: Refs,
 });
@@ -98,7 +98,7 @@ const ConsentResolutionSchema = Schema.Union([
   Schema.Struct({
     decisions: Schema.Array(ConsentDecisionSchema).check(Schema.isMinLength(2)),
     outcome: Schema.Literal('CONFLICT'),
-    reason: Schema.Literal('SAME_EFFECTIVE_TIME'),
+    reason: Schema.Literals(['SAME_EFFECTIVE_TIME', 'SUBJECT_BINDING_CONFLICT']),
   }),
 ]);
 export const CurrentConsentRequestSchema = Schema.Struct({ scopeRefs: Refs });
@@ -129,7 +129,7 @@ export const DsrCasesResponseSchema = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       caseRecord: DsrCaseSchema,
-      deadlines: Schema.Array(DsrDeadlineSchema),
+      deadlines: Schema.Array(DsrDeadlineHistorySchema),
       decisions: Schema.Array(DsrSubstantiveDecisionSchema),
       ownerContributions: Schema.Array(OwnerContributionSchema),
       resolverAssignments: Schema.Array(DsrResolverAssignmentSchema),

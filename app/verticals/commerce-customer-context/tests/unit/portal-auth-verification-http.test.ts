@@ -578,7 +578,16 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     const allowed = yield* runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
       Effect.provide(verifierLayer),
     );
-    expect(allowed).toBeUndefined();
+    expect(allowed).toEqual(
+      Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+        authBindingId: workloadAuthBindingId,
+        authContextRef: 'gateway-api-key:commerce-workload-test',
+        authenticationNamespaceId: workloadAuthenticationNamespaceId,
+        authMethod: 'api_key',
+        principalId: workloadPrincipalId,
+        tenantId: workloadTenantId,
+      }),
+    );
 
     const nextRelease = yield* makeApplicationCompositionSnapshotFixture(
       [ultramodernApiMarker.appId],

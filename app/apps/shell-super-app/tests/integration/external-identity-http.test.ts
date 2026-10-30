@@ -1,10 +1,18 @@
-import { ActionCommitIndeterminate, ActionRuntime, PrincipalResolver, ReadRuntime } from '@app/core-runtime';
-import type { ReadRuntimeService } from '@app/core-runtime';
+import {
+  ActionCommitIndeterminate,
+  ActionRuntime,
+  PrincipalResolver,
+  ReadRuntime,
+  TrustedPrincipalContextSchema,
+  makeOperationalScopeResolver,
+} from '@app/core-runtime';
+import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import {
   AuthenticationAdmissionObservationSchema,
   AuthenticationNamespaceRegistrationSchema,
   ChangePrincipalBindingStatusResultSchema,
   ExternalAuthenticationSubjectSchema,
+  ExternalSubjectAdmissionObservationSchema,
   ReadPrincipalBindingPayloadSchema,
   ReadPrincipalBindingResultSchema,
   ResolveExternalSubjectResultSchema,
@@ -16,13 +24,18 @@ import {
   TrustedExternalSubjectAdmissionService,
   makeAuthenticationNamespaceRegistry,
   makeTrustedAuthenticationAdmissionService,
+  makeTrustedExternalSubjectAdmissionService,
 } from '@app/core-runtime/auth/external-identity-admission';
 import type {
   TrustedAdmissionObservationService,
   TrustedAuthenticationAdmissionServiceContract,
 } from '@app/core-runtime/auth/external-identity-admission';
+import {
+  STAFF_AUTHENTICATION_NAMESPACE_ID,
+  staffAuthenticationNamespaceRegistration,
+} from '@app/core-runtime/auth/staff-authentication-namespace';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
+import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
@@ -47,12 +60,13 @@ const customerBindingId = '70000000-0000-4000-8000-000000000001';
 const customerPrincipalId = '70000000-0000-4000-8000-000000000002';
 const customerProviderSubjectId = 'fixture-customer-subject';
 const customerBindingRevision = 4;
-const staffNamespace = 'test.staff.better-auth.v1';
+const staffNamespace = STAFF_AUTHENTICATION_NAMESPACE_ID;
 const customerNamespace = 'test.customer.external.v1';
 const audience = 'shell-super-app';
 const gatewayAudience = 'commerce-customer-context';
 const attesterPrincipalId = '50000000-0000-4000-8000-000000000001';
 const admissionNow = DateTime.makeUnsafe('2026-09-17T00:00:00.000Z');
+const correlationIdSchema = Schema.String.pipe(Schema.brand('CorrelationId'));
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
 
 const decode = <S extends Schema.ConstraintDecoder<unknown>, Value>(schema: S, input: Value): S['Type'] =>
@@ -199,6 +213,33 @@ const makeAuthenticationAdmissionService = (): TrustedAuthenticationAdmissionSer
   };
 };
 
+const makeSubjectAdmissionService = (observedAudiences: string[]) => {
+  const timeline = makeAdmissionClock(admissionNow);
+  const observer: TrustedAdmissionObservationService = {
+    observeAuthentication: () => Effect.die('The subject observer does not authenticate sessions'),
+    observeExternalSubject: (input) =>
+      Effect.sync(() => {
+        observedAudiences.push(input.audience);
+        return decode(ExternalSubjectAdmissionObservationSchema, {
+          ...input,
+          expiresAt: DateTime.add(admissionNow, { milliseconds: 4000 }),
+          observedAt: admissionNow,
+        });
+      }),
+  };
+  const service = makeTrustedExternalSubjectAdmissionService({ attesterPrincipalId, maxAdmissionWindowMillis: 5000 });
+  return {
+    admit: (input: Parameters<typeof service.admit>[0]) =>
+      service
+        .admit(input)
+        .pipe(
+          Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+          Effect.provideService(TrustedAdmissionObservation, observer),
+          Effect.provideService(Clock.Clock, timeline),
+        ),
+  };
+};
+
 const makeReadRuntime = (
   readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[],
   resolvedSubjects: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>[],
@@ -214,6 +255,15 @@ const makeReadRuntime = (
       resolvedSubjects.push(decodedSubject);
       return Effect.succeed(resolveResult);
     }
+    if (input.registration.descriptor.readKey === 'core.identity.read-binding-subject') {
+      return Effect.succeed(
+        decode(ExternalAuthenticationSubjectSchema, {
+          authenticationNamespaceId: customerNamespace,
+          providerSubjectId: customerProviderSubjectId,
+          subjectType: 'user',
+        }),
+      );
+    }
     return Effect.die('The HTTP fixture received an unexpected read registration');
   },
 });
@@ -222,6 +272,7 @@ const makeServer = (
   outcomes: Parameters<typeof makeActionRuntimeDouble>[0],
   readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[],
   resolvedSubjects: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>[] = [],
+  deploymentConfiguration = configuration,
 ) =>
   Effect.gen(function* makeHttpServer() {
     const snapshot = yield* makeCompositionSnapshot([]);
@@ -251,9 +302,69 @@ const makeServer = (
           : Effect.die('Unexpected provider key in the HTTP fixture'),
     });
     const readRuntime = makeReadRuntime(readPayloads, resolvedSubjects);
-    const admissionService = {
-      admit: () => Effect.die('The revoke/read fixture must not call external subject admission'),
+    // Real Core scope admission, with repository facts controlled only by this unit fixture.
+    // STAFF is registered for the actual Shell receiver; the provider remains a different audience.
+    const receivingRegistry = makeAuthenticationNamespaceRegistry([
+      yield* staffAuthenticationNamespaceRegistration([audience]),
+    ]);
+    const scopeResolver = yield* makeOperationalScopeResolver(
+      {
+        load: () =>
+          Effect.succeed({
+            bindingAuthenticationNamespaceId: staffNamespace,
+            bindingPrincipalId: workloadPrincipalId,
+            bindingRevision: 1,
+            bindingRevokedAt: null,
+            bindingStatus: 'active',
+            bindingSubjectType: 'api_key',
+            bindingTenantId: tenantId,
+            legalEntityStatus: null,
+            legalEntityTenantId: null,
+            principalStatus: 'active',
+            principalTenantId: tenantId,
+            tenantStatus: 'active',
+          }),
+      },
+      { legalEntities: () => Effect.die('No selected Legal Entity belongs in this tenant-only fixture') },
+    ).pipe(Effect.provideService(Crypto.Crypto, testCrypto));
+    const admitWorkload = (input: Parameters<typeof scopeResolver.resolve>[0]) =>
+      scopeResolver.resolve(input).pipe(Effect.provideService(AuthenticationNamespaceRegistry, receivingRegistry));
+    const invocationContextSchema = Schema.Struct({
+      audience: Schema.optionalKey(Schema.String),
+      principal: TrustedPrincipalContextSchema,
+      transport: Schema.Struct({ correlationId: correlationIdSchema }),
+    });
+    const scopedReadRuntime: ReadRuntimeService = {
+      runRead: (input) =>
+        Effect.gen(function* scopedReceivingRead() {
+          const { transport, ...scope } = yield* Schema.decodeUnknownEffect(invocationContextSchema)(input).pipe(
+            Effect.orDie,
+          );
+          yield* admitWorkload({
+            ...scope,
+            correlationId: transport.correlationId,
+            legalEntityScope: input.registration.descriptor.legalEntityScope,
+          });
+          return yield* readRuntime.runRead(input);
+        }),
     };
+    const scopedActionRuntime: ActionRuntimeService = {
+      ...actionRuntime.runtime,
+      runAction: (input) =>
+        Effect.gen(function* scopedReceivingAction() {
+          const { transport, ...scope } = yield* Schema.decodeUnknownEffect(invocationContextSchema)(input).pipe(
+            Effect.orDie,
+          );
+          yield* admitWorkload({
+            ...scope,
+            correlationId: transport.correlationId,
+            legalEntityScope: input.registration.descriptor.legalEntityScope,
+          });
+          return yield* actionRuntime.runtime.runAction(input);
+        }),
+    };
+    const providerAudiences: string[] = [];
+    const admissionService = makeSubjectAdmissionService(providerAudiences);
     const authenticationAdmissionService = makeAuthenticationAdmissionService();
     const gatewayIssuer: GatewayIssuer['Service'] = {
       issue: (input) => {
@@ -268,12 +379,12 @@ const makeServer = (
       },
     };
     const dependencies = Layer.mergeAll(
-      Layer.succeed(ActionRuntime, actionRuntime.runtime),
+      Layer.succeed(ActionRuntime, scopedActionRuntime),
       Layer.succeed(ApiKeyService, apiKeyService),
-      Layer.succeed(ExternalIdentityHttpConfigurationService, configuration),
+      Layer.succeed(ExternalIdentityHttpConfigurationService, deploymentConfiguration),
       Layer.succeed(GatewayIssuer, gatewayIssuer),
       Layer.succeed(PrincipalResolver, principalResolver),
-      Layer.succeed(ReadRuntime, readRuntime),
+      Layer.succeed(ReadRuntime, scopedReadRuntime),
       Layer.succeed(Crypto.Crypto, testCrypto),
       Layer.succeed(TrustedAuthenticationAdmissionService, authenticationAdmissionService),
       Layer.succeed(TrustedExternalSubjectAdmissionService, admissionService),
@@ -286,8 +397,10 @@ const makeServer = (
     );
     return {
       actionRuntime,
+      admitWorkload,
       authorityCalls: () => authorityCalls,
       compositionRevision,
+      providerAudiences,
       server: HttpRouter.toWebHandler(
         HttpApiBuilder.layer(ExternalIdentityApi).pipe(
           Layer.provide(externalIdentityStandaloneGroupLive),
@@ -641,5 +754,125 @@ it.live('attributes the governed action invocation to the api_key workload Princ
       Predicate.hasProperty(recordedPrincipal, 'impersonatedByPrincipalId') &&
         recordedPrincipal['impersonatedByPrincipalId'] !== undefined,
     ).toBe(false);
+  }),
+);
+
+it.live('keeps the Shell workload receiving audience separate from the Commerce provider audience', () =>
+  Effect.gen(function* separateWorkloadReceivingAudience() {
+    const commerceConfiguration = decode(ExternalIdentityHttpConfigurationSchema, {
+      grants: [
+        ...configuration.grants.map((grant) => ({ ...grant, receivingAudience: gatewayAudience })),
+        ...['reserve', 'activate'].map((operation) => ({
+          operation,
+          receivingAudience: gatewayAudience,
+          targetAuthenticationNamespaceId: customerNamespace,
+          tenantId,
+          workloadAuthenticationNamespaceId: staffNamespace,
+          workloadPrincipalId,
+        })),
+      ],
+      providerEndpointAudience: gatewayAudience,
+    });
+    const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
+    const fixture = yield* makeServer(
+      [
+        actionSuccess({
+          authBindingId: customerBindingId,
+          bindingRevision: 1,
+          bindingStatus: 'pending',
+          outcome: 'RESERVED',
+          principalId: customerPrincipalId,
+        }),
+        actionSuccess({
+          authBindingId: customerBindingId,
+          bindingRevision: 4,
+          bindingStatus: 'active',
+          outcome: 'ACTIVATED',
+          principalId: customerPrincipalId,
+        }),
+        actionSuccess(revokedResult),
+      ],
+      readPayloads,
+      [],
+      commerceConfiguration,
+    );
+    const server = yield* acquireServer(fixture);
+    const read = yield* Effect.promise(() => server.handler(readRequest(), emptyRequestContext));
+    expect(read.status).toBe(200);
+    const reserve = yield* Effect.promise(() =>
+      server.handler(
+        new Request('https://fixture.ontos.test/auth/identity/external/bindings/reserve', {
+          body: JSON.stringify({
+            authenticationRef: 'fixture-provider-evidence',
+            compositionRevision: fixture.compositionRevision,
+            reservation: {
+              authenticationNamespaceId: customerNamespace,
+              providerSubjectId: customerProviderSubjectId,
+              subjectType: 'user',
+            },
+          }),
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': 'separate-reserve',
+            'x-api-key': 'workload-api-key',
+            'x-correlation-id': 'separate-reserve',
+          },
+          method: 'POST',
+        }),
+        emptyRequestContext,
+      ),
+    );
+    expect(reserve.status).toBe(200);
+    const activate = yield* Effect.promise(() =>
+      server.handler(
+        new Request('https://fixture.ontos.test/auth/identity/external/bindings/activate', {
+          body: JSON.stringify({
+            activation: { authBindingId: customerBindingId, expectedRevision: 4 },
+            authenticationRef: 'fixture-provider-evidence',
+            compositionRevision: fixture.compositionRevision,
+          }),
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': 'separate-activate',
+            'x-api-key': 'workload-api-key',
+            'x-correlation-id': 'separate-activate',
+          },
+          method: 'POST',
+        }),
+        emptyRequestContext,
+      ),
+    );
+    expect(activate.status).toBe(200);
+    const status = yield* Effect.promise(() =>
+      server.handler(statusRequest(fixture.compositionRevision), emptyRequestContext),
+    );
+    expect(status.status).toBe(200);
+    const resolved = yield* Effect.promise(() =>
+      server.handler(resolveRequest(fixture.compositionRevision), emptyRequestContext),
+    );
+    expect(resolved.status).toBe(200);
+    expect(readPayloads).toHaveLength(4);
+    expect(fixture.actionRuntime.invocationCount()).toBe(3);
+    expect(fixture.providerAudiences).toEqual([gatewayAudience, gatewayAudience]);
+    const workload = decode(TrustedPrincipalContextSchema, {
+      authBindingId: workloadBindingId,
+      authContextRef: 'better-auth-api-key:better-auth-workload-key',
+      authenticationNamespaceId: staffNamespace,
+      authMethod: 'api_key',
+      principalId: workloadPrincipalId,
+      tenantId,
+    });
+    for (const refused of [
+      { audience: gatewayAudience, principal: workload },
+      { audience, principal: { ...workload, authenticationNamespaceId: customerNamespace } },
+    ]) {
+      const result = yield* fixture
+        .admitWorkload({ ...refused, correlationId: 'negative-receiving-context', legalEntityScope: 'forbidden' })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({ code: 'operation_authentication_required' });
+      }
+    }
   }),
 );

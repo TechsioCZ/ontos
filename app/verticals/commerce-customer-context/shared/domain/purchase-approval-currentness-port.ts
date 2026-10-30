@@ -1,12 +1,17 @@
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime'; // eslint-disable-line eslint/max-classes-per-file -- This owner-local port intentionally colocates its implementation and composition service tags; expires: 2027-09-10.
-import type { Effect } from 'effect';
-import { Context } from 'effect';
-
 import type {
+  TrustedRevalidatePurchaseApprovalInput,
+  PurchaseApprovalFinalBinding,
+  PurchaseApprovalFinalBindingEvidence,
+  PurchaseApprovalRequest,
+  ConsumePurchaseApprovalInput,
   RevalidatePurchaseApprovalInput,
   SubmitPurchaseApprovalRequestInput,
   PurchasingApprovalRejected,
 } from './purchasing-approval.ts';
+import type { Effect } from 'effect';
+import { Context } from 'effect';
+
 import type {
   PurchaseApprovalProfileEvidence,
   PurchaseApprovalProposalEvidence,
@@ -69,7 +74,7 @@ export interface PurchaseApprovalCurrentnessService {
   readonly resolveRevalidation: (input: {
     readonly claimed: RevalidatePurchaseApprovalInput;
     readonly scope: PurchaseApprovalCurrentnessTrustedScope;
-  }) => Effect.Effect<RevalidatePurchaseApprovalInput, PurchasingApprovalRejected>;
+  }) => Effect.Effect<TrustedRevalidatePurchaseApprovalInput, PurchasingApprovalRejected>;
   /**
    * Validate a direct submission against the current proposal/profile/buyer/policy owners.  This
    * method is intentionally separate from revalidation: the first submission must not require an
@@ -102,11 +107,8 @@ export interface PurchaseApprovalCurrentnessFactoryContract {
       readonly legalEntityId: string;
       readonly trustedStorefrontId: string;
     },
-    // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded Core service before closing the owner-local Action adapter; expires: 2027-09-10.
     contextAccess: ContextAccessService,
-    // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded currentness port before closing the owner-local Action adapter; expires: 2027-09-10.
     purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService,
-    // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded evaluation source before closing the owner-local Action adapter; expires: 2027-09-10.
     evaluationSource: PurchaseLimitEvaluationSourceService,
   ) => PurchaseApprovalCurrentnessService;
 }
@@ -116,4 +118,35 @@ export class PurchaseApprovalCurrentnessFactory extends Context.Service<
   PurchaseApprovalCurrentnessFactoryContract
 >()(
   '@app/commerce-customer-context/shared/domain/purchase-approval-currentness-port/PurchaseApprovalCurrentnessFactory',
+) {}
+
+/** Exact final-owner authority. An absent provider always denies new proof/consumption.
+ * ISSUE is the narrow same-Attempt CCC eligibility decision, not an Order lifecycle model.
+ * COMMIT verifies a durable exact Order. Neither API authentication nor caller equality suffices.
+ */
+export interface PurchaseApprovalFinalBindingAuthorityService {
+  readonly verifyConsumption: (input: {
+    readonly claimed: ConsumePurchaseApprovalInput;
+    readonly scope: OperationalScope;
+  }) => Effect.Effect<
+    {
+      readonly bindingEvidence: PurchaseApprovalFinalBindingEvidence;
+      readonly orderRef: NonNullable<ConsumePurchaseApprovalInput['orderRef']>;
+      readonly revalidationRef: NonNullable<ConsumePurchaseApprovalInput['revalidationRef']>;
+    },
+    PurchasingApprovalRejected
+  >;
+  readonly verifyRevalidation: (input: {
+    readonly binding: PurchaseApprovalFinalBinding;
+    readonly claimed: RevalidatePurchaseApprovalInput;
+    readonly request: PurchaseApprovalRequest;
+    readonly scope: PurchaseApprovalCurrentnessTrustedScope;
+  }) => Effect.Effect<PurchaseApprovalFinalBindingEvidence, PurchasingApprovalRejected>;
+}
+
+export class PurchaseApprovalFinalBindingAuthority extends Context.Service<
+  PurchaseApprovalFinalBindingAuthority,
+  PurchaseApprovalFinalBindingAuthorityService
+>()(
+  '@app/commerce-customer-context/shared/domain/purchase-approval-currentness-port/PurchaseApprovalFinalBindingAuthority',
 ) {}

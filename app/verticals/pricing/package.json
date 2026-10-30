@@ -30,8 +30,10 @@
   },
   "dependencies": {
     "@app/catalog": "workspace:*",
+    "@app/commerce-cart-finalization-contracts": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
+    "@app/commerce-order-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
@@ -63,7 +65,7 @@
   },
   "modernjs": {
     "preset": "presetUltramodern",
-    "role": "module-federation-remote",
+    "role": "api-only",
     "appId": "pricing",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",

@@ -44,7 +44,15 @@ export const calculatePricingUnitPrice: (
   attempt: PricingUnitPriceCalculationAttempt,
 ): Effect.fn.Return<PricingUnitPriceCalculationSuccess, PricingUnitPriceCalculationFailure> {
   const input = yield* validateUnitPriceMaterialEvidence(attempt);
-  const unitPrice = input.tierSelection.resultingUnitPrice;
+  // Owner Price money permits fixed scale; exact arithmetic requires the same value in canonical form.
+  // Full material validation above retains the source scale/range limits and raw owner evidence.
+  const selectedUnitPrice = input.tierSelection.resultingUnitPrice;
+  const [integer = '0', fraction = ''] = selectedUnitPrice.amount.split('.');
+  const canonicalFraction = fraction.replace(/0+$/u, '');
+  const unitPrice = {
+    ...selectedUnitPrice,
+    amount: canonicalFraction === '' ? integer : `${integer}.${canonicalFraction}`,
+  };
   const baseLineValue = yield* calculateExactBaseLineValue({
     lineQuantity: input.lineQuantity.quantity,
     unitPrice,

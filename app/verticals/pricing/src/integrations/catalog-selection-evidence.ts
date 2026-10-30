@@ -83,7 +83,6 @@ const makeCatalogSelectionAssessmentPort = (dependencies: {
         .issue({
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
-          legalEntityId: dependencies.context.legalEntityId,
           requestCorrelation: dependencies.context.requestCorrelation,
         })
         .pipe(

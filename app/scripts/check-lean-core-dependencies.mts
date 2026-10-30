@@ -646,7 +646,45 @@ interface AllowedCompositionSeam {
   readonly specifier: string;
 }
 
+const orderApprovalOwnerGateway = 'verticals/commerce-order/src/services/approval-owner-gateway.ts';
+
 const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
+  {
+    importer: 'verticals/commerce-cart/src/services/final-cart-candidate-owners.service.ts',
+    reason:
+      'Approved #1257 final Cart candidate obtains exact CCC approval evidence through the generated governed HTTP boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/order-service-approval-evidence/client`,
+  },
+  {
+    importer: 'verticals/commerce-order/src/integrations/finalization-tax-payment-terms.ts',
+    reason:
+      'Approved #1257 final Order fence resolves exact approved Payment Terms through the CCC governed owner client.',
+    specifier: `${commercePackageSpecifierPrefix}/api/order-service-approval-evidence/client`,
+  },
+  {
+    importer: orderApprovalOwnerGateway,
+    reason:
+      'Approved #1257 Order owner gateway reads and recovers exact CCC approval evidence; it does not import owner persistence.',
+    specifier: `${commercePackageSpecifierPrefix}/api/order-service-approval-evidence/client`,
+  },
+  {
+    importer: orderApprovalOwnerGateway,
+    reason:
+      'Approved #1257 Order finalization revalidates its exact CCC approval binding through the generated governed Action client.',
+    specifier: `${commercePackageSpecifierPrefix}/api/revalidate-order-purchase-approval-action/client`,
+  },
+  {
+    importer: orderApprovalOwnerGateway,
+    reason:
+      'Approved #1257 Order finalization consumes its exact CCC approval through the generated governed Action client.',
+    specifier: `${commercePackageSpecifierPrefix}/api/consume-order-purchase-approval-action/client`,
+  },
+  {
+    importer: 'verticals/pricing/src/services/preapproval-quotation-verification.service.ts',
+    reason:
+      'Approved #1257 preproposal basis verifies the exact CCC buyer context before retaining the pre-Tax Pricing quotation.',
+    specifier: `${commercePackageSpecifierPrefix}/api/purchase-proposal-basis/client`,
+  },
   {
     importer: 'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts',
     reason:
@@ -670,6 +708,12 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     reason:
       'Pricing composes the narrow Customer Context price-group resolution owner client for the final owner-authority fence.',
     specifier: `${commercePackageSpecifierPrefix}/api/customer-price-group-resolution/client`,
+  },
+  {
+    importer: 'verticals/pricing/src/integrations/current-pricing-decision-owner-final-fence.ts',
+    reason:
+      'Pricing replays the narrow Customer Context purchase-context verification owner client at the final owner-authority fence, so the retained Purchase Context is verified in the same Attempt.',
+    specifier: `${commercePackageSpecifierPrefix}/api/pricing-purchase-context-verification/client`,
   },
   {
     importer: 'verticals/pricing/src/integrations/customer-context-subject-authority.ts',

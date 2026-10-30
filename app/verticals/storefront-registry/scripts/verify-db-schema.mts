@@ -97,6 +97,36 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
       reason: 'Storefront Registry column inventory does not match the typed schema',
     });
   }
+  const [gateway] = yield* client.unsafe<{ readonly valid: boolean }>(`select (
+  (select count(*) = 1 from pg_catalog.pg_class relation join pg_catalog.pg_namespace ns on ns.oid=relation.relnamespace
+    where ns.nspname='storefront_registry' and relation.relname='gateway_assertion_redemptions' and relation.relkind='r'
+      and not relation.relrowsecurity and not relation.relforcerowsecurity)
+  and (select count(*) = 5 from information_schema.columns where table_schema='storefront_registry' and table_name='gateway_assertion_redemptions'
+    and is_nullable='NO' and ((column_name in ('issuer','audience') and data_type='text')
+      or (column_name='jti' and data_type='uuid')
+      or (column_name in ('expires_at','redeemed_at') and data_type='timestamp with time zone')))
+  and (select count(*) = 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class t on t.oid=c.conrelid
+    join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace where ns.nspname='storefront_registry' and t.relname='gateway_assertion_redemptions'
+      and c.contype='u' and pg_catalog.pg_get_constraintdef(c.oid)='UNIQUE (issuer, audience, jti)')
+  and (select count(*) = 1 from pg_catalog.pg_indexes where schemaname='storefront_registry' and tablename='gateway_assertion_redemptions'
+    and indexdef like '% USING btree (expires_at)')
+  and has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','SELECT')
+  and has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','INSERT')
+  and has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','DELETE')
+  and not has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','UPDATE')
+  and not has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','REFERENCES')
+  and not has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','TRUNCATE')
+  and not has_table_privilege('ontos_runtime','storefront_registry.gateway_assertion_redemptions','TRIGGER')
+  and not exists(select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace,
+    lateral pg_catalog.aclexplode(coalesce(t.relacl,pg_catalog.acldefault('r',t.relowner))) acl
+    where ns.nspname='storefront_registry' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
+  and not exists(select 1 from pg_catalog.pg_roles where rolname='ontos_runtime' and (rolsuper or rolbypassrls))
+) as valid`);
+  if (!gateway?.valid) {
+    return yield* new StorefrontRegistrySchemaVerificationError({
+      reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
+    });
+  }
   const infrastructure = yield* client
     .unsafe<InfrastructureRow>(
       `select
@@ -127,6 +157,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
               from pg_catalog.pg_class as relation
               join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
              where namespace.nspname = $1 and relation.relkind in ('r', 'p')
+               and relation.relname <> 'gateway_assertion_redemptions'
                and (has_table_privilege('ontos_runtime', relation.oid, 'SELECT')
                  or has_table_privilege('ontos_runtime', relation.oid, 'INSERT')
                  or has_table_privilege('ontos_runtime', relation.oid, 'UPDATE')
@@ -171,7 +202,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
   if (
     row === undefined ||
     row.append_only_trigger_count !== 1 ||
-    row.forced_rls_count !== STOREFRONT_REGISTRY_TABLES.length ||
+    row.forced_rls_count !== STOREFRONT_REGISTRY_TABLES.length - 1 ||
     row.journal_count !== 1 ||
     row.policy_count !== expectedPolicyCount ||
     row.raw_runtime_privilege_count !== 0 ||

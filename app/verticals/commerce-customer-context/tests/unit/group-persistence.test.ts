@@ -126,7 +126,7 @@ it.effect('forwards exact actor and Action invocation attribution to create', ()
           {
             actual_revision: 1,
             changed: true,
-            group_json: Option.some(group),
+            group_json: group,
             outcome: 'CREATED',
           },
         ]);
@@ -162,20 +162,20 @@ it.effect('maps assignment, removal, and deterministic history documents without
     const rows = [
       {
         changed: true,
-        membership_json: Option.some(membership),
+        membership_json: membership,
         outcome: 'ASSIGNED',
-        profile_state: Option.none(),
+        profile_state: null,
       },
       {
         changed: false,
-        membership_json: Option.some(membership),
+        membership_json: membership,
         outcome: 'REMOVED',
-        profile_state: Option.none(),
+        profile_state: null,
       },
       {
-        group_json: Option.some(group),
+        group_json: group,
         items_json: [membership],
-        next_cursor: Option.some(membershipId),
+        next_cursor: membershipId,
         outcome: 'PRESENT',
       },
     ];
@@ -249,9 +249,9 @@ it.effect('refuses to treat a cursor-bearing effective membership read as a comp
       invoke: () =>
         Effect.succeed([
           {
-            group_json: Option.none(),
+            group_json: null,
             items_json: [],
-            next_cursor: Option.some(membershipId),
+            next_cursor: membershipId,
             outcome: 'PRESENT',
           },
         ]),
@@ -351,5 +351,103 @@ it.effect('sanitizes Core routine failures as the owner persistence error', () =
     expect(error.code).toBe('customer_group_persistence_unavailable');
     expect(error.reason).toContain('customer-group.read-detail');
     expect(error.reason).not.toContain('private driver detail');
+  }),
+);
+
+it('accepts native SQL wire rows at the exact Core result-schema boundary', () => {
+  const examples = new Map<string, object>([
+    ['create_customer_group', { actual_revision: 1, changed: true, group_json: group, outcome: 'CREATED' }],
+    [
+      'archive_customer_group',
+      { actual_revision: 2, cancelled_count: 0, changed: true, ended_count: 1, group_json: group, outcome: 'ARCHIVED' },
+    ],
+    [
+      'assign_customer_group_membership',
+      { changed: true, membership_json: membership, outcome: 'ASSIGNED', profile_state: null },
+    ],
+    [
+      'read_effective_customer_group_memberships',
+      { group_json: null, items_json: [membership], next_cursor: null, outcome: 'PRESENT' },
+    ],
+  ]);
+  for (const routine of customerGroupRoutineAllowlist) {
+    const row = examples.get(routine.name);
+    if (row !== undefined) {
+      expect(Schema.is(Schema.toType(routine.resultSchema))(row), routine.name).toBe(true);
+    }
+  }
+});
+
+it.effect('strictly decodes raw owner documents instead of accepting foreign fields', () =>
+  Effect.gen(function* strictRawDocuments() {
+    const malformed = [
+      { ...group, injected: true },
+      { ...group, revision: 0 },
+    ];
+    for (const document of malformed) {
+      const transaction: CustomerGroupScopedRoutineInvoker = {
+        invoke: (routine) =>
+          Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
+            { actual_revision: 1, changed: false, group_json: document, outcome: 'FOUND' },
+          ]).pipe(Effect.orDie),
+      };
+      const failure = yield* Effect.flip(
+        customerGroupPersistenceForTransaction(transaction, scope).detail({ groupRef, legalEntityId, tenantId }),
+      );
+      expect(Schema.is(CustomerGroupPersistenceUnavailable)(failure)).toBe(true);
+    }
+  }),
+);
+
+it.effect('round-trips native raw detail and membership page rows through Core wire validation', () =>
+  Effect.gen(function* rawWireRoundTrip() {
+    const transaction: CustomerGroupScopedRoutineInvoker = {
+      invoke: (routine) =>
+        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
+          routine.name === 'read_customer_group'
+            ? { actual_revision: 1, changed: false, group_json: group, outcome: 'FOUND' }
+            : { group_json: null, items_json: [membership], next_cursor: null, outcome: 'PRESENT' },
+        ]).pipe(Effect.orDie),
+    };
+    const persistence = customerGroupPersistenceForTransaction(transaction, scope);
+    expect(Option.getOrThrow(yield* persistence.detail({ groupRef, legalEntityId, tenantId }))).toEqual(group);
+    const current = yield* persistence.effectiveMemberships({
+      effectiveAt: membership.effectiveFrom,
+      legalEntityId,
+      profile,
+      tenantId,
+    });
+    expect(Option.getOrThrow(current).items).toEqual([membership]);
+  }),
+);
+
+it.effect('rejects malformed native membership documents after raw row validation', () =>
+  Effect.gen(function* rejectsMalformedMembership() {
+    const transaction: CustomerGroupScopedRoutineInvoker = {
+      invoke: (routine) =>
+        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
+          {
+            changed: true,
+            membership_json: { ...membership, unowned: true },
+            outcome: 'ASSIGNED',
+            profile_state: null,
+          },
+        ]).pipe(Effect.orDie),
+    };
+    const failure = yield* Effect.flip(
+      customerGroupPersistenceForTransaction(transaction, scope).assign({
+        actionInvocationId,
+        effectiveFrom: membership.effectiveFrom,
+        effectiveTo: null,
+        groupRef,
+        legalEntityId,
+        principalId,
+        profile,
+        reason: membership.assignmentReason,
+        recordedAt,
+        tenantId,
+      }),
+    );
+    expect(Schema.is(CustomerGroupPersistenceUnavailable)(failure)).toBe(true);
   }),
 );

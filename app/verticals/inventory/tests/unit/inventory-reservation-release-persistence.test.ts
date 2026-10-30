@@ -1,8 +1,10 @@
 import { getTableConfig } from 'drizzle-orm/pg-core';
+import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
   InventoryReservationReleaseRejected,
+  ReservationReleaseProtectionTruthSchema,
   ReservationReleaseEffectIdSchema,
 } from '../../shared/domain/inventory-reservation-release.ts';
 import {
@@ -106,6 +108,24 @@ describe('Inventory Reservation Release persistence contract', () => {
       'integer',
       'jsonb',
     ]);
+  });
+
+  it('requires authentic establishment time while retaining the existing absent proof contract', () => {
+    const proof = {
+      _tag: 'ESTABLISHED',
+      establishedAt: '2026-09-24T10:00:00.000Z',
+      evidenceRef: 'protection:original',
+      observedAt: '2026-09-24T11:00:00.000Z',
+    };
+    expect(Schema.is(ReservationReleaseProtectionTruthSchema)(proof)).toBe(true);
+    expect(Schema.is(ReservationReleaseProtectionTruthSchema)({ ...proof, establishedAt: null })).toBe(false);
+    expect(
+      Schema.is(ReservationReleaseProtectionTruthSchema)({
+        _tag: 'ABSENT_PROVEN',
+        evidenceRef: 'protection:absent',
+        observedAt: proof.observedAt,
+      }),
+    ).toBe(true);
   });
 
   it('maps duplicate Reservation and effect identities to typed conflicts', () => {

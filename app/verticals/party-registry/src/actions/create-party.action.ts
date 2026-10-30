@@ -123,12 +123,17 @@ export const createPartyAction = defineAction(
   handleCreateParty,
   (transaction, scope) =>
     Effect.succeed({
-      createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) =>
-        createOrMatchParty(transaction, {
+      createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) => {
+        const input: Parameters<typeof createOrMatchParty>[1] = {
           actionInvocationId,
           candidate,
           principalId: scope.principalId,
           tenantId: scope.tenantId,
-        }),
+        };
+        if (scope.legalEntityId !== undefined) {
+          Object.assign(input, { legalEntityId: scope.legalEntityId });
+        }
+        return createOrMatchParty(transaction, input);
+      },
     }),
 );

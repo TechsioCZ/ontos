@@ -1,4 +1,5 @@
-import { cpSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
 
 import { Schema } from 'effect';
@@ -19,14 +20,20 @@ const FixtureConfig = Schema.fromJsonString(
 );
 const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
 
-// Stage outside tools/**/tests: absolute fixture ancestors must not alter production scope.
+// This minimal effect-native-only config has no Sonar plugin. Keep its production-policy
+// fixtures outside the real repository so root-anchored rules see the intended fixture paths.
 for (const rule of listRuleNames()) {
   it(`effect-native/${rule} production settings report a positive fixture`, () => {
     withTemporaryWorkspace((directory) => {
       for (const kind of ['invalid', 'valid']) {
-        cpSync(nodePath.join(fixturesDirectory, rule, kind), nodePath.join(directory, kind), {
-          recursive: true,
-        });
+        const source = nodePath.join(fixturesDirectory, rule, kind);
+        for (const file of listFilesRecursively(source)) {
+          const target = nodePath.join(directory, kind, nodePath.relative(source, file));
+          mkdirSync(nodePath.dirname(target), { recursive: true });
+          // Copy fixture bytes without cpSync's filesystem metadata operations,
+          // which the shared sandbox mount does not support.
+          writeFileSync(target, readFileSync(file));
+        }
       }
       const paths = listFilesRecursively(directory).map((file) => nodePath.relative(directory, file));
       const run = runOxlint(nodePath.join(testsDirectory, 'production-fixture.config.ts'), paths, directory, rule);
@@ -61,6 +68,6 @@ for (const rule of listRuleNames()) {
           `${rule}: production false positive`,
         ).toEqual([]);
       }
-    });
+    }, tmpdir());
   });
 }

@@ -58,6 +58,7 @@ const handleReleaseLocalOverride = Effect.fn('ReleaseLocalOverrideAction.handle'
         createReleaseLocalOverrideCommerceCatalogSelectionSourceChangedV1OutboxMessage,
       ),
       principalId: context.scope.principalId,
+      recordDataAccess: context.recordDataAccess,
     })
     .release({ ...payload, at, principalId: context.scope.principalId });
   yield* context.recordAuditEvidence({ evidenceRefs: [payload.evidenceRef], reason: payload.reason });

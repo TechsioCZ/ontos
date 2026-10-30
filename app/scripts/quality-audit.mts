@@ -37,10 +37,16 @@ const ScopeSchema = Schema.Struct({
   exclude: Schema.Array(Schema.String),
   patterns: Schema.Array(Schema.String),
 });
+const KnipNamedIssueSchema = Schema.Struct({
+  col: Schema.optionalKey(CountSchema),
+  line: Schema.optionalKey(CountSchema),
+  name: Schema.String,
+});
 const KnipIssueSchema = Schema.Struct({
   binaries: Schema.Array(Schema.Unknown),
-  dependencies: Schema.Array(Schema.Unknown),
-  devDependencies: Schema.Array(Schema.Unknown),
+  dependencies: Schema.Array(KnipNamedIssueSchema),
+  devDependencies: Schema.Array(KnipNamedIssueSchema),
+  duplicates: Schema.optionalKey(Schema.Array(Schema.Array(KnipNamedIssueSchema))),
   exports: Schema.Array(Schema.Unknown),
   file: Schema.String,
   files: Schema.Array(Schema.Unknown),
@@ -156,6 +162,7 @@ interface AuditResult {
     readonly declarationOnlyClones?: number;
     readonly discoveredFiles?: number;
     readonly findingCounts?: Readonly<Record<string, number>>;
+    readonly modeledFindingCounts?: Readonly<Record<string, number>>;
     readonly modeledUsages?: number;
     readonly nativeFindingCounts?: Readonly<Record<string, number>>;
     readonly processed?: number;
@@ -237,12 +244,37 @@ const validateKnip = Effect.fn('qualityAudit.validateKnip')(function* validateKn
   };
 });
 
+const modeledDependencyUsage = (
+  file: string,
+  issue: typeof KnipNamedIssueSchema.Type,
+  evidence: readonly KnipModelEvidence[],
+  category: 'dependencies' | 'devDependencies',
+) =>
+  evidence.find(
+    (entry) =>
+      entry.kind === 'native-resolver' &&
+      entry.dependencyCategory === category &&
+      entry.target === issue.name &&
+      entry.declarationSource === file &&
+      entry.declarationLine === issue.line &&
+      entry.declarationColumn === issue.col &&
+      entry.workspace === nodePath.dirname(file) &&
+      entry.anchor !== undefined &&
+      entry.anchor === entry.owningManifest &&
+      entry.resolved !== undefined &&
+      entry.specifier !== undefined,
+  );
+
 const modeledUsage = (
   file: string,
   issue: (typeof KnipIssueSchema.Type.unlisted)[number],
   evidence: readonly KnipModelEvidence[],
-) =>
-  evidence.find((entry) => {
+  category: 'unlisted' | 'dependencies' | 'devDependencies' = 'unlisted',
+) => {
+  if (category !== 'unlisted') {
+    return modeledDependencyUsage(file, issue, evidence, category);
+  }
+  return evidence.find((entry) => {
     if (
       entry.source !== file ||
       entry.target !== issue.name ||
@@ -256,6 +288,25 @@ const modeledUsage = (
     }
     return entry.kind === 'compiler-option' && issue.line === undefined && issue.col === undefined;
   });
+};
+
+const modeledAliasUsage = (
+  file: string,
+  issues: readonly (typeof KnipNamedIssueSchema.Type)[],
+  evidence: readonly KnipModelEvidence[],
+) =>
+  evidence.find(
+    (entry) =>
+      entry.kind === 'api-schema-alias' &&
+      entry.source === file &&
+      entry.aliasMembers?.length === issues.length &&
+      issues.every(
+        (issue) =>
+          entry.aliasMembers?.some(
+            (member) => member.name === issue.name && member.line === issue.line && member.col === issue.col,
+          ) === true,
+      ),
+  );
 
 const calibrateKnip = Effect.fn('qualityAudit.calibrateKnip')(function* calibrateKnipEffect(
   source: string,
@@ -268,14 +319,37 @@ const calibrateKnip = Effect.fn('qualityAudit.calibrateKnip')(function* calibrat
     Schema.Array(KnipModelEvidenceSchema),
     yield* fs.readFileString(path.join(path.dirname(directory), 'knip-model.json')),
   );
-  const modeled = report.issues.flatMap((record) =>
-    record.unlisted.flatMap((issue) => {
+  const modeled: {
+    category: string;
+    consumer: KnipModelEvidence;
+    file: string;
+    issue: typeof KnipNamedIssueSchema.Type | readonly (typeof KnipNamedIssueSchema.Type)[];
+  }[] = report.issues.flatMap((record) => [
+    ...record.unlisted.flatMap((issue) => {
       const consumer = modeledUsage(record.file, issue, evidence);
       return consumer === undefined ? [] : [{ category: 'unlisted', consumer, file: record.file, issue }];
     }),
-  );
+    ...(['dependencies', 'devDependencies'] as const).flatMap((category) =>
+      record[category].flatMap((issue) => {
+        const consumer = modeledUsage(record.file, issue, evidence, category);
+        return consumer === undefined ? [] : [{ category, consumer, file: record.file, issue }];
+      }),
+    ),
+  ]);
+  for (const record of report.issues) {
+    for (const issues of record.duplicates ?? []) {
+      const consumer = modeledAliasUsage(record.file, issues, evidence);
+      if (consumer !== undefined) {
+        modeled.push({ category: 'duplicates', consumer, file: record.file, issue: issues });
+      }
+    }
+  }
   yield* writeJson(path.join(directory, 'modeled-usages.json'), modeled);
-  return modeled.length;
+  const findingCounts: Record<string, number> = {};
+  for (const usage of modeled) {
+    findingCounts[usage.category] = (findingCounts[usage.category] ?? 0) + 1;
+  }
+  return { findingCounts, total: modeled.length };
 });
 
 const evaluateKnip = Effect.fn('qualityAudit.evaluateKnip')(function* evaluateKnipEffect(
@@ -283,22 +357,26 @@ const evaluateKnip = Effect.fn('qualityAudit.evaluateKnip')(function* evaluateKn
   directory: string,
 ) {
   const validated = yield* validateKnip('knip', report);
-  const modeledUsages = yield* calibrateKnip(report, directory);
+  const modeled = yield* calibrateKnip(report, directory);
   const nativeFindingCounts = validated.coverage.findingCounts;
-  const { unlisted: nativeUnlisted = 0 } = nativeFindingCounts;
-  const unlisted = nativeUnlisted - modeledUsages;
-  if (unlisted < 0) {
-    return yield* failure('Knip modeled usages exceed raw unlisted count');
+  const findingCounts = { ...nativeFindingCounts };
+  for (const [category, count] of Object.entries(modeled.findingCounts)) {
+    const remaining = (findingCounts[category] ?? 0) - count;
+    if (remaining < 0) {
+      return yield* failure('Knip modeled usages exceed raw category count');
+    }
+    findingCounts[category] = remaining;
   }
   return {
     ...validated,
     coverage: {
       ...validated.coverage,
-      findingCounts: { ...nativeFindingCounts, unlisted },
-      modeledUsages,
+      findingCounts,
+      modeledFindingCounts: modeled.findingCounts,
+      modeledUsages: modeled.total,
       nativeFindingCounts,
     },
-    findings: validated.findings - modeledUsages,
+    findings: validated.findings - modeled.total,
   };
 });
 

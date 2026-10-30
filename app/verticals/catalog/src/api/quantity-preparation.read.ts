@@ -82,5 +82,5 @@ export const quantityPreparationRead = defineRead(
     return { evidence: { resultCount: result.status === 'READY' ? 1 : 0 }, result };
   }),
   (transaction, scope) => Effect.succeed(catalogQuantityHandoffForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  ({ selection }) => ({ kind: 'resource', resource: selection.productRef }),
 );

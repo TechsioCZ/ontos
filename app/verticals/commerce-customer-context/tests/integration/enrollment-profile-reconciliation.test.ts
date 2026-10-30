@@ -21,6 +21,7 @@ import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
   ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
+  RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
 import {
@@ -383,29 +384,36 @@ it.live('leaves a Retail Customer Profile ensure that never committed open for a
   ),
 );
 
-it.live('reconciles a committed Retail Portal Profile Binding whose response was lost', () =>
-  Effect.scoped(
-    Effect.gen(function* lostBindResponse() {
-      const runtime = yield* ownerDatabase;
-      const identities = scenario();
-      const ensured = yield* runOwnerRoutine(runtime, identities, ensureProfileStatement(identities));
-      const profileId = profileIdOf(ensured);
-      const bound = yield* runOwnerRoutine(runtime, identities, bindProfileStatement(identities, profileId));
-      expect(bound.outcome).toBe('BINDING_ACTIVATED');
+it.live(
+  'retains a committed Retail Portal Profile Binding as pending when its response was lost before grants settled',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* lostBindResponse() {
+        const runtime = yield* ownerDatabase;
+        const identities = scenario();
+        const ensured = yield* runOwnerRoutine(runtime, identities, ensureProfileStatement(identities));
+        const profileId = profileIdOf(ensured);
+        const bound = yield* runOwnerRoutine(runtime, identities, bindProfileStatement(identities, profileId));
+        expect(bound.outcome).toBe('BINDING_ACTIVATED');
 
-      const resolution = yield* reconcileThrough(
-        bindTransition,
-        contextFor(identities, [succeededEnsure(identities, profileId), indeterminateBind(identities)]),
-        reconciliationFor(identities, bindTransition, identities.bindInvocationId),
-      );
+        const resolution = yield* reconcileThrough(
+          bindTransition,
+          contextFor(identities, [succeededEnsure(identities, profileId), indeterminateBind(identities)]),
+          reconciliationFor(identities, bindTransition, identities.bindInvocationId),
+        );
 
-      // The binding half is the one that may already have granted portal access, so leaving it
-      // unresolved is the worst of the two. Without the owner read it is always unresolved.
-      expect(resolution.status).toBe('SUCCEEDED');
-      expect(String(resolution.outcomeCode)).toBe('retail_portal_profile_bound');
-      expect(String(resolution.resultReference).length).toBeGreaterThan(0);
-    }),
-  ),
+        // #1232: the committed binding is real progress, but no worker has made its grants Current.
+        expect(resolution).toMatchObject({
+          actorPrincipalId: identities.actorPrincipalId,
+          failureCode: 'owner_reconciliation_required',
+          nextState: 'RECONCILIATION_REQUIRED',
+          outcomeCode: RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
+          status: 'FAILED',
+        });
+        expect(resolution.resultReference).toBeUndefined();
+        expect(String(resolution.reconciliationRef).length).toBeGreaterThan(0);
+      }),
+    ),
 );
 
 it.live('leaves a Retail Portal Profile Binding that never committed open for a retry', () =>

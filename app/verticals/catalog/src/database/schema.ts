@@ -46,6 +46,7 @@ export const CATALOG_TABLE_INVENTORY = [
   'configuration_units',
   'controlled_attribute_value_revisions',
   'controlled_attribute_values',
+  'gateway_assertion_redemptions',
   'manufacturer_relation_revisions',
   'manufacturer_relations',
   'package_content_revisions',
@@ -106,6 +107,23 @@ export const CATALOG_TABLE_INVENTORY = [
 ] as const;
 
 export const catalogSchema = pgSchema(CATALOG_SCHEMA_NAME);
+
+/** Global technical ingress replay evidence consumed before trusted Tenant scope.
+ * All Catalog business tables retain their existing tenant RLS. */
+export const gatewayAssertionRedemptions = catalogSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('catalog_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('catalog_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 
@@ -1015,7 +1033,7 @@ export const productVariantRevisions = catalogSchema.table.withRLS(
     combinationKey: text('combination_key'),
     combinationAxisRevision: integer('combination_axis_revision'),
     changeKind: text('change_kind').notNull(),
-    reason: text('reason').notNull(),
+    reason: text('reason'),
     evidenceRefs: text('evidence_refs').array().notNull(),
     actionInvocationId: uuid('action_invocation_id').notNull(),
     actingPrincipalId: uuid('acting_principal_id').notNull(),
@@ -1057,7 +1075,7 @@ export const productVariantRevisions = catalogSchema.table.withRLS(
     ),
     check(
       'catalog_product_variant_revisions_reason_ck',
-      sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000`,
+      sql`(${table.changeKind} = 'CREATED' and ${table.reason} is null) or (${table.reason} is not null and ${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000)`,
     ),
     ...tenantRlsPolicies('catalog_product_variant_revisions_tenant', table.tenantId),
   ],
@@ -1870,7 +1888,7 @@ export const productRevisions = catalogSchema.table.withRLS(
     lifecycleState: text('lifecycle_state').notNull(),
     name: text('name'),
     description: text('description'),
-    reason: text('reason').notNull(),
+    reason: text('reason'),
     evidenceRefs: text('evidence_refs').array().notNull(),
     actionInvocationId: uuid('action_invocation_id').notNull(),
     actingPrincipalId: uuid('acting_principal_id').notNull(),
@@ -1902,7 +1920,7 @@ export const productRevisions = catalogSchema.table.withRLS(
     ),
     check(
       'catalog_product_revisions_reason_ck',
-      sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000`,
+      sql`(${table.changeKind} = 'CREATED' and ${table.reason} is null) or (${table.reason} is not null and ${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000)`,
     ),
     ...tenantRlsPolicies('catalog_product_revisions_tenant', table.tenantId),
   ],
@@ -3291,13 +3309,19 @@ export const catalogMediaAssignments = catalogSchema.table.withRLS(
     purpose: text('purpose').notNull(),
     position: integer('position').notNull(),
     state: text('state').notNull(),
+    activePosition: integer('active_position').generatedAlwaysAs(
+      sql`CASE WHEN state = 'ACTIVE' THEN position ELSE NULL END`,
+    ),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     unique('catalog_media_assignments_scope_id_uk').on(table.tenantId, table.assignmentId),
-    uniqueIndex('catalog_media_assignments_active_position_uk')
-      .on(table.tenantId, table.assignmentSetId, table.resourceKind, table.position)
-      .where(sql`${table.state} = 'ACTIVE'`),
+    unique('catalog_media_assignments_active_position_commit_uk').on(
+      table.tenantId,
+      table.assignmentSetId,
+      table.resourceKind,
+      table.activePosition,
+    ),
     foreignKey({
       columns: [table.tenantId, table.assignmentSetId],
       foreignColumns: [catalogMediaAssignmentSets.tenantId, catalogMediaAssignmentSets.assignmentSetId],
@@ -3932,6 +3956,7 @@ export const productConfigurationContinuityDecisions = catalogSchema.table.withR
 );
 
 const catalogDatabaseSchema = {
+  gatewayAssertionRedemptions,
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,
   catalogLocalOverrideRevisions,
@@ -4015,6 +4040,7 @@ const catalogDatabaseSchema = {
 } as const;
 
 export const CATALOG_TABLES = [
+  gatewayAssertionRedemptions,
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,
   catalogLocalOverrideRevisions,

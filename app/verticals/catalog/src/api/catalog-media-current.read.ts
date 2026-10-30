@@ -95,5 +95,5 @@ export const catalogMediaCurrentRead = defineRead(
       Effect.map((result) => ({ evidence: { resultCount: result.ordered.length }, result })),
     ),
   (transaction, scope) => Effect.succeed(catalogMediaReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  ({ target }) => ({ kind: 'resource', resource: target }),
 );

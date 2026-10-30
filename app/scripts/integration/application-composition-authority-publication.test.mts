@@ -10,6 +10,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
   Layer,
   Match,
   Option,
@@ -52,6 +53,28 @@ import {
 } from '../initial-composition-cutover-provider.mts';
 import { publishSnapshot } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
+
+const nativeLegacyOwners = Layer.unwrap(
+  Effect.gen(function* nativeLegacyPublicationEvidence() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({ prefix: 'ontos-publication-evidence-' });
+    yield* filesystem.chmod(directory, 0o700);
+    const adminUrl = yield* Config.String('DATABASE_ADMIN_URL');
+    const runtimeUrl = yield* Config.String('DATABASE_URL');
+    return ApplicationCompositionLegacyOwnersLive.pipe(
+      Layer.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            DATABASE_ADMIN_URL: adminUrl,
+            DATABASE_URL: runtimeUrl,
+            ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: directory,
+          }),
+        ),
+      ),
+    );
+  }),
+).pipe(Layer.provide(NodeServices.layer));
 
 const PENDING_TOPIC = 'publication.pending';
 const PRODUCER_MODULE = 'publication.test';
@@ -133,7 +156,7 @@ const initialCutoverProvider = (nodeStatus: string | undefined, workerPresent: b
   };
 };
 
-const skipInitialProof = Effect.die('An existing authority must not reverify the initial cutover');
+const rejectUnexpectedProof = Effect.die('Renewals and rejected requests must not repeat provider quiescence');
 
 const snapshot = Effect.fn(function* snapshot(label: string, freshenByMs: number) {
   const now = yield* DateTime.now;
@@ -336,6 +359,8 @@ it.live(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
             CLOUDFLARE_API_TOKEN: 'publication-native-kv-token',
+            DATABASE_ADMIN_URL: adminUrl,
+            DATABASE_URL: runtimeUrl,
             ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: KV_URL,
           }),
         ),
@@ -356,8 +381,9 @@ it.live(
       ]);
       const [firstAuthority] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(firstAuthority).toMatchObject({ phase: 'active', revision: first.composition.revision });
+      const transitionProvider = initialCutoverProvider(undefined, false);
       const nestedFailure = yield* database.executor
-        .transaction(() => publishApplicationCompositionAuthoritySnapshot(first, Effect.void, skipInitialProof))
+        .transaction(() => publishApplicationCompositionAuthoritySnapshot(first, Effect.void, rejectUnexpectedProof))
         .pipe(Effect.flip, Effect.flatMap(Schema.decodeUnknownEffect(ApplicationCompositionAuthorityError)));
       expect(nestedFailure.reason).toMatch(/must own its database transactions/u);
 
@@ -367,18 +393,19 @@ it.live(
       const equalLeaseFailure = yield* publishApplicationCompositionAuthoritySnapshot(
         equalLease,
         Ref.update(conflictCalls, (calls) => calls + 1),
-        skipInitialProof,
+        rejectUnexpectedProof,
       ).pipe(Effect.flip, Effect.flatMap(Schema.decodeUnknownEffect(ApplicationCompositionAuthorityError)));
       expect(equalLeaseFailure.reason).toMatch(/newer freshness/u);
       expect(yield* Ref.get(conflictCalls)).toBe(0);
       const [afterConflict] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterConflict).toMatchObject({ phase: 'active', revision: first.composition.revision });
       yield* Ref.set(rejectWrite, true);
-      const nativeWriteFailure = yield* publishSnapshot(second, Option.none(), skipInitialProof).pipe(
+      const nativeWriteFailure = yield* publishSnapshot(second, Option.none(), transitionProvider.proof).pipe(
         Effect.provide(nativeKvLayer),
         Effect.flip,
       );
       expect(nativeWriteFailure).toMatchObject({ reason: 'publication_failed' });
+      expect(transitionProvider.requests).toHaveLength(8);
       const [afterNativeWriteFailure] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterNativeWriteFailure).toMatchObject({ phase: 'draining', revision: first.composition.revision });
       expect(Option.getOrThrow(yield* Ref.get(storedPointer))).toContain(first.composition.revision);
@@ -390,16 +417,18 @@ it.live(
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(
         second,
         Effect.fail(failedPointer),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.flip);
       expect(failure).toBe(failedPointer);
+      expect(transitionProvider.requests).toHaveLength(12);
       const [afterFailure] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterFailure).toMatchObject({ phase: 'draining', revision: first.composition.revision });
 
       const renewal = { ...first, validUntil: DateTime.add(first.validUntil, { milliseconds: 5000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(renewal, Effect.void, skipInitialProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(renewal, Effect.void, rejectUnexpectedProof);
       const [afterRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterRenewal).toMatchObject({ phase: 'draining', revision: first.composition.revision });
+      expect(transitionProvider.requests).toHaveLength(12);
 
       const tenantId = randomUUID();
       const eventId = randomUUID();
@@ -445,7 +474,7 @@ it.live(
       const pendingPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         second,
         Ref.update(pointerCalls, (calls) => calls + 1),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.forkChild);
       yield* observer.executor
         .execute<{ readonly held: boolean }>(
@@ -473,13 +502,13 @@ it.live(
       const firstPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         second,
         Deferred.succeed(pointerEntered, true).pipe(Effect.andThen(Deferred.await(releasePointer))),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.forkChild);
       yield* Deferred.await(pointerEntered);
       const secondPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         second,
         Ref.update(pointerCalls, (calls) => calls + 1),
-        skipInitialProof,
+        rejectUnexpectedProof,
       ).pipe(Effect.forkChild);
       // Observing PostgreSQL's own wait state proves the second publisher is fenced while pointer I/O runs.
       yield* observer.executor
@@ -508,7 +537,7 @@ it.live(
       const renewingPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         activeRenewal,
         Deferred.succeed(renewalEntered, true).pipe(Effect.andThen(Deferred.await(releaseRenewal))),
-        skipInitialProof,
+        rejectUnexpectedProof,
       ).pipe(Effect.forkChild);
       yield* Deferred.await(renewalEntered);
       // A delayed provider renewal must not retain the exclusive authority fence used by owner writes.
@@ -525,7 +554,7 @@ it.live(
       const replacementPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         third,
         Ref.update(thirdCalls, (calls) => calls + 1),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.forkChild);
       yield* observer.executor
         .execute<{ readonly waiting: boolean }>(
@@ -547,7 +576,7 @@ it.live(
       const interruptedPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         fourth,
         Deferred.succeed(interruptionEntered, true).pipe(Effect.andThen(Effect.never)),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.forkChild);
       yield* Deferred.await(interruptionEntered);
       yield* Fiber.interrupt(interruptedPublisher);
@@ -559,7 +588,7 @@ it.live(
         )
         .pipe(Effect.timeout('2 seconds'));
       // Retrying after cancellation also proves the independent publication lock was released.
-      yield* publishApplicationCompositionAuthoritySnapshot(fourth, Effect.void, skipInitialProof).pipe(
+      yield* publishApplicationCompositionAuthoritySnapshot(fourth, Effect.void, transitionProvider.proof).pipe(
         Effect.timeout('5 seconds'),
       );
       const [afterRetry] = yield* observer.executor.select().from(applicationCompositionAuthority);
@@ -580,7 +609,7 @@ it.live(
       const migrationCalls = yield* Ref.make(0);
       const waitingForDurableWork = yield* runApplicationCompositionMigration(
         Ref.update(migrationCalls, (calls) => calls + 1),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.forkChild);
       yield* observer.executor
         .select({
@@ -629,7 +658,7 @@ it.live(
       }
       yield* Fiber.interrupt(waitingForDurableWork);
       const closedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 1000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(closedRenewal, Effect.void, skipInitialProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(closedRenewal, Effect.void, rejectUnexpectedProof);
       const [afterClosedRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterClosedRenewal).toMatchObject({ durableWorkAdmission: 'closed', phase: 'active' });
       yield* resumeApplicationCompositionDurableWork(fourth.composition.revision).pipe(Effect.timeout('2 seconds'));
@@ -697,7 +726,7 @@ it.live(
           yield* Deferred.await(releaseMigration);
           return yield* Effect.fail(injectedMigrationFailure);
         }),
-        skipInitialProof,
+        transitionProvider.proof,
       ).pipe(Effect.flip, Effect.forkChild);
       yield* observer.executor
         .select({ durableWorkAdmission: applicationCompositionAuthority.durableWorkAdmission })
@@ -764,7 +793,7 @@ it.live(
       const waitingForMigration = yield* publishApplicationCompositionAuthoritySnapshot(
         fifth,
         Ref.update(afterMigrationPointerCalls, (calls) => calls + 1),
-        skipInitialProof,
+        rejectUnexpectedProof,
       ).pipe(Effect.flip, Effect.forkChild);
       yield* observer.executor
         .execute<{ readonly waiting: boolean }>(
@@ -784,7 +813,7 @@ it.live(
       expect(afterMigrationFailure).toMatchObject({ phase: 'sealed', revision: fourth.composition.revision });
 
       const sealedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 5000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(sealedRenewal, Effect.void, skipInitialProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(sealedRenewal, Effect.void, rejectUnexpectedProof);
       const [afterSealedRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterSealedRenewal).toMatchObject({
         durableWorkAdmission: 'closed',
@@ -798,13 +827,13 @@ it.live(
             'objects',
           )
           .pipe(Effect.timeout('5 seconds'), Effect.as('migration-complete')),
-        skipInitialProof,
+        transitionProvider.proof,
       );
       expect(migrationResult).toBe('migration-complete');
       const [afterMigrationSuccess] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterMigrationSuccess).toMatchObject({ phase: 'migrated', revision: fourth.composition.revision });
       const migratedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 10_000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(migratedRenewal, Effect.void, skipInitialProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(migratedRenewal, Effect.void, rejectUnexpectedProof);
       const [afterMigratedRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterMigratedRenewal).toMatchObject({
         durableWorkAdmission: 'closed',
@@ -821,14 +850,14 @@ it.live(
       }
       const repeatedMigration = yield* runApplicationCompositionMigration(
         Ref.update(migrationCalls, (calls) => calls + 1),
-        skipInitialProof,
+        rejectUnexpectedProof,
       ).pipe(Effect.flip);
       expect(Schema.is(ApplicationCompositionAuthorityError)(repeatedMigration)).toBe(true);
       expect(yield* Ref.get(migrationCalls)).toBe(1);
       yield* publishApplicationCompositionAuthoritySnapshot(
         fifth,
         Ref.update(afterMigrationPointerCalls, (calls) => calls + 1),
-        skipInitialProof,
+        transitionProvider.proof,
       );
       expect(yield* Ref.get(afterMigrationPointerCalls)).toBe(1);
       const [afterMigratedPromotion] = yield* observer.executor.select().from(applicationCompositionAuthority);
@@ -838,5 +867,9 @@ it.live(
         revision: fifth.composition.revision,
       });
       expect(database.executor).toBeDefined();
-    }).pipe(Effect.provide(ApplicationCompositionAuthorityAdminDatabaseLive)),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(ApplicationCompositionAuthorityAdminDatabaseLive, nativeLegacyOwners, NodeServices.layer),
+      ),
+    ),
 );

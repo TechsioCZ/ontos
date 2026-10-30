@@ -29,9 +29,13 @@ import { catalogImportAcceptanceServiceFactoryLive } from '../src/persistence/ca
 import { catalogLocalOverrideServiceFactoryLive } from '../src/persistence/catalog-local-override-service.ts';
 import { catalogSourceActionPersistenceFactoryLive } from '../src/persistence/catalog-source-action-persistence.ts';
 import { catalogExternalCorrelationResolverLive } from '../src/persistence/external-correlation-resolver.ts';
+import { cartOpenSelectionPopulationLive } from './cart-open-selection-population.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -285,7 +289,7 @@ const readShellOrigin = () => {
 
 const runtimeObservabilityLayers = [
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
-  Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
+  Layer.effect(Tracer.Tracer, Tracer.Tracer),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 ] as const;
 const runtimeObservabilityLive = Layer.mergeAll(...runtimeObservabilityLayers);
@@ -312,6 +316,9 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
+const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
+  Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
+);
 const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(catalogSourceActionPersistenceLive),
   Layer.provide(
@@ -326,20 +333,32 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
       operationalScopeResolverLive,
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(DatabaseConfigLive),
 );
 const catalogReadRuntime = ReadRuntimeLive.pipe(
   Layer.provide(catalogExternalCorrelationResolverLive),
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(DatabaseConfigLive),
+);
+
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
 );
 
 type CatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof catalogReadRuntime>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof catalogActionRuntime>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 type CatalogApiGroups = (typeof catalogApi.groups)[keyof typeof catalogApi.groups];
@@ -561,6 +580,7 @@ export const makeCatalogApiRuntime = (
     variantHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(
+    Layer.provide(catalogCartPopulationLive),
     Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
     Layer.provide(nativeCompositionSourceLive),
   );
@@ -594,7 +614,7 @@ export const makeCatalogApiRuntime = (
 const apiRuntime: EffectBffDefinition<typeof catalogApi> & EffectBffRuntime<typeof catalogApi> = makeCatalogApiRuntime(
   catalogReadRuntime,
   catalogActionRuntime,
-  GovernedGatewayAssertionRedemptionLive,
+  productionGatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;

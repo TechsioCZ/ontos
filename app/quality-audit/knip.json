@@ -113,7 +113,8 @@
         "!**/modern-tanstack/**",
         "!**/routeTree.gen.*",
         "!**/.env",
-        "!**/.env.*"
+        "!**/.env.*",
+        "tests/support/privacy-completion-shell.ts"
       ],
       "drizzle": {
         "config": []
@@ -172,7 +173,16 @@
         "!**/modern-tanstack/**",
         "!**/routeTree.gen.*",
         "!**/.env",
-        "!**/.env.*"
+        "!**/.env.*",
+        "tests/support/preproposal-basis-receiver.fixture.ts",
+        "tests/support/preproposal-basis-producer.fixture.ts",
+        "tests/support/order-finalization-receiver.fixture.ts",
+        "tests/support/order-finalization-config-bootstrap.fixture.ts",
+        "tests/fixtures/market-revision-native-backend.ts",
+        "tests/support/market-revision-native-child.ts",
+        "tests/support/privacy-completion-worker.ts",
+        "tests/support/official-identifier-correction-reuse.rstest.config.ts",
+        "tests/support/dsr-legacy-owner.fixture.ts"
       ],
       "drizzle": {
         "config": []
@@ -234,7 +244,9 @@
         "!**/modern-tanstack/**",
         "!**/routeTree.gen.*",
         "!**/.env",
-        "!**/.env.*"
+        "!**/.env.*",
+        "tests/support/preproposal-basis-config.fixture.ts",
+        "tests/support/preproposal-scope-grant.fixture.ts"
       ],
       "rstest": {
         "config": [],

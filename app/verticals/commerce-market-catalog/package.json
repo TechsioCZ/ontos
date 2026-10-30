@@ -22,7 +22,8 @@
     "./resources/market-catalog-root": "./shared/resources/market-catalog-root.ts",
     "./resources/market-definition-revision": "./shared/resources/market-definition-revision.ts",
     "./resources/storefront-association": "./shared/resources/storefront-association.ts",
-    "./Route": "./src/federation-entry.tsx"
+    "./Route": "./src/federation-entry.tsx",
+    "./testing/market-revision-native": "./tests/fixtures/market-revision-native.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts commerce-market-catalog && modern dev",
@@ -91,6 +92,8 @@
     "typescript": "7.0.2",
     "wrangler": "4.137.0",
     "zephyr-rspack-plugin": "1.2.4",
+    "@app/shell-super-app": "workspace:*",
+    "@app/storefront-registry": "workspace:*",
     "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {

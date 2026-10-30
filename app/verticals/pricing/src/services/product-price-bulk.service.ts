@@ -36,6 +36,7 @@ import { pricePersistenceForScope } from './price-persistence.service.ts';
 import type {
   PriceActionResultLookupOutcome,
   PriceActionResultLookupPersistence,
+  PriceOriginalResultLookupPersistence,
   PricePersistence,
 } from './price-persistence.service.ts';
 import {
@@ -222,7 +223,9 @@ export const makeProductPriceBulkService = <Operation>(port: ProductPriceBulkCom
     }),
   }) satisfies ProductPriceBulkService<Operation>;
 
-type TransactionScopedPricePersistence = PricePersistence & PriceActionResultLookupPersistence;
+type TransactionScopedPricePersistence = PricePersistence &
+  PriceActionResultLookupPersistence &
+  PriceOriginalResultLookupPersistence;
 
 export interface ProductPriceBulkCommandOptions {
   readonly defineServices: DefinePriceActionServices;
@@ -323,10 +326,15 @@ const reconcilePriceTarget = (
   command: ProductPriceBulkCommand<ManageProductPriceOperation>,
   actionInvocationId: string,
 ) =>
-  persistence.lookupResult({ actionInvocationId }).pipe(
+  persistence.lookupOriginalResult({ actionInvocationId, operation: command.operation }).pipe(
     Effect.map((lookup) =>
       lookup.outcome === 'PRICE_ACTION_RESULT_FOUND'
-        ? ({ outcome: ownerOutcomeFromPriceResult(command, lookup.result), status: 'RESOLVED' as const } as const)
+        ? ({
+            outcome: lookup.originalIntentMatches
+              ? ownerOutcomeFromPriceResult(command, lookup.result)
+              : { outcome: 'CONFLICT' as const, reasonCode: 'IDEMPOTENCY_CONFLICT' },
+            status: 'RESOLVED' as const,
+          } as const)
         : ({ status: 'RETRY_ALLOWED' as const } as const),
     ),
     Effect.mapError((cause) => pricePortFailure('PriceOwnerResultLookupUnavailable', cause)),

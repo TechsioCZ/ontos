@@ -24,6 +24,7 @@ import type {
   InventoryEffectLedgerRecord,
   InventoryEffectLedgerResolution,
 } from '../../shared/domain/inventory-effect-ledger.ts';
+import { CommitmentProtectionInventoryEffectLedgerIntentSchema } from '../../shared/domain/inventory-effect-ledger.ts';
 import { CommitmentProtectionSchema } from '../../shared/domain/commitment-protection.ts';
 import type { CommitmentProtectionPersistence } from '../../shared/domain/commitment-protection.ts';
 import {
@@ -217,17 +218,86 @@ const applyReleaseResolution = Effect.fn('InventoryEffectRecovery.applyReleaseRe
   return yield* Effect.void;
 });
 
+const sameProtectionFoundation = (
+  current: typeof CommitmentProtectionSchema.Type,
+  original: typeof CommitmentProtectionSchema.Type,
+) => sameEncoded(canonicalProtection, { ...current, health: original.health, revision: original.revision }, original);
+
+/** Owner history, not a larger revision number, proves continuity of the original fence. */
+const isRecordedProtectionDescendant = (
+  original: typeof CommitmentProtectionSchema.Type,
+  current: typeof CommitmentProtectionSchema.Type,
+  history: readonly (typeof CommitmentProtectionSchema.Type)[],
+): boolean => {
+  if (
+    original.revision !== 1 ||
+    current.revision <= original.revision ||
+    current.health.state !== 'AT_RISK' ||
+    history.length < current.revision ||
+    !history.every(Schema.is(CommitmentProtectionSchema))
+  ) {
+    return false;
+  }
+  const [first] = history;
+  const observed = history[current.revision - 1];
+  if (
+    first === undefined ||
+    observed === undefined ||
+    !sameEncoded(canonicalProtection, first, original) ||
+    !sameEncoded(canonicalProtection, observed, current)
+  ) {
+    return false;
+  }
+  // A concurrent legitimate append after the observed Current remains valid history.
+  return history.every((revision, index) => {
+    const previous = history[index - 1];
+    return (
+      revision.revision === index + 1 &&
+      sameProtectionFoundation(revision, original) &&
+      (index === 0 ||
+        (previous !== undefined &&
+          revision.health.state === 'AT_RISK' &&
+          revision.health.reconciliationRequired &&
+          Match.value(revision.health.observation).pipe(
+            Match.tag('ESTABLISHED', () => false),
+            Match.tag('BINDING_CORRECTION', 'MATERIAL_IMPAIRMENT', () => true),
+            Match.exhaustive,
+          ) &&
+          instantMillis(previous.health.observation.effectiveAt) <=
+            instantMillis(revision.health.observation.effectiveAt)))
+    );
+  });
+};
+
 const applyProtectionResolution = Effect.fn('InventoryEffectRecovery.applyProtectionResolution')(
   function* applyProtection(
-    persistence: Pick<CommitmentProtectionPersistence, 'createOrRead'>,
-    recoveryEffectId: InventoryEffectRecoveryRequest['effectId'],
+    persistence: Pick<CommitmentProtectionPersistence, 'createOrRead' | 'readHistory'>,
+    original: InventoryEffectLedgerRecord,
     protection: typeof CommitmentProtectionSchema.Type,
   ) {
     const stored = yield* persistence
       .createOrRead(protection)
-      .pipe(Effect.mapError((cause) => ownerFailure(recoveryEffectId, 'OWNER_PERSISTENCE_UNAVAILABLE', cause)));
-    if (!sameEncoded(canonicalProtection, stored.protection, protection)) {
-      return yield* ownerFailure(recoveryEffectId, 'OWNER_STATE_CONFLICT');
+      .pipe(Effect.mapError((cause) => ownerFailure(original.effectId, 'OWNER_PERSISTENCE_UNAVAILABLE', cause)));
+    if (
+      !Schema.is(CommitmentProtectionSchema)(stored.protection) ||
+      !Schema.is(CommitmentProtectionSchema)(protection)
+    ) {
+      return yield* ownerFailure(original.effectId, 'OWNER_STATE_CONFLICT');
+    }
+    if (sameEncoded(canonicalProtection, stored.protection, protection)) {
+      return yield* Effect.void;
+    }
+    if (
+      original.currentState !== 'SUCCEEDED' ||
+      !Schema.is(CommitmentProtectionInventoryEffectLedgerIntentSchema)(original.intent)
+    ) {
+      return yield* ownerFailure(original.effectId, 'OWNER_STATE_CONFLICT');
+    }
+    const history = yield* persistence
+      .readHistory(protection.ref)
+      .pipe(Effect.mapError((cause) => ownerFailure(original.effectId, 'OWNER_PERSISTENCE_UNAVAILABLE', cause)));
+    if (!isRecordedProtectionDescendant(protection, stored.protection, history)) {
+      return yield* ownerFailure(original.effectId, 'OWNER_STATE_CONFLICT');
     }
     return yield* Effect.void;
   },
@@ -267,7 +337,7 @@ export const makeInventoryEffectRecoveryOwnerPersistence = (dependencies: {
   readonly creates: Pick<ReservationCreateEffectPersistence, 'read' | 'save'>;
   readonly obligations: Pick<InventoryObligationPersistence, 'establishReservation' | 'read'>;
   readonly physicalEffects: Pick<PhysicalStockEffectPersistence, 'read' | 'saveTerminal'>;
-  readonly protections: Pick<CommitmentProtectionPersistence, 'createOrRead'>;
+  readonly protections: Pick<CommitmentProtectionPersistence, 'createOrRead' | 'readHistory'>;
   readonly releases: Pick<ReservationReleaseEffectPersistence, 'read' | 'save'>;
 }): InventoryEffectRecoveryOwnerPersistence => ({
   apply: Effect.fn('InventoryEffectRecoveryOwnerPersistence.apply')(function* apply(original, resolution) {
@@ -286,7 +356,7 @@ export const makeInventoryEffectRecoveryOwnerPersistence = (dependencies: {
       Match.tag('ESTABLISH_COMMITMENT_PROTECTION', ({ effect }) =>
         Match.value(effect).pipe(
           Match.tag('PROTECTED', ({ protection }) =>
-            applyProtectionResolution(dependencies.protections, original.effectId, protection),
+            applyProtectionResolution(dependencies.protections, original, protection),
           ),
           Match.tag('NOT_PROTECTABLE', () => Effect.void),
           Match.exhaustive,

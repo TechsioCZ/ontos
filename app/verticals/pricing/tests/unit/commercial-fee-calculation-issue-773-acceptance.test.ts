@@ -1,9 +1,13 @@
+import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type { CurrentSupportedCurrenciesSuccess } from '@app/pricing-contracts/current-supported-currencies';
 import type {
   PricingCommercialFeeCalculationInput,
   ScheduledPricingCommercialFeeRevision,
 } from '@app/pricing-contracts/domain/commercial-fee';
-import { pricingCommercialFeeCurrentSetPredicateRef } from '@app/pricing-contracts/domain/commercial-fee';
+import {
+  PricingCommercialFeeCalculationInputSchema,
+  pricingCommercialFeeCurrentSetPredicateRef,
+} from '@app/pricing-contracts/domain/commercial-fee';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -284,6 +288,134 @@ const requestFor = (fees: readonly ScheduledPricingCommercialFeeRevision[]): Pri
 };
 
 describe('Issue #773 Pricing Commercial Fee runtime acceptance', () => {
+  it.effect('accepts truthful later Fee observation for nonempty and proven empty sets (#1242)', () =>
+    Effect.gen(function* latencyIsNotStale() {
+      const configured = fee({
+        amount: '20',
+        family: 'RECYCLING_FEE',
+        feeId: '12420000-0000-4000-8000-000000000001',
+        revisionId: '12420000-0000-4000-8000-000000000002',
+      });
+      for (const fees of [[], [configured]]) {
+        const original = requestFor(fees);
+        const observedAt = '2026-09-27T10:00:00.250Z';
+        const input = {
+          ...original,
+          feeSet: {
+            ...original.feeSet,
+            completenessEvidence: { ...original.feeSet.completenessEvidence, observedAt },
+            currentnessEvidence: { ...original.feeSet.currentnessEvidence, observedAt },
+            observedAt,
+          },
+        };
+        const result = yield* calculatePricingCommercialFees(input);
+        expect(result).toMatchObject({
+          contributionTotal: { amount: fees.length === 0 ? '0' : '20', currencyCode: 'CZK' },
+          discountableLineBasis: { amount: fees.length === 0 ? '100' : '120', currencyCode: 'CZK' },
+          input: { decision: { operationTime }, feeSet: { observedAt } },
+          outcome: 'COMMERCIAL_FEES_APPLIED',
+        });
+      }
+    }),
+  );
+
+  it.effect('accepts native-shaped later Currency Support evaluation and preserves stale controls (#1242)', () =>
+    Effect.gen(function* nativeCurrencySupportObservation() {
+      const request = requestFor([]);
+      const observedAt = '2026-09-27T10:00:00.250Z';
+      const support = yield* Schema.decodeEffect(CurrentSupportedCurrenciesSuccessSchema)({
+        ...request.currencySupport,
+        completenessEvidence: { ...request.currencySupport.completenessEvidence, observedAt },
+        currentnessEvidence: {
+          ...request.currencySupport.currentnessEvidence,
+          evaluatedAt: observedAt,
+          observedAt,
+        },
+        observedAt,
+      });
+      const input = yield* Schema.decodeEffect(PricingCommercialFeeCalculationInputSchema)({
+        ...request,
+        currencySupport: support,
+      });
+      expect(yield* calculatePricingCommercialFees(input)).toMatchObject({
+        contributionTotal: { amount: '0', currencyCode: 'CZK' },
+        input: { currencySupport: { currentnessEvidence: { evaluatedAt: observedAt }, effectiveAt: operationTime } },
+        outcome: 'COMMERCIAL_FEES_APPLIED',
+      });
+      for (const currentnessEvidence of [
+        { ...support.currentnessEvidence, evaluatedAt: '2026-09-27T09:59:59.999Z' },
+        { ...support.currentnessEvidence, evaluationMode: 'HISTORICAL_AS_OF' as const },
+      ]) {
+        expect(
+          yield* calculatePricingCommercialFees({
+            ...input,
+            currencySupport: { ...support, currentnessEvidence },
+          }),
+        ).toMatchObject({ outcome: 'COMMERCIAL_FEE_CALCULATION_FAILED', reason: 'STALE_CURRENT_SET' });
+      }
+      for (const invalidSupport of [
+        { ...support, currentnessEvidence: { ...support.currentnessEvidence, revalidatedAt: operationTime } },
+        {
+          ...support,
+          completenessEvidence: {
+            ...support.completenessEvidence,
+            nextApplicabilityBoundary: observedAt,
+          },
+          nextApplicabilityBoundary: observedAt,
+        },
+      ]) {
+        expect(
+          yield* calculatePricingCommercialFees({ ...input, currencySupport: invalidSupport }).pipe(Effect.flip),
+        ).toMatchObject({ code: 'CALCULATION_REQUEST_INVALID' });
+      }
+    }),
+  );
+
+  it.effect('keeps incoherent observations, effectivity, revalidation and boundary failures typed (#1242)', () =>
+    Effect.gen(function* actualStaleControls() {
+      const configured = fee({
+        amount: '20',
+        family: 'RECYCLING_FEE',
+        feeId: '12420000-0000-4000-8000-000000000003',
+        revisionId: '12420000-0000-4000-8000-000000000004',
+      });
+      const request = requestFor([configured]);
+      const original = request.feeSet;
+      const later = '2026-09-27T10:00:00.250Z';
+      const currentSet = {
+        ...original,
+        completenessEvidence: { ...original.completenessEvidence, observedAt: later },
+        currentnessEvidence: { ...original.currentnessEvidence, observedAt: later },
+        observedAt: later,
+      };
+      const invalidSets = [
+        { ...original, observedAt: '2026-09-27T09:59:59.999Z' },
+        { ...currentSet, completenessEvidence: original.completenessEvidence },
+        { ...currentSet, currentnessEvidence: original.currentnessEvidence },
+        { ...currentSet, currentnessEvidence: { ...currentSet.currentnessEvidence, revalidatedAt: operationTime } },
+        {
+          ...currentSet,
+          completenessEvidence: { ...currentSet.completenessEvidence, nextApplicabilityBoundary: later },
+        },
+        {
+          ...currentSet,
+          fees: [{ ...configured, effectivePeriod: { effectiveFrom: '2026-09-27T10:00:00.100Z', effectiveTo: null } }],
+        },
+        {
+          ...currentSet,
+          fees: [{ ...configured, effectivePeriod: { ...configured.effectivePeriod, effectiveTo: operationTime } }],
+        },
+      ];
+      for (const feeSet of invalidSets) {
+        expect(yield* calculatePricingCommercialFees({ ...request, feeSet })).toEqual({
+          occurrenceId,
+          outcome: 'COMMERCIAL_FEE_CALCULATION_FAILED',
+          reason: 'STALE_CURRENT_SET',
+        });
+      }
+    }),
+  );
+
   it.effect('applies +20 per line and +50 per ten Units once while retaining Price and Tier evidence', () =>
     Effect.gen(function* exactArithmetic() {
       const fixedLine = fee({

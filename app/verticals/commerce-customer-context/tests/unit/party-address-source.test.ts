@@ -1,5 +1,5 @@
-import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
 import {
+  executePartyContactPointDetail,
   PartyContactPointDetailAuthenticationProblemSchema,
   PartyContactPointDetailForbiddenProblemSchema,
   PartyContactPointDetailInternalProblemSchema,
@@ -10,11 +10,12 @@ import {
   PartyContactPointDetailResponseSchema,
   PartyContactPointDetailUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { AddressBookUnavailable, SavedAddressInvalidSchema } from '../../shared/domain/address-errors.ts';
 import {
+  PartyAddressSourceExecutor,
   partyBackedAddressSourceValidator,
   partyBackedPostalAddressResolver,
 } from '../../src/integrations/party-address-source.ts';
@@ -307,5 +308,170 @@ it.effect('rejects a different same-Tenant Contact Point returned by the depende
     const resolved = yield* partyBackedPostalAddressResolver('address-correlation', execute)(savedPartyAddress);
 
     expect(resolved).toEqual({ kind: 'NOT_FOUND' });
+  }),
+);
+
+it.effect('accepts finite future whole-End from the Current Party owner for Add and explicit Update', () =>
+  Effect.gen(function* futureWholeEnd() {
+    const finite = { ...currentPostalContactPoint, validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z') };
+    const execute = (): ReturnType<typeof executePartyContactPointDetail> => Effect.succeed(finite);
+    yield* partyBackedAddressSourceValidator('future-end-add', execute)(payload);
+    yield* partyBackedAddressSourceValidator(
+      'future-end-update',
+      execute,
+    )({
+      ...payload,
+      expectedRevision: savedPartyAddress.revision,
+      savedAddressRef: savedPartyAddress.savedAddressRef,
+    });
+    expect(yield* partyBackedPostalAddressResolver('future-end-resolve', execute)(savedPartyAddress)).toMatchObject({
+      kind: 'FOUND',
+      value: { currentSourceRevision: origin.sourceRevision, kind: 'PARTY_BACKED' },
+    });
+    expect(DateTime.formatIso(finite.validTo)).toBe('2031-01-01T00:00:00.000Z');
+  }),
+);
+it.effect('retains owner Current and exact revision guards for finite postal sources', () =>
+  Effect.gen(function* finiteSourceGuards() {
+    for (const patch of [{ current: false }, { state: 'ENDED' as const }, { revision: 8 }]) {
+      const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
+        Effect.succeed({
+          ...currentPostalContactPoint,
+          validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z'),
+          ...patch,
+        });
+      const failure = yield* Effect.flip(partyBackedAddressSourceValidator('finite-denial', execute)(payload));
+      expect(Schema.is(SavedAddressInvalidSchema)(failure)).toBe(true);
+    }
+    const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
+      Effect.succeed({
+        ...currentPostalContactPoint,
+        current: false,
+        validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z'),
+      });
+    expect(yield* partyBackedPostalAddressResolver('exclusive-end', execute)(savedPartyAddress)).toEqual({
+      kind: 'NOT_FOUND',
+    });
+  }),
+);
+it.effect('keeps COMMERCE_ONLY and omitted Update origins independent of Party availability', () =>
+  Effect.gen(function* independentAddressOrigins() {
+    let calls = 0;
+    const execute = (): ReturnType<typeof executePartyContactPointDetail> => {
+      calls += 1;
+      return Effect.succeed(currentPostalContactPoint);
+    };
+    const validate = partyBackedAddressSourceValidator('independent-origin', execute);
+    yield* validate({
+      ...payload,
+      origin: {
+        kind: 'COMMERCE_ONLY',
+        postalAddress: { addressLine1: '1 Main Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
+      },
+    });
+    yield* validate({
+      expectedRevision: 2,
+      label: 'Renamed',
+      profile,
+      reason: 'Label only',
+      savedAddressRef: savedPartyAddress.savedAddressRef,
+    });
+    expect(calls).toBe(0);
+  }),
+);
+
+it.effect('uses the exact published client by default and preserves validation with composed transport', () =>
+  Effect.gen(function* composedSourceTransport() {
+    expect(yield* PartyAddressSourceExecutor).toBe(executePartyContactPointDetail);
+    let calls = 0;
+    const execute: typeof executePartyContactPointDetail = () => {
+      calls += 1;
+      return Effect.succeed({
+        ...currentPostalContactPoint,
+        revision: 8,
+        validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z'),
+      });
+    };
+    const failure = yield* Effect.flip(
+      partyBackedAddressSourceValidator('composed-stale')(payload).pipe(
+        Effect.provideService(PartyAddressSourceExecutor, execute),
+      ),
+    );
+    expect(Schema.is(SavedAddressInvalidSchema)(failure)).toBe(true);
+    expect(calls).toBe(1);
+    yield* partyBackedAddressSourceValidator('composed-fresh')({
+      ...payload,
+      origin: { ...origin, sourceRevision: 8 },
+    }).pipe(Effect.provideService(PartyAddressSourceExecutor, execute));
+    expect(calls).toBe(2);
+  }),
+);
+
+it.effect('keeps finite-source identity and contact kind checks strict', () =>
+  Effect.gen(function* finiteIdentityGuards() {
+    const foreignTenant = '10000000-0000-4000-8000-000000000099';
+    const sources = [
+      { ...currentPostalContactPoint, partyRef: { ...partyRef, resourceId: '30000000-0000-4000-8000-000000000099' } },
+      { ...currentPostalContactPoint, contactPointRef: { ...contactPointRef, tenantId: foreignTenant } },
+      {
+        ...currentPostalContactPoint,
+        value: {
+          displayValue: 'owner@example.test',
+          lookupValue: 'owner@example.test',
+          preferred: false,
+          type: 'EMAIL' as const,
+        },
+      },
+    ];
+    for (const source of sources) {
+      const execute: typeof executePartyContactPointDetail = () =>
+        Effect.succeed({ ...source, validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z') });
+      expect(
+        Schema.is(SavedAddressInvalidSchema)(
+          yield* Effect.flip(partyBackedAddressSourceValidator('finite-identity', execute)(payload)),
+        ),
+      ).toBe(true);
+    }
+  }),
+);
+
+it.effect('rejects missing required postal fields without requiring optional fields or an open end', () =>
+  Effect.gen(function* completePostalAdmission() {
+    const completePostalAddress = {
+      addressLine1: '1 Main Street',
+      addressLine2: null,
+      city: 'Prague',
+      countryCode: 'CZ',
+      postalCode: '11000',
+      region: null,
+    };
+
+    for (const validTo of [null, DateTime.makeUnsafe('2031-01-01T00:00:00.000Z')]) {
+      for (const field of ['addressLine1', 'city', 'postalCode'] as const) {
+        const incomplete = {
+          ...currentPostalContactPoint,
+          validTo,
+          value: {
+            ...currentPostalContactPoint.value,
+            address: { ...completePostalAddress, [field]: null },
+            purposes:
+              currentPostalContactPoint.value.type === 'ADDRESS' ? currentPostalContactPoint.value.purposes : [],
+            type: 'ADDRESS' as const,
+          },
+        };
+        const execute: typeof executePartyContactPointDetail = () => Effect.succeed(incomplete);
+        const result = yield* Effect.result(partyBackedAddressSourceValidator('incomplete-source', execute)(payload));
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          expect(Schema.is(SavedAddressInvalidSchema)(result.failure)).toBe(true);
+        }
+        expect(yield* partyBackedPostalAddressResolver('incomplete-source', execute)(savedPartyAddress)).toEqual({
+          kind: 'NOT_FOUND',
+        });
+      }
+      const execute: typeof executePartyContactPointDetail = () =>
+        Effect.succeed({ ...currentPostalContactPoint, validTo });
+      yield* partyBackedAddressSourceValidator('complete-optional-fields-absent', execute)(payload);
+    }
   }),
 );

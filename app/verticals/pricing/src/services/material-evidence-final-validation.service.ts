@@ -27,6 +27,9 @@ import { Context, Effect, Schema } from 'effect';
 
 import { assemblePricingMaterialEvidence } from './material-evidence-assembly.service.ts';
 
+const CATALOG_OWNER_MODULE_ID = 'commerce.catalog';
+const EXACT_AUTHORITY_INVALID = 'Exact owner final-fence authority is missing or invalid';
+
 type PricingInstant = typeof PricingInstantSchema.Type;
 type VerifiedSourceEvidence = PricingSourceEvidenceVerifiedAbsent | PricingSourceEvidenceVerifiedPresent;
 
@@ -237,8 +240,37 @@ const sameSourceEvidence = Schema.toEquivalence(PricingSourceEvidenceResultSchem
 const deduplicateVerifiedSourceEvidence = (
   candidateRef: string,
   sources: readonly PricingSourceEvidenceResult[],
+  verificationRequest?: PricingOwnerMaterialEvidenceFenceGatewayRequest,
 ): Effect.Effect<readonly VerifiedSourceEvidence[], PricingMaterialEvidenceUnverifiableFailure> => {
+  if (
+    verificationRequest !== undefined &&
+    (!Schema.is(PricingOwnerMaterialEvidenceFenceGatewayRequestSchema)(verificationRequest) ||
+      verificationRequest.candidateRef !== candidateRef)
+  ) {
+    return Effect.fail(unverifiable(candidateRef, EXACT_AUTHORITY_INVALID, true));
+  }
+  const catalogMaterial = verificationRequest?.sources.flatMap((source) =>
+    'sourceEvidence' in source && source.sourceEvidence.request.ownerScope.ownerModuleId === CATALOG_OWNER_MODULE_ID
+      ? [source.sourceEvidence]
+      : [],
+  );
+  const catalogSources = sources.filter(
+    (source) => source.request.ownerScope.ownerModuleId === CATALOG_OWNER_MODULE_ID,
+  );
+  if (
+    catalogMaterial !== undefined &&
+    (catalogSources.length !== catalogMaterial.length ||
+      !catalogSources.every((source, index) => {
+        const material = catalogMaterial[index];
+        return material !== undefined && sameSourceEvidence(source, material);
+      }))
+  ) {
+    return Effect.fail(
+      unverifiable(candidateRef, 'Catalog final-fence authority does not cover each ordered material source', true),
+    );
+  }
   const byVerificationRef = new Map<string, VerifiedSourceEvidence>();
+  const verified: VerifiedSourceEvidence[] = [];
   for (const source of sources) {
     if (
       !Schema.is(PricingSourceEvidenceVerifiedPresentSchema)(source) &&
@@ -252,7 +284,14 @@ const deduplicateVerifiedSourceEvidence = (
     const { verification } = completeness;
     const { verificationRef } = verification;
     const retained = byVerificationRef.get(verificationRef);
-    if (retained !== undefined && !sameSourceEvidence(retained, source)) {
+    const preservesCatalogOccurrence =
+      catalogMaterial !== undefined && source.request.ownerScope.ownerModuleId === CATALOG_OWNER_MODULE_ID;
+    const sameCatalogOwner = retained?.request.ownerScope.ownerModuleId === CATALOG_OWNER_MODULE_ID;
+    if (
+      retained !== undefined &&
+      !(preservesCatalogOccurrence && sameCatalogOwner) &&
+      !sameSourceEvidence(retained, source)
+    ) {
       return Effect.fail(
         unverifiable(
           candidateRef,
@@ -261,16 +300,20 @@ const deduplicateVerifiedSourceEvidence = (
         ),
       );
     }
+    if (retained === undefined || preservesCatalogOccurrence) {
+      verified.push(source);
+    }
     byVerificationRef.set(verificationRef, source);
   }
-  return Effect.succeed([...byVerificationRef.values()]);
+  return Effect.succeed(verified);
 };
 
 const verifiedExpectations = (
   candidateRef: string,
   sources: readonly PricingSourceEvidenceResult[],
+  verificationRequest?: PricingOwnerMaterialEvidenceFenceGatewayRequest,
 ): Effect.Effect<readonly PricingMaterialEvidenceFenceExpectation[], PricingMaterialEvidenceUnverifiableFailure> =>
-  deduplicateVerifiedSourceEvidence(candidateRef, sources).pipe(
+  deduplicateVerifiedSourceEvidence(candidateRef, sources, verificationRequest).pipe(
     Effect.map((verifiedSources) => verifiedSources.map(expectationFrom)),
   );
 
@@ -278,10 +321,9 @@ type PricingSetBackedFenceSource = Extract<PricingMaterialEvidenceFenceSource, {
 const isSetBackedFenceSource = Schema.is(PricingSetBackedMaterialEvidenceFenceSourceSchema);
 const sameSetBackedFenceSource = Schema.toEquivalence(PricingSetBackedMaterialEvidenceFenceSourceSchema);
 
-const verifiedTypedRequest = (
+const verifiedTypedAuthority = (
   candidateRef: string,
   assembly: PricingMaterialEvidenceAssemblyRequest,
-  sources: readonly VerifiedSourceEvidence[],
 ): Effect.Effect<PricingOwnerMaterialEvidenceFenceGatewayRequest, PricingMaterialEvidenceUnverifiableFailure> => {
   const typed = assembly.ownerFenceRequest;
   if (
@@ -294,9 +336,28 @@ const verifiedTypedRequest = (
       ({ verificationMaterial }) => verificationMaterial.kind === 'CUSTOMER_CONTEXT_PURCHASE_AUTHORITY',
     ).length !== 1
   ) {
-    return Effect.fail(unverifiable(candidateRef, 'Exact owner final-fence authority is missing or invalid', true));
+    return Effect.fail(unverifiable(candidateRef, EXACT_AUTHORITY_INVALID, true));
   }
-  const setBackedSources = typed.sources.filter(isSetBackedFenceSource);
+  return Effect.succeed(typed);
+};
+
+const verifiedTypedRequest = (
+  candidateRef: string,
+  assembly: PricingMaterialEvidenceAssemblyRequest,
+  sources: readonly VerifiedSourceEvidence[],
+): Effect.Effect<PricingOwnerMaterialEvidenceFenceGatewayRequest, PricingMaterialEvidenceUnverifiableFailure> => {
+  const typed = assembly.ownerFenceRequest;
+  if (typed === undefined) {
+    return Effect.fail(unverifiable(candidateRef, EXACT_AUTHORITY_INVALID, true));
+  }
+  const setBackedSources = typed.sources.filter(
+    (source): source is PricingSetBackedFenceSource =>
+      isSetBackedFenceSource(source) &&
+      source.sourceEvidence.request.ownerScope.ownerModuleId !== CATALOG_OWNER_MODULE_ID,
+  );
+  const nonCatalogSources = sources.filter(
+    (source) => source.request.ownerScope.ownerModuleId !== CATALOG_OWNER_MODULE_ID,
+  );
   const byProof = new Map<string, PricingSetBackedFenceSource>();
   for (const source of setBackedSources) {
     const { sourceEvidence } = source;
@@ -316,8 +377,8 @@ const verifiedTypedRequest = (
     byProof.set(verificationRef, source);
   }
   if (
-    byProof.size !== sources.length ||
-    sources.some((source) => {
+    byProof.size !== nonCatalogSources.length ||
+    nonCatalogSources.some((source) => {
       if (
         !Schema.is(PricingSourceEvidenceVerifiedPresentSchema)(source) &&
         !Schema.is(PricingSourceEvidenceVerifiedAbsentSchema)(source)
@@ -369,7 +430,7 @@ export const verifyPricingMaterialEvidenceOwnerFence = Effect.fn('PricingMateria
     PricingMaterialEvidenceOwnerFenceFailure,
     PricingMaterialEvidenceOwnerFinalFence
   > {
-    const expectations = yield* verifiedExpectations(candidateRef, sources);
+    const expectations = yield* verifiedExpectations(candidateRef, sources, verificationRequest);
     const ownerFence = yield* PricingMaterialEvidenceOwnerFinalFence;
     const request: PricingMaterialEvidenceOwnerFenceRequest =
       verificationRequest === undefined
@@ -382,12 +443,27 @@ export const verifyPricingMaterialEvidenceOwnerFence = Effect.fn('PricingMateria
     if (evidence.sources.length !== expectations.length) {
       return yield* unverifiable(candidateRef, 'Owner final fence did not cover every material source proof', true);
     }
-    const observations = new Map(evidence.sources.map((source) => [source.evidenceVerificationRef, source]));
-    if (observations.size !== evidence.sources.length) {
+    const catalogObservations =
+      verificationRequest === undefined
+        ? []
+        : evidence.sources.filter((source) => source.ownerModuleId === CATALOG_OWNER_MODULE_ID);
+    const uniqueObservations =
+      verificationRequest === undefined
+        ? evidence.sources
+        : evidence.sources.filter((source) => source.ownerModuleId !== CATALOG_OWNER_MODULE_ID);
+    const observations = new Map(uniqueObservations.map((source) => [source.evidenceVerificationRef, source]));
+    if (observations.size !== uniqueObservations.length) {
       return yield* unverifiable(candidateRef, 'Owner final fence returned duplicate source observations', true);
     }
+    let catalogIndex = 0;
     for (const expectation of expectations) {
-      const observation = observations.get(expectation.evidenceVerificationRef);
+      const orderedCatalog = verificationRequest !== undefined && expectation.ownerModuleId === CATALOG_OWNER_MODULE_ID;
+      const observation = orderedCatalog
+        ? catalogObservations[catalogIndex]
+        : observations.get(expectation.evidenceVerificationRef);
+      if (orderedCatalog) {
+        catalogIndex += 1;
+      }
       if (observation === undefined || !observationMatchesExpectation(expectation, observation, evidence.observedAt)) {
         return yield* changedAtFinalFence(candidateRef, expectation);
       }
@@ -412,9 +488,16 @@ export const finalizePricingMaterialEvidenceForPublication = Effect.fn(
 > {
   const { request } = input;
   const materialEvidence = yield* assemblePricingMaterialEvidence(request);
+  const typedAuthority = yield* verifiedTypedAuthority(materialEvidence.candidateRef, request);
+  const equivalenceEvidence = typedAuthority.sources.flatMap((source) =>
+    'sourceEvidence' in source && source.verificationMaterial.kind === 'CATALOG_EQUIVALENCE_AUTHORITY'
+      ? [source.sourceEvidence]
+      : [],
+  );
   const sources = yield* deduplicateVerifiedSourceEvidence(
     materialEvidence.candidateRef,
-    collectSourceEvidence(materialEvidence.sourceEvidence),
+    [...collectSourceEvidence(materialEvidence.sourceEvidence), ...equivalenceEvidence],
+    typedAuthority,
   );
   const verificationRequest = yield* verifiedTypedRequest(materialEvidence.candidateRef, request, sources);
   const finalFenceEvidence = yield* verifyPricingMaterialEvidenceOwnerFence(

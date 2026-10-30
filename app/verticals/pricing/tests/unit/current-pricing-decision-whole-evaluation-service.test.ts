@@ -1,3 +1,26 @@
+import { TestClock } from 'effect/testing';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  PricingPurposeEquivalenceRequestSchema,
+  PricingPurposeEquivalenceResponseSchema,
+} from '@app/catalog/api/pricing-purpose-equivalence';
+import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
+import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantity-basis-compatibility';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
+import {
+  PricingCurrentMarketEvidenceRequestSchema,
+  PricingCurrentMarketEvidenceResponseSchema,
+} from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
+import type { PricingCurrentMarketEvidenceRequest } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
+import { PricingUnitPriceCalculationAttemptSchema } from '@app/pricing-contracts/domain/unit-price-calculation';
+import { PricingCommercialTotalReadySchema } from '@app/pricing-contracts/domain/commercial-total';
+import {
+  PricingCommercialFeeCalculationInputSchema,
+  pricingCommercialFeeCurrentSetPredicateRef,
+} from '@app/pricing-contracts/domain/commercial-fee';
+import { makeCurrentPricingDecisionExternalOwnerEvidenceLivePort } from '../../src/integrations/current-pricing-decision-external-owner-evidence-live.ts';
+import { makeCurrentPricingDecisionWholeComposition } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
+import { makePricingExternalOwnerEvidenceValidationService } from '../../src/services/external-owner-evidence-validation.service.ts';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -12,8 +35,8 @@ import { PRICING_ALLOCATION_PROFILE } from '@app/pricing-contracts/domain/exact-
 import type { PricingPromotionCompositionSelection } from '@app/pricing-contracts/domain/line-composition';
 import type { PricingDecision, PricingDecisionOutcome, PricingLine } from '@app/pricing-contracts/pricing-decision';
 import type { PricingUnitPriceCalculationAttempt } from '@app/pricing-contracts/domain/unit-price-calculation';
-import { DateTime, Effect, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { DateTime, Effect, Match, Redacted, Schema } from 'effect';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import type {
   CurrentPricingDecisionExactPriceLineInput,
@@ -25,11 +48,16 @@ import {
   makeCurrentPricingDecisionWholeEvaluationService,
 } from '../../src/services/current-pricing-decision-whole-evaluation.service.ts';
 import { PricingPromotionUnavailable } from '../../src/services/pricing-promotion-unavailable.ts';
+import { selectQuantityTier } from '../../src/services/quantity-tier-selection.service.ts';
+import { sumQuantityTierNormalizedQuantities } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import type { CurrentPricingDecisionSubjectAuthorityEvidence } from '../../src/services/current-pricing-decision-subject-authority.service.ts';
 import { makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
-import { makeIssue779Scenario } from './support/issue-779-line-value.fixture.ts';
+import { authorizationSetFor, makeIssue779Scenario } from './support/issue-779-line-value.fixture.ts';
 import {
   unitPriceCalculationAttempt,
+  unitPriceFixtureProductRef,
+  unitPriceFixtureVariantRef,
+  unitPriceFixturePriceRef,
   unitPriceFixtureEffectiveAt,
   unitPriceFixtureTenantId,
 } from './support/unit-price-calculation.fixture.ts';
@@ -740,3 +768,538 @@ describe('Current Pricing Decision whole evaluation source', () => {
     }),
   );
 });
+
+// Explicit owner-contract fixtures exercise the actual repaired reader and whole math.
+// Native owner authenticity and public provider reach are separate integration evidence.
+const catalogContract1225 = (
+  questions: PricingPurposeEquivalenceRequest[],
+  inputs: readonly PricingUnitPriceCalculationAttempt[],
+) => ({
+  execute: (payload: PricingPurposeEquivalenceRequest) =>
+    Effect.gen(function* declaredCatalogEquivalence1225() {
+      expect(Schema.is(PricingPurposeEquivalenceRequestSchema)(payload)).toBe(true);
+      expect(payload.members).toHaveLength(1);
+      const [member] = payload.members;
+      assert(member !== undefined);
+      const retained = inputs.find(({ line }) => line.occurrenceId === member.occurrenceId);
+      assert(retained !== undefined);
+      expect(member.handoff).toEqual(retained.line.catalog);
+      expect(payload.anchorSelection).toEqual(retained.line.catalog.selection);
+      questions.push(payload);
+      const handoff = retained.line.catalog;
+      const at = payload.effectiveAt;
+      const observedAt = handoff.evidence.assessedAt;
+      const validThrough = handoff.evidence.validUntil;
+      assert(validThrough !== undefined);
+      const predicateRef = `TEST:1225:singleton:${member.occurrenceId}`;
+      const generation = handoff.ownerRevision;
+      const target = {
+        quantityBasis: handoff.quantityBasis,
+        requestedQuantity: handoff.quantity.requested,
+        selection: handoff.selection,
+      };
+      return yield* Schema.decodeUnknownEffect(PricingPurposeEquivalenceResponseSchema)({
+        assessments: [
+          { handoff, role: 'ANCHOR' },
+          { handoff, occurrenceId: member.occurrenceId, role: 'MEMBER' },
+        ],
+        currentness: { effectiveAt: at, observedAt, status: 'CURRENT', validThrough },
+        currentnessEvidence: {
+          effectiveAt: at,
+          generation,
+          observedAt,
+          predicateRef,
+          revalidatedAt: observedAt,
+          validThrough,
+          verificationMode: 'OWNER_CURRENT_QUANTITY_REVALIDATED',
+        },
+        evidence: {
+          anchorSelection: handoff.selection,
+          assessmentId: `TEST:1225:assessment:${member.occurrenceId}`,
+          effectiveAt: at,
+          members: [{ occurrenceId: member.occurrenceId, selection: handoff.selection }],
+          observedAt,
+          ownerModuleId: 'commerce.catalog',
+          ownerRevision: handoff.ownerRevision,
+          purpose: 'PRICING',
+          status: 'CONFIRMED',
+          validThrough,
+        },
+        generation,
+        outcome: 'CATALOG_EQUIVALENCE_CONFIRMED',
+        verificationReceipt: {
+          generation,
+          issuedAt: observedAt,
+          ownerModuleId: 'commerce.catalog',
+          ownerRevision: handoff.ownerRevision,
+          predicate: {
+            anchor: target,
+            effectiveAt: at,
+            members: [{ ...target, occurrenceId: member.occurrenceId }],
+            purpose: 'PRICING',
+          },
+          predicateRef,
+          verificationRef: `TEST:1225:equivalence:${member.occurrenceId}`,
+        },
+      });
+    }).pipe(Effect.orDie),
+  executeCompatibility: (payload: QuantityBasisCompatibilityRequest) =>
+    Effect.sync(() => {
+      const matching = inputs.find(({ line }) =>
+        Schema.toEquivalence(CatalogQuantityHandoffReadySchema)(line.catalog, payload.handoff),
+      );
+      assert(matching !== undefined);
+      expect(payload.price.quantity).toBe(matching.line.pricingBasis.quantity);
+      assert(matching.quantityBasis.outcome === 'NO_CONVERSION_REQUIRED');
+      return matching.quantityBasis.evidence;
+    }),
+  issuer: {
+    issue: () =>
+      Effect.succeed({
+        baseUrl: new URL('http://127.0.0.1:1225'),
+        credential: Redacted.make('TEST:1225:owner-contract-only'),
+      }),
+  },
+});
+
+const marketContract1225 = (payload: PricingCurrentMarketEvidenceRequest) =>
+  Effect.gen(function* declaredMarketResponse1225() {
+    const encodedRequest = yield* Schema.encodeEffect(PricingCurrentMarketEvidenceRequestSchema)(payload);
+    const { channel, marketRef, sellingLegalEntityRef } = payload.commercialScope;
+    const observedAt = encodedRequest.effectiveAt;
+    const response = yield* Schema.decodeUnknownEffect(PricingCurrentMarketEvidenceResponseSchema)({
+      market: {
+        channels: [channel],
+        definitionRevisionRef: {
+          ...marketRef,
+          resourceId: 'TEST:1225:market-definition',
+          resourceType: 'commerce.market-catalog.market-definition-revision',
+        },
+        effectivePeriod: { startsAt: encodedRequest.effectiveAt },
+        jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
+        lifecycle: 'ACTIVE',
+        marketCode: 'CZ',
+        marketRef,
+        purpose: 'Explicit TEST non-Catalog prerequisite',
+        revision: 1,
+        sellingLegalEntityRef,
+        supportedLocales: ['cs-CZ'],
+      },
+      outcome: 'PRICING_MARKET_SOURCE_PRESENT',
+      receipt: {
+        authority: {
+          generation: 1,
+          observedAt,
+          ownerRootRef: 'TEST:1225:market-root',
+          ownerSetRevisionRef: 'TEST:1225:market-set',
+          predicateRef: 'TEST:1225:market-predicate',
+          verificationRef: 'TEST:1225:market-proof',
+        },
+        currentFacts: [
+          {
+            effectivePeriod: { startsAt: encodedRequest.effectiveAt },
+            factRef: marketRef.resourceId,
+            factRevisionRef: 'TEST:1225:market-definition',
+            verificationRef: 'TEST:1225:market-proof',
+          },
+        ],
+        state: 'PRESENT',
+      },
+      request: encodedRequest,
+    });
+    return yield* Schema.encodeEffect(PricingCurrentMarketEvidenceResponseSchema)(response);
+  }).pipe(Effect.orDie);
+
+for (const variant of [
+  'different Products',
+  'same Product non-equivalent Variants',
+  'singleton',
+  'equal-valued distinct occurrences',
+] as const) {
+  it.effect(`retains ${variant} through successful actual Catalog reader and whole monetary consumer #1225`, () =>
+    Effect.gen(function* successfulWholeCatalog1225() {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-28T12:00:00.500Z')));
+      const first = yield* unitPriceCalculationAttempt({
+        groupPath: false,
+        occurrenceId: 'TEST:1225:original-A',
+        priceAmount: '100',
+        quantity: '1',
+      });
+      const inputs = [first];
+      if (variant !== 'singleton') {
+        // Clone only this schema-checked owning unit fixture; no real owner proof is rewritten.
+        const codec = Schema.fromJsonString(PricingUnitPriceCalculationAttemptSchema);
+        let encoded = yield* Schema.encodeEffect(codec)(first);
+        encoded = encoded.replaceAll('TEST:1225:original-A', 'TEST:1225:original-B');
+        if (variant !== 'equal-valued distinct occurrences') {
+          encoded = encoded
+            .replaceAll(unitPriceFixtureVariantRef.resourceId, '33333333-3333-4333-8333-333333333334')
+            .replaceAll(unitPriceFixturePriceRef.resourceId, '55555555-5555-4555-8555-555555555556');
+          if (variant === 'different Products') {
+            encoded = encoded.replaceAll(unitPriceFixtureProductRef.resourceId, '22222222-2222-4222-8222-222222222223');
+          }
+        }
+        const second = yield* Schema.decodeEffect(codec)(encoded);
+        if (variant === 'equal-valued distinct occurrences' && 'usedPrice' in second.exactPrice.path) {
+          const { path } = second.exactPrice;
+          inputs.push({
+            ...second,
+            exactPrice: {
+              ...second.exactPrice,
+              path: {
+                ...path,
+                usedPrice: {
+                  ...path.usedPrice,
+                  evidence: { ...path.usedPrice.evidence, observedAt: '2026-09-28T12:00:00.050Z' },
+                },
+              },
+            },
+          });
+        } else {
+          inputs.push(second);
+        }
+      }
+      const [head, ...tail] = inputs;
+      assert(head !== undefined);
+      const decision = decisionFor([head.line, ...tail.map(({ line }) => line)]);
+      const request = requestFor(decision);
+      const attempt = attemptFor(decision);
+      const trusted = trustedScopeFor(request);
+      const composition = makeCurrentPricingDecisionWholeComposition();
+      const questions: PricingPurposeEquivalenceRequest[] = [];
+      const activeComposition = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog', 'pricing'],
+        'TEST:1225:build',
+      );
+      const external = makeCurrentPricingDecisionExternalOwnerEvidenceLivePort(
+        {
+          compositionRevision: activeComposition.composition.revision,
+          legalEntityId: decision.commercialScope.sellingLegalEntityId,
+          requestCorrelation: 'TEST:1225:whole',
+          tenantId: decision.tenantId,
+        },
+        {
+          applicationComposition: { load: Effect.succeed(activeComposition) },
+          catalog: catalogContract1225(questions, inputs),
+          customerContext: {
+            execute: () => Effect.die('Guest must not call Profile owner'),
+            issuer: { issue: () => Effect.die('Guest must not request Profile credential') },
+          },
+          market: {
+            execute: marketContract1225,
+            issuer: {
+              issue: () =>
+                Effect.succeed({
+                  baseUrl: new URL('http://127.0.0.1:1225'),
+                  credential: Redacted.make('TEST:1225:market-only'),
+                }),
+            },
+          },
+          validation: makePricingExternalOwnerEvidenceValidationService(),
+        },
+      );
+      const feeFixture = yield* makeIssue779Scenario({ feeAmount: '3' });
+      const [feeTemplate] = feeFixture.compositionRequest.feeResults;
+      assert(feeTemplate?.outcome === 'COMMERCIAL_FEES_APPLIED');
+      let reachedWholeConsumer = false;
+      const observedGroupSizes: number[] = [];
+      const qualifiedStop = new CurrentPricingDecisionOwnerReadFailure({
+        kind: 'UNAVAILABLE',
+        ownerRefs: ['TEST:1225:native-final-authority'],
+        reason:
+          'Unit contract proof ends after complete whole money and actual owner aggregate; native publication is separate evidence',
+      });
+      const whole = makeCurrentPricingDecisionWholeEvaluationService({
+        attemptSource: {
+          loadFresh: () =>
+            Effect.succeed({
+              attempt,
+              exactPriceLines: [
+                exactPriceLineFor(head, decision),
+                ...tail.map((item) => exactPriceLineFor(item, decision)),
+              ],
+              requiredOwnerRefs: ['TEST:1225:declared-Pricing-ports'],
+            }),
+        },
+        composition: {
+          ...composition,
+          buildMaterialEvidenceRequest: (input) =>
+            Effect.gen(function* observeWholeConsumer1225() {
+              reachedWholeConsumer = true;
+              expect(Schema.is(PricingCommercialTotalReadySchema)(input.commercialTotal)).toBe(true);
+              expect(input.commercialTotal.decision).toEqual(decision);
+              expect(input.commercialTotal.publishedLines.map(({ occurrenceId }) => occurrenceId)).toEqual(
+                inputs.map(({ line }) => line.occurrenceId),
+              );
+              expect(input.commercialTotal.pricingNetCommercialTotal).toEqual({
+                amount: String(inputs.length * 103),
+                currencyCode: 'CZK',
+              });
+              expect(input.commercialTotal.breakdown.commercialFeeTotal).toEqual({
+                amount: String(inputs.length * 3),
+                currencyCode: 'CZK',
+              });
+              expect(
+                input.externalOwnerEvidence.retained.catalogSelections.map(({ occurrenceId }) => occurrenceId),
+              ).toEqual(inputs.map(({ line }) => line.occurrenceId));
+              expect(
+                input.externalOwnerEvidence.fenceSources.filter(
+                  ({ verificationMaterial }) => verificationMaterial.kind === 'CATALOG_EQUIVALENCE_AUTHORITY',
+                ),
+              ).toHaveLength(inputs.length);
+              return yield* qualifiedStop;
+            }),
+        },
+        discountReader: { loadCurrent: () => Effect.succeed({ applicabilityInputs: [], currentSets: [] }) },
+        externalOwnerEvidence: external,
+        feeReader: {
+          loadCurrent: (_request, _attempt, unit) =>
+            Effect.gen(function* declaredFeeRead1225() {
+              const { line } = unit.input;
+              const target = { variantRef: line.catalog.selection.variantRef };
+              const predicateRef = pricingCommercialFeeCurrentSetPredicateRef({
+                commercialScope: decision.commercialScope,
+                currencyCode: 'CZK',
+                target,
+              });
+              assert('usedPrice' in unit.input.exactPrice.path);
+              const { usedPrice } = unit.input.exactPrice.path;
+              const feeSet = {
+                ...feeTemplate.input.feeSet,
+                commercialScope: decision.commercialScope,
+                completenessEvidence: {
+                  ...feeTemplate.input.feeSet.completenessEvidence,
+                  scope: { kind: 'EXACT_PREDICATE', predicateRef },
+                },
+                currentnessEvidence: { ...feeTemplate.input.feeSet.currentnessEvidence, predicateRef },
+                fees: feeTemplate.input.feeSet.fees.map((fee) => ({
+                  ...fee,
+                  definition: {
+                    ...fee.definition,
+                    catalogTargetEvidence: {
+                      ...fee.definition.catalogTargetEvidence,
+                      productRef: line.catalog.selection.productRef,
+                      variantRef: target.variantRef,
+                    },
+                    identityKey: { ...fee.definition.identityKey, commercialScope: decision.commercialScope, target },
+                  },
+                })),
+                target,
+              };
+              const input = yield* Schema.decodeUnknownEffect(PricingCommercialFeeCalculationInputSchema)({
+                baseLineValue: unit.baseLineValue,
+                currencySupport: unit.input.exactPrice.currencySupport,
+                decision,
+                feeSet,
+                occurrenceId: line.occurrenceId,
+                pricePath: {
+                  priceRef: usedPrice.priceRef,
+                  priceRevisionId: usedPrice.priceRevision.revisionId,
+                  source: 'NO_GROUP_PRICE',
+                },
+              });
+              return {
+                authority: {
+                  generation: 1,
+                  observedAt: decision.operationTime,
+                  ownerRevision: feeSet.completenessEvidence.ownerRevision,
+                  ownerRootRef: `TEST:1225:fee:${line.occurrenceId}`,
+                  predicateRef,
+                  verificationRef: `TEST:1225:fee-proof:${line.occurrenceId}`,
+                },
+                factProofs: [],
+                input,
+              };
+            }).pipe(Effect.orDie),
+        },
+        floorReader: {
+          loadCurrent: (_request, _attempt, raw) =>
+            Effect.succeed(
+              raw.lines.map((line) => ({
+                authority: {
+                  generation: 1,
+                  observedAt: decision.operationTime,
+                  ownerRevision: 'TEST:1225:floor-set',
+                  ownerRootRef: 'TEST:1225:floor-root',
+                  predicateRef: 'TEST:1225:floor-predicate',
+                  verificationRef: 'TEST:1225:floor-proof',
+                },
+                authorizationSet: authorizationSetFor(line, { authorizations: [] }),
+                factProofs: [],
+                occurrenceId: line.occurrenceId,
+              })),
+            ),
+        },
+        promotionEvaluation: { evaluate: () => Effect.die('Ordinary candidate must not activate Promotion') },
+        tierReader: {
+          loadCurrent: (_request, _attempt, line, _price, aggregationGroup) =>
+            Effect.sync(() => {
+              observedGroupSizes.push(aggregationGroup.length);
+              const fixture = inputs.find((item) => item.line.occurrenceId === line.line.occurrenceId);
+              assert(fixture !== undefined);
+              assert(fixture.tierSelection.outcome === 'BASE_PRICE_RETAINED');
+              return {
+                authority: fixture.tierSelection.evidence.input.tierSet.authority,
+                factProofs: fixture.tierSelection.evidence.input.tierSet.factProofs,
+                request: { input: fixture.tierSelection.evidence.input, outcome: 'TIER_SET_CURRENT' },
+              };
+            }),
+        },
+      });
+      const result = yield* whole.loadFresh(request, trusted, 1);
+      expect({
+        reachedWholeConsumer,
+        stage: 'reason' in result.attempt ? result.attempt.reason : result.attempt.kind,
+      }).toEqual({ reachedWholeConsumer: true, stage: qualifiedStop.reason });
+      expect(questions.map(({ members }) => members[0]?.occurrenceId)).toEqual(
+        inputs.map(({ line }) => line.occurrenceId),
+      );
+      expect(result.outcome.outcome).toBe('PRICING_INDETERMINATE');
+      expect(observedGroupSizes).toEqual(inputs.map(() => (variant === 'equal-valued distinct occurrences' ? 2 : 1)));
+    }),
+  );
+}
+
+for (const materialChange of ['none', 'Price owner revision', 'Group definition revision'] as const) {
+  it.effect(
+    `groups assigned Price reads by material evidence, not compatibility instants: ${materialChange} #1225`,
+    () =>
+      Effect.gen(function* assignedGroupCompatibilityInstants1225() {
+        const first = yield* unitPriceCalculationAttempt({
+          groupPath: true,
+          occurrenceId: 'TEST:1225:assigned-A',
+          quantity: '6',
+          tiers: [{ amount: '75', revisionId: '77777777-7777-4777-8777-777777777777', thresholdQuantity: '10' }],
+        });
+        const second = yield* unitPriceCalculationAttempt({
+          groupPath: true,
+          occurrenceId: 'TEST:1225:assigned-B',
+          quantity: '6',
+          tiers: [{ amount: '75', revisionId: '77777777-7777-4777-8777-777777777777', thresholdQuantity: '10' }],
+        });
+        const path = Match.value(second.exactPrice.path).pipe(
+          Match.tag('GROUP_PRICE', (assignedPath) => assignedPath),
+          Match.orElse(() => null),
+        );
+        assert(path !== null);
+        const { interpretation } = path.resolutionInput;
+        const compatibility = {
+          ...interpretation.compatibilityEvidence,
+          definitionRevisionId:
+            materialChange === 'Group definition revision'
+              ? 'cccccccc-cccc-4ccc-8ccc-cccccccccccd'
+              : interpretation.compatibilityEvidence.definitionRevisionId,
+          verifiedAt: '2026-09-28T12:00:00.050Z',
+        };
+        const secondPrice = yield* Schema.decodeEffect(Schema.toType(ExactPriceResolutionSchema))({
+          ...second.exactPrice,
+          path: {
+            ...path,
+            resolutionInput: {
+              ...path.resolutionInput,
+              interpretation: {
+                ...interpretation,
+                assignmentResolution: { ...interpretation.assignmentResolution, compatibility },
+                compatibilityEvidence: compatibility,
+              },
+            },
+            usedPrice: {
+              ...path.usedPrice,
+              evidence: {
+                ...path.usedPrice.evidence,
+                ownerRevision:
+                  materialChange === 'Price owner revision'
+                    ? 'TEST:1225:different-price-set'
+                    : path.usedPrice.evidence.ownerRevision,
+              },
+            },
+          },
+        });
+        const initialDecision = decisionFor([first.line, second.line]);
+        const decision: PricingDecision = {
+          ...initialDecision,
+          purchasingContext: {
+            ...initialDecision.purchasingContext,
+            actor: { kind: 'PRINCIPAL', principalId: '79000000-0000-4000-8000-000000000120' },
+            subject: {
+              authorizationSubject: { kind: 'RETAIL' },
+              kind: 'PROFILE',
+              profileRef: {
+                moduleId: 'commerce.customer-context',
+                resourceId: 'TEST:1225:retail-profile',
+                resourceType: 'commerce.customer-context.retail-customer-profile',
+                tenantId: initialDecision.tenantId,
+              },
+            },
+          },
+        };
+        const request = requestFor(decision);
+        const stop = new CurrentPricingDecisionOwnerReadFailure({
+          kind: 'UNAVAILABLE',
+          ownerRefs: ['TEST:1225:remaining-owner-prerequisites'],
+          reason: 'Regression observes grouping and real Tier selection before unrelated owner reads',
+        });
+        let observed = false;
+        const service = makeCurrentPricingDecisionWholeEvaluationService({
+          attemptSource: {
+            loadFresh: () =>
+              Effect.succeed({
+                attempt: attemptFor(decision),
+                exactPriceLines: [
+                  exactPriceLineFor(first, decision),
+                  exactPriceLineFor({ ...second, exactPrice: secondPrice }, decision),
+                ],
+                requiredOwnerRefs: ['TEST:1225:declared-Pricing-ports'],
+              }),
+          },
+          composition: unavailableComposition,
+          discountReader: { loadCurrent: unexpected },
+          externalOwnerEvidence: unavailableExternalOwnerEvidence,
+          feeReader: { loadCurrent: unexpected },
+          floorReader: { loadCurrent: unexpected },
+          promotionEvaluation: { evaluate: unexpected },
+          tierReader: {
+            loadCurrent: (_request, _attempt, _line, _price, aggregationGroup) =>
+              Effect.gen(function* observeAssignedTierGroup() {
+                observed = true;
+                expect(aggregationGroup).toHaveLength(materialChange === 'none' ? 2 : 1);
+                for (const member of aggregationGroup) {
+                  expect(member.exactPrice).toEqual(
+                    member.line.line.occurrenceId === first.line.occurrenceId ? first.exactPrice : secondPrice,
+                  );
+                }
+                assert(first.tierSelection.outcome === 'BASE_PRICE_RETAINED');
+                const tierInput = first.tierSelection.evidence.input;
+                const quantities = aggregationGroup.map(({ line }) => {
+                  assert(line.lineQuantity !== undefined);
+                  return line.lineQuantity;
+                });
+                const normalizedQuantity = sumQuantityTierNormalizedQuantities(quantities);
+                assert(normalizedQuantity !== undefined);
+                expect(normalizedQuantity.quantity).toBe(materialChange === 'none' ? '12' : '6');
+                const selected = yield* selectQuantityTier({
+                  input: {
+                    ...tierInput,
+                    attempt: {
+                      ...tierInput.attempt,
+                      normalizedQuantity,
+                    },
+                  },
+                  outcome: 'TIER_SET_CURRENT',
+                });
+                expect(selected.outcome).toBe(
+                  materialChange === 'none' ? 'QUANTITY_TIER_APPLIED' : 'BASE_PRICE_RETAINED',
+                );
+                return yield* stop;
+              }),
+          },
+        });
+        const result = yield* service.loadFresh(request, trustedScopeFor(request), 1);
+        expect(observed).toBe(true);
+        expect(result.outcome.outcome).toBe('PRICING_INDETERMINATE');
+        expect(secondPrice.path).toMatchObject({
+          resolutionInput: { interpretation: { compatibilityEvidence: { verifiedAt: compatibility.verifiedAt } } },
+        });
+      }),
+  );
+}

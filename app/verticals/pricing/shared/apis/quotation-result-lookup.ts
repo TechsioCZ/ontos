@@ -13,7 +13,7 @@ export const QuotationResultLookupResponseSchema = Schema.Union([
   Schema.Struct({
     actionInvocationId: QuotationActionInvocationIdSchema,
     outcome: Schema.Literal('QUOTATION_RESULT_FOUND'),
-    quotation: Schema.toType(PricingQuotationIssuedSchema),
+    quotation: Schema.toCodecJson(PricingQuotationIssuedSchema),
   }),
   Schema.Struct({
     actionInvocationId: QuotationActionInvocationIdSchema,

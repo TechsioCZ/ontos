@@ -33,6 +33,16 @@ const appRoot = path.resolve(import.meta.dirname, '../..');
 const nativeRoutesWorkspace = 'apps/native-routes';
 const nativeRoutesRoot = `${nativeRoutesWorkspace}/src/routes/[lang]`;
 const nodeExecutableExpression = 'process.execPath';
+const unknownCwdCase = 'unknown-cwd';
+const shadowDriverCase = 'shadow-driver';
+const mutableCwdCase = 'mutable-cwd';
+const nativeChildNamespaceImport = "import * as child from 'node:child_process';";
+const loaderLateCase = 'loader-late';
+const nativePathImport = "import paths from 'node:path';";
+const nativeEffectProcessImport = "import { ChildProcess as Process } from 'effect/process';";
+const sourceScriptsPattern = 'scripts/**/*.mts';
+const esbuildRootDeclaration = "const rootDirectory = paths.resolve(import.meta.dirname, '..', '..', '..', '..');";
+const esbuildCwdOptions = '{ cwd: rootDirectory }';
 const nativeSubprocessReason = 'Native Node subprocess';
 const nativePlaywrightReason = 'Native Playwright webServer.command';
 const playwrightPackageName = '@playwright/test';
@@ -43,6 +53,13 @@ const playwrightConfigSource = (server: string) =>
 const scriptArgument = (name: string) => `paths.resolve('../../scripts/${name}.fixture.mts')`;
 const nativeInvocation = (name: string, executable = nodeExecutableExpression, options = '{}') =>
   `execute(${executable}, ['--experimental-strip-types', ${scriptArgument(name)}], ${options});`;
+const esbuildInvocation = (
+  file: string,
+  options = esbuildCwdOptions,
+  executable = "'mise'",
+  prefix = "'exec', '--', 'pnpm', 'exec', 'esbuild'",
+) =>
+  `Process.make(${executable}, [${prefix}, '${file}', '--bundle', '--platform=node', '--format=esm', '--packages=external', '--outfile=/tmp/generated.mjs'], ${options});`;
 const Names = Schema.Array(Schema.Struct({ name: Schema.String }));
 const ReportSchema = Schema.Struct({
   issues: Schema.Array(
@@ -549,6 +566,628 @@ it.live(
   }),
 );
 
+const writeOpaqueScopeFixtures = (root: string, shell: string) => {
+  const cases = [
+    [
+      'for-of-path',
+      (invoke: string) =>
+        `for (const paths of [{ resolve: () => '/different' }]) { ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'for-of-factory',
+      (invoke: string) => `${esbuildRootDeclaration} for (const Process of [{ make() {} }]) { ${invoke} }`,
+    ],
+    ['for-in-path', (invoke: string) => `for (const paths in { other: {} }) { ${esbuildRootDeclaration} ${invoke} }`],
+    [
+      'for-path',
+      (invoke: string) =>
+        `for (const paths = { resolve: () => '/different' }; flag;) { ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'for-destructured',
+      (invoke: string) =>
+        `for (const { inner: paths } of [{ inner: { resolve: () => '/different' } }]) { ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'var-path-owner',
+      (invoke: string) =>
+        `function run() { if (flag) { var paths = { resolve: () => '/different' }; } ${esbuildRootDeclaration} ${invoke} } run();`,
+    ],
+    [
+      'var-factory-owner',
+      (invoke: string) =>
+        `function run() { if (flag) { var Process = { make() {} }; } ${esbuildRootDeclaration} ${invoke} } run();`,
+    ],
+    [
+      'named-function-self',
+      (invoke: string) => `const run = function paths() { ${esbuildRootDeclaration} ${invoke} }; run();`,
+    ],
+    [
+      'named-class-self',
+      (invoke: string) =>
+        `const Owner = class Process { static run() { ${esbuildRootDeclaration} ${invoke} } }; Owner.run();`,
+    ],
+    [
+      'switch-path',
+      (invoke: string) =>
+        `switch (flag) { case true: const paths = { resolve: () => '/different' }; ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'free-loader-after-loop',
+      (invoke: string) =>
+        `function loadDependency() { for (const require of [() => ({})]) {} const load = require; load('node:path'); } loadDependency(); ${esbuildRootDeclaration} ${invoke}`,
+    ],
+  ] satisfies readonly (readonly [string, (invoke: string) => string])[];
+  const rejected = cases.map(([name, source]) => {
+    const victim = `${shell}/tests/support/opaque-${name}.ts`;
+    write(root, victim, 'export const unusedOpaqueVictim = 1;');
+    write(
+      root,
+      `${shell}/tests/integration/opaque-${name}.test.ts`,
+      [nativeEffectProcessImport, nativePathImport, source(esbuildInvocation(victim))].join('\n'),
+    );
+    return victim;
+  });
+  for (const [name, declaration, invocation] of [
+    [
+      'argv',
+      "const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', target, '--bundle'];",
+      "for (const argv of [unknownArgv]) { Process.make('mise', argv, { cwd: rootDirectory }); }",
+    ],
+    [
+      'options',
+      'const options = { cwd: rootDirectory };',
+      "for (const options of [unknownOptions]) { Process.make('mise', ['exec', '--', 'pnpm', 'exec', 'esbuild', target, '--bundle'], options); }",
+    ],
+    [
+      'default-owner',
+      'const start = (file = target) => Process.make(process.execPath, [file], { cwd: rootDirectory });',
+      'for (const start of [() => {}]) { start(); }',
+    ],
+  ]) {
+    const victim = `${shell}/tests/support/opaque-${name}.ts`;
+    rejected.push(victim);
+    write(root, victim, 'export const unusedOpaqueVictim = 1;');
+    write(
+      root,
+      `${shell}/tests/integration/opaque-${name}.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        `const target = '${victim}';`,
+        declaration,
+        invocation,
+      ].join('\n'),
+    );
+  }
+  const unusedBootstrapSource = 'export const unusedBootstrapExport = 1;';
+  const preserved = `${shell}/tests/support/valid-unrelated-loop.ts`;
+  write(root, preserved, unusedBootstrapSource);
+  write(
+    root,
+    `${shell}/tests/integration/valid-unrelated-loop.test.ts`,
+    [
+      nativeEffectProcessImport,
+      nativePathImport,
+      "for (const paths of [unknownPaths]) {} for (const Process of [unknownProcesses]) {} for (const require of [() => ({})]) { require('node:path'); }",
+      esbuildRootDeclaration,
+      esbuildInvocation(preserved),
+    ].join('\n'),
+  );
+  const lexicalPositives = [
+    [
+      'inner-data-under-self',
+      () =>
+        `const run = function argv() { { const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', TARGET, '--bundle']; Process.make('mise', argv, { cwd: rootDirectory }); } }; run();`,
+    ],
+    [
+      'switch-discriminant',
+      (invoke: string) => `switch (${invoke.replace(/;$/u, '')}) { case 0: const Process = unknownProcess; break; }`,
+    ],
+  ] satisfies readonly (readonly [string, (invoke: string) => string])[];
+  const preservedFiles = lexicalPositives.map(([name, source]) => {
+    const victim = `${shell}/tests/support/valid-${name}.ts`;
+    write(root, victim, unusedBootstrapSource);
+    write(
+      root,
+      `${shell}/tests/integration/valid-${name}.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        source(esbuildInvocation(victim)).replace('TARGET', JSON.stringify(victim)),
+      ].join('\n'),
+    );
+    return victim;
+  });
+  return { preserved: [preserved, ...preservedFiles], rejected };
+};
+
+const writeNamespaceCapabilityFixtures = (root: string, shell: string) => {
+  const rejected: string[] = [];
+  const bad = (name: string) => `${shell}/tests/support/${name}.ts`;
+  const namespaceCases = [
+    ['url-constructor-alternate', "import { URL as other } from 'node:url'; other.prototype.pathname = '/different';"],
+    ['named-default-write', "import { default as other } from 'node:path'; other.resolve = () => '/different';"],
+    ['named-default-escape', "import { default as other } from 'node:path'; unknownMutator(other);"],
+    ['bare-default-write', "import other from 'path'; other.resolve = () => '/different';"],
+    ['namespace-default-write', "import * as other from 'node:path'; other.default.resolve = () => '/different';"],
+    ['protected-subpath', "import other from 'node:path/posix'; unknownMutator(other);"],
+    ['dynamic-protected', "const other = await import('node:path'); other.default.resolve = () => '/different';"],
+    ['dynamic-unknown', 'const other = await import(unknownModule);'],
+    [
+      'parameter-default-body-var',
+      "function capture(load = require) { var require = () => {}; load('node:path'); } capture();",
+    ],
+    [
+      'destructured-default-body-var',
+      "function capture({ load = require } = {}) { var require = () => {}; load('node:path'); } capture();",
+    ],
+    [
+      'rest-default-body-var',
+      "function capture([load = require] = [], ...rest) { var require = () => {}; load('node:path'); } capture();",
+    ],
+    [
+      'inner-loader-under-self',
+      "import { createRequire } from 'node:module'; const capture = function require() { { const require = createRequire(import.meta.url); require('node:path'); } }; capture();",
+    ],
+    [
+      'inner-loader-under-loop',
+      "import { createRequire } from 'node:module'; for (const require of values) { { const require = createRequire(import.meta.url); require('node:path'); } }",
+    ],
+    [
+      'inner-loader-under-var',
+      "import { createRequire } from 'node:module'; function capture() { var require = () => {}; { const require = createRequire(import.meta.url); require('node:path'); } } capture();",
+    ],
+    ['assignment-loop-loader', "for (require of values) {} const load = require; load('node:path');"],
+    [
+      'destructured-assignment-loop-loader',
+      "for ({ load: require } of values) {} const load = require; load('node:path');",
+    ],
+    ['require-alias', "const load = require; const other = load('node:path');"],
+    ['require-direct', "const other = require('path');"],
+    [
+      'create-require',
+      "import { createRequire as makeLoader } from 'node:module'; const load = makeLoader(import.meta.url); const other = load('node:path');",
+    ],
+    [
+      'module-namespace',
+      "import * as loaders from 'node:module'; const load = loaders.createRequire(import.meta.url); const other = load('path');",
+    ],
+    [
+      'module-default',
+      "import { default as loaders } from 'module'; const load = loaders.createRequire(import.meta.url); const other = load('node:path');",
+    ],
+    ['loader-container', "import { createRequire } from 'module'; const box = { createRequire };"],
+    [
+      'loader-unknown',
+      "import { createRequire } from 'module'; const load = createRequire(import.meta.url); load(unknownModule);",
+    ],
+    [
+      loaderLateCase,
+      "import { createRequire } from 'module'; const load = createRequire(import.meta.url); load('node:path');",
+    ],
+    ['builtin-sync', "import { syncBuiltinESMExports as sync } from 'node:module'; sync();"],
+    ['process-loader', "const other = process.getBuiltinModule('path');"],
+    ['global-loader', "const other = globalThis.require('path');"],
+    [
+      'global-alias',
+      "const ambient = globalThis; const load = ambient.require; const other = load('node:path'); other.resolve = () => '/different';",
+    ],
+    [
+      'global-container',
+      "const box = { ambient: globalThis }; const other = box.ambient.require('node:path'); other.resolve = () => '/different';",
+    ],
+    [
+      'global-nested-container',
+      "const box = { ambient: [{ nested: globalThis }] }; box.ambient[0].nested.require('node:path');",
+    ],
+    ['global-array', "const box = [globalThis]; box[0].require('node:path');"],
+    ['global-wrapped', "const ambient = (globalThis as unknown); ambient.require('node:path');"],
+    ['global-spread', 'const box = { ...globalThis };'],
+    ['global-argument', 'unknownMutator(globalThis);'],
+    ['global-return', 'function capture() { return globalThis; }'],
+    ['global-closure', 'const capture = () => globalThis;'],
+    ['global-conditional', 'const box = flag ? globalThis : {};'],
+    ['global-logical', 'const box = flag && globalThis;'],
+    ['global-sequence', 'const box = (0, globalThis);'],
+    ['global-destructure', 'const { require: load } = globalThis;'],
+    ['global-computed', "globalThis['crypto'].randomUUID();"],
+    ['global-optional', 'globalThis?.crypto.randomUUID();'],
+    ['global-member-write', 'globalThis.crypto.randomUUID = replacement;'],
+    ['global-member-update', 'globalThis.crypto.randomUUID++;'],
+    ['global-member-delete', 'delete globalThis.crypto.randomUUID;'],
+    ['global-root-alternate', "const ambient = global; ambient.require('node:path');"],
+    ['window-root-alternate', "const ambient = window; ambient.require('node:path');"],
+    ['self-root-alternate', "const ambient = self; ambient.require('node:path');"],
+    ['global-default-body-var', 'function capture(ambient = globalThis) { var globalThis; } capture();'],
+    ['process-alias-loader', "const ambient = process; ambient.getBuiltinModule('path');"],
+    ['process-container-loader', "const box = { nested: [process] }; box.nested[0].getBuiltinModule('path');"],
+    [
+      'process-import-alias-loader',
+      "import otherProcess from 'node:process'; const box = { otherProcess }; box.otherProcess.getBuiltinModule('path');",
+    ],
+    ['module-container-loader', "const box = { module }; box.module.require('node:path');"],
+
+    [
+      'file-target-alias',
+      "import { pathToFileURL as toFile } from 'node:url'; const convert = toFile; await import(convert(generatedPath).href);",
+    ],
+    ['file-target-factory', 'await import(unknownConverter(generatedPath).href);'],
+    ['file-target-member', "import * as urls2 from 'node:url'; await import(urls2.pathToFileURL(generatedPath).href);"],
+    [
+      'file-target-stored',
+      "import { pathToFileURL as toFile } from 'node:url'; const location = toFile(generatedPath).href; await import(location);",
+    ],
+    [
+      'file-target-computed',
+      "import { pathToFileURL as toFile } from 'node:url'; await import(toFile(generatedPath)['href']);",
+    ],
+    ['object-write', "const box = { paths }; box.paths.resolve = () => '/different';"],
+    ['object-escape', 'const box = { paths }; unknownMutator(box);'],
+    ['array', 'const box = [paths];'],
+    ['argument', 'unknownMutator(paths);'],
+    ['assignment', 'let box; box = paths;'],
+    ['delete', 'delete paths.resolve;'],
+    ['update', 'paths.resolve++;'],
+    ['extraction', 'const method = paths.resolve;'],
+    ['call', 'paths.resolve.call(null);'],
+    ['apply', 'paths.resolve.apply(null, []);'],
+    ['bind', 'paths.resolve.bind(null);'],
+    ['optional-call', 'paths.resolve?.();'],
+    ['optional-namespace', 'paths?.resolve();'],
+    ['wrapped', 'const box = { paths: (paths as unknown) };'],
+    ['nested', 'const box = { nested: [{ paths }] };'],
+    ['conditional', 'const box = flag ? paths : {};'],
+    ['logical', 'const box = flag && paths;'],
+    ['sequence', 'const box = (0, paths);'],
+    ['destructure', 'const { resolve } = paths;'],
+    ['spread', 'const box = { ...paths };'],
+    ['return', 'function expose() { return paths; }'],
+    ['export', 'export { paths };'],
+    ['closure', 'const expose = () => paths;'],
+    ['alias', 'const alias = paths;'],
+    ['dynamic', "paths['resolve'] = () => '/different';"],
+    ['unknown-method', 'paths.unknown();'],
+    ['late', 'const box = { paths }; unknownMutator(box);'],
+    ['factory', 'const box = { Process }; unknownMutator(box);'],
+    ['child-namespace', 'const box = { child }; unknownMutator(box);'],
+    ['process', 'const box = { process }; unknownMutator(box);'],
+    ['url-constructor', 'const box = { URL }; unknownMutator(box);'],
+    ['url-namespace', 'const box = { urls }; unknownMutator(box);'],
+  ];
+  for (const [name, capture] of namespaceCases) {
+    const victim = bad(`namespace-${name}`);
+    rejected.push(victim);
+    write(root, victim, 'export const unusedNamespaceVictim = 1;');
+    const cwd =
+      name === 'url-namespace' || name === 'url-constructor' || name === 'url-constructor-alternate'
+        ? "urls.fileURLToPath(new URL('../../../../', import.meta.url))"
+        : 'rootDirectory';
+    const invocation =
+      name === 'process' || name === 'child-namespace'
+        ? `${name === 'process' ? 'Process.make' : 'child.spawn'}(process.execPath, ['${victim}'], { cwd: rootDirectory });`
+        : esbuildInvocation(victim, `{ cwd: ${cwd} }`);
+    write(
+      root,
+      `${shell}/tests/integration/namespace-${name}.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        "import * as urls from 'node:url';",
+        nativeChildNamespaceImport,
+        name === 'late' || name === loaderLateCase ? '' : capture,
+        esbuildRootDeclaration,
+        invocation,
+        name === 'late' || name === loaderLateCase ? capture : '',
+      ].join('\n'),
+    );
+  }
+  const nativeNamespaceInput = bad('valid-native-namespace');
+  const helperNamespaceInput = bad('valid-helper-namespace');
+  for (const victim of [nativeNamespaceInput, helperNamespaceInput]) {
+    write(root, victim, 'console.log("bootstrap side effect"); export const unusedBootstrapExport = 1;');
+  }
+  write(
+    root,
+    `${shell}/tests/integration/valid-namespace.test.ts`,
+    [
+      nativeEffectProcessImport,
+      nativePathImport,
+      "import * as urls from 'node:url';",
+      nativeChildNamespaceImport,
+      "const rootDirectory = paths.join(urls.fileURLToPath(new URL('../../../../', import.meta.url)), '.');",
+      `child.spawn(process.execPath, ['${nativeNamespaceInput}'], { cwd: rootDirectory });`,
+      esbuildInvocation(helperNamespaceInput),
+    ].join('\n'),
+  );
+  const canonicalPositives = [
+    ['named-default', "import { default as paths } from 'node:path';"],
+    ['bare-default', "import paths from 'path';"],
+    ['namespace', "import * as paths from 'node:path';"],
+    ['ordinary-require', `${nativePathImport} function require() { return {}; } require('node:path');`],
+    [
+      'ordinary-loader',
+      `${nativePathImport} import { createRequire as makeLoader } from 'node:module'; const load = makeLoader(import.meta.url); load('@fixture/ordinary');`,
+    ],
+    ['ordinary-dynamic', `${nativePathImport} await import('./ordinary.ts');`],
+    ['ordinary-global-crypto', `${nativePathImport} globalThis.crypto.randomUUID();`],
+    [
+      'local-global-object-shadow',
+      `${nativePathImport} function capture(globalThis) { const box = { globalThis }; } capture({});`,
+    ],
+    ['local-process-shadow', `${nativePathImport} function capture(process) { const box = { process }; } capture({});`],
+
+    [
+      'ordinary-file',
+      `${nativePathImport} import { pathToFileURL as toFile } from 'node:url'; await import(toFile(generatedPath).href);`,
+    ],
+    ['type-only', `${nativePathImport} import type { createRequire } from 'node:module';`],
+  ].map(([name, importSource]) => {
+    const victim = bad(`valid-${name}`);
+    write(root, victim, 'export const unusedBootstrapExport = 1;');
+    write(
+      root,
+      `${shell}/tests/integration/valid-canonical-${name}.test.ts`,
+      [nativeEffectProcessImport, importSource, esbuildRootDeclaration, esbuildInvocation(victim)].join('\n'),
+    );
+    return victim;
+  });
+  return { canonicalPositives, helperNamespaceInput, nativeNamespaceInput, rejected };
+};
+
+it.live(
+  'esbuild subprocess inputs retain exact binding and cwd proof without hiding unused neighbors',
+  Effect.fn(function* esbuildSubprocessConsumers() {
+    const root = yield* fixture();
+    write(
+      root,
+      packageFile,
+      '{"name":"bundle-controls","private":true,"type":"module","workspaces":["apps/*","verticals/*"]}',
+    );
+    const shell = 'apps/bundle-shell';
+    const receiver = 'verticals/bundle-receiver';
+    for (const workspace of [shell, receiver]) {
+      write(
+        root,
+        `${workspace}/package.json`,
+        JSON.stringify({ dependencies: { effect: '*' }, name: `@fixture/${workspace.split('/')[1]}`, type: 'module' }),
+      );
+    }
+    const shellInput = `${shell}/tests/support/shell-http.ts`;
+    const receiverInput = `${receiver}/tests/support/receiver-http.ts`;
+    const immutableInput = `${shell}/tests/support/immutable-alias-http.ts`;
+    const crossInput = `${receiver}/tests/support/cross-http.ts`;
+    const unused = `${shell}/tests/support/never-bundled.ts`;
+    const rejected = [
+      'fake-driver',
+      shadowDriverCase,
+      'mutable-argv',
+      'spliced-argv',
+      'aliased-argv',
+      'aliased-options',
+      'aliased-factory',
+      'member-argv',
+      'member-options',
+      'member-escape',
+      'conditional-alias',
+      'logical-alias',
+      'sequence-alias',
+      'destructured-alias',
+      'nested-computed-alias',
+      'returned-options',
+      'constructor-options',
+      'url-mutation',
+      'url-escape',
+      'captured-path',
+      'captured-cwd',
+      'escaped-argv',
+      mutableCwdCase,
+      unknownCwdCase,
+      'spread-cwd',
+      'fake-path',
+      'fake-url',
+      'wrong-prefix',
+      'wrong-executable',
+      'output-only',
+      'string-only',
+    ].map((name) => `${shell}/tests/support/${name}.ts`);
+    for (const file of [shellInput, receiverInput, crossInput, immutableInput, unused, ...rejected]) {
+      write(root, file, 'console.log("bootstrap side effect"); export const unusedBootstrapExport = 1;');
+    }
+    const bad = (name: string) => `${shell}/tests/support/${name}.ts`;
+    const shellConsumer = `${shell}/tests/integration/consumer.test.ts`;
+    const receiverConsumer = `${receiver}/tests/integration/consumer.test.ts`;
+    write(
+      root,
+      shellConsumer,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        esbuildInvocation(shellInput),
+        esbuildInvocation(crossInput),
+        `const stableArgv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${immutableInput}', '--bundle']; const stableAlias = stableArgv; const stableOptions = { cwd: rootDirectory }; const stableOptionAlias = stableOptions; Process.make('mise', stableAlias, stableOptionAlias);`,
+        `{ const Process = { make() {} }; ${esbuildInvocation(bad('fake-driver'))} }`,
+        `function shadow(Process) { ${esbuildInvocation(bad(shadowDriverCase))} } shadow({ make() {} });`,
+        `const args = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('mutable-argv')}']; args[5] = 'elsewhere.ts'; Process.make('mise', args, { cwd: rootDirectory });`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('spliced-argv')}', '--bundle']; argv.splice(5, 1, '${shellInput}'); Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('aliased-argv')}', '--bundle']; const alias = argv; alias[5] = '${shellInput}'; Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        `{ const options = { cwd: rootDirectory }; const alias = options; alias.cwd = '/different'; ${esbuildInvocation(bad('aliased-options'), 'options')} }`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('escaped-argv')}', '--bundle']; unknownMutator(argv); Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        `{ let cwd = rootDirectory; cwd = '/different'; ${esbuildInvocation(bad(mutableCwdCase), '{ cwd }')} }`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('member-argv')}', '--bundle']; const outer = { argv }; const projected = outer.argv; projected[5] = '${shellInput}'; Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        ...[
+          [
+            'member-options',
+            'const outer = { options }; const projected = outer.options; projected.cwd = "/different";',
+          ],
+          ['member-escape', 'const outer = { options }; const projected = outer.options; unknownMutator(projected);'],
+          ['conditional-alias', 'const projected = condition ? options : {}; unknownMutator(projected);'],
+          ['logical-alias', 'const projected = condition && options; unknownMutator(projected);'],
+          ['sequence-alias', 'const projected = (null, options); projected.cwd = "/different";'],
+          ['destructured-alias', 'const { inner } = { inner: options }; unknownMutator(inner);'],
+          [
+            'nested-computed-alias',
+            'const outer = { inner: { options } }; const projected = outer.inner["options"]; unknownMutator(projected);',
+          ],
+          ['returned-options', 'const escape = () => options; unknownMutator(escape);'],
+          ['constructor-options', 'new UnknownMutator(options);'],
+        ].map(
+          ([name, mutation]) =>
+            `{ const options = { cwd: rootDirectory }; ${mutation} ${esbuildInvocation(bad(name), 'options')} }`,
+        ),
+        `function capturedCwd(directory) { const captured = directory; { const directory = rootDirectory; ${esbuildInvocation(bad('captured-cwd'), '{ cwd: captured }')} } } capturedCwd('/different');`,
+        esbuildInvocation(bad(unknownCwdCase), '{ cwd: missingDirectory }'),
+        esbuildInvocation(bad('spread-cwd'), '{ ...missingOptions }'),
+        `{ const paths = { resolve: () => rootDirectory }; const fakeRoot = paths.resolve(import.meta.dirname); ${esbuildInvocation(bad('fake-path'), '{ cwd: fakeRoot }')} }`,
+        esbuildInvocation(bad('wrong-prefix'), esbuildCwdOptions, "'mise'", "'exec', '--', 'pnpm', 'run', 'esbuild'"),
+        esbuildInvocation(bad('wrong-executable'), esbuildCwdOptions, "'printf'"),
+        `Process.make('mise', ['exec', '--', 'pnpm', 'exec', 'esbuild', '--outfile=${bad('output-only')}'], { cwd: rootDirectory });`,
+        `const documentation = ${JSON.stringify(esbuildInvocation(bad('string-only')))}; void documentation;`,
+      ].join('\n'),
+    );
+    write(
+      root,
+      receiverConsumer,
+      [
+        nativeEffectProcessImport,
+        "import { fileURLToPath as toPath } from 'node:url';",
+        "const rootDirectory = toPath(new URL('../../../../', import.meta.url));",
+        esbuildInvocation(receiverInput),
+        ...[
+          ['url-mutation', 'const projected = address; projected.pathname = "/different";'],
+          ['url-escape', 'unknownMutator(address);'],
+        ].map(
+          ([name, mutation]) =>
+            `{ const address = new URL('../../../../', import.meta.url); ${mutation} ${esbuildInvocation(bad(name), '{ cwd: toPath(address) }')} }`,
+        ),
+        `{ const toPath = () => rootDirectory; const fakeRoot = toPath(new URL('../../../../', import.meta.url)); ${esbuildInvocation(bad('fake-url'), '{ cwd: fakeRoot }')} }`,
+      ].join('\n'),
+    );
+    write(
+      root,
+      `${shell}/tests/integration/mutated-factory.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        'const driverAlias = Process; driverAlias.make = () => {};',
+        esbuildInvocation(bad('aliased-factory')),
+      ].join('\n'),
+    );
+    write(
+      root,
+      `${shell}/tests/integration/captured-path.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        `function capturedPath(fakePaths) { const captured = fakePaths; { const fakePaths = paths; ${esbuildInvocation(bad('captured-path'), "{ cwd: captured.resolve(import.meta.dirname, '..', '..', '..', '..') }")} } } capturedPath({ resolve: () => '/different' });`,
+      ].join('\n'),
+    );
+    const opaqueFixtures = writeOpaqueScopeFixtures(root, shell);
+    rejected.push(...opaqueFixtures.rejected);
+    const namespaceFixtures = writeNamespaceCapabilityFixtures(root, shell);
+    const { helperNamespaceInput, nativeNamespaceInput } = namespaceFixtures;
+    namespaceFixtures.canonicalPositives.push(...opaqueFixtures.preserved);
+    rejected.push(...namespaceFixtures.rejected);
+    const config = {
+      workspaces: {
+        '.': { entry: [], node: false, project: [sourceScriptsPattern] },
+        'apps/*': { entry: ['tests/integration/consumer.test.ts'], node: false, project: ['**/*.ts'] },
+        'verticals/*': { entry: ['tests/integration/consumer.test.ts'], node: false, project: ['**/*.ts'] },
+      },
+    };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, config, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const bundled = model.evidence.filter((fact) => fact.reason.startsWith('Native esbuild subprocess'));
+    for (const [source, target, workspace] of [
+      [shellConsumer, shellInput, shell],
+      [shellConsumer, crossInput, shell],
+      [shellConsumer, immutableInput, shell],
+      [receiverConsumer, receiverInput, receiver],
+    ]) {
+      const proof = bundled.find(
+        (fact) => fact.source === source && path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+      );
+      expect(proof).toMatchObject({ kind: 'file', workspace });
+      expect(proof?.line).toBeGreaterThan(0);
+      expect(proof?.column).toBeGreaterThanOrEqual(0);
+    }
+    for (const target of [nativeNamespaceInput, helperNamespaceInput, ...namespaceFixtures.canonicalPositives]) {
+      expect(
+        model.evidence.some(
+          (fact) => fact.kind === 'file' && path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+        ),
+        target,
+      ).toBe(true);
+    }
+    for (const file of [unused, ...rejected]) {
+      expect(
+        model.evidence.some((fact) => path.resolve(root, fact.workspace, fact.target) === path.join(root, file)),
+        file,
+      ).toBe(false);
+    }
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, run.stderr).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    for (const file of [
+      shellInput,
+      receiverInput,
+      crossInput,
+      immutableInput,
+      nativeNamespaceInput,
+      helperNamespaceInput,
+      ...namespaceFixtures.canonicalPositives,
+    ]) {
+      expect(unusedFiles).not.toContain(file);
+      expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
+        'unusedBootstrapExport',
+      );
+    }
+    for (const file of [unused, ...rejected]) {
+      expect(unusedFiles).toContain(file);
+    }
+
+    // Exercise the exact production-test source syntax without evaluating its modules.
+    const actualShell = 'apps/shell-super-app/tests/integration/auth-runtime.test.ts';
+    const actualReceiver =
+      'verticals/commerce-customer-context/tests/integration/purchase-resolution-permission-plan-postgres.test.ts';
+    for (const [workspace, name] of [
+      ['apps/shell-super-app', '@fixture/actual-shell'],
+      ['verticals/party-registry', '@fixture/actual-party'],
+      ['verticals/commerce-customer-context', '@fixture/actual-receiver'],
+    ]) {
+      write(root, `${workspace}/package.json`, JSON.stringify({ name, type: 'module' }));
+    }
+    for (const file of [actualShell, actualReceiver]) {
+      write(root, file, readFileSync(path.join(appRoot, file), 'utf-8'));
+    }
+    const actualInputs = [
+      'apps/shell-super-app/tests/support/tenant-party-shell-http.ts',
+      'verticals/party-registry/tests/support/tenant-party-http.ts',
+      'verticals/commerce-customer-context/tests/support/purchase-resolution-permission-plan-receiver.fixture.ts',
+    ];
+    for (const file of actualInputs) {
+      write(root, file, 'export const unusedActualExport = 1;');
+    }
+    const actual = yield* buildKnipModel(root, config, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    for (const target of actualInputs) {
+      expect(
+        actual.evidence.some(
+          (fact) =>
+            fact.kind === 'file' &&
+            fact.reason.startsWith('Native esbuild subprocess') &&
+            [actualShell, actualReceiver].includes(fact.source) &&
+            path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+        ),
+      ).toBe(true);
+    }
+  }),
+);
+
 it.live(
   'native subprocess consumers prove working directories and called parameter values without hiding neighbors',
   Effect.fn(function* nativeSubprocessConsumers() {
@@ -571,13 +1210,13 @@ it.live(
     const invalidFiles = [
       'data',
       'local-driver',
-      'shadow-driver',
+      shadowDriverCase,
       'destructured-driver',
       'foreign-executable',
       'eval',
       'fake-path',
       'mutable-path',
-      'unknown-cwd',
+      unknownCwdCase,
       'spread-options',
       'factory-options',
       'dynamic-member',
@@ -595,17 +1234,17 @@ it.live(
       `${shell}/tests/consumer.ts`,
       [
         "import { spawn as execute } from 'node:child_process';",
-        "import * as child from 'node:child_process';",
-        "import paths from 'node:path';",
+        nativeChildNamespaceImport,
+        nativePathImport,
         "execute(process.execPath, ['--experimental-strip-types', paths.resolve('../../scripts/native.fixture.mts'), paths.resolve('../../scripts/data.fixture.mts')], { stdio: 'pipe' });",
         `{ const execute = () => {}; ${nativeInvocation('local-driver')} }`,
-        `function shadow(execute) { ${nativeInvocation('shadow-driver')} } shadow(() => {});`,
+        `function shadow(execute) { ${nativeInvocation(shadowDriverCase)} } shadow(() => {});`,
         `function destructured({ execute }) { ${nativeInvocation('destructured-driver')} } destructured({ execute: () => {} });`,
         nativeInvocation('foreign-executable', "'/usr/bin/printf'"),
         `execute(process.execPath, ['-e', ${scriptArgument('eval')}]);`,
         `{ const paths = { resolve: (value) => value }; ${nativeInvocation('fake-path')} }`,
         "{ let target = '../../scripts/mutable-path.fixture.mts'; const alias = target; target = 'elsewhere.mts'; execute(process.execPath, [paths.resolve(alias)]); }",
-        nativeInvocation('unknown-cwd', nodeExecutableExpression, '{ cwd: unknownDirectory }'),
+        nativeInvocation(unknownCwdCase, nodeExecutableExpression, '{ cwd: unknownDirectory }'),
         nativeInvocation('spread-options', nodeExecutableExpression, '{ ...unknownOptions }'),
         nativeInvocation('factory-options', nodeExecutableExpression, 'unknownFactory({})'),
         `{ const method = 'spawn'; child[method](process.execPath, [${scriptArgument('dynamic-member')}]); }`,
@@ -620,7 +1259,7 @@ it.live(
       root,
       `${core}/tests/unit/consumer.test.ts`,
       [
-        "import { ChildProcess as Process } from 'effect/process';",
+        nativeEffectProcessImport,
         "const start = (signal, file = 'tests/fixtures/worker.fixture.ts') => (() => Process.make(process.execPath, ['--experimental-strip-types', file], { cwd: new URL('../..', import.meta.url).pathname }))();",
         "const assertStopped = (signal, file = 'tests/fixtures/worker.fixture.ts') => start(signal, file);",
         "assertStopped('SIGTERM'); assertStopped('SIGINT', 'tests/fixtures/override.fixture.ts');",
@@ -631,7 +1270,7 @@ it.live(
       root,
       {
         workspaces: {
-          '.': { entry: [], node: false, project: ['scripts/**/*.mts'] },
+          '.': { entry: [], node: false, project: [sourceScriptsPattern] },
           'apps/*': { entry: ['tests/consumer.ts'], node: false, project: ['**/*.ts'] },
           'packages/*': { entry: ['tests/unit/consumer.test.ts'], node: false, project: ['**/*.ts'] },
         },
@@ -676,7 +1315,7 @@ it.live(
       root,
       {
         workspaces: {
-          '.': { entry: [], node: false, project: ['scripts/**/*.mts'] },
+          '.': { entry: [], node: false, project: [sourceScriptsPattern] },
           'apps/*': { entry: ['tests/integration/module-api-node-process.test.ts'], node: false, project: ['**/*.ts'] },
           'packages/*': { entry: ['tests/unit/outbox-process.test.ts'], node: false, project: ['**/*.ts'] },
         },

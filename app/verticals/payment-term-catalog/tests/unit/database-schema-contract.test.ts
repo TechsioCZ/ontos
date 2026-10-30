@@ -1,7 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Migration contract reads checked-in Payment Term Catalog SQL; expires: 2027-03-31.
+import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Order } from 'effect';
 import {
+  gatewayAssertionRedemptions,
   PAYMENT_TERM_CATALOG_SCHEMA_NAME,
   PAYMENT_TERM_CATALOG_TABLE_INVENTORY,
   PAYMENT_TERM_CATALOG_TABLES,
@@ -24,6 +27,7 @@ it('owns the exact Payment Term Catalog in one legal-entity-scoped schema', () =
 
   expect(PAYMENT_TERM_CATALOG_SCHEMA_NAME).toBe('payment_term_catalog');
   expect(PAYMENT_TERM_CATALOG_TABLE_INVENTORY).toEqual([
+    'gateway_assertion_redemptions',
     'payment_term_aliases',
     'payment_term_lifecycle_events',
     'payment_term_revisions',
@@ -56,7 +60,8 @@ it('stores source-record high-water state and accepted lineage without exposing 
 });
 
 it('forces every governed table through tenant and legal-entity policy dimensions', () => {
-  for (const table of PAYMENT_TERM_CATALOG_TABLES) {
+  // The replay-identity table is global pre-authentication state and intentionally has no Tenant column or RLS.
+  for (const table of PAYMENT_TERM_CATALOG_TABLES.filter((candidate) => candidate !== gatewayAssertionRedemptions)) {
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -66,6 +71,20 @@ it('forces every governed table through tenant and legal-entity policy dimension
       expect(policy.to).toBe('ontos_runtime');
     }
   }
+});
+
+it('keeps gateway assertion replay identities global, unique and runtime-limited to select, insert and delete', () => {
+  const config = getTableConfig(gatewayAssertionRedemptions);
+  expect(config.enableRLS).toBe(false);
+  expect(config.columns.some((column) => column.name === 'tenant_id')).toBe(false);
+  const migration = readFileSync(
+    new URL('../../drizzle/20261021175815_gateway_assertion_redemption/migration.sql', import.meta.url),
+    'utf-8',
+  );
+  expect(migration).toContain('UNIQUE("issuer","audience","jti")');
+  expect(migration).toContain(
+    'GRANT SELECT, INSERT, DELETE ON TABLE "payment_term_catalog"."gateway_assertion_redemptions" TO ontos_runtime',
+  );
 });
 
 it('stores only the approved typed semantic kinds and immutable revision identity', () => {

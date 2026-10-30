@@ -1,0 +1,33 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/packages__commerce-cart-finalization-contracts",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__commerce-cart-finalization-contracts.tsbuildinfo",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../commerce-cart-contracts"
+    },
+    {
+      "path": "../core-runtime"
+    },
+    {
+      "path": "../pricing-contracts"
+    },
+    {
+      "path": "../shared-contracts"
+    }
+  ]
+}

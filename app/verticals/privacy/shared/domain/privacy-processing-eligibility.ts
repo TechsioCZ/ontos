@@ -29,6 +29,7 @@ const PrivacyEligibilityDecisionOutcomeSchema = Schema.Literals(['ALLOWED', 'NOT
 
 const privacyApplicabilityAuthorityEquivalent = Schema.toEquivalence(PrivacyApplicabilityAuthoritySchema);
 const privacyApplicabilityScopeEquivalent = Schema.toEquivalence(PrivacyApplicabilityScopeSchema);
+const privacySubjectRefEquivalent = Schema.toEquivalence(PrivacySubjectRefSchema);
 
 /** The complete business identity of the use being checked. Ambient request context is never added. */
 export const IntendedProcessingScopeSchema = Schema.Struct({
@@ -651,6 +652,8 @@ const consentMatchesScope = (input: ResolvePrivacyEligibilityInputsInput): boole
     return false;
   }
   return (
+    input.consent.scope.privacySubjectRef.tenantId === input.tenantId &&
+    privacySubjectRefEquivalent(input.consent.scope.privacySubjectRef, input.intendedScope.subjectRef) &&
     input.consent.scope.controllerRef === input.intendedScope.controllerRef &&
     input.consent.scope.scopeRef === input.intendedScope.processingScopeRef.scopeId &&
     input.consent.scope.processingPurposeRef.resourceId === input.intendedScope.purposeRef &&
@@ -660,6 +663,9 @@ const consentMatchesScope = (input: ResolvePrivacyEligibilityInputsInput): boole
 
 const resolveConsentInput = (input: ResolvePrivacyEligibilityInputsInput): PrivacyInputResolution => {
   if (input.consent === null) {
+    if (input.consentCurrentness !== null && !input.consentCurrentness.authoritative) {
+      return currentness(input.consentCurrentness, input.asOf);
+    }
     return absent('consent_absent', input.asOf);
   }
   return consentMatchesScope(input)

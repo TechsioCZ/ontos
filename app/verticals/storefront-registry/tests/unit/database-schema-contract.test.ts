@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'effect-rstest';
 import {
+  gatewayAssertionRedemptions,
   STOREFRONT_REGISTRY_SCHEMA_NAME,
   STOREFRONT_REGISTRY_TABLE_INVENTORY,
   STOREFRONT_REGISTRY_TABLES,
@@ -20,11 +21,29 @@ describe('Storefront Registry database contract', () => {
     expect(qualified).toEqual(
       STOREFRONT_REGISTRY_TABLE_INVENTORY.map((name) => `storefront_registry.${name}`).toSorted(),
     );
-    for (const table of STOREFRONT_REGISTRY_TABLES) {
+    // The replay-identity table is global pre-authentication state and intentionally has no Tenant column or RLS.
+    for (const table of STOREFRONT_REGISTRY_TABLES.filter((candidate) => candidate !== gatewayAssertionRedemptions)) {
       const config = getTableConfig(table);
       expect(config.enableRLS).toBe(true);
       expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
     }
+  });
+
+  it('keeps gateway assertion replay identities global, unique and runtime-limited to select, insert and delete', () => {
+    const config = getTableConfig(gatewayAssertionRedemptions);
+    expect(config.enableRLS).toBe(false);
+    expect(config.columns.some(({ name }) => name === 'tenant_id')).toBe(false);
+    const migration = readFileSync(
+      new URL('../../drizzle/20261021175811_gateway_assertion_redemption/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    expect(migration).toContain('UNIQUE("issuer","audience","jti")');
+    expect(migration).toContain(
+      'REVOKE ALL ON TABLE "storefront_registry"."gateway_assertion_redemptions" FROM PUBLIC, ontos_runtime',
+    );
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, DELETE ON TABLE "storefront_registry"."gateway_assertion_redemptions" TO ontos_runtime',
+    );
   });
 
   it('enforces tenant application identity, immutable revision numbering, lifecycle, channels, and intervals', () => {

@@ -1,11 +1,19 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import type { SetComponentCurrentProof } from '../../shared/domain/set-component-validation.ts';
 import { validateSetComponents } from '../../shared/domain/set-component-validation.ts';
 import type { CatalogRevisionInstant } from '../../shared/domain/catalog-revision-reference.ts';
-import type { CatalogSelection, CatalogSelectionRevision } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionBasisSchema, setComponentIdSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { productSelectionTypeValueAxisBasisForScope } from './product-type-readiness-source.ts';
+import type {
+  CatalogSelectionBasis,
+  CatalogSelection,
+  CatalogSelectionRevision,
+} from '../../shared/domain/catalog-selection-evidence.ts';
 import type { ConfigurationUnitRevision } from '../../shared/domain/configuration-unit.ts';
 import type { SetComponent, SetCompositionRevision } from '../../shared/domain/set-composition.ts';
 import { productVariants, products, setCompositions } from '../database/schema.ts';
@@ -18,19 +26,29 @@ const packageDefinitionType = 'commerce.catalog.package-definition';
 
 export interface SetComponentDependencyRevision {
   readonly componentId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly revision: number;
-  readonly role:
-    | 'PRODUCT'
-    | 'VARIANT'
-    | 'UNIT_RULE'
-    | 'UNIT_TARGET_DIVISIBILITY'
-    | 'PACKAGE_CONTENT'
-    | 'PACKAGE_OPTION_ROLE'
-    | 'CONFIGURATION_DEFINITION'
-    | 'UNIT';
+  readonly fact: CatalogSelectionBasis;
 }
+const componentDependenciesSchema = Schema.Array(
+  Schema.Struct({
+    componentId: setComponentIdSchema,
+    fact: CatalogSelectionBasisSchema,
+  }),
+);
+
+const dependency = (
+  componentId: string,
+  role: CatalogSelectionBasis['role'],
+  resourceId: string,
+  resourceType: string,
+  revision: number,
+  tenantId: string,
+) => ({
+  componentId,
+  fact: {
+    role,
+    source: { resourceRef: { moduleId: 'commerce.catalog', resourceId, resourceType, tenantId }, revision },
+  },
+});
 
 const unavailable = (cause: unknown) => {
   const error = new SetCompositionPersistenceUnavailable({
@@ -47,8 +65,7 @@ const exactConfigurationHeader = (
 ): boolean =>
   assessment.definitionId === configuration.definition.resourceRef.resourceId &&
   assessment.definitionRevision === configuration.definition.revision &&
-  configuration.definition.revisionId === undefined &&
-  assessment.choiceRevisions.length === configuration.choices.length;
+  configuration.definition.revisionId === undefined;
 
 const matchingConfigurationUnit = (
   selected: CatalogSelectionRevision,
@@ -85,19 +102,28 @@ export const setComponentConfigurationDependencies = (
   if (assessment?.status !== 'VALID' || !exactConfigurationHeader(configuration, assessment)) {
     return unproven('CONFIGURATION_PROOF_INCOMPLETE');
   }
-  const dependencies: SetComponentDependencyRevision[] = [
-    {
+  const dependencies = [
+    dependency(
       componentId,
-      resourceId: configuration.definition.resourceRef.resourceId,
-      resourceType: configuration.definition.resourceRef.resourceType,
-      revision: configuration.definition.revision,
-      role: 'CONFIGURATION_DEFINITION',
-    },
+      'CONFIGURATION_DEFINITION',
+      configuration.definition.resourceRef.resourceId,
+      configuration.definition.resourceRef.resourceType,
+      configuration.definition.revision,
+      selection.productRef.tenantId,
+    ),
   ];
   const choicesByKey = new Map(assessment.choiceRevisions.map((choice) => [choice.choiceKey, choice]));
-  const unitsById = new Map(assessment.unitRevisions.map((unit) => [unit.ref.resourceId, unit]));
-  if (choicesByKey.size !== assessment.choiceRevisions.length || unitsById.size !== assessment.unitRevisions.length) {
+  if (choicesByKey.size !== assessment.choiceRevisions.length) {
     return unproven('CONFIGURATION_PROOF_CONFLICT');
+  }
+  const unitsById = new Map<string, ConfigurationUnitRevision>();
+  for (const unit of assessment.unitRevisions) {
+    const prior = unitsById.get(unit.ref.resourceId);
+    // Several definition choices may attest the same Unit, but never conflicting owner material.
+    if (prior !== undefined && !isDeepStrictEqual(prior, unit)) {
+      return unproven('CONFIGURATION_PROOF_CONFLICT');
+    }
+    unitsById.set(unit.ref.resourceId, unit);
   }
   for (const choice of configuration.choices) {
     const proven = choicesByKey.get(choice.choiceKey);
@@ -119,17 +145,27 @@ export const setComponentConfigurationDependencies = (
     if (ownerUnit === undefined) {
       return unproven('CONFIGURATION_UNIT_UNPROVEN');
     }
-    if (!dependencies.some((item) => item.role === 'UNIT' && item.resourceId === ownerUnit.ref.resourceId)) {
-      dependencies.push({
-        componentId,
-        resourceId: ownerUnit.ref.resourceId,
-        resourceType: ownerUnit.ref.resourceType,
-        revision: ownerUnit.revision,
-        role: 'UNIT',
-      });
+    if (
+      !dependencies.some(
+        (item) => item.fact.role === 'UNIT' && item.fact.source.resourceRef.resourceId === ownerUnit.ref.resourceId,
+      )
+    ) {
+      dependencies.push(
+        dependency(
+          componentId,
+          'UNIT',
+          ownerUnit.ref.resourceId,
+          ownerUnit.ref.resourceType,
+          ownerUnit.revision,
+          ownerUnit.ref.tenantId,
+        ),
+      );
     }
   }
-  return { dependencies, status: 'PROVEN' };
+  const decoded = Schema.decodeUnknownOption(componentDependenciesSchema)(dependencies);
+  return Option.isNone(decoded)
+    ? unproven('CONFIGURATION_PROOF_INCOMPLETE')
+    : { dependencies: decoded.value, status: 'PROVEN' };
 };
 
 const readComponent = Effect.fn('SetCompositionComponentCurrentBasis.readComponent')(function* readComponent(
@@ -191,6 +227,13 @@ const readComponent = Effect.fn('SetCompositionComponentCurrentBasis.readCompone
   if (configuration.status !== 'PROVEN') {
     return configuration;
   }
+  const closure = yield* productSelectionTypeValueAxisBasisForScope(transaction, scope).read(
+    selection,
+    DateTime.fromDateUnsafe(at),
+  );
+  if (closure.reason !== null) {
+    return { code: 'COMPONENT_TYPE_VALUE_AXIS_UNVERIFIABLE', componentId, status: closure.status };
+  }
   const crypto = yield* Crypto.Crypto;
   const proof: SetComponentCurrentProof = {
     assessedAt,
@@ -210,54 +253,68 @@ const readComponent = Effect.fn('SetCompositionComponentCurrentBasis.readCompone
   if (selection.packageOption !== undefined) {
     Object.assign(proof, { packageLifecycle: 'ACTIVE', packageProductRef: selection.productRef });
   }
-  const dependencies: SetComponentDependencyRevision[] = [
-    {
+  const dependencies = [
+    dependency(
       componentId,
-      resourceId: componentProductId,
-      resourceType: 'commerce.catalog.product',
-      revision: current.productRevision,
-      role: 'PRODUCT',
-    },
-    {
+      'PRODUCT',
+      componentProductId,
+      'commerce.catalog.product',
+      current.productRevision,
+      scope.tenantId,
+    ),
+    dependency(
       componentId,
-      resourceId: selection.variantRef.resourceId,
-      resourceType: 'commerce.catalog.variant',
-      revision: current.variantRevision,
-      role: 'VARIANT',
-    },
-    {
+      'VARIANT',
+      selection.variantRef.resourceId,
+      'commerce.catalog.variant',
+      current.variantRevision,
+      scope.tenantId,
+    ),
+    dependency(
       componentId,
-      resourceId: current.unit.id,
-      resourceType: 'commerce.catalog.product-unit',
-      revision: current.unit.ruleRevision,
-      role: 'UNIT_RULE',
-    },
-    {
+      'UNIT_RULE',
+      current.unit.id,
+      'commerce.catalog.product-unit',
+      current.unit.ruleRevision,
+      scope.tenantId,
+    ),
+    dependency(
       componentId,
-      resourceId: selection.packageOption?.optionRef.resourceId ?? selection.variantRef.resourceId,
-      resourceType: selection.packageOption === undefined ? 'commerce.catalog.variant' : packageDefinitionType,
-      revision: current.unit.targetDivisibilityRevision,
-      role: 'UNIT_TARGET_DIVISIBILITY',
-    },
-    ...current.contentPath.map((step) => ({
-      componentId,
-      resourceId: step.packageDefinitionId,
-      resourceType: packageDefinitionType,
-      revision: step.revision,
-      role: 'PACKAGE_CONTENT' as const,
-    })),
+      'UNIT_TARGET_DIVISIBILITY',
+      selection.packageOption?.optionRef.resourceId ?? selection.variantRef.resourceId,
+      selection.packageOption === undefined ? 'commerce.catalog.variant' : packageDefinitionType,
+      current.unit.targetDivisibilityRevision,
+      scope.tenantId,
+    ),
+    ...current.contentPath.map((step) =>
+      dependency(
+        componentId,
+        'PACKAGE_CONTENT',
+        step.packageDefinitionId,
+        packageDefinitionType,
+        step.revision,
+        scope.tenantId,
+      ),
+    ),
     ...configuration.dependencies,
+    ...closure.basis.map((fact) => ({ componentId, fact })),
   ];
   if (selection.packageOption !== undefined && current.optionRevision !== undefined) {
-    dependencies.push({
-      componentId,
-      resourceId: selection.packageOption.optionRef.resourceId,
-      resourceType: packageDefinitionType,
-      revision: current.optionRevision,
-      role: 'PACKAGE_OPTION_ROLE',
-    });
+    dependencies.push(
+      dependency(
+        componentId,
+        'PACKAGE_OPTION_ROLE',
+        selection.packageOption.optionRef.resourceId,
+        packageDefinitionType,
+        current.optionRevision,
+        scope.tenantId,
+      ),
+    );
   }
-  return { dependencies, proof, status: 'PROVEN' as const };
+  const decoded = Schema.decodeUnknownOption(componentDependenciesSchema)(dependencies);
+  return Option.isNone(decoded)
+    ? { code: 'COMPONENT_DEPENDENCY_UNVERIFIABLE', componentId, status: 'INDETERMINATE' as const }
+    : { dependencies: decoded.value, proof, status: 'PROVEN' as const };
 });
 
 /** All reads share Core's tenant-scoped transaction and one assessment instant. */

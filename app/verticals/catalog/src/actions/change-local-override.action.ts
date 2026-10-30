@@ -58,6 +58,7 @@ const handleChangeLocalOverride = Effect.fn('ChangeLocalOverrideAction.handle')(
         createChangeLocalOverrideCommerceCatalogSelectionSourceChangedV1OutboxMessage,
       ),
       principalId: context.scope.principalId,
+      recordDataAccess: context.recordDataAccess,
     })
     .change({ ...payload, at, principalId: context.scope.principalId });
   yield* context.recordAuditEvidence({ evidenceRefs: [payload.evidenceRef], reason: payload.reason });

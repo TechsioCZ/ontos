@@ -66,6 +66,7 @@ import { stockSharingEligibilityResolutionReadApiLive } from './stock-sharing-el
 
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { inventoryApi, inventoryOperationContexts } from '../shared/api.ts';
+import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../src/persistence/import-source-assertion-owner-authorization.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
 const inventoryReadinessLayer = HttpApiBuilder.group(inventoryApi, 'foundation', (handlers) =>
@@ -116,6 +117,7 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
+      importSourceAssertionOwnerAuthorizationOverlayLive,
       ContextAccessLive,
       moduleStateGateLive,
       moduleEntrypointGatewayLive,

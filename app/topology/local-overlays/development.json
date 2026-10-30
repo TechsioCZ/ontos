@@ -13,7 +13,9 @@
     "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json",
     "tax": "http://localhost:4112/.well-known/ontos-module-manifest.json",
     "privacy": "http://localhost:4113/.well-known/ontos-module-manifest.json",
-    "projects": "http://localhost:4114/.well-known/ontos-module-manifest.json"
+    "projects": "http://localhost:4114/.well-known/ontos-module-manifest.json",
+    "commerce-cart": "http://localhost:4115/.well-known/ontos-module-manifest.json",
+    "commerce-order": "http://localhost:4116/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -33,7 +35,9 @@
     "availability": 4111,
     "tax": 4112,
     "privacy": 4113,
-    "projects": 4114
+    "projects": 4114,
+    "commerce-cart": 4115,
+    "commerce-order": 4116
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -753,6 +757,102 @@
           "buildMarker": "73f9b5b664d77c6a"
         }
       }
+    },
+    "commerce-cart": {
+      "apiBaseUrl": "http://localhost:4115/commerce-cart-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/commerce-cart",
+        "buildMarker": "e6215fce3998f57e"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-commerce-cart",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CART",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_COMMERCE_CART_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_COMMERCE_CART_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_COMMERCE_CART_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_COMMERCE_CART_WORKER",
+          "serviceBindingEnv": "VERTICAL_COMMERCE_CART_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_COMMERCE_CART_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_CART_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalCommerceCartBackend",
+        "manifestEnv": "VERTICAL_COMMERCE_CART_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4115/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4115/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/commerce-cart",
+          "buildMarker": "e6215fce3998f57e"
+        }
+      }
+    },
+    "commerce-order": {
+      "apiBaseUrl": "http://localhost:4116/commerce-order-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/commerce-order",
+        "buildMarker": "3cb1b0536553a70f"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-commerce-order",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_COMMERCE_ORDER_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_COMMERCE_ORDER_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_COMMERCE_ORDER_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_COMMERCE_ORDER_WORKER",
+          "serviceBindingEnv": "VERTICAL_COMMERCE_ORDER_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_COMMERCE_ORDER_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_ORDER_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalCommerceOrderBackend",
+        "manifestEnv": "VERTICAL_COMMERCE_ORDER_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4116/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4116/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/commerce-order",
+          "buildMarker": "3cb1b0536553a70f"
+        }
+      }
     }
   },
   "apis": {
@@ -769,6 +869,8 @@
     "availability": "http://localhost:4111/availability-api",
     "tax": "http://localhost:4112/tax-api",
     "privacy": "http://localhost:4113/privacy-api",
-    "projects": "http://localhost:4114/projects-api"
+    "projects": "http://localhost:4114/projects-api",
+    "commerce-cart": "http://localhost:4115/commerce-cart-api",
+    "commerce-order": "http://localhost:4116/commerce-order-api"
   }
 }

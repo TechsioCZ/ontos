@@ -36,7 +36,7 @@ const EndContactPointErrorSchema = Schema.Union([
 
 const ContactPointEndedEventSchema = Schema.Struct({
   contactPointRef: PartyContactPointSchema.fields.contactPointRef,
-  effectiveEnd: ContactPointTimestampSchema,
+  effectiveEnd: Schema.toEncoded(ContactPointTimestampSchema),
   partyRef: PartyContactPointSchema.fields.partyRef,
   revision: Schema.Finite,
 });
@@ -63,7 +63,7 @@ type EndError =
   | PartyContactPointNotFound
   | PartyContactPointPersistenceUnavailable;
 
-interface Services {
+export interface Services {
   readonly end: (
     command: EndContactPointCommand,
   ) => Effect.Effect<Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>, EndError>;
@@ -92,7 +92,7 @@ const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactP
     eventType: 'party.registry.contact-point-ended.v1',
     payloadJson: {
       contactPointRef: contactPoint.contactPointRef,
-      effectiveEnd: payload.effectiveEnd,
+      effectiveEnd: DateTime.formatIso(payload.effectiveEnd),
       partyRef: contactPoint.partyRef,
       revision: contactPoint.revision,
     },
@@ -144,7 +144,7 @@ export const endContactPointAction = defineAction(
   },
   handleEndContactPoint,
   (transaction, scope) =>
-    Effect.succeed({
+    Effect.succeed<Services>({
       end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),
     }),
 );

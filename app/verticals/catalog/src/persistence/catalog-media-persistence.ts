@@ -237,22 +237,6 @@ export const catalogMediaPersistenceForScope = (
     revision: number,
     input: Evidence,
   ) {
-    const changed = rows.filter((row, index) => row.position !== index + 1);
-    yield* Effect.forEach(
-      changed,
-      (row) =>
-        transaction
-          .update(catalogMediaAssignments)
-          .set({ state: 'REMOVED' })
-          .where(
-            and(
-              eq(catalogMediaAssignments.tenantId, tenantId),
-              eq(catalogMediaAssignments.assignmentId, row.assignmentId),
-            ),
-          )
-          .pipe(Effect.mapError(unavailable)),
-      { concurrency: 1, discard: true },
-    );
     yield* Effect.forEach(
       rows,
       (row, index) => (row.position === index + 1 ? Effect.void : updateRow(row, index + 1, 'ACTIVE', revision, input)),
@@ -342,23 +326,8 @@ export const catalogMediaPersistenceForScope = (
         return { _tag: 'invalid_change' };
       }
       const revision = prepared.set === undefined ? 1 : yield* incrementSet(set, input);
-      // Park shifted rows outside the partial active-position index, then restore final positions.
+      // Final uniqueness settles at commit; each changed assignment records one truthful revision.
       const shifted = active.slice(input.order - 1);
-      yield* Effect.forEach(
-        shifted,
-        (row) =>
-          transaction
-            .update(catalogMediaAssignments)
-            .set({ state: 'REMOVED' })
-            .where(
-              and(
-                eq(catalogMediaAssignments.tenantId, tenantId),
-                eq(catalogMediaAssignments.assignmentId, row.assignmentId),
-              ),
-            )
-            .pipe(Effect.mapError(unavailable)),
-        { concurrency: 1, discard: true },
-      );
       const [created] = yield* transaction
         .insert(catalogMediaAssignments)
         .values({

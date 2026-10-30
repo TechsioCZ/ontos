@@ -52,6 +52,9 @@
  *   action collector/events/context modules): the audit evidence envelope and outbox payload are
  *   genuinely shape-free by design, and their `Schema.decodeUnknownEffect(Schema.Json)` calls are
  *   already the correct Effect-native form.
+ * - **Opaque JSON key ordering**: a local record partition used only to guard a typed JSON-to-JSON
+ *   traversal with array mapping, record entry sorting, and recursive value mapping. Named fields,
+ *   literal selectors, filters, mutation, unknown input, and other codec consumers remain reported.
  * - **Test files** (`ignoreTestFiles`, default `true`): fixtures build deliberately malformed JSON
  *   documents to prove rejection (D tier), and the audit blesses "several tests already decode
  *   responses through Schema".
@@ -71,7 +74,7 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { unwrapNode } from '../shared/ast.ts';
-import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { isUnshadowedGlobal, lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { collectSchemaLocals, importedName } from '../shared/imports.ts';
 import { booleanOption as boolean, optionRecord, stringArray } from '../shared/options.ts';
@@ -464,6 +467,232 @@ export const rule = defineRule({
       return resolvesToImport(context, expression) ? expression.name : null;
     };
 
+    /** A generic JSON-to-JSON key ordering pass is not an authoritative document reader.
+     * Keep this proof lexical and closed: no named fields, literal selectors, filtering,
+     * arbitrary calls, mutation, or untyped input. A nearby document walk still reports.
+     */
+
+    const isJsonAnnotation = (annotation: ESTree.Node | null | undefined): boolean => {
+      if (annotation?.type !== 'TSTypeAnnotation') return false;
+      const type = annotation.typeAnnotation;
+      return (
+        type.type === 'TSTypeReference' &&
+        type.typeName.type === 'TSQualifiedName' &&
+        schemaReference(type.typeName.left) === '@schema' &&
+        jsonMembers.has(type.typeName.right.name)
+      );
+    };
+
+    const sameBinding = (left: ESTree.Node | null | undefined, right: ESTree.Node): boolean =>
+      left?.type === 'Identifier' &&
+      right.type === 'Identifier' &&
+      lookupVariable(context, left) !== null &&
+      lookupVariable(context, left) === lookupVariable(context, right);
+
+    const constantValue = (node: ESTree.Node | undefined): ESTree.Node | null => {
+      if (node?.type !== 'Identifier') return null;
+      const definition = lookupVariable(context, node)?.defs.find((entry) => entry.type === 'Variable');
+      return definition ? (constantInitializer(definition)?.init ?? null) : null;
+    };
+
+    const methodCall = (node: ESTree.Node | null | undefined, name: string): ESTree.CallExpression | null =>
+      node?.type === 'CallExpression' &&
+      !node.optional &&
+      node.callee.type === 'MemberExpression' &&
+      !node.callee.computed &&
+      !node.callee.optional &&
+      node.callee.property.type === 'Identifier' &&
+      node.callee.property.name === name
+        ? node
+        : null;
+
+    const receiver = (call: ESTree.CallExpression | null): ESTree.Node | null =>
+      call?.callee.type === 'MemberExpression' ? call.callee.object : null;
+
+    const nativeCall = (
+      node: ESTree.Node | null | undefined,
+      host: string,
+      name: string,
+    ): ESTree.CallExpression | null => {
+      const call = methodCall(node, name);
+      const object = receiver(call);
+      return object && isUnshadowedGlobal(context, object, host) ? call : null;
+    };
+
+    const returnedValue = (node: ESTree.Node | null | undefined): ESTree.Node | null => {
+      if (node?.type === 'ReturnStatement') return node.argument;
+      if (node?.type !== 'BlockStatement' || node.body.length !== 1 || node.body[0].type !== 'ReturnStatement')
+        return null;
+      return node.body[0].argument;
+    };
+
+    const comparesKeys = (node: ESTree.Node, operator: '<' | '>', left: ESTree.Node, right: ESTree.Node): boolean =>
+      node.type === 'BinaryExpression' &&
+      node.operator === operator &&
+      sameBinding(node.left, left) &&
+      sameBinding(node.right, right);
+
+    const numericResult = (node: ESTree.Node | null | undefined, value: number): boolean =>
+      node?.type === 'Literal'
+        ? node.value === value
+        : value === -1 &&
+          node?.type === 'UnaryExpression' &&
+          node.operator === '-' &&
+          node.argument.type === 'Literal' &&
+          node.argument.value === 1;
+
+    // Prove the comparator itself. An imported callable or a local function with any
+    // other statement could inspect/mutate record values and must remain a finding.
+    const isKeyComparator = (node: ESTree.Node | undefined): boolean => {
+      const fn = constantValue(node);
+      if (fn?.type !== 'ArrowFunctionExpression' || fn.async || fn.params.length !== 2) return false;
+      const [leftTuple, rightTuple] = fn.params;
+      if (
+        leftTuple.type !== 'ArrayPattern' ||
+        rightTuple.type !== 'ArrayPattern' ||
+        leftTuple.elements.length !== 1 ||
+        rightTuple.elements.length !== 1
+      )
+        return false;
+      const [left] = leftTuple.elements;
+      const [right] = rightTuple.elements;
+      if (left?.type !== 'Identifier' || right?.type !== 'Identifier') return false;
+      let tail: ESTree.Node | null = fn.body;
+      if (fn.body.type === 'BlockStatement') {
+        if (fn.body.body.length !== 2) return false;
+        const [first, last] = fn.body.body;
+        if (
+          first.type !== 'IfStatement' ||
+          first.alternate !== null ||
+          !comparesKeys(first.test, '<', left, right) ||
+          !numericResult(returnedValue(first.consequent), -1)
+        )
+          return false;
+        tail = returnedValue(last);
+      } else {
+        if (
+          fn.body.type !== 'ConditionalExpression' ||
+          !comparesKeys(fn.body.test, '<', left, right) ||
+          !numericResult(fn.body.consequent, -1)
+        )
+          return false;
+        tail = fn.body.alternate;
+      }
+      return (
+        tail?.type === 'ConditionalExpression' &&
+        comparesKeys(tail.test, '>', left, right) &&
+        numericResult(tail.consequent, 1) &&
+        numericResult(tail.alternate, 0)
+      );
+    };
+
+    const preservesEntry = (node: ESTree.Node | undefined, self: ESTree.Node): boolean => {
+      if (
+        node?.type !== 'ArrowFunctionExpression' ||
+        node.async ||
+        node.params.length !== 1 ||
+        node.body.type !== 'ArrayExpression' ||
+        node.body.elements.length !== 2
+      )
+        return false;
+      const [tuple] = node.params;
+      if (tuple.type !== 'ArrayPattern' || tuple.elements.length !== 2) return false;
+      const [keyBinding, valueBinding] = tuple.elements;
+      if (keyBinding?.type !== 'Identifier' || valueBinding?.type !== 'Identifier') return false;
+      const [key, nested] = node.body.elements;
+      return (
+        sameBinding(key, keyBinding) &&
+        nested?.type === 'CallExpression' &&
+        !nested.optional &&
+        sameBinding(nested.callee, self) &&
+        nested.arguments.length === 1 &&
+        sameBinding(nested.arguments[0], valueBinding)
+      );
+    };
+
+    const preservesRecord = (node: ESTree.Node | null, value: ESTree.Node, self: ESTree.Node): boolean => {
+      const fromEntries = nativeCall(node, 'Object', 'fromEntries');
+      if (!fromEntries || fromEntries.arguments.length !== 1) return false;
+      const map = methodCall(fromEntries.arguments[0], 'map');
+      if (!map || map.arguments.length !== 1 || !preservesEntry(map.arguments[0], self)) return false;
+      const sort = methodCall(receiver(map), 'toSorted');
+      if (!sort || sort.arguments.length !== 1 || !isKeyComparator(sort.arguments[0])) return false;
+      const entries = nativeCall(receiver(sort), 'Object', 'entries');
+      return entries !== null && entries.arguments.length === 1 && sameBinding(entries.arguments[0], value);
+    };
+
+    const isOpaqueOrderingGuard = (codec: ESTree.Node | null | undefined): boolean => {
+      if (codec?.type !== 'CallExpression' || schemaReference(codec.callee) !== 'is' || codec.arguments.length !== 1)
+        return false;
+      const record = constantValue(codec.arguments[0]) ?? codec.arguments[0];
+      if (
+        record.type !== 'CallExpression' ||
+        schemaReference(record.callee) !== 'Record' ||
+        record.arguments.length !== 2 ||
+        schemaReference(record.arguments[0]) !== 'String' ||
+        !isBareJson(record.arguments[1])
+      )
+        return false;
+      const invocation = codec.parent;
+      if (
+        invocation?.type !== 'CallExpression' ||
+        invocation.callee !== codec ||
+        invocation.optional ||
+        invocation.arguments.length !== 1
+      )
+        return false;
+      const [value] = invocation.arguments;
+      if (value.type !== 'Identifier') return false;
+      const fn = lookupVariable(context, value)?.defs.find((definition) => definition.type === 'Parameter')?.node;
+      if (
+        fn?.type !== 'ArrowFunctionExpression' ||
+        fn.async ||
+        fn.params.length !== 1 ||
+        fn.params[0].type !== 'Identifier' ||
+        !isJsonAnnotation(fn.params[0].typeAnnotation) ||
+        !isJsonAnnotation(fn.returnType) ||
+        fn.body.type !== 'BlockStatement' ||
+        fn.body.body.length !== 3
+      )
+        return false;
+      const declaration = fn.parent;
+      if (
+        declaration?.type !== 'VariableDeclarator' ||
+        declaration.id.type !== 'Identifier' ||
+        constantValue(declaration.id) !== fn
+      )
+        return false;
+      const self = declaration.id;
+      const [arrayBranch, recordBranch, scalarBranch] = fn.body.body;
+      if (
+        arrayBranch.type !== 'IfStatement' ||
+        arrayBranch.alternate !== null ||
+        recordBranch.type !== 'IfStatement' ||
+        recordBranch.alternate !== null ||
+        recordBranch.test !== invocation ||
+        !sameBinding(returnedValue(scalarBranch), value)
+      )
+        return false;
+      const arrayTest = nativeCall(arrayBranch.test, 'Array', 'isArray');
+      const arrayMap = methodCall(returnedValue(arrayBranch.consequent), 'map');
+      return (
+        arrayTest !== null &&
+        arrayTest.arguments.length === 1 &&
+        sameBinding(arrayTest.arguments[0], value) &&
+        arrayMap !== null &&
+        sameBinding(receiver(arrayMap), value) &&
+        arrayMap.arguments.length === 1 &&
+        sameBinding(arrayMap.arguments[0], self) &&
+        preservesRecord(returnedValue(recordBranch.consequent), value, self)
+      );
+    };
+
+    const isOrderingPartition = (node: ESTree.VariableDeclarator): boolean => {
+      if (node.id.type !== 'Identifier' || node.parent?.parent?.type === 'ExportNamedDeclaration') return false;
+      const reads = lookupVariable(context, node.id)?.references.filter((reference) => reference.isRead()) ?? [];
+      return reads.length > 0 && reads.every((reference) => isOpaqueOrderingGuard(reference.identifier.parent));
+    };
+
     return {
       CallExpression(node) {
         const codec = schemaReference(unwrapExpression(node.callee));
@@ -472,7 +701,7 @@ export const rule = defineRule({
         const first = node.arguments[0];
         if (first === undefined || first.type === 'SpreadElement') return;
         const shape = describe(first);
-        if (shape === null) return;
+        if (shape === null || isOpaqueOrderingGuard(node)) return;
         const callee = unwrapExpression(node.callee);
         const namespace =
           callee.type === 'MemberExpression' && callee.object.type === 'Identifier'
@@ -488,7 +717,7 @@ export const rule = defineRule({
       VariableDeclarator(node) {
         if (node.init === null) return;
         if (!atModuleScope(node)) return;
-        if (insideSchemaCall(node)) return;
+        if (insideSchemaCall(node) || isOrderingPartition(node)) return;
         const shape = describe(node.init);
         if (shape === null) return;
         context.report({

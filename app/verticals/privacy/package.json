@@ -38,6 +38,7 @@
     "./outbox/privacy-retention-evaluation-requested": "./shared/outbox/privacy-retention-evaluation-requested.ts",
     "./resources/identity-reconciliation": "./shared/resources/identity-reconciliation.ts",
     "./resources/legal-basis-assignment": "./shared/resources/legal-basis-assignment.ts",
+    "./resources/privacy-notice-acknowledgement": "./shared/resources/privacy-notice-acknowledgement.ts",
     "./resources/privacy-notice-version": "./shared/resources/privacy-notice-version.ts",
     "./resources/privacy-responsibility-assignment": "./shared/resources/privacy-responsibility-assignment.ts",
     "./resources/privacy-subject": "./shared/resources/privacy-subject.ts",
@@ -45,7 +46,8 @@
     "./resources/processing-purpose": "./shared/resources/processing-purpose.ts",
     "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./Route": "./src/federation-entry.tsx",
-    "./Widget": "./src/components/widget.tsx"
+    "./Widget": "./src/components/widget.tsx",
+    "./admin/legacy-completion": "./scripts/legacy-completion-publication.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
@@ -67,7 +69,9 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/party-registry": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
@@ -90,12 +94,14 @@
     "@tanstack/react-router": "1.170.39",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
+    "jose": "6.2.5",
     "i18next": "26.4.2",
     "pg": "8.22.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@authzed/authzed-node": "1.6.1",
     "@effect/tsgo": "0.63.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
@@ -113,6 +119,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
     "wrangler": "4.137.0",
+    "@app/shell-super-app": "workspace:*",
     "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {

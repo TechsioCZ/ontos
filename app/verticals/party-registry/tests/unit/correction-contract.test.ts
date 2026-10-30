@@ -1,6 +1,7 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
 import { DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import {
   PartyCorrectionCommandSchema,
@@ -215,6 +216,7 @@ const transactionHarness = (
   };
   // SAFETY: The harness implements exactly the select/insert/update fluent surface used by these cases.
   const transaction = {
+    delete: () => chain([]),
     insert: () => {
       const query = chain(insertQueue.shift() ?? []);
       return insertFailure === undefined
@@ -777,4 +779,132 @@ it.effect('Party Type correction preserves the SQL-selected incompatible relatio
     expect(h.updateSets.length).toBe(0);
     expect(h.insertValues.length).toBe(0);
   }),
+);
+
+const identifierCorrectionRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
+  acceptedByActionInvocationId: actionInvocationId,
+  acceptedByPrincipalId: principalId,
+  identifierTypeKey: 'ICO',
+  isCurrent: true,
+  namespace: 'CZ:ICO',
+  normalizedValue: '27074358',
+  officialIdentifierId: assertionId,
+  originalInputDigits: '27074358',
+  partyId,
+  policyVersion: 'party-official-identifier.v1',
+  provenanceMethod: 'DOCUMENT',
+  provenanceSource: 'original-acceptance',
+  recordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
+  state: 'ACTIVE',
+  supersedesOfficialIdentifierId: null,
+  tenantId,
+  validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
+  validTo: null,
+  verificationState: 'VERIFIED',
+  ...overrides,
+});
+const identifierCorrectionCommand = (replacementValue?: string) =>
+  Schema.decodeUnknownSync(PartyCorrectionCommandSchema)({
+    ...evidence,
+    factKind: 'OFFICIAL_IDENTIFIER',
+    partyId,
+    replacementValue,
+    targetAssertionId: assertionId,
+  });
+const identifierCorrectionSelects = (replacement: readonly Readonly<Record<string, unknown>>[]) => [
+  [],
+  [{ partyId }],
+  [],
+  [{ partyId }],
+  [identifierCorrectionRow()],
+  [],
+  [],
+  replacement,
+];
+it.effect('identifier correction converges to existing Current B without inserting or rewriting B', () =>
+  Effect.gen(function* identifierReuse() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')));
+    const existing = identifierCorrectionRow({
+      officialIdentifierId: replacementId,
+      normalizedValue: '26168685',
+      originalInputDigits: '26168685',
+    });
+    const h = transactionHarness(identifierCorrectionSelects([existing]), [
+      [{ correctionId, officialIdentifierId: organizationId }],
+      [{ correctionId }],
+    ]);
+    const result = yield* correctPartyFactRecord(h.transaction, tenantId, identifierCorrectionCommand('26168685'), {
+      actionInvocationId,
+      principalId,
+    });
+    expect(Option.getOrThrow(result.replacementAssertionId)).toBe(replacementId);
+    expect(result.retractedAssertionId).toBe(assertionId);
+    expect(h.insertValues).toHaveLength(1);
+    expect(h.insertValues[0]).toMatchObject({
+      officialIdentifierId: assertionId,
+      replacementOfficialIdentifierId: replacementId,
+    });
+    expect(h.updateSets).toEqual([
+      {
+        isCurrent: false,
+        state: 'SUPERSEDED',
+        validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+      },
+    ]);
+  }),
+);
+it.effect('identifier correction rejects same-ID and incompatible replacement before changing A', () =>
+  Effect.gen(function* identifierReuseNegatives() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')));
+    for (const overrides of [
+      { officialIdentifierId: assertionId },
+      { tenantId: organizationId },
+      { partyId: organizationId },
+      { identifierTypeKey: 'CZ_DIC', namespace: 'CZ:DIC' },
+      { normalizedValue: '27074358' },
+      { state: 'ENDED', isCurrent: false },
+      { verificationState: 'REJECTED' },
+      { validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2027-01-01T00:00:00.000Z')) },
+      { validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')) },
+    ]) {
+      const existing = identifierCorrectionRow({
+        officialIdentifierId: replacementId,
+        normalizedValue: '26168685',
+        ...overrides,
+      });
+      const h = transactionHarness(identifierCorrectionSelects([existing]));
+      const failure = yield* Effect.flip(
+        correctPartyFactRecord(h.transaction, tenantId, identifierCorrectionCommand('26168685'), {
+          actionInvocationId,
+          principalId,
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'PartyCorrectionConflict')).toBe(true);
+      expect(h.updateSets).toEqual([]);
+      expect(h.insertValues).toEqual([]);
+    }
+  }),
+);
+
+it.effect(
+  'identifier correction fails closed on pre-existing ambiguous Current replacements without remediating them',
+  () =>
+    Effect.gen(function* ambiguousIdentifiers() {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')));
+      const h = transactionHarness(
+        identifierCorrectionSelects([
+          identifierCorrectionRow({ officialIdentifierId: replacementId, normalizedValue: '26168685' }),
+          identifierCorrectionRow({ officialIdentifierId: organizationId, normalizedValue: '26168685' }),
+        ]),
+      );
+      const failure = yield* Effect.flip(
+        correctPartyFactRecord(h.transaction, tenantId, identifierCorrectionCommand('26168685'), {
+          actionInvocationId,
+          principalId,
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'PartyPersistenceUnavailable')).toBe(true);
+      expect(h.insertValues).toEqual([]);
+      expect(h.updateSets).toEqual([]);
+    }),
 );

@@ -3,12 +3,12 @@ import nodePath from 'node:path';
 
 import { expect, it } from 'effect-rstest';
 
-import { appRoot, runOxlint } from './oxlint.mts';
+import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const lintConfig = nodePath.join(appRoot, 'oxlint.config.ts');
-// SonarJS rejects files outside the lint root, so stage in the ignored in-repo scratch directory.
-const scratch = nodePath.join(appRoot, '.scratch');
+// Keep SonarJS inside appRoot and temporary files under the existing repository-scan exclusion.
+const scratch = testsDirectory;
 
 // Property keys that name domain vocabulary must not be read as function names.
 it('accepts Match.tags and discriminator keys that mirror domain vocabulary', () => {

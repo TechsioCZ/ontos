@@ -117,7 +117,7 @@ const roleRow = {
   variantId,
 };
 
-const variantServices = (row: Option.Option<typeof variantRow>) =>
+const variantServices = (row: Option.Option<Omit<typeof variantRow, 'reason'> & { readonly reason: string | null }>) =>
   ({
     getRevision: (_id: string, _revision: number) => Effect.succeed(row),
   }) satisfies ReturnType<typeof variantHistoryForScope>;
@@ -131,6 +131,23 @@ const roleServices = (row: Option.Option<typeof roleRow>) =>
   }) satisfies ReturnType<typeof packageOptionHistoryForScope>;
 
 describe('exact Catalog form history reads', () => {
+  it.effect('omits absent CREATED reason without relaxing later Variant history', () =>
+    Effect.gen(function* absentCreatedVariantReason() {
+      const response = yield* readVariantHistory(
+        variantRequest,
+        tenantId,
+        variantServices(Option.some({ ...variantRow, reason: null })),
+      );
+      const encoded = Schema.encodeSync(VariantHistoryResponseSchema)(response.result);
+      expect(encoded).not.toHaveProperty('reason');
+      expect(
+        Option.isNone(
+          Schema.decodeUnknownOption(VariantHistoryResponseSchema)({ ...encoded, changeKind: 'CORRECTED' }),
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect('returns retained Variant R1 rather than Current R2 and round-trips its provenance', () =>
     Effect.gen(function* returnsVariantHistory() {
       const response = yield* readVariantHistory(variantRequest, tenantId, variantServices(Option.some(variantRow)));

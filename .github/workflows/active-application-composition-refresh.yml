@@ -5,7 +5,7 @@ name: Active Application Composition Refresh
 # app/scripts/active-application-composition.mts (ACTIVE_APPLICATION_COMPOSITION_POLICY).
 on:
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -107,6 +107,13 @@ jobs:
         uses: ./.github/actions/install-app
         timeout-minutes: 5
 
+      - name: Prepare private legacy completion evidence
+        run: |
+          ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$RUNNER_TEMP/legacy-completion-evidence"
+          install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
+          printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
+        timeout-minutes: 5
+
       # On the Cloudflare target the Workers are what the snapshot observes, and a failed edge rollout leaves
       # the last successful stage-edge revision live even after a newer stage deployment succeeded.
       - name: Resolve the last successful stage deployment
@@ -193,6 +200,15 @@ jobs:
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
+      - name: Retain native legacy completion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-completion-evidence
+          if-no-files-found: ignore
+          retention-days: 30
+
   # Production runs on Zerops, the only target outside stage, and publishes a snapshot of the same validity.
   # A production that is not configured or has never deployed has no snapshot to refresh.
   refresh-production:
@@ -248,6 +264,13 @@ jobs:
       - name: Install the app workspace
         if: steps.configuration.outputs.configured == 'true'
         uses: ./.github/actions/install-app
+        timeout-minutes: 5
+
+      - name: Prepare private legacy completion evidence
+        run: |
+          ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$RUNNER_TEMP/legacy-completion-evidence"
+          install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
+          printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
         timeout-minutes: 5
 
       - name: Resolve the last successful production deployment
@@ -334,3 +357,12 @@ jobs:
           token: ${{ secrets.ZEROPS_TOKEN }}
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+      - name: Retain native legacy completion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-completion-evidence
+          if-no-files-found: ignore
+          retention-days: 30

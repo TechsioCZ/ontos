@@ -19,6 +19,7 @@ import {
 export const PAYMENT_TERM_CATALOG_SCHEMA_NAME = 'payment_term_catalog';
 
 export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'payment_term_aliases',
   'payment_term_lifecycle_events',
   'payment_term_revisions',
@@ -30,6 +31,22 @@ export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
 ] as const;
 
 export const paymentTermCatalogSchema = pgSchema(PAYMENT_TERM_CATALOG_SCHEMA_NAME);
+
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
+export const gatewayAssertionRedemptions = paymentTermCatalogSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('payment_term_catalog_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('payment_term_catalog_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 
@@ -456,6 +473,7 @@ const paymentTermCatalogDatabaseSchema = {
 } as const;
 
 export const PAYMENT_TERM_CATALOG_TABLES = [
+  gatewayAssertionRedemptions,
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,

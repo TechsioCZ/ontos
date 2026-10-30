@@ -1,5 +1,11 @@
-import { CounterpartyReadResponseSchema, executeCounterpartyRead } from '@app/party-registry/api/client';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { ActiveApplicationCompositionService, validateActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import {
+  CounterpartyReadResponseSchema,
+  executeCounterpartyReadWithAuthorization,
+} from '@app/party-registry/api/client';
+import type { executeCounterpartyRead } from '@app/party-registry/api/client';
+import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { Config, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { ProfilePersistenceDependencyFailure } from './persistence/profile-persistence.ts';
 import type { CounterpartyRoleEligibility, ProfilePersistenceDependencies } from './persistence/profile-persistence.ts';
@@ -20,6 +26,53 @@ const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceD
   }
   return failure;
 };
+
+const serverConfiguration = Config.all({
+  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
+  shellBaseUrl: Config.schema(
+    Schema.URLFromString.check(
+      Schema.makeFilter((url) =>
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.username.length === 0 &&
+        url.password.length === 0 &&
+        url.search.length === 0 &&
+        url.hash.length === 0
+          ? undefined
+          : 'Shell gateway URL must be HTTP(S) without credentials, query, or fragment',
+      ),
+    ),
+    'ONTOS_SHELL_GATEWAY_BASE_URL',
+  ),
+});
+
+const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibility.executeServerCounterpartyRead')(
+  function* serverCounterpartyRead(
+    scope: ProfileCounterpartyRoleEligibilityScope,
+    payload: Parameters<CounterpartyReadExecutor>[0],
+  ) {
+    const composition = yield* Effect.serviceOption(ActiveApplicationCompositionService);
+    if (Option.isNone(composition)) {
+      return yield* dependencyFailure('The server Application Composition authority is unavailable');
+    }
+    const active = yield* composition.value.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+    const configured = yield* serverConfiguration;
+    const compositionRevision = active.composition.revision;
+    const issued = yield* issueApiKeyGatewayContext(
+      { audience: 'party-registry', compositionRevision, legalEntityId: scope.legalEntityId },
+      { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.requestCorrelation },
+    );
+    if (issued.compositionRevision !== compositionRevision) {
+      return yield* dependencyFailure('The Party credential does not match the active composition revision');
+    }
+    yield* validateActiveApplicationCompositionSnapshot(active);
+    return yield* executeCounterpartyReadWithAuthorization(
+      payload,
+      `Bearer ${issued.token}`,
+      scope.requestCorrelation,
+      { baseUrl: new URL(issued.apiBaseUrl, configured.shellBaseUrl), compositionRevision },
+    );
+  },
+);
 
 const isCanonicalInstant = (value: string): boolean => {
   const parsed = DateTime.make(value);
@@ -108,24 +161,30 @@ export const classifyProfileCounterpartyRoleEligibility = (
 export const makeProfileCounterpartyRoleEligibilityResolver =
   (
     scope: ProfileCounterpartyRoleEligibilityScope,
-    execute: CounterpartyReadExecutor = executeCounterpartyRead,
+    execute?: CounterpartyReadExecutor,
   ): CounterpartyRoleEligibilityResolver =>
   ({ counterpartyResourceId, tenantId }) => {
     if (tenantId !== scope.tenantId) {
       return Effect.succeed({ outcome: 'INDETERMINATE' as const });
     }
 
-    return execute(
-      {
-        counterpartyRef: {
-          moduleId: 'party.registry',
-          resourceId: counterpartyResourceId,
-          resourceType: 'party.registry.counterparty',
-          tenantId: scope.tenantId,
-        },
+    const payload: Parameters<CounterpartyReadExecutor>[0] = {
+      counterpartyRef: {
+        moduleId: 'party.registry',
+        resourceId: counterpartyResourceId,
+        resourceType: 'party.registry.counterparty',
+        tenantId: scope.tenantId,
       },
-      scope.requestCorrelation,
-    ).pipe(
+    };
+    const read: Effect.Effect<
+      CounterpartyReadResponse,
+      | Effect.Error<ReturnType<typeof executeServerCounterpartyRead>>
+      | Effect.Error<ReturnType<CounterpartyReadExecutor>>
+    > =
+      execute === undefined
+        ? executeServerCounterpartyRead(scope, payload)
+        : execute(payload, scope.requestCorrelation);
+    return read.pipe(
       Effect.mapError((cause) => dependencyFailure('Party Registry Counterparty eligibility is unavailable', cause)),
       Effect.flatMap((response) =>
         DateTime.now.pipe(
@@ -141,7 +200,10 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
   };
 
 export interface ProfileCounterpartyRoleEligibilityResolverFactoryService {
-  readonly make: (scope: ProfileCounterpartyRoleEligibilityScope) => CounterpartyRoleEligibilityResolver;
+  readonly make: (
+    scope: ProfileCounterpartyRoleEligibilityScope,
+    execute?: CounterpartyReadExecutor,
+  ) => CounterpartyRoleEligibilityResolver;
 }
 
 export class ProfileCounterpartyRoleEligibilityResolverFactory extends Context.Service<

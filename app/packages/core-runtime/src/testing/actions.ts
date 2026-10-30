@@ -38,6 +38,12 @@ import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
+/** Test-only: bind the existing issuer registrar to an explicitly scoped fixture pool. */
+export { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';
+
+/** Test-only: owner fixtures bind routines to the package's single scoped-transaction implementation. */
+export { installOperationalScope } from '../db/scoped-transaction.ts';
+
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
@@ -525,4 +531,12 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
 
 export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
 
-export { makeLiveOperationFixture } from './live-operations.ts';
+export {
+  makeLiveOperationFixture,
+  makeLiveOperationFixtureRuntime,
+  makeLiveOperationFixtureBootstrap,
+  LiveOperationFixtureRuntimeHandoffSchema,
+  LiveOperationFixtureBootstrapRequestSchema,
+  LiveOperationFixtureBootstrapResponseSchema,
+} from './live-operations.ts';
+export type { LiveOperationFixtureRuntimeHandoff, LiveOperationFixtureBootstrapRequest } from './live-operations.ts';

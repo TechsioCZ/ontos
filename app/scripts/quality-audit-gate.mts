@@ -22,6 +22,7 @@ const ResultSchema = Schema.Union([
     ...primary,
     coverage: Schema.Struct({
       findingCounts: Counts,
+      modeledFindingCounts: Schema.optionalKey(Counts),
       modeledUsages: Count,
       nativeFindingCounts: Counts,
       processed: PositiveCount,
@@ -94,14 +95,15 @@ const consistent = (entry: typeof ResultSchema.Type) =>
       const { files, findings } = result;
       const knip = result.coverage;
       const keys = Object.keys(knip.findingCounts);
+      const modeled = knip.modeledFindingCounts ?? { unlisted: knip.modeledUsages };
       return (
         keys.length > 0 &&
-        keys.length === Object.keys(knip.nativeFindingCounts).length &&
-        keys.every(
-          (key) =>
-            knip.nativeFindingCounts[key] ===
-            (knip.findingCounts[key] ?? 0) + (key === 'unlisted' ? knip.modeledUsages : 0),
+        Object.keys(modeled).every(
+          (key) => ['unlisted', 'dependencies', 'devDependencies', 'duplicates'].includes(key) && keys.includes(key),
         ) &&
+        sum(modeled) === knip.modeledUsages &&
+        keys.length === Object.keys(knip.nativeFindingCounts).length &&
+        keys.every((key) => knip.nativeFindingCounts[key] === (knip.findingCounts[key] ?? 0) + (modeled[key] ?? 0)) &&
         sum(knip.findingCounts) === findings &&
         sum(knip.nativeFindingCounts) === findings + knip.modeledUsages &&
         knip.processed === files &&

@@ -1,10 +1,16 @@
 import { ConsentDecisionInvariantError } from './consent-decision-invariant-error.ts';
 import { Context, Effect, Schema } from 'effect';
 
-import { PrincipalAttributionSchema, PrivacyIsoTimestampSchema } from './privacy-subject.ts';
+import {
+  PrincipalAttributionSchema,
+  PrivacyIsoTimestampSchema,
+  isPrivacyInstantAtOrBefore,
+  isPrivacyInstantBefore,
+} from './privacy-subject.ts';
 import { ConsentScopeSchema, validateConsentScope } from './privacy-consent-scope.ts';
 import type { ConsentMaterialDimensionKind } from './privacy-consent-scope.ts';
 import type { PurposeVersion } from './processing-purpose.ts';
+import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const EvidenceRefs = Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32));
@@ -31,6 +37,19 @@ export const ConsentDecisionSchema = Schema.Struct({
 });
 export type ConsentDecision = typeof ConsentDecisionSchema.Type;
 
+/** Preliminary Purpose timing only; an ended-version withdrawal still needs retained owner history. */
+export const validateConsentPurposeTime = (input: ConsentDecision, version: PurposeVersion): string | undefined => {
+  if (
+    !isPrivacyInstantAtOrBefore(version.effectiveFrom, input.effectiveAt) ||
+    (version.effectiveTo !== null &&
+      !isPrivacyInstantBefore(input.effectiveAt, version.effectiveTo) &&
+      input.decision !== 'WITHDRAWN')
+  ) {
+    return 'Consent Decision effective time must fall within the referenced Purpose Version period';
+  }
+  return undefined;
+};
+
 /** Validates explicit decisions without deriving consent from a Notice or Terms fact. */
 // fallow-ignore-next-line complexity -- Consent acceptance deliberately enumerates provenance, timing, scope, and decision-specific invariants.
 export const validateConsentDecision = (
@@ -38,6 +57,10 @@ export const validateConsentDecision = (
   purposeVersion?: PurposeVersion,
   requiredDimensions?: readonly ConsentMaterialDimensionKind[],
 ): string | undefined => {
+  const purposeTime = purposeVersion === undefined ? undefined : validateConsentPurposeTime(input, purposeVersion);
+  if (purposeTime !== undefined) {
+    return purposeTime;
+  }
   if (input.recordedAt < input.effectiveAt) {
     return 'Recorded time cannot precede effective time';
   }
@@ -99,11 +122,12 @@ export type ConsentCurrentResolution =
   | {
       readonly decisions: readonly ConsentDecision[];
       readonly outcome: 'CONFLICT';
-      readonly reason: 'SAME_EFFECTIVE_TIME';
+      readonly reason: 'SAME_EFFECTIVE_TIME' | 'SUBJECT_BINDING_CONFLICT';
     };
 
 const decisionsAreEquivalent = Schema.toEquivalence(ConsentDecisionSchema);
 const consentScopesAreEquivalent = Schema.toEquivalence(ConsentScopeSchema);
+const privacySubjectsAreEquivalent = Schema.toEquivalence(PrivacySubjectRefSchema);
 
 export { ConsentDecisionInvariantError } from './consent-decision-invariant-error.ts';
 
@@ -111,6 +135,13 @@ const resolveCurrentConsent = (decisions: readonly ConsentDecision[], scopeRef: 
   const history = decisions.filter(({ scope }) => scope.scopeRef === scopeRef);
   if (history.length === 0) {
     return { outcome: 'ABSENT' };
+  }
+  const firstSubject = history[0]?.scope.privacySubjectRef;
+  if (
+    firstSubject !== undefined &&
+    history.some(({ scope }) => !privacySubjectsAreEquivalent(scope.privacySubjectRef, firstSubject))
+  ) {
+    return { decisions: history.toSorted(compareDecisions), outcome: 'CONFLICT', reason: 'SUBJECT_BINDING_CONFLICT' };
   }
   const latestEffectiveAt = history.toSorted(compareDecisions).at(-1)?.effectiveAt;
   if (latestEffectiveAt === undefined) {
@@ -133,6 +164,38 @@ const resolveCurrentConsent = (decisions: readonly ConsentDecision[], scopeRef: 
   return { decision: first, outcome: 'CURRENT' };
 };
 
+/** Authoritative callers supply retained history from the same owner transaction, never a public payload. */
+export const validateRetainedConsentWithdrawal = (
+  input: ConsentDecision,
+  version: PurposeVersion,
+  history: readonly ConsentDecision[],
+): string | undefined => {
+  if (
+    input.decision !== 'WITHDRAWN' ||
+    version.effectiveTo === null ||
+    isPrivacyInstantBefore(input.effectiveAt, version.effectiveTo)
+  ) {
+    return undefined;
+  }
+  const retained = history.filter((previous) => previous.scope.scopeRef === input.scope.scopeRef);
+  if (
+    retained.some((previous) => !consentScopesAreEquivalent(previous.scope, input.scope)) ||
+    resolveCurrentConsent(retained, input.scope.scopeRef).outcome === 'CONFLICT'
+  ) {
+    return 'Retained withdrawal requires unambiguous history for the exact original Consent Scope';
+  }
+  const grant = retained.some(
+    (previous) =>
+      previous.decision === 'GRANTED' &&
+      validateConsentDecision(previous, version) === undefined &&
+      isPrivacyInstantAtOrBefore(previous.effectiveAt, input.effectiveAt) &&
+      isPrivacyInstantAtOrBefore(previous.recordedAt, input.recordedAt),
+  );
+  return grant
+    ? undefined
+    : 'Retained withdrawal requires a valid original GRANTED decision for the exact Consent Scope';
+};
+
 export const makeConsentDecisionStore = (): ConsentDecisionStore => {
   const decisions: ConsentDecision[] = [];
   const byIdempotencyKey = new Map<string, ConsentDecision>();
@@ -141,7 +204,11 @@ export const makeConsentDecisionStore = (): ConsentDecisionStore => {
     currentResolution: (scopeRef) => resolveCurrentConsent(decisions, scopeRef),
     history: (scopeRef) => decisions.filter(({ scope }) => scope.scopeRef === scopeRef).toSorted(compareDecisions),
     record: (decision, purposeVersion) => {
-      const error = validateConsentDecision(decision, purposeVersion);
+      const error =
+        validateConsentDecision(decision, purposeVersion) ??
+        (purposeVersion === undefined
+          ? undefined
+          : validateRetainedConsentWithdrawal(decision, purposeVersion, decisions));
       if (error !== undefined) {
         return Effect.fail(new ConsentDecisionInvariantError({ reason: error }));
       }
@@ -162,6 +229,19 @@ export const makeConsentDecisionStore = (): ConsentDecisionStore => {
         return Effect.fail(new ConsentDecisionInvariantError({ reason: 'Consent Decision identity conflict' }));
       }
       const retained = Object.freeze({ ...decision });
+      if (
+        decisions.some(
+          (previous) =>
+            previous.scope.scopeRef === decision.scope.scopeRef &&
+            !privacySubjectsAreEquivalent(previous.scope.privacySubjectRef, decision.scope.privacySubjectRef),
+        )
+      ) {
+        return Effect.fail(
+          new ConsentDecisionInvariantError({
+            reason: 'Consent scope is already bound to a different Privacy Subject',
+          }),
+        );
+      }
       decisions.push(retained);
       if (decision.idempotencyKey !== undefined) {
         byIdempotencyKey.set(decision.idempotencyKey, retained);

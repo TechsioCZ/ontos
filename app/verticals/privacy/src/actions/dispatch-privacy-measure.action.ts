@@ -29,7 +29,7 @@ const MODULE_KEY = 'privacy.core' as const;
 const handleDispatchPrivacyMeasure = Effect.fn('DispatchPrivacyMeasureAction.handle')(
   function* handleDispatchPrivacyMeasure(
     payload: DispatchPrivacyMeasurePayload,
-    context: ActionHandlerContext<typeof domainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof domainEvents, Pick<PrivacyOperationRepositoryService, 'admitMeasureDispatch'>>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
     const reasons = validatePrivacyMeasureHandoff(payload.handoff);
@@ -39,22 +39,27 @@ const handleDispatchPrivacyMeasure = Effect.fn('DispatchPrivacyMeasureAction.han
         reason: reasons.join('; ') || 'Privacy Measure must belong to the trusted Tenant',
       });
     }
-    const result = yield* context.services.dispatchMeasure(
+    const admission = yield* context.services.admitMeasureDispatch(
       scope.tenantId,
       scope.legalEntityId,
       context.actionInvocationId,
       payload.handoff,
     );
-    const eventPayload = { handoff: result };
-    const event = yield* context.addDomainEvent({
-      eventType: 'privacy.measure.dispatched',
-      payloadJson: eventPayload,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.measureId,
-      subjectResourceType: 'privacy.core.privacy-measure',
-    });
-    yield* context.addOutboxMessage(event, createOutboxMessage(eventPayload));
+    const result = admission.handoff;
+    if (admission.created) {
+      const eventPayload = { handoff: result };
+      const event = yield* context.addDomainEvent({
+        eventType: 'privacy.measure.dispatched',
+        payloadJson: eventPayload,
+        producerModuleKey: MODULE_KEY,
+        subjectModuleKey: MODULE_KEY,
+        subjectResourceId: result.measureId,
+        subjectResourceType: 'privacy.core.privacy-measure',
+      });
+      yield* context.addOutboxMessage(event, createOutboxMessage(eventPayload), {
+        consumerModuleKey: result.owningCapability,
+      });
+    }
     return yield* completePrivacyAction(context, 'dispatch-privacy-measure', result.measureId, result);
   },
 );
@@ -86,7 +91,10 @@ export const dispatchPrivacyMeasureAction = defineAction(
     schemaVersion: '1',
   },
   handleDispatchPrivacyMeasure,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    privacyOperationRepositoryForScope(transaction, scope).pipe(
+      Effect.map((repository) => ({ admitMeasureDispatch: repository.admitMeasureDispatch })),
+    ),
 );
 
 // <generated-outbox-message-exports>

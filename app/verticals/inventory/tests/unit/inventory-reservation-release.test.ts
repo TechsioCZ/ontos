@@ -517,7 +517,7 @@ describe('Inventory Reservation Release', () => {
     }),
   );
 
-  it.effect('preserves late-proven in-time Protection as a fence even after Confirmation expiry', () =>
+  it.effect('releases after definitive noncommit closure while preserving authentic historical Protection', () =>
     Effect.gen(function* preserveProtectionFence() {
       const harness = makeHarness({
         protectionTruth: {
@@ -534,8 +534,81 @@ describe('Inventory Reservation Release', () => {
         tenantId,
       });
       yield* harness.execution.execute({ legalEntityId, tenantId }, requested.result.effect.request);
-      const notReleasable = Schema.decodeUnknownSync(NotReleasableReservationEffectSchema)(harness.effects.read());
-      expect(notReleasable.reason).toBe('PROTECTION_ESTABLISHED');
+      const released = Schema.decodeUnknownSync(ReleasedReservationEffectSchema)(harness.effects.read());
+      expect(released.safeReleaseProof).toEqual({
+        order: {
+          _tag: 'NOT_COMMITTED_CLOSED',
+          closureEvidenceRef: 'order-proof:closed:1',
+          nonCommitEvidenceRef: 'order-proof:not-committed:1',
+          observedAt: '2026-09-24T10:03:00.000Z',
+        },
+        protection: {
+          _tag: 'ESTABLISHED',
+          establishedAt: '2026-09-24T10:04:00.000Z',
+          evidenceRef: 'protection-proof:established:1',
+          observedAt: '2026-09-24T10:20:00.000Z',
+        },
+      });
+      expect(released.safelyReusable).toBe(true);
+      expect(released.activeAllocations).toEqual([]);
+      expect(harness.backendCalls()).toBe(1);
+    }),
+  );
+
+  it.effect(
+    'keeps established Protection fenced unless both Order closure and an original backend receipt are proven',
+    () =>
+      Effect.forEach(
+        [
+          { _tag: 'COMMITTED', evidenceRef: 'order:committed', observedAt: timestamp },
+          { _tag: 'NOT_COMMITTED_OPEN', evidenceRef: 'order:open', observedAt: timestamp },
+          { _tag: 'INDETERMINATE', observedAt: timestamp, reason: 'ORDER_EVIDENCE_UNAVAILABLE' },
+        ] as const,
+        (orderTruth) =>
+          Effect.gen(function* keepUnresolvedFence() {
+            const harness = makeHarness({
+              orderTruth,
+              protectionTruth: {
+                _tag: 'ESTABLISHED',
+                establishedAt: timestamp,
+                evidenceRef: 'protection:original',
+                observedAt: timestamp,
+              },
+            });
+            const requested = yield* harness.service.request(payload(), {
+              actionInvocationId,
+              legalEntityId,
+              requestedAt: timestamp,
+              tenantId,
+            });
+            yield* harness.execution.execute({ legalEntityId, tenantId }, requested.result.effect.request);
+            expect(harness.effects.read()).toMatchObject({ safelyReusable: false });
+            expect(harness.backendCalls()).toBe(0);
+          }),
+        { concurrency: 1 },
+      ),
+  );
+
+  it.effect('retains historical terminal refusal without redispatching after the new closed-noncommit rule', () =>
+    Effect.gen(function* preserveHistoricalTerminal() {
+      const harness = makeHarness();
+      const requested = yield* harness.service.request(payload(), {
+        actionInvocationId,
+        legalEntityId,
+        requestedAt: timestamp,
+        tenantId,
+      });
+      const historical = yield* harness.effects.persistence.save(requested.result.effect, {
+        _tag: 'NOT_RELEASABLE',
+        evidenceRef: 'protection:historical-terminal',
+        observedAt: timestamp,
+        reason: 'PROTECTION_ESTABLISHED',
+        request: requested.result.effect.request,
+        revision: 2,
+        safelyReusable: false,
+      });
+      yield* harness.execution.execute({ legalEntityId, tenantId }, requested.result.effect.request);
+      expect(harness.effects.read()).toEqual(historical);
       expect(harness.backendCalls()).toBe(0);
     }),
   );

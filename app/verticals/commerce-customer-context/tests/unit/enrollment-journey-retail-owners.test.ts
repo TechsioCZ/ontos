@@ -27,7 +27,6 @@ import {
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
-  RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
   retailSelfEnrollmentRequestDigest,
   retailSelfEnrollmentStepPlan,
@@ -514,12 +513,12 @@ const bindingExecutors = (
   ...overrides,
 });
 
-it.effect('binds the Retail Portal profile when the reviewed grant baseline is staged in full', () =>
+it.effect('keeps Retail enrollment reconciling while its complete baseline is only staged', () =>
   Effect.gen(function* boundWithGrants() {
     const outcome = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).dispatch(transition);
-    expect(outcome.status).toBe('SUCCEEDED');
-    expect(outcome.outcomeCode).toBe(RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE);
-    expect(outcome.resultReference).toBe(bindingRef.resourceId);
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
+    expect(outcome.nextState).toBe('RECONCILIATION_REQUIRED');
   }),
 );
 
@@ -538,18 +537,18 @@ it.effect('treats a partially completed grant as a reconciliation halt, not port
       bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult(false)) }),
     ).dispatch(transition);
     expect(unstaged.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
-    expect(retailPortalGrantsAreComplete(bindingResult(true))).toBe(true);
+    expect(retailPortalGrantsAreComplete(bindingResult(true))).toBe(false);
     expect(retailPortalGrantsAreComplete(bindingResult(true, false))).toBe(false);
   }),
 );
 
-it.effect('reconciles an indeterminate binding through its committed invocation', () =>
+it.effect('keeps a committed pending binding reconciling after its Action answer was lost', () =>
   Effect.gen(function* reconcileBinding() {
     const resolution = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).reconcile(
       reconciliationInput,
     );
-    expect(resolution.status).toBe('SUCCEEDED');
-    expect(resolution.resultReference).toBe(bindingRef.resourceId);
+    expect(resolution.status).toBe('FAILED');
+    expect(resolution.nextState).toBe('RECONCILIATION_REQUIRED');
   }),
 );
 

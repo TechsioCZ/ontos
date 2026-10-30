@@ -3,10 +3,11 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   ModuleEntrypointGatewayLive,
@@ -24,7 +25,10 @@ import { FetchHttpClient } from 'effect/http';
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
+} from './auth/gateway-assertion-redemption.ts';
 // <generated-governed-http-handler-imports>
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
@@ -94,9 +98,17 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 
+const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
 type CommerceMarketCatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makeCommerceMarketCatalogApiRuntime = (
@@ -144,6 +156,21 @@ export const makeCommerceMarketCatalogApiRuntime = (
   });
 };
 
-const apiRuntime = makeCommerceMarketCatalogApiRuntime(productionReadRuntimeLive, GatewayAssertionRedemptionLive);
+/** Assemble this owner's unchanged HTTP runtime from caller-owned scoped services. */
+export const commerceMarketCatalogApiRuntimeFromContext = Effect.gen(
+  function* commerceMarketCatalogApiRuntimeFromContext() {
+    const readRuntime = yield* ReadRuntime;
+    const redemption = yield* GatewayAssertionRedemptionService;
+    return makeCommerceMarketCatalogApiRuntime(
+      Layer.succeed(ReadRuntime, readRuntime),
+      Layer.succeed(GatewayAssertionRedemptionService, redemption),
+    );
+  },
+);
+
+const apiRuntime = makeCommerceMarketCatalogApiRuntime(
+  productionReadRuntimeLive,
+  productionGatewayAssertionRedemptionLive,
+);
 
 export default apiRuntime;

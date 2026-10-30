@@ -4,7 +4,27 @@ This playbook is the authoritative release guidance for OntOS application delive
 
 > [!IMPORTANT] Explicit `implementationId`, dependency-closure selection, public-contract hashes, migration-set identity, and full artifact metadata are accepted target architecture, not fields in the current manifest/catalog schema. Requirements below that name them become mandatory with that contract. Until then, releases use one implicit `standard` implementation per `moduleId` and the current generated `buildMarker`; do not simulate missing fields with ad hoc configuration.
 
-Application Composition validation and stage publication are implemented; live Shell loading is not. After the delivery units deploy, the deploy workflow observes the deployed artifacts and publishes the active snapshot as the `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` Zerops project variable, deploys the composition consumers on it, then publishes the complete inventory and restarts them; a scheduled workflow re-publishes it before it expires (see ADR-0020). Until #374–#377 wire those paths in, remote URL and generated lazy-registry changes still require Shell regeneration and redeployment. The composition promotion sequence below is the target flow.
+Application Composition validation and native publication are implemented; live Shell loading remains a separate integration concern. The current publisher writes the approved versioned snapshot to Workers KV and verifies readback under Core DB publication authority. Node consumers use a lazy HTTP source; Workers consumers use a native KV binding. The retired snapshot environment-variable/process-start transport is historical, not an operator recovery procedure. See [Current Composition transport](#current-composition-transport) and [ADR-0020](../../../docs/adr/0020-governed-application-composition.md). Until the live loader replaces generated registry paths, remote URL and lazy-registry changes still require Shell regeneration and redeployment; the broader composition promotion sequence remains target guidance.
+
+## Current Composition transport
+
+The source-owned publisher is `scripts/publish-active-application-composition.mts`. After the deployed candidate artifacts are observable, the environment's serialized deploy workflow supplies its reviewed candidate file:
+
+```sh
+mise exec -- pnpm active-composition:publish publish --environment <environment> --candidate-file <reviewed-candidate.json>
+```
+
+The publisher observes served contracts, Module Federation manifests and Shell runtime evidence with bounded reads, validates the whole candidate, and derives its immutable content revision. It validates the provider-native KV value endpoint from `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, authenticates publication with the operator's `CLOUDFLARE_API_TOKEN`, performs a native HTTP PUT and waits for matching readback. This is authorized operator/CI publication, not a new snapshot-signature protocol. Runtime readers use a separate read-only credential; neither credentials nor complete snapshots belong in logs.
+
+Core DB authority coordinates publication and transaction admission with revision, phase and deadline fences. A successful HTTP/KV read alone does not authorize a business operation. Storage publication and DB settlement are distinct boundaries, not one atomic distributed transaction: failed PUT/readback or uncertain settlement must stop promotion and be resolved against the actual publication/authority state before retry. Preserve the exact candidate/revision and failure evidence.
+
+- **Node:** `active-application-composition-source.node.ts` lazily reads `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, with optional `ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN`. It enforces the source URL contract, bounded body/read time and a short successful-read cache capped by the snapshot's original authority deadline. Failures are not cached. Reading the same old content never extends its lease. The source constants own the timeout/cache limits.
+- **Workers:** `active-application-composition-source.workerd.ts` reads native binding `ONTOS_ACTIVE_APPLICATION_COMPOSITION`, key `active`, as defined in `active-application-composition-edge.ts`. Missing binding/key, invalid content or bounded-read failure fail closed. KV propagation is distinct from publication readback; this playbook promises no immediate global cutover SLA.
+- **Renewal:** the scheduled `active-application-composition-refresh.yml` workflow shares the environment's deployment lock and runs `active-composition:publish refresh --environment <environment>`. It re-observes the approved exact artifacts and rejects any different revision; changed artifacts require an explicit promotion. `scripts/active-application-composition.mts#ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window. Renewal does not select another graph or restart consumers to replace process-start JSON.
+
+For Node source configuration the publisher's `configure-source` command installs the stable URL and read-only token through the existing provider configuration path; Workers placement supplies the native binding. Code or configuration changes may still require normal deployment/restart, but routine snapshot publication/renewal is consumed through these native sources. Do not restore `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` or use a restart to bypass missing, expired, inconsistent or draining/sealed authority. Check configured source/binding, published revision/deadline and DB phase, then use the existing authorized publication/recovery path. Readiness and the authenticated smoke suite still gate activation. Installation is not activation, and Tenant Module State never selects a different runtime graph.
+
+Rollback remains an explicit audited promotion of a previously validated immutable revision with compatible artifact evidence (see [Rollback](#rollback)); there is no automatic last-known-good or untrusted fallback. Accepted future manifest/artifact fields in the warning above remain target architecture, not prerequisites that current tooling silently implements.
 
 The rules exist because the first Zerops stage rollout was merged after source-level validation and then required 43 linear repair commits. Stage had become the first production-shaped integration test. Future releases must prove the target artifact and the distributed user journey before promotion.
 
@@ -153,6 +173,22 @@ Rotation (human operator, during stage maintenance):
 New connections can fail after the migrator changes PostgreSQL's password until the Hyperdrive update and service restarts complete. Existing pooled connections can mask a stale credential, so run these steps back to back and confirm fresh connections before ending maintenance.
 
 `zerops.yaml` is shared with production. Production stays blocked until the same `migrator` secrets exist there.
+
+### Order-flow owner credentials
+
+Commerce Order, Customer Context, Commerce Cart and Pricing call each other and the Shell gateway with Shell-issued API keys, and admit each other's API-key Principals by ID or by grant list. `scripts/ops/owner-runtime-configuration.mts` names every value each owner reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues the keys in Shell and records the per-environment values:
+
+| Owner                       | Credentials (sensitive)                                                                                                       | Per-environment values (not secret)                                                                                                                                                                                                                                                                        |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commerce-order`            | `ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY`, `ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY`                                            | `ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID` (the finalization key's Principal), `ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID` (Customer Context's `ONTOS_CCC_ORDER_GATEWAY_API_KEY` Principal), `ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID` (Pricing's key Principal)                                         |
+| `commerce-customer-context` | `ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY`, `ONTOS_CCC_ORDER_GATEWAY_API_KEY`, `ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY` | `ONTOS_CCC_ORDER_CONSUMER_{PRINCIPAL,LEGAL_ENTITY,TENANT}_ID` (Order's approval key), `ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID`, and the JSON grant lists `ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS`, `ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS`, `ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS` |
+| `commerce-cart`             | `ONTOS_CART_FINALIZATION_SERVICE_API_KEY`                                                                                     | the JSON grant lists `ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS`, `ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS`                                                                                                                                                                                                  |
+| `pricing`                   | `ONTOS_PRICING_GATEWAY_API_KEY`, `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET`                                                  | `ONTOS_PRICING_ORDER_PRINCIPAL_ID`, `ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID`, `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}`                                                                                                                                                                   |
+
+1. Store the credentials as sensitive `migrator` service secrets and the per-environment values as `migrator` service variables, under those names.
+2. Add all of them to the cut-over settings file for the Cloudflare Workers (see [Stage cut-over](#stage-cut-over-and-zerops-service-retirement)).
+
+Each owner's service references only its own values as `${migrator_<KEY>}`; an owner with an Outbox Worker (Order, Customer Context) also hands them to that worker and `outbox-worker-host`. `scripts/tests/zerops-deployment-contract.test.mts` enforces that no other service references them. Caller namespaces (`*_NAMESPACE_ID`) are the Shell's staff namespace `ontos.staff.better-auth.v1`, the code constant every Shell-issued API key is bound in, and every owner base is the owner's internal address `http://<hostname>:<port>/<unit>-api`; both are generated from topology. Create the values before the deploy that first references them, because `outbox-worker-host` references Order's and Customer Context's. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in `outbox-worker-host`. Production stays blocked until the same `migrator` values exist there.
 
 ### SpiceDB
 
@@ -351,17 +387,17 @@ the next deploy job, and every deploy re-publishes the composition anyway.
 
 The composition publisher resolves each unit's public origin by target: the Zerops subdomain of its
 service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
-(`ULTRAMODERN_PUBLIC_URL_<UNIT>` in the placement `buildEnvironment`). On `cloudflare` it restarts
-only the consumers that remain on Zerops (the Outbox Workers of the environment's mode). `deploy-zerops` does not publish
+(`ULTRAMODERN_PUBLIC_URL_<UNIT>` in the placement `buildEnvironment`). `deploy-zerops` does not publish
 on `cloudflare`, because a new or moved Worker is unobservable until `deploy-cloudflare` ships it;
-`publish-edge-composition` publishes from the new Workers afterwards. A placed Worker that consumes
-the snapshot (Commerce Customer Context) has no Zerops project variable, and the snapshot outgrows
-a Worker secret's 5.1 kB limit. Every placed Worker binds the stage composition KV namespace as
-`ONTOS_ACTIVE_APPLICATION_COMPOSITION` and reads key `active` on each request, failing closed when
-the binding or key is missing. `sync-edge-composition`, and `refresh-stage-edge` after each
-scheduled refresh, write every publication to that key from `stage-edge`
-(`scripts/put-edge-composition-snapshot.sh`). Writing the key deploys nothing. Both writes run outside
-the stage deploy lock, so the script leaves the key alone when it already holds a newer `observedAt`.
+`publish-edge-composition` then runs `active-composition:publish publish` with the complete approved
+candidate. Scheduled refresh runs `active-composition:publish refresh` for the same approved revision.
+Both invoke `scripts/publish-active-application-composition.mts` directly under the environment's
+deploy lock: the native publisher writes KV key `active`, verifies readback, and coordinates Core DB
+authority. There is no detached synchronization writer or publication-triggered consumer restart.
+Every placed Worker binds the composition KV namespace as `ONTOS_ACTIVE_APPLICATION_COMPOSITION`
+and reads key `active` on each request, failing closed when the binding or key is missing. Node
+consumers use the lazy HTTP source described in **Current Composition transport**; troubleshoot
+source/readback and authority freshness rather than restarting processes to load a snapshot.
 
 Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
 `full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
@@ -532,7 +568,13 @@ retired: `shellsuperapp_BETTER_AUTH_SECRET` (at least 32 characters) and
 in single quotes). They use the vault export's `<hostname>_<KEY>` names, so the file also serves
 `stage-zerops-services.mts restore --secrets-file`. Zerops is no place for them: it returns a
 sensitive project variable only masked, and every service would inherit it. The Worker secrets step
-and `verify` fail when either is missing. A new value takes effect only after `worker-secrets`, which
+and `verify` fail when either is missing. The file also holds
+`ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY` and every value in
+[Order-flow owner credentials](#order-flow-owner-credentials); the Worker secrets step fails before
+writing anything, naming the setting, when one is missing or is not a UUID, JSON document or reference
+where one is required. Those owners' Workers also receive their caller namespaces and the owner API bases
+they call by URL on the owners' custom domains. A base a Worker reaches through a service binding, or
+only an Outbox Worker on Zerops reads (`ONTOS_ORDER_API_BASE_URL`), is not set. A new value takes effect only after `worker-secrets`, which
 gives the Shell the new key and every vertical its derived public JWKS in the same run. To create
 them:
 
@@ -899,7 +941,7 @@ the queue) runs the gates first. The deploy then runs:
 ```text
 deploy-target ──┬─ deploy-plan ───────────────┐
 edge-readiness ─┴─ edge-plan ─ edge-build ─┐  │
-Workspace gates ───────────────────────────┼──┴─ deploy-migrations ─┬─ deploy-zerops ─────┬─ publish-edge-composition ─ sync-edge-composition
+Workspace gates ───────────────────────────┼──┴─ deploy-migrations ─┬─ deploy-zerops ─────┬─ publish-edge-composition
                                            └────────────────────────┴─ deploy-cloudflare ─┘
 ```
 
@@ -946,3 +988,39 @@ Authorization changes deploy schema and data expansion first: the Contacts asser
 Pass `--authorization-environment <environment>` to `pnpm deployment-impact:plan --` for a promotion plan. `report_only` is valid only before its declared expiry and never in production. `enforced` has no expiry; `expiresAt` bounds only a report-only window. In production, `enforced` requires matching zero-impact, readiness, and negative-smoke artifacts from the exact build. Development and stage may enforce without those artifacts only while the compatibility baseline is empty, because enforcing then withdraws no allowance; the plan records status `enforced` instead of `ready`. Any present artifact must still match, and a non-empty baseline needs the full evidence. Stage enforces since 2026-10-01. Abort on an expired window, mixed build evidence, unresolved impact, missing policy/module/worker/issuer/replay data, or a failed negative smoke.
 
 Production remains blocked while no approved source-controlled production context exists; the development/stage provisioner must continue rejecting production and arbitrary tenant or Action arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate production-promotion approval gate. Issue #169 is broader review context, not approval. Their current records—not this playbook—determine whether the gates are satisfied. An implementation override never records Petr/Jiří approval or permits production enforcement. The checked-in stage context remains `pending`; code-only override is not approval. Rollback restores the prior application mode only after preserving the exact evidence and must not remove the expanded schema or durable redemption rows while old/new consumers overlap.
+
+## Operator-only legacy completion gate
+
+Before first authority publication, the first active-to-draining fence, a recovered migration, and a replacement pointer publication, the administrative publisher rechecks the configured retired-provider inventory and requires the published owner legacy-completion verifier. Missing verifier, incomplete observation, unknown owner database, unresolved legacy work, or failed evidence retention refuses publication. Closing new durable admission does not itself establish legacy absence.
+
+The operator sets `ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY` to an absolute private directory. Deployment and refresh jobs create that mode-0700 directory under `runner.temp` and upload its sanitized evidence with `always()` retention for 30 days, including failed attempts. The publisher retains each sanitized native identity/result observation as an exclusive mode-0600 JSON artifact there. A retained observation cannot authorize a later attempt: its live callback, exact database/system/runtime identity, native transaction and revision must match the current transition. Provider credentials and database URLs remain the existing distinct operator/runtime configuration; evidence contains no handoff payload or credentials.
+
+Privacy observes all tenants through its deployment-only administrative verifier, with native full-visibility and READ COMMITTED checks. It holds its own dispatch/outcome table locks while Core verifies its immutable message evidence and commits the fence in a separate transaction. No raw executor crosses the published interface. Unmarked legacy obligations remain unresolved; the gateway never invents an original release, adopts work, marks delivery done, or treats a fresh environment as evidence about another environment. Current marked completion requires the exact owner handoff and immutable successful outcome.
+
+An existing base-schema authority first receives the additive opt-in Core completion and dead-delivery resolution migrations through the normal Drizzle journal. Only that compatible expansion runs before drain verification; the full owner migrator remains deferred until the old authority is verified and sealed. Repeated migration skips the already journaled expansion.
+
+Core acquires its exclusive authority fence before requesting owner leases, matching the authority-before-owner order of public Actions. The owner lock remains held through the actual Core commit. A later owner connection/finalizer failure does not undo an already committed Core transition: retain the exact failure and independently inspect native authority before recovery, as for provider settlement failures.
+
+## Dead Outbox deliveries during a composition drain
+
+A dead delivery never finishes by itself. While publication drains the old release, a dead delivery that carries completion debt blocks the durable-work phase, and any dead delivery blocks the final Outbox phase. The publisher keeps waiting so an operator can act. It logs a warning that names each blocking delivery as the exact command arguments, for example `--tenant-id <uuid> --message-id <uuid> --worker-key commerce.order.finalize-order-work (attempts 60)`. If the drain does not finish within its freshness lease (at most 20 minutes), the publisher fails, and the timeout error names the same deliveries. Durable admission stays closed, and the old release keeps running.
+
+Resolve each named delivery with the administrative database identity the publisher uses (`DATABASE_ADMIN_URL` and `DATABASE_URL`). A waiting drain then continues by itself; after a timeout, rerun the same publication:
+
+```sh
+mise exec -- pnpm outbox:dead-delivery list [--tracked-revision <old revision>] [--tenant-id <uuid>]
+mise exec -- pnpm outbox:dead-delivery redrive --tenant-id <uuid> --message-id <uuid> --worker-key <key> \
+  --operator <who> --reason <why>
+mise exec -- pnpm outbox:dead-delivery release --tenant-id <uuid> --message-id <uuid> --worker-key <key> \
+  --operator <who> --reason <why>
+```
+
+- `list` shows each dead delivery with its attempt count and last sanitized error.
+- `redrive` is the default once the owner is healthy again. It returns the delivery to `pending` with a fresh attempt budget, and the normal Worker runs it. Its real acknowledgement then clears the debt.
+- `release` resolves the delivery without delivery and clears its completion debt. Use it only when no automatic outcome is safe and the owner's business effect has been settled by hand.
+- Only a `dead` delivery is eligible. A `released` delivery is terminal and cannot be redriven or released again.
+- Every redrive and release appends a row to `core.outbox_delivery_resolutions`. The row holds the operator, the reason, the database session user and the time. No runtime role can write it, so a release is always distinguishable from a Worker acknowledgement.
+
+Order finalization retries for about 24.5 hours, so a dead finalization delivery means a lasting owner refusal. When Customer Context refused PROOF revalidation while the approval request was still valid, redrive the delivery once the owner is available. When CONSUME died after commit because the approval was cancelled or revised, the Order already exists and no automatic terminal outcome is safe. First reconcile the buyer-facing Order by hand, then release the delivery with a reason that records that reconciliation.
+
+Privacy still verifies its own successful measure outcome before publication, so a released Privacy delivery does not satisfy the Privacy legacy-completion gate. Redrive Privacy work instead.

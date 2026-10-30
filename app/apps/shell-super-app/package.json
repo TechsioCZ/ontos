@@ -4,7 +4,10 @@
   "private": true,
   "exports": {
     "./api": "./shared/api.ts",
-    "./api/client": "./src/api/auth-client.ts"
+    "./api/client": "./src/api/auth-client.ts",
+    "./testing/api-key-gateway-native": "./tests/fixtures/api-key-gateway-native.ts",
+    "./testing/tenant-party-shell-http": "./tests/support/tenant-party-shell-http.ts",
+    "./testing/api-key-gateway-native-child": "./tests/support/api-key-gateway-native-child.ts"
   },
   "scripts": {
     "dev": "modern dev",

@@ -194,15 +194,15 @@ jobs:
           # do not name, so a new package is always tested; Repository Tooling Tests check the split.
           - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
             commands: |
-              pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
-              pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
+              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
+              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
           - name: Unit and Component Tests (every other package)
             # Pricing's issue #890 traceability test compares immutable historical revisions and the
             # branch's latest main integration merge. Keep that bounded history in this shard only.
             fetch_depth: 512
             commands: |
-              pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
-              pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
+              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
+              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -402,9 +402,11 @@ jobs:
             <"$RUNNER_TEMP/shard-files"
           git diff --exit-code HEAD
 
-  # Two suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host
-  # artifacts followed by the integration tests (as one job ran them), and the authenticated browser tests
-  # on their own freshly migrated database.
+  # Suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host artifacts
+  # followed by the integration tests, and the authenticated browser tests on their own freshly migrated
+  # database. The integration tests are split into package shards that each fit the job timeout. Every
+  # shard repeats the full service preparation; the root suite and every package that no other shard names
+  # run in the first shard, so a new package can never fall out of the gate.
   service-integration:
     name: ${{ matrix.name }}
     needs: [queue-proof]
@@ -417,6 +419,38 @@ jobs:
         include:
           - suite: integration
             name: Database, Migration, RLS, Authorization, and Outbox Integration
+            root-suite: true
+            package-filters: >-
+              --filter !. --filter !./verticals/catalog --filter !./verticals/pricing
+              --filter !./verticals/inventory --filter !./verticals/commerce-customer-context
+              --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order
+              --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog
+              --filter !./verticals/storefront-registry --filter !./verticals/privacy
+              --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects
+          - suite: integration
+            name: Catalog, Pricing, and Inventory Integration
+            package-filters: >-
+              --filter ./verticals/catalog --filter ./verticals/pricing --filter ./verticals/inventory
+          - suite: integration
+            name: Commerce Customer Context Integration (1/2)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 1/2
+          - suite: integration
+            name: Commerce Customer Context Integration (2/2)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 2/2
+          - suite: integration
+            name: Market, Order, Payment Term, Price Group, and Storefront Integration
+            native-preproposal: true
+            package-filters: >-
+              --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order
+              --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog
+              --filter ./verticals/storefront-registry
+          - suite: integration
+            name: Privacy, Party Registry, Tax, and Projects Integration
+            package-filters: >-
+              --filter ./verticals/privacy --filter ./verticals/party-registry --filter ./verticals/tax
+              --filter ./verticals/projects
           - suite: browser
             name: Authenticated Browser Tests
     env:
@@ -577,7 +611,30 @@ jobs:
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         if: matrix.suite == 'integration'
         working-directory: app
-        run: mise exec -- pnpm test:integration
+        # The job environment above is the whole configuration. Native fixtures refuse to start unless
+        # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
+        env:
+          APP_ENV_PATH: /dev/null
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_SUITE: ${{ matrix.root-suite }}
+          RSTEST_SHARD: ${{ matrix.rstest-shard }}
+        # Same commands as `pnpm test:integration`, restricted to this shard's packages and, for a package
+        # too large for one job, to one Rstest shard of its test files.
+        run: |
+          if [[ "$ROOT_SUITE" == true ]]; then
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1
+          fi
+          # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+          mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+
+      - name: Prove native preproposal basis and genuine approval through registered owners
+        if: matrix.native-preproposal == true
+        working-directory: app
+        timeout-minutes: 20
+        env:
+          APP_ENV_PATH: /dev/null
+        # Reuse this shard's services; each case migrates its own disposable source database.
+        run: mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
@@ -634,8 +691,12 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
         include:
-          - { shard: 1, proof: none, units: verticals/catalog verticals/tax }
-          - { shard: 2, proof: none, units: verticals/commerce-customer-context verticals/storefront-registry }
+          - { shard: 1, proof: none, units: verticals/catalog verticals/tax verticals/commerce-cart }
+          - {
+              shard: 2,
+              proof: none,
+              units: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order,
+            }
           - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app }
           - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory verticals/availability }
           - {
@@ -774,11 +835,11 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
         include:
-          - { shard: 1, proof: topology, units: verticals/assortment verticals/pricing }
+          - { shard: 1, proof: topology, units: verticals/assortment verticals/pricing verticals/commerce-cart }
           - {
               shard: 2,
               proof: none,
-              units: verticals/party-registry verticals/price-group-catalog verticals/availability,
+              units: verticals/party-registry verticals/price-group-catalog verticals/availability verticals/commerce-order,
             }
           - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
           - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app verticals/tax }
@@ -822,6 +883,8 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_CART: https://commerce-cart.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER: https://commerce-order.invalid
           ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
@@ -951,6 +1014,8 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_CART: https://commerce-cart.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER: https://commerce-order.invalid
           ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
@@ -1366,6 +1431,12 @@ jobs:
         if: env.INFRASTRUCTURE == 'true'
         uses: ./.github/actions/install-app
 
+      - name: Prepare private legacy completion evidence
+        run: |
+          ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$RUNNER_TEMP/legacy-completion-evidence"
+          install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
+          printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
+
       - name: Download the initial provider retirement receipt for migration
         if: needs.deploy-plan.outputs.migrator == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1466,6 +1537,15 @@ jobs:
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
+      - name: Retain native legacy completion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-completion-evidence
+          if-no-files-found: ignore
+          retention-days: 30
+
   # The environment's deployment: the providers, outbox workers and Shell that run on Zerops, beside the edge deploy.
   deploy-zerops:
     name: Deploy the environment's Zerops services after merge to main
@@ -1505,6 +1585,12 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+
+      - name: Prepare private legacy completion evidence
+        run: |
+          ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$RUNNER_TEMP/legacy-completion-evidence"
+          install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
+          printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
 
       - name: Download the initial provider quiescence receipt for Node publication
         if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
@@ -1613,6 +1699,15 @@ jobs:
           token: ${{ secrets.ZEROPS_TOKEN }}
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+      - name: Retain native legacy completion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-completion-evidence
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The edge deploy runs only when the repository is configured for Cloudflare: the
   # CLOUDFLARE_ACCOUNT_ID variable, the `stage-edge` CLOUDFLARE_API_TOKEN secret, and a complete
@@ -2105,6 +2200,12 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      - name: Prepare private legacy completion evidence
+        run: |
+          ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$RUNNER_TEMP/legacy-completion-evidence"
+          install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
+          printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
+
       - name: Download this deployment's complete approved candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -2146,6 +2247,15 @@ jobs:
           token: ${{ secrets.ZEROPS_TOKEN }}
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+      - name: Retain native legacy completion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-completion-evidence
+          if-no-files-found: ignore
+          retention-days: 30
 
   # Old durable work finishes before publication. The live Shell changes afterward, while its
   # native publication lock verifies that this exact retained release is still the active choice.

@@ -154,6 +154,30 @@ export const PricingQuantityBasisAttemptSchema = Schema.Struct({
 });
 export type PricingQuantityBasisAttempt = typeof PricingQuantityBasisAttemptSchema.Type;
 
+/** Retains the Catalog assessment instant while proving availability at Pricing's common business instant. */
+export const pricingQuantityBasisTemporalBindingIsValid = (
+  attempt: PricingQuantityBasisAttempt,
+  ownerDecision: PricingCatalogQuantityBasisDecision,
+): boolean => {
+  const { assessedAt } = attempt.catalog.evidence;
+  if (ownerDecision.effectiveAt !== assessedAt || attempt.effectiveAt < assessedAt) {
+    return false;
+  }
+  if (attempt.effectiveAt === assessedAt || !('selection' in ownerDecision)) {
+    return true;
+  }
+  const { validUntil } = attempt.catalog.evidence;
+  return (
+    validUntil !== undefined &&
+    attempt.catalog.completeness.nextApplicabilityBoundary === validUntil &&
+    attempt.effectiveAt < validUntil &&
+    ownerDecision.currentness.validUntil === validUntil &&
+    ownerDecision.completeness.nextApplicabilityBoundary === validUntil &&
+    ownerDecision.observedAt < validUntil &&
+    ownerDecision.observedAt >= attempt.effectiveAt
+  );
+};
+
 const exactCatalogTargetFor = (attempt: PricingQuantityBasisAttempt) =>
   attempt.price.identityKey.catalogSelection.packageOption?.optionRef ??
   attempt.price.identityKey.catalogSelection.variantRef;
@@ -164,11 +188,11 @@ export const PricingQuantityBasisAssessmentInputSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ attempt, ownerDecision }) => {
     const { catalog, price, tier } = attempt;
-    if (attempt.effectiveAt !== catalog.evidence.assessedAt) {
-      return 'Quantity-basis effective time must bind the exact prepared Catalog handoff';
+    if (!pricingQuantityBasisTemporalBindingIsValid(attempt, ownerDecision)) {
+      return 'Quantity-basis must retain the Catalog assessment and prove its finite Current window at the Pricing instant';
     }
     if (!('selection' in ownerDecision)) {
-      return ownerDecision.effectiveAt === attempt.effectiveAt
+      return ownerDecision.effectiveAt === catalog.evidence.assessedAt
         ? undefined
         : `Quantity-basis ${leanFailureOutcomeNoun[ownerDecision.outcome]} must bind the exact requested effective time`;
     }
@@ -179,7 +203,7 @@ export const PricingQuantityBasisAssessmentInputSchema = Schema.Struct({
       return 'Quantity-basis assessment must preserve one exact Product, Variant, Package, Configuration, and Set selection';
     }
     if (
-      ownerDecision.effectiveAt !== attempt.effectiveAt ||
+      ownerDecision.effectiveAt !== catalog.evidence.assessedAt ||
       ownerDecision.requestedOwnerRevision !== catalog.ownerRevision ||
       ownerDecision.hierarchyRevision !== catalog.hierarchyRevision ||
       ownerDecision.equivalentSelectionKey !== catalog.equivalentSelectionKey ||

@@ -470,3 +470,100 @@ for (const control of hostGraphControls) {
     }),
   );
 }
+
+it.live('admits only the six approved 1257 governed owner client composition pairs', () =>
+  Effect.gen(function* approvedOwnerCompositionPairs() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-lean-core-1257-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const approvalEvidenceClient = '@app/commerce-customer-context/api/order-service-approval-evidence/client';
+    const approvalOwnerGateway = 'verticals/commerce-order/src/services/approval-owner-gateway.ts';
+    const commerceManifest = 'verticals/commerce-customer-context/package.json';
+    const pairs = [
+      {
+        importer: 'verticals/commerce-cart/src/services/final-cart-candidate-owners.service.ts',
+        specifier: approvalEvidenceClient,
+      },
+      {
+        importer: 'verticals/commerce-order/src/integrations/finalization-tax-payment-terms.ts',
+        specifier: approvalEvidenceClient,
+      },
+      {
+        importer: approvalOwnerGateway,
+        specifier: approvalEvidenceClient,
+      },
+      {
+        importer: approvalOwnerGateway,
+        specifier: '@app/commerce-customer-context/api/revalidate-order-purchase-approval-action/client',
+      },
+      {
+        importer: approvalOwnerGateway,
+        specifier: '@app/commerce-customer-context/api/consume-order-purchase-approval-action/client',
+      },
+      {
+        importer: 'verticals/pricing/src/services/preapproval-quotation-verification.service.ts',
+        specifier: '@app/commerce-customer-context/api/purchase-proposal-basis/client',
+      },
+    ];
+    const files = new Map<string, string>();
+    const exports = Object.fromEntries(
+      pairs.map(({ specifier }) => {
+        const subpath = specifier.replace('@app/commerce-customer-context/', './');
+        return [subpath, `./src/api/${subpath.slice(6).replace('/client', '-client')}.ts`];
+      }),
+    );
+    files.set(commerceManifest, JSON.stringify({ exports }));
+    for (const { importer, specifier } of pairs) {
+      files.set(importer, `${files.get(importer) ?? ''}import { execute } from '${specifier}';\n`);
+    }
+    for (const [relative, source] of files) {
+      const file = path.join(root, relative);
+      yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+      yield* Effect.tryPromise(() => writeFile(file, source));
+    }
+    const valid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    expect(valid).toEqual([]);
+    const adjacent = pairs.map(({ importer, specifier }, index) => ({
+      importer: importer.replace(/\.ts$/u, `.unauthorized-${index}.ts`),
+      specifier,
+    }));
+    for (const { importer, specifier } of adjacent) {
+      const file = path.join(root, importer);
+      yield* Effect.tryPromise(() => writeFile(file, `import { execute } from '${specifier}';\n`));
+    }
+    for (const importer of new Set(pairs.map((pair) => pair.importer))) {
+      const privatePath = path.relative(
+        path.dirname(importer),
+        'verticals/commerce-customer-context/src/api/private.ts',
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          path.join(root, importer),
+          `import { execute } from '@app/commerce-customer-context/api/order-service-approval-evidence/client-private';\nimport { executePrivate } from '${privatePath}';\n`,
+        ),
+      );
+    }
+    // The nearby wrong client is published too; publication alone must not grant a new seam.
+    files.set(
+      commerceManifest,
+      JSON.stringify({
+        exports: {
+          ...exports,
+          './api/order-service-approval-evidence/client-private': './src/api/private.ts',
+        },
+      }),
+    );
+    yield* Effect.tryPromise(() => writeFile(path.join(root, commerceManifest), files.get(commerceManifest) ?? ''));
+    const invalid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    expect(invalid).toHaveLength(14);
+    for (const { importer } of adjacent) {
+      expect(invalid.filter((violation) => violation.file === importer)).toHaveLength(1);
+    }
+    for (const importer of new Set(pairs.map((pair) => pair.importer))) {
+      expect(invalid.filter((violation) => violation.file === importer).map((violation) => violation.line)).toEqual([
+        1, 2,
+      ]);
+    }
+  }),
+);

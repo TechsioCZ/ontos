@@ -1,4 +1,8 @@
 // @effect-diagnostics globalConsole:off nodeBuiltinImport:off -- Operator-only database verification adapts the PostgreSQL driver at the infrastructure edge; expires: 2027-03-31.
+import { fileURLToPath } from 'node:url';
+import { NodeFileSystem } from '@effect/platform-node';
+import { FileSystem } from 'effect/FileSystem';
+
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { PgClient } from '@effect/sql-pg';
@@ -55,6 +59,30 @@ const pointersAreCurrent = (pointers: {
   variant_unit_mismatch: number;
 }) => Object.values(pointers).every((count) => count === 0);
 
+interface InfrastructureRow {
+  readonly forced_rls: number;
+  readonly foreign_key_count: number;
+  readonly journal_count: number;
+  readonly policy_count: number;
+  readonly result_snapshot_guard_count: number;
+  readonly trigger_count: number;
+  readonly validated_combination_count: number;
+}
+const infrastructureCounts = (row: InfrastructureRow | undefined) =>
+  row === undefined
+    ? undefined
+    : [
+        row.forced_rls,
+        row.journal_count,
+        row.policy_count,
+        row.result_snapshot_guard_count,
+        row.trigger_count,
+        row.validated_combination_count,
+        row.foreign_key_count,
+      ];
+const sameInventory = (actual: readonly number[] | undefined, expected: readonly number[]) =>
+  actual !== undefined && actual.every((value, index) => value === expected[index]);
+
 const verification = Effect.gen(function* verifyCatalogDatabase() {
   const configuration = yield* loadDatabaseConnectionPair();
   const client = yield* PgClient.makeClient({ url: Redacted.make(configuration.admin.connectionString) }).pipe(
@@ -93,6 +121,36 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
       reason: 'Catalog column inventory does not match the typed schema',
     });
   }
+  const [gateway] = yield* client.unsafe<{ readonly valid: boolean }>(`select (
+  (select count(*) = 1 from pg_catalog.pg_class relation join pg_catalog.pg_namespace ns on ns.oid=relation.relnamespace
+    where ns.nspname='catalog' and relation.relname='gateway_assertion_redemptions' and relation.relkind='r'
+      and not relation.relrowsecurity and not relation.relforcerowsecurity)
+  and (select count(*) = 5 from information_schema.columns where table_schema='catalog' and table_name='gateway_assertion_redemptions'
+    and is_nullable='NO' and ((column_name in ('issuer','audience') and data_type='text')
+      or (column_name='jti' and data_type='uuid')
+      or (column_name in ('expires_at','redeemed_at') and data_type='timestamp with time zone')))
+  and (select count(*) = 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class t on t.oid=c.conrelid
+    join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace where ns.nspname='catalog' and t.relname='gateway_assertion_redemptions'
+      and c.contype='u' and pg_catalog.pg_get_constraintdef(c.oid)='UNIQUE (issuer, audience, jti)')
+  and (select count(*) = 1 from pg_catalog.pg_indexes where schemaname='catalog' and tablename='gateway_assertion_redemptions'
+    and indexdef like '% USING btree (expires_at)')
+  and has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','SELECT')
+  and has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','INSERT')
+  and has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','DELETE')
+  and not has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','UPDATE')
+  and not has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','REFERENCES')
+  and not has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','TRUNCATE')
+  and not has_table_privilege('ontos_runtime','catalog.gateway_assertion_redemptions','TRIGGER')
+  and not exists(select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace,
+    lateral pg_catalog.aclexplode(coalesce(t.relacl,pg_catalog.acldefault('r',t.relowner))) acl
+    where ns.nspname='catalog' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
+  and not exists(select 1 from pg_catalog.pg_roles where rolname='ontos_runtime' and (rolsuper or rolbypassrls))
+) as valid`);
+  if (!gateway?.valid) {
+    yield* new CatalogSchemaVerificationError({
+      reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
+    });
+  }
   const infrastructure = yield* inspect<{
     forced_rls: number;
     foreign_key_count: number;
@@ -124,7 +182,7 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
   // 78 existing triggers plus accepted-source and override-ledger guards and the mutable-head identity guard.
   const expectedTriggerCount = 81;
   const expectedInfrastructure = [
-    CATALOG_TABLES.length,
+    CATALOG_TABLES.filter((table) => getTableConfig(table).name !== 'gateway_assertion_redemptions').length,
     1,
     expectedPolicyCount,
     1,
@@ -132,25 +190,105 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
     1,
     expectedForeignKeyCount,
   ];
-  const actualInfrastructure =
-    row === undefined
-      ? undefined
-      : [
-          row.forced_rls,
-          row.journal_count,
-          row.policy_count,
-          row.result_snapshot_guard_count,
-          row.trigger_count,
-          row.validated_combination_count,
-          row.foreign_key_count,
-        ];
-  if (
-    actualInfrastructure === undefined ||
-    actualInfrastructure.some((value, index) => value !== expectedInfrastructure[index])
-  ) {
+  if (!sameInventory(infrastructureCounts(row), expectedInfrastructure)) {
     yield* new CatalogSchemaVerificationError({
       reason: 'Catalog RLS, journal, trigger, or foreign-key inventory differs from its migration',
     });
+  }
+  const mediaPositionGuards = yield* inspect<{ valid: boolean }>(
+    'Unable to inspect Catalog media commit-time position uniqueness',
+    `select (
+      k.contype = 'u' and k.condeferrable and k.condeferred and k.convalidated
+      and i.indisunique and i.indisvalid and i.indisready and not i.indnullsnotdistinct
+      and i.indpred is null
+      and (select array_agg(a.attname::text order by key.ordinality)
+        from unnest(k.conkey) with ordinality as key(attnum, ordinality)
+        join pg_attribute a on a.attrelid=k.conrelid and a.attnum=key.attnum)
+        = array['tenant_id','assignment_set_id','resource_kind','active_position']::text[]
+      and exists (select 1 from pg_attribute a join pg_attrdef d
+        on d.adrelid=a.attrelid and d.adnum=a.attnum
+        where a.attrelid=k.conrelid and a.attname='active_position'
+          and a.attgenerated='s' and not a.attnotnull and a.atttypid='integer'::regtype
+          and translate(regexp_replace(pg_get_expr(d.adbin,d.adrelid), '[[:space:]]', '', 'g'), '()"', '')
+            = 'CASEWHENstate=''ACTIVE''::textTHENpositionELSENULL::integerEND')
+      and not exists (select 1 from pg_class old_index join pg_namespace old_ns
+        on old_ns.oid=old_index.relnamespace
+        where old_ns.nspname='catalog' and old_index.relname='catalog_media_assignments_active_position_uk')
+    ) valid
+    from pg_constraint k join pg_class c on c.oid=k.conrelid
+      join pg_namespace n on n.oid=c.relnamespace join pg_index i on i.indexrelid=k.conindid
+    where n.nspname='catalog' and c.relname='catalog_media_assignments'
+      and k.conname='catalog_media_assignments_active_position_commit_uk'`,
+  );
+  if (mediaPositionGuards.length !== 1 || !mediaPositionGuards[0]?.valid) {
+    yield* new CatalogSchemaVerificationError({
+      reason: 'Catalog media final-position uniqueness is not the expected deferred generated-key constraint',
+    });
+  }
+  yield* Effect.gen(function* verifySetPublishedHeadGuard() {
+    const fs = yield* FileSystem;
+    const setHeadSql = yield* fs
+      .readFileString(
+        fileURLToPath(
+          new URL('../drizzle/20261020103114_set_successor_publication_head/migration.sql', import.meta.url),
+        ),
+      )
+      .pipe(
+        Effect.mapError(
+          () => new CatalogSchemaVerificationError({ reason: 'Catalog Set head migration is unreadable' }),
+        ),
+      );
+    const expectedSetHeadBody = setHeadSql.split('AS $$')[1]?.split('$$;')[0];
+    const setHeadGuards = yield* inspect<{ body: string; retained_trigger: boolean }>(
+      'Unable to inspect the Catalog Set published-head guard',
+      `select p.prosrc as body,
+        (t.tgdeferrable and t.tginitdeferred and t.tgenabled='O' and t.tgtype=21
+          and t.tgconstraint<>0 and not t.tgisinternal and not p.prosecdef
+          and p.proconfig is null and p.prorettype='trigger'::regtype
+          and p.pronargs=0 and l.lanname='plpgsql') as retained_trigger
+        from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        join pg_language l on l.oid=p.prolang
+        join pg_trigger t on t.tgfoid=p.oid
+        join pg_class c on c.oid=t.tgrelid
+        join pg_namespace tn on tn.oid=c.relnamespace
+        where n.nspname='catalog' and p.proname='validate_set_composition_current'
+          and tn.nspname='catalog' and c.relname='set_compositions'
+          and t.tgname='catalog_set_compositions_current_revision_valid'`,
+    );
+    const [setHeadGuard] = setHeadGuards;
+    if (
+      expectedSetHeadBody === undefined ||
+      setHeadGuards.length !== 1 ||
+      setHeadGuard === undefined ||
+      !setHeadGuard.retained_trigger ||
+      setHeadGuard.body.trim() !== expectedSetHeadBody.trim()
+    ) {
+      yield* new CatalogSchemaVerificationError({
+        reason: 'Catalog Set published-head function or deferred trigger differs',
+      });
+    }
+  });
+  const creationReasons = yield* inspect<{ definition: string; is_nullable: string; table_name: string }>(
+    'Unable to inspect Catalog creation reason guards',
+    `select col.table_name,col.is_nullable,pg_get_constraintdef(k.oid,true) as definition
+       from information_schema.columns col
+       join pg_namespace n on n.nspname=col.table_schema
+       join pg_class c on c.relnamespace=n.oid and c.relname=col.table_name
+       join pg_constraint k on k.conrelid=c.oid and k.conname='catalog_'||col.table_name||'_reason_ck'
+       where col.table_schema='catalog' and col.table_name in ('product_revisions','product_variant_revisions')
+         and col.column_name='reason'`,
+  );
+  if (
+    creationReasons.length !== 2 ||
+    creationReasons.some(
+      (reasonGuard) =>
+        reasonGuard.is_nullable !== 'YES' ||
+        !reasonGuard.definition.includes("'CREATED'") ||
+        !reasonGuard.definition.includes('reason IS NOT NULL') ||
+        !reasonGuard.definition.includes('reason IS NULL'),
+    )
+  ) {
+    yield* new CatalogSchemaVerificationError({ reason: 'Catalog CREATED-only nullable reason guards are absent' });
   }
   const skuIndex = yield* inspect<{ index_definition: string }>(
     'Unable to inspect Catalog SKU uniqueness',
@@ -333,8 +471,9 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
         where not exists (select 1 from catalog.set_composition_revisions r
           where r.tenant_id=s.tenant_id and r.composition_id=s.composition_id
             and r.product_id=s.product_id and r.variant_id=s.variant_id
-            and r.revision=s.current_revision and r.effective_from <= now()
-            and (r.effective_to is null or r.effective_to > now()))
+            and r.revision=s.current_revision
+            and (s.current_revision > 1 or (r.effective_from <= now()
+              and (r.effective_to is null or r.effective_to > now()))))
           or exists (select 1 from catalog.set_composition_revisions r
             where r.tenant_id=s.tenant_id and r.composition_id=s.composition_id
               and r.revision=s.current_revision and r.lifecycle_state='ACTIVE'
@@ -501,7 +640,12 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
     });
   }
   yield* Console.log('Verified Catalog database schema, columns, and security metadata');
-}).pipe(Effect.scoped, Effect.provide(Reactivity.layer), Effect.tapError(Console.error));
+}).pipe(
+  Effect.scoped,
+  Effect.provide(Reactivity.layer),
+  Effect.provide(NodeFileSystem.layer),
+  Effect.tapError(Console.error),
+);
 
 const exit = await Effect.runPromiseExit(verification);
 process.exitCode = Exit.isFailure(exit) ? 1 : 0;

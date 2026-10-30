@@ -80,6 +80,12 @@ export const readCatalogSourceResolution = Effect.fn('CatalogSourceResolutionRea
     if (input.scope.tenantId !== tenantId) {
       return yield* notFound();
     }
+    if (input.scope.targetKind === 'PRODUCT') {
+      const exists = yield* services.productExists(input.scope).pipe(Effect.mapError(unavailable));
+      if (!exists) {
+        return yield* notFound();
+      }
+    }
     const at = yield* DateTime.nowAsDate;
     const [acceptedBases, overrides] = yield* Effect.all(
       [services.readAcceptedBases(input.scope), services.readOverrides(input.scope)],

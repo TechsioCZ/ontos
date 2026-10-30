@@ -32,6 +32,7 @@ import {
   recordedVariantCombinationKey,
   variantAxisPersistenceForScope,
 } from '../../src/persistence/variant-axis-persistence.ts';
+import { AttributeDefinitionSchema, validateAttributeValues } from '../../shared/domain/attribute-values.ts';
 import { axisFreeCombinationKey } from '../../src/persistence/variant-current-basis.ts';
 import {
   ConfirmedVariantCombinationSchema,
@@ -322,6 +323,20 @@ const confirmInput = (
   ...overrides,
 });
 
+const textDefinitionRows = (special = false): Map<Table, readonly object[]> => {
+  const rules = {
+    ...definitionRules,
+    allowsNone: special ? 1 : 0,
+    allowsUnknown: special ? 1 : 0,
+    controlledValueKind: null,
+    valueKind: 'TEXT',
+  };
+  return new Map<Table, readonly object[]>([
+    [attributeDefinitions, [{ ...rules, attributeDefinitionId: definitionId, currentRevision: 3, tenantId }]],
+    [attributeDefinitionRevisions, [{ ...rules, attributeDefinitionId: definitionId, revision: 3, tenantId }]],
+  ]);
+};
+
 describe('Variant allowed-value governance', () => {
   const input = {
     actionInvocationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
@@ -335,6 +350,112 @@ describe('Variant allowed-value governance', () => {
     reason: 'Product-specific allowed colors',
     values: [controlledValue],
   };
+
+  it.effect(
+    'permits two independent alternatives for a SINGLE axis while actual assignments remain single-valued',
+    () =>
+      Effect.gen(function* singleAlternativeUniverse() {
+        const writes: object[] = [];
+        // @ts-expect-error Focused Drizzle transaction mock.
+        const persistence = variantAxisPersistenceForScope(transactionWith(textDefinitionRows(), writes), scope);
+        const values = [
+          { kind: 'TEXT', text: 'matte' },
+          { kind: 'TEXT', text: 'gloss' },
+        ] as const;
+        const outcome = yield* persistence.governAllowedValues({ ...input, values });
+        expect(Schema.is(GovernVariantAllowedValuesGovernedSchema)(outcome)).toBe(true);
+        expect(outcome).toMatchObject({ allowanceRevision: 1, changed: true });
+        expect(writes).toEqual([
+          {
+            insert: productVariantAxisAllowanceEvents,
+            values: expect.objectContaining({ allowanceRevision: 1, valueCount: 2 }),
+          },
+          {
+            insert: productVariantAxisAllowedValues,
+            values: values.map((value) =>
+              expect.objectContaining({ valueKey: allowedValueKeyHash(value), valueSnapshot: value }),
+            ),
+          },
+        ]);
+        const definition = yield* Schema.decodeUnknownEffect(AttributeDefinitionSchema)({
+          label: 'Finish',
+          levels: ['VARIANT'],
+          meaning: 'Observed physical finish',
+          multiplicity: 'SINGLE',
+          ref: {
+            moduleId: 'commerce.catalog',
+            resourceId: definitionId,
+            resourceType: 'commerce.catalog.attribute-definition',
+            tenantId,
+          },
+          specialStates: [],
+          valueKind: 'TEXT',
+        });
+        expect(validateAttributeValues(definition, values)).toMatchObject({
+          reasons: ['Single attribute has multiple values'],
+          valid: false,
+        });
+      }),
+  );
+
+  it.effect('rejects the entire allowance when one alternative is invalid or repeats an identity', () =>
+    Effect.gen(function* invalidAlternativeUniverse() {
+      const controls = [
+        [
+          { kind: 'TEXT', text: 'matte' },
+          { amount: 1, kind: 'MEASUREMENT', unit: 'cm' },
+        ],
+        [
+          { kind: 'TEXT', text: 'matte' },
+          { kind: 'TEXT', text: 'matte' },
+        ],
+        [
+          { kind: 'TEXT', text: 'matte' },
+          { kind: 'SPECIAL', state: 'UNKNOWN' },
+        ],
+      ] as const;
+      for (const values of controls) {
+        const writes: object[] = [];
+        // @ts-expect-error Focused Drizzle transaction mock.
+        const persistence = variantAxisPersistenceForScope(transactionWith(textDefinitionRows(true), writes), scope);
+        const outcome = yield* persistence.governAllowedValues({ ...input, values });
+        expect(Schema.is(GovernVariantAllowedValuesInvalidInputSchema)(outcome)).toBe(true);
+        expect(writes).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect(
+    'permits an allowed special alternative independently without relaxing actual special-state coexistence',
+    () =>
+      Effect.gen(function* specialAlternativeUniverse() {
+        const writes: object[] = [];
+        // @ts-expect-error Focused Drizzle transaction mock.
+        const persistence = variantAxisPersistenceForScope(transactionWith(textDefinitionRows(true), writes), scope);
+        const values = [
+          { kind: 'TEXT', text: 'matte' },
+          { kind: 'SPECIAL', state: 'NONE' },
+        ] as const;
+        const outcome = yield* persistence.governAllowedValues({ ...input, values });
+        expect(Schema.is(GovernVariantAllowedValuesGovernedSchema)(outcome)).toBe(true);
+        expect(writes).toHaveLength(2);
+        const definition = yield* Schema.decodeUnknownEffect(AttributeDefinitionSchema)({
+          label: 'Finish',
+          levels: ['VARIANT'],
+          meaning: 'Observed physical finish',
+          multiplicity: 'SINGLE',
+          ref: {
+            moduleId: 'commerce.catalog',
+            resourceId: definitionId,
+            resourceType: 'commerce.catalog.attribute-definition',
+            tenantId,
+          },
+          specialStates: ['NONE'],
+          valueKind: 'TEXT',
+        });
+        expect(validateAttributeValues(definition, values).valid).toBe(false);
+      }),
+  );
 
   it.effect('appends an explicit replacement snapshot pinned to the Current axis and definition', () =>
     Effect.gen(function* appendsSnapshot() {

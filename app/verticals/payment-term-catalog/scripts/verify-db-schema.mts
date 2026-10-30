@@ -52,7 +52,7 @@ const expectedColumns = EffectArray.sort(
 );
 
 const schemaInfrastructureIsValid = (infrastructure: InfrastructureRow): boolean =>
-  infrastructure.table_count === 8 &&
+  infrastructure.table_count === 9 &&
   infrastructure.force_rls_count === 8 &&
   infrastructure.wrong_owner_count === 0 &&
   infrastructure.policy_count === 32 &&
@@ -153,6 +153,39 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
     });
   }
 
+  const [gateway] = yield* database.executor.execute<{ readonly valid: boolean }>(
+    sql`select (
+  (select count(*) = 1 from pg_catalog.pg_class relation join pg_catalog.pg_namespace ns on ns.oid=relation.relnamespace
+    where ns.nspname='payment_term_catalog' and relation.relname='gateway_assertion_redemptions' and relation.relkind='r'
+      and not relation.relrowsecurity and not relation.relforcerowsecurity)
+  and (select count(*) = 5 from information_schema.columns where table_schema='payment_term_catalog' and table_name='gateway_assertion_redemptions'
+    and is_nullable='NO' and ((column_name in ('issuer','audience') and data_type='text')
+      or (column_name='jti' and data_type='uuid')
+      or (column_name in ('expires_at','redeemed_at') and data_type='timestamp with time zone')))
+  and (select count(*) = 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class t on t.oid=c.conrelid
+    join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace where ns.nspname='payment_term_catalog' and t.relname='gateway_assertion_redemptions'
+      and c.contype='u' and pg_catalog.pg_get_constraintdef(c.oid)='UNIQUE (issuer, audience, jti)')
+  and (select count(*) = 1 from pg_catalog.pg_indexes where schemaname='payment_term_catalog' and tablename='gateway_assertion_redemptions'
+    and indexdef like '% USING btree (expires_at)')
+  and has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','SELECT')
+  and has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','INSERT')
+  and has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','DELETE')
+  and not has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','UPDATE')
+  and not has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','REFERENCES')
+  and not has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','TRUNCATE')
+  and not has_table_privilege('ontos_runtime','payment_term_catalog.gateway_assertion_redemptions','TRIGGER')
+  and not exists(select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace,
+    lateral pg_catalog.aclexplode(coalesce(t.relacl,pg_catalog.acldefault('r',t.relowner))) acl
+    where ns.nspname='payment_term_catalog' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
+  and not exists(select 1 from pg_catalog.pg_roles where rolname='ontos_runtime' and (rolsuper or rolbypassrls))
+) as valid`,
+    'objects',
+  );
+  if (!gateway?.valid) {
+    return yield* new PaymentTermCatalogVerificationError({
+      reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
+    });
+  }
   const [infrastructure] = yield* database.executor
     .execute<InfrastructureRow>(
       sql`
@@ -229,10 +262,10 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
             or has_function_privilege(${'ontos_runtime'}, ${'payment_term_catalog.enforce_revision_semantic_immutability()'}, ${'EXECUTE'}) as private_routine_executable,
           has_schema_privilege(${'ontos_runtime'}, ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
           has_schema_privilege(${'ontos_runtime'}, ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) as runtime_select,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) as runtime_insert,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) as runtime_update,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) as runtime_delete,
+          bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) as runtime_select,
+          bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) as runtime_insert,
+          bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) as runtime_update,
+          bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) as runtime_delete,
           runtime_role.rolsuper as role_super,
           runtime_role.rolbypassrls as role_bypass_rls
         from pg_catalog.pg_class as relation

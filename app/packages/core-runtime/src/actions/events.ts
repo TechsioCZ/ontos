@@ -79,6 +79,10 @@ export const OutboxMessageSchema = Schema.Struct({
 
 export type OutboxMessage = Schema.Schema.Type<typeof OutboxMessageSchema>;
 
+/** Opt-in completion debt for this message and its intended consumer only. */
+export const OutboxCompletionDeclarationSchema = Schema.Struct({ consumerModuleKey: nonEmptyString });
+export type OutboxCompletionDeclaration = Schema.Schema.Type<typeof OutboxCompletionDeclarationSchema>;
+
 const domainEventReferenceBrand: unique symbol = Symbol('@app/core-runtime/actions/events/DomainEventReference');
 
 /** Opaque reference produced only by one execution's Domain Event collector. */
@@ -91,6 +95,7 @@ export const createDomainEventReference = (): DomainEventReference =>
   Object.freeze({ [domainEventReferenceBrand]: true as const });
 
 export interface CollectedOutboxMessage {
+  readonly completion?: OutboxCompletionDeclaration & { readonly originalRevision: string };
   readonly domainEventIndex: number;
   readonly message: OutboxMessage;
 }

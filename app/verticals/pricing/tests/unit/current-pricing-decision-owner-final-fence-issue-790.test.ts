@@ -1,4 +1,14 @@
-import { Context, Effect, Layer, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import {
+  PricingCurrentMarketEvidenceRequestSchema,
+  PricingCurrentMarketEvidenceResponseSchema,
+} from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
+import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
+import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
+import { DateTime, Redacted, Context, Effect, Exit, Layer, Schema } from 'effect';
+import { pricingCommercialFeeCurrentSetPredicateRef } from '@app/pricing-contracts/domain/commercial-fee';
+import { ReadCurrentCommercialFeeSetPersistenceOutcomeSchema } from '../../src/services/commercial-fee-persistence.service.ts';
+import { ReadCurrentZeroFloorAuthorizationSetPersistenceOutcomeSchema } from '../../src/services/zero-floor-authorization-persistence.service.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { PricingMaterialEvidenceFenceSourceSchema } from '@app/pricing-contracts/domain/material-evidence';
@@ -17,6 +27,8 @@ import { ActiveApplicationCompositionService, ActiveApplicationCompositionUnavai
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 
 import {
+  executeAuthorizedMarketEvidence,
+  makePricingCurrentDecisionCatalogOwnerFinalFenceGateway,
   makePricingCurrentDecisionPricingOwnerFinalFenceGateway,
   makePricingCurrentDecisionOwnerFinalFenceGatewaysLive,
   pricingCurrentDecisionOwnerFinalFenceGatewaysLive,
@@ -42,7 +54,8 @@ import {
   ReadCurrentQuantityTierSetPersistenceOutcomeSchema,
   ResolveQuantityTierSetProofPersistenceOutcomeSchema,
 } from '../../src/services/quantity-tier-persistence.service.ts';
-import { makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
+import { ReadExactPriceCandidateSetPersistenceOutcomeSchema } from '../../src/services/price-persistence.service.ts';
+import { makeIssue787SourceEvidence, makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
 
 const services = [
   ['commerce.pricing', PricingPricingMaterialEvidenceFenceGateway],
@@ -152,6 +165,448 @@ const successfulGateway = (completedAt: string): PricingOwnerMaterialEvidenceFen
 });
 
 describe('Current Pricing Decision production owner final-fence adapters #790', () => {
+  it.effect(
+    'confirms ZERO_FLOOR with the retained witness and rejects changed generation or expired boundary (#1277)',
+    () =>
+      Effect.gen(function* retainedZeroFloorObservation() {
+        const snapshot = makeIssue787Snapshot();
+        const [line] = snapshot.decision.lines;
+        if (line === undefined) {
+          return yield* Effect.die('ZERO_FLOOR fixture requires a line');
+        }
+        const predicateRef = 'pricing-zero-floor-current-set:v1:retained-1277';
+        const evidence = makeIssue787SourceEvidence({ family: 'ZERO_FLOOR', predicateRef, state: 'ABSENT' });
+        if (!('completeness' in evidence)) {
+          return yield* Effect.die('ZERO_FLOOR fixture requires completeness');
+        }
+        const { completeness } = evidence;
+        const authority = {
+          generation: 1,
+          observedAt: completeness.temporal.observedAt,
+          ownerRevision: completeness.ownerSetRevisionRef,
+          ownerRootRef: completeness.ownerScope.ownerRootRef,
+          predicateRef,
+          verificationRef: completeness.verification.verificationRef,
+        };
+        const query = {
+          audienceRefs: [],
+          catalogSelection: line.catalog.selection,
+          commercialScope: snapshot.decision.commercialScope,
+          currencyCode: snapshot.decision.currencyCode,
+          effectiveAt: snapshot.decision.operationTime,
+          exactPredicateRef: predicateRef,
+          materialRevisionRefs: ['pricing:material:1277'],
+          pricingBasis: line.pricingBasis,
+          tenantId: snapshot.decision.tenantId,
+        };
+        const source = yield* Schema.decodeUnknownEffect(PricingMaterialEvidenceFenceSourceSchema)({
+          sourceEvidence: evidence,
+          verificationMaterial: {
+            kind: 'PRICING_ZERO_FLOOR_AUTHORITY',
+            occurrenceId: line.occurrenceId,
+            ownerReadReceipt: { authority, factProofs: [] },
+            query,
+          },
+        });
+        const completedAt = '2026-09-28T10:00:10.000Z';
+        const freshAt = '2026-09-28T10:00:11.000Z';
+        const checked: unknown[] = [];
+        for (const mode of [
+          'stable',
+          'changed-generation',
+          'changed-root',
+          'changed-revision',
+          'changed-predicate',
+          'changed-query',
+          'expired-boundary',
+        ] as const) {
+          const through = mode === 'expired-boundary' ? completeness.temporal.nextMaterialBoundary : completedAt;
+          const current = yield* Schema.decodeUnknownEffect(
+            ReadCurrentZeroFloorAuthorizationSetPersistenceOutcomeSchema,
+          )({
+            authority: {
+              ...authority,
+              generation: mode === 'changed-generation' ? 2 : 1,
+              observedAt: freshAt,
+              ownerRevision: mode === 'changed-revision' ? 'ZERO_FLOOR:set:foreign' : authority.ownerRevision,
+              ownerRootRef: mode === 'changed-root' ? 'pricing:foreign-root' : authority.ownerRootRef,
+              predicateRef: mode === 'changed-predicate' ? 'pricing:foreign-predicate' : predicateRef,
+            },
+            authorizationSet: {
+              authorizations: [],
+              completenessEvidence: { ...completeness.completenessEvidence, observedAt: freshAt },
+              currentness: {
+                evaluatedAt: query.effectiveAt,
+                observedAt: freshAt,
+                revalidatedAt: freshAt,
+                status: 'CURRENT',
+              },
+              exactPredicateRef: predicateRef,
+              ownerRevision: authority.ownerRevision,
+              query:
+                mode === 'changed-query' ? { ...query, materialRevisionRefs: ['pricing:foreign-material'] } : query,
+            },
+            factProofs: [],
+            outcome: 'ZERO_FLOOR_AUTHORIZATION_SET_CURRENT',
+          });
+          const gateway = makePricingCurrentDecisionPricingOwnerFinalFenceGateway({
+            currencySupport: {
+              loadCurrent: forbiddenOwnerPersistence,
+              resolveOriginalProof: forbiddenOwnerPersistence,
+              verifyCurrentThrough: forbiddenOwnerPersistence,
+            },
+            discounts: {
+              readCurrentSet: forbiddenOwnerPersistence,
+              resolveOriginalSetProof: forbiddenOwnerPersistence,
+              verifySetGeneration: forbiddenOwnerPersistence,
+            },
+            fees: { readCurrentSet: forbiddenOwnerPersistence, verifySetGeneration: forbiddenOwnerPersistence },
+            prices: {
+              readExactCandidateSet: forbiddenOwnerPersistence,
+              verifyExactCandidateSetGeneration: forbiddenOwnerPersistence,
+            },
+            tiers: {
+              readCurrentSet: forbiddenOwnerPersistence,
+              resolveQuantityTierSetProof: forbiddenOwnerPersistence,
+              verifySetGeneration: forbiddenOwnerPersistence,
+            },
+            zeroFloor: {
+              readCurrentSet: () => Effect.succeed(current),
+              verifyGeneration: (input) => {
+                checked.push(input);
+                // Native SQL requires the witness observation <= through, even when the reread is later.
+                expect(input.observedAt).toBe(authority.observedAt);
+                expect(input.observedAt <= input.through).toBe(true);
+                const boundary = completeness.temporal.nextMaterialBoundary;
+                return Effect.succeed(
+                  input.through >= boundary
+                    ? {
+                        outcome: 'ZERO_FLOOR_AUTHORIZATION_SET_GENERATION_CHANGED' as const,
+                        verifiedThrough: input.through,
+                      }
+                    : {
+                        generation: authority.generation,
+                        outcome: 'ZERO_FLOOR_AUTHORIZATION_SET_GENERATION_CURRENT' as const,
+                        ownerRevision: authority.ownerRevision,
+                        ownerRootRef: authority.ownerRootRef,
+                        verifiedThrough: input.through,
+                      },
+                );
+              },
+            },
+          });
+          const confirmation = gateway.confirmObservedGenerationsThrough({
+            candidateRef: snapshot.candidateRef,
+            compositionRevision: 'revision:1277',
+            observations: [
+              {
+                currencyCode: snapshot.decision.currencyCode,
+                currentFacts: [],
+                currentInvalidationGenerationRef: '1',
+                currentOwnerSetRevisionRef: authority.ownerRevision,
+                evidenceInvalidationGenerationRef: '1',
+                evidenceVerificationRef: authority.verificationRef,
+                family: 'ZERO_FLOOR',
+                observedAt: authority.observedAt,
+                ownerModuleId: 'commerce.pricing',
+                ownerRootRef: authority.ownerRootRef,
+                predicateRef,
+                tenantId: snapshot.decision.tenantId,
+              },
+            ],
+            through,
+            typedSources: [source],
+            verificationContext: {
+              candidateRef: snapshot.candidateRef,
+              decision: snapshot.decision,
+              effectiveAt: query.effectiveAt,
+              evaluatedAt: completeness.temporal.evaluatedAt,
+              requestedAt: completeness.temporal.requestedAt,
+            },
+          });
+          if (mode === 'stable') {
+            expect((yield* confirmation).verifiedThrough).toBe(through);
+          } else {
+            expect(yield* confirmation.pipe(Effect.flip)).toBeInstanceOf(
+              PricingOwnerMaterialEvidenceFenceGatewayUnavailable,
+            );
+          }
+        }
+        const { predicateRef: _predicateRef, verificationRef: _verificationRef, ...retainedWitness } = authority;
+        expect(checked).toEqual([
+          { ...retainedWitness, query, through: completedAt },
+          { ...retainedWitness, query, through: completeness.temporal.nextMaterialBoundary },
+        ]);
+        return yield* Effect.void;
+      }),
+  );
+
+  it.effect('confirms Fee history with original observation despite a later fresh read (#1242)', () =>
+    Effect.gen(function* retainedFeeObservation() {
+      const snapshot = makeIssue787Snapshot();
+      const [line] = snapshot.decision.lines;
+      if (line === undefined) {
+        return yield* Effect.die('Fee fixture requires a line');
+      }
+      const query = {
+        commercialScope: snapshot.decision.commercialScope,
+        currencyCode: 'CZK',
+        effectiveAt: snapshot.decision.operationTime,
+        target: { variantRef: line.catalog.selection.variantRef },
+      };
+      const predicateRef = pricingCommercialFeeCurrentSetPredicateRef(query);
+      const evidence = makeIssue787SourceEvidence({ family: 'COMMERCIAL_FEE', predicateRef, state: 'ABSENT' });
+      if (!('completeness' in evidence)) {
+        return yield* Effect.die('Fee fixture requires completeness');
+      }
+      const { completeness } = evidence;
+      const authority = {
+        generation: 1,
+        nextApplicabilityBoundary: completeness.temporal.nextMaterialBoundary,
+        observedAt: completeness.temporal.observedAt,
+        ownerRevision: completeness.ownerSetRevisionRef,
+        ownerRootRef: completeness.ownerScope.ownerRootRef,
+        predicateRef,
+        verificationRef: completeness.verification.verificationRef,
+      };
+      const currentSet = {
+        commercialScope: query.commercialScope,
+        completenessEvidence: completeness.completenessEvidence,
+        currencyCode: 'CZK',
+        currentnessEvidence: {
+          observedAt: authority.observedAt,
+          ownerRevision: authority.ownerRevision,
+          predicateRef,
+          revalidatedAt: authority.observedAt,
+          verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
+        },
+        fees: [],
+        observedAt: authority.observedAt,
+        target: query.target,
+      };
+      const source = yield* Schema.decodeUnknownEffect(PricingMaterialEvidenceFenceSourceSchema)({
+        sourceEvidence: evidence,
+        verificationMaterial: {
+          currentSet,
+          kind: 'PRICING_COMMERCIAL_FEE_AUTHORITY',
+          ownerReadReceipt: { authority, factProofs: [] },
+        },
+      });
+      const through = '2026-09-28T10:00:10.000Z';
+      const freshAt = '2026-09-28T10:00:11.000Z';
+      const checked: unknown[] = [];
+      for (const changed of [false, true]) {
+        const current = yield* Schema.decodeUnknownEffect(ReadCurrentCommercialFeeSetPersistenceOutcomeSchema)({
+          authority: { ...authority, generation: changed ? 2 : 1, observedAt: freshAt },
+          factProofs: [],
+          feeSet: {
+            ...currentSet,
+            completenessEvidence: { ...currentSet.completenessEvidence, observedAt: freshAt },
+            currentnessEvidence: { ...currentSet.currentnessEvidence, observedAt: freshAt, revalidatedAt: freshAt },
+            observedAt: freshAt,
+          },
+          outcome: 'COMMERCIAL_FEE_SET_CURRENT',
+        });
+        const gateway = makePricingCurrentDecisionPricingOwnerFinalFenceGateway({
+          currencySupport: {
+            loadCurrent: forbiddenOwnerPersistence,
+            resolveOriginalProof: forbiddenOwnerPersistence,
+            verifyCurrentThrough: forbiddenOwnerPersistence,
+          },
+          discounts: {
+            readCurrentSet: forbiddenOwnerPersistence,
+            resolveOriginalSetProof: forbiddenOwnerPersistence,
+            verifySetGeneration: forbiddenOwnerPersistence,
+          },
+          fees: {
+            readCurrentSet: () => Effect.succeed(current),
+            verifySetGeneration: (input) => {
+              checked.push(input);
+              return Effect.succeed({
+                authority: input.authority,
+                outcome: 'COMMERCIAL_FEE_SET_GENERATION_CURRENT' as const,
+                verifiedThrough: input.through,
+              });
+            },
+          },
+          prices: {
+            readExactCandidateSet: forbiddenOwnerPersistence,
+            verifyExactCandidateSetGeneration: forbiddenOwnerPersistence,
+          },
+          tiers: {
+            readCurrentSet: forbiddenOwnerPersistence,
+            resolveQuantityTierSetProof: forbiddenOwnerPersistence,
+            verifySetGeneration: forbiddenOwnerPersistence,
+          },
+          zeroFloor: { readCurrentSet: forbiddenOwnerPersistence, verifyGeneration: forbiddenOwnerPersistence },
+        });
+        const confirmation = gateway.confirmObservedGenerationsThrough({
+          candidateRef: snapshot.candidateRef,
+          compositionRevision: 'revision:1242',
+          observations: [
+            {
+              currencyCode: 'CZK',
+              currentFacts: [],
+              currentInvalidationGenerationRef: '1',
+              currentOwnerSetRevisionRef: authority.ownerRevision,
+              evidenceInvalidationGenerationRef: '1',
+              evidenceVerificationRef: authority.verificationRef,
+              family: 'COMMERCIAL_FEE',
+              observedAt: authority.observedAt,
+              ownerModuleId: 'commerce.pricing',
+              ownerRootRef: authority.ownerRootRef,
+              predicateRef,
+              tenantId: snapshot.decision.tenantId,
+            },
+          ],
+          through,
+          typedSources: [source],
+          verificationContext: {
+            candidateRef: snapshot.candidateRef,
+            decision: snapshot.decision,
+            effectiveAt: snapshot.decision.operationTime,
+            evaluatedAt: completeness.temporal.evaluatedAt,
+            requestedAt: completeness.temporal.requestedAt,
+          },
+        });
+        if (changed) {
+          expect(yield* confirmation.pipe(Effect.flip)).toBeInstanceOf(
+            PricingOwnerMaterialEvidenceFenceGatewayUnavailable,
+          );
+        } else {
+          expect((yield* confirmation).verifiedThrough).toBe(through);
+        }
+      }
+      expect(checked).toEqual([{ ...query, authority, through }]);
+      return yield* Effect.void;
+    }),
+  );
+
+  it.effect(
+    'confirms Price history with the retained original observation when the fresh read follows aggregate completion (#1279)',
+    () =>
+      Effect.gen(function* retainedPriceObservation() {
+        const snapshot = makeIssue787Snapshot();
+        const [line] = snapshot.decision.lines;
+        const evidence = makeIssue787SourceEvidence({ state: 'ABSENT' });
+        if (line === undefined || !('completeness' in evidence)) {
+          return yield* Effect.die('Price fixture requires complete source evidence');
+        }
+        const { completeness } = evidence;
+        const originalAuthority = {
+          generation: 0,
+          kind: 'VIRTUAL_EMPTY' as const,
+          nextApplicabilityBoundary: completeness.temporal.nextMaterialBoundary,
+          observedAt: completeness.temporal.observedAt,
+          ownerRevision: completeness.ownerSetRevisionRef,
+          ownerRootRef: completeness.ownerScope.ownerRootRef,
+          predicateRef: completeness.ownerScope.predicateRef,
+          verificationRef: completeness.verification.verificationRef,
+        };
+        const lookupRequest = {
+          effectiveAt: snapshot.decision.operationTime,
+          exactKey: {
+            catalogSelection: line.catalog.selection,
+            commercialScope: snapshot.decision.commercialScope,
+            currencyCode: snapshot.decision.currencyCode,
+            priceGroupSelector: { kind: 'NO_GROUP' as const },
+            unitBasis: line.pricingBasis,
+          },
+        };
+        const source = yield* Schema.decodeUnknownEffect(PricingMaterialEvidenceFenceSourceSchema)({
+          sourceEvidence: evidence,
+          verificationMaterial: {
+            kind: 'PRICING_PRICE_AUTHORITY',
+            lookupRequest,
+            ownerReadReceipt: { authority: originalAuthority, factProofs: [] },
+          },
+        });
+        const through = '2026-09-28T10:00:10.000Z';
+        const freshAt = '2026-09-28T10:00:11.000Z';
+        const checked: unknown[] = [];
+        for (const changed of [false, true]) {
+          const current = yield* Schema.decodeUnknownEffect(ReadExactPriceCandidateSetPersistenceOutcomeSchema)({
+            authority: {
+              ...originalAuthority,
+              observedAt: freshAt,
+              verificationRef: changed ? 'changed-price-set-proof' : originalAuthority.verificationRef,
+            },
+            candidateSet: { candidates: [], ...lookupRequest },
+            factProofs: [],
+            outcome: 'EXACT_PRICE_CANDIDATE_SET_CURRENT',
+          });
+          const gateway = makePricingCurrentDecisionPricingOwnerFinalFenceGateway({
+            currencySupport: {
+              loadCurrent: forbiddenOwnerPersistence,
+              resolveOriginalProof: forbiddenOwnerPersistence,
+              verifyCurrentThrough: forbiddenOwnerPersistence,
+            },
+            discounts: {
+              readCurrentSet: forbiddenOwnerPersistence,
+              resolveOriginalSetProof: forbiddenOwnerPersistence,
+              verifySetGeneration: forbiddenOwnerPersistence,
+            },
+            fees: { readCurrentSet: forbiddenOwnerPersistence, verifySetGeneration: forbiddenOwnerPersistence },
+            prices: {
+              readExactCandidateSet: () => Effect.succeed(current),
+              verifyExactCandidateSetGeneration: (query) => {
+                checked.push(query);
+                return Effect.succeed({
+                  authority: query.authority,
+                  outcome: 'EXACT_PRICE_CANDIDATE_SET_GENERATION_CURRENT' as const,
+                  verifiedThrough: query.through,
+                });
+              },
+            },
+            tiers: {
+              readCurrentSet: forbiddenOwnerPersistence,
+              resolveQuantityTierSetProof: forbiddenOwnerPersistence,
+              verifySetGeneration: forbiddenOwnerPersistence,
+            },
+            zeroFloor: { readCurrentSet: forbiddenOwnerPersistence, verifyGeneration: forbiddenOwnerPersistence },
+          });
+          const confirmation = gateway.confirmObservedGenerationsThrough({
+            candidateRef: snapshot.candidateRef,
+            compositionRevision: 'revision:1279',
+            observations: [
+              {
+                currencyCode: 'CZK',
+                currentFacts: [],
+                currentInvalidationGenerationRef: '0',
+                currentOwnerSetRevisionRef: originalAuthority.ownerRevision,
+                evidenceInvalidationGenerationRef: '0',
+                evidenceVerificationRef: originalAuthority.verificationRef,
+                family: 'PRICE',
+                observedAt: '2026-09-28T10:00:09.000Z',
+                ownerModuleId: 'commerce.pricing',
+                ownerRootRef: originalAuthority.ownerRootRef,
+                predicateRef: originalAuthority.predicateRef,
+                tenantId: snapshot.decision.tenantId,
+              },
+            ],
+            through,
+            typedSources: [source],
+            verificationContext: {
+              candidateRef: snapshot.candidateRef,
+              decision: snapshot.decision,
+              effectiveAt: snapshot.decision.operationTime,
+              evaluatedAt: completeness.temporal.evaluatedAt,
+              requestedAt: completeness.temporal.requestedAt,
+            },
+          });
+          if (changed) {
+            const failure = yield* confirmation.pipe(Effect.flip);
+            expect(failure).toBeInstanceOf(PricingOwnerMaterialEvidenceFenceGatewayUnavailable);
+          } else {
+            const result = yield* confirmation;
+            expect(result.verifiedThrough).toBe(through);
+          }
+        }
+        expect(checked).toEqual([{ authority: originalAuthority, ...lookupRequest, through }]);
+        return checked;
+      }),
+  );
+
   it.effect('accepts a fresh Tier receipt and verifies the original proof through completion', () => {
     const tenantId = '10000000-0000-4000-8000-000000000001';
     const effectiveAt = '2026-09-28T08:58:00.000Z';
@@ -1124,4 +1579,207 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       expect(failure.cause).toMatchObject({ ownerModuleId: 'commerce.customer-context', retryable: true });
     });
   });
+});
+
+it.effect('Catalog final replay preserves distinct occurrence material with identical proof refs #1225', () =>
+  Effect.gen(function* catalogCollisionReplay() {
+    const snapshot = makeIssue787Snapshot();
+    const [line] = snapshot.decision.lines;
+    if (line === undefined) {
+      return yield* Effect.die('TEST fixture requires a Catalog line');
+    }
+    const sourceEvidence = yield* Schema.decodeUnknownEffect(PricingSourceEvidenceVerifiedPresentSchema)(
+      makeIssue787SourceEvidence({ family: 'COMMERCIAL_CONTEXT', ownerModuleId: 'commerce.catalog' }),
+    );
+    const { completeness } = sourceEvidence;
+    const { effectiveAt } = sourceEvidence.request;
+    const { observedAt } = completeness.temporal;
+    const validThrough = completeness.temporal.nextMaterialBoundary;
+    const generation = 'catalog:test:identical-generation';
+    const { predicateRef } = completeness.ownerScope;
+    const target = {
+      quantityBasis: line.catalog.quantityBasis,
+      requestedQuantity: line.catalog.quantity.requested,
+      selection: line.catalog.selection,
+    };
+    const responseFor = (request: PricingPurposeEquivalenceRequest) => ({
+      assessments: [
+        { handoff: line.catalog, role: 'ANCHOR' as const },
+        ...request.members.map(({ handoff, occurrenceId }) => ({ handoff, occurrenceId, role: 'MEMBER' as const })),
+      ],
+      currentness: { effectiveAt, observedAt, status: 'CURRENT' as const, validThrough },
+      currentnessEvidence: {
+        effectiveAt,
+        generation,
+        observedAt,
+        predicateRef,
+        revalidatedAt: observedAt,
+        validThrough,
+        verificationMode: 'OWNER_CURRENT_QUANTITY_REVALIDATED' as const,
+      },
+      evidence: {
+        anchorSelection: line.catalog.selection,
+        assessmentId: 'catalog:test:assessment',
+        effectiveAt,
+        members: request.members.map(({ occurrenceId }) => ({ occurrenceId, selection: line.catalog.selection })),
+        observedAt,
+        ownerModuleId: 'commerce.catalog' as const,
+        ownerRevision: completeness.ownerSetRevisionRef,
+        purpose: 'PRICING' as const,
+        status: 'CONFIRMED' as const,
+        validThrough,
+      },
+      generation,
+      outcome: 'CATALOG_EQUIVALENCE_CONFIRMED' as const,
+      verificationReceipt: {
+        generation,
+        issuedAt: observedAt,
+        ownerModuleId: 'commerce.catalog' as const,
+        ownerRevision: completeness.ownerSetRevisionRef,
+        predicate: {
+          anchor: target,
+          effectiveAt,
+          members: request.members.map(({ occurrenceId }) => ({ ...target, occurrenceId })),
+          purpose: 'PRICING' as const,
+        },
+        predicateRef,
+        verificationRef: completeness.verification.verificationRef,
+      },
+    });
+    const typedSources = yield* Effect.forEach(
+      ['occurrence:1225:a', 'occurrence:1225:b'],
+      (occurrenceId) =>
+        Effect.gen(function* sourceForOccurrence() {
+          const request = {
+            anchorSelection: line.catalog.selection,
+            effectiveAt,
+            members: [{ handoff: line.catalog, occurrenceId }],
+          };
+          const response = yield* Schema.decodeUnknownEffect(PricingPurposeEquivalenceResponseSchema)(
+            responseFor(request),
+          );
+          return yield* Schema.decodeUnknownEffect(PricingMaterialEvidenceFenceSourceSchema)({
+            sourceEvidence,
+            verificationMaterial: { kind: 'CATALOG_EQUIVALENCE_AUTHORITY', request, response },
+          });
+        }),
+      { concurrency: 1 },
+    );
+    const expected: PricingMaterialEvidenceFenceExpectation = {
+      currentFacts: sourceEvidence.currentFacts.map(({ factRef, factRevisionRef, verification }) => ({
+        factRef,
+        factRevisionRef,
+        verificationRef: verification.verificationRef,
+      })),
+      evidenceObservedAt: observedAt,
+      evidenceVerificationRef: completeness.verification.verificationRef,
+      family: sourceEvidence.request.family,
+      ownerModuleId: 'commerce.catalog',
+      ownerRootRef: completeness.ownerScope.ownerRootRef,
+      ownerSetRevisionRef: completeness.ownerSetRevisionRef,
+      predicateRef,
+      tenantId: completeness.ownerScope.tenantId,
+    };
+    const calls: string[] = [];
+    let credentials = 0;
+    const gateway = makePricingCurrentDecisionCatalogOwnerFinalFenceGateway({
+      equivalence: (request) =>
+        Effect.sync(() => {
+          calls.push(request.members[0]?.occurrenceId ?? 'missing');
+          return responseFor(request);
+        }),
+      issuer: {
+        issue: () =>
+          Effect.sync(() => {
+            credentials += 1;
+            return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${credentials}`) };
+          }),
+      },
+      quantity: () => Effect.die('Quantity replay is outside this exact equivalence-source fixture'),
+    });
+    const verificationContext = {
+      candidateRef: 'candidate:1225',
+      decision: snapshot.decision,
+      effectiveAt,
+      evaluatedAt: snapshot.capturedAt,
+      requestedAt: snapshot.requestedAt,
+    };
+    const verified = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
+      candidateRef: 'candidate:1225',
+      compositionRevision: 'test:1225',
+      sources: [expected, expected],
+      typedSources,
+      verificationContext,
+    });
+    expect(calls).toEqual(['occurrence:1225:a', 'occurrence:1225:b']);
+    yield* gateway.confirmObservedGenerationsThrough({
+      candidateRef: 'candidate:1225',
+      compositionRevision: 'test:1225',
+      observations: verified.observations,
+      through: observedAt,
+      typedSources,
+      verificationContext,
+    });
+    expect(calls).toEqual(['occurrence:1225:a', 'occurrence:1225:b', 'occurrence:1225:a', 'occurrence:1225:b']);
+    expect(credentials).toBe(4);
+    return yield* Effect.void;
+  }),
+);
+
+describe('native generated Market client wire boundary #1250', () => {
+  for (const invalidObservedAt of [false, true]) {
+    it.effect(`preserves actual client dates for strict readers; invalid wire=${invalidObservedAt}`, () =>
+      Effect.gen(function* preservesGeneratedMarketClientWire() {
+        const rawRequest = {
+          commercialScope: {
+            channel: 'B2C',
+            marketRef: {
+              moduleId: 'commerce.market-catalog',
+              resourceId: 'market:1250',
+              resourceType: 'commerce.market-catalog.market',
+              tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            },
+            sellingLegalEntityRef: {
+              moduleId: 'core.identity',
+              resourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              resourceType: 'core.identity.legal-entity',
+              tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            },
+          },
+          effectiveAt: '2026-10-22T10:00:00.000Z',
+          requestedAt: '2026-10-22T10:00:00.000Z',
+        };
+        const request = yield* Schema.decodeUnknownEffect(PricingCurrentMarketEvidenceRequestSchema)(rawRequest);
+        const wireResponse = {
+          observedAt: invalidObservedAt ? 'not-an-instant' : '2026-10-22T10:00:01.000Z',
+          outcome: 'PRICING_MARKET_SOURCE_MISSING',
+          reason: 'The native owner has no complete source set',
+          request: rawRequest,
+        };
+        const responseBody = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(wireResponse);
+        let requests = 0;
+        const fetchClient: typeof globalThis.fetch = (url) => {
+          requests += 1;
+          expect(new Request(url).url).toContain('/reads/pricing-current-market-evidence');
+          return Promise.resolve(new Response(responseBody, { headers: { 'content-type': 'application/json' } }));
+        };
+        const actual = executeAuthorizedMarketEvidence(request, Redacted.make('test-native-1250'), 'test-native-1250', {
+          baseUrl: new URL('https://market-native.invalid/commerce-market-catalog-api'),
+          compositionRevision: 'test-native-1250',
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetchClient));
+        if (invalidObservedAt) {
+          const exit = yield* Effect.exit(actual);
+          expect(Exit.isFailure(exit)).toBe(true);
+        } else {
+          const encoded = yield* actual;
+          expect(encoded).toMatchObject(wireResponse);
+          // This is the same strict published decoder used by the real collection/final-fence reader.
+          const decoded = yield* Schema.decodeUnknownEffect(PricingCurrentMarketEvidenceResponseSchema)(encoded);
+          expect(decoded.outcome).toBe('PRICING_MARKET_SOURCE_MISSING');
+          expect(DateTime.formatIso(decoded.request.effectiveAt)).toBe(rawRequest.effectiveAt);
+        }
+        expect(requests).toBe(1);
+      }),
+    );
+  }
 });

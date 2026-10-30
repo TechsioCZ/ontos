@@ -1,4 +1,6 @@
 import { Context, Schema } from 'effect';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { PurchaseProposalRevision } from './purchasing-approval.ts';
 import type { Effect } from 'effect';
 
 import type { PurchaseLimitCounterpartyRef, PurchaseLimitDependencyUnavailable } from './purchase-limit-policy.ts';
@@ -34,6 +36,12 @@ export const PurchaseLimitEvaluationCurrentFactsSchema = Schema.Struct({
 export type PurchaseLimitEvaluationCurrentFacts = typeof PurchaseLimitEvaluationCurrentFactsSchema.Type;
 
 export interface PurchaseLimitEvaluationCurrentnessPortService {
+  /** Capture the real authenticated operation; a business buyer scope must never be promoted to it. */
+  readonly forOperation?: (
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+  ) => PurchaseLimitEvaluationCurrentnessPortService;
+
   /**
    * Close the owner-currentness resolver over the Action transaction. A
    * resolver may omit this when it is already transaction-bound; production
@@ -49,6 +57,7 @@ export interface PurchaseLimitEvaluationCurrentnessPortService {
    * satisfy this by reading the proposal row that the create routine is about to insert.
    */
   readonly resolveCandidate?: (input: {
+    readonly candidateProposal?: PurchaseProposalRevision;
     readonly claimedPurchaseValue: PurchaseValue;
     readonly counterpartyRef: PurchaseLimitCounterpartyRef;
     readonly expectedSourceRevisions: PurchaseLimitSourceRevisionVector;

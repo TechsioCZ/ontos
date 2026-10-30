@@ -1789,7 +1789,7 @@ const coreReadLegalEntityDetailGroupLive = HttpApiBuilder.group(
 // @ontos-codesmith-core-read-server-groups:end
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
-  Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
+  Layer.effect(Tracer.Tracer, Tracer.Tracer),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 

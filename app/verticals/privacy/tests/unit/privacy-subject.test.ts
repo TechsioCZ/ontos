@@ -6,6 +6,7 @@ import {
   DataSubjectSchema,
   PrincipalAttributionSchema,
   PrivacySubjectSchema,
+  PrivacySubjectRecordSchema,
   RepresentationSchema,
   RequesterSchema,
 } from '../../shared/domain/privacy-subject.ts';
@@ -111,4 +112,25 @@ describe('privacy subject contracts', () => {
     expect(Schema.decodeUnknownSync(RequesterSchema)(requester)).toEqual(requester);
     expect(Schema.decodeUnknownSync(PrincipalAttributionSchema)(attribution).authMethod).toBe('session');
   });
+});
+
+it('retains owner admission evidence separately from structural subject input and legacy history', () => {
+  const record = {
+    createdAt: '2026-10-19T10:00:00Z',
+    ownerAdmission: {
+      observedAt: '2026-10-19T10:00:00Z',
+      ownerRevision: 3,
+      partyRef: party,
+      typeAssertions: [
+        { assertionId: '30000000-0000-4000-8000-000000000001', validFrom: '2026-01-01T00:00:00Z', validTo: null },
+      ],
+    },
+    subject: { kind: 'DATA_SUBJECT', partyRef: party },
+    subjectRef,
+    updatedAt: '2026-10-19T10:00:00Z',
+  };
+  expect(Schema.decodeUnknownSync(PrivacySubjectRecordSchema)(record)).toEqual(record);
+  expect(Schema.decodeUnknownSync(PrivacySubjectSchema)(record.subject)).toEqual(record.subject);
+  const { ownerAdmission: _ownerAdmission, ...legacy } = record;
+  expect(Schema.decodeUnknownSync(PrivacySubjectRecordSchema)(legacy)).toEqual(legacy);
 });

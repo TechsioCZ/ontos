@@ -426,14 +426,31 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
       'price-group-catalog-worker',
       'inventory-worker',
       'privacy-worker',
+      'commerce-order-worker',
     ]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual(
-      yield* otherModeWorkerSetups(zeropsYaml, topology, 'host'),
-    );
+    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual([
+      'party-registry-worker',
+      CUSTOMER_CONTEXT_WORKER,
+      'price-group-catalog-worker',
+      'inventory-worker',
+      'privacy-worker',
+      'commerce-order-worker',
+    ]);
     expect(serviceIdVariable(OUTBOX_WORKER_HOST_SETUP)).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
     expect(serviceIdVariable(CUSTOMER_CONTEXT_WORKER)).toBe('ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID');
     expect(serviceIdVariable('shellsuperapp')).toBe('ZEROPS_SHELL_SERVICE_ID');
+  }),
+);
+
+it.effect('excludes non-topology workers and undefined topology workers from mode setup inventory', () =>
+  Effect.gen(function* excludesUndeclaredWorkerSetups() {
+    const yaml = 'zerops:\n  - setup: catalog-worker\n  - setup: unrelated-worker\n  - setup: outbox-worker-host\n';
+    const topology = { verticals: [{ id: 'catalog' }, { id: 'commerce-order' }] };
+    expect(yield* modeWorkerSetups(yaml, topology, 'dedicated')).toEqual(['catalog-worker']);
+    expect(yield* otherModeWorkerSetups(yaml, topology, 'host')).toEqual(['catalog-worker']);
+    expect(yield* modeWorkerSetups(yaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* otherModeWorkerSetups(yaml, topology, 'dedicated')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
   }),
 );
 

@@ -97,6 +97,20 @@ const assignmentRow = {
   revision: 1,
 } as const;
 
+const acceptedCompatibilityRow = {
+  catalog_revision: compatibility.catalogRevision,
+  compatibility_contract_id: compatibility.requiredContract.contractId,
+  compatibility_contract_revision: compatibility.requiredContract.version,
+  compatibility_trusted_at: compatibility.trustedOperationAt,
+  compatibility_verified_at: compatibility.verifiedAt,
+  definition_effective_from: compatibility.definitionEffectivePeriod.effectiveFrom,
+  definition_effective_to: compatibility.definitionEffectivePeriod.effectiveTo,
+  definition_revision: compatibility.definitionRevisionNumber,
+  definition_revision_id: compatibility.definitionRevisionId,
+  meaning_fingerprint: compatibility.meaningFingerprint,
+  outcome: 'FOUND',
+};
+
 const transactionReturning = (
   rows: readonly object[],
   calls: Readonly<{ readonly name: string; readonly values: readonly unknown[] }>[] = [],
@@ -275,76 +289,117 @@ it.effect('round-trips canonical owner evidence and fails closed on corrupt pers
   }),
 );
 
-it.effect('preserves the first verification observation on a business-equivalent assignment replay', () =>
-  Effect.gen(function* assignReplay() {
-    const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
-    const retriedCompatibility = {
-      ...compatibility,
-      verifiedAt: '2026-09-09T10:00:02.000Z',
-    } as const;
-    const store = customerPriceGroupAssignmentStoreForTransaction(
-      transactionReturning(
-        [
-          {
-            ...assignmentRow,
-            changed: false,
-            outcome: 'UNCHANGED',
-            profile_state: null,
-            replaced_assignment_id: null,
-          },
-        ],
-        calls,
-        {
-          bind_price_group_assignment_compatibility_evidence: [
+it.effect(
+  'preserves the first operation and verification observations on a business-equivalent assignment replay',
+  () =>
+    Effect.gen(function* assignReplay() {
+      const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
+      const retriedCompatibility = {
+        ...compatibility,
+        trustedOperationAt: '2026-09-09T10:00:01.000Z',
+        verifiedAt: '2026-09-09T10:00:02.000Z',
+      } as const;
+      const store = customerPriceGroupAssignmentStoreForTransaction(
+        transactionReturning(
+          [
             {
-              catalog_revision: compatibility.catalogRevision,
+              ...assignmentRow,
               changed: false,
-              compatibility_contract_id: compatibility.requiredContract.contractId,
-              compatibility_contract_revision: compatibility.requiredContract.version,
-              compatibility_trusted_at: compatibility.trustedOperationAt,
-              compatibility_verified_at: compatibility.verifiedAt,
-              definition_effective_from: compatibility.definitionEffectivePeriod.effectiveFrom,
-              definition_effective_to: compatibility.definitionEffectivePeriod.effectiveTo,
-              definition_revision: compatibility.definitionRevisionNumber,
-              definition_revision_id: compatibility.definitionRevisionId,
-              meaning_fingerprint: compatibility.meaningFingerprint,
-              outcome: 'BOUND',
+              outcome: 'UNCHANGED',
+              profile_state: null,
+              replaced_assignment_id: null,
             },
           ],
-        },
-      ),
-      scope,
-    );
-    const result = yield* store.assign({
-      actionInvocationId,
-      compatibility: retriedCompatibility,
-      effectiveFrom: '2026-09-09T10:00:00.000Z',
-      effectiveTo: null,
-      expectedProfileRevision: 3,
-      priceGroupRef,
-      principalId,
-      profile,
-      reason: 'Negotiated terms',
-      recordedAt: '2026-09-09T09:00:00.000Z',
-      tenantId,
-    });
-    const assigned = Match.value(result).pipe(
-      Match.tag('assigned', (value) => value),
-      Match.tag('overlap', () => null),
-      Match.tag('profile_ineligible', () => null),
-      Match.tag('profile_not_found', () => null),
-      Match.tag('profile_revision_conflict', () => null),
-      Match.tag('retroactive_schedule', () => null),
-      Match.exhaustive,
-    );
-    expect(assigned).toMatchObject({
-      assignment: { assignmentRef: { resourceId: assignmentId }, compatibility, revision: 1 },
-      changed: false,
-      replacedAssignmentRef: null,
-    });
-    expect(calls.find(({ name }) => name === 'bind_price_group_assignment_compatibility_evidence')?.values[13]).toBe(
-      retriedCompatibility.verifiedAt,
-    );
+          calls,
+          {
+            read_price_group_assignment_compatibility_evidence: [acceptedCompatibilityRow],
+          },
+        ),
+        scope,
+      );
+      const result = yield* store.assign({
+        actionInvocationId,
+        compatibility: retriedCompatibility,
+        effectiveFrom: '2026-09-09T10:00:00.000Z',
+        effectiveTo: null,
+        expectedProfileRevision: 3,
+        priceGroupRef,
+        principalId,
+        profile,
+        reason: 'Negotiated terms',
+        recordedAt: '2026-09-09T09:00:00.000Z',
+        tenantId,
+      });
+      const assigned = Match.value(result).pipe(
+        Match.tag('assigned', (value) => value),
+        Match.tag('overlap', () => null),
+        Match.tag('profile_ineligible', () => null),
+        Match.tag('profile_not_found', () => null),
+        Match.tag('profile_revision_conflict', () => null),
+        Match.tag('retroactive_schedule', () => null),
+        Match.exhaustive,
+      );
+      expect(assigned).toMatchObject({
+        assignment: { assignmentRef: { resourceId: assignmentId }, compatibility, revision: 1 },
+        changed: false,
+        replacedAssignmentRef: null,
+      });
+      expect(calls.find(({ name }) => name === 'read_price_group_assignment_compatibility_evidence')?.values).toEqual([
+        assignmentId,
+      ]);
+      expect(calls.some(({ name }) => name === 'bind_price_group_assignment_compatibility_evidence')).toBe(false);
+    }),
+);
+
+it.effect('rejects changed or corrupt accepted identity on a native no-op without rebinding evidence', () =>
+  Effect.gen(function* rejectUnchangedEvidenceConflict() {
+    const inconsistentRows = [
+      { ...acceptedCompatibilityRow, catalog_revision: 8 },
+      { ...acceptedCompatibilityRow, compatibility_contract_id: 'other.actual-owner-contract.v1' },
+      { ...acceptedCompatibilityRow, compatibility_contract_revision: 2 },
+      { ...acceptedCompatibilityRow, definition_revision: 5 },
+      { ...acceptedCompatibilityRow, definition_revision_id: '80000000-0000-4000-8000-000000000002' },
+      { ...acceptedCompatibilityRow, meaning_fingerprint: 'b'.repeat(64) },
+      { ...acceptedCompatibilityRow, definition_effective_from: '2026-08-31T00:00:00.000Z' },
+      { ...acceptedCompatibilityRow, definition_effective_to: '2026-10-01T00:00:00.000Z' },
+      { ...acceptedCompatibilityRow, outcome: 'CORRUPT' },
+    ];
+    for (const persisted of inconsistentRows) {
+      const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
+      const store = customerPriceGroupAssignmentStoreForTransaction(
+        transactionReturning(
+          [
+            {
+              ...assignmentRow,
+              changed: false,
+              outcome: 'UNCHANGED',
+              profile_state: null,
+              replaced_assignment_id: null,
+            },
+          ],
+          calls,
+          { read_price_group_assignment_compatibility_evidence: [persisted] },
+        ),
+        scope,
+      );
+      const failure = yield* Effect.flip(
+        store.assign({
+          actionInvocationId,
+          compatibility,
+          effectiveFrom: assignmentRow.effective_from,
+          effectiveTo: null,
+          expectedProfileRevision: 3,
+          priceGroupRef,
+          principalId,
+          profile,
+          reason: 'Negotiated terms',
+          recordedAt: assignmentRow.recorded_at,
+          tenantId,
+        }),
+      );
+      expect(Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)).toBe(true);
+      expect(calls.some(({ name }) => name === 'bind_price_group_assignment_compatibility_evidence')).toBe(false);
+    }
   }),
 );
 

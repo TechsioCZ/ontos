@@ -42,6 +42,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
       'commercial-fee-definition': () => import('./src/api/commercial-fee-definition-client.ts'),
       'commercial-fee-result-lookup': () => import('./src/api/commercial-fee-result-lookup-client.ts'),
       'commercial-fee-schedule': () => import('./src/api/commercial-fee-schedule-client.ts'),
+      'commitment-confirmation-verification': () => import('./src/api/commitment-confirmation-verification-client.ts'),
       'contractual-discount-result-lookup': () => import('./src/api/contractual-discount-result-lookup-client.ts'),
       'currency-support-result-lookup': () => import('./src/api/currency-support-result-lookup-client.ts'),
       'current-pricing-decision': () => import('./src/api/current-pricing-decision-client.ts'),
@@ -52,6 +53,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
       'price-schedule': () => import('./src/api/price-schedule-client.ts'),
       'quantity-tier-result-lookup': () => import('./src/api/quantity-tier-result-lookup-client.ts'),
       'quotation-result-lookup': () => import('./src/api/quotation-result-lookup-client.ts'),
+      'quotation-verification': () => import('./src/api/quotation-verification-client.ts'),
       'zero-floor-authorization-result-lookup': () =>
         import('./src/api/zero-floor-authorization-result-lookup-client.ts'),
       // </generated-module-registration-apis>

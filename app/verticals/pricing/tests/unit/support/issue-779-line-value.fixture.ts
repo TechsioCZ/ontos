@@ -19,6 +19,7 @@ import {
 } from '@app/pricing-contracts/domain/discount-composition';
 import { PricingPromotionCompositionReadySchema } from '@app/pricing-contracts/domain/promotion-composition';
 import { Effect, Schema } from 'effect';
+import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
 import type { PricingUnitPriceCalculationSuccess } from '@app/pricing-contracts/domain/unit-price-calculation';
 import type { ScheduledPricingCommercialFeeRevisionSchema } from '@app/pricing-contracts/domain/commercial-fee';
 import type { PriceGroupRef } from '@app/price-group-catalog-contracts/resources/price-group';
@@ -47,12 +48,14 @@ export const requireIssue779ProductUnitRef = (unitRef: CatalogResourceRef): Prod
 };
 
 interface Issue779ScenarioOptions {
+  readonly candidateIdentity?: string;
   readonly currencyCode?: 'CZK' | 'EUR';
   readonly discounts?: readonly [catalog: string, group: string, counterparty: string];
   readonly feeAmount?: string;
   readonly occurrenceId?: string;
   readonly priceAmount?: string;
   readonly promotionAmount?: string;
+  readonly purchasingContext?: CurrentPricingDecisionRequest['decision']['purchasingContext'];
 }
 
 interface Issue779Scenario {
@@ -72,6 +75,7 @@ export const makeIssue779Scenario: (
   options?: Issue779ScenarioOptions,
 ) => Effect.Effect<Issue779Scenario, Issue779ScenarioError> = Effect.fn('test.makeIssue779Scenario')(
   function* makeIssue779Scenario(options?: Issue779ScenarioOptions) {
+    const scenarioCandidateRef = options?.candidateIdentity ?? candidateRef;
     const currencyCode = options?.currencyCode ?? 'CZK';
     const priceAmount = options?.priceAmount ?? '100';
     const scenarioOccurrenceId = options?.occurrenceId ?? occurrenceId;
@@ -102,7 +106,7 @@ export const makeIssue779Scenario: (
       lines: [line],
       monetaryBoundary: 'PRE_TAX' as const,
       operationTime: unitPriceFixtureEffectiveAt,
-      purchasingContext: {
+      purchasingContext: options?.purchasingContext ?? {
         accessDecision: {
           decisionRef: 'purchase-context-access:779',
           decisionRevision: 'purchase-context-access-r779',
@@ -414,7 +418,7 @@ export const makeIssue779Scenario: (
     };
     const acceptedRequest = {
       applicationRequestRef: 'promotion-request:779',
-      candidateRef,
+      candidateRef: scenarioCandidateRef,
       exactPredicateRef,
       subjectEvidence,
     };
@@ -461,11 +465,11 @@ export const makeIssue779Scenario: (
     const promotionComposition = yield* Schema.decodeUnknownEffect(PricingPromotionCompositionReadySchema, {
       onExcessProperty: 'error',
     })({
-      candidateRef,
+      candidateRef: scenarioCandidateRef,
       completedPricingAllocationRefs: ['pricing-composition:779'],
       currentnessEvidence: {
         applicationRequestRef: acceptedRequest.applicationRequestRef,
-        candidateRef,
+        candidateRef: scenarioCandidateRef,
         currencySupport: {
           currencyCode,
           evidenceRef: 'currency-support:779',
@@ -487,7 +491,7 @@ export const makeIssue779Scenario: (
       stage: 'AFTER_PRICE_TIER_FEES_ALL_PRICING_DISCOUNTS_AND_PROMOTION',
     });
     const compositionRequest: PricingLineCompositionRequest = {
-      candidateRef,
+      candidateRef: scenarioCandidateRef,
       decision,
       discountComposition,
       feeResults: [feeResult],

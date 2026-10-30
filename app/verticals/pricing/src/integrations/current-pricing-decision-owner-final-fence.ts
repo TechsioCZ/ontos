@@ -13,6 +13,13 @@ import {
   CustomerPriceGroupResolutionResponseSchema,
 } from '@app/commerce-customer-context/api/customer-price-group-resolution';
 import type { CustomerPriceGroupResolutionRequest } from '@app/commerce-customer-context/api/customer-price-group-resolution';
+import { executePricingPurchaseContextVerificationWithAuthorization } from '@app/commerce-customer-context/api/pricing-purchase-context-verification/client';
+import {
+  PricingPurchaseContextVerificationEvidenceSchema,
+  PricingPurchaseContextVerificationRequestSchema,
+  PricingPurchaseContextVerificationResponseSchema,
+} from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
+import type { PricingPurchaseContextVerificationRequest } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
@@ -51,9 +58,18 @@ import type {
 import { PricingSetBackedMaterialEvidenceFenceSourceSchema } from '@app/pricing-contracts/domain/material-evidence';
 import type { PricingMaterialEvidenceFenceSource } from '@app/pricing-contracts/domain/material-evidence';
 import type { PricingMaterialEvidenceFenceExpectation } from '../services/material-evidence-final-validation.service.ts';
-import { pricePersistenceForScope } from '../services/price-persistence.service.ts';
-import { commercialFeePersistenceForScope } from '../services/commercial-fee-persistence.service.ts';
-import { zeroFloorAuthorizationPersistenceForScope } from '../services/zero-floor-authorization-persistence.service.ts';
+import {
+  ExactPriceCandidateSetAuthoritySchema,
+  pricePersistenceForScope,
+} from '../services/price-persistence.service.ts';
+import {
+  CommercialFeeSetAuthoritySchema,
+  commercialFeePersistenceForScope,
+} from '../services/commercial-fee-persistence.service.ts';
+import {
+  ZeroFloorAuthorizationSetAuthoritySchema,
+  zeroFloorAuthorizationPersistenceForScope,
+} from '../services/zero-floor-authorization-persistence.service.ts';
 import {
   currencySupportGenerationVerificationPersistenceForScope,
   currencySupportPersistenceForScope,
@@ -321,9 +337,14 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
       ) {
         return yield* unavailable('Price generation changed before aggregate completion');
       }
+      const retainedAuthority = yield* Schema.decodeUnknownEffect(ExactPriceCandidateSetAuthoritySchema)(
+        material.ownerReadReceipt.authority,
+      ).pipe(Effect.mapError((cause) => unavailable('Original Price candidate-set authority is invalid', cause)));
       const checked = yield* dependencies.prices
         .verifyExactCandidateSetGeneration({
-          authority: read.authority,
+          // Verify the retained witness through aggregate completion. The fresh phase-two
+          // read above can occur later than `through`; its timestamp is not the original proof.
+          authority: retainedAuthority,
           effectiveAt: material.lookupRequest.effectiveAt,
           exactKey: material.lookupRequest.exactKey,
           through,
@@ -381,6 +402,7 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
           observedAt: proof.authority.observedAt,
           ownerRevision: proof.authority.ownerRevision,
           ownerRootRef: proof.authority.ownerRootRef,
+          predicateRef: proof.authority.predicateRef,
           priceRef,
           through,
           verificationRef: proof.authority.verificationRef,
@@ -434,8 +456,12 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
     ) {
       return yield* unavailable('Commercial Fee generation changed before aggregate completion');
     }
+    const retainedAuthority = yield* Schema.decodeUnknownEffect(CommercialFeeSetAuthoritySchema)(
+      material.ownerReadReceipt.authority,
+    ).pipe(Effect.mapError((cause) => unavailable('Original Commercial Fee authority is invalid', cause)));
     const checked = yield* dependencies.fees
-      .verifySetGeneration({ ...query, authority: read.authority, through })
+      // The fresh read may follow aggregate completion; retain the original native witness.
+      .verifySetGeneration({ ...query, authority: retainedAuthority, through })
       .pipe(Effect.mapError((cause) => unavailable('Commercial Fee generation history is unavailable', cause)));
     if (
       checked.outcome !== 'COMMERCIAL_FEE_SET_GENERATION_CURRENT' ||
@@ -514,16 +540,24 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
         anyMismatch(
           read.authority.verificationRef !== observation.evidenceVerificationRef,
           generationRef(read.authority.generation) !== observation.currentInvalidationGenerationRef,
+          read.authority.ownerRevision !== observation.currentOwnerSetRevisionRef,
+          read.authority.ownerRootRef !== observation.ownerRootRef,
+          read.authority.predicateRef !== observation.predicateRef,
+          !sameZeroFloorQuery(read.authorizationSet.query, material.query),
         )
       ) {
         return yield* unavailable('Zero Floor generation changed before aggregate completion');
       }
+      const retainedAuthority = yield* Schema.decodeUnknownEffect(ZeroFloorAuthorizationSetAuthoritySchema)(
+        material.ownerReadReceipt.authority,
+      ).pipe(Effect.mapError((cause) => unavailable('Original Zero Floor authority is invalid', cause)));
       const checked = yield* dependencies.zeroFloor
         .verifyGeneration({
-          generation: read.authority.generation,
-          observedAt: read.authority.observedAt,
-          ownerRevision: read.authority.ownerRevision,
-          ownerRootRef: read.authority.ownerRootRef,
+          // The fresh read can follow aggregate completion; verify the original retained witness through it.
+          generation: retainedAuthority.generation,
+          observedAt: retainedAuthority.observedAt,
+          ownerRevision: retainedAuthority.ownerRevision,
+          ownerRootRef: retainedAuthority.ownerRootRef,
           query: material.query,
           through,
         })
@@ -1307,8 +1341,10 @@ const indexSetBackedSourcesByProof = (sources: readonly PricingMaterialEvidenceF
   return sourcesByProof;
 };
 
-const executeAuthorizedMarketEvidence: MarketEvidenceExecutor = (payload, credential, correlation, options) =>
-  executePricingCurrentMarketEvidenceWithAuthorization(payload, Redacted.value(credential), correlation, options);
+export const executeAuthorizedMarketEvidence: MarketEvidenceExecutor = (payload, credential, correlation, options) =>
+  executePricingCurrentMarketEvidenceWithAuthorization(payload, Redacted.value(credential), correlation, options).pipe(
+    Effect.flatMap(Schema.encodeEffect(PricingCurrentMarketEvidenceResponseSchema)),
+  );
 
 const marketReceiptFacts = (receipt: PricingMarketSourceReceipt) =>
   receipt.currentFacts.map((fact) => ({
@@ -1558,11 +1594,30 @@ type CustomerGroupExecutor = (
 
 const executeAuthorizedCustomerGroup: CustomerGroupExecutor = (payload, credential, correlation, options) =>
   executeCustomerPriceGroupResolutionWithAuthorization(payload, Redacted.value(credential), correlation, options);
+type PurchaseContextClientEffect = ReturnType<typeof executePricingPurchaseContextVerificationWithAuthorization>;
+type PurchaseContextClientFailure =
+  PurchaseContextClientEffect extends Effect.Effect<unknown, infer Failure, unknown> ? Failure : never;
+type PurchaseContextExecutor = (
+  payload: PricingPurchaseContextVerificationRequest,
+  credential: Redacted.Redacted,
+  requestCorrelation: string,
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
+) => Effect.Effect<unknown, PurchaseContextClientFailure>;
+
+const executeAuthorizedPurchaseContext: PurchaseContextExecutor = (payload, credential, correlation, options) =>
+  executePricingPurchaseContextVerificationWithAuthorization(payload, Redacted.value(credential), correlation, options);
 const sameCustomerGroupProfile = Schema.toEquivalence(PriceGroupAssignmentProfileSchema);
+const samePurchaseVerifiedScope = Schema.toEquivalence(
+  PricingPurchaseContextVerificationEvidenceSchema.fields.verifiedScope,
+);
+const samePurchaseSubjectAuthority = Schema.toEquivalence(
+  PricingPurchaseContextVerificationEvidenceSchema.fields.subjectAuthority,
+);
 const sameCustomerGroupResolution = Schema.toEquivalence(PriceGroupAssignmentResolutionSchema);
 
 export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (dependencies: {
   readonly execute: CustomerGroupExecutor;
+  readonly executePurchaseContext?: PurchaseContextExecutor;
   readonly issuer: CommercePriceGroupResolutionGatewayCredentialIssuer;
 }): PricingOwnerMaterialEvidenceFenceGateway => {
   const read = Effect.fn('makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.read')(
@@ -1632,24 +1687,84 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
       return response;
     },
   );
-  const verifyPurchaseSingleton = (
-    typedSources: readonly PricingMaterialEvidenceFenceSource[] | undefined,
-  ): Effect.Effect<void, PricingOwnerMaterialEvidenceFenceGatewayUnavailable> => {
-    const purchaseSources = typedSources?.filter(
-      ({ verificationMaterial }) => verificationMaterial.kind === 'CUSTOMER_CONTEXT_PURCHASE_AUTHORITY',
+  // The Purchase Context is replayed as Pricing's own granted service identity: the buyer's original assertion is
+  // never retained, and Customer Context binds the replay to the retained actor, Profile, and context revision.
+  const verifyPurchaseSingleton = Effect.fn(
+    'makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.verifyPurchaseSingleton',
+  )(function* verifyPurchaseContext({
+    candidateRef,
+    compositionRevision,
+    typedSources,
+  }: {
+    readonly candidateRef: string;
+    readonly compositionRevision: string;
+    readonly typedSources: readonly PricingMaterialEvidenceFenceSource[] | undefined;
+  }) {
+    const purchaseMaterials = (typedSources ?? []).flatMap(({ verificationMaterial }) =>
+      verificationMaterial.kind === 'CUSTOMER_CONTEXT_PURCHASE_AUTHORITY' ? [verificationMaterial] : [],
     );
-    return purchaseSources?.length === 1
-      ? Effect.fail(
-          customerContextGatewayUnavailable(
-            'Purchase Context replay requires the original trusted same-principal gateway assertion, which is not retained by the final-fence request',
-          ),
-        )
-      : Effect.fail(
-          customerContextGatewayUnavailable(
-            'Exact Purchase Context singleton authority is required at the final fence',
-          ),
-        );
-  };
+    const [material] = purchaseMaterials;
+    if (purchaseMaterials.length !== 1 || material === undefined) {
+      return yield* customerContextGatewayUnavailable(
+        'Exact Purchase Context singleton authority is required at the final fence',
+      );
+    }
+    const { baseUrl, credential } = yield* dependencies.issuer
+      .issue({
+        audience: 'commerce-customer-context',
+        compositionRevision,
+        legalEntityId: material.request.purchasingContext.sellingLegalEntityId,
+        requestCorrelation: candidateRef,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          customerContextGatewayUnavailable('Customer Context owner credential is unavailable', cause),
+        ),
+      );
+    const replayRequest = yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationRequestSchema)(
+      material.request,
+    ).pipe(
+      Effect.mapError((cause) =>
+        customerContextGatewayUnavailable('Purchase Context replay request is invalid', cause),
+      ),
+    );
+    const raw = yield* (dependencies.executePurchaseContext ?? executeAuthorizedPurchaseContext)(
+      replayRequest,
+      credential,
+      candidateRef,
+      { baseUrl, compositionRevision },
+    ).pipe(
+      Effect.mapError((cause) =>
+        customerContextGatewayUnavailable('Purchase Context owner replay is unavailable', cause),
+      ),
+    );
+    const response = yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationResponseSchema)(raw).pipe(
+      Effect.mapError((cause) =>
+        customerContextGatewayUnavailable('Purchase Context owner replay response is unverifiable', cause),
+      ),
+    );
+    if (response.outcome !== 'PURCHASE_CONTEXT_VERIFIED') {
+      return yield* customerContextGatewayUnavailable('Purchase Context is no longer verified by its owner');
+    }
+    const retained = yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationEvidenceSchema)(
+      material.evidence,
+    ).pipe(
+      Effect.mapError((cause) =>
+        customerContextGatewayUnavailable('Retained Purchase Context evidence is invalid', cause),
+      ),
+    );
+    const replayed = response.evidence;
+    if (
+      replayed.ownerRef !== retained.ownerRef ||
+      replayed.ownerRevisionRef !== retained.ownerRevisionRef ||
+      replayed.verificationRef !== retained.verificationRef ||
+      !samePurchaseVerifiedScope(replayed.verifiedScope, retained.verifiedScope) ||
+      !samePurchaseSubjectAuthority(replayed.subjectAuthority, retained.subjectAuthority)
+    ) {
+      return yield* customerContextGatewayUnavailable('Purchase Context owner revision changed before publication');
+    }
+    return replayed;
+  });
 
   const confirmCustomerGroupObservation = ({
     candidateRef,
@@ -1732,7 +1847,7 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
       through,
       typedSources,
     }) {
-      yield* verifyPurchaseSingleton(typedSources);
+      yield* verifyPurchaseSingleton({ candidateRef, compositionRevision, typedSources });
       if (typedSources === undefined) {
         return yield* customerContextGatewayUnavailable(
           'Exact typed Customer Context sources are required for generation confirmation',
@@ -1770,7 +1885,7 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
       typedSources,
       verificationContext,
     }) {
-      yield* verifyPurchaseSingleton(typedSources);
+      yield* verifyPurchaseSingleton({ candidateRef, compositionRevision, typedSources });
       if (typedSources === undefined) {
         return yield* customerContextGatewayUnavailable(
           'Exact typed Customer Context sources and candidate context are required',
@@ -1857,6 +1972,29 @@ const catalogEvidenceGeneration = (material: PricingSetBackedFenceSource['verifi
     return material.response.generation;
   }
   return '';
+};
+
+const catalogSourceFor = (
+  source: PricingMaterialEvidenceFenceSource | undefined,
+  expected: Pick<
+    PricingMaterialEvidenceFenceExpectation,
+    'evidenceVerificationRef' | 'family' | 'ownerModuleId' | 'ownerRootRef' | 'predicateRef' | 'tenantId'
+  >,
+): PricingSetBackedFenceSource | undefined => {
+  if (source === undefined || !isSetBackedFenceSource(source)) {
+    return undefined;
+  }
+  const { completeness, request } = source.sourceEvidence;
+  const { ownerScope } = request;
+  return ownerScope.ownerModuleId === 'commerce.catalog' &&
+    ownerScope.ownerModuleId === expected.ownerModuleId &&
+    ownerScope.ownerRootRef === expected.ownerRootRef &&
+    ownerScope.predicateRef === expected.predicateRef &&
+    ownerScope.tenantId === expected.tenantId &&
+    request.family === expected.family &&
+    completeness.verification.verificationRef === expected.evidenceVerificationRef
+    ? source
+    : undefined;
 };
 
 export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependencies: {
@@ -2041,17 +2179,17 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
       ) {
         return yield* catalogGatewayUnavailable('Exact typed Catalog sources and candidate context are required');
       }
-      const typedByProof = indexSetBackedSourcesByProof(typedSources);
+
       const legalEntityId = verificationContext.decision.commercialScope.sellingLegalEntityId;
       const confirmations = yield* Effect.forEach(
         observations,
-        (observation) =>
+        (observation, index) =>
           confirmCatalogObservation({
             candidateRef,
             compositionRevision,
             legalEntityId,
             observation,
-            source: typedByProof.get(observation.evidenceVerificationRef),
+            source: catalogSourceFor(typedSources[index], observation),
             through,
           }),
         { concurrency: 5 },
@@ -2068,17 +2206,17 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
       ) {
         return yield* catalogGatewayUnavailable('Exact typed Catalog sources and candidate context are required');
       }
-      const typedByProof = indexSetBackedSourcesByProof(typedSources);
+
       const legalEntityId = verificationContext.decision.commercialScope.sellingLegalEntityId;
       const observations = yield* Effect.forEach(
         sources,
-        (expected) =>
+        (expected, index) =>
           observeCatalogExpectation({
             candidateRef,
             compositionRevision,
             expected,
             legalEntityId,
-            source: typedByProof.get(expected.evidenceVerificationRef),
+            source: catalogSourceFor(typedSources[index], expected),
           }),
         { concurrency: 5 },
       );

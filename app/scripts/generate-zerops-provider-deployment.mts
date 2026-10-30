@@ -3,7 +3,12 @@ import { Array as EffectArray, Effect, FileSystem, ManagedRuntime, Order, Path, 
 import { Command, Flag } from 'effect/cli';
 import { parse } from 'yaml';
 
-import { PARTY_REGISTRY_REQUEST_SECRET, zeropsIdentityDatabaseUrl } from './ops/database-identity-secrets.mts';
+import { CALLER_NAMESPACE_ID, ownerRuntimeConfiguration, unitApiBaseUrl } from './ops/owner-runtime-configuration.mts';
+import {
+  PARTY_REGISTRY_REQUEST_SECRET,
+  migratorSecretReference,
+  zeropsIdentityDatabaseUrl,
+} from './ops/database-identity-secrets.mts';
 import { readDevelopmentPorts } from './topology-development-ports.mjs';
 
 const begin = '  # <generated-vertical-provider-deployments>';
@@ -13,6 +18,7 @@ const importsEnd = '  # </generated-vertical-provider-imports>';
 const providerRuntimeBase = 'nodejs@24';
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
+    shell: Schema.Struct({ id: Schema.String }),
     verticals: Schema.Array(
       Schema.Struct({
         id: Schema.String,
@@ -36,6 +42,17 @@ interface ProviderVertical {
   readonly port: number;
 }
 
+/** A topology unit another provider can call inside the Zerops project network. */
+interface ProviderUnit {
+  readonly id: string;
+  readonly port: number;
+}
+
+interface ProviderTopology {
+  readonly shell?: ProviderUnit;
+  readonly verticals: readonly ProviderVertical[];
+}
+
 const EnvironmentEntryOrder = Order.mapInput(Order.String, ([key]: readonly [string, string]) => key);
 
 const SHARED_RUNTIME_DATABASE_URL = `postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
@@ -51,6 +68,43 @@ const providerDatabaseEnvironment = (id: string): readonly (readonly [string, st
 
 const isPort = (port: number): boolean => Number.isInteger(port) && port >= 1 && port <= 65_535;
 
+/** Services reach each other by Zerops hostname: the topology id without hyphens. */
+const zeropsHostname = (id: string) => id.replaceAll('-', '');
+
+/** The project-internal API base of a unit, `http://<hostname>:<port>/<unit>-api`. */
+const internalApiBaseUrl = ({ id, port }: ProviderUnit) => unitApiBaseUrl(`http://${zeropsHostname(id)}:${port}`, id);
+
+/**
+ * The internal API bases one provider calls; a dependency the topology does not deploy is omitted.
+ * The owner's Outbox Worker copies them, so a worker-only base is set on the owner too.
+ */
+const providerApiEnvironment = (
+  id: string,
+  units: ReadonlyMap<string, ProviderUnit>,
+): readonly (readonly [string, string])[] =>
+  (ownerRuntimeConfiguration(id)?.apiDependencies ?? []).flatMap(({ unitId, variable }) => {
+    const unit = units.get(unitId);
+    return unit === undefined ? [] : [[variable, `'${internalApiBaseUrl(unit)}'`] as const];
+  });
+
+const migratorReference = (key: string) => `\${${migratorSecretReference(key)}}`;
+
+/**
+ * The credentials, per-environment identities and caller namespaces of one provider. Credentials are
+ * sensitive `migrator` service secrets and the other values `migrator` variables, both referenced as
+ * `${migrator_<KEY>}`, never project variables every service would inherit.
+ */
+const providerIdentityEnvironment = (id: string): readonly (readonly [string, string])[] => {
+  const configuration = ownerRuntimeConfiguration(id);
+  return configuration === undefined
+    ? []
+    : [
+        ...configuration.credentialVariables.map((key) => [key, migratorReference(key)] as const),
+        ...configuration.operatorValues.map(({ variable }) => [variable, migratorReference(variable)] as const),
+        ...configuration.callerNamespaces.map((variable) => [variable, `'${CALLER_NAMESPACE_ID}'`] as const),
+      ];
+};
+
 /** Joins reference-topology providers with their development-overlay ports. */
 export const readZeropsProviderTopology = (root: string) =>
   Effect.gen(function* readProviderTopology() {
@@ -60,6 +114,10 @@ export const readZeropsProviderTopology = (root: string) =>
       yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
     );
     const ports = yield* readDevelopmentPorts(root);
+    const shellPort = ports[topology.shell.id];
+    if (shellPort === undefined) {
+      return yield* invalid(`Missing development port for topology Shell: ${topology.shell.id}`);
+    }
     const verticals: ProviderVertical[] = [];
     for (const vertical of topology.verticals) {
       const port = ports[vertical.id];
@@ -68,7 +126,7 @@ export const readZeropsProviderTopology = (root: string) =>
       }
       verticals.push({ ...vertical, port });
     }
-    return { verticals };
+    return { shell: { id: topology.shell.id, port: shellPort }, verticals } satisfies ProviderTopology;
   });
 
 export interface ZeropsToolchain {
@@ -78,7 +136,7 @@ export interface ZeropsToolchain {
 
 const renderProvider = (
   vertical: ProviderVertical,
-  priceGroupCatalogBaseUrl: string | undefined,
+  units: ReadonlyMap<string, ProviderUnit>,
   toolchain: ZeropsToolchain,
 ) =>
   Effect.gen(function* renderProviderEffect() {
@@ -107,10 +165,9 @@ const renderProvider = (
       ['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT', 'stage'],
       ['ULTRAMODERN_ZEROPS_SERVICE', id],
       [portKey, `'${port}'`],
+      ...providerApiEnvironment(id, units),
+      ...providerIdentityEnvironment(id),
     ];
-    if (id === 'commerce-customer-context' && priceGroupCatalogBaseUrl !== undefined) {
-      environment.push(['ONTOS_PRICE_GROUP_CATALOG_BASE_URL', `'${priceGroupCatalogBaseUrl}'`]);
-    }
     const renderedEnvironment = EffectArray.sort(environment, EnvironmentEntryOrder)
       .map(([key, value]) => `        ${key}: ${value}`)
       .join('\n');
@@ -159,7 +216,7 @@ ${renderedEnvironment}
 
 export const generateZeropsProviderDeployment = (
   source: string,
-  topology: { readonly verticals: readonly ProviderVertical[] },
+  topology: ProviderTopology,
   toolchain: ZeropsToolchain,
 ) =>
   Effect.gen(function* generateProviderEffect() {
@@ -179,13 +236,11 @@ export const generateZeropsProviderDeployment = (
       }
       ports.add(port);
     }
-    const priceGroupCatalog = topology.verticals.find((vertical) => vertical.id === 'price-group-catalog');
-    const priceGroupCatalogBaseUrl =
-      priceGroupCatalog === undefined
-        ? undefined
-        : `http://pricegroupcatalog:${priceGroupCatalog.port}/price-group-catalog-api`;
+    const units = new Map<string, ProviderUnit>(
+      [...(topology.shell === undefined ? [] : [topology.shell]), ...topology.verticals].map((unit) => [unit.id, unit]),
+    );
     const providers = yield* Effect.all(
-      topology.verticals.map((vertical) => renderProvider(vertical, priceGroupCatalogBaseUrl, toolchain)),
+      topology.verticals.map((vertical) => renderProvider(vertical, units, toolchain)),
     );
     const rendered = `${begin}\n${providers.join('\n\n')}\n${end}`;
     const start = source.indexOf(begin);

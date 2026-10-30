@@ -5,12 +5,29 @@ import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, un
 
 export const STOREFRONT_REGISTRY_SCHEMA_NAME = 'storefront_registry';
 export const STOREFRONT_REGISTRY_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'storefront_applications',
   'storefront_application_revisions',
   'storefront_registry_generations',
 ] as const;
 
 export const storefrontRegistrySchema = pgSchema(STOREFRONT_REGISTRY_SCHEMA_NAME);
+
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
+export const gatewayAssertionRedemptions = storefrontRegistrySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('storefront_registry_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('storefront_registry_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
 
 export const storefrontApplications = storefrontRegistrySchema.table.withRLS(
   'storefront_applications',
@@ -100,6 +117,7 @@ export const storefrontRegistryGenerations = storefrontRegistrySchema.table.with
 );
 
 export const STOREFRONT_REGISTRY_TABLES = [
+  gatewayAssertionRedemptions,
   storefrontApplicationRevisions,
   storefrontApplications,
   storefrontRegistryGenerations,

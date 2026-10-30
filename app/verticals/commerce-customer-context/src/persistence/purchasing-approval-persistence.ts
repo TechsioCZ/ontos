@@ -29,7 +29,8 @@ import {
   CreatePurchaseProposalRevisionResultSchema,
   DecidePurchaseApprovalRequestInputSchema,
   DecidePurchaseApprovalRequestResultSchema,
-  RevalidatePurchaseApprovalInputSchema,
+  TrustedRevalidatePurchaseApprovalInputSchema,
+  PurchaseApprovalFinalBindingEvidenceSchema,
   RevalidatePurchaseApprovalResultSchema,
   ReroutePurchaseApprovalRequestInputSchema,
   ReroutePurchaseApprovalRequestResultSchema,
@@ -45,11 +46,16 @@ import type {
   CreatePurchaseProposalRevisionInput,
   DecidePurchaseApprovalRequestInput,
   RevalidatePurchaseApprovalInput,
+  TrustedRevalidatePurchaseApprovalInput,
+  PurchaseApprovalFinalBindingEvidence,
   ReroutePurchaseApprovalRequestInput,
   SubmitPurchaseApprovalRequestInput,
 } from '../../shared/domain/purchasing-approval.ts';
+import { PurchaseApprovalFinalBindingAuthority } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import { compareExactDecimals } from '../../shared/domain/purchase-limit.ts';
 import type { PurchaseApprovalOrderCommitmentPort } from '../../shared/domain/purchase-approval-order-commitment-port.ts';
+
+import { ConsumeOrderPurchaseApprovalResultSchema } from '../../shared/actions/consume-order-purchase-approval.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
 const ROUTINE_SCHEMA = 'commerce_customer_context' as const;
@@ -266,8 +272,13 @@ const paRerouteRequired = () =>
   reject('NO_ELIGIBLE_ROUTE', 'The captured approval route requires a fresh current route before it can proceed');
 const paDecisionReasonRequired = () =>
   reject('PERMISSION_DENIED', 'Return and reject decisions require a non-empty reason');
+const finalBindingUnavailable = (cause: unknown): PurchasingApprovalRejected => {
+  const failure = reject('CURRENT_STATE_INDETERMINATE', 'Verified final Bundle/Attempt evidence is required', true);
+  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return failure;
+};
 const paRevalidationExpired = () =>
-  reject('REQUEST_EXPIRED', 'The owner revalidation evidence is outside the trusted validity window');
+  reject('OWNER_CONFIRMATION_EXPIRED', 'The owner revalidation evidence is outside the trusted validity window');
 const paCommitmentMalformed = () =>
   reject('PROPOSAL_MATERIAL_CHANGE', 'The Order commitment evidence is malformed or incomplete');
 const paCommitmentNotFound = () =>
@@ -629,7 +640,10 @@ const makeWorkflow = (
   const revalidate = Effect.fn('makeWorkflow.revalidate')(function* revalidateEffect(
     input: RevalidatePurchaseApprovalInput,
   ) {
-    const encoded = yield* encodeJson(RevalidatePurchaseApprovalInputSchema, input);
+    const trusted = yield* Schema.decodeUnknownEffect(Schema.toType(TrustedRevalidatePurchaseApprovalInputSchema))(
+      input,
+    ).pipe(Effect.mapError(finalBindingUnavailable));
+    const encoded = yield* encodeJson(TrustedRevalidatePurchaseApprovalInputSchema, trusted);
     return yield* invokeRoutine(
       transaction,
       scope,
@@ -640,12 +654,52 @@ const makeWorkflow = (
   });
 
   const consume = Effect.fn('makeWorkflow.consume')(function* consumeEffect(input: ConsumePurchaseApprovalInput) {
-    const encoded = yield* encodeJson(ConsumePurchaseApprovalInputSchema, input);
+    // Historical exact consumed replay is checked by the locked native aggregate. Missing final
+    // evidence can never enter its new-consumption branch and never upgrades a legacy row.
+    if (input.finalBinding === undefined && input.revalidationRef === undefined) {
+      const legacy = yield* encodeJson(ConsumePurchaseApprovalInputSchema, input);
+      return yield* invokeRoutine(
+        transaction,
+        scope,
+        consumeRoutine,
+        withOwnerMetadata(legacy, scope, actionInvocationId),
+        ConsumePurchaseApprovalResultSchema,
+      );
+    }
+    const authority = yield* Effect.serviceOption(PurchaseApprovalFinalBindingAuthority);
+    if (Option.isNone(authority) || input.finalBinding === undefined || input.revalidationRef === undefined) {
+      return yield* reject(
+        'CURRENT_STATE_INDETERMINATE',
+        'The committed final Bundle/Attempt authority is unavailable',
+        true,
+      );
+    }
+    const commitment = yield* authority.value.verifyConsumption({ claimed: input, scope });
+    const evidence = yield* Schema.decodeUnknownEffect(Schema.toType(PurchaseApprovalFinalBindingEvidenceSchema))(
+      commitment.bindingEvidence,
+    ).pipe(Effect.mapError(finalBindingUnavailable));
+    const { encoded, encodedEvidence } = yield* Effect.all(
+      {
+        encoded: encodeJson(ConsumePurchaseApprovalInputSchema, input),
+        encodedEvidence: encodeJson(PurchaseApprovalFinalBindingEvidenceSchema, evidence),
+      },
+      { concurrency: 2 },
+    );
     return yield* invokeRoutine(
       transaction,
       scope,
       consumeRoutine,
-      withOwnerMetadata(encoded, scope, actionInvocationId),
+      withOwnerMetadata(
+        {
+          ...encoded,
+          finalCommitmentEvidence: {
+            ...commitment,
+            bindingEvidence: encodedEvidence,
+          },
+        },
+        scope,
+        actionInvocationId,
+      ),
       ConsumePurchaseApprovalResultSchema,
     );
   });
@@ -725,6 +779,67 @@ export const purchasingApprovalWorkflowForScope = (
   transaction: PurchasingApprovalScopedRoutineInvoker,
   scope: OperationalScope,
 ): Effect.Effect<PurchasingApprovalWorkflowService> => Effect.succeed(makeWorkflow(transaction, scope));
+/** The Order service has independently verified the buyer, current owner facts and exact final binding.
+ * Owner attribution remains the authenticated service; no buyer authentication scope is fabricated. */
+export const revalidatePurchaseApprovalFromVerifiedOrder = Effect.fn('PurchasingApproval.revalidateVerifiedOrder')(
+  function* revalidateVerifiedOrder(
+    transaction: Parameters<typeof purchasingApprovalWorkflowForScope>[0],
+    actualServiceScope: OperationalScope,
+    trustedInput: TrustedRevalidatePurchaseApprovalInput,
+    actionInvocationId: string,
+  ) {
+    const trusted = yield* Schema.decodeUnknownEffect(Schema.toType(TrustedRevalidatePurchaseApprovalInputSchema))(
+      trustedInput,
+    ).pipe(Effect.mapError(finalBindingUnavailable));
+    const encoded = yield* encodeJson(TrustedRevalidatePurchaseApprovalInputSchema, trusted);
+    return yield* invokeRoutine(
+      transaction,
+      actualServiceScope,
+      revalidateRoutine,
+      withOwnerMetadata(encoded, actualServiceScope, actionInvocationId),
+      RevalidatePurchaseApprovalResultSchema,
+    );
+  },
+);
+
+/** The private service-only admission has already matched genuine committed Order and CCC snapshots.
+ * Keep the real service actor in owner metadata; the SQL routine retains exact proof/CAS validation. */
+export const consumePurchaseApprovalFromVerifiedOrder = Effect.fn('PurchasingApproval.consumeVerifiedOrder')(
+  function* consumeVerifiedOrder(
+    transaction: Parameters<typeof purchasingApprovalWorkflowForScope>[0],
+    scope: OperationalScope,
+    input: ConsumePurchaseApprovalInput,
+    actionInvocationId: string,
+    commitment: {
+      readonly bindingEvidence: PurchaseApprovalFinalBindingEvidence;
+      readonly orderRef: ConsumePurchaseApprovalInput['orderRef'];
+      readonly revalidationRef: NonNullable<ConsumePurchaseApprovalInput['revalidationRef']>;
+    },
+  ) {
+    const { encoded, encodedEvidence } = yield* Effect.all(
+      {
+        encoded: encodeJson(ConsumePurchaseApprovalInputSchema, input),
+        encodedEvidence: encodeJson(PurchaseApprovalFinalBindingEvidenceSchema, commitment.bindingEvidence),
+      },
+      { concurrency: 1 },
+    );
+    return yield* invokeRoutine(
+      transaction,
+      scope,
+      consumeRoutine,
+      withOwnerMetadata(
+        {
+          ...encoded,
+          finalCommitmentEvidence: { ...commitment, bindingEvidence: encodedEvidence },
+        },
+        scope,
+        actionInvocationId,
+      ),
+      ConsumeOrderPurchaseApprovalResultSchema,
+    );
+  },
+);
+
 /**
  * Public Order-owner adapter. It closes the scoped routine capability and the
  * Core invocation id together; callers cannot obtain the routine invoker or

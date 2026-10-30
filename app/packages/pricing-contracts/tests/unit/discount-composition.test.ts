@@ -1,9 +1,11 @@
 import { Schema } from 'effect';
+import { CurrentSupportedCurrenciesSuccessSchema } from '../../src/apis/current-supported-currencies.ts';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
   PricingDiscountCardinalityConflictSchema,
   PricingDiscountCompositionCandidateSchema,
+  PricingDiscountCompositionRequestSchema,
   PricingDiscountLineContributionSchema,
   PricingDiscountWholePurchaseContributionSchema,
   PricingDiscountableLineBasisSchema,
@@ -224,6 +226,161 @@ const decodeLineContribution = Schema.decodeUnknownSync(PricingDiscountLineContr
 });
 
 describe('Pricing Discount composition contracts (#772)', () => {
+  it('accepts actual later Current Currency observation without changing the business instant', () => {
+    const observedAt = '2026-09-27T10:00:00.001Z';
+    const supportRootId = '77777777-7777-4777-8777-777777777777';
+    const supportRevisionId = '88888888-8888-4888-8888-888888888888';
+    const verificationRef = 'currency-support-owner-proof:discount-composition:1249';
+    const supportRootRef = {
+      moduleId: 'commerce.pricing',
+      resourceId: supportRootId,
+      resourceType: 'commerce.pricing.currency-support',
+      tenantId,
+    };
+    const supportRevisionRef = {
+      moduleId: 'commerce.pricing',
+      resourceId: supportRevisionId,
+      resourceType: 'commerce.pricing.currency-support-revision',
+      supportRootId,
+      tenantId,
+    };
+    // Native CURRENT evidence records evaluatedAt=observedAt (O), while the
+    // request's immutable effectiveAt remains the original business time (T).
+    const support = {
+      completenessEvidence: {
+        observedAt,
+        ownerRevision: supportRevisionId,
+        scope: { kind: 'EXACT_PREDICATE', predicateRef: `commerce.pricing.current-supported-currencies:${tenantId}` },
+      },
+      currentnessEvidence: {
+        evaluatedAt: observedAt,
+        evaluationMode: 'CURRENT_WITH_REVALIDATION',
+        observedAt,
+        revalidatedAt: observedAt,
+        scheduleRevision: 1,
+        supportRevisionRef,
+        supportRootRef,
+      },
+      effectiveAt: decision.operationTime,
+      effectivePeriod: { effectiveFrom: '2026-09-01T00:00:00.000Z', effectiveTo: null },
+      factProofs: [{ factRef: supportRootId, factRevisionRef: supportRevisionId, verificationRef }],
+      generation: 1,
+      observedAt,
+      outcome: 'SUPPORTED_CURRENCIES_CURRENT',
+      pricingRevision: 'pricing-currency-support:1249',
+      scheduleRevision: 1,
+      supportedCurrencies: ['CZK'],
+      supportRevisionRef,
+      supportRootRef,
+      tenantId,
+      verificationRef,
+    };
+    expect(Schema.is(CurrentSupportedCurrenciesSuccessSchema)(support)).toBe(true);
+    const request = {
+      candidates: [
+        lineCandidate(
+          definition('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', {
+            kind: 'PERCENTAGE',
+            level: '5',
+          }),
+        ),
+      ],
+      currencySupport: support,
+      decision,
+      lineBases: [
+        {
+          amount: { amount: '100', currencyCode: 'CZK' },
+          applicablePricingFeeTotal: { amount: '0', currencyCode: 'CZK' },
+          baseLineValue: { amount: '100', currencyCode: 'CZK' },
+          occurrenceId: 'line-1',
+        },
+      ],
+    };
+    const isRequest = Schema.is(PricingDiscountCompositionRequestSchema);
+    expect(isRequest(request)).toBe(true);
+    expect(request.currencySupport.effectiveAt).toBe(decision.operationTime);
+    expect(request.currencySupport.currentnessEvidence.evaluatedAt).toBe(observedAt);
+    const before = '2026-09-27T09:59:59.999Z';
+    expect(
+      isRequest({
+        ...request,
+        currencySupport: {
+          ...support,
+          completenessEvidence: { ...support.completenessEvidence, observedAt: before },
+          currentnessEvidence: {
+            ...support.currentnessEvidence,
+            evaluatedAt: before,
+            observedAt: before,
+            revalidatedAt: before,
+          },
+          observedAt: before,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRequest({
+        ...request,
+        currencySupport: {
+          ...support,
+          currentnessEvidence: {
+            evaluatedAt: decision.operationTime,
+            evaluationMode: 'HISTORICAL_AS_OF',
+            observedAt,
+            scheduleRevision: 1,
+            supportRevisionRef,
+            supportRootRef,
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRequest({
+        ...request,
+        currencySupport: {
+          ...support,
+          currentnessEvidence: { ...support.currentnessEvidence, revalidatedAt: decision.operationTime },
+        },
+      }),
+    ).toBe(false);
+    expect(isRequest({ ...request, currencySupport: { ...support, effectiveAt: observedAt } })).toBe(false);
+    expect(
+      isRequest({ ...request, currencySupport: { ...support, tenantId: '99999999-9999-4999-8999-999999999999' } }),
+    ).toBe(false);
+    expect(
+      isRequest({
+        ...request,
+        currencySupport: {
+          ...support,
+          currentnessEvidence: {
+            ...support.currentnessEvidence,
+            supportRevisionRef: { ...supportRevisionRef, resourceId: '99999999-9999-4999-8999-999999999999' },
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRequest({
+        ...request,
+        currencySupport: {
+          ...support,
+          completenessEvidence: { ...support.completenessEvidence, nextApplicabilityBoundary: observedAt },
+          nextApplicabilityBoundary: observedAt,
+        },
+      }),
+    ).toBe(false);
+    const laterBoundary = '2026-09-27T10:00:00.002Z';
+    expect(
+      isRequest({
+        ...request,
+        currencySupport: {
+          ...support,
+          completenessEvidence: { ...support.completenessEvidence, nextApplicabilityBoundary: laterBoundary },
+          nextApplicabilityBoundary: laterBoundary,
+        },
+      }),
+    ).toBe(true);
+  });
+
   it('defines one exact fee-inclusive basis without a running Discount subtotal', () => {
     const basis = {
       amount: { amount: '1000.25', currencyCode: 'CZK' },

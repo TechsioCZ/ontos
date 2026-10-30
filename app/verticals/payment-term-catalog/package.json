@@ -65,7 +65,7 @@
   },
   "modernjs": {
     "preset": "presetUltramodern",
-    "role": "module-federation-remote",
+    "role": "api-only",
     "appId": "payment-term-catalog",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",

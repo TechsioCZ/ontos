@@ -8,6 +8,7 @@ import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definit
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
 import { CommercialFeeResultLookupApi } from './shared/apis/commercial-fee-result-lookup.ts';
 import { CommercialFeeScheduleApi } from './shared/apis/commercial-fee-schedule.ts';
+import { CommitmentConfirmationVerificationApi } from './shared/apis/commitment-confirmation-verification.ts';
 import { compensateCurrencySupportRecoveryAction } from './src/actions/compensate-currency-support-recovery.action.ts';
 import { ContractualDiscountResultLookupApi } from './shared/apis/contractual-discount-result-lookup.ts';
 import { CurrencySupportResultLookupApi } from './shared/apis/currency-support-result-lookup.ts';
@@ -33,6 +34,7 @@ import { pricingExactPriceResolutionReadPermission } from './shared/permissions/
 import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
 import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
+import { QuotationVerificationApi } from './shared/apis/quotation-verification.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
@@ -75,6 +77,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       'commercial-fee-definition': CommercialFeeDefinitionApi,
       'commercial-fee-result-lookup': CommercialFeeResultLookupApi,
       'commercial-fee-schedule': CommercialFeeScheduleApi,
+      'commitment-confirmation-verification': CommitmentConfirmationVerificationApi,
       'contractual-discount-result-lookup': ContractualDiscountResultLookupApi,
       'currency-support-result-lookup': CurrencySupportResultLookupApi,
       'current-pricing-decision': CurrentPricingDecisionApi,
@@ -85,6 +88,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       'price-schedule': PriceScheduleApi,
       'quantity-tier-result-lookup': QuantityTierResultLookupApi,
       'quotation-result-lookup': QuotationResultLookupApi,
+      'quotation-verification': QuotationVerificationApi,
       'zero-floor-authorization-result-lookup': ZeroFloorAuthorizationResultLookupApi,
       // </generated-module-manifest-apis>
     },

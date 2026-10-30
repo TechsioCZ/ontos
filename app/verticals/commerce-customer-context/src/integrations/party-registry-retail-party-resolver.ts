@@ -21,7 +21,10 @@ export interface PartyRegistryRetailPartyResolverFactoryInput {
 }
 
 export interface PartyRegistryRetailPartyResolverFactoryService {
-  readonly make: (input: PartyRegistryRetailPartyResolverFactoryInput) => RetailPartyResolver;
+  readonly make: (
+    input: PartyRegistryRetailPartyResolverFactoryInput,
+    execute?: RetailPartyResolutionExecutor,
+  ) => RetailPartyResolver;
 }
 
 export class PartyRegistryRetailPartyResolverFactory extends Context.Service<

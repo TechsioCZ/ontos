@@ -21,6 +21,7 @@ describe('Pricing module contract', () => {
       'commercial-fee-definition',
       'commercial-fee-result-lookup',
       'commercial-fee-schedule',
+      'commitment-confirmation-verification',
       'contractual-discount-result-lookup',
       'currency-support-result-lookup',
       'current-pricing-decision',
@@ -31,6 +32,7 @@ describe('Pricing module contract', () => {
       'price-schedule',
       'quantity-tier-result-lookup',
       'quotation-result-lookup',
+      'quotation-verification',
       'zero-floor-authorization-result-lookup',
     ]);
     expect(pricingManifest.publicSurface.resourceTypes.map(({ key }) => key)).toEqual(

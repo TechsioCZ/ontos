@@ -6,6 +6,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
+  CustomerPriceGroupRemovedAuditEvidenceSchema,
   CustomerPriceGroupRemovedEventSchema,
   isPriceGroupInstantBefore,
 } from '../../shared/domain/price-group-contracts.ts';
@@ -94,6 +95,14 @@ const handleRemoveCustomerPriceGroup = Effect.fn('RemoveCustomerPriceGroupAction
       });
     }
 
+    yield* context.recordAuditEvidence({
+      assignmentId: result.assignment.assignmentRef.resourceId,
+      assignmentRevision: result.assignment.revision,
+      changed: result.changed,
+      operation: 'REMOVE',
+      requestedEffectiveAt: payload.effectiveAt,
+    });
+
     yield* context.recordDataAccess({
       accessKind: 'read',
       queryHash: `customer-price-group-remove:${payload.assignmentRef.resourceId}:${payload.expectedRevision}`,
@@ -137,6 +146,7 @@ export const removeCustomerPriceGroupAction = defineAction(
       policyKey: 'commerce.customer-context.remove-customer-price-group.access.v1',
     },
     actionKey: 'commerce.customer-context.remove-customer-price-group',
+    auditEvidenceSchema: CustomerPriceGroupRemovedAuditEvidenceSchema,
     auditProfile: 'standard',
     domainErrorSchema: RemoveCustomerPriceGroupErrorSchema,
     domainEvents: {

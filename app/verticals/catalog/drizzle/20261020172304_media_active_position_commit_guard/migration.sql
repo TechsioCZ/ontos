@@ -1,0 +1,2 @@
+ALTER TABLE "catalog"."catalog_media_assignments" ADD COLUMN "active_position" integer GENERATED ALWAYS AS (CASE WHEN state = 'ACTIVE' THEN position ELSE NULL END) STORED;--> statement-breakpoint
+ALTER TABLE "catalog"."catalog_media_assignments" ADD CONSTRAINT "catalog_media_assignments_active_position_commit_uk" UNIQUE("tenant_id","assignment_set_id","resource_kind","active_position") DEFERRABLE INITIALLY DEFERRED;

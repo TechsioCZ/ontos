@@ -26,6 +26,43 @@ import { TaxPrivacyOwnerCoverageApi } from './apis/tax-privacy-owner-coverage.ts
 import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
 // </generated-governed-http-api-imports>
 
+export {
+  FinalizeOrderTaxActionAlreadyCommittedProblemSchema,
+  FinalizeOrderTaxActionApi,
+  FinalizeOrderTaxActionAuthenticationProblemSchema,
+  FinalizeOrderTaxActionCommitIndeterminateProblemSchema,
+  FinalizeOrderTaxActionConflictProblemSchema,
+  FinalizeOrderTaxActionForbiddenProblemSchema,
+  FinalizeOrderTaxActionIneligibleProblemSchema,
+  FinalizeOrderTaxActionInternalProblemSchema,
+  FinalizeOrderTaxActionInvalidProblemSchema,
+  FinalizeOrderTaxActionNotFoundProblemSchema,
+  FinalizeOrderTaxActionPreconditionProblemSchema,
+  FinalizeOrderTaxActionSchemaErrorMiddleware,
+  FinalizeOrderTaxActionUnavailableProblemSchema,
+  FinalizeOrderTaxPayloadSchema,
+  finalizeOrderTaxActionGroupDefinition,
+} from './apis/finalize-order-tax-action.ts';
+export type {
+  FinalizeOrderTaxActionGroupContract,
+  FinalizeOrderTaxActionProblem,
+} from './apis/finalize-order-tax-action.ts';
+export { FinalizeOrderTaxResultSchema } from './actions/finalize-order-tax.ts';
+export {
+  FinalOrderTaxApi,
+  FinalOrderTaxAuthenticationProblemSchema,
+  FinalOrderTaxForbiddenProblemSchema,
+  FinalOrderTaxInternalProblemSchema,
+  FinalOrderTaxInvalidProblemSchema,
+  FinalOrderTaxNotFoundProblemSchema,
+  FinalOrderTaxPolicyConflictProblemSchema,
+  FinalOrderTaxPolicyProblemSchema,
+  FinalOrderTaxRequestSchema,
+  FinalOrderTaxResponseSchema,
+  FinalOrderTaxUnavailableProblemSchema,
+} from './apis/final-order-tax.ts';
+export type { FinalOrderTaxRequest, FinalOrderTaxResponse } from './apis/final-order-tax.ts';
+
 export const taxMarkerSchema = Schema.Struct({
   ...MicroVerticalBuildMarkerSchema.fields,
   kind: Schema.Literal('microvertical-delivery-unit'),

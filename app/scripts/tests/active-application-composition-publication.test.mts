@@ -16,6 +16,7 @@ import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
+import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
@@ -41,6 +42,7 @@ import {
   readPublishedSnapshot,
 } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import { legacyCompletionPublicationFixture } from './support/legacy-completion-publication.mts';
 
 const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'b'.repeat(32)}/values/active`;
 const PUBLICATION_LOCK_SQL =
@@ -60,6 +62,9 @@ const SHELL_BUILD_MARKER = 'shell-immutable-build';
 const WORKER_VERSION_ID = 'c302ec41-290b-4d31-8105-5c3467008799';
 const WORKER_ACCOUNT_SUBDOMAIN = 'test-account';
 const CATALOG_MODULE_ID = 'catalog.products';
+const INVENTORY_MODULE_ID = 'inventory.stock';
+const PUBLICATION_TIME = '2026-10-02T16:02:00.000Z';
+const AUTHORITY_INSERT_SQL = 'insert into "core"."application_composition_authority"';
 const initialCutoverProof = verifyInitialCutoverProviderInventory({
   cloudflare: {
     accountId: CUTOVER_ACCOUNT_ID,
@@ -153,12 +158,12 @@ const shellArtifacts = (buildMarker: string) =>
 
 const snapshotAt = (observedAt: string) =>
   Effect.gen(function* deriveTestSnapshot() {
-    yield* TestClock.setTime(Date.parse('2026-10-02T16:02:00.000Z'));
+    yield* TestClock.setTime(Date.parse(PUBLICATION_TIME));
     return yield* deriveActiveApplicationCompositionSnapshot({
       environment: 'stage',
       modules: yield* Effect.all([
         deployedModule('catalog', CATALOG_MODULE_ID),
-        deployedModule('inventory', 'inventory.stock'),
+        deployedModule('inventory', INVENTORY_MODULE_ID),
       ]),
       observedAt: DateTime.makeUnsafe(observedAt),
       shell: yield* shellArtifacts(SHELL_BUILD_MARKER),
@@ -180,6 +185,7 @@ const provider = (
   url = KV_URL,
   authorityUnexpired = true,
   oldRuntime: 'retired' | typeof NODE_ACTIVE_STATE | typeof NODE_STOPPED_STATE | typeof WORKER_ACTIVE_STATE = 'retired',
+  currentSnapshot?: ActiveApplicationCompositionSnapshot,
 ) => {
   const requests: RecordedRequest[] = [];
   const proofRequests: RecordedRequest[] = [];
@@ -187,6 +193,21 @@ const provider = (
   const statements: string[] = [];
   const transactionStatements: string[] = [];
   const events: string[] = [];
+  const legacy = legacyCompletionPublicationFixture(events);
+  let authority =
+    currentSnapshot === undefined
+      ? undefined
+      : {
+          authorityKey: 'active',
+          durableWorkAdmission: 'closed',
+          phase: 'active',
+          revision: currentSnapshot.composition.revision,
+          subscriptionsJson: [],
+          updatedAt: DateTime.toDateUtc(currentSnapshot.observedAt),
+          validUntil: DateTime.toDateUtc(currentSnapshot.validUntil),
+        };
+  let pendingValidUntil: Date | null = null;
+  const authorityWrites: (readonly unknown[])[] = [];
   const client = HttpClient.make((request, destination) => {
     const recorded = {
       authorization: request.headers.authorization,
@@ -240,17 +261,59 @@ const provider = (
   });
   const layer = Layer.mergeAll(
     NodeServices.layer,
+    legacy.layer,
     Layer.succeed(HttpClient.HttpClient, client),
     ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
     Layer.effect(
       CoreDatabase,
-      makeTestDatabase((sql) =>
+      makeTestDatabase((sql, params) =>
         Effect.sync(() => {
           statements.push(sql);
           if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
             transactionStatements.push(sql);
           }
           events.push(sql);
+          const legacyRows = legacy.sqlResponse(sql, params);
+          if (legacyRows !== null) {
+            return legacyRows;
+          }
+          if (sql === 'COMMIT' && authority !== undefined && pendingValidUntil !== null) {
+            authority = { ...authority, validUntil: pendingValidUntil };
+            pendingValidUntil = null;
+          }
+          if (sql === 'ROLLBACK') {
+            pendingValidUntil = null;
+          }
+          if (sql.startsWith('select') && sql.includes('from "core"."application_composition_authority"')) {
+            if (authority === undefined) {
+              return [];
+            }
+            if (sql.startsWith('select "phase", "revision", "valid_until"')) {
+              return [{ phase: authority.phase, revision: authority.revision, validUntil: authority.validUntil }];
+            }
+            if (sql.startsWith('select "revision" from')) {
+              return [{ revision: authority.revision }];
+            }
+            // The scripted driver uses Object.values; preserve the physical SELECT * projection order.
+            return [
+              Object.fromEntries<unknown>([
+                ['authorityKey', authority.authorityKey],
+                ['revision', authority.revision],
+                ['phase', authority.phase],
+                ['durableWorkAdmission', authority.durableWorkAdmission],
+                ['validUntil', authority.validUntil],
+                ['subscriptionsJson', authority.subscriptionsJson],
+                ['updatedAt', authority.updatedAt],
+              ]),
+            ];
+          }
+          if (sql.startsWith(AUTHORITY_INSERT_SQL)) {
+            authorityWrites.push(params);
+            const [validUntil] = params.slice(4);
+            if (Schema.is(Schema.String)(validUntil)) {
+              pendingValidUntil = new Date(validUntil);
+            }
+          }
           if (sql === PUBLICATION_UNLOCK_SQL) {
             return [{ unlocked: true }];
           }
@@ -272,11 +335,21 @@ const provider = (
       }),
     ),
   );
-  return { events, layer, proofRequests, requests, statements, transactionStatements };
+  return {
+    authority: () => authority,
+    authorityWrites,
+    events,
+    layer,
+    legacy,
+    proofRequests,
+    requests,
+    statements,
+    transactionStatements,
+  };
 };
 
 const candidateObservation = Effect.gen(function* nativeCandidateObservationFixture() {
-  yield* TestClock.setTime(Date.parse('2026-10-02T16:02:00.000Z'));
+  yield* TestClock.setTime(Date.parse(PUBLICATION_TIME));
   const module = yield* deployedModule('catalog', CATALOG_MODULE_ID);
   const shell = yield* shellArtifacts(SHELL_BUILD_MARKER);
   const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
@@ -536,6 +609,12 @@ it.effect('publishes and reads back the exact complete bundle through native KV 
     const published = yield* publishSnapshot(snapshot, Option.none(), initialCutoverProof).pipe(Effect.provide(layer));
 
     expect(published).toEqual(snapshot);
+    expect(events.indexOf('OWNER ACQUIRE')).toBeGreaterThan(events.indexOf('BEGIN'));
+    expect(events.indexOf('OWNER ACQUIRE')).toBeGreaterThan(
+      events.findIndex((event) => event.includes('pg_advisory_xact_lock(')),
+    );
+    expect(events.indexOf('OWNER RELEASE')).toBeGreaterThan(events.lastIndexOf('COMMIT'));
+    expect(events.indexOf('OWNER RETAIN')).toBeLessThan(events.indexOf(`PUT ${KV_URL}`));
     expect(proofRequests).toHaveLength(4);
     expect(proofRequests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET', 'GET']);
     expect(proofRequests.slice(-2).map(({ url }) => url)).toEqual([
@@ -554,12 +633,10 @@ it.effect('publishes and reads back the exact complete bundle through native KV 
     expect(requests[1]?.body).toBe(encoded);
     expect(snapshot.composition.modules.map(({ moduleId }) => moduleId)).toEqual([
       CATALOG_MODULE_ID,
-      'inventory.stock',
+      INVENTORY_MODULE_ID,
     ]);
     expect(statements.some((statement) => statement.includes('pg_advisory_xact_lock'))).toBe(true);
-    expect(
-      statements.some((statement) => statement.startsWith('insert into "core"."application_composition_authority"')),
-    ).toBe(true);
+    expect(statements.some((statement) => statement.startsWith(AUTHORITY_INSERT_SQL))).toBe(true);
     expect(events.lastIndexOf('COMMIT')).toBeGreaterThan(events.indexOf(`GET ${KV_URL}`));
     expect(events.lastIndexOf('COMMIT')).toBeGreaterThan(events.indexOf(`PUT ${KV_URL}`));
     const publicationLock = events.indexOf(PUBLICATION_LOCK_SQL);
@@ -595,9 +672,7 @@ it.effect('refuses initial publication until every old Node service and Worker i
       expect(requests).toEqual([]);
       expect(statements.filter((statement) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(statement))).toEqual([]);
       expect(statements.at(-1)).toBe(PUBLICATION_UNLOCK_SQL);
-      expect(
-        statements.some((statement) => statement.startsWith('insert into "core"."application_composition_authority"')),
-      ).toBe(false);
+      expect(statements.some((statement) => statement.startsWith(AUTHORITY_INSERT_SQL))).toBe(false);
     }
   }),
 );
@@ -717,16 +792,38 @@ it.effect('renews expired authority without changing release identity or droppin
     const renewed = yield* snapshotAt(OBSERVED_AT);
     const previous = yield* encodeActiveApplicationCompositionSnapshot(expired);
     const next = yield* encodeActiveApplicationCompositionSnapshot(renewed);
-    const { layer, requests } = provider((request, index) => {
-      if (request.method === 'PUT') {
-        return Response.json({ success: true });
-      }
-      return new Response(index === 0 ? previous : next);
-    });
+    const { authority, authorityWrites, layer, legacy, proofRequests, requests, statements } = provider(
+      (request, index) => {
+        if (request.method === 'PUT') {
+          return Response.json({ success: true });
+        }
+        return new Response(index === 0 ? previous : next);
+      },
+      KV_URL,
+      true,
+      'retired',
+      expired,
+    );
+    expect(authority()?.validUntil.getTime()).toBeLessThan(Date.parse(PUBLICATION_TIME));
+    expect(authority()?.revision).toBe(renewed.composition.revision);
+    expect(authority()?.durableWorkAdmission).toBe('closed');
 
     const published = yield* publishSnapshot(renewed, Option.none(), initialCutoverProof).pipe(Effect.provide(layer));
 
     expect(published.composition).toEqual(expired.composition);
+    expect(authority()?.revision).toBe(expired.composition.revision);
+    expect(authority()?.phase).toBe('active');
+    expect(authority()?.durableWorkAdmission).toBe('closed');
+    expect(authority()?.validUntil).toEqual(DateTime.toDateUtc(renewed.validUntil));
+    expect(authorityWrites).toHaveLength(1);
+    expect(authorityWrites[0]?.slice(0, 4)).toEqual(['active', renewed.composition.revision, 'active', 'closed']);
+    expect(legacy.observations).toEqual([]);
+    expect(proofRequests).toEqual([]);
+    expect(statements.some((sql) => sql.startsWith('update '))).toBe(false);
+    expect(published.composition.modules.map(({ moduleId }) => moduleId)).toEqual([
+      CATALOG_MODULE_ID,
+      INVENTORY_MODULE_ID,
+    ]);
     expect(published.validUntil).toEqual(renewed.validUntil);
     expect(requests[1]?.body).toBe(next);
     expect(requests.map(({ method }) => method)).toEqual(['GET', 'PUT', 'GET']);

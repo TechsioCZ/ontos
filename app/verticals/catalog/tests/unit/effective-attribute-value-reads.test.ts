@@ -130,12 +130,19 @@ const serviceWith = (
   options: {
     readonly applicabilityProductLevel?: boolean;
     readonly applicabilityVariantLevel?: boolean;
+    readonly controlledLifecycle?: string;
+    readonly malformedControlledDefinition?: boolean;
+    readonly malformedControlledRevision?: boolean;
+    readonly malformedControlledSpecialization?: boolean;
+    readonly malformedControlledTenant?: boolean;
     readonly malformedDefinitionRevision?: boolean;
     readonly malformedItem?: boolean;
     readonly malformedRevision?: boolean;
     readonly malformedValueSnapshot?: boolean;
     readonly malformedValueSnapshotSetId?: string;
     readonly missingApplicabilityRevision?: boolean;
+    readonly missingControlledRevision?: boolean;
+    readonly missingControlledValue?: boolean;
     readonly retiredControlledValue?: boolean;
     readonly specialState?: 'UNKNOWN' | 'NONE' | 'NOT_APPLICABLE';
     readonly staleSnapshotDefinitionRevision?: boolean;
@@ -248,6 +255,42 @@ const serviceWith = (
     }
     return undefined;
   };
+  const controlledRows = (table: QueryTable): readonly object[] | undefined => {
+    if (table === controlledAttributeValues) {
+      if (options.missingControlledValue === true) {
+        return [];
+      }
+      return [
+        {
+          attributeDefinitionId: options.malformedControlledDefinition === true ? productId : definitionId,
+          controlledAttributeValueId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          currentRevision: 2,
+          lifecycleState: options.controlledLifecycle ?? 'RETIRED',
+          meaning: 'Stable material identity',
+          name: 'Material',
+          specialization: options.malformedControlledSpecialization === true ? 'COLOR' : 'GENERAL',
+          tenantId: options.malformedControlledTenant === true ? productId : tenantId,
+        },
+      ];
+    }
+    if (table === controlledAttributeValueRevisions) {
+      if (options.missingControlledRevision === true) {
+        return [];
+      }
+      return [
+        {
+          attributeDefinitionId: definitionId,
+          lifecycleState: options.controlledLifecycle ?? 'RETIRED',
+          meaning: options.malformedControlledRevision === true ? 'Changed meaning' : 'Stable material identity',
+          name: 'Material',
+          revision: 2,
+          specialization: options.malformedControlledSpecialization === true ? 'COLOR' : 'GENERAL',
+          tenantId,
+        },
+      ];
+    }
+    return undefined;
+  };
   const rows = (table: QueryTable) => {
     const authority = authorityRows(table);
     if (authority !== undefined) {
@@ -298,30 +341,7 @@ const serviceWith = (
       }
       return valueItemRows(set, value, options.specialState, options.malformedItem);
     }
-    if (table === controlledAttributeValues) {
-      return [
-        {
-          attributeDefinitionId: definitionId,
-          controlledAttributeValueId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-          currentRevision: 1,
-          lifecycleState: 'RETIRED',
-          specialization: 'GENERAL',
-          tenantId,
-        },
-      ];
-    }
-    if (table === controlledAttributeValueRevisions) {
-      return [
-        {
-          attributeDefinitionId: definitionId,
-          lifecycleState: 'RETIRED',
-          revision: 1,
-          specialization: 'GENERAL',
-          tenantId,
-        },
-      ];
-    }
-    return [];
+    return controlledRows(table) ?? [];
   };
   const transaction = {
     select: () => ({
@@ -530,13 +550,52 @@ describe('private effective attribute value reads', () => {
     }),
   );
 
-  it.effect('does not expose a retired controlled value as Current', () =>
-    Effect.gen(function* retiredControlledValue() {
-      const reads = yield* serviceWith([productSet], {}, { retiredControlledValue: true }).service;
-      expect((yield* reads.resolveVariant(input)).status).toBe('INVALID_AUTHORITY');
-      expect((yield* reads.readProductTypeValidity([productId])).complete).toBe(false);
-    }),
-  );
+  for (const set of [productSet, variantSet]) {
+    for (const controlledLifecycle of ['ACTIVE', 'RETIRED']) {
+      it.effect(
+        `preserves ${controlledLifecycle} controlled use at ${set.variantId === null ? 'Product' : 'Variant'} level`,
+        () =>
+          Effect.gen(function* retainedControlledUse() {
+            const options = { controlledLifecycle, retiredControlledValue: true };
+            const reads = yield* serviceWith([set], {}, options).service;
+            expect(yield* reads.resolveVariant(input)).toMatchObject({
+              source: { level: set.variantId === null ? 'PRODUCT' : 'VARIANT', revision: set.currentRevision },
+              status: 'CURRENT',
+              values: [{ kind: 'CONTROLLED' }],
+            });
+            const inventoryReads = yield* serviceWith([set], {}, options).service;
+            const basis = yield* inventoryReads.readProductTypeValidity([productId]);
+            expect(basis.complete).toBe(true);
+            expect(basis.entries).toMatchObject([{ confirmsRequiredFact: true, valid: true }]);
+            expect(basis.entries[0]?.sourceRevisionToken).toContain('dddddddd-dddd-4ddd-8ddd-dddddddddddd@2');
+          }),
+      );
+    }
+  }
+
+  for (const invalid of [
+    { missingControlledValue: true },
+    { missingControlledRevision: true },
+    { malformedControlledDefinition: true },
+    { malformedControlledTenant: true },
+    { malformedControlledSpecialization: true },
+    { malformedControlledRevision: true },
+    { controlledLifecycle: 'UNKNOWN' },
+  ]) {
+    it.effect(`rejects retained controlled use with ${Object.keys(invalid)[0]}`, () =>
+      Effect.gen(function* invalidRetainedUse() {
+        const options = { retiredControlledValue: true, ...invalid };
+        const reads = yield* serviceWith([productSet], {}, options).service;
+        expect((yield* reads.resolveVariant(input)).status).toBe(
+          'missingControlledRevision' in invalid || 'malformedControlledRevision' in invalid
+            ? 'CURRENT'
+            : 'INVALID_AUTHORITY',
+        );
+        const inventoryReads = yield* serviceWith([productSet], {}, options).service;
+        expect((yield* inventoryReads.readProductTypeValidity([productId])).complete).toBe(false);
+      }),
+    );
+  }
 
   it.effect('returns to Product inheritance after a Variant tombstone', () =>
     Effect.gen(function* removedOverride() {
