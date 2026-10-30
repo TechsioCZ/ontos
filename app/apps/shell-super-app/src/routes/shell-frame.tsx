@@ -10,12 +10,13 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
+import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useContext, useEffect, useEffectEvent, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 import { Effect } from 'effect';
 
@@ -90,6 +91,12 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantSwitchPending: boolean;
   readonly title?: string;
   readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
+}
+
+interface DashboardSearchProps {
+  readonly onSearch: (query: string) => void;
+  readonly onValueChange: (value: string) => void;
+  readonly value: string;
 }
 
 interface DashboardSelectorProps {
@@ -690,12 +697,39 @@ const DashboardNavigationLink = ({
 
 const navigationToggleKey = 'shell.dashboard.navigation.toggle';
 
+const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProps) => {
+  const { t } = useModernI18n();
+
+  return (
+    <SearchForm
+      onSubmit={(event) => {
+        event.preventDefault();
+        const query = value.trim();
+        if (query.length > 0) {
+          onSearch(query);
+        }
+      }}
+      onValueChange={onValueChange}
+      value={value}
+    >
+      <SearchForm.Label>{t('shell.search.label')}</SearchForm.Label>
+      <SearchForm.Control>
+        <SearchForm.Input />
+        <SearchForm.ClearButton />
+        <SearchForm.Button showSearchIcon>{t('shell.search.submit')}</SearchForm.Button>
+      </SearchForm.Control>
+    </SearchForm>
+  );
+};
+
 /** Grouped navigation panel: labelled groups on desktop, icon rail when collapsed, drawer below lg. */
 const GroupedSidebarPanel = ({
   model,
+  search,
   selectors,
 }: {
   readonly model: ShellNavigationModel;
+  readonly search: ReactNode;
   readonly selectors: ReactNode;
 }) => {
   const { t } = useModernI18n();
@@ -705,6 +739,7 @@ const GroupedSidebarPanel = ({
         <div className="flex justify-end">
           <Sidebar.CloseTrigger aria-label={t('shell.dashboard.navigation.close')} />
         </div>
+        <Sidebar.Expanded>{search}</Sidebar.Expanded>
         <nav aria-label={t('shell.dashboard.navigation.label')} className="grid gap-150">
           <Sidebar.Menu>
             <Sidebar.Item>
@@ -817,6 +852,7 @@ const useDashboardRoutePreload = (props: AuthenticatedDashboardLayoutProps) =>
  */
 export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
   const { language, t } = useModernI18n();
+  const [searchValue, setSearchValue] = useState('');
   const { tenantSwitchFailed } = props;
   const pageLanguage = language ?? '';
   const pendingHref = usePendingNavigationHref(pageLanguage);
@@ -897,7 +933,6 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             <ShellRouteLink aria-current={false} className="hidden no-underline md:flex" to="/">
               <DashboardBrand />
             </ShellRouteLink>
-            {/* Search lives in each governed agenda; do not advertise an unavailable global provider. */}
             {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
           <Header.Container className="ms-auto w-auto shrink-0" position="end">
@@ -923,6 +958,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         <div className={props.logoutPending ? 'hidden' : 'flex min-h-0 flex-1'}>
           <GroupedSidebarPanel
             model={model}
+            search={<DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />}
             selectors={
               <DashboardContextSelectors
                 currentTenantId={props.currentTenantId}

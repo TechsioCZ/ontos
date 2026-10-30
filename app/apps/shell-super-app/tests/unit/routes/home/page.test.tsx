@@ -342,12 +342,13 @@ it.live('successful legal-entity switch performs a full document reload', () =>
   }),
 );
 
-it.live('the header offers no global search: search lives in each governed agenda', () =>
-  Effect.gen(function* headerOffersNoGlobalSearch() {
+it.live('search submission navigates to the localized Shell search route', () =>
+  Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
+    const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    expect(screen.queryByLabelText('Search this legal entity')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull();
-    yield* Effect.void;
+    yield* Effect.promise(() => user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
   }),
 );
 

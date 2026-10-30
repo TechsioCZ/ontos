@@ -269,7 +269,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
     await expect(page.getByText(content.empty)).toHaveCount(0);
   };
   await expectContacts({
-    description: 'Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
+    description: 'Kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
     empty: 'Zatím zde není žádný obsah.',
     heading: 'Kontakty',
     module: 'Modul',
