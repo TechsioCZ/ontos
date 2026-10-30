@@ -48,7 +48,8 @@ jobs:
       ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
-      UNIT_CACHE_DIR: ${{ github.workspace }}/unit-cache
+      # Outside the checkout: an untracked file in the tree makes every release identity `workspace`.
+      UNIT_CACHE_DIR: ${{ github.workspace }}/../zerops-unit-cache
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -64,7 +65,7 @@ jobs:
       - name: Restore the shard's unit builds
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: unit-cache
+          path: ${{ github.workspace }}/../zerops-unit-cache
           key: zerops-units-${{ matrix.shard }}-${{ github.sha }}
           restore-keys: zerops-units-${{ matrix.shard }}-
 
@@ -88,7 +89,7 @@ jobs:
       - name: Save the shard's unit builds
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: unit-cache
+          path: ${{ github.workspace }}/../zerops-unit-cache
           key: zerops-units-${{ matrix.shard }}-${{ github.sha }}
 
       - name: Upload the shard's unit builds
