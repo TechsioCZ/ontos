@@ -322,6 +322,9 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   # S00: Nájempark business cases; the three owned by „Externí obchodník“ are entrusted to external@najempark.demo.
   step demo-seed-siampark-cases env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     node scripts/demo/seed-siampark-cases.mts
+  # Štítky and Úkoly of Nájempark and Velkoobchod Hanák through the public Actions (adds missing names/titles only).
+  step demo-seed-company-content env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+    node scripts/demo/seed-company-content.mts --apply
 fi
 # AKROS remains an independent Next.js app. Its helper owns :3070 and registers the PID for down.sh.
 step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"
