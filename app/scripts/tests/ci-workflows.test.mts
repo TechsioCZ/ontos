@@ -384,6 +384,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm typecheck:lint-rules',
     'pnpm test:lint-rules',
     'pnpm api:check:ontos',
+    'pnpm handler-services:check',
     'pnpm shell:ui-candidates:check',
     'pnpm test:scripts',
     'pnpm module-entrypoints:check',

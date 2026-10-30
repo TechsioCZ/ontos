@@ -172,6 +172,7 @@ jobs:
               pnpm typecheck:lint-rules
               pnpm test:lint-rules
               pnpm api:check:ontos
+              pnpm handler-services:check
           - name: Repository Tooling, Module Entrypoint, and Codesmith Generation Tests
             commands: |
               pnpm shell:ui-candidates:check
