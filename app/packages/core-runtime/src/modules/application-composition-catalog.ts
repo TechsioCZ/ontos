@@ -1,4 +1,4 @@
-import { Effect, Predicate, Redacted, Ref, Schema } from 'effect';
+import { Effect, Option, Predicate, Redacted, Ref, Schema } from 'effect';
 
 import {
   ApplicationCompositionSchema,
@@ -15,6 +15,7 @@ import { buildInstalledModuleCatalog, OntosModuleCatalogValidationError } from '
 import type { InstalledModuleCatalog } from './catalog.ts';
 import { ONTOS_MODULE_CONTRACT_MAX_BYTES } from './manifest.ts';
 import { shellPageRouteCatalogIssue } from './shell-contribution.ts';
+import type { ProcessCompositionValidationRegistry } from './process-composition-validation.ts';
 
 const utf8 = new TextEncoder();
 const contractJsonSchema = Schema.fromJsonString(Schema.Unknown);
@@ -203,6 +204,10 @@ const isFrozenArtifact = <Value>(value: Value): boolean =>
     ));
 const validatedCatalogs = Ref.makeUnsafe(new WeakMap<ApplicationComposition, InstalledModuleCatalog>());
 
+/** The host registry exposes only catalogs this validator minted from deeply immutable content. */
+export const validatedApplicationCompositionCatalog: ProcessCompositionValidationRegistry['catalog'] = (composition) =>
+  Ref.get(validatedCatalogs).pipe(Effect.map((catalogs) => Option.fromUndefinedOr(catalogs.get(composition))));
+
 /**
  * Construct one all-or-nothing catalog from approved documents. No remote fetch, topology fallback,
  * availability filtering, or retained last-known-good catalog can alter installed membership.
@@ -212,9 +217,12 @@ export const buildApplicationCompositionCatalog = Effect.fn(
 )(function* loadValidatedCatalog(
   composition: ApplicationComposition,
 ): Effect.fn.Return<InstalledModuleCatalog, ApplicationCompositionValidationError> {
-  const cached = (yield* Ref.get(validatedCatalogs)).get(composition);
-  if (cached !== undefined) {
-    return cached;
+  const local = yield* validatedApplicationCompositionCatalog(composition);
+  const cached = Option.isSome(local)
+    ? local
+    : yield* globalThis.ontosProcessCompositionValidation?.catalog(composition) ?? Effect.succeed(Option.none());
+  if (Option.isSome(cached)) {
+    return cached.value;
   }
   return yield* buildCatalog(composition).pipe(
     Effect.tap((catalog) =>

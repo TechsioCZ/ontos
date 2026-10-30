@@ -117,32 +117,6 @@ describe('finiteProcessEnvironment', () => {
 describe('processEnvironment', () => {
   const derived = { ONTOS_GATEWAY_ISSUER: ORIGIN };
 
-  it('budgets the shared request pool for all owners, separately from the Shell and workers', () => {
-    const owners = processEnvironment(['crm', PARTY_REGISTRY], {}, derived).environment;
-    const shell = processEnvironment([SHELL_ID], {}, derived).environment;
-    const workers = processEnvironment(['outbox-worker-host', 'crm', PARTY_REGISTRY], {}, derived).environment;
-
-    expect(owners.ONTOS_DATABASE_POOL_MAX_CONNECTIONS).toBe('12');
-    expect(shell.ONTOS_DATABASE_POOL_MAX_CONNECTIONS).toBe('6');
-    expect(workers.ONTOS_DATABASE_POOL_MAX_CONNECTIONS).toBe('2');
-    // Two roles in each child process, plus the supervisor's six and a private lock session.
-    // Two releases leave room for SpiceDB, migration/verifier jobs and operator connections.
-    const overlappingHosts = 2 * (2 * 12 + 2 * 6 + 2 * 2 + 6 + 1);
-    expect(overlappingHosts + 10 + 16 + 2).toBeLessThan(150);
-  });
-
-  it('does not let stored owner settings replace the host-owned shared pool budget', () => {
-    const secrets = {
-      crm: { ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '4', ONTOS_DATABASE_POOL_SHARED: 'false' },
-      [PARTY_REGISTRY]: { ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '2' },
-    };
-    const { conflicts, environment } = processEnvironment(['crm', PARTY_REGISTRY], secrets, derived);
-
-    expect(conflicts).toEqual([]);
-    expect(environment.ONTOS_DATABASE_POOL_MAX_CONNECTIONS).toBe('12');
-    expect(environment.ONTOS_DATABASE_POOL_SHARED).toBeUndefined();
-  });
-
   it('always removes the migration admin URL and the owner secrets bundle', () => {
     const { environment } = processEnvironment(['crm'], {}, derived);
     expect(Object.keys(environment)).toContain('DATABASE_ADMIN_URL');

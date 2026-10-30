@@ -119,9 +119,6 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
   'BETTER_AUTH_URL',
   'DATABASE_URL',
   'NODE_ENV',
-  'ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS',
-  'ONTOS_DATABASE_POOL_MAX_CONNECTIONS',
-  'ONTOS_DATABASE_POOL_SHARED',
   'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
   'ONTOS_GATEWAY_ISSUER',
   'ONTOS_SHELL_GATEWAY_BASE_URL',
@@ -132,11 +129,6 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
   'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
 ]);
 
-interface HostedProcessEnvironment {
-  readonly conflicts: readonly string[];
-  readonly environment: ChildEnvironment;
-}
-
 /**
  * The environment overlay one process starts with for the owners it serves: removed keys map to `undefined` (the
  * child then never sees them), host-derived settings win over stored owner secrets. Owners that share a process
@@ -146,7 +138,7 @@ export const processEnvironment = (
   processIds: readonly string[],
   ownerSecrets: OwnerSecrets,
   derived: ChildEnvironment,
-): HostedProcessEnvironment => {
+) => {
   const served = new Set(processIds);
   const hidden = [
     ...SUPERVISOR_ONLY_KEYS,
@@ -157,13 +149,6 @@ export const processEnvironment = (
   const removed = new Set(hidden);
   const own = new Map<string, string>();
   const conflicts = new Set<string>();
-  let poolMaxConnections = '12';
-  if (served.has(SHELL_ID)) {
-    poolMaxConnections = '6';
-  }
-  if (served.has(OUTBOX_HOST_ID)) {
-    poolMaxConnections = '2';
-  }
   for (const processId of processIds) {
     for (const [key, value] of Object.entries(ownerSecrets[processId] ?? {})) {
       if (HOST_CONTROLLED_KEYS.has(key) || removed.has(key)) {
@@ -181,9 +166,6 @@ export const processEnvironment = (
       ...Object.fromEntries(hidden.map((key) => [key, undefined])),
       ...Object.fromEntries(own),
       ...derived,
-      // The request process serves every owner, not one owner. Workers have their own process and
-      // must not consume that request budget. The supervisor retains the container's six-slot cap.
-      ONTOS_DATABASE_POOL_MAX_CONNECTIONS: poolMaxConnections,
     } satisfies ChildEnvironment,
   };
 };

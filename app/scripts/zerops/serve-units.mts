@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { startProcessDatabasePools } from './process-database-pools.mts';
+import { startProcessCompositionValidation } from './process-composition-validation.mts';
 /**
  * Serves the named units in this one Node process, each unit's own Modern.js production server on its loopback
  * port. Every unit resolves its packages through the installed workspace, so their shared dependencies load once.
@@ -73,7 +74,7 @@ const command = Command.make('serve-units', { ids: Argument.String('app-id').pip
 if (import.meta.main) {
   NodeRuntime.runMain(
     Effect.andThen(
-      startProcessDatabasePools,
+      Effect.andThen(startProcessDatabasePools, startProcessCompositionValidation),
       Layer.build(
         Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(Layer.provide(NodeServices.layer)),
       ),
