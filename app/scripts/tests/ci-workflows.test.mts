@@ -1826,6 +1826,10 @@ const GateCommandsWorkflowSchema = Schema.Struct({
   }),
 });
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+const readRootScripts = () =>
+  Schema.decodeUnknownSync(RootScriptsSchema)(
+    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
+  );
 
 const readGateCommandJobs = () =>
   Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
@@ -1842,12 +1846,14 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm test:lint-rules',
     'pnpm api:check:ontos',
     'pnpm test:scripts',
-    'pnpm module-entrypoints:check',
     'pnpm test:deployment-impact',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
   }
+  // The module entrypoint boundary check runs inside the deployment impact gate.
+  const { scripts } = readRootScripts();
+  expect(scripts['test:deployment-impact']).toContain(scripts['module-entrypoints:check']);
   const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
     parallel ? parallel.map((step) => step.run) : [run ?? ''],
   );
@@ -1855,9 +1861,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
 });
 
 it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
-  const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
-  );
+  const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:unit']).toBe(
     'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component',
@@ -1915,9 +1919,7 @@ const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
 
 it('runs the root integration suite once and every package integration suite in exactly one shard', () => {
-  const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
-  );
+  const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:integration']).toBe(
     'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
