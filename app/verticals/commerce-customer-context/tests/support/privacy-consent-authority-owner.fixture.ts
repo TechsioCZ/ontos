@@ -35,10 +35,11 @@ import {
   CorePersistenceLive,
   ContextAccessLive,
   DatabaseConfigLive,
+  loadDatabaseConfig,
   loadDatabaseConnectionPair,
   SHARED_RUNTIME_IDENTITY,
 } from '@app/core-runtime';
-import type { DatabaseConnectionPair } from '@app/core-runtime';
+import type { RuntimeDatabaseConfigValue } from '@app/core-runtime';
 import { extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
@@ -511,8 +512,10 @@ const migrateOwnedPortalAuth = Effect.fn('RetainedConsentOwner.migrateOwnedPorta
 // Runtime-only observation: missing storage is reported, never created by an HTTP process.
 const ownedDatabaseStage = 'owned-database';
 const ownedProviderStorageIsReady = Effect.fn('RetainedConsentOwner.ownedProviderStorageIsReady')(
-  function* ownedProviderStorageIsReady(runtime: DatabaseConnectionPair['runtime']) {
-    if (!/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(runtime.database)) {
+  function* ownedProviderStorageIsReady(runtime: RuntimeDatabaseConfigValue) {
+    // A runtime identity's configuration carries its connection and role; the connection names the database.
+    const database = decodeURIComponent(new URL(runtime.connectionString).pathname.slice(1));
+    if (!/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(database)) {
       return yield* failed(ownedDatabaseStage);
     }
     const providerConnection = yield* Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL');
@@ -540,8 +543,8 @@ const ownedProviderStorageIsReady = Effect.fn('RetainedConsentOwner.ownedProvide
         ),
       );
     if (
-      identities[0].database !== runtime.database ||
-      identities[0].role !== runtime.user ||
+      identities[0].database !== database ||
+      identities[0].role !== runtime.expectedRole ||
       identities[0].superuser ||
       identities[0].bypass
     ) {
@@ -602,7 +605,8 @@ const prepareOwnedProviderStorage = Effect.fn('RetainedConsentOwner.prepareOwned
 
 const verifyPreparedProviderStorage = Effect.fn('RetainedConsentOwner.verifyPreparedProviderStorage')(
   function* verifyPreparedProviderStorage() {
-    const { runtime } = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity: SHARED_RUNTIME_IDENTITY });
+    // HTTP processes receive only their runtime identity, never the administrative connection.
+    const runtime = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: SHARED_RUNTIME_IDENTITY });
     if (!(yield* ownedProviderStorageIsReady(runtime))) {
       return yield* failed(providerSchemaInventory);
     }

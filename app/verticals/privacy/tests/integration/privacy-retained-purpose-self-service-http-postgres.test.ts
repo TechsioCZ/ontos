@@ -1303,7 +1303,8 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   const environment = {
     APP_ENV_PATH: '/dev/null',
     BETTER_AUTH_SECRET: `${suffix}${yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4())}`,
-    BETTER_AUTH_URL: 'http://retained-shell.localhost',
+    // The Shell's MCP resource accepts only HTTPS or a loopback development origin.
+    BETTER_AUTH_URL: 'http://localhost',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${coreOrigin}/composition`,
     ONTOS_GATEWAY_ISSUER: 'https://retained-account.fixture.invalid',
@@ -1502,7 +1503,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       grants,
       providerEndpointAudience: 'commerce-customer-context',
-      providerOrigin: accountReady.baseUrl,
     }),
     SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL,
   });
