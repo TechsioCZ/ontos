@@ -632,7 +632,6 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         EMAIL_PROVIDER: smtp
         NODE_ENV: production
-        ONTOS_APP_HOST_PUBLISH: 'false'
         ONTOS_EMAIL_FROM: noreply@ontos-stage.web-revolution.cz
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
