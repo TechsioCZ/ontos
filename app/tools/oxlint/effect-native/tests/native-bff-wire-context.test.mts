@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { expect, it } from 'effect-rstest';
 
-import { appRoot, fixtureConfigPath, runOxlint } from './oxlint.mts';
+import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const ruleName = 'no-threaded-correlation-parameter';
@@ -78,7 +78,7 @@ it('proves published native BFF wire context while retaining internal correlatio
       writeFileSync(filename, entry.source);
       return filename;
     });
-    const result = runOxlint(fixtureConfigPath(ruleName), files, appRoot);
+    const result = runOxlint(path.join(testsDirectory, 'native-bff-wire-context.config.ts'), files, appRoot);
     expect(result.numberOfFiles).toBe(cases.length);
     expect(result.diagnostics.filter(({ code }) => code !== ruleCode)).toEqual([]);
     for (const [index, entry] of cases.entries()) {

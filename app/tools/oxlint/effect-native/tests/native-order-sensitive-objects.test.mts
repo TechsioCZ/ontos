@@ -464,7 +464,7 @@ sort_objects_default.create = context => {
         /oxlint-(?:disable[^ ]*|enable) perfectionist\/sort-objects/u,
       );
     }
-  }, appRoot);
+  });
 });
 
 it('the full production CLI preserves first-party Drizzle columns without source waivers', () => {
