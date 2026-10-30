@@ -539,3 +539,47 @@ zerops:
           port: 4100
           path: /live
       start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
+  - setup: storefront
+    build:
+      base: alpine@3.23
+      envVariables:
+        AKROS_STANDALONE_BUILD: '1'
+        NEXT_TELEMETRY_DISABLED: '1'
+        STOREFRONT_IMAGE_HOSTS: ''
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile --filter 'akros-storefront...'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter akros-storefront run build
+        - mkdir -p 'app/.zerops/runtime' && mv 'app/akros-storefront/.next/standalone' 'app/.zerops/runtime/akros-storefront'
+        - cp -a 'app/akros-storefront/.next/static' 'app/.zerops/runtime/akros-storefront/akros-storefront/.next/static'
+        - cp -a 'app/akros-storefront/public' 'app/.zerops/runtime/akros-storefront/akros-storefront/public'
+        - mkdir -p 'app/.zerops/runtime/akros-storefront/node/bin' && cp "$HOME/.local/node-26.12.0/bin/node" 'app/.zerops/runtime/akros-storefront/node/bin/'
+      deployFiles:
+        - app/.zerops/runtime/akros-storefront
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 3070
+          path: /robots.txt
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: nodejs@24
+      ports:
+        - port: 3070
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        NEXT_TELEMETRY_DISABLED: '1'
+        NODE_ENV: production
+        ONTOS_SHELL_URL: http://app:3000
+        PORT: '3070'
+        STOREFRONT_IMAGE_HOSTS: ''
+      healthCheck:
+        httpGet:
+          port: 3070
+          path: /robots.txt
+      start: sh -c 'test -n "$ONTOS_AKROS_STOREFRONT_API_KEY" || { echo "ONTOS_AKROS_STOREFRONT_API_KEY is required" >&2; exit 1; }; cd app/.zerops/runtime/akros-storefront && HOSTNAME=0.0.0.0 exec node/bin/node akros-storefront/server.js'
