@@ -137,8 +137,11 @@ export const makePartyRegistryApiRuntime = (
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
-    partyRegistryCommandsLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    partyRegistryCommandRecoveryLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    // The commands and their commit recovery read the committed result through the governed Read runtime.
+    partyRegistryCommandsLive.pipe(Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive))),
+    partyRegistryCommandRecoveryLive.pipe(
+      Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
+    ),
     engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
     // <generated-governed-http-handler-layers>
     aresLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(aresSubjectService)),
