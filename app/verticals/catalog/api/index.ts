@@ -324,7 +324,9 @@ const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
 const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-  Layer.provide(catalogSourceActionPersistenceLive),
+  // The source and local override Actions build their persistence from this factory while they execute, so it must
+  // stay visible in the runtime context beside the Action runtime.
+  Layer.provideMerge(catalogSourceActionPersistenceLive),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,

@@ -97,7 +97,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(GovernedReadLayer.mergeAll(ActionPermissionLive)),
+  // The apply command validates its references through the governed Read runtime.
+  GovernedReadLayer.provide(GovernedReadLayer.mergeAll(ActionPermissionLive, governedReadRuntimeLive)),
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 

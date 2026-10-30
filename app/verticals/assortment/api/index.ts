@@ -193,7 +193,14 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(
-      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive, databaseIdentitiesLive),
+      Layer.mergeAll(
+        runtimeObservabilityLive,
+        RequestSchemaProblemLive,
+        compositionSourceLive,
+        databaseIdentitiesLive,
+        // Commitment confirmation issuance signs its confirmation with Crypto inside the handler's Action execution.
+        nodeCryptoLayer,
+      ),
     ),
     Layer.orDie,
   );
