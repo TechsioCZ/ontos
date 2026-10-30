@@ -3,7 +3,7 @@
 import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
@@ -477,11 +477,14 @@ type ReconciliationFailure =
   | Effect.Error<ReturnType<typeof reconcileStageServicePrincipals>>
   | Effect.Error<ReturnType<typeof ensureStageVerification>>
   | Effect.Error<ReturnType<typeof verificationContext>>;
+/** The failure's tag names the failing step (a config key, the composition source, SpiceDB) without any value. */
+const failureTag = (error: ReconciliationFailure): string =>
+  Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag) ? error._tag : 'untagged';
 const reportFailure = (error: ReconciliationFailure) =>
   Console.error(
     Schema.is(ServiceGrantError)(error)
       ? error.reason
-      : 'Stage service reconciliation failed; credentials were not logged',
+      : `Stage service reconciliation failed (${failureTag(error)}); credentials were not logged`,
   );
 const command = Command.make(
   'reconcile-stage-service-grants',
