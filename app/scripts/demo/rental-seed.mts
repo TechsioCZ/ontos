@@ -255,7 +255,7 @@ export const rentalInvoicePlan = (asOf: Date) =>
   }).flat();
 type InvoiceSpec = ReturnType<typeof rentalInvoicePlan>[number];
 
-const seedNote = 'DEMO siampark-rental-v2: syntetický příklad, bez skutečného podepsaného souboru.';
+const seedNote = 'DEMO najempark-rental-v2: syntetický příklad, bez skutečného podepsaného souboru.';
 const propertyRead = Schema.toEncoded(PropertyRecords);
 const occupancyRead = Schema.toEncoded(OccupancyRecords);
 const agreementsRead = Schema.toEncoded(AgreementsRecords);
