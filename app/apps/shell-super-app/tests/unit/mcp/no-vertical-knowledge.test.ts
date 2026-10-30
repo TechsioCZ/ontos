@@ -4,7 +4,8 @@
  * navigation entry, review rule or follow-up comes from the composed module contracts. This test fails when a
  * vertical id appears in that source as a quoted literal or a path segment, or a module id appears anywhere.
  * Companies are tenant data too: the Shell UI must not name a demo company or key behaviour by its legal entity id.
- * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour).
+ * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour), and Core's test
+ * fixtures (`@app/core-runtime/testing/*`), which stage one owner's data for owner tests; no platform code may import them.
  */
 import { OntosDeploymentAppIdSchema, OntosModuleIdSchema } from '@app/core-runtime';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -36,8 +37,12 @@ const GUARDED = [
   'scripts/ontos-mcp-contribution.mts',
 ];
 
-/** Demo guide content and seed data (`demo-seed/` directories) name the demo tenants' modules on purpose. */
-const EXCEPTIONS = ['apps/shell-super-app/src/demo-guide/guides/'];
+/**
+ * Demo guide content and seed data (`demo-seed/` directories) name the demo tenants' modules on purpose. Core's test
+ * fixtures stage a named owner's data for that owner's tests; the platform never imports them (asserted below).
+ */
+const CORE_TEST_FIXTURES = 'packages/core-runtime/src/testing/';
+const EXCEPTIONS = ['apps/shell-super-app/src/demo-guide/guides/', CORE_TEST_FIXTURES];
 const SEED_DIRECTORY = `${path.sep}demo-seed${path.sep}`;
 
 const VerticalManifestSchema = Schema.fromJsonString(
@@ -193,6 +198,30 @@ it('does not permit another vertical descriptor at the enrollment root', () => {
 it('keeps Core and the whole Shell platform free of vertical ids', () => {
   const hits = GUARDED.flatMap(filesOf).flatMap((file) =>
     verticalKnowledgeIn(path.relative(appRoot, file), readFileSync(file, 'utf-8')),
+  );
+  expect(hits).toEqual([]);
+});
+
+it('keeps Core and the Shell platform off Core test fixtures', () => {
+  const fixtures = path.join(appRoot, CORE_TEST_FIXTURES);
+  const hits = GUARDED.flatMap(filesOf).flatMap((file) =>
+    parseSync(file, readFileSync(file, 'utf-8')).program.body.flatMap((statement) => {
+      if (
+        statement.type !== 'ImportDeclaration' &&
+        statement.type !== 'ExportNamedDeclaration' &&
+        statement.type !== 'ExportAllDeclaration'
+      ) {
+        return [];
+      }
+      const specifier = statement.source?.value;
+      if (specifier === undefined) {
+        return [];
+      }
+      const fixtureImport = specifier.startsWith('.')
+        ? path.resolve(path.dirname(file), specifier).startsWith(fixtures)
+        : specifier.startsWith('@app/core-runtime/testing/');
+      return fixtureImport ? [`${path.relative(appRoot, file)} imports ${specifier}`] : [];
+    }),
   );
   expect(hits).toEqual([]);
 });

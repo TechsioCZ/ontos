@@ -13,8 +13,31 @@ const leaves = (value: Messages, prefix = ''): string[] => {
   return Object.entries(value).flatMap(([key, child]) => leaves(child, prefix === '' ? key : `${prefix}.${key}`));
 };
 
+// i18next resolves `t(key, { count })` to `key_<CLDR plural category>`, and Czech has more categories than English.
+const pluralCategories = (locale: string) => new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
+const PLURAL_SUFFIX = /_(?:zero|one|two|few|many|other)$/u;
+const messages = (keys: readonly string[]) =>
+  [...new Set(keys.map((key) => key.replace(PLURAL_SUFFIX, '')))].toSorted();
+const pluralForms = (keys: readonly string[]) =>
+  Object.groupBy(
+    keys.filter((key) => PLURAL_SUFFIX.test(key)),
+    (key) => key.replace(PLURAL_SUFFIX, ''),
+  );
+
 it('has a nonempty Czech translation for every people and agent message', () => {
-  expect(leaves(cs.shell.agents).toSorted()).toEqual(leaves(en.shell.agents).toSorted());
+  expect(messages(leaves(cs.shell.agents))).toEqual(messages(leaves(en.shell.agents)));
+});
+
+it('gives every plural people and agent message exactly its locale plural forms', () => {
+  for (const [locale, catalog] of [
+    ['cs', cs.shell.agents],
+    ['en', en.shell.agents],
+  ] as const) {
+    const expected = pluralCategories(locale).toSorted();
+    for (const [message, forms = []] of Object.entries(pluralForms(leaves(catalog)))) {
+      expect(forms.map((form) => form.slice(message.length + 1)).toSorted(), `${locale}: ${message}`).toEqual(expected);
+    }
+  }
 });
 
 it('resolves every message path used by the people and agents views, including interpolated namespaces', () => {
@@ -51,7 +74,8 @@ it('resolves every message path used by the people and agents views, including i
           `${file}: ${path}`,
         ).toBe(true);
       } else {
-        expect(paths.has(path), `${file}: missing Czech message ${path}`).toBe(true);
+        const plural = pluralCategories('cs').every((category) => paths.has(`${path}_${category}`));
+        expect(paths.has(path) || plural, `${file}: missing Czech message ${path}`).toBe(true);
       }
       checked += 1;
     }
