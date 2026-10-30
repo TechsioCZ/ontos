@@ -225,7 +225,7 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
 });
 
 /** Runs one finite child to a successful exit. */
-const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: Record<string, string>) =>
+const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: ChildEnvironment) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
@@ -536,6 +536,18 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       { concurrency: 'unbounded' },
     );
     yield* publish;
+    // The canonical SpiceDB schema and the stage service grants follow the published release. A failure is logged
+    // loudly but does not stop a release whose data is already served.
+    yield* runChild(
+      'service-grants',
+      node,
+      ['scripts/demo/reconcile-stage-service-grants.mts', '--apply'],
+      workspaceRoot,
+      processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment,
+    ).pipe(
+      Effect.tapError((problem) => Console.error(`[app-host] service grant reconciliation failed: ${problem.reason}`)),
+      Effect.ignore,
+    );
     yield* Ref.set(published, true);
     const outbox = yield* startChild(
       OUTBOX_HOST_ID,
