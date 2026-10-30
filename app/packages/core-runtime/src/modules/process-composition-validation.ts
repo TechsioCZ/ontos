@@ -10,8 +10,13 @@ import type { InstalledModuleCatalog } from './catalog.ts';
  * A native host may share immutable deployment validation among separately bundled owners. No source reads,
  * principal decisions, database admission, or request services enter this registry. Every load checks its lease.
  */
+/** The installed-module catalog the host validator minted for one composition, if any. */
+export type ValidatedCompositionCatalogLookup = (
+  composition: ApplicationComposition,
+) => Effect.Effect<Option.Option<InstalledModuleCatalog>>;
+
 export interface ProcessCompositionValidationRegistry {
-  readonly catalog: (composition: ApplicationComposition) => Effect.Effect<Option.Option<InstalledModuleCatalog>>;
+  readonly catalog: ValidatedCompositionCatalogLookup;
   readonly decode: (
     encoded: string,
   ) => Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>;

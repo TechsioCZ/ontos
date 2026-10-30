@@ -15,7 +15,7 @@ import { buildInstalledModuleCatalog, OntosModuleCatalogValidationError } from '
 import type { InstalledModuleCatalog } from './catalog.ts';
 import { ONTOS_MODULE_CONTRACT_MAX_BYTES } from './manifest.ts';
 import { shellPageRouteCatalogIssue } from './shell-contribution.ts';
-import type { ProcessCompositionValidationRegistry } from './process-composition-validation.ts';
+import type { ValidatedCompositionCatalogLookup } from './process-composition-validation.ts';
 
 const utf8 = new TextEncoder();
 const contractJsonSchema = Schema.fromJsonString(Schema.Unknown);
@@ -205,7 +205,7 @@ const isFrozenArtifact = <Value>(value: Value): boolean =>
 const validatedCatalogs = Ref.makeUnsafe(new WeakMap<ApplicationComposition, InstalledModuleCatalog>());
 
 /** The host registry exposes only catalogs this validator minted from deeply immutable content. */
-export const validatedApplicationCompositionCatalog: ProcessCompositionValidationRegistry['catalog'] = (composition) =>
+export const validatedApplicationCompositionCatalog: ValidatedCompositionCatalogLookup = (composition) =>
   Ref.get(validatedCatalogs).pipe(Effect.map((catalogs) => Option.fromUndefinedOr(catalogs.get(composition))));
 
 /**
