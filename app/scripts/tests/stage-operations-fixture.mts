@@ -21,7 +21,7 @@ import type { ZeropsServiceStackIdentity } from '../zerops-public-api.mts';
 
 /**
  * In-memory stand-ins for everything the stage operations touch: Zerops and GitHub behind the
- * `OpsShell` seam, the Cloudflare account behind the Effect `HttpClient` seam, the Zerops REST API
+ * `OpsShell` seam, the Cloudflare Origin CA behind the Effect `HttpClient` seam, the Zerops REST API
  * behind `ZeropsPublicApi`, and repository files behind `FileSystem`. Each records what the scripts
  * asked for, so tests assert exact mutations. `openssl` runs for real, so certificates are real.
  */
@@ -557,36 +557,7 @@ export const fakeZeropsApi = (
 };
 
 // ---------------------------------------------------------------------------------------------
-// Cloudflare account through the HttpClient
-
-const TunnelSchema = Schema.Struct({ id: Schema.String, name: Schema.String, status: Schema.String });
-export type FakeTunnel = typeof TunnelSchema.Type;
-
-const VpcServiceBodySchema = Schema.Struct({
-  app_protocol: Schema.optionalKey(Schema.String),
-  host: Schema.Struct({ hostname: Schema.String, resolver_network: Schema.Struct({ tunnel_id: Schema.String }) }),
-  http_port: Schema.optionalKey(Schema.Number),
-  https_port: Schema.optionalKey(Schema.Number),
-  name: Schema.String,
-  tcp_port: Schema.optionalKey(Schema.Number),
-  tls_settings: Schema.optionalKey(Schema.Struct({ cert_verification_mode: Schema.String })),
-  type: Schema.String,
-});
-const VpcServiceSchema = Schema.Struct({ ...VpcServiceBodySchema.fields, service_id: Schema.String });
-export type FakeVpcService = typeof VpcServiceSchema.Type;
-
-const HyperdriveBodySchema = Schema.Struct({
-  caching: Schema.Struct({ disabled: Schema.Boolean }),
-  name: Schema.String,
-  origin: Schema.Struct({
-    database: Schema.String,
-    scheme: Schema.String,
-    service_id: Schema.String,
-    user: Schema.String,
-  }),
-  origin_connection_limit: Schema.Number,
-});
-const HyperdriveSchema = Schema.Struct({ ...HyperdriveBodySchema.fields, id: Schema.String });
+// Cloudflare Origin CA through the HttpClient
 
 const OriginCertificateBodySchema = Schema.Struct({
   csr: Schema.String,
@@ -594,7 +565,6 @@ const OriginCertificateBodySchema = Schema.Struct({
   request_type: Schema.Literal('origin-ecc'),
   requested_validity: Schema.Number,
 });
-export type FakeHyperdrive = typeof HyperdriveSchema.Type;
 
 export interface FakeCloudflareRequest {
   readonly body: Option.Option<Json>;
@@ -602,71 +572,9 @@ export interface FakeCloudflareRequest {
   readonly url: URL;
 }
 
-/** A cost-guard object the fake stores as the API returns it. */
-export type FakeRecord = Readonly<Record<string, Json>>;
-
-export interface FakeRuleset {
-  readonly id: string;
-  readonly kind: string;
-  readonly phase: string;
-  rules: FakeRecord[];
-}
-
-export interface FakeZone {
-  readonly id: string;
-  readonly name: string;
-}
-
-/** One Worker script's usage in the window the GraphQL Analytics API is asked about. */
-export interface FakeUsage {
-  readonly cpuTimeUs: number;
-  readonly requests: number;
-  readonly scriptName: string;
-}
-
-const KvNamespaceBodySchema = Schema.Struct({ title: Schema.String });
-const KvNamespaceSchema = Schema.Struct({ id: Schema.String, title: Schema.String });
-export type FakeKvNamespace = typeof KvNamespaceSchema.Type;
-
 export interface FakeCloudflareAccount {
-  readonly accessApps: FakeRecord[];
-  /** Whether Zero Trust is on; while it is off every Access route answers `access.api.error.not_enabled`. */
-  accessEnabled: boolean;
-  readonly accessPolicies: FakeRecord[];
-  readonly alertPolicies: FakeRecord[];
-  readonly hyperdrives: FakeHyperdrive[];
-  /** Key names per KV namespace id. */
-  readonly kvKeys: Map<string, string[]>;
-  readonly kvNamespaces: FakeKvNamespace[];
   readonly layer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: FakeCloudflareRequest[];
-  readonly rulesets: FakeRuleset[];
-  readonly serviceTokens: FakeRecord[];
-  readonly tunnels: FakeTunnel[];
-  /** What the GraphQL Analytics API reports for any window, one row per script. */
-  usage: readonly FakeUsage[];
-  readonly vpcServices: FakeVpcService[];
-  readonly zones: FakeZone[];
-}
-
-export interface FakeCloudflareInitial {
-  readonly accessApps?: readonly FakeRecord[];
-  readonly accessEnabled?: boolean;
-  readonly accessPolicies?: readonly FakeRecord[];
-  readonly alertPolicies?: readonly FakeRecord[];
-  readonly hyperdrives?: readonly FakeHyperdrive[];
-  readonly kvKeys?: Readonly<Record<string, readonly string[]>>;
-  readonly kvNamespaces?: readonly FakeKvNamespace[];
-  readonly rulesets?: readonly FakeRuleset[];
-  readonly serviceTokens?: readonly FakeRecord[];
-  readonly tunnels?: readonly FakeTunnel[];
-  readonly tunnelStatus?: string;
-  readonly usage?: readonly FakeUsage[];
-  readonly vpcServices?: readonly FakeVpcService[];
-  readonly workersDevSubdomain?: string;
-  readonly zoneReadDeniedForToken?: string;
-  /** Defaults to the test stage zone `stage.example.com` as `zone-1`. */
-  readonly zones?: readonly FakeZone[];
 }
 
 const requestBody = (request: HttpClientRequest.HttpClientRequest): Option.Option<Json> =>
@@ -677,331 +585,38 @@ const requestBody = (request: HttpClientRequest.HttpClientRequest): Option.Optio
     Match.orElse(() => Option.none()),
   );
 
-const envelope = (result: Json) => Response.json({ errors: [], messages: [], result, success: true });
-
-const decodeBody = <A, I>(schema: Schema.Codec<A, I>, body: Option.Option<Json>) =>
-  Schema.decodeUnknownSync(schema)(Option.getOrNull(body));
-
-const firstPage = (url: URL, items: Json) => envelope(Number(url.searchParams.get('page')) > 1 ? [] : items);
-
-const tunnelAnswer = (
-  account: Omit<FakeCloudflareAccount, 'layer'>,
-  initial: FakeCloudflareInitial,
-  method: string,
-  url: URL,
-  path: string,
-) => {
-  if (path === '/cfd_tunnel') {
-    if (method === 'POST') {
-      const tunnel = { id: 'tunnel-1', name: 'ontos-stage', status: initial.tunnelStatus ?? 'healthy' };
-      account.tunnels.push(tunnel);
-      return envelope(tunnel);
-    }
-    return envelope(account.tunnels.filter(({ name }) => name === url.searchParams.get('name')));
-  }
-  if (path.endsWith('/token')) {
-    return envelope('tunnel-connector-token');
-  }
-  const tunnel = account.tunnels.find(({ id }) => path === `/cfd_tunnel/${id}`);
-  return tunnel === undefined ? undefined : envelope(tunnel);
-};
-
-const RecordSchema = Schema.Record(Schema.String, Schema.Json);
-const RulesSchema = Schema.Struct({ rules: Schema.Array(RecordSchema) });
-
-type FakeState = Omit<FakeCloudflareAccount, 'layer'>;
-
-/** Stores a POSTed object with a fresh `id`, or replaces the one a PUT names. */
-const collection = (
-  items: FakeRecord[],
-  prefix: string,
-  method: string,
-  id: string | undefined,
-  body: Option.Option<Json>,
-  created: (record: FakeRecord, id: string) => FakeRecord = (record, newId) => ({ ...record, id: newId }),
-) => {
-  if (method === 'GET' && id === undefined) {
-    return items;
-  }
-  const record = decodeBody(RecordSchema, body);
-  if (method === 'POST') {
-    const stored = created(record, `${prefix}-${String(items.length + 1)}`);
-    items.push(stored);
-    return stored;
-  }
-  const index = items.findIndex((item) => item.id === id);
-  const replaced = { ...record, id: id ?? '' };
-  if (index !== -1) {
-    items[index] = replaced;
-  }
-  return index === -1 ? undefined : replaced;
-};
-
-const serviceTokenAnswer = (account: FakeState, method: string, path: string) => {
-  const rotated = /^\/access\/service_tokens\/(?<id>[^/]+)\/rotate$/u.exec(path)?.groups?.id;
-  if (rotated !== undefined) {
-    const token = account.serviceTokens.find(({ id }) => id === rotated);
-    return token === undefined ? undefined : { ...token, client_secret: 'rotated-service-token-secret' };
-  }
-  if (method === 'GET') {
-    return account.serviceTokens;
-  }
-  const token = {
-    client_id: 'access-client-id',
-    id: `token-${String(account.serviceTokens.length + 1)}`,
-    name: 'ontos-stage-ci',
-  };
-  account.serviceTokens.push(token);
-  return { ...token, client_secret: 'service-token-secret' };
-};
-
-const accountGuardAnswer = (account: FakeState, method: string, path: string, body: Option.Option<Json>) => {
-  const match = /^\/(?<resource>access\/policies|access\/apps|alerting\/v3\/policies)(?:\/(?<id>[^/]+))?$/u.exec(path);
-  const resource = match?.groups?.resource;
-  const id = match?.groups?.id;
-  if (resource === 'access/policies') {
-    return collection(account.accessPolicies, 'policy', method, id, body);
-  }
-  if (resource === 'access/apps') {
-    return collection(account.accessApps, 'app', method, id, body);
-  }
-  if (resource === 'alerting/v3/policies') {
-    const stored = collection(account.alertPolicies, 'alert', method, id, body);
-    return Array.isArray(stored) || stored === undefined ? stored : { id: stored.id ?? '' };
-  }
-  return path.startsWith('/access/service_tokens') ? serviceTokenAnswer(account, method, path) : undefined;
-};
-
-const rulesetView = ({ id, rules }: FakeRuleset) => ({ id, rules });
-
-const withRuleIds = (ruleset: FakeRuleset, rules: readonly FakeRecord[]) =>
-  rules.map((rule, index) => ({ ...rule, id: `${ruleset.id}-rule-${String(ruleset.rules.length + index + 1)}` }));
-
-const zoneAnswer = (account: FakeState, method: string, url: URL, body: Option.Option<Json>): Json | undefined => {
-  const path = url.pathname.replace(/^\/client\/v4\/zones/u, '');
-  if (path === '') {
-    return account.zones
-      .filter(({ name }) => name === url.searchParams.get('name'))
-      .map(({ id, name }) => ({ id, name }));
-  }
-  const parts = /^\/[^/]+\/rulesets(?:\/(?<rest>.*))?$/u.exec(path)?.groups;
-  const rest = parts?.rest;
-  if (parts === undefined) {
-    return undefined;
-  }
-  if (rest === undefined) {
-    return account.rulesets.map(({ id, kind, phase }) => ({ id, kind, phase }));
-  }
-  const phase = /^phases\/(?<phase>[^/]+)\/entrypoint$/u.exec(rest)?.groups?.phase;
-  if (phase !== undefined) {
-    const ruleset: FakeRuleset = { id: `ruleset-${phase}`, kind: 'zone', phase, rules: [] };
-    ruleset.rules = withRuleIds(ruleset, decodeBody(RulesSchema, body).rules);
-    account.rulesets.push(ruleset);
-    return rulesetView(ruleset);
-  }
-  const [rulesetId, , ruleId] = rest.split('/');
-  const ruleset = account.rulesets.find(({ id }) => id === rulesetId);
-  if (ruleset === undefined) {
-    return undefined;
-  }
-  if (method === 'POST') {
-    ruleset.rules.push(...withRuleIds(ruleset, [decodeBody(RecordSchema, body)]));
-  }
-  if (method === 'PATCH') {
-    ruleset.rules = ruleset.rules.map((rule) =>
-      rule.id === ruleId ? { ...decodeBody(RecordSchema, body), id: ruleId ?? '' } : rule,
-    );
-  }
-  return rulesetView(ruleset);
-};
-
-const graphqlAnswer = (account: FakeState) =>
-  Response.json({
-    data: {
-      viewer: {
-        accounts: [
-          {
-            workersInvocationsAdaptive: account.usage.map(({ cpuTimeUs, requests, scriptName }) => ({
-              dimensions: { scriptName },
-              sum: { cpuTimeUs, requests },
-            })),
-          },
-        ],
-      },
-    },
-    errors: null,
-  });
-
 const noRoute = () =>
   Response.json(
     { errors: [{ code: 7003, message: 'No route for that URI' }], result: null, success: false },
     { status: 404 },
   );
 
-const accessNotEnabled = () =>
-  Response.json(
-    { errors: [{ code: 9999, message: 'access.api.error.not_enabled' }], result: null, success: false },
-    { status: 403 },
+/** Answers Origin CA certificate requests by signing the CSR with the fake Origin CA; every other route is unknown. */
+const answer = (method: string, url: URL, body: Option.Option<Json>): Response => {
+  if (url.pathname !== '/client/v4/certificates' || method !== 'POST') {
+    return noRoute();
+  }
+  const { csr, hostnames, requested_validity } = Schema.decodeUnknownSync(OriginCertificateBodySchema)(
+    Option.getOrNull(body),
   );
-
-/** Routes outside `/accounts/<id>`: Origin CA certificates, GraphQL analytics and zones. */
-const nonAccountAnswer = (
-  account: FakeState,
-  method: string,
-  url: URL,
-  body: Option.Option<Json>,
-): Response | undefined => {
-  if (url.pathname === '/client/v4/certificates' && method === 'POST') {
-    const { csr, hostnames, requested_validity } = decodeBody(OriginCertificateBodySchema, body);
-    const certificate = signWithFakeOriginCa(csr, hostnames, requested_validity);
-    return envelope({ certificate, expires_on: '2041-01-01 00:00:00 +0000 UTC', hostnames, id: 'origin-cert-1' });
-  }
-  if (url.pathname === '/client/v4/graphql') {
-    return graphqlAnswer(account);
-  }
-  if (!url.pathname.startsWith('/client/v4/zones')) {
-    return undefined;
-  }
-  const zoneResult = zoneAnswer(account, method, url, body);
-  return zoneResult === undefined ? noRoute() : envelope(zoneResult);
+  const certificate = signWithFakeOriginCa(csr, hostnames, requested_validity);
+  return Response.json({
+    errors: [],
+    messages: [],
+    result: { certificate, expires_on: '2041-01-01 00:00:00 +0000 UTC', hostnames, id: 'origin-cert-1' },
+    success: true,
+  });
 };
 
-/** The ID the fake account gives its `index`th created KV namespace (1-based). */
-export const fakeKvNamespaceId = (index: number) => String(index).padStart(32, '0');
-
-/** The KV namespace list and create routes, and a namespace's key list (names only, by prefix). */
-const kvAnswer = (account: FakeState, method: string, url: URL, path: string, body: Option.Option<Json>): Response => {
-  if (path === '/storage/kv/namespaces') {
-    if (method === 'POST') {
-      const created = {
-        ...decodeBody(KvNamespaceBodySchema, body),
-        // Cloudflare KV namespace IDs are 32 hex digits; topology/stage-edge.json accepts nothing else.
-        id: fakeKvNamespaceId(account.kvNamespaces.length + 1),
-      };
-      account.kvNamespaces.push(created);
-      return envelope(created);
-    }
-    return firstPage(url, account.kvNamespaces);
-  }
-  const namespace = /^\/storage\/kv\/namespaces\/(?<namespace>[^/]+)\/keys$/u.exec(path)?.groups?.namespace;
-  if (namespace === undefined) {
-    return noRoute();
-  }
-  const prefix = url.searchParams.get('prefix') ?? '';
-  const names = (account.kvKeys.get(namespace) ?? []).filter((name) => name.startsWith(prefix));
-  return envelope(names.map((name) => ({ name })));
-};
-
-/** Hyperdrive list/create and in-place updates; an unknown ID must not become a new config. */
-const hyperdriveAnswer = (
-  account: FakeState,
-  method: string,
-  url: URL,
-  path: string,
-  body: Option.Option<Json>,
-): Response => {
-  if (path === '/hyperdrive/configs') {
-    if (method === 'POST') {
-      const created = {
-        ...decodeBody(HyperdriveBodySchema, body),
-        id: `hyperdrive-${String(account.hyperdrives.length + 1)}`,
-      };
-      account.hyperdrives.push(created);
-      return envelope(created);
-    }
-    return firstPage(url, account.hyperdrives);
-  }
-  const hyperdriveId = /^\/hyperdrive\/configs\/(?<id>[^/]+)$/u.exec(path)?.groups?.id;
-  if (method !== 'PUT' || hyperdriveId === undefined) {
-    return noRoute();
-  }
-  const index = account.hyperdrives.findIndex(({ id }) => id === hyperdriveId);
-  if (index === -1) {
-    return noRoute();
-  }
-  const updated = { ...decodeBody(HyperdriveBodySchema, body), id: hyperdriveId };
-  account.hyperdrives[index] = updated;
-  return envelope(updated);
-};
-
-export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloudflareAccount => {
-  const account: FakeState = {
-    accessApps: [...(initial.accessApps ?? [])],
-    accessEnabled: initial.accessEnabled ?? true,
-    accessPolicies: [...(initial.accessPolicies ?? [])],
-    alertPolicies: [...(initial.alertPolicies ?? [])],
-    hyperdrives: [...(initial.hyperdrives ?? [])],
-    kvKeys: new Map(Object.entries(initial.kvKeys ?? {}).map(([namespace, names]) => [namespace, [...names]])),
-    kvNamespaces: [...(initial.kvNamespaces ?? [])],
-    requests: [],
-    rulesets: (initial.rulesets ?? []).map((ruleset) => ({ ...ruleset, rules: [...ruleset.rules] })),
-    serviceTokens: [...(initial.serviceTokens ?? [])],
-    tunnels: [...(initial.tunnels ?? [])],
-    usage: [...(initial.usage ?? [])],
-    vpcServices: [...(initial.vpcServices ?? [])],
-    zones: [...(initial.zones ?? [{ id: 'zone-1', name: 'stage.example.com' }])],
-  };
-  const answer = (method: string, url: URL, body: Option.Option<Json>): Response => {
-    const outsideAccount = nonAccountAnswer(account, method, url, body);
-    if (outsideAccount !== undefined) {
-      return outsideAccount;
-    }
-    const path = url.pathname.replace(/^\/client\/v4\/accounts\/[^/]+/u, '');
-    if (!account.accessEnabled && path.startsWith('/access/')) {
-      return accessNotEnabled();
-    }
-    const guardResult = accountGuardAnswer(account, method, path, body);
-    if (guardResult !== undefined) {
-      return Array.isArray(guardResult) ? firstPage(url, guardResult) : envelope(guardResult);
-    }
-    if (path === '/workers/subdomain') {
-      return envelope({ subdomain: initial.workersDevSubdomain ?? 'stage-example' });
-    }
-    if (path.startsWith('/cfd_tunnel')) {
-      return tunnelAnswer(account, initial, method, url, path) ?? noRoute();
-    }
-    if (path === '/connectivity/directory/services') {
-      if (method === 'POST') {
-        const created = {
-          ...decodeBody(VpcServiceBodySchema, body),
-          service_id: `vpc-${String(account.vpcServices.length + 1)}`,
-        };
-        account.vpcServices.push(created);
-        return envelope(created);
-      }
-      return firstPage(url, account.vpcServices);
-    }
-    if (path.startsWith('/hyperdrive/configs')) {
-      return hyperdriveAnswer(account, method, url, path, body);
-    }
-    if (path.startsWith('/storage/kv/namespaces')) {
-      return kvAnswer(account, method, url, path, body);
-    }
-    return noRoute();
-  };
+export const fakeCloudflareAccount = (): FakeCloudflareAccount => {
+  const requests: FakeCloudflareRequest[] = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request, url) => {
       const body = requestBody(request);
-      if (
-        url.pathname === '/client/v4/zones' &&
-        initial.zoneReadDeniedForToken !== undefined &&
-        request.headers.authorization === `Bearer ${initial.zoneReadDeniedForToken}`
-      ) {
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json(
-              { errors: [{ code: 9109, message: 'Zone Read denied' }], result: null, success: false },
-              { status: 403 },
-            ),
-          ),
-        );
-      }
-      account.requests.push({ body, method: request.method, url });
+      requests.push({ body, method: request.method, url });
       return Effect.succeed(HttpClientResponse.fromWeb(request, answer(request.method, url, body)));
     }),
   );
-  // The layer answers against this same object, so tests observe every change and can set `usage`.
-  return Object.assign(account, { layer });
+  return { layer, requests };
 };

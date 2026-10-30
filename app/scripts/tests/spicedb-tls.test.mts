@@ -46,7 +46,7 @@ const newFakes = (projectValues: Readonly<Record<string, string>> = {}): Fakes =
     sensitiveKeys: Object.keys(projectValues),
     services: [SPICEDB_SERVICE],
   });
-  return { account: fakeCloudflareAccount({}), stage, zerops: fakeZeropsApi(stage) };
+  return { account: fakeCloudflareAccount(), stage, zerops: fakeZeropsApi(stage) };
 };
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>, fakes: Fakes, dryRun = false) =>
@@ -54,9 +54,7 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>, fakes: Fakes, dryRun = fal
     Effect.provide(
       Layer.mergeAll(
         CloudflareApiLive.pipe(
-          Layer.provide(
-            Layer.succeed(CloudflareCredentials, { accountId: 'account-1', apiToken: Redacted.make('api-token') }),
-          ),
+          Layer.provide(Layer.succeed(CloudflareCredentials, { apiToken: Redacted.make('api-token') })),
           Layer.provide(fakes.account.layer),
         ),
         Layer.succeed(OpsMode, { dryRun }),
