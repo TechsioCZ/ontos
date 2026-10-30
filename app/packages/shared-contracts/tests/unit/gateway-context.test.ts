@@ -25,7 +25,11 @@ const endpointStatuses = (
   endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
 ) =>
   [...endpoint.error]
-    .map((schema) => Schema.resolveAnnotationsKey(schema)?.httpApiStatus)
+    // Effect's built-in HttpApiError schemas annotate the schema; the Problem schemas annotate their key.
+    .map(
+      (schema) =>
+        Schema.resolveAnnotations(schema)?.httpApiStatus ?? Schema.resolveAnnotationsKey(schema)?.httpApiStatus,
+    )
     .toSorted((left, right) => Number(left) - Number(right));
 
 const problemTag = (schema: Schema.Top) => {
