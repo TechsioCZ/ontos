@@ -48,8 +48,6 @@ jobs:
       ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
-      # Outside the checkout: an untracked file in the tree makes every release identity `workspace`.
-      UNIT_CACHE_DIR: ${{ github.workspace }}/../zerops-unit-cache
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -65,12 +63,15 @@ jobs:
       - name: Restore the shard's unit builds
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ github.workspace }}/../zerops-unit-cache
+          path: ${{ runner.temp }}/zerops-unit-cache
           key: zerops-units-${{ matrix.shard }}-${{ github.sha }}
           restore-keys: zerops-units-${{ matrix.shard }}-
 
       - name: Build the shard's units
         working-directory: app
+        env:
+          # Outside the checkout: an untracked file in the tree makes every release identity `workspace`.
+          UNIT_CACHE_DIR: ${{ runner.temp }}/zerops-unit-cache
         run: |
           units="$(node -e '
             const ids = ["shell-super-app", ...require("./topology/application-release-intent.json").modules.map((m) => m.appId)];
@@ -89,7 +90,7 @@ jobs:
       - name: Save the shard's unit builds
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ github.workspace }}/../zerops-unit-cache
+          path: ${{ runner.temp }}/zerops-unit-cache
           key: zerops-units-${{ matrix.shard }}-${{ github.sha }}
 
       - name: Upload the shard's unit builds
@@ -127,8 +128,14 @@ jobs:
 
       # The push carries every prebuilt dist/ (git-ignored) with the checkout; its digests tell the Zerops build to
       # keep them, so Zerops only installs the workspace.
-      - name: Unpack the unit builds
-        run: for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C app; done
+      # The units travel as one zstd archive inside the push, which keeps the package small enough to upload in one
+      # go; the Zerops build unpacks it and keeps every unit whose digest it carries.
+      - name: Pack the unit builds for the push
+        run: |
+          mkdir -p "$RUNNER_TEMP/dists"
+          for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
+          tar --create --file - -C "$RUNNER_TEMP/dists" . | zstd -q -12 -T0 -o app/.zerops-prebuilt.tar.zst
+          ls -lh app/.zerops-prebuilt.tar.zst
 
       # The owner secret bundle is the one GitHub copy of every owner's runtime secrets. The app host hands each owner
       # only its own entries; the bundle itself never leaves the supervisor.
@@ -144,7 +151,7 @@ jobs:
         run: |
           started="$(date +%s)"
           bash app/scripts/zerops/push-service.sh "$ZEROPS_APP_SERVICE_ID" app "$GITHUB_SHA" >"$RUNNER_TEMP/push-app.log" 2>&1 & app=$!
-          bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
+          PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
           status=0
           wait "$app" || status=1
           wait "$storefront" || status=1

@@ -3,7 +3,9 @@
 # build and deploy. Like `zcli push`, but the package uploads over HTTP/1.1 with curl: Zerops silently drops a zcli
 # upload that runs longer than about 30 s.
 #
-#   ZEROPS_TOKEN=… push-service.sh <service-id> <setup> <version-name>      (run from the repository root)
+#   ZEROPS_TOKEN=… [PUSH_EXCLUDE=<path>] push-service.sh <service-id> <setup> <version-name>   (from the repository root)
+#
+# Keep the package small: Zerops silently truncates an upload that runs longer than about 30 s.
 set -euo pipefail
 
 service_id="${1:?service id is required}"
@@ -18,7 +20,8 @@ trap 'rm -rf "$work"' EXIT
 # POSIX (pax) headers like zcli's Go archive/tar; Zerops rejects the GNU format. node_modules is never shipped.
 # Member names carry no './' prefix, as zcli writes them; Zerops cannot identify an archive of './…' members.
 mapfile -t entries < <(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
-tar --format=pax --exclude='node_modules' --exclude='.output' --exclude='*.map' -czf "$work/package.tar.gz" -- "${entries[@]}"
+tar --format=pax --exclude='node_modules' --exclude='.output' --exclude='*.map' --exclude="${PUSH_EXCLUDE:-}" \
+  -czf "$work/package.tar.gz" -- "${entries[@]}"
 echo "package: $(du -h "$work/package.tar.gz" | cut -f1)"
 
 created="$(jq -n --arg name "$version_name" '{name: $name}' |
