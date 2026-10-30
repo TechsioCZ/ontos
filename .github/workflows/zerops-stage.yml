@@ -119,9 +119,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install zcli
-        run: npm install --global @zerops/zcli@1.1.0
-
       - name: Download the unit builds
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -145,21 +142,14 @@ jobs:
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
-          zcli login "$ZEROPS_TOKEN" >/dev/null
           started="$(date +%s)"
-          push() {
-            local setup="$1" service="$2" log="$RUNNER_TEMP/push-$1.log"
-            zcli push --working-dir . --zerops-yaml-path app/zerops.yaml --no-git \
-              --project-id "$ZEROPS_PROJECT_ID" --service-id "$service" --setup "$setup" \
-              --version-name "$GITHUB_SHA" >"$log" 2>&1
-          }
-          push app "$ZEROPS_APP_SERVICE_ID" & app=$!
-          push storefront "$ZEROPS_STOREFRONT_SERVICE_ID" & storefront=$!
+          bash app/scripts/zerops/push-service.sh "$ZEROPS_APP_SERVICE_ID" app "$GITHUB_SHA" >"$RUNNER_TEMP/push-app.log" 2>&1 & app=$!
+          bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
           status=0
           wait "$app" || status=1
           wait "$storefront" || status=1
           for setup in app storefront; do
-            echo "::group::zcli push $setup"
+            echo "::group::push $setup"
             cat "$RUNNER_TEMP/push-$setup.log"
             echo "::endgroup::"
           done
@@ -170,7 +160,10 @@ jobs:
         if: failure()
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
+        run: |
+          npm install --global @zerops/zcli@1.1.0 >/dev/null
+          zcli login "$ZEROPS_TOKEN" >/dev/null
+          zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
 
   verify:
     name: Verify stage

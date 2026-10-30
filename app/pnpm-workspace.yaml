@@ -146,8 +146,8 @@ patchedDependencies:
   '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.3-ultramodern.9.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/bff-effect (request-scoped edge services)
   '@bleedingdev/modern-js-bff-effect@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-bff-effect@3.9.3-ultramodern.9.patch
-  # Zerops app builds skip the BFF server's declaration emit and TS-Go check (ULTRAMODERN_SKIP_SERVER_TYPECHECK=1);
-  # CI gates typecheck every unit, and the check does not fit the 8 GB build container next to another unit build.
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils (ULTRAMODERN_SKIP_SERVER_TYPECHECK=1
+  # skips the BFF server declaration emit and TS-Go check in deploy builds; CI gates typecheck every unit)
   '@bleedingdev/modern-js-server-utils@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-server-utils@3.9.3-ultramodern.9.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
   '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-ultramodern-create@3.9.3-ultramodern.9.patch
