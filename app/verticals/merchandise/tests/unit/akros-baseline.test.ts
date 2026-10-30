@@ -13,28 +13,33 @@ import { computeProductRecords } from '../../src/services/stock-levels.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { decodeAkrosBaselinePart } from '../../src/services/akros-demo-reset.ts';
 
+// A case that rebuilds the whole AKROS catalogue takes seconds on a shared CI runner.
+const CATALOGUE_BUILD_TIMEOUT = 30_000;
 const hash = (parts: readonly string[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 
-it.effect('bundled baseline parts equal the seed baseline built from the storefront feed', () =>
-  Effect.gen(function* sameBundledBaseline() {
-    const built = yield* buildAkrosEncoded();
-    const parts = yield* akrosBaselineParts(built);
-    const expected = parts.map((part) => JSON.stringify(part));
-    const nativeJson = yield* Effect.forEach(
-      parts,
-      (part) => Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(part),
-      { concurrency: 1 },
-    );
-    expect(nativeJson).toEqual(expected);
-    const bundled = loadAkrosBaselineParts().map((part) => gunzipSync(Buffer.from(part, 'base64')).toString('utf-8'));
-    expect(bundled.length).toBe(expected.length);
-    const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(MerchandiseStateSchema));
-    const decodedBundled = yield* Effect.forEach(bundled, (part) => decode(part), { concurrency: 1 });
-    const decodedExpected = yield* Effect.forEach(expected, (part) => decode(part), { concurrency: 1 });
-    expect(decodedBundled).toEqual(decodedExpected);
-    expect(bundled.every((part, index) => part === expected[index])).toBe(true);
-    expect(hash(bundled)).toBe(hash(expected));
-  }),
+it.effect(
+  'bundled baseline parts equal the seed baseline built from the storefront feed',
+  () =>
+    Effect.gen(function* sameBundledBaseline() {
+      const built = yield* buildAkrosEncoded();
+      const parts = yield* akrosBaselineParts(built);
+      const expected = parts.map((part) => JSON.stringify(part));
+      const nativeJson = yield* Effect.forEach(
+        parts,
+        (part) => Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(part),
+        { concurrency: 1 },
+      );
+      expect(nativeJson).toEqual(expected);
+      const bundled = loadAkrosBaselineParts().map((part) => gunzipSync(Buffer.from(part, 'base64')).toString('utf-8'));
+      expect(bundled.length).toBe(expected.length);
+      const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(MerchandiseStateSchema));
+      const decodedBundled = yield* Effect.forEach(bundled, (part) => decode(part), { concurrency: 1 });
+      const decodedExpected = yield* Effect.forEach(expected, (part) => decode(part), { concurrency: 1 });
+      expect(decodedBundled).toEqual(decodedExpected);
+      expect(bundled.every((part, index) => part === expected[index])).toBe(true);
+      expect(hash(bundled)).toBe(hash(expected));
+    }),
+  CATALOGUE_BUILD_TIMEOUT,
 );
 
 // gzip bytes differ between zlib builds (the header names the OS), so the parts' content is proven above by
@@ -73,54 +78,63 @@ it.effect('the generator rejects an oversized insert part instead of emitting un
   }),
 );
 
-it.effect('parts cover the whole baseline: every product once, every movement with its product', () =>
-  Effect.gen(function* completeBaselineParts() {
-    const built = yield* buildAkrosEncoded();
-    const parts = yield* akrosBaselineParts(built);
-    expect(parts.flatMap((part) => part.products.map((product) => product.id))).toEqual(
-      built.products.map((product) => product.id),
-    );
-    expect(parts.reduce((sum, part) => sum + part.movements.length, 0)).toBe(built.movements.length);
-    for (const part of parts.slice(1)) {
-      const ids = new Set(part.products.map((product) => product.id));
-      expect(part.movements.every((movement) => ids.has(movement.productId))).toBe(true);
-      expect(part.orders).toHaveLength(0);
-    }
-    expect(parts[0]?.orders).toHaveLength(built.orders.length);
-    expect(parts[0]?.categories).toHaveLength(built.categories?.length ?? 0);
-  }),
+it.effect(
+  'parts cover the whole baseline: every product once, every movement with its product',
+  () =>
+    Effect.gen(function* completeBaselineParts() {
+      const built = yield* buildAkrosEncoded();
+      const parts = yield* akrosBaselineParts(built);
+      expect(parts.flatMap((part) => part.products.map((product) => product.id))).toEqual(
+        built.products.map((product) => product.id),
+      );
+      expect(parts.reduce((sum, part) => sum + part.movements.length, 0)).toBe(built.movements.length);
+      for (const part of parts.slice(1)) {
+        const ids = new Set(part.products.map((product) => product.id));
+        expect(part.movements.every((movement) => ids.has(movement.productId))).toBe(true);
+        expect(part.orders).toHaveLength(0);
+      }
+      expect(parts[0]?.orders).toHaveLength(built.orders.length);
+      expect(parts[0]?.categories).toHaveLength(built.categories?.length ?? 0);
+    }),
+  CATALOGUE_BUILD_TIMEOUT,
 );
 
-it.effect('every bundled part decodes through the runtime path (Web streams, no filesystem)', () =>
-  Effect.gen(function* decodeAllParts() {
-    const built = yield* buildAkrosEncoded();
-    const expected = yield* akrosBaselineParts(built);
-    let products = 0;
-    for (const [index, part] of loadAkrosBaselineParts().entries()) {
-      const state = yield* decodeAkrosBaselinePart(part);
-      const expectedState = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(expected[index]);
-      expect(state).toEqual(expectedState);
+it.effect(
+  'every bundled part decodes through the runtime path (Web streams, no filesystem)',
+  () =>
+    Effect.gen(function* decodeAllParts() {
+      const built = yield* buildAkrosEncoded();
+      const expected = yield* akrosBaselineParts(built);
+      let products = 0;
+      for (const [index, part] of loadAkrosBaselineParts().entries()) {
+        const state = yield* decodeAkrosBaselinePart(part);
+        const expectedState = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(expected[index]);
+        expect(state).toEqual(expectedState);
+        expect(
+          state.products.every((product) => DateTime.isUtc(product.createdAt) && DateTime.isUtc(product.updatedAt)),
+        ).toBe(true);
+        products += state.products.length;
+      }
+      expect(products).toBe(built.products.length);
+    }),
+  CATALOGUE_BUILD_TIMEOUT,
+);
+
+it.effect(
+  'catalogue-only products have no replenishment minimum, with only a handful of genuine shortages',
+  () =>
+    Effect.gen(function* catalogueStockMinimums() {
+      const built = yield* buildAkrosEncoded();
+      const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built));
+      expect(records).toHaveLength(1289);
       expect(
-        state.products.every((product) => DateTime.isUtc(product.createdAt) && DateTime.isUtc(product.updatedAt)),
+        records
+          .filter((record) => record.stockOnHand <= 0)
+          .every((record) => record.lowStockThreshold === 0 && !record.lowStock),
       ).toBe(true);
-      products += state.products.length;
-    }
-    expect(products).toBe(built.products.length);
-  }),
-);
-
-it.effect('catalogue-only products have no replenishment minimum, with only a handful of genuine shortages', () =>
-  Effect.gen(function* catalogueStockMinimums() {
-    const built = yield* buildAkrosEncoded();
-    const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built));
-    expect(records).toHaveLength(1289);
-    expect(
-      records
-        .filter((record) => record.stockOnHand <= 0)
-        .every((record) => record.lowStockThreshold === 0 && !record.lowStock),
-    ).toBe(true);
-    const shortages = records.filter((record) => record.lowStock);
-    expect(shortages.length).toBeGreaterThan(0);
-    expect(shortages.length).toBeLessThan(10);
-  }),
+      const shortages = records.filter((record) => record.lowStock);
+      expect(shortages.length).toBeGreaterThan(0);
+      expect(shortages.length).toBeLessThan(10);
+    }),
+  CATALOGUE_BUILD_TIMEOUT,
 );
