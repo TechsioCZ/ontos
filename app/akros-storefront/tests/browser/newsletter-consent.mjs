@@ -36,6 +36,16 @@ let browser;
 let context;
 let authenticated = false;
 let phase = "browser startup";
+// Method, path and status of the latest storefront API response: enough to tell a refusal from an outage.
+let lastApiResponse = "none";
+const seen = (method, response) => {
+  lastApiResponse = `${method} ${new URL(response.url()).pathname} HTTP ${response.status()}`;
+  return response;
+};
+const api = {
+  get: async (...args) => seen("GET", await context.request.get(...args)),
+  post: async (...args) => seen("POST", await context.request.post(...args)),
+};
 const notice = {
   language: "cs",
   noticeVersionId: "demo-newsletter.cs.v1",
@@ -43,7 +53,7 @@ const notice = {
     "Souhlasím se zasíláním novinek a obchodních nabídek AKROS na svůj kontaktní e-mail. Souhlas je dobrovolný, není podmínkou nákupu a mohu jej kdykoli odvolat v části Můj účet. Odvolání neovlivní zákonnost předchozího zpracování.",
 };
 const fresh = async () => {
-  const response = await context.request.get(url);
+  const response = await api.get(url);
   assert.equal(response.status(), 200, "Native Commerce must provide current consent");
   assert.equal(response.headers()["cache-control"], "no-store");
   const { consent } = await response.json();
@@ -61,13 +71,17 @@ try {
   browser = await chromium.launch({ headless: true });
   context = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
   const page = await context.newPage();
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname.startsWith("/api/ontos/"))
+      seen(response.request().method(), response);
+  });
   page.setDefaultTimeout(120000);
   page.setDefaultNavigationTimeout(120000);
   phase = "anonymous access and real login";
-  assert.equal((await context.request.get(url)).status(), 401);
+  assert.equal((await api.get(url)).status(), 401);
   assert.equal(
     (
-      await context.request.post(url, {
+      await api.post(url, {
         headers: { origin: "https://other.example" },
         data: {},
       })
@@ -137,11 +151,11 @@ try {
   if (before.decision === "GRANTED") await choose("WITHDRAWN");
   const { input: grant, committed: granted } = await choose("GRANTED");
   phase = "current replay and authority stripping";
-  const replay = await context.request.post(url, { headers, data: grant });
+  const replay = await api.post(url, { headers, data: grant });
   assert.equal(replay.status(), 200, "The unchanged latest request must replay without mutation");
   assert.deepEqual((await replay.json()).consent, granted);
   assert.deepEqual(await fresh(), granted);
-  const forgedIdentity = await context.request.post(url, {
+  const forgedIdentity = await api.post(url, {
     headers,
     data: {
       ...grant,
@@ -163,14 +177,14 @@ try {
   );
   assert.deepEqual((await forgedIdentity.json()).consent, granted);
   phase = "changed payload with the latest request UUID";
-  const changed = await context.request.post(url, {
+  const changed = await api.post(url, {
     headers,
     data: { ...grant, decision: "WITHDRAWN" },
   });
   console.log(`Newsletter changed-payload check: HTTP ${changed.status()}, expected 409.`);
   assert.equal(changed.status(), 409, "A latest request UUID cannot authorize changed input");
   phase = "invented notice version refusal";
-  const versionForgery = await context.request.post(url, {
+  const versionForgery = await api.post(url, {
     headers,
     data: {
       ...grant,
@@ -182,14 +196,14 @@ try {
   console.log(`Newsletter notice-version check: HTTP ${versionForgery.status()}, expected 409.`);
   assert.equal(versionForgery.status(), 409, "A browser cannot invent a demo notice version");
   phase = "stale revision refusal";
-  const staleRevision = await context.request.post(url, {
+  const staleRevision = await api.post(url, {
     headers,
     data: { ...grant, requestId: randomUUID() },
   });
   console.log(`Newsletter stale-revision check: HTTP ${staleRevision.status()}, expected 409.`);
   assert.equal(staleRevision.status(), 409, "A new request must use the current revision");
   phase = "cross-origin refusal";
-  const crossOrigin = await context.request.post(url, {
+  const crossOrigin = await api.post(url, {
     headers: { origin: "https://other.example" },
     data: grant,
   });
@@ -206,7 +220,7 @@ try {
   phase = "explicit UI withdrawal and old grant replay";
   const { input: withdrawal, committed: withdrawn } = await choose("WITHDRAWN");
   assert.notEqual(withdrawal.requestId, grant.requestId);
-  const oldGrant = await context.request.post(url, { headers, data: grant });
+  const oldGrant = await api.post(url, { headers, data: grant });
   assert.equal(oldGrant.status(), 409, "An old grant retry must never undo a later withdrawal");
   assert.deepEqual(await fresh(), withdrawn);
   phase = "withdrawal reload and screenshot";
@@ -234,11 +248,9 @@ try {
   assert.equal(logout.status(), 200);
   authenticated = false;
   await page.waitForURL(new URL("/prihlaseni", base).href);
-  assert.equal((await context.request.get(url)).status(), 401);
+  assert.equal((await api.get(url)).status(), 401);
   assert.equal(
-    (
-      await context.request.post(url, { headers, data: { ...grant, requestId: randomUUID() } })
-    ).status(),
+    (await api.post(url, { headers, data: { ...grant, requestId: randomUUID() } })).status(),
     401,
   );
   await page.goto(new URL("/registrace", base).href, { waitUntil: "domcontentloaded" });
@@ -253,7 +265,9 @@ try {
   );
 } catch {
   // Playwright errors can contain filled input values. Never log raw errors, headers or credentials.
-  console.error(`Newsletter proof failed during ${phase}.`);
+  console.error(
+    `Newsletter proof failed during ${phase} (latest API response: ${lastApiResponse}).`,
+  );
   process.exitCode = 1;
 } finally {
   try {
@@ -261,7 +275,7 @@ try {
     if (authenticated) {
       const current = await fresh();
       if (current.decision !== "WITHDRAWN") {
-        const cleanup = await context.request.post(url, {
+        const cleanup = await api.post(url, {
           headers,
           data: {
             decision: "WITHDRAWN",
@@ -276,7 +290,9 @@ try {
       assert.equal((await fresh()).decision, "WITHDRAWN");
     }
   } catch {
-    console.error("Newsletter fixture withdrawal cleanup failed.");
+    console.error(
+      `Newsletter fixture withdrawal cleanup failed (latest API response: ${lastApiResponse}).`,
+    );
     process.exitCode = 1;
   } finally {
     try {
