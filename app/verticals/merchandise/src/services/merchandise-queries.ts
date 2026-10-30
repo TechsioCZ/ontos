@@ -969,7 +969,7 @@ export const productMovements = Effect.fn('MerchandiseQueries.productMovements')
   );
 });
 
-/** Company-wide indicators in two aggregate queries. */
+/** Company-wide indicators in two aggregate queries. The bigint sums arrive as strings and are mapped to numbers. */
 export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* indicators(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -981,7 +981,6 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
           .select({
             lowStockCount: sql<number>`count(*) filter (where ${products.lowStock})::int`,
             productCount: sql<number>`count(*)::int`,
-            // Postgres returns bigint as a string; the response schema requires an integer.
             stockValueMinor: sql`coalesce(sum(${products.stockValueMinor}), 0)::bigint`.mapWith(Number),
           })
           .from(products)
