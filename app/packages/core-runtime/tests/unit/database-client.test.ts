@@ -2,7 +2,7 @@ import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
 
 import { PgClient } from '@effect/sql-pg';
-import { ConfigProvider, Context, Effect, Exit, Layer, Predicate, Redacted, Scope } from 'effect';
+import { ConfigProvider, Context, Deferred, Effect, Exit, Layer, Predicate, Redacted, Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -311,6 +311,51 @@ it.live('gives different roles different pools', () =>
     expect(runtime.config).not.toBe(party.config);
     expect(fake.sessions.map(({ user }) => user)).toStrictEqual(['ontos_runtime', 'party_registry_runtime']);
   }).pipe(Effect.scoped, sharedPools),
+);
+
+it.live('serves twelve owners from the process budget and queues another checkout until a lease closes', () =>
+  Effect.gen(function* processWideCapacity() {
+    const fake = yield* fakePostgres;
+    const parent = yield* Effect.scope;
+    const url = fake.url('ontos_runtime');
+    const leases = yield* Effect.forEach(Array.from({ length: 12 }), () =>
+      Effect.gen(function* reserveForOwner() {
+        const scope = yield* Scope.fork(parent);
+        const client = yield* ownerClient(url, parent);
+        yield* client.reserve.pipe(Scope.provide(scope));
+        return scope;
+      }),
+    );
+    expect(fake.sessions).toHaveLength(12);
+
+    const next = yield* ownerClient(url, parent);
+    const acquired = yield* Deferred.make<boolean>();
+    const started = yield* Deferred.make<boolean>();
+    yield* Effect.scoped(
+      Effect.andThen(Deferred.succeed(started, true), Effect.andThen(next.reserve, Deferred.succeed(acquired, true))),
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(started);
+    yield* Effect.yieldNow;
+    expect(yield* Deferred.isDone(acquired)).toBe(false);
+    const [first] = leases;
+    if (first === undefined) {
+      return yield* Effect.die('The pool capacity test opened no lease');
+    }
+    yield* Scope.close(first, Exit.void);
+    yield* Deferred.await(acquired);
+    expect(fake.sessions).toHaveLength(12);
+    return yield* Effect.void;
+  }).pipe(
+    Effect.scoped,
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({
+        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '12',
+        ONTOS_DATABASE_POOL_SHARED: 'true',
+      }),
+    ),
+    sharedPools,
+  ),
 );
 
 it.live('keeps the shared pool open until its last owner closes', () =>

@@ -134,8 +134,9 @@ zerops:
         NODE_ENV: production
         # Private, container-local directory where composition publication retains its legacy completion evidence.
         ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
-        # Every owner in a process shares one pool per database configuration and role. Small pools
-        # keep the old and new containers inside db18's 150 slots during deployment.
+        # Supervisor/finite-job cap. app-host assigns 12 per role to the all-owner request process,
+        # 6 to the Shell, and 2 to the Outbox host. Two releases leave room in db18's 150 slots for
+        # SpiceDB, the storefront and migration/verifier jobs without cutting menu prefetching.
         ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '10000'
         ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
         ONTOS_DATABASE_POOL_SHARED: 'true'

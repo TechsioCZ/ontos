@@ -110,10 +110,27 @@ const commitUnlessAborted = (connection: SqlConnection.Connection) =>
  * tracing attributes are supplied here; the native client owns connections, protocol, codecs, JSON and notifications.
  * The COMMIT check is necessary because PostgreSQL reports ROLLBACK, not an error, after an ignored statement error.
  */
-const clientOnSharedPool = Effect.fnUntraced(function* clientOnSharedPool(pool: PgClient.PgClient) {
+const clientOnSharedPool = Effect.fnUntraced(function* clientOnSharedPool(
+  pool: PgClient.PgClient,
+  maxConnections: number | undefined,
+) {
   const { config } = pool;
+  const acquire = pool.reserve.pipe(
+    Effect.timed,
+    Effect.tap(([duration]) =>
+      Duration.toMillis(duration) < 1000
+        ? Effect.void
+        : Effect.logWarning('Shared database pool checkout waited at least one second').pipe(
+            Effect.annotateLogs({
+              elapsedMs: Duration.toMillis(duration),
+              maxConnections,
+            }),
+          ),
+    ),
+    Effect.map(([, connection]) => connection),
+  );
   const client = yield* SqlClient.make({
-    acquirer: pool.reserve,
+    acquirer: acquire,
     commit: commitUnlessAborted,
     compiler: PgClient.makeCompiler(),
     driver: 'pg',
@@ -149,6 +166,6 @@ export const openDatabaseClient = (
   configuration.processShared
     ? DatabasePools.pipe(
         Effect.flatMap((registry) => registry.acquire(configuration)),
-        Effect.flatMap(clientOnSharedPool),
+        Effect.flatMap((pool) => clientOnSharedPool(pool, configuration.maxConnections)),
       )
     : PgClient.make(configuration);
