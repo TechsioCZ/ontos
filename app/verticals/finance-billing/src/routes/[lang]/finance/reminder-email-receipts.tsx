@@ -1,4 +1,7 @@
-// @effect-diagnostics *:off
+import { getEmailProvider, listEmailDeliveries } from '@app/email-delivery/receipt-client';
+import type { EmailProviderViewSchema } from '@app/email-delivery/contract';
+import { DateTime, Effect, Option, Schedule } from 'effect';
+import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 // Delivery receipts of payment-reminder e-mails from the demo e-mail dispatcher (same-origin Shell API).
 import { formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -8,83 +11,80 @@ import type { EmailDeliveryView } from './reminder-email-labels.ts';
 
 export type ReminderEmailReceipts =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'unavailable' }
+  | { readonly cause: Effect.Error<ReturnType<typeof listEmailDeliveries>>; readonly kind: 'unavailable' }
   | { readonly byReminderId: ReadonlyMap<string, EmailDeliveryView>; readonly kind: 'ready' };
 
-const emailApi = '/shell-super-app-api/email';
-
-/** GET /shell-super-app-api/email/provider of the dispatcher (copied from @app/email-delivery/contract EmailProviderView). */
-export interface EmailProviderView {
-  readonly configured: boolean;
-  readonly label: string | null;
-}
+const loadProvider = getEmailProvider();
+export type EmailProviderView = typeof EmailProviderViewSchema.Encoded;
 export type EmailProviderState =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'unavailable' }
+  | { readonly cause: Effect.Error<typeof loadProvider>; readonly kind: 'unavailable' }
   | { readonly kind: 'ready'; readonly provider: EmailProviderView };
 
-/** S07-R8: sending is offered only when an e-mail provider is configured; an unreachable dispatcher cannot confirm it. */
+/** Sending is offered only when the dispatcher confirms a configured provider. */
 export const useEmailProvider = (): EmailProviderState => {
   const [state, setState] = useState<EmailProviderState>({ kind: 'loading' });
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const response = await fetch(`${emailApi}/provider`, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const provider = (await response.json()) as EmailProviderView;
-        if (!cancelled) setState({ kind: 'ready', provider });
-      } catch {
-        if (!cancelled) setState({ kind: 'unavailable' });
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 10_000);
+    const load = loadProvider.pipe(
+      Effect.match({
+        onFailure: (cause): EmailProviderState => ({ cause, kind: 'unavailable' }),
+        onSuccess: (provider): EmailProviderState => ({
+          kind: 'ready',
+          provider: { ...provider, label: Option.getOrNull(provider.label) },
+        }),
+      }),
+      Effect.map(setState),
+    );
+    const fiber = financeBrowserRuntime.runFork(
+      Effect.scoped(Effect.repeat(Effect.forkScoped(load), Schedule.fixed('10 seconds'))),
+    );
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      fiber.interruptUnsafe();
     };
   }, []);
   return state;
 };
 
 export const useReminderEmailReceipts = (reminderIds: readonly string[]): ReminderEmailReceipts => {
-  const [state, setState] = useState<ReminderEmailReceipts>({ kind: 'loading' });
   const key = reminderIds.join(',');
+  const [state, setState] = useState<{ readonly key: string; readonly receipts: ReminderEmailReceipts }>();
   useEffect(() => {
-    if (key === '') {
-      setState({ byReminderId: new Map(), kind: 'ready' });
-      return undefined;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const params = new URLSearchParams({ source: 'rent-reminder' });
-        for (const id of key.split(',')) params.append('subjectId', id);
-        // The dispatcher verifies the OntOS session cookie and returns only this company's receipts.
-        const response = await fetch(`${emailApi}/deliveries?${params.toString()}`, {
-          cache: 'no-store',
-          credentials: 'include',
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const body = (await response.json()) as { readonly deliveries: readonly EmailDeliveryView[] };
-        if (!cancelled)
-          setState({
-            byReminderId: new Map(body.deliveries.map((delivery) => [delivery.subjectId, delivery] as const)),
-            kind: 'ready',
-          });
-      } catch {
-        if (!cancelled) setState({ kind: 'unavailable' });
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 4000);
+    const load = listEmailDeliveries({ source: 'rent-reminder', subjectId: key.split(',') }).pipe(
+      Effect.match({
+        onFailure: (cause): ReminderEmailReceipts => ({ cause, kind: 'unavailable' }),
+        onSuccess: ({ deliveries }): ReminderEmailReceipts => ({
+          byReminderId: new Map(
+            deliveries.map((delivery) => [
+              delivery.subjectId,
+              {
+                ...delivery,
+                createdAt: DateTime.formatIso(delivery.createdAt),
+                eventAt: DateTime.formatIso(delivery.eventAt),
+                eventLabel: Option.getOrNull(delivery.eventLabel),
+                sentAt: Option.getOrNull(delivery.sentAt.pipe(Option.map(DateTime.formatIso))),
+              },
+            ]),
+          ),
+          kind: 'ready',
+        }),
+      }),
+      Effect.map((receipts) => setState({ key, receipts })),
+    );
+    // Each tick starts a scoped read; unmounting or changing reminder ids cancels outstanding requests.
+    const fiber =
+      key === ''
+        ? undefined
+        : financeBrowserRuntime.runFork(
+            Effect.scoped(Effect.repeat(Effect.forkScoped(load), Schedule.fixed('4 seconds'))),
+          );
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      fiber?.interruptUnsafe();
     };
   }, [key]);
-  return state;
+  if (key === '') {
+    return { byReminderId: new Map(), kind: 'ready' };
+  }
+  return state?.key === key ? state.receipts : { kind: 'loading' };
 };
 
 export const ReminderEmailStatus = ({
@@ -94,20 +94,24 @@ export const ReminderEmailStatus = ({
   readonly receipts: ReminderEmailReceipts;
   readonly reminderId: string;
 }) => {
-  if (receipts.kind === 'loading') return <span className="text-fg-secondary text-xs">Zjišťuji stav e-mailu…</span>;
-  if (receipts.kind === 'unavailable')
+  if (receipts.kind === 'loading') {
+    return <span className="text-fg-secondary text-xs">Zjišťuji stav e-mailu…</span>;
+  }
+  if (receipts.kind === 'unavailable') {
     return (
       <Badge size="sm" variant="warning">
         Stav e-mailu nedostupný – e-mailová služba neběží
       </Badge>
     );
+  }
   const delivery = receipts.byReminderId.get(reminderId);
-  if (delivery === undefined)
+  if (delivery === undefined) {
     return (
       <Badge size="sm" variant="secondary">
         Čeká na odeslání e-mailem
       </Badge>
     );
+  }
   return (
     <Badge size="sm" variant={emailStatusVariant[delivery.status]}>
       {deliveryLabel(delivery, (iso) => formatDateTime(iso))}

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 import { ReadHandlerNotFound } from '@app/core-runtime';
@@ -242,7 +243,7 @@ it.effect('rejects a foreign Product before resolving tenant-local persistence',
     ).pipe(Effect.flip);
     expect(Schema.is(ReadHandlerNotFound)(result)).toBe(true);
     expect(currentReads).toBe(0);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect(
@@ -330,7 +331,7 @@ it.effect(
       expect(Schema.is(ProductDetailRequestSchema)({ locale: 'de-de', productRef })).toBe(false);
       expect(Schema.is(ProductDetailResponseSchema)(present)).toBe(true);
       expect(Schema.is(ProductDetailResponseSchema)(missing)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it('publishes only explicitly implemented atomic permissions with disjoint authority bundles', () => {

@@ -1,13 +1,17 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, DateTime } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // "Historie" tab: readable timeline of the client card — creation, edits, archive/restore, contact persons and
 // every change of the salesperson with author, time and reason (C00-03, C01). Newest first.
+
 import { EmptyState, formatDateTime } from '@app/admin-ui';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { Client } from '../../../../../shared/domain/clients.ts';
+import type { Client, ClientEventKind } from '../../../../../shared/domain/clients.ts';
 import { salespersonName } from '../../../../crm/records.ts';
 import { eventLabels, fieldLabels, principalLabel } from './clients-model.ts';
 
 interface TimelineEntry {
-  readonly at: string;
+  readonly at: DateTime.Utc;
   readonly by: string;
   readonly detail?: string;
   readonly icon: string;
@@ -15,7 +19,7 @@ interface TimelineEntry {
   readonly title: string;
 }
 
-const iconOf: Record<string, string> = {
+const iconOf = {
   assigned: 'icon-[mdi--account-switch-outline]',
   client_archived: 'icon-[mdi--archive-outline]',
   client_created: 'icon-[mdi--star-four-points-outline]',
@@ -25,32 +29,35 @@ const iconOf: Record<string, string> = {
   contact_removed: 'icon-[mdi--account-remove-outline]',
   contact_updated: 'icon-[mdi--account-edit-outline]',
   party_linked: 'icon-[mdi--link-variant]',
-};
+} satisfies Record<ClientEventKind, string>;
 
 const timelineOf = (records: RecordsResponse, client: Client): TimelineEntry[] => {
   const events = (records.state.clients.events ?? []).filter(
     (event) => event.clientId === client.id && event.kind !== 'assigned',
   );
   const entries: TimelineEntry[] = events.map((event) => {
-    const fields = event.fields?.map((field) => fieldLabels[field] ?? field).join(', ');
+    const fields = event.fields?.map((field) => fieldLabels.get(field) ?? field).join(', ');
     const subject = event.kind.startsWith('contact_') || event.kind === 'party_linked' ? event.subject : undefined;
     const detail = [subject, fields === undefined ? undefined : `změněno: ${fields}`]
       .filter((part) => part !== undefined)
       .join(' · ');
-    return {
+    const entry: TimelineEntry = {
       at: event.at,
       by: event.by,
-      ...(detail === '' ? {} : { detail }),
       icon: iconOf[event.kind] ?? 'icon-[mdi--circle-small]',
       id: event.id,
       title: eventLabels[event.kind],
     };
+    if (detail !== '') {
+      Object.assign(entry, { detail });
+    }
+    return entry;
   });
   if (!events.some((event) => event.kind === 'client_created')) {
     entries.push({
       at: client.createdAt,
       by: client.createdBy,
-      icon: iconOf['client_created'] ?? '',
+      icon: iconOf.client_created ?? '',
       id: `${client.id}-created`,
       title: eventLabels.client_created,
     });
@@ -58,22 +65,26 @@ const timelineOf = (records: RecordsResponse, client: Client): TimelineEntry[] =
   for (const change of records.state.clients.assignmentHistory.filter((entry) => entry.clientId === client.id)) {
     const from = salespersonName(records, change.fromSalespersonId);
     const to = salespersonName(records, change.toSalespersonId) ?? 'bez obchodníka';
-    entries.push({
+    const entry: TimelineEntry = {
       at: change.at,
       by: change.by,
-      ...(change.reason === undefined ? {} : { detail: `Důvod: ${change.reason}` }),
-      icon: iconOf['assigned'] ?? '',
+      icon: iconOf.assigned ?? '',
       id: change.id,
       title: from === undefined ? `Přidělen obchodníkovi ${to}` : `Převeden: ${from} → ${to}`,
-    });
+    };
+    if (change.reason !== undefined) {
+      Object.assign(entry, { detail: `Důvod: ${change.reason}` });
+    }
+    entries.push(entry);
   }
-  return entries.toSorted((left, right) => right.at.localeCompare(left.at));
+  return entries.toSorted((left, right) => DateTime.Order(right.at, left.at));
 };
 
 export const HistoryTab = ({ client, records }: { readonly client: Client; readonly records: RecordsResponse }) => {
+  const { t } = useModernI18n();
   const entries = timelineOf(records, client);
   if (entries.length === 0) {
-    return <EmptyState title="Bez historie" />;
+    return <EmptyState title={t('crm.ciClientsVisits.history.empty')} />;
   }
   return (
     <ol className="relative flex flex-col gap-200 ps-50">
@@ -89,7 +100,7 @@ export const HistoryTab = ({ client, records }: { readonly client: Client; reado
             <span className="font-medium text-sm">{entry.title}</span>
             {entry.detail !== undefined && <span className="text-sm">{entry.detail}</span>}
             <span className="text-fg-secondary text-xs">
-              {formatDateTime(entry.at)} · {principalLabel(records, entry.by)}
+              {pipe(entry.at, orderDateText, formatDateTime)} · {principalLabel(records, entry.by)}
             </span>
           </div>
         </li>

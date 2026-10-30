@@ -14,10 +14,11 @@ import {
   Result,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parse as parseYaml } from 'yaml';
 
+import { ActionProvisioningIntentSchema } from '../packages/core-runtime/src/authorization/entrypoint-classification.ts';
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -76,6 +77,12 @@ const TopologyOwnerSchema = Schema.Struct({
   path: Schema.optional(Schema.String),
 });
 
+const StandaloneWorkspaceSchema = Schema.Struct({
+  id: Schema.NonEmptyString,
+  package: Schema.NonEmptyString,
+  path: Schema.NonEmptyString,
+});
+
 const ReferenceTopologySchema = Schema.Struct({
   sharedPackages: Schema.optional(Schema.Array(TopologyOwnerSchema)),
   shell: Schema.optional(
@@ -86,6 +93,7 @@ const ReferenceTopologySchema = Schema.Struct({
       verticalRefs: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
+  standaloneWorkspaces: Schema.optional(Schema.Array(StandaloneWorkspaceSchema)),
   verticals: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -244,7 +252,7 @@ const InventoryAuthorizationSchema = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal('action_execution'),
-    provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
+    provisioning: ActionProvisioningIntentSchema,
   }),
   Schema.Struct({
     credential: AuthorizationCredentialSchema,
@@ -938,7 +946,28 @@ const planCloudflareDeployments = (
   }));
 };
 
-const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;
+const WORKSPACE_PATH_PATTERN = /^[\w.-]+(?:\/[\w.-]+)*$/u;
+const isSafeWorkspacePath = (value: string): boolean =>
+  WORKSPACE_PATH_PATTERN.test(value) && value.split('/').every((segment) => segment !== '.' && segment !== '..');
+
+// Match the native resolver's physical containment check, including symlinked manifests.
+const containedWorkspacePath = (rootDirectory: string, relativePath: string) =>
+  Effect.gen(function* containedWorkspacePathEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const root = yield* fileSystem.realPath(rootDirectory);
+    const target = yield* fileSystem.realPath(pathService.join(root, relativePath));
+    const relative = pathService.relative(root, target);
+    if (
+      relative.length === 0 ||
+      relative === '..' ||
+      relative.startsWith(`..${pathService.sep}`) ||
+      pathService.isAbsolute(relative)
+    ) {
+      return fail(`workspace path "${relativePath}" leaves the workspace`);
+    }
+    return target;
+  });
 
 const WorkspaceManifestSchema = Schema.Struct({ packages: Schema.NonEmptyArray(Schema.String) });
 
@@ -957,44 +986,120 @@ const listWorkspaceProjects = (rootDirectory: string, globs: readonly string[]) 
   Effect.gen(function* listWorkspaceProjectsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const projects: string[] = [];
+    const projects = new Set<string>();
     for (const glob of globs) {
-      const directory = WORKSPACE_GLOB_PATTERN.exec(glob)?.groups?.directory;
-      if (directory === undefined) {
+      const isGlob = glob.endsWith('/*');
+      const directory = isGlob ? glob.slice(0, -2) : glob;
+      if (!isSafeWorkspacePath(directory)) {
         return fail(
-          `pnpm-workspace.yaml glob "${glob}" is unsupported; declare workspace projects with "<directory>/*" globs`,
+          `pnpm-workspace.yaml glob "${glob}" is unsupported; declare safe literal workspace paths or "<directory>/*" globs`,
         );
       }
-      const absoluteDirectory = pathService.join(rootDirectory, directory);
-      if (!(yield* fileSystem.exists(absoluteDirectory))) {
+      if (!isGlob) {
+        if (!(yield* fileSystem.exists(pathService.join(rootDirectory, directory, PACKAGE_MANIFEST)))) {
+          return fail(`literal workspace project "${directory}" has no package.json`);
+        }
+        projects.add(directory);
         continue;
       }
-      for (const entry of yield* fileSystem.readDirectory(absoluteDirectory)) {
-        if (yield* fileSystem.exists(pathService.join(absoluteDirectory, entry, PACKAGE_MANIFEST))) {
-          projects.push(`${directory}/${entry}`);
+      const absoluteDirectory = pathService.join(rootDirectory, directory);
+      if (yield* fileSystem.exists(absoluteDirectory)) {
+        const containedDirectory = yield* containedWorkspacePath(rootDirectory, directory);
+        for (const entry of yield* fileSystem.readDirectory(containedDirectory)) {
+          const entryPath = pathService.join(containedDirectory, entry);
+          if (
+            (yield* fileSystem.stat(entryPath)).type === 'Directory' &&
+            (yield* fileSystem.exists(pathService.join(entryPath, PACKAGE_MANIFEST)))
+          ) {
+            projects.add(`${directory}/${entry}`);
+          }
         }
       }
     }
-    return EffectArray.sort(projects, Order.String);
+    return EffectArray.sort([...projects], Order.String);
   });
 
+type StandaloneWorkspace = typeof StandaloneWorkspaceSchema.Type;
+
+const classifyStandaloneWorkspaces = (
+  units: readonly TopologyUnit[],
+  sharedPackages: readonly TopologyOwner[],
+  standaloneWorkspaces: readonly StandaloneWorkspace[],
+) => {
+  const nativeProjects = [
+    ...units.map((unit) => ({ id: unit.id, package: unit.packageName, path: unit.path })),
+    ...sharedPackages,
+  ];
+  const classified = [...nativeProjects];
+  for (const standalone of standaloneWorkspaces) {
+    if (!isSafeWorkspacePath(standalone.path)) {
+      fail(`standalone workspace "${standalone.id}" has unsafe path "${standalone.path}"`);
+    }
+    if (
+      classified.some(
+        (project) =>
+          project.id === standalone.id ||
+          project.package === standalone.package ||
+          (project.path !== undefined &&
+            (isWithin(project.path, standalone.path) || isWithin(standalone.path, project.path))),
+      )
+    ) {
+      fail(`standalone workspace "${standalone.id}" overlaps another classified workspace identity or path`);
+    }
+    classified.push(standalone);
+  }
+  return classified;
+};
+
+const WorkspacePackageSchema = Schema.Struct({
+  modernjs: Schema.optionalKey(Schema.Unknown),
+  name: Schema.NonEmptyString,
+});
+
 const validateWorkspaceCompleteness = (
+  rootDirectory: string,
   workspaceProjects: readonly string[],
   units: readonly TopologyUnit[],
   sharedPackages: readonly TopologyOwner[],
-): void => {
-  const declaredPaths = new Set([
-    ...units.map((unit) => unit.path),
-    ...sharedPackages.flatMap((sharedPackage) => (sharedPackage.path === undefined ? [] : [sharedPackage.path])),
-  ]);
-  for (const project of workspaceProjects) {
-    if (!declaredPaths.has(project)) {
-      fail(
-        `workspace project "${project}" is not declared in topology; add it to reference-topology.json sharedPackages and topology/ownership.json owners`,
-      );
+  standaloneWorkspaces: readonly StandaloneWorkspace[],
+) =>
+  Effect.gen(function* validateWorkspaceCompletenessEffect() {
+    const classified = classifyStandaloneWorkspaces(units, sharedPackages, standaloneWorkspaces);
+    const standalonePaths = new Set(standaloneWorkspaces.map((project) => project.path));
+    for (const standalone of standaloneWorkspaces) {
+      if (!workspaceProjects.includes(standalone.path)) {
+        fail(`standalone workspace "${standalone.id}" at "${standalone.path}" is not included in pnpm-workspace.yaml`);
+      }
     }
-  }
-};
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const physicalManifests = new Set<string>();
+    for (const project of workspaceProjects) {
+      const declaration =
+        classified.find((entry) => entry.path === project) ??
+        fail(
+          `workspace project "${project}" is not declared in topology; classify it as a native delivery unit, shared package with ownership, or explicit standaloneWorkspaces entry`,
+        );
+      const manifestPath = yield* containedWorkspacePath(rootDirectory, `${project}/${PACKAGE_MANIFEST}`);
+      if (physicalManifests.has(manifestPath)) {
+        fail(`workspace project "${project}" aliases another workspace package manifest`);
+      }
+      physicalManifests.add(manifestPath);
+      const manifest = yield* readJson(WorkspacePackageSchema, manifestPath);
+      if (manifest.name !== declaration.package) {
+        fail(
+          `workspace project "${project}" package identity "${manifest.name}" disagrees with topology package "${String(declaration.package)}"`,
+        );
+      }
+      if (
+        standalonePaths.has(project) &&
+        (manifest.modernjs !== undefined ||
+          (yield* fileSystem.exists(pathService.join(rootDirectory, project, 'modern.config.ts'))))
+      ) {
+        fail(`standalone workspace "${project}" declares Modern configuration and cannot bypass native planning`);
+      }
+    }
+  });
 
 const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => {
   const unitsById = new Map(units.map((unit) => [unit.id, unit]));
@@ -1129,13 +1234,19 @@ const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRe
     return output.split('\0').filter(Boolean);
   });
 
-const isMigrationChange = (changedPath: string): boolean =>
-  /(?:^|\/)(?:drizzle(?:-(?:auth|contacts))?\/|drizzle(?:\.(?:auth|contacts))?\.config\.ts$|schema\.ts$|prepare-[^/]+-migration\.mts$|verify-(?:auth-)?db-schema\.mts$)/u.test(
+export const isMigrationChange = (changedPath: string): boolean =>
+  /(?:^|\/)(?:drizzle(?:-(?:auth|contacts|portal-auth))?\/|drizzle(?:\.(?:auth|contacts|portal-auth))?\.config\.ts$|schema\.ts$|prepare-[^/]+-migration\.mts$|verify-[^/]*db-schema\.mts$)/u.test(
     changedPath,
   ) ||
-  /^(?:scripts\/run-zerops-migrator\.mjs|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|runtime-role-bootstrap\.mts|bootstrap-spicedb-database\.mts|database-login-roles\.mts|database-role-manifest\.mts|docker-init-runtime-role\.sh))$/u.test(
+  /^(?:scripts\/stage-demo-migrate\.mts|scripts\/run-zerops-migrator\.mjs|scripts\/run-optional-commerce-portal-auth-db\.mts|scripts\/migration-(?:convergence(?:-cli)?|equivalence)\.mts|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|runtime-role-bootstrap\.mts|runtime-role-grants\.mts|bootstrap-spicedb-database\.mts|database-login-roles\.mts|database-role-manifest\.mts|docker-init-runtime-role\.sh))$/u.test(
     changedPath,
   ) ||
+  /^verticals\/commerce-customer-context\/scripts\/(?:bootstrap-portal-auth-runtime-role|portal-auth-database-config|portal-auth-migration-journal)\.mts$/u.test(
+    changedPath,
+  ) ||
+  changedPath === 'database/identity-enrollment.ts' ||
+  changedPath.startsWith('packages/party-registry-identity-contracts/src/') ||
+  changedPath === 'packages/core-runtime/src/environment/drizzle-config.ts' ||
   changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'packages/core-runtime/src/db/database-identities.ts' ||
   changedPath === 'packages/core-runtime/src/db/database-identity-manifest.ts' ||
@@ -1185,7 +1296,9 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   PACKAGE_MANIFEST,
   'pnpm-lock.yaml',
   'scripts/generate-ontos-module-contract.mts',
+  'scripts/ontos-mcp-contribution.mts',
   'scripts/generate-ontos-shell-runtime-contract.mts',
+  'scripts/generate-shell-ui-candidates.mts',
   'scripts/application-release-intent.mts',
   'scripts/application-composition-authority-publication.mts',
   'scripts/immutable-application-release.mts',
@@ -1208,14 +1321,20 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   // The planner decides what every other input impacts: after a repair to one of its rules, the
   // units the old rule skipped must deploy too.
   'scripts/plan-deployment-impact.mts',
+  // The release script recomputes each unit digest and its secret fingerprint with the content-addressed planner.
+  'scripts/ci/deploy-plan.mts',
+  'scripts/ci/release-ledger.mts',
+  'scripts/ci/unit-closure.mts',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-environment.mts',
-  'scripts/materialize-zerops-runtime.mjs',
-  'scripts/locked-registry-overrides.mjs',
+  'scripts/materialize-ontos-zerops-runtime.mjs',
   'scripts/outbox-worker-delivery.mjs',
+  // CI prebuilds the Outbox Worker host with this recipe and compiles its digest module into the bundle.
+  'scripts/ci/build-outbox-host.sh',
+  'scripts/outbox-worker-host-artifact.mts',
   OUTBOX_WORKER_HOST.entry,
   CORE_SYSTEM_OUTBOX_WORKER.entry,
   'zerops.yaml',
@@ -1450,7 +1569,9 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );
     const orderedUnits = orderUnits(buildTopologyUnits(topology, ownership, stageSetups));
-    validateWorkspaceCompleteness(
+    const standaloneWorkspaces = topology.standaloneWorkspaces ?? [];
+    yield* validateWorkspaceCompleteness(
+      rootDirectory,
       yield* listWorkspaceProjects(
         rootDirectory,
         yield* parseWorkspaceGlobs(
@@ -1459,6 +1580,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       ),
       orderedUnits,
       topology.sharedPackages ?? [],
+      standaloneWorkspaces,
     );
     const workerDeliveries = yield* Effect.all(
       (topology.verticals ?? []).map((vertical) =>
@@ -1483,7 +1605,9 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     );
 
     const { impacted, migrator, spicedb } = deriveDeploymentImpact(
-      changedPaths,
+      changedPaths.filter(
+        (changedPath) => !standaloneWorkspaces.some((project) => isWithin(changedPath, project.path)),
+      ),
       fullDeploy,
       ownership.owners ?? [],
       orderedUnits,

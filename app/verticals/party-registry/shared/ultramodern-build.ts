@@ -1,14 +1,23 @@
-import { resolveUltramodernBuildArtifact } from '@modern-js/runtime-extensions/build-identity';
+import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
 
-declare const ULTRAMODERN_BUILD_MARKER: string;
-declare const ULTRAMODERN_SOURCE_REVISION: string;
-
-const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
-  {
-    deliveryUnit: {
+const buildArtifact = {
+  deliveryUnit: {
+    appId: 'party-registry',
+    deployProfile: 'cloudflare-ssr-mf-effect-v1',
+    kind: 'microvertical-delivery-unit',
+    packageName: '@app/party-registry',
+    schemaVersion: 1,
+    sourceRevision: 'workspace',
+    unitId: 'app/party-registry',
+    version: '0.1.0',
+    buildMarker: 'aaebe4ee5a28e557',
+    build: 'aaebe4ee5a28e557',
+  },
+  kind: 'ultramodern-build-artifact',
+  schemaVersion: 2,
+  surfaces: {
+    api: {
       appId: 'party-registry',
-      build: '3f023644c8a07e9a',
-      buildMarker: '3f023644c8a07e9a',
       deployProfile: 'cloudflare-ssr-mf-effect-v1',
       kind: 'microvertical-delivery-unit',
       packageName: '@app/party-registry',
@@ -16,44 +25,85 @@ const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
       sourceRevision: 'workspace',
       unitId: 'app/party-registry',
       version: '0.1.0',
+      buildMarker: 'aaebe4ee5a28e557',
+      build: 'aaebe4ee5a28e557',
+      surface: 'api',
     },
-    kind: 'ultramodern-build-artifact',
-    schemaVersion: 1,
-    surfaces: {
-      api: {
+    ui: {
+      appId: 'party-registry',
+      deployProfile: 'cloudflare-ssr-mf-effect-v1',
+      kind: 'microvertical-delivery-unit',
+      packageName: '@app/party-registry',
+      schemaVersion: 1,
+      sourceRevision: 'workspace',
+      unitId: 'app/party-registry',
+      version: '0.1.0',
+      buildMarker: 'aaebe4ee5a28e557',
+      build: 'aaebe4ee5a28e557',
+      surface: 'ui',
+      rendererIdentity: {
+        renderer: 'react',
         appId: 'party-registry',
-        build: '3f023644c8a07e9a',
-        buildMarker: '3f023644c8a07e9a',
-        deployProfile: 'cloudflare-ssr-mf-effect-v1',
-        kind: 'microvertical-delivery-unit',
-        packageName: '@app/party-registry',
-        schemaVersion: 1,
-        sourceRevision: 'workspace',
-        surface: 'api',
-        unitId: 'app/party-registry',
-        version: '0.1.0',
+        entryName: 'index',
+        protocolVersion: 1,
+        buildId: 'aaebe4ee5a28e557',
       },
-      ui: {
-        appId: 'party-registry',
-        build: '3f023644c8a07e9a',
-        buildMarker: '3f023644c8a07e9a',
-        deployProfile: 'cloudflare-ssr-mf-effect-v1',
-        kind: 'microvertical-delivery-unit',
-        packageName: '@app/party-registry',
-        schemaVersion: 1,
-        sourceRevision: 'workspace',
-        surface: 'ui',
-        unitId: 'app/party-registry',
-        version: '0.1.0',
+      rendererProfile: {
+        renderer: 'react',
+        protocolVersion: 1,
+        compiler: {
+          name: '@rsbuild/plugin-react',
+          version: '2.1.1',
+        },
+        hydration: {
+          name: 'react-dom',
+          version: '19.3.1',
+        },
+        router: {
+          name: 'react-router',
+          version: '7.18.4',
+          coreName: 'react-router',
+          coreVersion: '7.18.4',
+        },
+      },
+      routerBindings: {
+        index: {
+          owner: '@modern-js/plugin-tanstack',
+          evidence: 'file-routes',
+          defaultProvider: {
+            framework: 'tanstack',
+            name: '@tanstack/react-router',
+            version: '1.170.39',
+            coreName: '@tanstack/router-core',
+            coreVersion: '1.171.32',
+          },
+          providers: [
+            {
+              framework: 'tanstack',
+              name: '@tanstack/react-router',
+              version: '1.170.39',
+              coreName: '@tanstack/router-core',
+              coreVersion: '1.171.32',
+            },
+          ],
+        },
       },
     },
-  } as const,
-  {
-    buildMarker: () => ULTRAMODERN_BUILD_MARKER,
-    sourceRevision: () => ULTRAMODERN_SOURCE_REVISION,
   },
-);
+} as const;
+
+declare const ULTRAMODERN_BUILD_MARKER: string;
+declare const ULTRAMODERN_SOURCE_REVISION: string;
+
+const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(buildArtifact, {
+  buildMarker: () => ULTRAMODERN_BUILD_MARKER,
+  sourceRevision: () => ULTRAMODERN_SOURCE_REVISION,
+});
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
-export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
+const ultramodernUiSurface = ultramodernBuildArtifact.surfaces.ui;
+if (ultramodernUiSurface === undefined) {
+  throw new Error('Application party-registry requires a UI build identity.');
+}
+export const ultramodernUiMarker = ultramodernUiSurface;
 export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;

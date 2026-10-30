@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -120,7 +121,7 @@ describe('Package Definition committed revision event', () => {
         topic: 'commerce.catalog.package-definition-revised.v1',
       });
       expect(Object.keys(state.outbox[0]?.message.payloadJson ?? {})).not.toContain('currentAtCommit');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('emits no completed-change event for a rejected revision', () =>
@@ -129,7 +130,7 @@ describe('Package Definition committed revision event', () => {
       yield* handleRevisePackageDefinition(payload, state.value).pipe(Effect.flip);
       expect(state.events).toHaveLength(0);
       expect(state.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('requires an exact tenant and matching Package Definition revision in the published payload', () => {

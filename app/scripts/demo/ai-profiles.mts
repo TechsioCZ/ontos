@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { demoAgentProfileSetup } from '../../apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts';
 import { explicitProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
@@ -22,12 +22,8 @@ const command = Command.make(
         session.close.pipe(Effect.ignore),
       );
       yield* Console.log(yield* runAgentProfileSetup(operator.principal, inputs, mode, sourceFingerprint));
-    }).pipe(
-      Effect.scoped,
-      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Executable Command composition root; --help must not open database/service resources.
-      Effect.provide(AgentProfileOperatorLive),
-    ),
-);
+    }).pipe(Effect.scoped),
+).pipe(Command.provide(AgentProfileOperatorLive));
 
 if (import.meta.main) {
   await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));

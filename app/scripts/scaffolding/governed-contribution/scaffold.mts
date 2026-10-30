@@ -60,7 +60,11 @@ import {
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
-import { governedApiBinding, hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import {
+  governedApiBinding,
+  hasGeneratedPublicContractFacade,
+  hasValidGovernedHttpCompositionRoot,
+} from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -387,13 +391,36 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
 const renderPublicContractShim = (specifier: string): string =>
   `${generatedHeader(MODULE_API_KIND)}\n// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`;
 
+const createOrAcceptPublicContractShim = Effect.fn('GovernedContributionScaffold.publicContractShim')(
+  function* createOrAcceptPublicContractShim(
+    filePath: string,
+    specifier: string,
+    producerPath: string,
+    producerFallback: string,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const producerSource = (yield* fileSystem.exists(producerPath))
+      ? yield* fileSystem
+          .readFileString(producerPath)
+          .pipe(
+            Effect.mapError((cause) =>
+              scaffoldFailure(`failed to read public contract producer ${producerPath}`, cause),
+            ),
+          )
+      : producerFallback;
+    return yield* createOrAcceptGeneratedMutationEffect(filePath, renderPublicContractShim(specifier), (current) =>
+      hasGeneratedPublicContractFacade(current, specifier, producerSource),
+    );
+  },
+);
+
 const renderApiContract = (name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader(MODULE_API_KIND)}
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const ${type}RequestSchema = Schema.Struct({});
 export type ${type}Request = typeof ${type}RequestSchema.Type;
@@ -726,7 +753,7 @@ const renderProviderApiContract = (
   return `${generatedHeader(kind)}
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const ${type}ProviderRequestSchema = Schema.Struct({
   ${payloadField}: ${kind === REPORT_KIND ? 'Schema.Record(Schema.String, Schema.String)' : 'Schema.String'},
@@ -1364,15 +1391,17 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
       resolveContainedPath(vertical.directory, 'src', 'api', `${name}-${suffix}.ts`),
     );
     if (isApi && publicContractPackage !== undefined) {
+      const client = renderApiClient(vertical, name, `../apis/${name}.ts`);
       const canonicalClientMutation = yield* createOrAcceptGeneratedMutationEffect(
         publicContractPackage.clientPath,
-        renderApiClient(vertical, name, `../apis/${name}.ts`),
+        client,
         acceptsGeneratedClient(kind, vertical, name, `../apis/${name}.ts`),
       );
-      const ownerClientMutation = yield* createOrAcceptGeneratedMutationEffect(
+      const ownerClientMutation = yield* createOrAcceptPublicContractShim(
         clientPath,
-        renderPublicContractShim(publicContractPackage.clientSpecifier),
-        (current) => current === renderPublicContractShim(publicContractPackage.clientSpecifier),
+        publicContractPackage.clientSpecifier,
+        publicContractPackage.clientPath,
+        client,
       );
       const packageGatewayPath = yield* tryScaffold('failed to resolve public contract operation gateway path', () =>
         resolveContainedPath(publicContractPackage.directory, 'src', 'api', 'action-gateway.ts'),
@@ -1480,10 +1509,11 @@ const planGovernedArtifactMutations = Effect.fn('GovernedContributionScaffold.ar
         artifact,
         acceptsGovernedArtifact(kind, vertical, name, config),
       );
-      const ownerArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
+      const ownerArtifactMutation = yield* createOrAcceptPublicContractShim(
         artifactPath,
-        renderPublicContractShim(publicContractPackage.contractSpecifier),
-        (current) => current === renderPublicContractShim(publicContractPackage.contractSpecifier),
+        publicContractPackage.contractSpecifier,
+        publicContractPackage.contractPath,
+        artifact,
       );
       const dependencyMutation = yield* tryScaffold('failed to ensure public contract package dependency', () =>
         withExactDependencies(vertical, {

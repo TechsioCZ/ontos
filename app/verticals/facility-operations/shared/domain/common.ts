@@ -3,21 +3,45 @@
 // Each agenda owns one JSONB state row per (tenant, legal entity, agenda) with its own revision.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
+import { CalendarDateWireSchema } from '@app/shared-contracts';
 import { Effect, Schema } from 'effect';
 import type { DateTime } from 'effect';
 import { FacilityOperationsLifecycleConflict } from '../errors/facility-operations-lifecycle-conflict.ts';
 import { FacilityOperationsNotFound } from '../errors/facility-operations-not-found.ts';
 
+import type { AgendaState } from './agenda.ts';
+import type { AssetsState } from './assets.ts';
+import type { DocumentsState } from './documents.ts';
+import type { MetersState } from './meters.ts';
+import type { PurchasingState } from './purchasing.ts';
+import type { SecurityState } from './security.ts';
+import type { AgendaCommand } from '../commands/agenda.ts';
+import type { AssetsCommand } from '../commands/assets.ts';
+import type { DocumentsCommand } from '../commands/documents.ts';
+import type { MetersCommand } from '../commands/meters.ts';
+import type { PurchasingCommand } from '../commands/purchasing.ts';
+import type { SecurityCommand } from '../commands/security.ts';
+
+type OpsAgendaState = AgendaState | AssetsState | DocumentsState | MetersState | PurchasingState | SecurityState;
+type OpsAgendaCommand =
+  | AgendaCommand
+  | AssetsCommand
+  | DocumentsCommand
+  | MetersCommand
+  | PurchasingCommand
+  | SecurityCommand;
+
 /** Branded opaque identifier (1–300 chars). */
-export const opsIdOf = <const Brand extends string>(brand: Brand) =>
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand(brand));
+export const OpsIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('FacilityOpsId'),
+);
 
 /** Identifier of any record created or changed by a command (returned in `entityIds`). */
-export const EntityIdSchema = opsIdOf('FacilityOperationsEntityId');
+export const EntityIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityOperationsEntityId'));
 export type EntityId = typeof EntityIdSchema.Type;
 
 /** Identifier of a stored binary file (facility_operations.files). */
-export const FileIdSchema = opsIdOf('FacilityOperationsFileId');
+export const FileIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityOperationsFileId'));
 export type FileId = typeof FileIdSchema.Type;
 
 /** Required trimmed text of 1..maximum characters. */
@@ -25,7 +49,7 @@ export const TextSchema = (maximum: number) => Schema.Trim.check(Schema.isMinLen
 /** Optional free text (may be empty). */
 export const NoteSchema = Schema.Trim.check(Schema.isMaxLength(4000));
 /** Calendar date `YYYY-MM-DD` (Europe/Prague business date, no time zone). */
-export const IsoDateSchema = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));
+export const IsoDateSchema = CalendarDateWireSchema;
 export type IsoDate = typeof IsoDateSchema.Type;
 /** Non-negative integer amount in CZK minor units (haléře). */
 export const MinorAmountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -33,7 +57,7 @@ export const MinorAmountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(
 export const SignedMinorAmountSchema = Schema.Int;
 
 /**
- * Opaque reference to a Siampark property-module record (property, unit or asset id from property-portfolio),
+ * Opaque reference to a Nájempark property-module record (property, unit or asset id from property-portfolio),
  * plus a display snapshot taken when the reference was set. Never joined to the other module's tables.
  */
 export const PropertyRefSchema = Schema.Struct({
@@ -60,6 +84,12 @@ export interface OpsCommandInput {
   readonly resourceId: string;
 }
 
+/** Named data supplied to one command reducer. */
+export interface OpsCommandCall<Command> {
+  readonly input: OpsCommandInput;
+  readonly value: Command;
+}
+
 export const auditCreated = (input: OpsCommandInput): AuditFields => ({
   createdAt: input.now,
   createdBy: input.actor,
@@ -67,7 +97,7 @@ export const auditCreated = (input: OpsCommandInput): AuditFields => ({
   updatedBy: input.actor,
 });
 
-export const auditUpdated = <Record extends AuditFields>(record: Record, input: OpsCommandInput): Record => ({
+export const auditUpdated = <Record extends AuditFields>(record: Record, input: OpsCommandInput) => ({
   ...record,
   updatedAt: input.now,
   updatedBy: input.actor,
@@ -76,7 +106,8 @@ export const auditUpdated = <Record extends AuditFields>(record: Record, input: 
 /** Errors a reducer may raise. Mapped to HTTP 404 / 409 (`facility_operations_lifecycle_conflict` reads as „rejected“). */
 export type OpsCommandError = FacilityOperationsLifecycleConflict | FacilityOperationsNotFound;
 
-export const opsNotFound = (reason: string) => new FacilityOperationsNotFound({ code: 'facility_operations_not_found', reason });
+export const opsNotFound = (reason: string) =>
+  new FacilityOperationsNotFound({ code: 'facility_operations_not_found', reason });
 export const opsConflict = (reason: string) =>
   new FacilityOperationsLifecycleConflict({ code: 'facility_operations_lifecycle_conflict', reason });
 
@@ -98,15 +129,20 @@ export type AgendaId = typeof AgendaIdSchema.Type;
  * `operational` agendas are readable with `facility.operations.read_operational` (external persona);
  * `restricted` agendas (finance values, documents, security) need `facility.operations.read_all` / `write_all`.
  */
-export type AgendaSensitivity = 'operational' | 'restricted';
+export const AgendaSensitivitySchema = Schema.Literals(['operational', 'restricted']);
+export type AgendaSensitivity = typeof AgendaSensitivitySchema.Type;
 
 /** One agenda: its state schema, empty state, command union and pure reducer. */
 export interface AgendaDefinition<State, StateEncoded, Command extends { readonly _tag: string }> {
   /** Union of this agenda's commands. Tags must be globally unique (prefix them, e.g. `Asset…`, `Meter…`). */
   readonly commandSchema: Schema.Codec<Command, unknown>;
   readonly empty: StateEncoded;
-  /** Pure reducer. Method syntax on purpose (bivariant), so the central registry can hold all agendas. */
-  evolve(state: State, command: Command, input: OpsCommandInput): Effect.Effect<AgendaChange<State>, OpsCommandError>;
+  /** Pure reducer; each registry entry retains its owner-local state and command contract. */
+  readonly evolve: (
+    state: State,
+    command: Command,
+    input: OpsCommandInput,
+  ) => Effect.Effect<AgendaChange<State>, OpsCommandError>;
   readonly id: AgendaId;
   readonly sensitivity: AgendaSensitivity;
   readonly stateSchema: Schema.Codec<State, StateEncoded>;
@@ -114,4 +150,30 @@ export interface AgendaDefinition<State, StateEncoded, Command extends { readonl
 
 export const defineAgenda = <State, StateEncoded, Command extends { readonly _tag: string }>(
   definition: AgendaDefinition<State, StateEncoded, Command>,
-) => definition;
+) => {
+  const { evolve, ...description } = definition;
+  const dispatch = Effect.fn(`FacilityOperations.${definition.id}.dispatch`)(function* decodeAgendaCommand(
+    state: OpsAgendaState,
+    command: OpsAgendaCommand,
+    input: OpsCommandInput,
+  ) {
+    const current = yield* Schema.decodeUnknownEffect(Schema.toType(definition.stateSchema))(state);
+    const selected = yield* Schema.decodeUnknownEffect(Schema.toType(definition.commandSchema))(command);
+    const change = yield* evolve(current, selected, input);
+    return {
+      encoding: Schema.encodeEffect(definition.stateSchema)(change.state),
+      entityIds: change.entityIds,
+    };
+  });
+  return { ...description, dispatch };
+};
+
+/** Copies one optional field while keeping an absent value out of the object's own keys. */
+type OptionalField<Key extends string, Value> = Partial<Record<Key, Value>>;
+export const optionalField = <Key extends string, Value>(key: Key, value: Value | undefined) => {
+  const fields: OptionalField<Key, Value> = {};
+  if (value !== undefined) {
+    fields[key] = value;
+  }
+  return fields;
+};

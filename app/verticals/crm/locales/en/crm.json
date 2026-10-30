@@ -3,8 +3,12 @@
     "title": "CRM",
     "role": "crm",
     "routeSurface": "Hanák wholesale CRM.",
-    "seo": { "description": "CRM: clients, visits, imported orders and sales overview." },
-    "routes": { "home": "Home" },
+    "seo": {
+      "description": "CRM: clients, visits, imported orders and sales overview."
+    },
+    "routes": {
+      "home": "Home"
+    },
     "common": {
       "loading": "Loading…",
       "errorTitle": "CRM data could not be loaded",
@@ -24,13 +28,186 @@
       "scopeNone": "No clients are assigned to you."
     },
     "pages": {
-      "ai": { "title": "AI změny ke schválení", "description": "Návrhy AI, lidské schvalování a bezpečné vrácení celé dávky." },
-      "clients": { "title": "Clients", "description": "Business clients, contact persons and salesperson assignment." },
-      "visits": { "title": "Visits", "description": "History of visits, calls and e-mails." },
-      "plan": { "title": "To contact", "description": "Manual plan of next contacts. Not a system recommendation." },
-      "imports": { "title": "Order import", "description": "CSV imports of orders and status changes from source systems." },
-      "pairing": { "title": "Order pairing", "description": "Orders without an unambiguous client awaiting manual pairing." },
-      "reports": { "title": "Sales overview", "description": "Counts and values of recorded orders by salesperson, client and period." }
+      "ai": {
+        "title": "AI změny ke schválení",
+        "description": "Návrhy AI, lidské schvalování a bezpečné vrácení celé dávky."
+      },
+      "clients": {
+        "title": "Clients",
+        "description": "Business clients, contact persons and salesperson assignment."
+      },
+      "visits": {
+        "title": "Visits",
+        "description": "History of visits, calls and e-mails."
+      },
+      "plan": {
+        "title": "To contact",
+        "description": "Manual plan of next contacts. Not a system recommendation."
+      },
+      "imports": {
+        "title": "Order import",
+        "description": "CSV imports of orders and status changes from source systems."
+      },
+      "pairing": {
+        "title": "Order pairing",
+        "description": "Orders without an unambiguous client awaiting manual pairing."
+      },
+      "reports": {
+        "title": "Sales overview",
+        "description": "Counts and values of recorded orders by salesperson, client and period."
+      }
+    },
+    "ciWorkflow": {
+      "aiApprovalLog": "AI and approval log",
+      "approvedLinks": "Approved links",
+      "awaitingPairing": "Awaiting pairing",
+      "batchView": "Batch view",
+      "businessOverview": "Business overview",
+      "chartCurrency": "Chart currency",
+      "client": "Client",
+      "clientAssignment": "Client assignment",
+      "clientsWithOrders": "Clients with an order",
+      "completeContact": "Complete contact",
+      "completed30Days": "Completed in 30 days",
+      "contactOn": "Contact on",
+      "contactOutcome": "Outcome (briefly)",
+      "contactToday": "To contact today",
+      "crmClient": "CRM client",
+      "crossSourceDuplicate": "Duplicate across sources",
+      "csvContents": "CSV contents (the first row is the header)",
+      "csvFile": "CSV file",
+      "csvImport": "Import orders from CSV",
+      "decisionNote": "Decision note (optional)",
+      "decisionNotePlaceholder": "E.g. verified with the salesperson",
+      "emptyQueue": "The queue is empty",
+      "excludedFromReport": "Excluded from the report",
+      "groupBy": "Group by",
+      "importBatches": "Import batches",
+      "importedSkuItems": "Imported items (SKU)",
+      "items": "Items",
+      "itemsNotProvided": "Items not provided — no data",
+      "managementApprovalsOnly": "Approvals are reserved for management",
+      "managementPairingOnly": "Sales management handles pairing",
+      "monthlyOrderCounts": "Monthly order counts",
+      "monthlyOrderValue": "Order value this month",
+      "monthlyTrend": "Monthly trend",
+      "needsReview": "Requires review",
+      "newApprovedLink": "New approved link",
+      "noCompletedContacts": "No completed contacts yet",
+      "noData": "No data",
+      "noImportsYet": "No imports yet",
+      "noOrders": "No orders",
+      "noOrdersYet": "No orders yet",
+      "note": "Note",
+      "nothingToReview": "Nothing to review",
+      "openContacts": "Open contacts",
+      "orderChartData": "Order trends and available chart data",
+      "ordersToResolve": "Orders to resolve",
+      "overdue": "Overdue",
+      "pairingReason": "Reason for assignment and verification source",
+      "period": "Period",
+      "planNotePlaceholder": "e.g. ask about the winter offer",
+      "recordVisit": "Also record the visit / call in the history",
+      "recordedOrderValue": "Recorded order value",
+      "recordedOrders": "Recorded orders",
+      "responsibleSalesperson": "Responsible salesperson",
+      "salesAtAGlance": "Sales at a glance",
+      "salesperson": "Salesperson",
+      "sampleFiles": "Sample files",
+      "searchClient": "Search for a client",
+      "searchOrder": "Search orders",
+      "searchOrderPlaceholder": "Number, ID, customer, company ID, status",
+      "selectClient": "Select a client",
+      "show": "Show",
+      "source": "Source",
+      "sourceCustomerId": "Customer ID in the source",
+      "sourceSystem": "Source system",
+      "status": "Status",
+      "targetClient": "Target client",
+      "today": "Today",
+      "uncertainClient": "Uncertain client",
+      "unpaired": "Unpaired",
+      "within14Days": "Within 14 days"
+    },
+    "ciClientsVisits": {
+      "clients": {
+        "active": "Active clients",
+        "assignedSalesperson": "Assigned salesperson",
+        "assignedToMe": "Assigned to me",
+        "cannotDisplay": "The client cannot be displayed",
+        "cardUnavailable": "The client card cannot be opened",
+        "contactedLast30Days": "Contacted in the last 30 days",
+        "customerRegistry": "Customer registry",
+        "existingRegistryCustomer": "Existing customer in the customer registry",
+        "exportDescription": "Clients and contact persons matching the current filters; only records you are allowed to view",
+        "linkedToRegistry": "Linked to the customer registry",
+        "newSalesperson": "New salesperson",
+        "notFound": "Client not found",
+        "recordedOrders": "Recorded orders",
+        "recordedOrderValue": "Value of recorded orders",
+        "registryIdentity": "Identity in the customer registry",
+        "salespeople": "Salespeople",
+        "searchLabel": "Search for a client",
+        "searchPlaceholder": "Name, company registration number, phone, e-mail, contact person",
+        "withoutContact": "Clients without contact",
+        "withoutSalesperson": "Without a salesperson"
+      },
+      "contacts": {
+        "empty": "No contact persons",
+        "primary": "Primary client contact",
+        "removeFromForm": "Remove this person from the form",
+        "roleExample": "e.g. Buyer",
+        "rolesExample": "e.g. Buyer, Operations manager",
+        "title": "Contact persons"
+      },
+      "fields": {
+        "address": "Address",
+        "addressPlaceholder": "Street and number, postal code and city",
+        "client": "Client",
+        "date": "Date",
+        "dueDate": "Due date",
+        "email": "E-mail",
+        "fullName": "Full name",
+        "jobRole": "Job role",
+        "note": "Note",
+        "period": "Period",
+        "phone": "Phone",
+        "registrationNumber": "Company registration number",
+        "salesperson": "Salesperson",
+        "segment": "Segment",
+        "status": "Status",
+        "taxId": "Tax identification number",
+        "time": "Time",
+        "type": "Type",
+        "website": "Website"
+      },
+      "history": {
+        "empty": "No history"
+      },
+      "visits": {
+        "addNextStepToMyPlan": "Add the next step to my To contact plan",
+        "addNextStepToPlan": "Add the next step to the To contact plan",
+        "clientPlaceholder": "Search for a client",
+        "contactOnDate": "Contact on",
+        "contactsLast30Days": "Contacts in the last 30 days",
+        "correctedRecords": "Corrected records",
+        "correctionExample": "e.g. a typo, clarification by phone",
+        "correctionReason": "Reason for correction",
+        "correctRecord": "Correct the record",
+        "empty": "No visits",
+        "inPersonLast30Days": "In-person visits in the last 30 days",
+        "lastContact": "Last contact",
+        "lastContactAnyType": "Last contact (any type)",
+        "lastVisit": "Last visit",
+        "nextPlannedContact": "Next planned contact",
+        "nextStep": "What to do",
+        "recordedContacts": "Recorded contacts",
+        "recordVisit": "Record a visit",
+        "responsibleSalesperson": "Responsible salesperson",
+        "result": "Result",
+        "searchLabel": "Search visits",
+        "searchPlaceholder": "Search records"
+      }
     }
   }
 }

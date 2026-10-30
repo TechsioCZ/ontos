@@ -6,7 +6,7 @@ import {
   PricingCommercialFeeScheduleSnapshotSchema,
 } from '@app/pricing-contracts/domain/commercial-fee';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const CommercialFeeScheduleRequestSchema = Schema.Struct({ identityKey: PricingCommercialFeeIdentityKeySchema });
 export type CommercialFeeScheduleRequest = typeof CommercialFeeScheduleRequestSchema.Type;

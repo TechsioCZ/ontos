@@ -19,7 +19,7 @@ Local only. Nothing here deploys. Run everything from `app/`.
    This starts `ontos-demo-db` (Postgres 18) and `ontos-demo-spicedb` (in-memory) in a separate
    project with its own `ontos_demo_postgres_data` volume.
 3. `pnpm db:migrate`, `pnpm local:initialize`, `pnpm demo:reset`, `pnpm demo:reset:sales`
-   (including the CRM and Siampark operations owner seeds), `pnpm demo:seed:eshop`, and `pnpm db:verify`.
+   (including the CRM and Nájempark operations owner seeds), `pnpm demo:seed:eshop`, and `pnpm db:verify`.
    Early fixtures create identities and data, not Action execution grants.
 4. Native builds of the shell and each selected vertical, run only when an app has no build or its
    sources (or `packages/`, or the lockfile) changed since its last build. At most two native builds run
@@ -30,10 +30,10 @@ Local only. Nothing here deploys. Run everything from `app/`.
 6. `node scripts/demo/reset-permissions.mts`: all four companies, 14 staff personas, role grants and the
    agent/storefront API keys. The shared tenant is labelled **OntOS DEMO**; each company retains its own name.
 7. `node scripts/demo/accounts-admin-grants.mts`, `node scripts/demo/company-membership-hygiene.mts`
-   (removes only four stale commercial-company memberships of Siampark staff), and `pnpm demo:ai-profiles`
+   (removes only four stale commercial-company memberships of Nájempark staff), and `pnpm demo:ai-profiles`
    (AI A/B/C principals and keys).
 8. Unless `DEMO_RESET=0`, `pnpm demo:seed:rental --apply` against the running local shell, authenticated as
-   `management@siampark.demo`, fixed Siampark company `…0021`. This uses public reads/Actions, not private DB writes.
+   `management@najempark.demo`, fixed Nájempark company `…0021`. This uses public reads/Actions, not private DB writes.
 9. Starts the customer storefront BFF on **http://localhost:3060**, registers its PID for `down.sh`, and waits for
    `/api/home` to return live backend data. Its managed key is read server-side from `app/.env.demo.local`.
 
@@ -62,7 +62,7 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 | Port            | Service                                                                                                     |
 | --------------- | ----------------------------------------------------------------------------------------------------------- |
 | 3020            | Shell: http://localhost:3020/cs                                                                             |
-| 3041            | Development composition (`/active`). Siampark used 3031, but launchd still holds 3031 on this machine.      |
+| 3041            | Development composition (`/active`). Nájempark used 3031, but launchd still holds 3031 on this machine.     |
 | 3060            | Kavárna Doma customer storefront + server-only BFF                                                          |
 | 4125 / 4126     | CRM / facility operations                                                                                   |
 | 4101            | commerce-customer-context (API only)                                                                        |
@@ -90,8 +90,8 @@ What is sent, exactly once per event (after the database commit, by `scripts/dem
   goods are shipped.
 - Payment reminders („Připravit upomínku“ → „Odeslat e-mailem“ in Faktury a finance) of every company that
   uses the finance module. Each reminder goes out in the name of the company that issued the invoice (header,
-  subject, footer and sender: Siampark → Siampark, Obchodní firma → Obchodní firma).
-- Siampark agenda notifications (Provoz → Agenda) for people who switched on „Posílat upozornění i e-mailem“ in
+  subject, footer and sender: Nájempark → Nájempark, Obchodní firma → Obchodní firma).
+- Nájempark agenda notifications (Provoz → Agenda) for people who switched on „Posílat upozornění i e-mailem“ in
   Nastavení upozornění: Přiřazeno vám and Po termínu always, Blíží se termín and Změna only when chosen. Only
   notifications created after e-mail was switched on, one e-mail per delivery batch, to the person's sign-in
   address; the notification centre shows „odesláno e-mailem“ per notification (receipts only for one's own).
@@ -135,11 +135,11 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 | `SMTP_TIMEOUT_MS`                               | `10000`                                                  | Socket timeout per attempt                                                                                                                                                                             |
 | `SMTP_FROM`                                     | –                                                        | Sender address for every company without its own variable below (the display name stays the company's, e.g. `Obchodní firma – účtárna <noreply@vase-domena.cz>`). Unset → the built-in demo addresses. |
 | `AKROS_EMAIL_FROM`                              | `AKROS e-shop <eshop@akros.demo>`                        | Sender of AKROS order e-mails                                                                                                                                                                          |
-| `SIAMPARK_EMAIL_FROM`                           | `Siampark – finanční oddělení <finance@siampark.demo>`   | Sender of Siampark payment reminders                                                                                                                                                                   |
+| `SIAMPARK_EMAIL_FROM`                           | `Nájempark – finanční oddělení <finance@najempark.demo>` | Sender of Nájempark payment reminders                                                                                                                                                                  |
 | `OBCHODNI_FIRMA_EMAIL_FROM`                     | `Obchodní firma – účtárna <ucetni@demo.ontos>`           | Sender of Obchodní firma payment reminders                                                                                                                                                             |
 | `EMAIL_TEST_SMTP_HOST` / `EMAIL_TEST_SMTP_PORT` | `127.0.0.1` / `1026`                                     | Test capture for test/QA recipients (second Mailpit); `none` = send them to `SMTP_HOST` too                                                                                                            |
 | `EMAIL_PROVIDER`                                | `smtp`                                                   | `none` = no e-mail provider configured: nothing is sent, the UI offers only copy/download                                                                                                              |
-| `SIAMPARK_AGENDA_EMAIL_FROM`                    | `Siampark – upozornění <provoz@siampark.demo>`           | Sender of Siampark agenda notifications                                                                                                                                                                |
+| `SIAMPARK_AGENDA_EMAIL_FROM`                    | `Nájempark – upozornění <provoz@najempark.demo>`         | Sender of Nájempark agenda notifications                                                                                                                                                               |
 | `ONTOS_PUBLIC_URL`                              | `http://localhost:3020`                                  | Links to the staff app in agenda e-mails                                                                                                                                                               |
 | `EMAIL_DISPATCHER_SESSION_URL`                  | `http://127.0.0.1:3020/shell-super-app-api/auth/session` | Shell session check for staff receipt reads                                                                                                                                                            |
 | `AKROS_STOREFRONT_PUBLIC_URL`                   | `http://localhost:3070`                                  | Link in AKROS e-mails                                                                                                                                                                                  |
@@ -176,7 +176,7 @@ composition, and the operator account must have read/write access to Party Regis
 occupancy, agreements, opportunities and finance, plus Party identity review for a new demo customer.
 Provision server accounts through the normal environment-specific operator workflow first. This
 command does not create accounts, grant permissions, rename companies or bootstrap a server.
-The development companies are `Obchodní firma` and `Siampark`; server IDs may differ.
+The development companies are `Obchodní firma` and `Nájempark`; server IDs may differ.
 
 Example in Bash, using the IDs of the intended server company:
 
@@ -203,7 +203,7 @@ Replace the UUID placeholders before running. Export the password through the se
 manager for unattended use. No configuration file or password is checked into source control.
 
 The fixture contains Rezidence Parková at Parková 12 in Prague, active unit Byt A102, an active
-`Ukázkový nájemce Siampark` customer, a rent opportunity, a confirmed long-term lease for
+`Ukázkový nájemce Nájempark` customer, a rent opportunity, a confirmed long-term lease for
 2026-11-01 through 2027-10-31, its draft contract, and a draft invoice for November rent of
 12,500.25 CZK excluding 21% VAT. It does not confirm invoices or contact an accounting/signature
 provider. `--demo-signature` records a `demo://` reference and a clearly labelled DEMO signer and
@@ -231,13 +231,18 @@ resetting the commercial company or replacing existing company data.
 
 Every account uses the password `password1234`. Sign in at http://localhost:3020/cs/login.
 
-| Login                      | Role                                                                             |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `management@siampark.demo` | Management: reads all Siampark modules                                           |
-| `operations@siampark.demo` | Operations: can write in the Siampark modules                                    |
-| `finance@siampark.demo`    | Finance: can write in billing/finance                                            |
-| `external@siampark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)    |
-| `demo@test.com`            | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only. |
+For administration across all five companies in **OntOS DEMO**, use `obchod@demo.ontos`.
+It holds the explicit tenant superadministrator role and can switch between Obchodní firma,
+Nájempark, Velkoobchod Hanák, Kavárna Doma and AKROS. This does not grant access to other tenants.
+The company-specific personas below keep their restricted roles.
+
+| Login                       | Role                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| `management@najempark.demo` | Management: reads all Nájempark modules                                          |
+| `operations@najempark.demo` | Operations: can write in the Nájempark modules                                   |
+| `finance@najempark.demo`    | Finance: can write in billing/finance                                            |
+| `external@najempark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)    |
+| `demo@test.com`             | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only. |
 
 ### Sales demo permissions
 
@@ -248,7 +253,7 @@ SpiceDB is in-memory, so re-run it after a container restart.
 
 Once the Shell is running, the same operator command calls the restricted
 `core.identity.configure-demo-companies` Action. It renames the fixed commercial demo company to
-Obchodní firma and ensures the separate Siampark company and rental module states exist. This runs
+Obchodní firma and ensures the separate Nájempark company and rental module states exist. This runs
 at the end of the local launcher after grants have been installed; when the Shell is offline it is
 deferred. Conflicting company identity or an Action denial fails setup. Existing business rows are
 retained. Rental example data is added separately with `demo:seed:rental --apply`.
@@ -296,18 +301,18 @@ exactly one company and a switch to any other company answers 403.
 
 The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
 `ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
-`merchandise` gateway assertion in company 0023 and runs without the Better Auth rate limit. The Siampark
-accounts (`management@`, `operations@`, `finance@`, `external@siampark.demo`) also get their roles in the
-Siampark company 0021 (`siamparkRentalPersonas`).
+`merchandise` gateway assertion in company 0023 and runs without the Better Auth rate limit. The Nájempark
+accounts (`management@`, `operations@`, `finance@`, `external@najempark.demo`) also get their roles in the
+Nájempark company 0021 (`siamparkRentalPersonas`).
 
-### Siampark CRM: entrusted contacts (S00)
+### Nájempark CRM: entrusted contacts (S00)
 
-`node --env-file=.env scripts/demo/seed-siampark-crm.mts` writes the Siampark (0021) CRM state once (`--reset`
-replaces it): six prospective tenants, three entrusted by Vedení to `external@siampark.demo` (Martin Krejčí), with
+`node --env-file=.env scripts/demo/seed-siampark-crm.mts` writes the Nájempark (0021) CRM state once (`--reset`
+replaces it): six prospective tenants, three entrusted by Vedení to `external@najempark.demo` (Martin Krejčí), with
 contacts, calls/meetings and planned contacts. `management@` holds `demo.crm` read_all/write_all/assign and
 `external@` only `demo.crm.read_assigned`, so the crm owner returns just the three entrusted clients to him; finance,
 agreements and occupancy stay closed. On a running demo `node scripts/demo/siampark-crm-permissions.mts` adds the two
-grants without a full permission reset. In Siampark the sidebar shows only Klienti, K oslovení and Návštěvy of CRM.
+grants without a full permission reset. In Nájempark the sidebar shows only Klienti, K oslovení and Návštěvy of CRM.
 
 ### Proofs
 

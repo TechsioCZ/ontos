@@ -2,7 +2,7 @@
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { ProductInstantSchema } from '../domain/product.ts';
 import { CatalogSelectionSchema, CatalogSelectionValidEvidenceSchema } from '../domain/catalog-selection-evidence.ts';
 import { ProductRefSchema } from '../resources/product.ts';

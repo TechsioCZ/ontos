@@ -588,6 +588,42 @@ it.effect('reuses an exact empty CUSTOMER period without a duplicate role write 
   }),
 );
 
+it.effect('accepts a current open-ended CUSTOMER period as the open-ended customer onboarding it already is', () =>
+  Effect.gen(function* alreadyCustomer() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));
+    const existingCounterpartyRow = { ...counterpartyRow, createdAt: date('2025-01-01T00:00:00.000Z') };
+    const party = { archivedAt: null, partyId, tenantId };
+    const existingRole = roleRow({ validFrom: date('2026-03-01T00:00:00.000Z'), validTo: null });
+    const harness = transactionHarness(
+      [
+        [],
+        [{ partyId }],
+        [],
+        [{ partyId }],
+        [party],
+        [existingCounterpartyRow],
+        [existingCounterpartyRow],
+        [],
+        [{ partyId }],
+        [party],
+        [existingRole],
+      ],
+      [],
+      [[]],
+    );
+
+    const result = yield* onboardCounterpartyCustomerRecord(harness.transaction, onboardInput());
+
+    expect(Predicate.isTagged(result, 'onboarded')).toBe(true);
+    if (!Predicate.isTagged(result, 'onboarded')) {
+      return;
+    }
+    expect(result.rolePeriodCreated).toBe(false);
+    expect(result.role.validFrom).toBe('2026-03-01T00:00:00.000Z');
+    expect(harness.insertedTables).not.toContain('counterparty_role_periods');
+  }),
+);
+
 it.effect('rejects a non-equivalent overlapping CUSTOMER period', () =>
   Effect.gen(function* overlappingRole() {
     yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));

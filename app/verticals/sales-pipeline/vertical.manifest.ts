@@ -73,8 +73,8 @@ export const salesPipelineManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
-      'page-records': RecordsPage,
       'page-ai-approvals': AiApprovalsPage,
+      'page-records': RecordsPage,
       // </generated-module-manifest-components>
     },
     events: [],

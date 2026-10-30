@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -119,6 +119,10 @@ describe("MiniCart", () => {
     await user.tab();
     expect(document.activeElement).toBe(trigger);
     expect(await screen.findByRole("dialog")).not.toBeNull();
+    // Zag installs the portalled Tab proxy on the next animation frame, after the dialog mounts.
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
     await user.tab();
     expect(document.activeElement?.textContent).toContain("Přejít do košíku");
     await user.keyboard("{Escape}");

@@ -1,4 +1,4 @@
-import { expect, it } from '@rstest/core';
+import { expect, it } from 'effect-rstest';
 import { seedAssetsState } from '../../scripts/seed/assets.mts';
 
 it('all seeded approved depreciation entries and their history were recorded in the past', () => {
@@ -7,17 +7,28 @@ it('all seeded approved depreciation entries and their history were recorded in 
       for (const entry of plan.entries) {
         expect(entry.at.slice(0, 10) <= '2026-10-20').toBe(true);
         expect(entry.period <= (plan.interval === 'yearly' ? '2026' : '2026-10')).toBe(true);
-        expect(plan.history).toContainEqual(expect.objectContaining({ at: entry.at, change: 'entry_recorded', note: entry.period }));
+        expect(plan.history).toContainEqual(
+          expect.objectContaining({ at: entry.at, change: 'entry_recorded', note: entry.period }),
+        );
       }
     }
   }
 });
 
 it('the partial 2026 rack write uses the damage document date, without changing approved totals', () => {
-  const rack = seedAssetsState().assets.find((asset) => asset.inventoryNumber === 'VYB-008')!;
-  const plan = rack.depreciationPlans![0]!;
+  const rack = seedAssetsState().assets.find((asset) => asset.inventoryNumber === 'VYB-008');
+  if (rack === undefined) {
+    throw new Error('Missing seeded rack VYB-008');
+  }
+  const [plan] = rack.depreciationPlans ?? [];
+  if (plan === undefined) {
+    throw new Error('Missing seeded rack depreciation plan');
+  }
   expect(plan.entries.find((entry) => entry.period === '2026')).toMatchObject({
-    at: '2026-04-30T14:00:00Z', amountMinor: 3_500_000, documentRef: 'PS-2026-04', partial: true,
+    amountMinor: 3_500_000,
+    at: '2026-04-30T14:00:00Z',
+    documentRef: 'PS-2026-04',
+    partial: true,
   });
   expect(plan.entries.reduce((sum, entry) => sum + entry.amountMinor, 0)).toBe(11_475_000);
   expect(seedAssetsState()).toEqual(seedAssetsState());

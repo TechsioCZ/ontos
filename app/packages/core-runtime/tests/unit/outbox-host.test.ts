@@ -1,7 +1,8 @@
-import { Clock, ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema } from 'effect';
+import { Clock, ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { identity } from 'effect/Function';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
@@ -11,6 +12,7 @@ import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoin
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from '../../src/outbox/health.ts';
 import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
+import type { OutboxWorkerEntry } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 import type { OutboxCycleResult } from '../../src/outbox/runtime.ts';
 import {
@@ -20,6 +22,8 @@ import {
 } from '../support/outbox-worker-composition.ts';
 
 const expectedDeployment = { appId: 'worker-fixture', buildMarker: 'worker-fixture-build' };
+
+class HostStartupRejected extends Schema.TaggedError<HostStartupRejected>()('HostStartupRejected', {}) {}
 
 const emptyResult: OutboxCycleResult = {
   claimed: 0,
@@ -195,9 +199,99 @@ const hostEnvironment = (values: Record<string, string>) =>
 
 const freeHealthPort = Effect.scoped(
   createOutboxWorkerHealth({ staleAfterMs: 5000 }).pipe(
-    Effect.flatMap((health) => serveOutboxWorkerHealth(health, { port: 0 })),
+    Effect.flatMap((health) =>
+      serveOutboxWorkerHealth(health, {
+        port: 0,
+        status: Effect.succeed({ artifactDigest: Option.none(), owners: [] }),
+      }),
+    ),
     Effect.map(({ port }) => port),
   ),
+);
+
+it.effect('acquires process services before polling and releases their resources and fibers on interruption', () =>
+  Effect.gen(function* startupLifecycle() {
+    const loop = yield* observedLoop;
+    const events = yield* Ref.make<readonly string[]>([]);
+    const backgroundStopped = yield* Ref.make(false);
+    const startupReleased = yield* Ref.make(false);
+    const entry = observedEntry('ledger-outbox-worker', loop);
+    const host = yield* runOutboxWorkerHost({
+      entries: [
+        {
+          ...entry,
+          runLoop: (input) =>
+            Ref.update(events, (seen) => [...seen, 'loop']).pipe(Effect.andThen(entry.runLoop(input))),
+        },
+      ],
+      startup: () =>
+        Effect.gen(function* acquireProcessServices() {
+          yield* Ref.update(events, (seen) => [...seen, 'startup']);
+          yield* Effect.addFinalizer(() => Ref.set(startupReleased, true));
+          yield* Effect.never.pipe(
+            Effect.ensuring(Ref.set(backgroundStopped, true)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        }),
+    }).pipe(hostEnvironment({}), Effect.forkChild);
+
+    yield* driveCycles(loop, 1);
+    expect(yield* Ref.get(events)).toEqual(['startup', 'loop']);
+    expect(yield* Ref.get(startupReleased)).toBe(false);
+    yield* Fiber.interrupt(host);
+    expect(yield* Ref.get(loop.disposed)).toBe(true);
+    expect(yield* Ref.get(startupReleased)).toBe(true);
+    expect(yield* Ref.get(backgroundStopped)).toBe(true);
+  }),
+);
+
+it.effect('retains a typed startup failure and releases partial startup before any polling begins', () =>
+  Effect.gen(function* rejectedStartup() {
+    const loop = yield* observedLoop;
+    const startupReleased = yield* Ref.make(false);
+    const failure = new HostStartupRejected({});
+    const rejected = yield* runOutboxWorkerHost({
+      entries: [observedEntry('ledger-outbox-worker', loop)],
+      startup: () =>
+        Effect.addFinalizer(() => Ref.set(startupReleased, true)).pipe(Effect.andThen(Effect.fail(failure))),
+    }).pipe(hostEnvironment({}), Effect.flip);
+
+    expect(rejected).toBe(failure);
+    expect(yield* cyclesOf(loop)).toBe(0);
+    expect(yield* Ref.get(loop.disposed)).toBe(false);
+    expect(yield* Ref.get(startupReleased)).toBe(true);
+  }),
+);
+
+it.effect('preserves distinct owner failures and startup errors when hosting heterogeneous entries', () =>
+  Effect.gen(function* heterogeneousHostFailures() {
+    const secondFailure = new HostStartupRejected({});
+    const first: OutboxWorkerEntry<PersistenceFailure> = {
+      claimOwnerPrefix: 'first-owner-outbox-worker',
+      registrations: 0,
+      runLoop: () => Effect.never,
+    };
+    const second: OutboxWorkerEntry<HostStartupRejected> = {
+      claimOwnerPrefix: 'second-owner-outbox-worker',
+      registrations: 0,
+      runLoop: () => Effect.fail(secondFailure),
+    };
+    const startupFailure = new ActiveApplicationCompositionUnavailableError({ reason: 'controlled startup failure' });
+    const startupHost = runOutboxWorkerHost({
+      entries: [first, second],
+      startup: () => Effect.fail(startupFailure),
+    });
+    const acceptHostFailure = identity<Effect.Error<typeof startupHost>>;
+    expect(acceptHostFailure(controlledFailure)).toBe(controlledFailure);
+    expect(acceptHostFailure(secondFailure)).toBe(secondFailure);
+    expect(acceptHostFailure(startupFailure)).toBe(startupFailure);
+    // @ts-expect-error The host must retain its concrete failure union, not admit unrelated owner errors.
+    acceptHostFailure({ _tag: 'UnregisteredOwnerFailure' });
+
+    expect(yield* startupHost.pipe(hostEnvironment({}), Effect.flip)).toBe(startupFailure);
+    const loopFailure = yield* runOutboxWorkerHost({ entries: [first, second] }).pipe(hostEnvironment({}), Effect.flip);
+    expect(loopFailure).toBe(secondFailure);
+  }),
 );
 
 it.effect('hosts two workers with distinct claim owners and independent polling loops', () =>
@@ -248,12 +342,71 @@ it.effect('serves one readiness endpoint that is ready only while every hosted l
   }),
 );
 
+it.effect("reports the host artifact and each owner's admitted revision, including owners behind a wrapper", () =>
+  Effect.gen(function* hostAdmissionStatus() {
+    const client = yield* Layer.build(FetchHttpClient.layer).pipe(
+      Effect.flatMap((services) => Effect.provide(HttpClient.HttpClient, services)),
+    );
+    const billing = yield* observedLoop;
+    const ledger = yield* observedLoop;
+    yield* Ref.set(billing.outcome, 'fail');
+    const ledgerEntry = observedEntry('ledger-outbox-worker', ledger);
+    // Owner wrappers such as Commerce's recovery entry rebuild the entry and the loop input they pass on.
+    const wrappedLedger: OutboxWorkerEntry<Effect.Error<ReturnType<typeof ledgerEntry.runLoop>>> = {
+      claimOwnerPrefix: ledgerEntry.claimOwnerPrefix,
+      registrations: ledgerEntry.registrations,
+      runLoop: ({ config }) => ledgerEntry.runLoop({ config }),
+    };
+    const port = yield* freeHealthPort;
+    const host = yield* runOutboxWorkerHost({
+      artifactDigest: Option.some('d'.repeat(64)),
+      entries: [observedEntry('billing-outbox-worker', billing), wrappedLedger],
+      health: true,
+    }).pipe(hostEnvironment({ OUTBOX_WORKER_HEALTH_PORT: String(port) }), Effect.forkChild);
+    const status = client.get(`http://127.0.0.1:${port}/status`).pipe(Effect.flatMap((response) => response.json));
+
+    yield* Effect.all([driveCycles(billing, 2), driveCycles(ledger, 2)], { concurrency: 'unbounded' });
+    const observed = yield* status;
+    expect(observed).toMatchObject({
+      artifactDigest: 'd'.repeat(64),
+      owners: [
+        { admittedRevision: null, lastSuccessAt: null, ready: false, ...expectedDeployment },
+        // The wrapper hands the inner loop no health, so only the admission is visible, never readiness.
+        {
+          admittedRevision: makeOutboxWorkerComposition().revision,
+          lastSuccessAt: expect.any(String),
+          ready: false,
+          ...expectedDeployment,
+        },
+      ],
+    });
+
+    yield* Ref.set(billing.outcome, 'succeed');
+    yield* driveCycles(billing, (yield* cyclesOf(billing)) + 2);
+    expect(yield* status).toMatchObject({
+      owners: [{ admittedRevision: makeOutboxWorkerComposition().revision, ready: true }, {}],
+    });
+
+    yield* Fiber.interrupt(host);
+  }),
+);
+
 it.effect('fails fast when one loop dies and disposes every hosted runtime before exiting', () =>
   Effect.gen(function* failFast() {
     const billing = yield* observedLoop;
     const ledger = yield* observedLoop;
+    const startupReleased = yield* Ref.make(false);
+    const backgroundStopped = yield* Ref.make(false);
     const host = yield* runOutboxWorkerHost({
       entries: [observedEntry('billing-outbox-worker', billing), observedEntry('ledger-outbox-worker', ledger)],
+      startup: () =>
+        Effect.gen(function* releaseServicesOnHostFailure() {
+          yield* Effect.addFinalizer(() => Ref.set(startupReleased, true));
+          yield* Effect.never.pipe(
+            Effect.ensuring(Ref.set(backgroundStopped, true)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        }),
     }).pipe(hostEnvironment({}), Effect.forkChild);
 
     yield* driveCycles(ledger, 2);
@@ -264,6 +417,8 @@ it.effect('fails fast when one loop dies and disposes every hosted runtime befor
     expect(Exit.isFailure(exit)).toBe(true);
     expect(yield* Ref.get(billing.disposed)).toBe(true);
     expect(yield* Ref.get(ledger.disposed)).toBe(true);
+    expect(yield* Ref.get(startupReleased)).toBe(true);
+    expect(yield* Ref.get(backgroundStopped)).toBe(true);
   }),
 );
 

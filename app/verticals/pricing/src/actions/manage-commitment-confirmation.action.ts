@@ -12,8 +12,10 @@ import type {
 import { PricingCommitmentConfirmationIssuedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Function as EffectFunction, Match, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   ManageCommitmentConfirmationPayloadSchema,
@@ -108,7 +110,7 @@ const AuditDigestSchema = Schema.String.check(Schema.isMinLength(71), Schema.isM
  * Core's 4 KiB envelope. The digest is deliberately not a verbatim copy of oversized reference text.
  */
 const auditIdentity = (value: string): string =>
-  value.length <= 160 ? value : `sha256:${createHash('sha256').update(value).digest('hex')}`;
+  value.length <= 160 ? value : `sha256:${Hex.encode(sha256(utf8ToBytes(value)))}`;
 
 interface CommitmentConfirmationAuditReason {
   readonly reason: string;
@@ -117,7 +119,7 @@ interface CommitmentConfirmationAuditReason {
 
 const auditReason = (value: string): CommitmentConfirmationAuditReason => ({
   reason: value.slice(0, 300),
-  reasonDigest: `sha256:${createHash('sha256').update(value).digest('hex')}`,
+  reasonDigest: `sha256:${Hex.encode(sha256(utf8ToBytes(value)))}`,
 });
 
 export const ManageCommitmentConfirmationAuditEvidenceSchema = Schema.Struct({
@@ -661,18 +663,20 @@ const dataAccessEvidenceFor = (payload: ManageCommitmentConfirmationPayload, rea
   const binding = bindingFor(payload);
   return {
     accessKind: 'read' as const,
-    queryHash: createHash('sha256')
-      .update(
-        [
-          payload.kind,
-          accessLookupKeyFor(payload),
-          binding.attemptRef,
-          binding.decisionBundleRef,
-          binding.decisionBundleVersion,
-          binding.decisionBundleHash,
-        ].join('\u001F'),
-      )
-      .digest('hex'),
+    queryHash: Hex.encode(
+      sha256(
+        utf8ToBytes(
+          [
+            payload.kind,
+            accessLookupKeyFor(payload),
+            binding.attemptRef,
+            binding.decisionBundleRef,
+            binding.decisionBundleVersion,
+            binding.decisionBundleHash,
+          ].join('\u001F'),
+        ),
+      ),
+    ),
     resultCount: readFound ? 1 : 0,
     servingModuleKey: MODULE_KEY,
   };

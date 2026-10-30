@@ -1,6 +1,6 @@
 import { Effect, Inspectable, Redacted, Result, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { FetchHttpClient } from 'effect/http';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 
 import { makeReferenceGatewayCredentials } from '../../src/operation-gateway.ts';

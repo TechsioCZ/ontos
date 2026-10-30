@@ -202,6 +202,23 @@
     "selectPlaceholder": "Vyberte…",
     "sidePanel": {
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    },
+    "history": {
+      "title": "Historie změn"
+    },
+    "planning": {
+      "projectTitle": "Název projektu",
+      "plannedStart": "Plánovaný začátek",
+      "plannedEnd": "Plánovaný konec",
+      "responsiblePerson": "Odpovědná osoba",
+      "milestoneTitle": "Název milníku",
+      "milestoneDueDate": "Termín milníku",
+      "projects": "Projekty",
+      "noProjects": "Zatím žádné projekty",
+      "plannedCapacity": "Plánované kapacity",
+      "from": "Od",
+      "to": "Do",
+      "noAssignedTasks": "V tomto období nejsou přiřazené úkoly"
     }
   }
 }

@@ -111,6 +111,12 @@
     },
     {
       "path": "verticals/crm-activities"
+    },
+    {
+      "path": "./verticals/projects"
+    },
+    {
+      "path": "packages/party-registry-identity-contracts"
     }
   ]
 }

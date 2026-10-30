@@ -6,6 +6,7 @@ import {
   clientLabel,
   formatClock,
   formatVisitDay,
+  formatDay,
   groupByMonth,
   principalLabel,
   salespersonLabel,
@@ -15,11 +16,7 @@ import {
 export const VisitKindIcon = ({ kind }: { readonly kind: Visit['kind'] }) => {
   const meta = visitKindMeta[kind];
   return (
-    <span
-      aria-hidden="true"
-      className={`flex size-400 shrink-0 items-center justify-center rounded-full ${meta.tone}`}
-      title={meta.label}
-    >
+    <span aria-hidden="true" className={`flex size-400 shrink-0 items-center justify-center rounded-full ${meta.tone}`}>
       <span className={`${meta.icon} size-250`} />
     </span>
   );
@@ -79,7 +76,7 @@ const TimelineEntry = ({
             <span aria-hidden="true" className="icon-[mdi--arrow-right-circle-outline] size-200 text-primary" />
             <span>
               {visit.nextStep}
-              {visit.nextStepDate === undefined ? '' : ` · do ${formatVisitDay(`${visit.nextStepDate}T12:00:00.000Z`)}`}
+              {visit.nextStepDate === undefined ? '' : ` · do ${formatDay(visit.nextStepDate)}`}
             </span>
           </span>
         )}

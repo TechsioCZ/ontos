@@ -1,7 +1,7 @@
 import { Effect, Schema, SchemaIssue } from 'effect';
 import type { Types } from 'effect';
-import { HttpRouter, HttpServerResponse } from 'effect/unstable/http';
-import { HttpApiError } from 'effect/unstable/httpapi';
+import { HttpRouter, HttpServerResponse } from 'effect/http';
+import { HttpApiError } from 'effect/http-api';
 
 import { RequestSchemaProblemSchema } from './problem-details.ts';
 

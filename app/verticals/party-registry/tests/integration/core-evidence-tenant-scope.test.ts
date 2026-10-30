@@ -3,8 +3,8 @@ import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gatew
 import { NodeCrypto } from '@effect/platform-node';
 import { Data, Effect, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
-import type { Row } from 'effect/unstable/sql/SqlConnection';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { Row } from 'effect/sql/SqlConnection';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import {
   hasPostgreSqlCode,

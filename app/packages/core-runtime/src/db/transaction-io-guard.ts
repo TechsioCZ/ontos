@@ -1,6 +1,6 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Data, Effect, Option, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Context, Data, Effect, Option, Schema, flow } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 
 /**
  * What must never run between BEGIN and COMMIT of a governed operation: every one of them would hold the
@@ -54,18 +54,19 @@ const fetchTarget = (input: Request | URL | string): string => {
 };
 
 /** Every Effect HTTP client built on `FetchHttpClient` reads its fetch from the fiber; inside a mark it refuses. */
-const refusingFetch =
-  (open: OpenTransaction) =>
-  // oxlint-disable-next-line typescript/promise-function-async -- Native `fetch` contract: the refusal is a rejected Promise, recorded first so the mark re-raises it.
-  (input: Request | URL | string): Promise<Response> => {
-    const refusal = new IoInsideDatabaseTransaction({
-      io: 'outbound-fetch',
-      operationKey: open.operationKey,
-      target: fetchTarget(input),
-    });
-    open.refusedFetches.push(refusal);
-    return Promise.reject(refusal);
-  };
+const refusingFetch = (open: OpenTransaction) =>
+  flow(
+    (input: Request | URL | string) => {
+      const refusal = new IoInsideDatabaseTransaction({
+        io: 'outbound-fetch',
+        operationKey: open.operationKey,
+        target: fetchTarget(input),
+      });
+      open.refusedFetches.push(refusal);
+      return refusal;
+    },
+    Promise.reject.bind(Promise)<Response>,
+  );
 
 /**
  * Marks `effect` as the body of the named operation's database transaction: SpiceDB, module transport,
@@ -80,10 +81,8 @@ export const insideDatabaseTransaction =
     Effect.suspend(() => {
       const open: OpenTransaction = { operationKey, refusedFetches: [] };
       return effect.pipe(
-        // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- The transaction mark is this seam: inside it every FetchHttpClient refuses.
-        Effect.provideService(FetchHttpClient.Fetch, refusingFetch(open)),
-        // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- The transaction mark itself, read by every Core transport guard.
-        Effect.provideService(OpenDatabaseTransaction, Option.some(open)),
+        Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
+        Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
         Effect.exit,
         Effect.flatMap((exit) => {
           const [refusal] = open.refusedFetches;
@@ -114,7 +113,6 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
   const guardStatement = <Statement extends object>(statement: Statement): Statement =>
     new Proxy(statement, {
       get: (target, key, receiver) => {
-        // oxlint-disable-next-line anti-slop/no-reflect-get -- Proxy trap over the native statement: every member passes through unchanged.
         const value: unknown = Reflect.get(target, key, receiver);
         // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- Proxy boundary: the statement's own execution Effect passes through unchanged.
         return statementExecutions.has(key) && Effect.isEffect(value) ? Effect.andThen(acquisition, value) : value;
@@ -130,7 +128,6 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
   ]);
   return new Proxy(client, {
     get: (target, key, receiver) => {
-      // oxlint-disable-next-line anti-slop/no-reflect-get -- Proxy trap over the native client: unguarded members pass through unchanged.
       const member: unknown = guardedMembers.has(key) ? guardedMembers.get(key) : Reflect.get(target, key, receiver);
       return member;
     },

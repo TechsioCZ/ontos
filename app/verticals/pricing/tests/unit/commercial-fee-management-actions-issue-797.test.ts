@@ -758,6 +758,7 @@ describe('Commercial Fee management Actions issue #797', () => {
                   payload,
                   requestCorrelation,
                 });
+                // SAFETY: This fixture deliberately returns malformed owner evidence to verify rejection before persistence.
                 return response as CatalogSnapshotResponse;
               }),
           );

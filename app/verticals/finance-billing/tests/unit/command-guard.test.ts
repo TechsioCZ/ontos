@@ -1,5 +1,6 @@
-import { Effect, Layer, Predicate } from 'effect';
-import { HttpServerRequest } from 'effect/unstable/http';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, Effect, Layer, PlatformError, Predicate, Schema } from 'effect';
+import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
   ActiveApplicationCompositionService,
@@ -11,6 +12,7 @@ import type { AgentGrantWritePolicy } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import type { FinanceState } from '../../shared/apis/records.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 
@@ -77,7 +79,7 @@ const profileActionGrants = (writePolicy: AgentGrantWritePolicy) =>
     writePolicy,
   }).filter((relationship) => relationship.resource?.objectType === 'action_grant');
 
-it.layer(unusedProductionServices)('Finance command authorization', (suite) => {
+it.layer(Layer.merge(unusedProductionServices, NodeCrypto.layer))('Finance command authorization', (suite) => {
   suite.effect('executes an API-key principal through the real Action when native execute is allowed', () =>
     Effect.gen(function* apiKeyCommand() {
       const saved: FinanceState[] = [];
@@ -117,6 +119,38 @@ it.layer(unusedProductionServices)('Finance command authorization', (suite) => {
       expect(snapshot.transactionCount).toBe(1);
       expect(snapshot.committed).toHaveLength(1);
       expect(snapshot.stages).toContain('handler_executed');
+    }),
+  );
+
+  suite.effect('reports native UUID failure as Finance persistence unavailability without saving the ledger', () =>
+    Effect.gen(function* uuidFailure() {
+      const crypto = yield* Crypto.Crypto;
+      const cause = PlatformError.systemError({ _tag: 'Unknown', method: 'randomUUIDv4', module: 'Crypto' });
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        services: [
+          bindActionTestServices(applyCommandAction, {
+            load: () => Effect.succeed({ revision: 0, state: { financialPlanEntries: [], invoices: [] } }),
+            loadDocument: unused,
+            loadStateRow: unused,
+            save: () => Effect.die('UUID failure must not save Finance state'),
+            validators: { invoice: () => Effect.void },
+            writeDocument: () => Effect.die('UUID failure must not write Finance documents'),
+          }),
+        ],
+      });
+      const failure = yield* harness.runtime
+        .runAction(request)
+        .pipe(
+          Effect.provideService(Crypto.Crypto, Crypto.Crypto.of({ ...crypto, randomUUIDv4: () => Effect.fail(cause) })),
+          Effect.flip,
+        );
+      expect(Schema.is(FinancePersistenceUnavailable)(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        code: 'finance_persistence_unavailable',
+        reason: 'Finance persistence is temporarily unavailable',
+      });
+      expect(harness.snapshot().committed).toHaveLength(0);
     }),
   );
 

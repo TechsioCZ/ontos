@@ -9,52 +9,62 @@ import {
   stripUnbackedDiscount,
 } from '../../scripts/akros-merge.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
+import { OrderSchema } from '../../shared/domain/merchandise-model.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 
 const at = '2026-10-19T08:00:00.000Z';
-const product = (id: string, overrides: Record<string, unknown> = {}) => ({
-  id,
-  name: `Produkt ${id}`,
-  sku: `SKU-${id}`,
-  category: 'Šrouby',
+type EncodedState = typeof MerchandiseStateSchema.Encoded;
+type EncodedProduct = EncodedState['products'][number];
+type EncodedVariant = NonNullable<EncodedProduct['variants']>[number];
+const product = (id: string, overrides: Partial<EncodedProduct> = {}): EncodedProduct => ({
   active: true,
-  unit: 'ks',
-  vatRate: 21,
-  currentPriceMinor: 8,
-  lowStockThreshold: 5,
+  category: 'Šrouby',
   createdAt: at,
-  updatedAt: at,
+  currentPriceMinor: 8,
+  id,
+  lowStockThreshold: 5,
+  name: `Produkt ${id}`,
   priceHistory: [],
+  sku: `SKU-${id}`,
+  unit: 'ks',
+  updatedAt: at,
+  vatRate: 21,
   ...overrides,
 });
-const variant = (overrides: Record<string, unknown> = {}) => ({
+const variant = (overrides: Partial<EncodedVariant> = {}): EncodedVariant => ({
+  active: true,
+  attributes: '',
   id: 'v1',
+  minimumQuantity: 10,
+  name: 'M6 × 20',
+  priceMinor: 8,
+  priceTiers: [{ minimumQuantity: 1, priceExcludingVatMinor: 8, priceMinor: 10 }],
+  sku: 'SKU-v1',
   sourceId: '1',
   sourceUnit: 'ks',
-  sku: 'SKU-v1',
-  name: 'M6 × 20',
-  attributes: '',
-  active: true,
-  priceMinor: 8,
-  minimumQuantity: 10,
-  priceTiers: [{ minimumQuantity: 1, priceMinor: 10, priceExcludingVatMinor: 8 }],
   ...overrides,
 });
 const category = (id: string) => ({
-  id,
-  parentId: null,
-  name: `Kategorie ${id}`,
-  slug: id,
-  heading: `Kategorie ${id}`,
   description: '',
-  longDescription: '',
-  position: 0,
-  imageSrc: '',
-  imageAlt: `Kategorie ${id}`,
   hasChildren: false,
+  heading: `Kategorie ${id}`,
+  id,
+  imageAlt: `Kategorie ${id}`,
+  imageSrc: '',
+  longDescription: '',
+  name: `Kategorie ${id}`,
+  parentId: null,
+  position: 0,
+  slug: id,
 });
-const movement = (id: string, productId: string) => ({ id, productId, at, delta: 5, reason: 'RECEIPT' });
-const state = (input: Record<string, unknown>): MerchandiseState =>
+const movement = (id: string, productId: string): EncodedState['movements'][number] => ({
+  at,
+  delta: 5,
+  id,
+  productId,
+  reason: 'RECEIPT',
+});
+const state = (input: Partial<EncodedState>): MerchandiseState =>
   Schema.decodeUnknownSync(MerchandiseStateSchema)({
     categories: [],
     homepageFeaturedProductIds: [],
@@ -71,8 +81,8 @@ it('orders seed products first and appends current-only products last', () => {
 });
 
 it('keeps current price and name, fills only missing imageAlt', () => {
-  const current = state({ products: [product('p1', { name: 'Vlastní název', currentPriceMinor: 99 })] });
-  const seed = state({ products: [product('p1', { imageSrc: '/img.jpg', imageAlt: 'Alt ze semene' })] });
+  const current = state({ products: [product('p1', { currentPriceMinor: 99, name: 'Vlastní název' })] });
+  const seed = state({ products: [product('p1', { imageAlt: 'Alt ze semene', imageSrc: '/img.jpg' })] });
   const [merged] = mergeSeed(current, seed).products;
   expect(merged?.name).toEqual('Vlastní název');
   expect(merged?.currentPriceMinor).toEqual(99);
@@ -89,7 +99,7 @@ it('does not overwrite an existing non-empty imageAlt', () => {
 it('fills a missing isSale flag on an existing variant from the seed', () => {
   const current = state({ products: [product('p1', { variants: [variant()] })] });
   const seed = state({ products: [product('p1', { variants: [variant({ isSale: true })] })] });
-  expect(backfillProduct(current.products[0]!, seed.products[0]!).variants?.[0]?.isSale).toEqual(true);
+  expect(backfillProduct(current.products[0], seed.products[0]).variants?.[0]?.isSale).toEqual(true);
 });
 
 it('adds seed categories once across repeated merges', () => {
@@ -102,28 +112,41 @@ it('adds seed categories once across repeated merges', () => {
 
 it('is idempotent when applied twice', () => {
   const current = state({
-    products: [product('p-extra'), product('p1', { variants: [variant()] })],
     movements: [movement('m-extra', 'p-extra')],
+    products: [product('p-extra'), product('p1', { variants: [variant()] })],
   });
   const seed = state({
     categories: [category('c1')],
     movements: [movement('m1', 'p1')],
-    products: [product('p1', { variants: [variant({ isSale: true })], imageAlt: 'Alt' }), product('p2')],
+    products: [product('p1', { imageAlt: 'Alt', variants: [variant({ isSale: true })] }), product('p2')],
   });
   const once = mergeSeed(current, seed);
   expect(mergeSeed(once, seed)).toEqual(once);
 });
 
 it('keeps existing orders and movements and skips seed records already present', () => {
-  const order = { id: 'o1', number: 'OBJ-2026-0001' };
-  const seedOrder = { id: 'o-seed', number: 'OBJ-2026-0001' };
+  const order = Schema.decodeUnknownSync(OrderSchema)({
+    createdAt: at,
+    id: 'o1',
+    lines: [{ productId: 'p1', productName: 'Produkt p1', quantity: 1, sku: 'SKU-p1', unitPriceMinor: 8, vatRate: 21 }],
+    number: 'OBJ-2026-0001',
+    partyId: 'party-1',
+    status: 'NEW',
+    totalMinor: 10,
+    totalVatMinor: 2,
+    updatedAt: at,
+  });
+  const seedOrder = Schema.decodeUnknownSync(OrderSchema)({
+    ...Schema.encodeSync(OrderSchema)(order),
+    id: 'o-seed',
+  });
   const current = {
     ...state({ movements: [movement('m1', 'p1')], products: [product('p1')] }),
-    orders: [order as unknown as MerchandiseState['orders'][number]],
+    orders: [order],
   };
   const seed = {
     ...state({ movements: [movement('m1', 'p1'), movement('m2', 'p1')], products: [product('p1')] }),
-    orders: [seedOrder as unknown as MerchandiseState['orders'][number]],
+    orders: [seedOrder],
   };
   const merged = mergeSeed(current, seed);
   expect(merged.orders.map((entry) => entry.id)).toEqual(['o1']);
@@ -170,7 +193,7 @@ it('numbers unordered siblings 10, 20, 30 by Czech name and keeps a group staff 
     { name: 'B', parentId: 'x', position: 5 },
     { name: 'A', parentId: 'x', position: 0 },
   ]);
-  expect(ordered.map((category) => `${category.name}:${category.position}`)).toEqual([
+  expect(ordered.map((entry) => `${entry.name}:${entry.position}`)).toEqual([
     'Šrouby:30',
     'Matice:20',
     'Čepy:10',
@@ -181,12 +204,12 @@ it('numbers unordered siblings 10, 20, 30 by Czech name and keeps a group staff 
 
 it('stores the source "NULL" description placeholder as empty text', () => {
   expect(
-    decodeCategoryText({ name: 'Null', description: 'NULL', longDescription: ' null ', heading: 'Šrouby' }),
+    decodeCategoryText({ description: 'NULL', heading: 'Šrouby', longDescription: ' null ', name: 'Null' }),
   ).toEqual({
-    name: 'Null',
     description: '',
-    longDescription: '',
     heading: 'Šrouby',
+    longDescription: '',
+    name: 'Null',
   });
 });
 

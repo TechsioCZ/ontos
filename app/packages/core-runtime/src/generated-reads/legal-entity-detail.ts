@@ -61,12 +61,15 @@ export const classifyLegalEntityDetail = Effect.fn('LegalEntityDetail.classify')
     const status = yield* Schema.decodeUnknownEffect(LegalEntityStatusSchema)(row.status).pipe(
       Effect.mapError(unavailable),
     );
-    return {
+    const result = {
       legalEntityRef: input.legalEntityRef,
       legalName: row.legalName,
       status,
-      ...(row.welcome === null ? {} : { welcome: row.welcome }),
     };
+    if (row.welcome === null) {
+      return result;
+    }
+    return { ...result, welcome: row.welcome };
   },
 );
 

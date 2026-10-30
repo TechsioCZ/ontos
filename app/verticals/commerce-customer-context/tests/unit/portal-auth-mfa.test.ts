@@ -1,7 +1,7 @@
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { HttpApi } from 'effect/unstable/httpapi';
+import { HttpApi } from 'effect/http-api';
 import { expect, it } from 'effect-rstest';
 
 import type { OTPOptions } from 'better-auth/plugins/two-factor';

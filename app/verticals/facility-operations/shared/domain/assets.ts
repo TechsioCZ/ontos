@@ -11,10 +11,10 @@ import {
   NoteSchema,
   PropertyRefSchema,
   TextSchema,
-  opsIdOf,
+  OpsIdSchema,
 } from './common.ts';
 
-export const AssetIdSchema = opsIdOf('FacilityAssetId');
+export const AssetIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityAssetId'));
 export type AssetId = typeof AssetIdSchema.Type;
 
 /** budova / technologie / vybavení */
@@ -51,7 +51,6 @@ export const AssetEventKindSchema = Schema.Literals([
   'retirement',
   'liquidation',
 ]);
-export type AssetEventKind = typeof AssetEventKindSchema.Type;
 /** Event kinds a user may record directly (the rest come from dedicated commands). */
 export const manualEventKinds = ['placed_in_service', 'construction', 'ownership', 'note'] as const;
 export const ManualEventKindSchema = Schema.Literals(manualEventKinds);
@@ -101,10 +100,9 @@ export type DepreciationType = typeof DepreciationTypeSchema.Type;
 export const DepreciationIntervalSchema = Schema.Literals(['monthly', 'yearly']);
 export type DepreciationInterval = typeof DepreciationIntervalSchema.Type;
 export const PlanStatusSchema = Schema.Literals(['draft', 'confirmed']);
-export type PlanStatus = typeof PlanStatusSchema.Type;
 export const YearsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100));
 /** `YYYY` (yearly) or `YYYY-MM` (monthly). */
-export const PeriodSchema = Schema.String.check(Schema.isPattern(/^\d{4}(-(0[1-9]|1[0-2]))?$/));
+export const PeriodSchema = Schema.String.check(Schema.isPattern(/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/u));
 
 /** One manually approved depreciation amount (S03: „ručně potvrzené částky“). */
 export const DepreciationEntrySchema = Schema.Struct({
@@ -126,7 +124,6 @@ export const PlanHistoryEntrySchema = Schema.Struct({
   change: Schema.Literals(['created', 'confirmed', 'entry_recorded']),
   note: Schema.optionalKey(NoteSchema),
 });
-export type PlanHistoryEntry = typeof PlanHistoryEntrySchema.Type;
 
 export const DepreciationPlanSchema = Schema.Struct({
   baseMinor: MinorAmountSchema,
@@ -155,7 +152,6 @@ export const DisposalSchema = Schema.Struct({
   proceedsMinor: Schema.optionalKey(MinorAmountSchema),
   reason: TextSchema(2000),
 });
-export type Disposal = typeof DisposalSchema.Type;
 
 /**
  * Staff-only archive of a disposed record (S02 demo hygiene, e.g. test records from verification runs): the
@@ -166,20 +162,19 @@ export const AssetArchiveSchema = Schema.Struct({
   by: PrincipalRefSchema,
   reason: TextSchema(2000),
 });
-export type AssetArchive = typeof AssetArchiveSchema.Type;
 
 export const AssetSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  archive: Schema.optionalKey(AssetArchiveSchema),
   acquisitionDate: Schema.optionalKey(IsoDateSchema),
   acquisitionMethod: Schema.optionalKey(AcquisitionMethodSchema),
   acquisitionValueMinor: Schema.optionalKey(MinorAmountSchema),
+  archive: Schema.optionalKey(AssetArchiveSchema),
   /** Identifier of the external accounting product card; absent = „nenapojeno“. */
   accountingProduct: Schema.optionalKey(TextSchema(200)),
   category: TextSchema(120),
   /** Last confirmed current value (S02-02); history in `events` (value_change). */
-  currentValueMinor: Schema.optionalKey(MinorAmountSchema),
   currentValueDate: Schema.optionalKey(IsoDateSchema),
+  currentValueMinor: Schema.optionalKey(MinorAmountSchema),
   depreciationPlans: Schema.optionalKey(Schema.Array(DepreciationPlanSchema)),
   disposal: Schema.optionalKey(DisposalSchema),
   events: Schema.optionalKey(Schema.Array(AssetEventSchema)),
@@ -208,13 +203,12 @@ export const FollowUpSchema = Schema.Struct({
   createdBy: PrincipalRefSchema,
   dueDate: IsoDateSchema,
   id: TextSchema(300),
+  resolution: Schema.optionalKey(NoteSchema),
   resolvedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   resolvedBy: Schema.optionalKey(PrincipalRefSchema),
-  resolution: Schema.optionalKey(NoteSchema),
   status: Schema.Literals(['open', 'done']),
   title: TextSchema(200),
 });
-export type FollowUp = typeof FollowUpSchema.Type;
 
 export const InventoryItemSchema = Schema.Struct({
   assetId: AssetIdSchema,
@@ -263,20 +257,26 @@ export type InvestmentPriority = typeof InvestmentPrioritySchema.Type;
 export const investmentPriorities: readonly InvestmentPriority[] = ['high', 'medium', 'low'];
 export const InvestmentStatusSchema = Schema.Literals(['planned', 'approved', 'in_progress', 'done', 'cancelled']);
 export type InvestmentStatus = typeof InvestmentStatusSchema.Type;
-export const investmentStatuses: readonly InvestmentStatus[] = ['planned', 'approved', 'in_progress', 'done', 'cancelled'];
+export const investmentStatuses: readonly InvestmentStatus[] = [
+  'planned',
+  'approved',
+  'in_progress',
+  'done',
+  'cancelled',
+];
 
 export const InvestmentSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: TextSchema(300),
-  title: TextSchema(200),
+  actualAmountMinor: Schema.optionalKey(MinorAmountSchema),
+  actualDate: Schema.optionalKey(IsoDateSchema),
   description: Schema.optionalKey(NoteSchema),
+  id: TextSchema(300),
+  location: Schema.optionalKey(PropertyRefSchema),
   plannedAmountMinor: MinorAmountSchema,
   plannedDate: IsoDateSchema,
   priority: InvestmentPrioritySchema,
   status: InvestmentStatusSchema,
-  actualAmountMinor: Schema.optionalKey(MinorAmountSchema),
-  actualDate: Schema.optionalKey(IsoDateSchema),
-  location: Schema.optionalKey(PropertyRefSchema),
+  title: TextSchema(200),
   /** property-portfolio property id (also when `location` is a unit), for filtering and summaries. */
   propertyId: Schema.optionalKey(TextSchema(300)),
   /** Optional asset the investment improves or replaces. */
@@ -292,8 +292,8 @@ export const investmentDifference = (investment: Investment): number | undefined
 export const AssetsStateSchema = Schema.Struct({
   assets: Schema.Array(AssetSchema),
   inventories: Schema.optionalKey(Schema.Array(InventorySchema)),
-  templates: Schema.optionalKey(Schema.Array(DepreciationTemplateSchema)),
   investments: Schema.optionalKey(Schema.Array(InvestmentSchema)),
+  templates: Schema.optionalKey(Schema.Array(DepreciationTemplateSchema)),
 });
 export type AssetsState = typeof AssetsStateSchema.Type;
 export type AssetsStateEncoded = typeof AssetsStateSchema.Encoded;
@@ -323,42 +323,50 @@ export interface ServiceDue {
   readonly title: string;
 }
 
+const serviceRank = (entry: ServiceRecord) => entry.performedOn ?? entry.nextDueOn ?? '';
+
 export const currentServiceRecords = (asset: Asset): readonly ServiceRecord[] => {
   const newest = new Map<string, ServiceRecord>();
   for (const record of asset.services ?? []) {
     const key = `${record.kind}:${record.title.toLowerCase()}`;
     const previous = newest.get(key);
-    const rank = (entry: ServiceRecord) => entry.performedOn ?? entry.nextDueOn ?? '';
-    if (previous === undefined || rank(record) >= rank(previous)) {
+    if (previous === undefined || serviceRank(record) >= serviceRank(previous)) {
       newest.set(key, record);
     }
   }
   return [...newest.values()];
 };
 
-export const upcomingServiceDue = (state: AssetsState): readonly ServiceDue[] =>
-  state.assets
-    .filter(isActiveAsset)
-    .flatMap((asset) =>
-      currentServiceRecords(asset).flatMap((record): ServiceDue[] =>
-        record.nextDueOn === undefined
-          ? []
-          : [
-              {
-                assetId: asset.id,
-                assetName: asset.name,
-                inventoryNumber: asset.inventoryNumber,
-                kind: record.kind,
-                nextDueOn: record.nextDueOn,
-                recordId: record.id,
-                title: record.title,
-                ...(asset.location === undefined ? {} : { location: asset.location }),
-                ...(record.responsible === undefined ? {} : { responsible: record.responsible }),
-              },
-            ],
-      ),
-    )
-    .toSorted((left, right) => left.nextDueOn.localeCompare(right.nextDueOn));
+export const upcomingServiceDue = (state: AssetsState): readonly ServiceDue[] => {
+  const due: ServiceDue[] = [];
+  for (const asset of state.assets) {
+    if (!isActiveAsset(asset)) {
+      continue;
+    }
+    for (const record of currentServiceRecords(asset)) {
+      if (record.nextDueOn === undefined) {
+        continue;
+      }
+      const entry: { -readonly [K in keyof ServiceDue]: ServiceDue[K] } = {
+        assetId: asset.id,
+        assetName: asset.name,
+        inventoryNumber: asset.inventoryNumber,
+        kind: record.kind,
+        nextDueOn: record.nextDueOn,
+        recordId: record.id,
+        title: record.title,
+      };
+      if (asset.location !== undefined) {
+        entry.location = asset.location;
+      }
+      if (record.responsible !== undefined) {
+        entry.responsible = record.responsible;
+      }
+      due.push(entry);
+    }
+  }
+  return due.toSorted((left, right) => left.nextDueOn.localeCompare(right.nextDueOn));
+};
 
 /** Sum of approved depreciation amounts of one plan. */
 export const approvedTotal = (plan: DepreciationPlan): number =>

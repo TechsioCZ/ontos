@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
 import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -9,13 +9,16 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { Schema } from 'effect';
-import { useEffect, useState } from 'react';
+import { Effect, Result, Schema } from 'effect';
+import { useReducer, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
-import type { PropertyRef } from '../../../../../shared/domain/common.ts';
+import type { IsoDateSchema, PropertyRef } from '../../../../../shared/domain/common.ts';
 import {
   SecurityIncidentIdSchema,
+  SecurityDeviceTypeSchema,
+  SecurityDeviceStateSchema,
+  SecuritySeveritySchema,
   securityDeviceStates,
   securityDeviceTypes,
   securitySeverities,
@@ -32,18 +35,29 @@ import { runCommand } from '../../../../ui/use-agenda.ts';
 import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts';
 import { addDays, createServiceTask, locationText, todayPrague, useSecurityLabel } from './security-model.ts';
 
-export type RunCommand = (command: OpsCommand) => Promise<CommandOutcome>;
+export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
+type DeviceFields = Omit<Extract<OpsCommand, { readonly _tag: 'SecurityDeviceCreate' }>, '_tag'>;
+type MutableDeviceFields = { -readonly [Key in keyof DeviceFields]: DeviceFields[Key] };
+type InspectionCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceRecordInspection' }>;
+type MutableInspectionCommand = { -readonly [Key in keyof InspectionCommand]: InspectionCommand[Key] };
+type ReportCommand = Extract<OpsCommand, { readonly _tag: 'SecurityIncidentReport' }>;
+type MutableReportCommand = { -readonly [Key in keyof ReportCommand]: ReportCommand[Key] };
+type ResolveCommand = Extract<OpsCommand, { readonly _tag: 'SecurityIncidentChangeState' }>;
+type MutableResolveCommand = { -readonly [Key in keyof ResolveCommand]: ResolveCommand[Key] };
 
+type FormError = FailureReason | 'required';
 const NONE = 'none';
 
-const ErrorLine = ({ error }: { readonly error: FailureReason | 'required' | undefined }) => {
+const ErrorLine = ({ error }: { readonly error: FormError | undefined }) => {
   const { t } = useModernI18n();
   if (error === undefined) {
     return null;
   }
   return (
     <StatusText showIcon status="error">
-      {error === 'required' ? t('facility-operations.common.required') : t(`facility-operations.common.errors.${error}`)}
+      {error === 'required'
+        ? t('facility-operations.common.required')
+        : t(`facility-operations.common.errors.${error}`)}
     </StatusText>
   );
 };
@@ -73,7 +87,12 @@ const PanelFrame = ({
           <Button onClick={onClose} theme="outlined" variant="secondary">
             {t('facility-operations.common.cancel')}
           </Button>
-          <Button isLoading={busy} loadingText={t('facility-operations.common.saving')} onClick={onSubmit} variant="primary">
+          <Button
+            isLoading={busy}
+            loadingText={t('facility-operations.common.saving')}
+            onClick={onSubmit}
+            variant="primary"
+          >
             {submitLabel}
           </Button>
         </>
@@ -105,36 +124,118 @@ const PanelFrame = ({
 interface DeviceDraft {
   administrator: string;
   deviceType: SecurityDeviceType;
-  lastInspectionDate: string;
+  lastInspectionDate: typeof IsoDateSchema.Encoded;
   location: string;
   locationDetail: string;
   name: string;
-  nextInspectionDate: string;
+  nextInspectionDate: typeof IsoDateSchema.Encoded;
   note: string;
   serialNumber: string;
   state: SecurityDeviceState;
   supplier: string;
 }
 
-const draftOf = (device: SecurityDevice | undefined): DeviceDraft => ({
-  administrator: device?.administrator ?? '',
-  deviceType: device?.deviceType ?? 'camera',
-  lastInspectionDate: device?.lastInspectionDate ?? '',
-  location: device?.location === undefined ? '' : `${device.location.kind}:${device.location.id}`,
-  locationDetail: device?.locationDetail ?? '',
-  name: device?.name ?? '',
-  nextInspectionDate: device?.nextInspectionDate ?? '',
-  note: device?.note ?? '',
-  serialNumber: device?.serialNumber ?? '',
-  state: device?.state ?? 'in_operation',
-  supplier: device?.supplier ?? '',
-});
+const draftOf = (device: SecurityDevice | undefined): DeviceDraft => {
+  if (device === undefined) {
+    return {
+      administrator: '',
+      deviceType: 'camera',
+      lastInspectionDate: '',
+      location: '',
+      locationDetail: '',
+      name: '',
+      nextInspectionDate: '',
+      note: '',
+      serialNumber: '',
+      state: 'in_operation',
+      supplier: '',
+    };
+  }
+  return {
+    administrator: device.administrator ?? '',
+    deviceType: device.deviceType,
+    lastInspectionDate: device.lastInspectionDate ?? '',
+    location: device.location === undefined ? '' : `${device.location.kind}:${device.location.id}`,
+    locationDetail: device.locationDetail ?? '',
+    name: device.name,
+    nextInspectionDate: device.nextInspectionDate ?? '',
+    note: device.note ?? '',
+    serialNumber: device.serialNumber ?? '',
+    state: device.state,
+    supplier: device.supplier ?? '',
+  };
+};
 
 const textKeys = ['administrator', 'locationDetail', 'note', 'serialNumber', 'supplier'] as const;
 const dateKeys = ['lastInspectionDate', 'nextInspectionDate'] as const;
 
 /** Create (device undefined) or edit one device card. */
-export const DeviceFormPanel = ({
+interface SubmitSecurityDeviceInput {
+  readonly device: SecurityDevice | undefined;
+  readonly draft: DeviceDraft;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly onSaved: (deviceId: string | undefined) => void;
+  readonly pickedLocation: () => PropertyRef | undefined;
+  readonly run: RunCommand;
+  readonly setBusy: (busy: boolean) => void;
+  readonly setError: (error: FormError | undefined) => void;
+  readonly toast: ReturnType<typeof useToast>;
+}
+
+const submitSecurityDevice = Effect.fn('Facility.submitSecurityDevice')(function* submitSecurityDevice({
+  device,
+  draft,
+  k,
+  onSaved,
+  pickedLocation,
+  run,
+  setBusy,
+  setError,
+  toast,
+}: SubmitSecurityDeviceInput) {
+  if (draft.name.trim() === '') {
+    setError('required');
+    return;
+  }
+  const location = pickedLocation();
+  const fields: MutableDeviceFields = {
+    deviceType: draft.deviceType,
+    name: draft.name.trim(),
+    state: draft.state,
+  };
+  for (const key of [...textKeys, ...dateKeys]) {
+    const value = draft[key].trim();
+    if (value !== '') {
+      fields[key] = value;
+    }
+  }
+  if (location !== undefined) {
+    fields.location = location;
+  }
+  setBusy(true);
+  const command: OpsCommand =
+    device === undefined
+      ? { _tag: 'SecurityDeviceCreate', ...fields }
+      : {
+          _tag: 'SecurityDeviceUpdate',
+          ...fields,
+          clear: [
+            ...[...textKeys, ...dateKeys].filter((key) => draft[key].trim() === '' && device[key] !== undefined),
+            ...(location === undefined && device.location !== undefined ? (['location'] as const) : []),
+          ],
+          deviceId: device.id,
+        };
+  const outcome = yield* run(command);
+  setBusy(false);
+  if (outcome.ok) {
+    toast.create({ title: device === undefined ? k('created') : k('saved'), type: 'success' });
+    onSaved(outcome.result.entityIds[0]);
+  } else {
+    setError(outcome.reason);
+  }
+});
+
+const DeviceFormSession = ({
   device,
   onClose,
   onSaved,
@@ -152,13 +253,7 @@ export const DeviceFormPanel = ({
   const properties = usePropertyOptions();
   const [draft, setDraft] = useState<DeviceDraft>(() => draftOf(device));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<FailureReason | 'required' | undefined>(undefined);
-  useEffect(() => {
-    if (open) {
-      setDraft(draftOf(device));
-      setError(undefined);
-    }
-  }, [open, device]);
+  const [error, setError] = useState<FormError | undefined>();
   const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
@@ -177,48 +272,8 @@ export const DeviceFormPanel = ({
       : undefined;
   };
 
-  const submit = async () => {
-    if (draft.name.trim() === '') {
-      setError('required');
-      return;
-    }
-    const location = pickedLocation();
-    const filled = Object.fromEntries(
-      [...textKeys, ...dateKeys].flatMap((key) => (draft[key].trim() === '' ? [] : [[key, draft[key].trim()]])),
-    );
-    setBusy(true);
-    const command: OpsCommand =
-      device === undefined
-        ? {
-            _tag: 'SecurityDeviceCreate',
-            ...filled,
-            deviceType: draft.deviceType,
-            name: draft.name.trim(),
-            state: draft.state,
-            ...(location === undefined ? {} : { location }),
-          }
-        : {
-            _tag: 'SecurityDeviceUpdate',
-            ...filled,
-            clear: [
-              ...[...textKeys, ...dateKeys].filter((key) => draft[key].trim() === '' && device[key] !== undefined),
-              ...(location === undefined && device.location !== undefined ? (['location'] as const) : []),
-            ],
-            deviceId: device.id,
-            deviceType: draft.deviceType,
-            name: draft.name.trim(),
-            state: draft.state,
-            ...(location === undefined ? {} : { location }),
-          };
-    const outcome = await run(command);
-    setBusy(false);
-    if (outcome.ok) {
-      toast.create({ title: device === undefined ? k('created') : k('saved'), type: 'success' });
-      onSaved(outcome.result.entityIds[0]);
-    } else {
-      setError(outcome.reason);
-    }
-  };
+  const submit = () =>
+    submitSecurityDevice({ device, draft, k, onSaved, pickedLocation, run, setBusy, setError, toast });
 
   const options = (values: readonly string[], prefix: string) =>
     values.map((value) => ({ displayValue: k(`${prefix}.${value}`), label: k(`${prefix}.${value}`), value }));
@@ -227,7 +282,9 @@ export const DeviceFormPanel = ({
     <PanelFrame
       busy={busy}
       onClose={onClose}
-      onSubmit={() => void submit()}
+      onSubmit={() => {
+        void browserRuntime.runPromise(submit());
+      }}
       open={open}
       submitLabel={device === undefined ? k('create.submit') : k('edit.submit')}
       title={device === undefined ? k('create.title') : k('edit.title')}
@@ -247,7 +304,12 @@ export const DeviceFormPanel = ({
           items={options(securityDeviceTypes, 'deviceType')}
           label={k('fields.deviceType')}
           name="deviceType"
-          onValueChange={({ value }) => set('deviceType', (value[0] as SecurityDeviceType | undefined) ?? 'camera')}
+          onValueChange={({ value }) => {
+            const parsed = Schema.decodeUnknownResult(SecurityDeviceTypeSchema)(value[0] ?? 'camera');
+            if (Result.isSuccess(parsed)) {
+              set('deviceType', parsed.success);
+            }
+          }}
           size="md"
           value={[draft.deviceType]}
         />
@@ -255,7 +317,12 @@ export const DeviceFormPanel = ({
           items={options(securityDeviceStates, 'state')}
           label={k('fields.state')}
           name="state"
-          onValueChange={({ value }) => set('state', (value[0] as SecurityDeviceState | undefined) ?? 'in_operation')}
+          onValueChange={({ value }) => {
+            const parsed = Schema.decodeUnknownResult(SecurityDeviceStateSchema)(value[0] ?? 'in_operation');
+            if (Result.isSuccess(parsed)) {
+              set('state', parsed.success);
+            }
+          }}
           size="md"
           value={[draft.state]}
         />
@@ -338,8 +405,174 @@ export const DeviceFormPanel = ({
   );
 };
 
+/** Creates the work-tasks task and stores its reference on the incident. Returns whether both succeeded. */
+export const linkNewTask = Effect.fn('FacilityOperations.linkNewTask')(function* linkNewTask(input: {
+  readonly description: string;
+  readonly device: SecurityDevice;
+  readonly dueDate: typeof IsoDateSchema.Encoded;
+  readonly incidentId: SecurityIncident['id'];
+  readonly label: ReturnType<typeof useSecurityLabel>;
+  readonly revision: number;
+  readonly severity: SecuritySeverity;
+  readonly severityLabel: string;
+  readonly tenantId: string;
+  readonly title: string;
+}) {
+  const k = input.label;
+  const language = window.location.pathname.split('/')[1] === 'en' ? 'en' : 'cs';
+  const deviceUrl = new URL(`/${language}/provoz/bezpecnost`, window.location.origin);
+  deviceUrl.searchParams.set('device', input.device.id);
+  const task = yield* createServiceTask(
+    {
+      description: k('report.taskDescription', {
+        description: input.description,
+        device: input.device.name,
+        location: locationText(input.device, '—'),
+        severity: input.severityLabel,
+        url: deviceUrl.href,
+      }),
+      dueDate: input.dueDate === '' ? addDays(todayPrague(), 3) : input.dueDate,
+      severity: input.severity,
+      title: k('report.taskTitle', { device: input.device.name, title: input.title }),
+    },
+    input.device,
+    input.tenantId,
+  );
+  if (!task.ok) {
+    return false;
+  }
+  const linked = yield* runCommand(
+    { _tag: 'SecurityIncidentLinkTask', incidentId: input.incidentId, task: task.task },
+    input.revision,
+  );
+  return linked.ok;
+});
+
 /** S11-01: report a fault and, in the same step, create the linked service task in work-tasks. */
-export const ReportFaultPanel = ({
+interface SubmitSecurityFaultInput {
+  readonly active: readonly SecurityDevice[];
+  readonly description: string;
+  readonly deviceId: string;
+  readonly dueDate: typeof IsoDateSchema.Encoded;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly occurredOn: SecurityIncident['occurredOn'];
+  readonly onSaved: (deviceId: string) => void;
+  readonly run: RunCommand;
+  readonly setBusy: (busy: boolean) => void;
+  readonly setError: (error: FormError | undefined) => void;
+  readonly severity: SecuritySeverity;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly tenantId: string;
+  readonly title: string;
+  readonly toast: ReturnType<typeof useToast>;
+  readonly withTask: boolean;
+}
+
+const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* submitSecurityFault({
+  active,
+  description,
+  deviceId,
+  dueDate,
+  k,
+  occurredOn,
+  onSaved,
+  run,
+  setBusy,
+  setError,
+  severity,
+  t,
+  tenantId,
+  title,
+  toast,
+  withTask,
+}: SubmitSecurityFaultInput) {
+  const device = active.find((entry) => entry.id === deviceId);
+  if (device === undefined || title.trim() === '' || occurredOn === '') {
+    setError('required');
+    return;
+  }
+  setBusy(true);
+  const command: MutableReportCommand = {
+    _tag: 'SecurityIncidentReport',
+    deviceId: device.id,
+    occurredOn,
+    severity,
+    title: title.trim(),
+  };
+  if (description.trim() !== '') {
+    command.description = description.trim();
+  }
+  const reported = yield* run(command);
+  if (!reported.ok) {
+    setBusy(false);
+    setError(reported.reason);
+    return;
+  }
+  const [createdId] = reported.result.entityIds;
+  let incidentId: SecurityIncident['id'] | undefined;
+  if (createdId !== undefined) {
+    const parsedId = Schema.decodeResult(SecurityIncidentIdSchema)(createdId);
+    if (Result.isFailure(parsedId)) {
+      setBusy(false);
+      setError('invalid');
+      return;
+    }
+    incidentId = parsedId.success;
+  }
+  if (!withTask || incidentId === undefined) {
+    setBusy(false);
+    toast.create({ title: k('report.done'), type: 'success' });
+    onSaved(device.id);
+    return;
+  }
+  const created = yield* linkNewTask({
+    description: description.trim(),
+    device,
+    dueDate,
+    incidentId,
+    label: k,
+    revision: reported.result.revision,
+    severity,
+    severityLabel: t(`facility-operations.security.severity.${severity}`),
+    tenantId,
+    title: title.trim(),
+  });
+  setBusy(false);
+  toast.create(
+    created
+      ? { title: k('report.doneWithTask'), type: 'success' }
+      : { description: k('report.taskFailed'), title: k('report.done'), type: 'warning' },
+  );
+  onSaved(device.id);
+});
+
+interface ReportDraft {
+  readonly description: string;
+  readonly deviceId: string;
+  readonly dueDate: typeof IsoDateSchema.Encoded;
+  readonly occurredOn: SecurityIncident['occurredOn'];
+  readonly severity: SecuritySeverity;
+  readonly title: string;
+  readonly withTask: boolean;
+}
+const reportDraftOf = (initialDeviceId: string | undefined): ReportDraft => {
+  const today = todayPrague();
+  return {
+    description: '',
+    deviceId: initialDeviceId ?? '',
+    dueDate: addDays(today, 3),
+    occurredOn: today,
+    severity: 'high',
+    title: '',
+    withTask: true,
+  };
+};
+const updateReportDraft = (draft: ReportDraft, changes: Partial<ReportDraft>): ReportDraft => ({
+  ...draft,
+  ...changes,
+});
+
+const ReportFaultSession = ({
   devices,
   initialDeviceId,
   onClose,
@@ -360,82 +593,45 @@ export const ReportFaultPanel = ({
   const { t } = useModernI18n();
   const toast = useToast();
   const active = devices.filter((device) => device.state !== 'decommissioned');
-  const [deviceId, setDeviceId] = useState(initialDeviceId ?? '');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState<SecuritySeverity>('high');
-  const [occurredOn, setOccurredOn] = useState(todayPrague());
-  const [withTask, setWithTask] = useState(true);
-  const [dueDate, setDueDate] = useState(addDays(todayPrague(), 3));
+  const [draft, updateDraft] = useReducer(updateReportDraft, initialDeviceId, reportDraftOf);
+  const { description, deviceId, dueDate, occurredOn, severity, title, withTask } = draft;
+  const setDeviceId = (nextValue: string) => updateDraft({ deviceId: nextValue });
+  const setTitle = (nextValue: string) => updateDraft({ title: nextValue });
+  const setDescription = (nextValue: string) => updateDraft({ description: nextValue });
+  const setSeverity = (nextValue: SecuritySeverity) => updateDraft({ severity: nextValue });
+  const setOccurredOn = (nextValue: SecurityIncident['occurredOn']) => updateDraft({ occurredOn: nextValue });
+  const setWithTask = (nextValue: boolean) => updateDraft({ withTask: nextValue });
+  const setDueDate = (nextValue: typeof IsoDateSchema.Encoded) => updateDraft({ dueDate: nextValue });
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<FailureReason | 'required' | undefined>(undefined);
-  useEffect(() => {
-    if (open) {
-      setDeviceId(initialDeviceId ?? '');
-      setTitle('');
-      setDescription('');
-      setSeverity('high');
-      setOccurredOn(todayPrague());
-      setWithTask(true);
-      setDueDate(addDays(todayPrague(), 3));
-      setError(undefined);
-    }
-  }, [open, initialDeviceId]);
+  const [error, setError] = useState<FormError | undefined>();
 
-  const submit = async () => {
-    const device = active.find((entry) => entry.id === deviceId);
-    if (device === undefined || title.trim() === '' || occurredOn === '') {
-      setError('required');
-      return;
-    }
-    setBusy(true);
-    const reported = await run({
-      _tag: 'SecurityIncidentReport',
-      deviceId: device.id,
-      occurredOn,
-      severity,
-      title: title.trim(),
-      ...(description.trim() === '' ? {} : { description: description.trim() }),
-    });
-    if (!reported.ok) {
-      setBusy(false);
-      setError(reported.reason);
-      return;
-    }
-    const createdId = reported.result.entityIds[0];
-    const incidentId = createdId === undefined ? undefined : Schema.decodeSync(SecurityIncidentIdSchema)(createdId);
-    if (!withTask || incidentId === undefined) {
-      setBusy(false);
-      toast.create({ title: k('report.done'), type: 'success' });
-      onSaved(device.id);
-      return;
-    }
-    const created = await linkNewTask({
-      description: description.trim(),
-      device,
+  const submit = () =>
+    submitSecurityFault({
+      active,
+      description,
+      deviceId,
       dueDate,
-      incidentId,
-      label: k,
-      revision: reported.result.revision,
+      k,
+      occurredOn,
+      onSaved,
+      run,
+      setBusy,
+      setError,
       severity,
-      severityLabel: t(`facility-operations.security.severity.${severity}`),
+      t,
       tenantId,
-      title: title.trim(),
+      title,
+      toast,
+      withTask,
     });
-    setBusy(false);
-    toast.create(
-      created
-        ? { title: k('report.doneWithTask'), type: 'success' }
-        : { description: k('report.taskFailed'), title: k('report.done'), type: 'warning' },
-    );
-    onSaved(device.id);
-  };
 
   return (
     <PanelFrame
       busy={busy}
       onClose={onClose}
-      onSubmit={() => void submit()}
+      onSubmit={() => {
+        void browserRuntime.runPromise(submit());
+      }}
       open={open}
       submitLabel={k('report.submit')}
       title={k('report.title')}
@@ -449,8 +645,8 @@ export const ReportFaultPanel = ({
         }))}
         label={k('fields.device')}
         name="deviceId"
-        placeholder={k('report.pickDevice')}
         onValueChange={({ value }) => setDeviceId(value[0] ?? '')}
+        placeholder={k('report.pickDevice')}
         size="md"
         value={deviceId === '' ? [] : [deviceId]}
       />
@@ -472,7 +668,12 @@ export const ReportFaultPanel = ({
           }))}
           label={k('fields.severity')}
           name="severity"
-          onValueChange={({ value }) => setSeverity((value[0] as SecuritySeverity | undefined) ?? 'high')}
+          onValueChange={({ value }) => {
+            const parsed = Schema.decodeUnknownResult(SecuritySeveritySchema)(value[0] ?? 'high');
+            if (Result.isSuccess(parsed)) {
+              setSeverity(parsed.success);
+            }
+          }}
           size="md"
           value={[severity]}
         />
@@ -515,51 +716,59 @@ export const ReportFaultPanel = ({
   );
 };
 
-/** Creates the work-tasks task and stores its reference on the incident. Returns whether both succeeded. */
-export const linkNewTask = async (input: {
-  readonly description: string;
-  readonly device: SecurityDevice;
-  readonly dueDate: string;
-  readonly incidentId: SecurityIncident['id'];
-  readonly label: ReturnType<typeof useSecurityLabel>;
-  readonly revision: number;
-  readonly severity: SecuritySeverity;
-  readonly severityLabel: string;
-  readonly tenantId: string;
-  readonly title: string;
-}) => {
-  const k = input.label;
-  const language = window.location.pathname.split('/')[1] === 'en' ? 'en' : 'cs';
-  const deviceUrl = new URL(`/${language}/provoz/bezpecnost`, window.location.origin);
-  deviceUrl.searchParams.set('device', input.device.id);
-  const task = await createServiceTask(
-    {
-      description: k('report.taskDescription', {
-        description: input.description,
-        device: input.device.name,
-        location: locationText(input.device, '—'),
-        severity: input.severityLabel,
-        url: deviceUrl.href,
-      }),
-      dueDate: input.dueDate === '' ? addDays(todayPrague(), 3) : input.dueDate,
-      severity: input.severity,
-      title: k('report.taskTitle', { device: input.device.name, title: input.title }),
-    },
-    input.device,
-    input.tenantId,
-  );
-  if (!task.ok) {
-    return false;
-  }
-  const linked = await runCommand(
-    { _tag: 'SecurityIncidentLinkTask', incidentId: input.incidentId, task: task.task },
-    input.revision,
-  );
-  return linked.ok;
-};
-
 /** Records a performed inspection and the next planned one. */
-export const InspectionPanel = ({
+interface SubmitSecurityInspectionInput {
+  readonly date: typeof IsoDateSchema.Encoded;
+  readonly device: SecurityDevice | undefined;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly next: typeof IsoDateSchema.Encoded;
+  readonly note: string;
+  readonly onSaved: () => void;
+  readonly run: RunCommand;
+  readonly setBusy: (busy: boolean) => void;
+  readonly setError: (error: FormError | undefined) => void;
+  readonly toast: ReturnType<typeof useToast>;
+}
+
+const submitSecurityInspection = Effect.fn('Facility.submitSecurityInspection')(function* submitSecurityInspection({
+  date,
+  device,
+  k,
+  next,
+  note,
+  onSaved,
+  run,
+  setBusy,
+  setError,
+  toast,
+}: SubmitSecurityInspectionInput) {
+  if (device === undefined || date === '') {
+    setError('required');
+    return;
+  }
+  setBusy(true);
+  const command: MutableInspectionCommand = {
+    _tag: 'SecurityDeviceRecordInspection',
+    deviceId: device.id,
+    inspectionDate: date,
+  };
+  if (next !== '') {
+    command.nextInspectionDate = next;
+  }
+  if (note.trim() !== '') {
+    command.note = note.trim();
+  }
+  const outcome = yield* run(command);
+  setBusy(false);
+  if (outcome.ok) {
+    toast.create({ title: k('inspectionSaved'), type: 'success' });
+    onSaved();
+  } else {
+    setError(outcome.reason);
+  }
+});
+
+const InspectionSession = ({
   device,
   onClose,
   onSaved,
@@ -574,45 +783,20 @@ export const InspectionPanel = ({
 }) => {
   const k = useSecurityLabel();
   const toast = useToast();
-  const [date, setDate] = useState(todayPrague());
-  const [next, setNext] = useState(addDays(todayPrague(), 365));
+  const [date, setDate] = useState(todayPrague);
+  const [next, setNext] = useState(() => addDays(todayPrague(), 365));
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<FailureReason | 'required' | undefined>(undefined);
-  useEffect(() => {
-    if (open) {
-      setDate(todayPrague());
-      setNext(addDays(todayPrague(), 365));
-      setNote('');
-      setError(undefined);
-    }
-  }, [open]);
-  const submit = async () => {
-    if (device === undefined || date === '') {
-      setError('required');
-      return;
-    }
-    setBusy(true);
-    const outcome = await run({
-      _tag: 'SecurityDeviceRecordInspection',
-      deviceId: device.id,
-      inspectionDate: date,
-      ...(next === '' ? {} : { nextInspectionDate: next }),
-      ...(note.trim() === '' ? {} : { note: note.trim() }),
-    });
-    setBusy(false);
-    if (outcome.ok) {
-      toast.create({ title: k('inspectionSaved'), type: 'success' });
-      onSaved();
-    } else {
-      setError(outcome.reason);
-    }
-  };
+  const [error, setError] = useState<FormError | undefined>();
+  const submit = () =>
+    submitSecurityInspection({ date, device, k, next, note, onSaved, run, setBusy, setError, toast });
   return (
     <PanelFrame
       busy={busy}
       onClose={onClose}
-      onSubmit={() => void submit()}
+      onSubmit={() => {
+        void browserRuntime.runPromise(submit());
+      }}
       open={open}
       submitLabel={k('inspection.submit')}
       title={k('inspection.title')}
@@ -649,7 +833,50 @@ export const InspectionPanel = ({
 };
 
 /** Resolves a fault with an optional resolution note. */
-export const ResolvePanel = ({
+interface SubmitSecurityResolutionInput {
+  readonly incident: SecurityIncident | undefined;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly onSaved: () => void;
+  readonly resolution: string;
+  readonly run: RunCommand;
+  readonly setBusy: (busy: boolean) => void;
+  readonly setError: (error: FormError | undefined) => void;
+  readonly toast: ReturnType<typeof useToast>;
+}
+
+const submitSecurityResolution = Effect.fn('Facility.submitSecurityResolution')(function* submitSecurityResolution({
+  incident,
+  k,
+  onSaved,
+  resolution,
+  run,
+  setBusy,
+  setError,
+  toast,
+}: SubmitSecurityResolutionInput) {
+  if (incident === undefined) {
+    return;
+  }
+  setBusy(true);
+  const command: MutableResolveCommand = {
+    _tag: 'SecurityIncidentChangeState',
+    incidentId: incident.id,
+    state: 'resolved',
+  };
+  if (resolution.trim() !== '') {
+    command.resolution = resolution.trim();
+  }
+  const outcome = yield* run(command);
+  setBusy(false);
+  if (outcome.ok) {
+    toast.create({ title: k('stateSaved'), type: 'success' });
+    onSaved();
+  } else {
+    setError(outcome.reason);
+  }
+});
+
+const ResolveSession = ({
   incident,
   onClose,
   onSaved,
@@ -666,37 +893,15 @@ export const ResolvePanel = ({
   const toast = useToast();
   const [resolution, setResolution] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<FailureReason | 'required' | undefined>(undefined);
-  useEffect(() => {
-    if (open) {
-      setResolution('');
-      setError(undefined);
-    }
-  }, [open]);
-  const submit = async () => {
-    if (incident === undefined) {
-      return;
-    }
-    setBusy(true);
-    const outcome = await run({
-      _tag: 'SecurityIncidentChangeState',
-      incidentId: incident.id,
-      state: 'resolved',
-      ...(resolution.trim() === '' ? {} : { resolution: resolution.trim() }),
-    });
-    setBusy(false);
-    if (outcome.ok) {
-      toast.create({ title: k('stateSaved'), type: 'success' });
-      onSaved();
-    } else {
-      setError(outcome.reason);
-    }
-  };
+  const [error, setError] = useState<FormError | undefined>();
+  const submit = () => submitSecurityResolution({ incident, k, onSaved, resolution, run, setBusy, setError, toast });
   return (
     <PanelFrame
       busy={busy}
       onClose={onClose}
-      onSubmit={() => void submit()}
+      onSubmit={() => {
+        void browserRuntime.runPromise(submit());
+      }}
       open={open}
       submitLabel={k('resolveDialog.submit')}
       title={k('resolveDialog.title')}
@@ -714,3 +919,13 @@ export const ResolvePanel = ({
     </PanelFrame>
   );
 };
+
+/** Each open target owns one draft. Background record refreshes keep unsaved edits intact. */
+export const DeviceFormPanel = (props: Parameters<typeof DeviceFormSession>[0]) =>
+  props.open ? <DeviceFormSession key={props.device?.id ?? 'create'} {...props} /> : null;
+export const ReportFaultPanel = (props: Parameters<typeof ReportFaultSession>[0]) =>
+  props.open ? <ReportFaultSession key={props.initialDeviceId ?? 'choose-device'} {...props} /> : null;
+export const InspectionPanel = (props: Parameters<typeof InspectionSession>[0]) =>
+  props.open ? <InspectionSession key={props.device?.id ?? 'choose-device'} {...props} /> : null;
+export const ResolvePanel = (props: Parameters<typeof ResolveSession>[0]) =>
+  props.open ? <ResolveSession key={props.incident?.id ?? 'choose-incident'} {...props} /> : null;

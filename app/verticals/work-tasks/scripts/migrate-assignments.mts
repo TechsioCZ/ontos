@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { executeRecordsWithAuthorization } from '@app/workforce/clients/records';
 import { WorkStateSchema } from '../shared/apis/records.ts';

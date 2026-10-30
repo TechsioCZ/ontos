@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Option, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { FULL_PLAN_SEED_INSTRUCTION } from './plan-deployment-impact.mts';
 

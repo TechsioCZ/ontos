@@ -24,7 +24,7 @@ const seed = {
   tasks: [],
 } as const;
 
-const command = (input: unknown) => Schema.decodeUnknownEffect(SingleWorkCommandSchema)(input);
+const command = Schema.decodeUnknownEffect(SingleWorkCommandSchema);
 
 it.effect('every governed change records who, when and each field before → after', () =>
   Effect.gen(function* history() {

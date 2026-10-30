@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 
 import { ONTOS_MODULE_CONTRACT_MAX_BYTES } from '../../packages/core-runtime/src/index.ts';
 import { moduleReleaseWorkerName } from '../../packages/core-runtime/src/http/module-release-identity.ts';

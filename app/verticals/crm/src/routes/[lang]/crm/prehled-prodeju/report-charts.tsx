@@ -1,18 +1,24 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // One series per chart: counts or one currency, never mixed currencies or filter-dependent series colors.
 import { EmptyState, SectionCard, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Component, useState } from 'react';
-import type { ReactNode } from 'react';
-import type { SalesReport } from '../../../../../shared/domain/reports.ts';
+import type { ReactElement } from 'react';
+
 import { normalizeStatus, statusMeaningLabels, statusMeanings } from '../../../../../shared/domain/reports.ts';
-import { formatDecimalMoney, totalIn } from './report-format.ts';
+import type { SalesReport } from '../../../../../shared/domain/reports.ts';
+
+import { useFormatDecimalMoney, totalIn } from './report-format.ts';
 
 const shortMonths = ['led', 'úno', 'bře', 'dub', 'kvě', 'čvn', 'čvc', 'srp', 'zář', 'říj', 'lis', 'pro'];
 const shortMonth = (key: string) => `${shortMonths[Number(key.slice(5, 7)) - 1] ?? key.slice(5, 7)} ${key.slice(2, 4)}`;
 
-class ChartBoundary extends Component<{ readonly children: ReactNode }, { readonly failed: boolean }> {
-  override state = { failed: false };
+class ChartBoundary extends Component<{ readonly children: ReactElement }, { readonly failed: boolean }> {
+  constructor(props: { readonly children: ReactElement }) {
+    super(props);
+    this.state = { failed: false };
+  }
   static getDerivedStateFromError() {
     return { failed: true };
   }
@@ -26,13 +32,18 @@ class ChartBoundary extends Component<{ readonly children: ReactNode }, { readon
 }
 
 export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
-  const [chosenCurrency, setCurrency] = useState<string | undefined>(undefined);
+  const { t } = useModernI18n();
+  const formatDecimalMoney = useFormatDecimalMoney();
+  const [chosenCurrency, setChosenCurrency] = useState<string | undefined>();
   const currency =
     chosenCurrency !== undefined && report.currencies.includes(chosenCurrency) ? chosenCurrency : report.currencies[0];
   if (report.count === 0) {
     return (
-      <SectionCard title="Vývoj po měsících">
-        <EmptyState description="Pro zvolené filtry neexistuje žádná započtená objednávka." title="Bez dat" />
+      <SectionCard title={t('crm.ciWorkflow.monthlyTrend')}>
+        <EmptyState
+          description="Pro zvolené filtry neexistuje žádná započtená objednávka."
+          title={t('crm.ciWorkflow.noData')}
+        />
       </SectionCard>
     );
   }
@@ -40,9 +51,11 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
   const statusKey = (row: SalesReport['rows'][number]) =>
     report.mappingApproved ? row.meaning : normalizeStatus(row.order.rawStatus);
   const meanings: readonly { readonly key: string; readonly label: string }[] = report.mappingApproved
-    ? statusMeanings
-        .filter((meaning) => report.rows.some((row) => row.meaning === meaning))
-        .map((meaning) => ({ key: meaning, label: statusMeaningLabels[meaning] }))
+    ? statusMeanings.flatMap((meaning) =>
+        report.rows.some((row) => row.meaning === meaning)
+          ? [{ key: meaning, label: statusMeaningLabels[meaning] }]
+          : [],
+      )
     : [...new Map(report.rows.map((row) => [statusKey(row), row.order.rawStatus] as const)).entries()].map(
         ([key, raw]) => ({ key, label: `Ze zdroje: ${raw}` }),
       );
@@ -65,9 +78,9 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
   const firstMonth = report.byMonth[0]?.label ?? '';
   const lastMonth = report.byMonth.at(-1)?.label ?? '';
   return (
-    <section className="flex min-w-0 flex-col gap-150" aria-label="Vývoj objednávek a dostupná data grafů">
+    <section aria-label={t('crm.ciWorkflow.orderChartData')} className="flex min-w-0 flex-col gap-150">
       <div className="grid min-w-0 grid-cols-1 gap-250 xl:grid-cols-2">
-        <SectionCard title="Počet objednávek po měsících">
+        <SectionCard title={t('crm.ciWorkflow.monthlyOrderCounts')}>
           <p className="text-fg-secondary text-sm">
             Spárované objednávky bez duplicit. Podrobné rozdělení podle stavů je v datové tabulce a souhrnu.
           </p>
@@ -85,18 +98,17 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
           </ChartBoundary>
         </SectionCard>
         <SectionCard
-          title={currency === undefined ? 'Hodnota objednávek' : `Hodnota objednávek v ${currency}`}
           actions={
             report.currencies.length > 1 ? (
               <fieldset
-                aria-label="Měna grafu"
+                aria-label={t('crm.ciWorkflow.chartCurrency')}
                 className="inline-flex rounded-button-sm border border-border-primary p-50"
               >
                 {report.currencies.map((entry) => (
                   <Button
                     aria-pressed={entry === currency}
                     key={entry}
-                    onClick={() => setCurrency(entry)}
+                    onClick={() => setChosenCurrency(entry)}
                     size="sm"
                     theme={entry === currency ? 'solid' : 'borderless'}
                     variant={entry === currency ? 'primary' : 'secondary'}
@@ -107,9 +119,13 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               </fieldset>
             ) : undefined
           }
+          title={currency === undefined ? 'Hodnota objednávek' : `Hodnota objednávek v ${currency}`}
         >
           {currency === undefined ? (
-            <EmptyState description="Zdroj u započtených objednávek neposkytl částku a měnu." title="Bez dat" />
+            <EmptyState
+              description="Zdroj u započtených objednávek neposkytl částku a měnu."
+              title={t('crm.ciWorkflow.noData')}
+            />
           ) : (
             <>
               <p className="text-fg-secondary text-sm">

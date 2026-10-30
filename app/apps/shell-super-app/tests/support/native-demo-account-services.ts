@@ -2,9 +2,10 @@ import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/se
 import { AgentProposalQueueModuleReview, ContextAccess, ReadRuntime } from '@app/core-runtime';
 import type { OperationalScopeRequest } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { DateTime, Effect, Layer } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Crypto, DateTime, Effect, Layer } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 
 import { IdentityAdministrationDeniedAuditLive } from '../../../../packages/core-runtime/src/auth/identity-administration-audit-denied.ts';
 import { AgentProposalCommandPreparationLive } from '../../../../packages/core-runtime/src/auth/agent-proposal-command-preparation.ts';
@@ -30,6 +31,7 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
     transport: OperationalScopeRequest,
     contextAccess: (typeof ContextAccess)['Service'],
   ) {
+    const crypto = yield* Crypto.Crypto;
     const driver = scriptedPgClientLayer(
       Effect.succeed(testSqlConnection(() => Effect.die('Unexpected identity SQL'))),
     ).pipe(Layer.provideMerge(Reactivity.layer));
@@ -70,6 +72,7 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
       active,
       review,
       Layer.succeed(ReadRuntime, reads.runtime),
-    );
+    ).pipe(Layer.provide(Layer.succeed(Crypto.Crypto, crypto)));
   },
+  Effect.provide(NodeCrypto.layer),
 );

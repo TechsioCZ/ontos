@@ -1154,3 +1154,8 @@ export {
   ManageAgentStatusAuditEvidenceSchema,
 } from './modules/actions/manage-agent-status.action.ts';
 export type { ManageAgentStatusPayload } from './modules/actions/manage-agent-status.action.ts';
+export {
+  humanPrincipalCandidatesForTransaction,
+  PrincipalCandidatesUnavailable,
+} from './permissions/human-principal-candidates.ts';
+export { toTenantResourceAccessObjectId } from './permissions/context-access.ts';

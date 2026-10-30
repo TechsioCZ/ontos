@@ -15,6 +15,10 @@ import {
   BudgetKindSchema,
   CalendarMonthSchema,
   FinanceLongTextSchema,
+  FinanceCompanyIdSchema,
+  FinanceInvoiceResourceIdSchema,
+  FinancePriceListItemIdSchema,
+  FinanceRecurringTemplateIdSchema,
   InvoiceDocumentKindSchema,
   CalendarDateSchema,
   FinanceOpportunityIdSchema,
@@ -80,7 +84,7 @@ export const FinanceCommandSchema = Schema.Union([
     entries: Schema.Array(
       Schema.Struct({
         amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
-        invoiceResourceId: FinanceTextSchema,
+        invoiceResourceId: FinanceInvoiceResourceIdSchema,
       }),
     ).check(Schema.isMaxLength(20)),
     invoiceRef: InvoiceRefSchema,
@@ -99,8 +103,6 @@ export const FinanceCommandSchema = Schema.Union([
   // ---- Sales demo v2 (S07 – S09) ----
   /** Received invoice entered by hand, optionally with the scanned/PDF document attached. */
   Schema.TaggedStruct('RecordIncomingInvoice', {
-    lines: Schema.optionalKey(InvoiceLinesSchema),
-    sourceOrder: Schema.optionalKey(SourceOrderSchema),
     actorLabel,
     budgetCategory: Schema.optionalKey(FinanceTextSchema),
     costCenter: Schema.optionalKey(FinanceTextSchema),
@@ -109,12 +111,14 @@ export const FinanceCommandSchema = Schema.Union([
     documentNumber: FinanceTextSchema,
     dueDate: CalendarDateSchema,
     issueDate: CalendarDateSchema,
+    lines: Schema.optionalKey(InvoiceLinesSchema),
     note: Schema.optionalKey(FinanceTextSchema),
     propertyRef: Schema.optionalKey(PropertyRefSchema),
-    unitRef: Schema.optionalKey(UnitRefSchema),
-    supplierCompanyId: Schema.optionalKey(FinanceTextSchema),
+    sourceOrder: Schema.optionalKey(SourceOrderSchema),
+    supplierCompanyId: Schema.optionalKey(FinanceCompanyIdSchema),
     supplierName: FinanceTextSchema,
     totalMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+    unitRef: Schema.optionalKey(UnitRefSchema),
   }),
   Schema.TaggedStruct('AttachDocument', { actorLabel, document: DocumentUploadSchema, invoiceRef: InvoiceRefSchema }),
   Schema.TaggedStruct('SetInvoiceDetails', {
@@ -149,12 +153,15 @@ export const FinanceCommandSchema = Schema.Union([
     propertyRef: Schema.optionalKey(PropertyRefSchema),
     unitRef: Schema.optionalKey(UnitRefSchema),
   }),
-  Schema.TaggedStruct('SetRecurringTemplateActive', { active: Schema.Boolean, templateId: FinanceTextSchema }),
+  Schema.TaggedStruct('SetRecurringTemplateActive', {
+    active: Schema.Boolean,
+    templateId: FinanceRecurringTemplateIdSchema,
+  }),
   /** S07-05: a second draft for the same template and period needs `confirmDuplicate: true`. */
   Schema.TaggedStruct('GenerateRecurringInvoice', {
     confirmDuplicate: Schema.Boolean,
     period: CalendarMonthSchema,
-    templateId: FinanceTextSchema,
+    templateId: FinanceRecurringTemplateIdSchema,
   }),
   Schema.TaggedStruct('UpdateAccountingSetup', {
     ...AccountingIssuerFields,
@@ -170,7 +177,10 @@ export const FinanceCommandSchema = Schema.Union([
     actorLabel,
     format: AccountingExportFormatSchema,
     // Issuer name and partner identities are resolved by the server (Core legal entity, party registry).
-    invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+    invoiceResourceIds: Schema.Array(FinanceInvoiceResourceIdSchema).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(1000),
+    ),
   }),
   Schema.TaggedStruct('HandOverAccountingExport', { actorLabel, exportId: FinanceTextSchema }),
   Schema.TaggedStruct('MarkAccountingExportFailed', {
@@ -214,10 +224,10 @@ export const FinanceCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('DeletePlanItem', { id: FinanceTextSchema }),
   Schema.TaggedStruct('UpsertPriceListItem', {
-    actorLabel,
     active: Schema.Boolean,
+    actorLabel,
     code: Schema.optionalKey(FinanceTextSchema),
-    id: Schema.optionalKey(FinanceTextSchema),
+    id: Schema.optionalKey(FinancePriceListItemIdSchema),
     name: FinanceTextSchema,
     unit: Schema.optionalKey(FinanceTextSchema),
     unitPriceMinor: MoneyMinorSchema,

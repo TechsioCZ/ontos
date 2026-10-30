@@ -1,4 +1,5 @@
-import { Config, ConfigProvider, Effect } from 'effect';
+import { Config, Effect } from 'effect';
+import type { ConfigProvider } from 'effect';
 
 import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { loadConfigurationProvider } from '../auth/configuration-provider.ts';
@@ -11,13 +12,15 @@ export interface OAuthServerConfig {
   readonly resource: string;
 }
 
-const parseOAuthServerConfig = Effect.gen(function* parseOAuthServerConfig() {
-  const betterAuthUrl = yield* Config.String('BETTER_AUTH_URL').pipe(
-    Effect.orElseSucceed(() => 'http://localhost:3020'),
-  );
-  const issuer = yield* Config.String('ONTOS_OAUTH_ISSUER').pipe(
-    Effect.orElseSucceed(() => `${betterAuthUrl.replace(/\/+$/u, '')}/shell-super-app-api/oauth`),
-  );
+const parseOAuthServerConfig = Effect.fn('OAuthServerConfig.parse')(function* parseOAuthServerConfig(
+  provider: ConfigProvider.ConfigProvider,
+) {
+  const betterAuthUrl = yield* Config.String('BETTER_AUTH_URL')
+    .parse(provider)
+    .pipe(Effect.orElseSucceed(() => 'http://localhost:3020'));
+  const issuer = yield* Config.String('ONTOS_OAUTH_ISSUER')
+    .parse(provider)
+    .pipe(Effect.orElseSucceed(() => `${betterAuthUrl.replace(/\/+$/u, '')}/shell-super-app-api/oauth`));
   return {
     issuer: issuer.replace(/\/+$/u, ''),
     resource: mcpResourceUrlOf(betterAuthUrl),
@@ -30,7 +33,5 @@ export const loadOAuthServerConfig = loadConfigurationProvider(
 ).pipe(
   // An unreadable environment is a runtime configuration defect, not a connector's token/grant failure.
   Effect.orDie,
-  Effect.flatMap((provider) =>
-    parseOAuthServerConfig.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider)),
-  ),
+  Effect.flatMap(parseOAuthServerConfig),
 );

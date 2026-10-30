@@ -1,8 +1,7 @@
-import { randomBytes } from 'node:crypto';
-
 import { and, eq, gt, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 
 import {
   CommercePortalAuthSessionRefreshConflict,
@@ -129,7 +128,14 @@ const isLiveForCount = (
   );
 };
 
-const newOpaqueId = (bytes: number): string => randomBytes(bytes).toString('base64url');
+const newOpaqueId = (
+  crypto: Crypto.Crypto,
+  bytes: number,
+): Effect.Effect<string, CommercePortalAuthSessionUnavailable> =>
+  crypto.randomBytes(bytes).pipe(
+    Effect.map(Base64Url.encode),
+    Effect.mapError((cause) => unavailable('session-identifier', cause)),
+  );
 
 interface TouchInput {
   readonly expectedUpdatedAt: Date;
@@ -163,6 +169,7 @@ interface RotateInput {
  */
 export const makeCommercePortalAuthSessionStore = (
   database: CommercePortalAuthDatabaseExecutor,
+  crypto: Crypto.Crypto,
 ): CommercePortalAuthSessionStore => {
   const findById = Effect.fn('CommercePortalAuthSessionStore.findById')(function* findById(
     sessionId: string,
@@ -433,8 +440,9 @@ export const makeCommercePortalAuthSessionStore = (
             return Option.none();
           }
 
-          const newSessionId = newOpaqueId(18);
-          const newToken = newOpaqueId(32);
+          const [newSessionId, newToken] = yield* Effect.all([newOpaqueId(crypto, 18), newOpaqueId(crypto, 32)], {
+            concurrency: 2,
+          });
           yield* transaction.insert(session).values({
             // `createdAt` carries the absolute session lifetime, so rotation preserves it. The
             // fresh-authentication stamp travels separately: supplied when this rotation itself
@@ -502,6 +510,7 @@ export const CommercePortalAuthSessionStoreLive = Layer.effect(
   CommercePortalAuthSessionStoreService,
   Effect.gen(function* makeStoreLive() {
     const database = yield* CommercePortalAuthDatabase;
-    return makeCommercePortalAuthSessionStore(database.executor);
+    const crypto = yield* Crypto.Crypto;
+    return makeCommercePortalAuthSessionStore(database.executor, crypto);
   }),
 );

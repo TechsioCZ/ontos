@@ -4,7 +4,7 @@ import {
   CurrentStorefrontApplicationResponseSchema,
 } from '@app/storefront-registry-contracts';
 import { ConfigProvider, DateTime, Effect, Option, Predicate, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { makeServerCurrentStorefrontApplicationAuthority } from '../../src/integrations/current-storefront-application.ts';

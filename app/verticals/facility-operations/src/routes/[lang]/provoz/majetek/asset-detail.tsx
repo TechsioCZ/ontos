@@ -7,7 +7,10 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { useEffect, useState } from 'react';
+import { Effect, Match } from 'effect';
+import type { TOptions } from 'i18next';
+import { useState } from 'react';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
   Asset,
@@ -15,9 +18,11 @@ import type {
   AssetsState,
   DepreciationPlan,
   DepreciationType,
+  ServiceRecord,
 } from '../../../../../shared/domain/assets.ts';
 import { assetStatusOf, currentServiceRecords, isActiveAsset } from '../../../../../shared/domain/assets.ts';
 import {
+  ArchiveForm,
   AssetCardForm,
   DisposeForm,
   EntryForm,
@@ -47,6 +52,7 @@ import { usePropertyTree } from './property-tree.ts';
 
 export type DetailMode =
   | { readonly kind: 'view' }
+  | { readonly kind: 'archive' }
   | { readonly kind: 'edit' }
   | { readonly kind: 'value' }
   | { readonly kind: 'event' }
@@ -56,17 +62,27 @@ export type DetailMode =
   | { readonly kind: 'entry'; readonly planId: string };
 
 const FORM_ID = 'facility-asset-detail-form';
+const ARCHIVE_LABEL = 'actions.archive';
+const kindVariants = { building: 'info', equipment: 'outline', technology: 'secondary' } as const;
+const permitVariants = {
+  expired: 'danger',
+  granted: 'success',
+  in_progress: 'info',
+  rejected: 'danger',
+  requested: 'info',
+} as const;
+const serviceVariants = { defects: 'warning', failed: 'danger', ok: 'success' } as const;
 
 const useK = () => {
   const { t } = useModernI18n();
-  return (key: string, options?: Record<string, unknown>) => t(`facility-operations.assets.${key}`, options);
+  return (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
 };
 
 export const KindBadge = ({ asset }: { readonly asset: Asset }) => {
   const k = useK();
   const kind = asset.kind ?? 'equipment';
   return (
-    <Badge size="sm" variant={kind === 'building' ? 'info' : kind === 'technology' ? 'secondary' : 'outline'}>
+    <Badge size="sm" variant={kindVariants[kind]}>
       {k(`kind.${kind}`)}
     </Badge>
   );
@@ -139,6 +155,53 @@ const Timeline = ({ actor, asset }: { readonly actor: PrincipalRef | undefined; 
   );
 };
 
+const ServiceResultBadge = ({ record }: { readonly record: ServiceRecord }) => {
+  const k = useK();
+  if (record.kind === 'permit') {
+    const permitState = record.permitState ?? 'requested';
+    return (
+      <Badge size="sm" variant={permitVariants[permitState]}>
+        {k(`permit.${permitState}`)}
+      </Badge>
+    );
+  }
+  if (record.result === undefined) {
+    return '—';
+  }
+  return (
+    <Badge size="sm" variant={serviceVariants[record.result]}>
+      {k(`result.${record.result}`)}
+    </Badge>
+  );
+};
+
+const ServiceDue = ({
+  current,
+  record,
+  today,
+}: {
+  readonly current: boolean;
+  readonly record: ServiceRecord;
+  readonly today: string;
+}) => {
+  const k = useK();
+  if (record.nextDueOn === undefined) {
+    return '—';
+  }
+  if (current) {
+    const due = dueState(record.nextDueOn, today);
+    return (
+      <span className="flex flex-col items-start gap-50">
+        <span>{isoDateLabel(record.nextDueOn)}</span>
+        <Badge size="sm" variant={dueBadgeVariant(due)}>
+          {k(`due.${due}`)}
+        </Badge>
+      </span>
+    );
+  }
+  return <span className="text-fg-secondary line-through">{isoDateLabel(record.nextDueOn)}</span>;
+};
+
 const ServicesTable = ({ actor, asset }: { readonly actor: PrincipalRef | undefined; readonly asset: Asset }) => {
   const k = useK();
   const today = todayIsoDate();
@@ -176,43 +239,10 @@ const ServicesTable = ({ actor, asset }: { readonly actor: PrincipalRef | undefi
             </Table.Cell>
             <Table.Cell>{isoDateLabel(record.performedOn)}</Table.Cell>
             <Table.Cell>
-              {record.kind === 'permit' ? (
-                <Badge
-                  size="sm"
-                  variant={
-                    record.permitState === 'granted'
-                      ? 'success'
-                      : record.permitState === 'rejected' || record.permitState === 'expired'
-                        ? 'danger'
-                        : 'info'
-                  }
-                >
-                  {k(`permit.${record.permitState ?? 'requested'}`)}
-                </Badge>
-              ) : record.result === undefined ? (
-                '—'
-              ) : (
-                <Badge
-                  size="sm"
-                  variant={record.result === 'ok' ? 'success' : record.result === 'defects' ? 'warning' : 'danger'}
-                >
-                  {k(`result.${record.result}`)}
-                </Badge>
-              )}
+              <ServiceResultBadge record={record} />
             </Table.Cell>
             <Table.Cell>
-              {record.nextDueOn === undefined ? (
-                '—'
-              ) : current.has(record.id) ? (
-                <span className="flex flex-col items-start gap-50">
-                  <span>{isoDateLabel(record.nextDueOn)}</span>
-                  <Badge size="sm" variant={dueBadgeVariant(dueState(record.nextDueOn, today))}>
-                    {k(`due.${dueState(record.nextDueOn, today)}`)}
-                  </Badge>
-                </span>
-              ) : (
-                <span className="text-fg-secondary line-through">{isoDateLabel(record.nextDueOn)}</span>
-              )}
+              <ServiceDue current={current.has(record.id)} record={record} today={today} />
             </Table.Cell>
             <Table.Cell>
               <span className="flex flex-col gap-50">
@@ -301,6 +331,35 @@ const BuildingContents = ({
   );
 };
 
+const AssetLocation = ({
+  asset,
+  language,
+  missing,
+}: {
+  readonly asset: Asset;
+  readonly language: string;
+  readonly missing: string;
+}) => {
+  if (asset.location === undefined) {
+    return missing;
+  }
+  if (asset.location.id.startsWith('label:')) {
+    return asset.location.label;
+  }
+  return (
+    <a className="text-primary underline-offset-2 hover:underline" href={propertyHref(language, asset.location.id)}>
+      {asset.location.label}
+    </a>
+  );
+};
+
+const planVariant = (plan: DepreciationPlan | undefined) => {
+  if (plan === undefined) {
+    return 'outline' as const;
+  }
+  return plan.status === 'confirmed' ? ('success' as const) : ('warning' as const);
+};
+
 const CardTab = ({
   actor,
   asset,
@@ -355,19 +414,7 @@ const CardTab = ({
           { label: k('fields.serialNumber'), value: asset.serialNumber ?? missing },
           {
             label: k('fields.location'),
-            value:
-              asset.location === undefined ? (
-                missing
-              ) : asset.location.id.startsWith('label:') ? (
-                asset.location.label
-              ) : (
-                <a
-                  className="text-primary underline-offset-2 hover:underline"
-                  href={propertyHref(language, asset.location.id)}
-                >
-                  {asset.location.label}
-                </a>
-              ),
+            value: <AssetLocation asset={asset} language={language} missing={missing} />,
           },
           { label: k('fields.responsible'), value: asset.responsible ?? missing },
           {
@@ -385,13 +432,11 @@ const CardTab = ({
               <span className="flex flex-wrap gap-50">
                 {(['accounting', 'tax'] as const).map((type) => {
                   const plan = planOf(asset, type);
+                  const label = k(`depreciation.${type}`);
+                  const status = plan === undefined ? k('depreciation.none') : k(`planStatus.${plan.status}`);
                   return (
-                    <Badge
-                      key={type}
-                      size="sm"
-                      variant={plan === undefined ? 'outline' : plan.status === 'confirmed' ? 'success' : 'warning'}
-                    >
-                      {`${k(`depreciation.${type}`)}: ${plan === undefined ? k('depreciation.none') : k(`planStatus.${plan.status}`)}`}
+                    <Badge key={type} size="sm" variant={planVariant(plan)}>
+                      {`${label}: ${status}`}
                     </Badge>
                   );
                 })}
@@ -452,7 +497,23 @@ const CardTab = ({
   );
 };
 
-export const AssetDetailPanel = ({
+interface AssetDetailProps {
+  readonly actor: PrincipalRef | undefined;
+  readonly asset: Asset | undefined;
+  readonly busy: boolean;
+  readonly canWrite: boolean;
+  readonly language: string;
+  readonly onClose: () => void;
+  readonly onOpenAsset: (asset: Asset) => void;
+  /** Runs the command; returns true when it was saved (the page reloads data and toasts). */
+  readonly onSubmit: (command: OpsCommand, successKey: string) => Effect.Effect<boolean>;
+  readonly state: AssetsState;
+}
+
+const continueAfterSave = (operation: Effect.Effect<boolean>, onSaved: () => void) =>
+  operation.pipe(Effect.tap((saved) => (saved ? Effect.sync(onSaved) : Effect.void)));
+
+const AssetDetailContent = ({
   actor,
   asset,
   busy,
@@ -462,50 +523,31 @@ export const AssetDetailPanel = ({
   onOpenAsset,
   onSubmit,
   state,
-}: {
-  readonly actor: PrincipalRef | undefined;
-  readonly asset: Asset | undefined;
-  readonly busy: boolean;
-  readonly canWrite: boolean;
-  readonly language: string;
-  readonly onClose: () => void;
-  readonly onOpenAsset: (asset: Asset) => void;
-  /** Runs the command; resolves true when it was saved (the page reloads data and toasts). */
-  readonly onSubmit: (command: OpsCommand, successKey: string) => Promise<boolean>;
-  readonly state: AssetsState;
-}) => {
+}: AssetDetailProps & { readonly asset: Asset }) => {
   const k = useK();
   const [mode, setMode] = useState<DetailMode>({ kind: 'view' });
   const [tab, setTab] = useState('card');
-  useEffect(() => {
-    setMode({ kind: 'view' });
-    setTab('card');
-  }, [asset?.id]);
-
-  if (asset === undefined) {
-    return null;
-  }
   const active = isActiveAsset(asset);
   const submit = (successKey: string, nextTab?: string) => (command: OpsCommand) => {
-    void onSubmit(command, successKey).then((ok) => {
-      if (ok) {
+    void browserRuntime.runPromise(
+      continueAfterSave(onSubmit(command, successKey), () => {
         setMode({ kind: 'view' });
         if (nextTab !== undefined) {
           setTab(nextTab);
         }
-      }
-    });
+      }),
+    );
   };
   const confirmPlan = (plan: DepreciationPlan) => {
-    void onSubmit(
-      { _tag: 'AssetDepreciationPlanConfirm', assetId: asset.id, planId: plan.id },
-      'messages.planConfirmed',
+    void browserRuntime.runPromise(
+      onSubmit({ _tag: 'AssetDepreciationPlanConfirm', assetId: asset.id, planId: plan.id }, 'messages.planConfirmed'),
     );
   };
   const entryPlan =
     mode.kind === 'entry' ? (asset.depreciationPlans ?? []).find((plan) => plan.id === mode.planId) : undefined;
 
-  const formTitle: Record<Exclude<DetailMode['kind'], 'view'>, string> = {
+  const formTitle = {
+    archive: k(ARCHIVE_LABEL),
     dispose: k('actions.dispose'),
     edit: k('actions.edit'),
     entry: k('actions.recordEntry'),
@@ -515,107 +557,118 @@ export const AssetDetailPanel = ({
     value: k('actions.changeValue'),
   };
 
-  const body = (() => {
-    switch (mode.kind) {
-      case 'edit':
-        return <AssetCardForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.updated')} state={state} />;
-      case 'value':
-        return <ValueChangeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.valueChanged', 'history')} />;
-      case 'event':
-        return <EventForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.eventRecorded', 'history')} />;
-      case 'dispose':
-        return <DisposeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.disposed', 'card')} />;
-      case 'service':
-        return <ServiceForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.serviceRecorded', 'services')} />;
-      case 'plan':
-        return (
-          <PlanForm
+  const saveLabel = mode.kind === 'archive' ? k(ARCHIVE_LABEL) : k('actions.save');
+  const body = Match.value(mode).pipe(
+    Match.when({ kind: 'archive' }, () => (
+      <ArchiveForm
+        asset={asset}
+        formId={FORM_ID}
+        onSubmit={(command) => {
+          void browserRuntime.runPromise(continueAfterSave(onSubmit(command, 'messages.archived'), onClose));
+        }}
+      />
+    )),
+    Match.when({ kind: 'edit' }, () => (
+      <AssetCardForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.updated')} state={state} />
+    )),
+    Match.when({ kind: 'value' }, () => (
+      <ValueChangeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.valueChanged', 'history')} />
+    )),
+    Match.when({ kind: 'event' }, () => (
+      <EventForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.eventRecorded', 'history')} />
+    )),
+    Match.when({ kind: 'dispose' }, () => (
+      <DisposeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.disposed', 'card')} />
+    )),
+    Match.when({ kind: 'service' }, () => (
+      <ServiceForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.serviceRecorded', 'services')} />
+    )),
+    Match.when({ kind: 'plan' }, (value) => (
+      <PlanForm
+        asset={asset}
+        formId={FORM_ID}
+        onSubmit={submit('messages.planCreated', 'depreciation')}
+        state={state}
+        type={value.type}
+      />
+    )),
+    Match.when({ kind: 'entry' }, () =>
+      entryPlan === undefined ? null : (
+        <EntryForm
+          asset={asset}
+          formId={FORM_ID}
+          onSubmit={submit('messages.entryRecorded', 'depreciation')}
+          plan={entryPlan}
+        />
+      ),
+    ),
+    Match.when({ kind: 'view' }, () => (
+      <Tabs onValueChange={setTab} value={tab} variant="line">
+        <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
+          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="card">
+            {k('detail.tabs.card')}
+          </Tabs.Trigger>
+          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="history">
+            {k('detail.tabs.history', { count: (asset.events ?? []).length })}
+          </Tabs.Trigger>
+          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="services">
+            {k('detail.tabs.services', { count: (asset.services ?? []).length })}
+          </Tabs.Trigger>
+          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
+            {k('detail.tabs.depreciation')}
+          </Tabs.Trigger>
+          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="documents">
+            {k('detail.tabs.documents')}
+          </Tabs.Trigger>
+          <Tabs.Indicator />
+        </Tabs.List>
+        <Tabs.Content className="py-250" value="card">
+          <CardTab actor={actor} asset={asset} language={language} onOpenAsset={onOpenAsset} state={state} />
+        </Tabs.Content>
+        <Tabs.Content className="flex flex-col gap-200 py-250" value="history">
+          {canWrite && active && (
+            <div className="flex flex-wrap gap-100">
+              <Button onClick={() => setMode({ kind: 'value' })} size="sm" theme="outlined" variant="secondary">
+                {k('actions.changeValue')}
+              </Button>
+              <Button onClick={() => setMode({ kind: 'event' })} size="sm" theme="outlined" variant="secondary">
+                {k('actions.recordEvent')}
+              </Button>
+            </div>
+          )}
+          <Timeline actor={actor} asset={asset} />
+        </Tabs.Content>
+        <Tabs.Content className="flex flex-col gap-200 py-250" value="services">
+          {canWrite && active && (
+            <div>
+              <Button onClick={() => setMode({ kind: 'service' })} size="sm" theme="outlined" variant="secondary">
+                {k('actions.recordService')}
+              </Button>
+            </div>
+          )}
+          <ServicesTable actor={actor} asset={asset} />
+        </Tabs.Content>
+        <Tabs.Content className="py-250" value="depreciation">
+          <AssetDepreciation
+            actor={actor}
             asset={asset}
-            formId={FORM_ID}
-            onSubmit={submit('messages.planCreated', 'depreciation')}
-            state={state}
-            type={mode.type}
+            canWrite={canWrite}
+            onConfirm={confirmPlan}
+            onCreate={(type) => setMode({ kind: 'plan', type })}
+            onRecord={(plan) => setMode({ kind: 'entry', planId: plan.id })}
           />
-        );
-      case 'entry':
-        return entryPlan === undefined ? null : (
-          <EntryForm
-            asset={asset}
-            formId={FORM_ID}
-            onSubmit={submit('messages.entryRecorded', 'depreciation')}
-            plan={entryPlan}
+        </Tabs.Content>
+        <Tabs.Content className="flex flex-col gap-300 py-250" value="documents">
+          <LinkedDocuments
+            subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }}
           />
-        );
-      default:
-        return (
-          <Tabs onValueChange={setTab} value={tab} variant="line">
-            <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="card">
-                {k('detail.tabs.card')}
-              </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="history">
-                {k('detail.tabs.history', { count: (asset.events ?? []).length })}
-              </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="services">
-                {k('detail.tabs.services', { count: (asset.services ?? []).length })}
-              </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
-                {k('detail.tabs.depreciation')}
-              </Tabs.Trigger>
-              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="documents">
-                {k('detail.tabs.documents')}
-              </Tabs.Trigger>
-              <Tabs.Indicator />
-            </Tabs.List>
-            <Tabs.Content className="py-250" value="card">
-              <CardTab actor={actor} asset={asset} language={language} onOpenAsset={onOpenAsset} state={state} />
-            </Tabs.Content>
-            <Tabs.Content className="flex flex-col gap-200 py-250" value="history">
-              {canWrite && active && (
-                <div className="flex flex-wrap gap-100">
-                  <Button onClick={() => setMode({ kind: 'value' })} size="sm" theme="outlined" variant="secondary">
-                    {k('actions.changeValue')}
-                  </Button>
-                  <Button onClick={() => setMode({ kind: 'event' })} size="sm" theme="outlined" variant="secondary">
-                    {k('actions.recordEvent')}
-                  </Button>
-                </div>
-              )}
-              <Timeline actor={actor} asset={asset} />
-            </Tabs.Content>
-            <Tabs.Content className="flex flex-col gap-200 py-250" value="services">
-              {canWrite && active && (
-                <div>
-                  <Button onClick={() => setMode({ kind: 'service' })} size="sm" theme="outlined" variant="secondary">
-                    {k('actions.recordService')}
-                  </Button>
-                </div>
-              )}
-              <ServicesTable actor={actor} asset={asset} />
-            </Tabs.Content>
-            <Tabs.Content className="py-250" value="depreciation">
-              <AssetDepreciation
-                actor={actor}
-                asset={asset}
-                canWrite={canWrite}
-                onConfirm={confirmPlan}
-                onCreate={(type) => setMode({ kind: 'plan', type })}
-                onRecord={(plan) => setMode({ kind: 'entry', planId: plan.id })}
-              />
-            </Tabs.Content>
-            <Tabs.Content className="flex flex-col gap-300 py-250" value="documents">
-              <LinkedDocuments
-                subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }}
-              />
-              <CommentThread
-                subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }}
-              />
-              <ChangeHistory entityId={asset.id} refreshKey={asset.updatedAt} />
-            </Tabs.Content>
-          </Tabs>
-        );
-    }
-  })();
+          <CommentThread subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }} />
+          <ChangeHistory entityId={asset.id} refreshKey={asset.updatedAt} />
+        </Tabs.Content>
+      </Tabs>
+    )),
+    Match.exhaustive,
+  );
 
   return (
     <SidePanel
@@ -629,25 +682,22 @@ export const AssetDetailPanel = ({
               <Button
                 disabled={busy}
                 onClick={() => {
-                  const reason = globalThis.prompt(k('archive.prompt'), k('archive.defaultReason'))?.trim();
-                  if (reason !== undefined && reason !== '') {
-                    void onSubmit({ _tag: 'AssetArchive', assetId: asset.id, reason }, 'messages.archived').then(
-                      (ok) => {
-                        if (ok) onClose();
-                      },
-                    );
-                  }
+                  setMode({ kind: 'archive' });
                 }}
                 theme="outlined"
                 variant="danger"
               >
-                {k('actions.archive')}
+                {k(ARCHIVE_LABEL)}
               </Button>
             )}
             {canWrite && asset.archive !== undefined && (
               <Button
                 disabled={busy}
-                onClick={() => void onSubmit({ _tag: 'AssetArchiveRestore', assetId: asset.id }, 'messages.restored')}
+                onClick={() => {
+                  void browserRuntime.runPromise(
+                    onSubmit({ _tag: 'AssetArchiveRestore', assetId: asset.id }, 'messages.restored'),
+                  );
+                }}
                 theme="outlined"
                 variant="secondary"
               >
@@ -675,9 +725,9 @@ export const AssetDetailPanel = ({
               isLoading={busy}
               loadingText={k('saving')}
               type="submit"
-              variant={mode.kind === 'dispose' ? 'danger' : 'primary'}
+              variant={mode.kind === 'dispose' || mode.kind === 'archive' ? 'danger' : 'primary'}
             >
-              {mode.kind === 'dispose' ? k('actions.confirmDispose') : k('actions.save')}
+              {mode.kind === 'dispose' ? k('actions.confirmDispose') : saveLabel}
             </Button>
           </>
         )
@@ -707,3 +757,6 @@ export const AssetDetailPanel = ({
     </SidePanel>
   );
 };
+
+export const AssetDetailPanel = (props: AssetDetailProps) =>
+  props.asset === undefined ? null : <AssetDetailContent {...props} asset={props.asset} key={props.asset.id} />;

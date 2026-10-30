@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -128,7 +129,7 @@ describe('Set composition revision event', () => {
           topic: 'commerce.catalog.set-composition-revised.v1',
         },
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not announce stale or invalid Set revisions', () =>
@@ -142,7 +143,7 @@ describe('Set composition revision event', () => {
         expect(events).toHaveLength(0);
         expect(messages).toHaveLength(0);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects cross-Tenant source identity in the published payload contract', () => {

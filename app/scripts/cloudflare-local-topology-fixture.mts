@@ -17,7 +17,7 @@ import {
   Redacted,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
 import { parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';

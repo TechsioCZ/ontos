@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -126,7 +127,7 @@ describe('Package successor promotion persistence', () => {
         .pipe(Effect.flip);
       expect(Schema.is(PackageActivationUnavailable)(error)).toBe(true);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
   it.effect('promotes only a due immutable successor under the Definition lock', () =>
     Effect.gen(function* duePromotion() {
@@ -179,7 +180,7 @@ describe('Package successor promotion persistence', () => {
         ),
       ).toEqual([0, 2]);
       expect(writes).toEqual([[packageDefinitions, expect.objectContaining({ currentRevision: 2 })]]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('requires fresh Option role proof before promoting an active selectable package', () =>
@@ -242,7 +243,7 @@ describe('Package successor promotion persistence', () => {
         packageOptionRoleRevisions,
         expect.objectContaining({ contentRevision: 2, revision: 2, state: 'ACTIVE' }),
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed on ambiguous successor schedules and on a lost pointer CAS', () =>
@@ -280,7 +281,7 @@ describe('Package successor promotion persistence', () => {
         ),
       ).toBe(true);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
 describe('Package Definition activation persistence', () => {
@@ -294,7 +295,7 @@ describe('Package Definition activation persistence', () => {
       const error = yield* service.activate(input).pipe(Effect.flip);
       expect(Schema.is(PackageActivationUnavailable)(error)).toBe(true);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps the Draft content immutable and appends an Active revision without selecting the Option', () =>
@@ -328,7 +329,7 @@ describe('Package Definition activation persistence', () => {
         ],
       ]);
       expect(writes[0]).not.toEqual(expect.objectContaining({ optionState: 'ACTIVE' }));
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects stale, retired-parent, and unsafe-selection states without writes', () =>
@@ -354,7 +355,7 @@ describe('Package Definition activation persistence', () => {
         ),
       ).toBe(true);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('refuses a pinned lower revision that is not active', () =>
@@ -380,7 +381,7 @@ describe('Package Definition activation persistence', () => {
         ),
       ).toBe(true);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not activate a future successor or overwrite its immutable revision slot', () =>
@@ -413,7 +414,7 @@ describe('Package Definition activation persistence', () => {
       ).toBe(true);
       expect(verifiedAmounts).toEqual([]);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reports a newly effective successor as stale without activating old content', () =>
@@ -438,6 +439,6 @@ describe('Package Definition activation persistence', () => {
         ),
       ).toBe(2);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

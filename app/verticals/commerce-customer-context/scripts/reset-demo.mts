@@ -12,8 +12,8 @@ import { customerSegmentDefinitions } from '@app/party-registry/api/client';
 import type { CustomerSegmentCode } from '@app/party-registry/api/client';
 import { PgClient } from '@effect/sql-pg';
 import { Console, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 
 import {
   demoId,

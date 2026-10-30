@@ -7,15 +7,26 @@ import type {
   ManualPayment,
   PlanItem,
 } from '../apis/records.ts';
-import { DateTime } from 'effect';
-import { ACCOUNTING_EXPORT_SCHEMA_VERSION } from '../apis/records.ts';
+import { DateTime, Effect, Schema } from 'effect';
+import {
+  ACCOUNTING_EXPORT_SCHEMA_VERSION,
+  InvoiceDocumentKindSchema,
+  InvoiceSchema,
+  IssuerIcoSchema,
+  IssuerVatIdSchema,
+} from '../apis/records.ts';
 import { buildPohodaDataPack } from './pohoda-xml.ts';
 
+const pragueDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+const czkNumberFormatter = new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+
 /** Calendar date (YYYY-MM-DD) of the instant `epochMillis` in Europe/Prague. */
-export const pragueCalendarDate = (epochMillis: number): string =>
-  new Intl.DateTimeFormat('en-CA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Prague', year: 'numeric' })
-    .format(epochMillis)
-    .slice(0, 10);
+export const pragueCalendarDate = (epochMillis: number): string => pragueDateFormatter.format(epochMillis).slice(0, 10);
 
 export const monthOf = (date: string): string => date.slice(0, 7);
 
@@ -53,12 +64,7 @@ export interface PaymentEvent {
   readonly source: 'MANUAL' | 'PRIOR' | 'SNAPSHOT';
 }
 
-const isoDateOf = (value: unknown): string => {
-  if (typeof value === 'string') {
-    return value.slice(0, 10);
-  }
-  return DateTime.isDateTime(value) ? DateTime.formatIsoDateUtc(value) : '1970-01-01';
-};
+const isoDateOf = (value: Invoice['updatedAt']): string => DateTime.formatIsoDateUtc(value);
 
 /**
  * Every confirmed payment of every invoice exactly once. Simulated observations are cumulative, so each one
@@ -162,6 +168,30 @@ export interface CashFlowMonth {
   readonly planOutMinor: number;
 }
 
+const emptyCashFlowBucket = () => ({ expectedIn: 0, expectedOut: 0, paidIn: 0, paidOut: 0, planIn: 0, planOut: 0 });
+type CashFlowBucket = ReturnType<typeof emptyCashFlowBucket>;
+
+const addPaidFlows = (
+  events: readonly PaymentEvent[],
+  buckets: ReadonlyMap<string, CashFlowBucket>,
+  openingDate: string | undefined,
+): void => {
+  for (const event of events) {
+    // A taken-into-account advance moved its money when the advance itself was paid.
+    if (event.source === 'PRIOR' || (openingDate !== undefined && event.date < openingDate)) {
+      continue;
+    }
+    const bucket = buckets.get(monthOf(event.date));
+    if (bucket !== undefined) {
+      if (event.direction === 'OUTGOING') {
+        bucket.paidIn += event.amountMinor;
+      } else {
+        bucket.paidOut += event.amountMinor;
+      }
+    }
+  }
+};
+
 /**
  * Monthly cash-flow. Paid = confirmed payment events by payment date. Expected = what is still outstanding on
  * confirmed invoices, by due date (overdue amounts land in the current month). Plan = the part of a budget line
@@ -180,23 +210,9 @@ export const cashFlowMonths = (
   const currentMonth = monthOf(options.businessDate);
   const opening = state.cashFlowOpening;
   const months = Array.from({ length: options.months }, (_, index) => addMonths(options.fromMonth, index));
-  const empty = () => ({ expectedIn: 0, expectedOut: 0, paidIn: 0, paidOut: 0, planIn: 0, planOut: 0 });
-  const buckets = new Map(months.map((month) => [month, empty()] as const));
+  const buckets = new Map(months.map((month) => [month, emptyCashFlowBucket()] as const));
   const openingDate = opening?.openingDate;
-  for (const event of paymentEvents(state)) {
-    // A taken-into-account advance moved its money when the advance itself was paid.
-    if (event.source === 'PRIOR' || (openingDate !== undefined && event.date < openingDate)) {
-      continue;
-    }
-    const bucket = buckets.get(monthOf(event.date));
-    if (bucket !== undefined) {
-      if (event.direction === 'OUTGOING') {
-        bucket.paidIn += event.amountMinor;
-      } else {
-        bucket.paidOut += event.amountMinor;
-      }
-    }
-  }
+  addPaidFlows(paymentEvents(state), buckets, openingDate);
   for (const invoice of state.invoices) {
     const remaining = remainingMinor(invoice);
     if (remaining === 0) {
@@ -213,18 +229,16 @@ export const cashFlowMonths = (
     }
   }
   for (const budget of state.budgets ?? []) {
-    if (budget.period < currentMonth) {
-      continue;
-    }
-    const bucket = buckets.get(budget.period);
-    if (bucket === undefined) {
-      continue;
-    }
-    const uncovered = Math.max(0, budget.plannedMinor - budgetActualMinor(budget, state.invoices));
-    if (budget.kind === 'REVENUE') {
-      bucket.planIn += uncovered;
-    } else {
-      bucket.planOut += uncovered;
+    if (budget.period >= currentMonth) {
+      const bucket = buckets.get(budget.period);
+      if (bucket !== undefined) {
+        const uncovered = Math.max(0, budget.plannedMinor - budgetActualMinor(budget, state.invoices));
+        if (budget.kind === 'REVENUE') {
+          bucket.planIn += uncovered;
+        } else {
+          bucket.planOut += uncovered;
+        }
+      }
     }
   }
   // Plan items count with their probability; a past expected date that is still planned lands in this month.
@@ -244,7 +258,7 @@ export const cashFlowMonths = (
   let balance = opening?.openingBalanceMinor;
   const openingMonth = openingDate === undefined ? undefined : monthOf(openingDate);
   return months.map((month) => {
-    const bucket = buckets.get(month) ?? empty();
+    const bucket = buckets.get(month) ?? emptyCashFlowBucket();
     const netMinor =
       bucket.paidIn + bucket.expectedIn + bucket.planIn - bucket.paidOut - bucket.expectedOut - bucket.planOut;
     const counts = balance !== undefined && openingMonth !== undefined && month >= openingMonth;
@@ -289,13 +303,23 @@ export interface ExportPartnerIdentity {
   readonly vatId?: string;
 }
 
-export interface ExportMeta {
-  readonly batchNumber: string;
-  readonly createdAt: string;
-  readonly createdBy: string;
-  readonly issuer?: ExportIssuer;
-  readonly version: number;
-}
+const ExportMetaSchema = Schema.Struct({
+  batchNumber: Schema.String,
+  createdAt: Schema.toEncoded(Schema.DateTimeUtcFromString),
+  createdBy: Schema.String,
+  issuer: Schema.optionalKey(
+    Schema.Struct({
+      city: Schema.optionalKey(Schema.String),
+      ico: Schema.optionalKey(Schema.toEncoded(IssuerIcoSchema)),
+      name: Schema.optionalKey(Schema.String),
+      street: Schema.optionalKey(Schema.String),
+      vatId: Schema.optionalKey(Schema.toEncoded(IssuerVatIdSchema)),
+      zip: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  version: Schema.Finite,
+});
+export type ExportMeta = typeof ExportMetaSchema.Type;
 
 export interface ExportRow {
   readonly counterpartyName: string;
@@ -304,20 +328,56 @@ export interface ExportRow {
   readonly partner?: ExportPartnerIdentity;
 }
 
+const exportExtensions = { CSV: 'csv', JSON: 'json', POHODA_XML: 'xml' } as const;
+
 export const exportFileName = (format: AccountingExportFormat, meta: Pick<ExportMeta, 'batchNumber' | 'version'>) =>
-  `${meta.batchNumber}-v${meta.version}.${format === 'CSV' ? 'csv' : format === 'JSON' ? 'json' : 'xml'}`;
+  `${meta.batchNumber}-v${meta.version}.${exportExtensions[format]}`;
 
 const objectLabel = (invoice: Invoice) =>
   [invoice.propertyRef?.resourceId, invoice.unitRef?.resourceId, invoice.costCenter, invoice.budgetCategory]
     .filter((part) => part !== undefined)
     .join(' / ');
 
+const AccountingExportDocumentSchema = Schema.Struct({
+  batch: ExportMetaSchema.fields.batchNumber,
+  batchVersion: ExportMetaSchema.fields.version,
+  createdAt: ExportMetaSchema.fields.createdAt,
+  createdBy: ExportMetaSchema.fields.createdBy,
+  documents: Schema.Array(
+    Schema.Struct({
+      counterparty: Schema.String,
+      counterpartyRef: InvoiceSchema.fields.counterpartyRef.fields.resourceId,
+      currency: InvoiceSchema.fields.currency,
+      direction: InvoiceSchema.fields.direction,
+      documentKind: InvoiceDocumentKindSchema,
+      documentLink: Schema.String,
+      dueDate: InvoiceSchema.fields.dueDate,
+      id: InvoiceSchema.fields.ref.fields.resourceId,
+      issueDate: InvoiceSchema.fields.issueDate,
+      number: Schema.String,
+      object: Schema.String,
+      paid: Schema.String,
+      paymentState: InvoiceSchema.fields.paymentState,
+      subtotal: Schema.String,
+      total: Schema.String,
+      vat: Schema.String,
+    }),
+  ),
+  note: Schema.Literal('Předávací balíček pro účetní. Nejde o potvrzení zaúčtování.'),
+  schemaVersion: Schema.Literal(ACCOUNTING_EXPORT_SCHEMA_VERSION),
+});
+const AccountingExportDocumentJsonSchema = Schema.fromJsonString(AccountingExportDocumentSchema, { space: 2 });
+
 /** Builds the exact handover file. CSV/JSON carry the OntOS schema version; POHODA_XML is a STORMWARE dataPack. */
-export const buildAccountingExport = (
-  format: AccountingExportFormat,
-  rows: readonly ExportRow[],
-  meta: ExportMeta,
-): string => {
+export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(function* buildAccountingExport({
+  format,
+  meta,
+  rows,
+}: {
+  readonly format: AccountingExportFormat;
+  readonly meta: ExportMeta;
+  readonly rows: readonly ExportRow[];
+}): Effect.fn.Return<string, Schema.SchemaError> {
   if (format === 'CSV') {
     const header = [
       'schema_version',
@@ -368,42 +428,39 @@ export const buildAccountingExport = (
     return `﻿${[header.join(';'), ...lines].join('\r\n')}\r\n`;
   }
   if (format === 'JSON') {
-    return `${JSON.stringify(
-      {
-        batch: meta.batchNumber,
-        batchVersion: meta.version,
-        createdAt: meta.createdAt,
-        createdBy: meta.createdBy,
-        documents: rows.map(({ counterpartyName, documentLink, invoice }) => ({
-          counterparty: counterpartyName,
-          counterpartyRef: invoice.counterpartyRef.resourceId,
-          currency: invoice.currency,
-          direction: invoice.direction,
-          documentKind: invoice.documentKind ?? 'STANDARD',
-          documentLink,
-          dueDate: invoice.dueDate,
-          id: invoice.ref.resourceId,
-          issueDate: invoice.issueDate,
-          number: invoice.number ?? invoice.documentNumber,
-          object: objectLabel(invoice),
-          paid: amount(invoice.paidMinor),
-          paymentState: invoice.paymentState,
-          subtotal: amount(invoice.subtotalMinor),
-          total: amount(invoice.totalMinor),
-          vat: amount(invoice.vatMinor),
-        })),
-        note: 'Předávací balíček pro účetní. Nejde o potvrzení zaúčtování.',
-        schemaVersion: ACCOUNTING_EXPORT_SCHEMA_VERSION,
-      },
-      null,
-      2,
-    )}\n`;
+    const document = {
+      batch: meta.batchNumber,
+      batchVersion: meta.version,
+      createdAt: meta.createdAt,
+      createdBy: meta.createdBy,
+      documents: rows.map(({ counterpartyName, documentLink, invoice }) => ({
+        counterparty: counterpartyName,
+        counterpartyRef: invoice.counterpartyRef.resourceId,
+        currency: invoice.currency,
+        direction: invoice.direction,
+        documentKind: invoice.documentKind ?? 'STANDARD',
+        documentLink,
+        dueDate: invoice.dueDate,
+        id: invoice.ref.resourceId,
+        issueDate: invoice.issueDate,
+        number: invoice.number ?? invoice.documentNumber,
+        object: objectLabel(invoice),
+        paid: amount(invoice.paidMinor),
+        paymentState: invoice.paymentState,
+        subtotal: amount(invoice.subtotalMinor),
+        total: amount(invoice.totalMinor),
+        vat: amount(invoice.vatMinor),
+      })),
+      note: 'Předávací balíček pro účetní. Nejde o potvrzení zaúčtování.',
+      schemaVersion: ACCOUNTING_EXPORT_SCHEMA_VERSION,
+    };
+    const content = yield* Schema.encodeUnknownEffect(AccountingExportDocumentJsonSchema)(document);
+    return `${content}\n`;
   }
   return buildPohodaDataPack(rows, meta);
-};
+});
 
-const czk = (minor: number) =>
-  `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(minor / 100)} Kč`;
+const czk = (minor: number) => `${czkNumberFormatter.format(minor / 100)} Kč`;
 
 /**
  * A reminder sent to a reserved test domain (RFC 2606/6761: `.invalid`, `.example`, `.test`, `.localhost`,

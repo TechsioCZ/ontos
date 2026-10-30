@@ -5,7 +5,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 

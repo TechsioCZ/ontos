@@ -1,0 +1,26 @@
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index 9434f88..3fe8464 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -3,7 +3,7 @@ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Scope from "effect/Scope";
+-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary";
++import { Arbitrary } from "effect";
+ import * as Schema from "effect/Schema";
+ export * from "@rstest/core";
+ //#region src/index.d.ts
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 34513fd..9cd4970 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -11,7 +11,7 @@ import * as Schedule from "effect/Schedule";
+ import * as Scope from "effect/Scope";
+ import * as TestClock from "effect/testing/TestClock";
+ import * as TestConsole from "effect/testing/TestConsole";
+-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary";
++import { Arbitrary } from "effect";
+ export * from "@rstest/core";
+ //#region src/internal/internal.ts
+ /**

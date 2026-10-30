@@ -1,6 +1,5 @@
-import { Effect, Equal, Hash, Schema } from 'effect';
+import { Arbitrary, Effect, Equal, Hash, Schema } from 'effect';
 import { addEqualityTesters, describe, expect, it } from 'effect-rstest';
-import { Arbitrary } from 'effect/unstable/arbitrary';
 
 class SemanticValue implements Equal.Equal {
   readonly #key: string;

@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -19,6 +20,7 @@ import {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
@@ -352,7 +354,10 @@ it.live(
     const configuration = { ...(yield* loadAuthConfig({ envPath: '/dev/null' })), secureCookies: true };
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
@@ -1699,7 +1704,7 @@ it.live(
     );
     expect(expiredModulesResponse.status).toBe(401);
     expect(yield* Effect.tryPromise(() => expiredModulesResponse.text())).not.toMatch(/30000000|40000000/u);
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );
 it.live(
   'selects, lists, switches, revalidates, and upgrades a multi-tenant session',
@@ -1751,7 +1756,10 @@ it.live(
     const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
     const resolver = makePrincipalResolver(
@@ -2291,5 +2299,5 @@ it.live(
     yield* assertSessionForbidden(
       authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );

@@ -5,7 +5,7 @@
  *   - **B3** "Convert consequential operational scripts into Effect programs" —
  *     "Approximately 79 of 103 scripts are primarily async/await; **hundreds of manual throws** and
  *     several independent argv parsers remain. […] Use scoped resources, shared Layers, **typed
- *     errors**, Schema decoders, and `effect/unstable/cli`. Keep one small process-exit adapter at
+ *     errors**, Schema decoders, and `effect/cli`. Keep one small process-exit adapter at
  *     the executable edge."
  *     Audit B3 script-family references (not individual throw locations): `scripts/migrate-contacts-authorization.mts:98`,
  *     `scripts/migrate-contacts-authorization.mts:291`, `scripts/postgres/bootstrap-runtime-role.mts:29`,

@@ -22,6 +22,8 @@ import type {
 import { encodeRelationshipEventPayload } from './relationship-event-payload.ts';
 import { createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 interface Services {
   readonly update: (
     payload: Payload,
@@ -45,8 +47,8 @@ const handleUpdatePartyRelationship = Effect.fn('UpdatePartyRelationshipAction.h
       accessKind: 'read',
       queryHash: `party-relationship-update:${payload.relationshipRef.resourceId}:${payload.expectedRevision}`,
       resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
+      servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+      targetModuleKey: PARTY_REGISTRY_MODULE_ID,
       targetResourceId: payload.relationshipRef.resourceId,
       targetResourceType: payload.relationshipRef.resourceType,
     });
@@ -68,8 +70,8 @@ const handleUpdatePartyRelationship = Effect.fn('UpdatePartyRelationshipAction.h
       const domainEvent = yield* context.addDomainEvent({
         eventType: 'party.registry.relationship-updated.v1',
         payloadJson,
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
+        producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+        subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
         subjectResourceId: result.relationship.relationshipRef.resourceId,
         subjectResourceType: result.relationship.relationshipRef.resourceType,
       });
@@ -102,12 +104,12 @@ export const updatePartyRelationshipAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.update-party-relationship',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: UpdatePartyRelationshipPayloadSchema,
     policies: [],
     resultSchema: ChangePartyRelationshipResultSchema,

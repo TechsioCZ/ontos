@@ -1,4 +1,3 @@
-// @effect-diagnostics asyncFunction:off
 // Detail of one calendar entry. Derived deadlines are read-only here: the date is changed in the source record
 // (S13 „Termín se upravuje v původním záznamu“). Own calendar events can be edited, reassigned, completed or
 // cancelled, and carry a comment thread (S14). Also the create form. Owned by the ops-agenda lane.
@@ -9,8 +8,10 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { DateTime } from 'effect';
-import { useEffect, useState } from 'react';
+import { DateTime, Effect, Schema } from 'effect';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useState } from 'react';
+import { OpsCommandSchema } from '../../../../../shared/agendas.ts';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { AgendaState, CalendarEvent, CalendarEventKind } from '../../../../../shared/domain/agenda.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
@@ -25,14 +26,21 @@ import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 const k = 'facility-operations.agenda';
 const kinds: readonly CalendarEventKind[] = ['MEETING', 'DEADLINE', 'INSPECTION', 'REMINDER'];
 const NONE = 'none';
+interface PanelFeedback {
+  readonly cause?: Schema.SchemaError;
+  readonly message: string;
+}
+type WireCommand = typeof OpsCommandSchema.Encoded;
+type CreateEventCommand = Extract<WireCommand, { readonly _tag: 'AgendaEventCreate' }>;
+type UpdateEventCommand = Extract<WireCommand, { readonly _tag: 'AgendaEventUpdate' }>;
 
 interface Draft {
-  readonly title: string;
+  readonly assignee: string;
   readonly date: string;
   readonly kind: CalendarEventKind;
-  readonly assignee: string;
   readonly location: string;
   readonly note: string;
+  readonly title: string;
 }
 
 const emptyDraft = (date: string): Draft => ({
@@ -86,7 +94,7 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
           label={t(`${k}.fields.kind`)}
           name="kind"
           onValueChange={({ value }) =>
-            setDraft({ ...draft, kind: (value[0] as CalendarEventKind | undefined) ?? 'MEETING' })
+            setDraft({ ...draft, kind: kinds.find((kind) => kind === value[0]) ?? 'MEETING' })
           }
           size="md"
           value={[draft.kind]}
@@ -165,50 +173,67 @@ export const CreateEventPanel = ({
 }: {
   readonly initialDate: string;
   readonly onClose: () => void;
-  readonly onRun: (command: OpsCommand) => Promise<CommandOutcome>;
+  readonly onRun: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly open: boolean;
 }) => {
   const { t } = useModernI18n();
   const [draft, setDraft] = useState(() => emptyDraft(initialDate));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<PanelFeedback>();
   const locationRef = useLocationRef();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
-  useEffect(() => {
+  const [previousForm, setPreviousForm] = useState({ initialDate, open });
+  if (previousForm.open !== open || previousForm.initialDate !== initialDate) {
+    setPreviousForm({ initialDate, open });
     if (open) {
       setDraft(emptyDraft(initialDate));
       setError(undefined);
     }
-  }, [open, initialDate]);
-  const submit = async () => {
+  }
+  const submit = () => {
     if (draft.title.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/u.test(draft.date)) {
-      setError(t('facility-operations.common.required'));
+      setError({ message: t('facility-operations.common.required') });
       return;
     }
     setBusy(true);
     const related = locationRef(draft.location);
     const assignee = personOf(draft.assignee === NONE ? undefined : draft.assignee);
-    const outcome = await onRun({
+    const command: { -readonly [Key in keyof CreateEventCommand]: CreateEventCommand[Key] } = {
       _tag: 'AgendaEventCreate',
       date: draft.date,
       kind: draft.kind,
       title: draft.title.trim(),
-      ...(assignee === undefined
-        ? {}
-        : {
-            assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
-            assigneeLabel: assignee.displayName,
-          }),
-      ...(related === undefined ? {} : { related }),
-      ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
-    } as OpsCommand);
-    setBusy(false);
-    if (outcome.ok) {
-      onClose();
-    } else {
-      setError(t(`facility-operations.common.errors.${outcome.reason}`));
+    };
+    if (assignee !== undefined) {
+      command.assignee = { principalId: assignee.principalId, tenantId: assignee.tenantId };
+      command.assigneeLabel = assignee.displayName;
     }
+    if (related !== undefined) {
+      command.related = related;
+    }
+    if (draft.note.trim() !== '') {
+      command.note = draft.note.trim();
+    }
+    browserRuntime.runFork(
+      Schema.decodeEffect(OpsCommandSchema)(command).pipe(
+        Effect.flatMap(onRun),
+        Effect.match({
+          onFailure: (cause) => {
+            setBusy(false);
+            setError({ cause, message: t('facility-operations.common.errors.invalid') });
+          },
+          onSuccess: (outcome) => {
+            setBusy(false);
+            if (outcome.ok) {
+              onClose();
+            } else {
+              setError({ message: t(`facility-operations.common.errors.${outcome.reason}`) });
+            }
+          },
+        }),
+      ),
+    );
   };
   return (
     <SidePanel
@@ -220,7 +245,9 @@ export const CreateEventPanel = ({
           <Button
             isLoading={busy}
             loadingText={t('facility-operations.common.saving')}
-            onClick={() => void submit()}
+            onClick={() => {
+              submit();
+            }}
             variant="primary"
           >
             {t(`${k}.create.submit`)}
@@ -242,7 +269,7 @@ export const CreateEventPanel = ({
       <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:py-2">
         {error !== undefined && (
           <StatusText showIcon status="error">
-            {error}
+            {error.message}
           </StatusText>
         )}
         <EventForm draft={draft} setDraft={setDraft} />
@@ -251,7 +278,7 @@ export const CreateEventPanel = ({
   );
 };
 
-export const DeadlinePanel = ({
+const useDeadlinePanel = ({
   canWrite,
   deadline,
   onClose,
@@ -262,7 +289,7 @@ export const DeadlinePanel = ({
   readonly canWrite: boolean;
   readonly deadline: Deadline | undefined;
   readonly onClose: () => void;
-  readonly onRun: (command: OpsCommand) => Promise<CommandOutcome>;
+  readonly onRun: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly state: AgendaState | undefined;
   readonly today: string;
 }) => {
@@ -271,31 +298,45 @@ export const DeadlinePanel = ({
   const event =
     deadline?.eventId === undefined ? undefined : state?.events.find((entry) => entry.id === deadline.eventId);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Draft | undefined>(undefined);
+  const [draft, setDraft] = useState<Draft | undefined>(() => (event === undefined ? undefined : draftOf(event)));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<PanelFeedback>();
   const locationRef = useLocationRef();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
-  useEffect(() => {
+  const [previousRecord, setPreviousRecord] = useState({ event, key: deadline?.key });
+  if (previousRecord.key !== deadline?.key || previousRecord.event !== event) {
+    setPreviousRecord({ event, key: deadline?.key });
     setEditing(false);
     setError(undefined);
     setDraft(event === undefined ? undefined : draftOf(event));
-  }, [deadline?.key, event]);
+  }
 
-  const run = async (command: OpsCommand, close = false) => {
+  const run = (command: WireCommand, close = false) => {
     setBusy(true);
-    const outcome = await onRun(command);
-    setBusy(false);
-    if (outcome.ok) {
-      setEditing(false);
-      setError(undefined);
-      if (close) {
-        onClose();
-      }
-    } else {
-      setError(t(`facility-operations.common.errors.${outcome.reason}`));
-    }
+    browserRuntime.runFork(
+      Schema.decodeEffect(OpsCommandSchema)(command).pipe(
+        Effect.flatMap(onRun),
+        Effect.match({
+          onFailure: (cause) => {
+            setBusy(false);
+            setError({ cause, message: t('facility-operations.common.errors.invalid') });
+          },
+          onSuccess: (outcome) => {
+            setBusy(false);
+            if (outcome.ok) {
+              setEditing(false);
+              setError(undefined);
+              if (close) {
+                onClose();
+              }
+            } else {
+              setError({ message: t(`facility-operations.common.errors.${outcome.reason}`) });
+            }
+          },
+        }),
+      ),
+    );
   };
 
   const save = () => {
@@ -303,101 +344,196 @@ export const DeadlinePanel = ({
       return;
     }
     if (draft.title.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/u.test(draft.date)) {
-      setError(t('facility-operations.common.required'));
+      setError({ message: t('facility-operations.common.required') });
       return;
     }
     const assignee = personOf(draft.assignee === NONE ? undefined : draft.assignee);
     const related = locationRef(draft.location);
-    void run({
+    let command: UpdateEventCommand = {
       _tag: 'AgendaEventUpdate',
       date: draft.date,
       eventId: event.id,
       kind: draft.kind,
       note: draft.note.trim(),
       title: draft.title.trim(),
-      ...(draft.assignee === NONE
-        ? { assignee: null }
-        : assignee === undefined
-          ? {}
-          : {
-              assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
-              assigneeLabel: assignee.displayName,
-            }),
-      ...(draft.location === NONE ? { related: null } : related === undefined ? {} : { related }),
-    } as OpsCommand);
+    };
+    if (draft.assignee === NONE) {
+      command = { ...command, assignee: null };
+    } else if (assignee !== undefined) {
+      command = {
+        ...command,
+        assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
+        assigneeLabel: assignee.displayName,
+      };
+    }
+    if (draft.location === NONE) {
+      command = { ...command, related: null };
+    } else if (related !== undefined) {
+      command = { ...command, related };
+    }
+    run(command);
   };
 
   const status = event?.status ?? 'PLANNED';
   const urgency = deadline === undefined ? 'later' : urgencyOf(deadline, today);
   const owner = personOf(deadline?.ownerPrincipalId);
 
+  return {
+    busy,
+    canWrite,
+    deadline,
+    draft,
+    editing,
+    error,
+    event,
+    lang,
+    onClose,
+    owner,
+    personOf,
+    run,
+    save,
+    setDraft,
+    setEditing,
+    status,
+    t,
+    urgency,
+  };
+};
+
+const renderDeadlineActions = ({
+  busy,
+  canWrite,
+  deadline,
+  editing,
+  event,
+  lang,
+  run,
+  save,
+  setEditing,
+  status,
+  t,
+}: ReturnType<typeof useDeadlinePanel>) => {
+  if (event !== undefined && canWrite) {
+    return editing ? (
+      <>
+        <Button onClick={() => setEditing(false)} theme="outlined" variant="secondary">
+          {t('facility-operations.common.cancel')}
+        </Button>
+        <Button isLoading={busy} loadingText={t('facility-operations.common.saving')} onClick={save} variant="primary">
+          {t('facility-operations.common.save')}
+        </Button>
+      </>
+    ) : (
+      <div className="ops-event-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+        <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
+        {status === 'PLANNED' && (
+          <Button
+            isLoading={busy}
+            onClick={() => {
+              run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' }, true);
+            }}
+            theme="borderless"
+            variant="danger"
+          >
+            {t(`${k}.event.cancel`)}
+          </Button>
+        )}
+        {status === 'PLANNED' ? (
+          <Button
+            isLoading={busy}
+            onClick={() => {
+              run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'DONE' });
+            }}
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${k}.event.done`)}
+          </Button>
+        ) : (
+          <Button
+            isLoading={busy}
+            onClick={() => {
+              run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'PLANNED' });
+            }}
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${k}.event.reopen`)}
+          </Button>
+        )}
+        <Button onClick={() => setEditing(true)} variant="primary">
+          {t(`${k}.event.edit`)}
+        </Button>
+      </div>
+    );
+  }
+  if (deadline !== undefined && deadline.eventId === undefined) {
+    return (
+      <a className="facilityoperations:font-medium" href={`/${lang}${deadline.href}`}>
+        {t(`${k}.event.openSource`, { source: t(`${k}.sources.${deadline.source}`) })}
+      </a>
+    );
+  }
+  return null;
+};
+
+const renderDeadlineDetails = ({ deadline, event, lang, owner, personOf, t }: ReturnType<typeof useDeadlinePanel>) => {
+  if (deadline === undefined) {
+    return null;
+  }
+  return (
+    <DetailList
+      items={[
+        { label: t(`${k}.columns.date`), value: fmt.long(lang, deadline.date) },
+        { label: t(`${k}.columns.source`), value: t(`${k}.sources.${deadline.source}`) },
+        ...(deadline.location === undefined ? [] : [{ label: t(`${k}.columns.location`), value: deadline.location }]),
+        ...(event?.kind === undefined ? [] : [{ label: t(`${k}.fields.kind`), value: t(`${k}.kind.${event.kind}`) }]),
+        ...(owner === undefined ? [] : [{ label: t(`${k}.fields.owner`), value: owner.displayName }]),
+        ...(deadline.amountMinor === undefined
+          ? []
+          : [
+              {
+                label: t(`${k}.columns.amount`),
+                value: `${(deadline.amountMinor / 100).toLocaleString('cs-CZ')} Kč`,
+              },
+            ]),
+        ...(event?.note === undefined || event.note === ''
+          ? []
+          : [{ label: t('facility-operations.common.note'), value: event.note }]),
+        ...(event === undefined
+          ? []
+          : [
+              {
+                label: t('facility-operations.common.createdBy'),
+                value: [
+                  personOf(event.createdBy.principalId)?.displayName,
+                  fmt.stamp(lang, DateTime.formatIso(event.createdAt)),
+                ]
+                  .filter((part) => part !== undefined)
+                  .join(' · '),
+              },
+              {
+                label: t('facility-operations.common.updatedAt'),
+                value: [
+                  personOf(event.updatedBy.principalId)?.displayName,
+                  fmt.stamp(lang, DateTime.formatIso(event.updatedAt)),
+                ]
+                  .filter((part) => part !== undefined)
+                  .join(' · '),
+              },
+            ]),
+      ]}
+    />
+  );
+};
+
+export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => {
+  const model = useDeadlinePanel(props);
+  const { deadline, draft, editing, error, event, onClose, setDraft, status, t, urgency } = model;
+
   return (
     <SidePanel
-      actions={
-        event !== undefined && canWrite ? (
-          editing ? (
-            <>
-              <Button onClick={() => setEditing(false)} theme="outlined" variant="secondary">
-                {t('facility-operations.common.cancel')}
-              </Button>
-              <Button
-                isLoading={busy}
-                loadingText={t('facility-operations.common.saving')}
-                onClick={save}
-                variant="primary"
-              >
-                {t('facility-operations.common.save')}
-              </Button>
-            </>
-          ) : (
-            <div className="ops-event-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-              <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
-              {status === 'PLANNED' && (
-                <Button
-                  isLoading={busy}
-                  onClick={() =>
-                    void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' } as OpsCommand, true)
-                  }
-                  theme="borderless"
-                  variant="danger"
-                >
-                  {t(`${k}.event.cancel`)}
-                </Button>
-              )}
-              {status !== 'PLANNED' ? (
-                <Button
-                  isLoading={busy}
-                  onClick={() =>
-                    void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'PLANNED' } as OpsCommand)
-                  }
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {t(`${k}.event.reopen`)}
-                </Button>
-              ) : (
-                <Button
-                  isLoading={busy}
-                  onClick={() =>
-                    void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'DONE' } as OpsCommand)
-                  }
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {t(`${k}.event.done`)}
-                </Button>
-              )}
-              <Button onClick={() => setEditing(true)} variant="primary">
-                {t(`${k}.event.edit`)}
-              </Button>
-            </div>
-          )
-        ) : deadline !== undefined && deadline.eventId === undefined ? (
-          <a className="facilityoperations:font-medium" href={`/${lang}${deadline.href}`}>
-            {t(`${k}.event.openSource`, { source: t(`${k}.sources.${deadline.source}`) })}
-          </a>
-        ) : undefined
-      }
+      actions={renderDeadlineActions(model)}
       closeOnInteractOutside
       onOpenChange={(next) => {
         if (!next) {
@@ -424,58 +560,13 @@ export const DeadlinePanel = ({
           </div>
           {error !== undefined && (
             <StatusText showIcon status="error">
-              {error}
+              {error.message}
             </StatusText>
           )}
           {editing && draft !== undefined ? (
             <EventForm draft={draft} setDraft={setDraft} />
           ) : (
-            <DetailList
-              items={[
-                { label: t(`${k}.columns.date`), value: fmt.long(lang, deadline.date) },
-                { label: t(`${k}.columns.source`), value: t(`${k}.sources.${deadline.source}`) },
-                ...(deadline.location === undefined
-                  ? []
-                  : [{ label: t(`${k}.columns.location`), value: deadline.location }]),
-                ...(event?.kind === undefined
-                  ? []
-                  : [{ label: t(`${k}.fields.kind`), value: t(`${k}.kind.${event.kind}`) }]),
-                ...(owner === undefined ? [] : [{ label: t(`${k}.fields.owner`), value: owner.displayName }]),
-                ...(deadline.amountMinor === undefined
-                  ? []
-                  : [
-                      {
-                        label: t(`${k}.columns.amount`),
-                        value: `${(deadline.amountMinor / 100).toLocaleString('cs-CZ')} Kč`,
-                      },
-                    ]),
-                ...(event?.note === undefined || event.note === ''
-                  ? []
-                  : [{ label: t('facility-operations.common.note'), value: event.note }]),
-                ...(event === undefined
-                  ? []
-                  : [
-                      {
-                        label: t('facility-operations.common.createdBy'),
-                        value: [
-                          personOf(event.createdBy.principalId)?.displayName,
-                          fmt.stamp(lang, DateTime.formatIso(event.createdAt)),
-                        ]
-                          .filter((part) => part !== undefined)
-                          .join(' · '),
-                      },
-                      {
-                        label: t('facility-operations.common.updatedAt'),
-                        value: [
-                          personOf(event.updatedBy.principalId)?.displayName,
-                          fmt.stamp(lang, DateTime.formatIso(event.updatedAt)),
-                        ]
-                          .filter((part) => part !== undefined)
-                          .join(' · '),
-                      },
-                    ]),
-              ]}
-            />
+            renderDeadlineDetails(model)
           )}
           {deadline.eventId === undefined && (
             <p

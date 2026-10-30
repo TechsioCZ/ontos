@@ -2,7 +2,7 @@ import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../api/auth/db/client.ts';
 import { account, user } from '../api/auth/db/schema.ts';
@@ -17,7 +17,7 @@ const FixtureSchema = Schema.Struct({
     Schema.Struct({
       authUserId: AuthUserIdSchema,
       displayName: Schema.NonEmptyString,
-      email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external)@siampark\.demo$/u)),
+      email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external)@najempark\.demo$/u)),
     }),
   ),
 });
@@ -34,10 +34,10 @@ const main = (fixturePath: string) =>
     if (
       input.accounts.length !== 4 ||
       new Set(input.accounts.map((row) => row.authUserId)).size !== 4 ||
-      input.accounts.some((row) => row.email !== `${row.authUserId.slice('siampark-'.length)}@siampark.demo`)
+      input.accounts.some((row) => row.email !== `${row.authUserId.slice('siampark-'.length)}@najempark.demo`)
     ) {
       return yield* new ResetAccountsError({
-        reason: 'The fixture must contain the four distinct Siampark accounts with matching emails',
+        reason: 'The fixture must contain the four distinct Nájempark accounts with matching emails',
       });
     }
     const { executor } = yield* AuthDatabase;
@@ -70,7 +70,7 @@ const main = (fixturePath: string) =>
         }
       }),
     );
-    return yield* Console.log('Four Siampark development accounts initialized');
+    return yield* Console.log('Four Nájempark development accounts initialized');
   });
 const AdminDatabaseConfigLive = Layer.effect(
   DatabaseConfig,

@@ -1,6 +1,8 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { Clock, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import type { OperationalScope } from '../operations/context.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
@@ -332,16 +334,18 @@ const stableJson = (value: UnparsedCoreSearchInput): string => {
 
 /** Private Core persistence identity, independent of transport object/document ordering. */
 export const coreSearchReplacementFingerprint = (replacement: CoreSearchProjectionReplacement): string =>
-  createHash('sha256')
-    .update(
-      stableJson({
-        ...replacement,
-        documents: replacement.documents.toSorted((left, right) =>
-          left.ref.resourceId.localeCompare(right.ref.resourceId),
-        ),
-      }),
-    )
-    .digest('hex');
+  Hex.encode(
+    sha256(
+      utf8ToBytes(
+        stableJson({
+          ...replacement,
+          documents: replacement.documents.toSorted((left, right) =>
+            left.ref.resourceId.localeCompare(right.ref.resourceId),
+          ),
+        }),
+      ),
+    ),
+  );
 
 const projectionDocumentEquivalence = Schema.toEquivalence(CoreSearchProjectionDocumentSchema);
 

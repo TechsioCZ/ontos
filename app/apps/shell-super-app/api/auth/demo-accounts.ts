@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 
 import {
   ContextAccess,
@@ -60,19 +62,19 @@ const companyRoles = {
   '71000000-0000-4000-8000-000000000021': {
     roles: [
       role('spravce', 'Správce', 'obchod@demo.ontos', 'Celá agenda pronájmů a správa lidí.', true),
-      role('management', 'Vedení', 'management@siampark.demo', 'Přehledy, schvalování a správa lidí.', true),
-      role('operations', 'Provoz', 'operations@siampark.demo', 'Majetek, prostory, úkoly a závady.'),
+      role('management', 'Vedení', 'management@najempark.demo', 'Přehledy, schvalování a správa lidí.', true),
+      role('operations', 'Provoz', 'operations@najempark.demo', 'Majetek, prostory, úkoly a závady.'),
       role('sales', 'Obchod', 'obchodnik@demo.ontos', 'Nájemci, smlouvy a obchodní případy; faktury jen čte.'),
-      role('finance', 'Účetní', 'finance@siampark.demo', 'Fakturace, platby a upomínky.'),
-      role('external', 'Externí obchodník', 'external@siampark.demo', 'Jen svěřené kontakty a případy, bez financí.'),
+      role('finance', 'Účetní', 'finance@najempark.demo', 'Fakturace, platby a upomínky.'),
+      role('external', 'Externí obchodník', 'external@najempark.demo', 'Jen svěřené kontakty a případy, bez financí.'),
     ],
     seeded: {
-      'external@siampark.demo': 'external',
-      'finance@siampark.demo': 'finance',
-      'management@siampark.demo': 'management',
+      'external@najempark.demo': 'external',
+      'finance@najempark.demo': 'finance',
+      'management@najempark.demo': 'management',
       'obchod@demo.ontos': 'spravce',
       'obchodnik@demo.ontos': 'sales',
-      'operations@siampark.demo': 'operations',
+      'operations@najempark.demo': 'operations',
       'ucetni@demo.ontos': 'finance',
     },
   },
@@ -230,7 +232,7 @@ export const demoAccountCapability = Effect.fn('DemoAccounts.capability')(functi
 
 /** Deterministic IDs per idempotency key, so a retried create replays the same Core Action. */
 export const derivedUuid = (seed: string) => {
-  const hex = createHash('sha256').update(seed).digest('hex');
+  const hex = Hex.encode(sha256(utf8ToBytes(seed)));
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 

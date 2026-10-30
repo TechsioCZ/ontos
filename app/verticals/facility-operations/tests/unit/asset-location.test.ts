@@ -35,7 +35,9 @@ it.effect('Riverside electrical revision matches its 2026 PDF and supersedes onl
     const state = yield* Schema.decodeUnknownEffect(AssetsStateSchema)(seedAssetsState());
     const building = state.assets.find((asset) => asset.inventoryNumber === 'BUD-002');
     expect(building).toBeDefined();
-    if (building === undefined) return;
+    if (building === undefined) {
+      return;
+    }
     const revision = currentServiceRecords(building).find(
       (record) => record.title === 'Revize elektroinstalace (budova)',
     );

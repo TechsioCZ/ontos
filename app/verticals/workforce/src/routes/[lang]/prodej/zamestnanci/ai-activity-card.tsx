@@ -3,7 +3,9 @@ import { EmptyState, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
-import { useCallback, useEffect } from 'react';
+import { useEffect } from 'react';
+import type { ComponentProps } from 'react';
+import { DateTime, Effect, Fiber, Option, Schedule, Schema } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { usePageData } from '../../../../runtime/use-page-data.ts';
 import type { AiActivityEntry } from '../../../../../shared/apis/records.ts';
@@ -11,28 +13,44 @@ import { aiActivityData } from './employees-data.ts';
 
 const key = 'workforce.pages.employees.aiActivity';
 /** The list refreshes itself while the page is open, so an AI action appears without a reload. */
-const REFRESH_MS = 10_000;
+const REFRESH_INTERVAL = '10 seconds';
 
-type BadgeVariant = 'danger' | 'info' | 'outline' | 'primary' | 'success' | 'warning';
+type BadgeVariant = Exclude<NonNullable<ComponentProps<typeof Badge>['variant']>, 'dynamic'>;
 
-const outcomeVariant: Readonly<Record<string, BadgeVariant>> = {
-  allowed: 'info',
-  denied: 'danger',
-  failed: 'warning',
-  succeeded: 'success',
-};
+const outcomeVariant = new Map<string, BadgeVariant>([
+  ['allowed', 'info'],
+  ['denied', 'danger'],
+  ['failed', 'warning'],
+  ['succeeded', 'success'],
+]);
 
 /** Module part of an Action key or a target module, e.g. `work.tasks.apply-command` → `work.tasks`. */
 const moduleOf = (entry: AiActivityEntry): string =>
-  entry.targetModuleKey ?? entry.actionKey?.replace(/\.[a-z0-9-]+$/u, '') ?? '';
+  entry.targetModuleKey.pipe(
+    Option.orElse(() => entry.actionKey.pipe(Option.map((action) => action.replace(/\.[a-z0-9-]+$/u, '')))),
+    Option.getOrElse(() => ''),
+  );
 
-type Level = 'A' | 'B' | 'C';
-const levelVariant: Readonly<Record<Level, BadgeVariant>> = { A: 'info', B: 'warning', C: 'primary' };
+const LevelSchema = Schema.Literals(['A', 'B', 'C']);
+type Level = typeof LevelSchema.Type;
+const levelVariant = { A: 'info', B: 'warning', C: 'primary' } satisfies Readonly<Record<Level, BadgeVariant>>;
 
 const levelOf = (entry: AiActivityEntry): Level | undefined => {
   const match = /AI agent (?<level>[ABC])\b/u.exec(entry.actorDisplayName);
-  const level = match?.groups?.['level'];
-  return level === 'A' || level === 'B' || level === 'C' ? level : undefined;
+  return Schema.decodeUnknownOption(LevelSchema)(match?.groups?.['level']).pipe(Option.getOrUndefined);
+};
+
+const timeFormatOptions = {
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  month: 'numeric',
+  second: '2-digit',
+  timeZone: 'Europe/Prague',
+} satisfies Intl.DateTimeFormatOptions;
+const timeFormats = {
+  cs: new Intl.DateTimeFormat('cs-CZ', timeFormatOptions),
+  en: new Intl.DateTimeFormat('en-GB', timeFormatOptions),
 };
 
 const noEntries: readonly AiActivityEntry[] = [];
@@ -46,29 +64,26 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
   const { language, t } = useModernI18n();
   const feed = usePageData(aiActivityData, legalEntityId);
   // A refresh keeps the current entries on screen until the new read settles.
-  const refresh = useCallback(() => {
-    void browserRuntime.runPromise(aiActivityData.refresh(legalEntityId));
+  const refresh = () => {
+    browserRuntime.runFork(aiActivityData.refresh(legalEntityId));
+  };
+
+  // Delay the first tick; each later tick starts a read without waiting for the previous read.
+  // Page-data owns in-flight reads, so unmount interrupts the ticker while a started read may settle.
+  useEffect(() => {
+    const timer = browserRuntime.runFork(
+      Effect.suspend(() =>
+        document.visibilityState === 'visible'
+          ? aiActivityData.refresh(legalEntityId).pipe(Effect.forkDetach, Effect.asVoid)
+          : Effect.void,
+      ).pipe(Effect.repeat(Schedule.fixed(REFRESH_INTERVAL)), Effect.delay(REFRESH_INTERVAL)),
+    );
+    return () => {
+      browserRuntime.runFork(Fiber.interrupt(timer));
+    };
   }, [legalEntityId]);
 
-  // The first read is the prepared (or ensured) entry; the timer only keeps it current.
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        refresh();
-      }
-    }, REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-
-  const timeFormat = new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', {
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: 'numeric',
-    second: '2-digit',
-    timeZone: 'Europe/Prague',
-  });
-  const time = (iso: string) => timeFormat.format(Date.parse(iso));
+  const timeFormat = language === 'en' ? timeFormats.en : timeFormats.cs;
   const label = (group: string, value: string, fallback: string) =>
     t(`${key}.${group}.${value.replaceAll('.', '_')}`, { defaultValue: fallback });
 
@@ -122,9 +137,15 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
             <tbody>
               {entries.map((entry) => {
                 const level = levelOf(entry);
+                const moduleLabel = label('modules', moduleOf(entry), t(`${key}.otherModule`));
+                const actionLabel = Option.isNone(entry.actionKey)
+                  ? moduleLabel
+                  : [moduleLabel, t(`${key}.write`)].join(' · ');
                 return (
                   <tr className="border-border-primary border-b last:border-b-0" key={entry.auditEventId}>
-                    <td className="whitespace-nowrap px-150 py-100 tabular-nums">{time(entry.occurredAt)}</td>
+                    <td className="whitespace-nowrap px-150 py-100 tabular-nums">
+                      {DateTime.formatIntl(entry.occurredAt, timeFormat)}
+                    </td>
                     <td className="px-150 py-100">
                       <span className="flex items-center gap-100">
                         {level !== undefined && (
@@ -135,13 +156,9 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
                         <span className="truncate">{entry.actorDisplayName}</span>
                       </span>
                     </td>
+                    <td className="px-150 py-100">{actionLabel}</td>
                     <td className="px-150 py-100">
-                      {entry.actionKey === null
-                        ? label('modules', moduleOf(entry), t(`${key}.otherModule`))
-                        : `${label('modules', moduleOf(entry), t(`${key}.otherModule`))} · ${t(`${key}.write`)}`}
-                    </td>
-                    <td className="px-150 py-100">
-                      <Badge size="sm" variant={outcomeVariant[entry.outcome] ?? 'outline'}>
+                      <Badge size="sm" variant={outcomeVariant.get(entry.outcome) ?? 'outline'}>
                         {label('outcomes', entry.outcome, t(`${key}.otherOutcome`))}
                       </Badge>
                     </td>

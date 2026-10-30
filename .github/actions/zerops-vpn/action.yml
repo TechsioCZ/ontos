@@ -77,8 +77,14 @@ runs:
         export ZEROPS_WG_CONFIG_FILE_PATH="$VPN_STATE_DIRECTORY/zerops.conf"
         export ZEROPS_CLI_YAML_FILE_PATH="$VPN_STATE_DIRECTORY/.zcli.yml"
         export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
+        native_status=0
         sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
-          "$VPN_CLI_PATH" vpn up --project-id "$VPN_PROJECT_ID" --mtu 1350
+          "$VPN_CLI_PATH" vpn up --project-id "$VPN_PROJECT_ID" --mtu 1350 >/dev/null 2>&1 || native_status=$?
+        if (( native_status != 0 )); then
+          echo 'Native Zerops VPN connection failed; runner-owned cleanup is still required.' >&2
+          exit "$native_status"
+        fi
+        echo 'Native Zerops VPN up completed; private database verification is still required.'
 
     # Native vpn up only warns when its logger ping fails. Database DNS and TCP must work before
     # any authority lock, migration, artifact upload or publication can proceed.
@@ -88,30 +94,175 @@ runs:
       env:
         DATABASE_URL: ${{ inputs.database-url }}
         DATABASE_ADMIN_URL: ${{ inputs.database-admin-url }}
+        VPN_PROJECT_ID: ${{ inputs.project-id }}
+        ZEROPS_TOKEN: ${{ inputs.token }}
+        VPN_STATE_DIRECTORY: ${{ steps.prepare.outputs.state-directory }}
+        VPN_CLI_PATH: ${{ steps.prepare.outputs.cli-path }}
       run: |
-        python3 - <<'PY'
+        export ZEROPS_CLI_DATA_FILE_PATH="$VPN_STATE_DIRECTORY/cli.data"
+        export ZEROPS_WG_CONFIG_FILE_PATH="$VPN_STATE_DIRECTORY/zerops.conf"
+        export ZEROPS_CLI_YAML_FILE_PATH="$VPN_STATE_DIRECTORY/.zcli.yml"
+        export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
+        sudo --preserve-env=DATABASE_URL,DATABASE_ADMIN_URL,VPN_PROJECT_ID,VPN_STATE_DIRECTORY,VPN_CLI_PATH,RUNNER_TEMP,ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
+          python3 - <<'PY'
+        import base64
+        import configparser
+        import errno
+        import json
         import os
+        import pathlib
+        import signal
         import socket
+        import subprocess
         import time
         from urllib.parse import urlsplit
 
+        def fail(message):
+            raise SystemExit(message) from None
+
+        # Parse both before any socket or native mutation; neither URL is ever printed.
+        endpoints = []
         for name in ("DATABASE_URL", "DATABASE_ADMIN_URL"):
             try:
                 endpoint = urlsplit(os.environ[name])
                 if endpoint.scheme not in ("postgres", "postgresql") or not endpoint.hostname:
                     raise ValueError()
-                address = (endpoint.hostname, endpoint.port or 5432)
+                port = endpoint.port
+                if port == 0:
+                    raise ValueError()
+                endpoints.append((name, endpoint.hostname, port or 5432))
             except (KeyError, ValueError):
-                raise SystemExit(f"{name} must name the private PostgreSQL endpoint") from None
-            deadline = time.monotonic() + 60
-            while True:
+                fail(f"{name} must name the private PostgreSQL endpoint")
+
+        def dns_timeout(_signal, _frame):
+            raise TimeoutError()
+
+        signal.signal(signal.SIGALRM, dns_timeout)
+
+        def probe(name, host, port):
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 3)
                 try:
-                    with socket.create_connection(address, timeout=3):
-                        break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise SystemExit(f"{name} is unreachable through the native Zerops VPN") from None
-                    time.sleep(1)
+                    addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+                finally:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+            except socket.gaierror:
+                print(f"{name}: dns=resolution_failed", flush=True)
+                return False
+            except TimeoutError:
+                print(f"{name}: dns=timeout", flush=True)
+                return False
+            except OSError:
+                print(f"{name}: dns=error", flush=True)
+                return False
+            reached = False
+            states = []
+            # One address per family per pass, no polling or unbounded DNS answer walks.
+            for family, label in ((socket.AF_INET, "ipv4"), (socket.AF_INET6, "ipv6")):
+                address = next((item for item in addresses if item[0] == family), None)
+                state = "not_resolved"
+                if address is not None:
+                    try:
+                        with socket.socket(address[0], address[1], address[2]) as connection:
+                            connection.settimeout(2)
+                            connection.connect(address[4])
+                        reached = True
+                        state = "tcp_connected"
+                    except TimeoutError:
+                        state = "tcp_timeout"
+                    except OSError as error:
+                        state = {
+                            errno.ECONNREFUSED: "tcp_refused",
+                            errno.ETIMEDOUT: "tcp_timeout",
+                            errno.EHOSTUNREACH: "tcp_unreachable",
+                            errno.ENETUNREACH: "tcp_unreachable",
+                        }.get(error.errno, "tcp_error")
+                states.append(f"{label}={state}")
+            print(f"{name}: dns=resolved {' '.join(states)}", flush=True)
+            return reached
+
+        def verify_both():
+            # Do not short-circuit: every pass diagnoses and verifies both credentials' endpoints.
+            results = [probe(*endpoint) for endpoint in endpoints]
+            return all(results)
+
+        def command(arguments, timeout, input_text=None, expect_absent=False):
+            try:
+                result = subprocess.run(
+                    arguments, input=input_text, text=True, capture_output=True,
+                    timeout=timeout, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                fail("Native Zerops VPN recovery command failed or timed out; cleanup is still required")
+            if expect_absent:
+                if result.returncode != 1:
+                    fail("Native Zerops VPN recovery refused: interface removal was not confirmed")
+                return ""
+            if result.returncode != 0:
+                fail("Native Zerops VPN recovery command failed; cleanup is still required")
+            return result.stdout.strip()
+
+        def owned_key():
+            try:
+                state = pathlib.Path(os.environ["VPN_STATE_DIRECTORY"])
+                runner = pathlib.Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+                if (state.is_symlink() or not state.is_dir() or state.parent != runner
+                        or not state.name.startswith("ontos-zerops-vpn.")):
+                    raise ValueError()
+                data = state / "cli.data"
+                config = state / "zerops.conf"
+                if any(item.is_symlink() or not item.is_file() for item in (data, config)):
+                    raise ValueError()
+                project = os.environ["VPN_PROJECT_ID"]
+                registry = json.loads(data.read_text())["ProjectVpnKeyRegistry"]
+                if set(registry) != {project} or registry[project]["ProjectId"] != project:
+                    raise ValueError()
+                key = registry[project]["Key"]
+                if len(base64.b64decode(key, validate=True)) != 32:
+                    raise ValueError()
+                authored_config = configparser.ConfigParser(interpolation=None, strict=False)
+                authored_config.read_string(config.read_text())
+                if authored_config["Interface"]["PrivateKey"] != key:
+                    raise ValueError()
+                return key
+            except (OSError, ValueError, KeyError, TypeError, configparser.Error):
+                fail("Native Zerops VPN recovery refused: owned project key or configuration is invalid")
+
+        def handshake():
+            text = command(["wg", "show", "zerops", "latest-handshakes"], 3)
+            try:
+                timestamps = [int(line.split()[1]) for line in text.splitlines()]
+                latest = max(timestamps, default=0)
+                if latest == 0:
+                    print("native_handshake=absent", flush=True)
+                else:
+                    age = max(0, int(time.time()) - latest)
+                    print(f"native_handshake=present age_seconds={age}", flush=True)
+            except (ValueError, IndexError):
+                print("native_handshake=unknown", flush=True)
+
+        if verify_both():
+            raise SystemExit(0)
+
+        # v1.1.0 vpnDown.go only disconnects; vpnUp.go reuses ProjectVpnKeyRegistry[project].
+        # Guard its missing/corrupt-key fallback so recovery cannot create another credential.
+        key = owned_key()
+        public_key = command(["wg", "pubkey"], 3, key + "\n")
+        if not public_key or command(["wg", "show", "zerops", "public-key"], 3) != public_key:
+            fail("Native Zerops VPN recovery refused: the interface is not owned by this runner")
+        handshake()
+        print("Private endpoint verification failed; reconnecting the same runner-owned native VPN once.", flush=True)
+        cli = os.environ["VPN_CLI_PATH"]
+        command([cli, "vpn", "down"], 10)
+        command(["wg", "show", "zerops", "public-key"], 3, expect_absent=True)
+        if owned_key() != key:
+            fail("Native Zerops VPN recovery refused: the project key changed after disconnect")
+        command([cli, "vpn", "up", "--project-id", os.environ["VPN_PROJECT_ID"], "--mtu", "1350"], 20)
+        if owned_key() != key:
+            fail("Native Zerops VPN recovery refused: the project key changed after reconnect")
+        handshake()
+        if not verify_both():
+            fail("Both private PostgreSQL endpoints must be reachable after the single native VPN reconnect")
         PY
 
     - name: Clear only this runner's native VPN key and configuration
@@ -132,10 +283,10 @@ runs:
         export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
         cleanup_status=0
         sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
-          "$VPN_CLI_PATH" vpn clear --project-id "$VPN_PROJECT_ID" || cleanup_status=$?
+          "$VPN_CLI_PATH" vpn clear --project-id "$VPN_PROJECT_ID" >/dev/null 2>&1 || cleanup_status=$?
         if sudo ip link show dev zerops >/dev/null 2>&1; then
           sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
-            "$VPN_CLI_PATH" vpn down || cleanup_status=$?
+            "$VPN_CLI_PATH" vpn down >/dev/null 2>&1 || cleanup_status=$?
         fi
         if sudo ip link show dev zerops >/dev/null 2>&1; then
           echo 'The runner-owned Zerops VPN interface is still present.' >&2

@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SectionCard } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DateTime } from 'effect';
@@ -7,14 +8,14 @@ import type { Occupancy, RecordsResponse } from '../../../../shared/apis/records
 import './occupancy-calendar.css';
 
 type Properties = Effect.Success<ReturnType<typeof executeProperty>>;
-const monthFormat = new Intl.DateTimeFormat('cs-CZ', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-const todayInPrague = () =>
-  new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Europe/Prague',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+const monthFormat = new Intl.DateTimeFormat('cs-CZ', { month: 'long', timeZone: 'UTC', year: 'numeric' });
+const todayFormat = new Intl.DateTimeFormat('sv-SE', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+const todayInPrague = () => todayFormat.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 export const dayOccupancy = (records: readonly Occupancy[], unitId: string, day: string) =>
   records.find(
     (record) =>
@@ -23,6 +24,19 @@ export const dayOccupancy = (records: readonly Occupancy[], unitId: string, day:
       record.startDate <= day &&
       (record.endDate === null || day < record.endDate),
   );
+
+const dayPresentation = (lease: Occupancy | undefined, unavailable: boolean) => {
+  if (unavailable) {
+    return { className: '', mark: '—', status: 'Mimo provoz' };
+  }
+  if (lease?.state === 'ACTIVE') {
+    return { className: 'sp-day-occupied', mark: 'O', status: 'Obsazeno' };
+  }
+  if (lease === undefined) {
+    return { className: '', mark: '·', status: 'Volno' };
+  }
+  return { className: 'sp-day-reserved', mark: 'R', status: 'Rezervováno' };
+};
 
 /** Exact source intervals, not a second calendar store: cancellation releases every affected day immediately. */
 export const OccupancyCalendar = ({
@@ -38,6 +52,7 @@ export const OccupancyCalendar = ({
   readonly properties: Properties;
   readonly snapshot: RecordsResponse;
 }) => {
+  const { t } = useModernI18n();
   const today = todayInPrague();
   const month = monthValue === '' ? `${today.slice(0, 7)}-01` : monthValue;
   const start = DateTime.makeUnsafe(`${month}T00:00:00Z`);
@@ -53,7 +68,7 @@ export const OccupancyCalendar = ({
         actions={
           <div className="sp-calendar-controls">
             <Button
-              aria-label="Předchozí měsíc obsazenosti"
+              aria-label={t('property-leasing.calendar.previousMonth')}
               onClick={() => shift(-1)}
               size="sm"
               theme="outlined"
@@ -63,7 +78,7 @@ export const OccupancyCalendar = ({
             </Button>
             <strong>{monthFormat.format(DateTime.toEpochMillis(start))}</strong>
             <Button
-              aria-label="Následující měsíc obsazenosti"
+              aria-label={t('property-leasing.calendar.nextMonth')}
               onClick={() => shift(1)}
               size="sm"
               theme="outlined"
@@ -81,7 +96,7 @@ export const OccupancyCalendar = ({
             </Button>
           </div>
         }
-        title="Kalendář obsazenosti jednotek"
+        title={t('property-leasing.calendar.title')}
       >
         <p className="sp-calendar-muted">
           Každý den odkazuje na zdrojový nájem nebo jednotku. Den konce pobytu je volný; koncepty a zrušené rezervace
@@ -123,13 +138,7 @@ export const OccupancyCalendar = ({
                   {days.map((day) => {
                     const lease = dayOccupancy(snapshot.occupancies, unit.unitRef.resourceId, day);
                     const unavailable = unit.lifecycleState !== 'ACTIVE';
-                    const status = unavailable
-                      ? 'Mimo provoz'
-                      : lease?.state === 'ACTIVE'
-                        ? 'Obsazeno'
-                        : lease === undefined
-                          ? 'Volno'
-                          : 'Rezervováno';
+                    const { className, mark, status } = dayPresentation(lease, unavailable);
                     const detail =
                       lease === undefined || unavailable
                         ? status
@@ -138,23 +147,14 @@ export const OccupancyCalendar = ({
                       <td key={day}>
                         <a
                           aria-label={`${unit.code}, ${day}, ${detail}`}
-                          className={
-                            unavailable
-                              ? ''
-                              : lease?.state === 'ACTIVE'
-                                ? 'sp-day-occupied'
-                                : lease === undefined
-                                  ? ''
-                                  : 'sp-day-reserved'
-                          }
+                          className={className}
                           href={
                             lease === undefined || unavailable
                               ? `/${language}/nemovitosti?resourceId=${unit.unitRef.resourceId}`
                               : `/${language}/najmy?resourceId=${lease.occupancyRef.resourceId}`
                           }
-                          title={`${unit.code} · ${day} · ${detail}`}
                         >
-                          {unavailable ? '—' : lease?.state === 'ACTIVE' ? 'O' : lease === undefined ? '·' : 'R'}
+                          {mark}
                         </a>
                       </td>
                     );

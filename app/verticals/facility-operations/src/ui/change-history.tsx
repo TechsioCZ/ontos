@@ -1,11 +1,11 @@
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // Per-record change history (S00 audit, S12 contracts, S15): who, when and old → new values.
 // Entries are written by the server in the same transaction as the change (shared/domain/change-log.ts).
 //   <ChangeHistory entityId={document.id} refreshKey={envelope.revision} />
-// @effect-diagnostics asyncFunction:off
 import { formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { DateTime } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ChangeEntry, FieldChange } from '../../shared/domain/change-log.ts';
 import { loadRecords } from './use-agenda.ts';
@@ -13,82 +13,91 @@ import { loadRecords } from './use-agenda.ts';
 const k = 'facility-operations.common.history';
 
 /** Czech labels of the fields the agendas use most; unknown fields fall back to their key. */
-const fieldLabels: Readonly<Record<string, string>> = {
-  acquisitionDate: 'Datum pořízení',
-  acquisitionMethod: 'Způsob pořízení',
-  acquisitionValueMinor: 'Pořizovací hodnota',
-  actualAmountMinor: 'Skutečná částka',
-  amountTerms: 'Částka / podmínky',
-  category: 'Kategorie',
-  'contract.amountTerms': 'Částka / podmínky',
-  'contract.contractType': 'Typ smlouvy',
-  'contract.noticeDate': 'Poslední den výpovědi',
-  'contract.noticePeriod': 'Výpovědní lhůta',
-  'contract.owner': 'Odpovědná osoba',
-  'contract.parties': 'Smluvní strany',
-  'contract.status': 'Stav smlouvy',
-  'contract.subject': 'Předmět smlouvy',
-  'contract.validFrom': 'Platnost od',
-  'contract.validTo': 'Platnost do',
-  counterparty: 'Protistrana',
-  currentValueMinor: 'Aktuální hodnota',
-  date: 'Datum',
-  deliveries: 'Dodávky',
-  description: 'Popis',
-  disposal: 'Vyřazení',
-  dueDate: 'Termín',
-  expectedDate: 'Očekávané dodání',
-  inventoryNumber: 'Inventární číslo',
-  invoices: 'Faktury',
-  kind: 'Druh',
-  lines: 'Řádky',
-  links: 'Vazby',
-  location: 'Umístění',
-  name: 'Název',
-  nextInspectionDate: 'Příští revize',
-  note: 'Poznámka',
-  number: 'Číslo',
-  owner: 'Vlastník',
-  plannedAmountMinor: 'Plánovaná částka',
-  plannedDate: 'Plánovaný termín',
-  priority: 'Priorita',
-  related: 'Vazba',
-  responsible: 'Odpovědná osoba',
-  serialNumber: 'Výrobní číslo',
-  status: 'Stav',
-  title: 'Název',
-  unit: 'Jednotka',
-  validUntil: 'Platnost do',
-  valueChanges: 'Změny hodnoty',
-  warehouseId: 'Sklad',
-};
+const fieldLabels = new Map(
+  Object.entries({
+    acquisitionDate: 'Datum pořízení',
+    acquisitionMethod: 'Způsob pořízení',
+    acquisitionValueMinor: 'Pořizovací hodnota',
+    actualAmountMinor: 'Skutečná částka',
+    amountTerms: 'Částka / podmínky',
+    category: 'Kategorie',
+    'contract.amountTerms': 'Částka / podmínky',
+    'contract.contractType': 'Typ smlouvy',
+    'contract.noticeDate': 'Poslední den výpovědi',
+    'contract.noticePeriod': 'Výpovědní lhůta',
+    'contract.owner': 'Odpovědná osoba',
+    'contract.parties': 'Smluvní strany',
+    'contract.status': 'Stav smlouvy',
+    'contract.subject': 'Předmět smlouvy',
+    'contract.validFrom': 'Platnost od',
+    'contract.validTo': 'Platnost do',
+    counterparty: 'Protistrana',
+    currentValueMinor: 'Aktuální hodnota',
+    date: 'Datum',
+    deliveries: 'Dodávky',
+    description: 'Popis',
+    disposal: 'Vyřazení',
+    dueDate: 'Termín',
+    expectedDate: 'Očekávané dodání',
+    inventoryNumber: 'Inventární číslo',
+    invoices: 'Faktury',
+    kind: 'Druh',
+    lines: 'Řádky',
+    links: 'Vazby',
+    location: 'Umístění',
+    name: 'Název',
+    nextInspectionDate: 'Příští revize',
+    note: 'Poznámka',
+    number: 'Číslo',
+    owner: 'Vlastník',
+    plannedAmountMinor: 'Plánovaná částka',
+    plannedDate: 'Plánovaný termín',
+    priority: 'Priorita',
+    related: 'Vazba',
+    responsible: 'Odpovědná osoba',
+    serialNumber: 'Výrobní číslo',
+    status: 'Stav',
+    title: 'Název',
+    unit: 'Jednotka',
+    validUntil: 'Platnost do',
+    valueChanges: 'Změny hodnoty',
+    warehouseId: 'Sklad',
+  }),
+);
 
-const valueLabels: Readonly<Record<string, string>> = {
-  accepted: 'Přijato',
-  active: 'Aktivní',
-  approved: 'Schváleno',
-  cancelled: 'Zrušeno',
-  completed: 'Dokončeno',
-  confirmed: 'Potvrzeno',
-  disposed: 'Vyřazeno',
-  done: 'Hotovo',
-  draft: 'Návrh',
-  expired: 'Vypršela',
-  false: 'Ne',
-  high: 'Vysoká',
-  in_progress: 'Probíhá',
-  invoiced: 'Vyfakturováno',
-  low: 'Nízká',
-  medium: 'Střední',
-  ordered: 'Objednáno',
-  partially_delivered: 'Částečně dodáno',
-  planned: 'Plánováno',
-  received: 'Přijato',
-  rejected: 'Zamítnuto',
-  sent: 'Odesláno',
-  sold: 'Prodáno',
-  terminated: 'Ukončená',
-  true: 'Ano',
+const valueLabels = new Map(
+  Object.entries({
+    accepted: 'Přijato',
+    active: 'Aktivní',
+    approved: 'Schváleno',
+    cancelled: 'Zrušeno',
+    completed: 'Dokončeno',
+    confirmed: 'Potvrzeno',
+    disposed: 'Vyřazeno',
+    done: 'Hotovo',
+    draft: 'Návrh',
+    expired: 'Vypršela',
+    false: 'Ne',
+    high: 'Vysoká',
+    in_progress: 'Probíhá',
+    invoiced: 'Vyfakturováno',
+    low: 'Nízká',
+    medium: 'Střední',
+    ordered: 'Objednáno',
+    partially_delivered: 'Částečně dodáno',
+    planned: 'Plánováno',
+    received: 'Přijato',
+    rejected: 'Zamítnuto',
+    sent: 'Odesláno',
+    sold: 'Prodáno',
+    terminated: 'Ukončená',
+    true: 'Ano',
+  }),
+);
+
+const currencyFormatters = {
+  cs: new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }),
+  en: new Intl.NumberFormat('en-GB', { currency: 'CZK', style: 'currency' }),
 };
 
 const leaf = (field: string) => field.split('.').at(-1) ?? field;
@@ -96,7 +105,7 @@ const leaf = (field: string) => field.split('.').at(-1) ?? field;
 type Load =
   | { readonly status: 'loading' }
   | { readonly status: 'unavailable' }
-  | { readonly status: 'ready'; readonly entries: readonly ChangeEntry[] };
+  | { readonly entries: readonly ChangeEntry[]; readonly status: 'ready' };
 
 export const ChangeHistory = ({
   entityId,
@@ -114,17 +123,28 @@ export const ChangeHistory = ({
 
   useEffect(() => {
     let alive = true;
-    void loadRecords({ agendas: [], historyFor: entityId }).then((outcome) => {
-      if (alive) {
-        setLoad(outcome.ok ? { entries: outcome.data.history ?? [], status: 'ready' } : { status: 'unavailable' });
-      }
-    });
+    browserRuntime.runFork(
+      loadRecords({ agendas: [], historyFor: entityId }).pipe(
+        Effect.withSpan('FacilityOperations.changeHistory', {
+          attributes: { entityId, refreshToken: refreshToken ?? 'initial' },
+        }),
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (alive) {
+              setLoad(
+                outcome.ok ? { entries: outcome.data.history ?? [], status: 'ready' } : { status: 'unavailable' },
+              );
+            }
+          }),
+        ),
+      ),
+    );
     return () => {
       alive = false;
     };
   }, [entityId, refreshToken]);
 
-  const label = (field: string) => (czech ? (fieldLabels[field] ?? fieldLabels[leaf(field)] ?? field) : field);
+  const label = (field: string) => (czech ? (fieldLabels.get(field) ?? fieldLabels.get(leaf(field)) ?? field) : field);
   const value = (field: string, raw: string | undefined) => {
     if (raw === undefined) {
       return t(`${k}.emptyValue`);
@@ -132,15 +152,13 @@ export const ChangeHistory = ({
     if (/^#\d+$/u.test(raw)) {
       return t(`${k}.items`, { count: Number(raw.slice(1)) });
     }
-    if (/Minor$/u.test(leaf(field)) && /^-?\d+$/u.test(raw)) {
-      return new Intl.NumberFormat(czech ? 'cs-CZ' : 'en-GB', { currency: 'CZK', style: 'currency' }).format(
-        Number(raw) / 100,
-      );
+    if (leaf(field).endsWith('Minor') && /^-?\d+$/u.test(raw)) {
+      return currencyFormatters[czech ? 'cs' : 'en'].format(Number(raw) / 100);
     }
     if (/^\d{4}-\d{2}-\d{2}$/u.test(raw)) {
       return formatDate(raw);
     }
-    return czech ? (valueLabels[raw] ?? raw) : raw;
+    return czech ? (valueLabels.get(raw) ?? raw) : raw;
   };
 
   const renderChange = (change: FieldChange) => (

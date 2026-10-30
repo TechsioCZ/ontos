@@ -1,3 +1,8 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, Effect } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
 // "Kontakty" tab of the client card: contact persons with work role, phone, e-mail and note (C01). Add / edit
 // inline; "Odebrat" archives the person (kept in history, never deleted). One person can be the main contact.
 import { EmptyState, dialogCloseLabel, formatDate, surfaceTileClassName } from '@app/admin-ui';
@@ -12,9 +17,12 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
+import type { ComponentProps } from 'react';
 import type { ContactPerson } from '../../../../../shared/domain/clients.ts';
 import type { ClientCardTabProps } from './card-tab-props.ts';
 import { activeContactsOf } from './clients-model.ts';
+
+type InputHelp = Pick<ComponentProps<typeof FormInput>, 'helpText'>;
 
 interface ContactDraft {
   readonly email: string;
@@ -39,9 +47,9 @@ const draftOf = (contact: ContactPerson | undefined, primary: boolean): ContactD
 const ContactForm = ({
   busy,
   contact,
+  isFirst,
   onCancel,
   onSave,
-  isFirst,
 }: {
   readonly busy: boolean;
   readonly contact?: ContactPerson;
@@ -49,12 +57,21 @@ const ContactForm = ({
   readonly onCancel: () => void;
   readonly onSave: (draft: ContactDraft) => void;
 }) => {
+  const { t } = useModernI18n();
   const [draft, setDraft] = useState<ContactDraft>(() => draftOf(contact, isFirst));
   const [touched, setTouched] = useState(false);
   const patch = (next: Partial<ContactDraft>) => setDraft((current) => ({ ...current, ...next }));
   const prefix = contact?.id ?? 'new';
   const nameError = touched && draft.name.trim() === '' ? 'Vyplňte jméno' : undefined;
   const emailError = draft.email.trim() !== '' && !EMAIL.test(draft.email.trim()) ? 'Neplatný e-mail' : undefined;
+  const nameHelp: InputHelp = {};
+  if (nameError !== undefined) {
+    nameHelp.helpText = nameError;
+  }
+  const emailHelp: InputHelp = {};
+  if (emailError !== undefined) {
+    emailHelp.helpText = emailError;
+  }
   return (
     <form
       className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}
@@ -73,25 +90,25 @@ const ContactForm = ({
         <FormInput
           autoComplete="off"
           id={`crm-contact-${prefix}-name`}
-          label="Jméno a příjmení"
+          label={t('crm.ciClientsVisits.fields.fullName')}
           onChange={(event) => patch({ name: event.target.value })}
           required
           validateStatus={nameError === undefined ? 'default' : 'error'}
-          {...(nameError === undefined ? {} : { helpText: nameError })}
+          {...nameHelp}
           value={draft.name}
         />
         <FormInput
           autoComplete="off"
           id={`crm-contact-${prefix}-role`}
-          label="Pracovní role"
+          label={t('crm.ciClientsVisits.fields.jobRole')}
           onChange={(event) => patch({ role: event.target.value })}
-          placeholder="např. Nákupčí, Provozní"
+          placeholder={t('crm.ciClientsVisits.contacts.rolesExample')}
           value={draft.role}
         />
         <FormInput
           autoComplete="off"
           id={`crm-contact-${prefix}-phone`}
-          label="Telefon"
+          label={t('crm.ciClientsVisits.fields.phone')}
           onChange={(event) => patch({ phone: event.target.value })}
           type="tel"
           value={draft.phone}
@@ -99,17 +116,17 @@ const ContactForm = ({
         <FormInput
           autoComplete="off"
           id={`crm-contact-${prefix}-email`}
-          label="E-mail"
+          label={t('crm.ciClientsVisits.fields.email')}
           onChange={(event) => patch({ email: event.target.value })}
           type="email"
           validateStatus={emailError === undefined ? 'default' : 'error'}
-          {...(emailError === undefined ? {} : { helpText: emailError })}
+          {...emailHelp}
           value={draft.email}
         />
         <div className="sm:col-span-2">
           <FormTextarea
             id={`crm-contact-${prefix}-note`}
-            label="Poznámka"
+            label={t('crm.ciClientsVisits.fields.note')}
             maxLength={4000}
             onChange={(event) => patch({ note: event.target.value })}
             rows={2}
@@ -120,8 +137,8 @@ const ContactForm = ({
       <FormCheckbox
         checked={draft.primary}
         id={`crm-contact-${prefix}-primary`}
-        label="Hlavní kontakt klienta"
-        onCheckedChange={(checked) => patch({ primary: checked === true })}
+        label={t('crm.ciClientsVisits.contacts.primary')}
+        onCheckedChange={(checked) => patch({ primary: checked })}
         size="sm"
       />
       <div className="flex justify-end gap-100">
@@ -143,15 +160,13 @@ const ContactCard = ({
   writable,
 }: {
   readonly contact: ContactPerson;
-  readonly onEdit: () => void;
-  readonly onRemove: () => void;
+  readonly onEdit?: () => void;
+  readonly onRemove?: () => void;
   readonly writable: boolean;
 }) => {
   const archived = contact.status === 'archived';
   return (
-    <li
-      className={`${surfaceTileClassName} flex flex-col gap-100 p-200 ${archived ? 'opacity-60' : ''}`}
-    >
+    <li className={`${surfaceTileClassName} flex flex-col gap-100 p-200 ${archived ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between gap-100">
         <div className="flex min-w-0 items-center gap-150">
           <span
@@ -170,7 +185,7 @@ const ContactCard = ({
               )}
               {archived && (
                 <Badge size="sm" variant="outline">
-                  {`Odebrán ${formatDate(contact.archivedAt)}`}
+                  {`Odebrán ${pipe(contact.archivedAt, orderDateText, formatDate)}`}
                 </Badge>
               )}
             </span>
@@ -239,12 +254,17 @@ const contactPatch = (draft: ContactDraft, contact: ContactPerson) => {
   return patch;
 };
 
-const optionalText = (draft: ContactDraft) =>
-  Object.fromEntries(
-    (['role', 'phone', 'email', 'note'] as const)
-      .filter((key) => draft[key].trim() !== '')
-      .map((key) => [key, draft[key].trim()]),
-  ) as { role?: string; phone?: string; email?: string; note?: string };
+const optionalText = (draft: ContactDraft) => {
+  type TextFields = Pick<ContactPerson, 'email' | 'note' | 'phone' | 'role'>;
+  const fields: { -readonly [K in keyof TextFields]: TextFields[K] } = {};
+  for (const key of ['role', 'phone', 'email', 'note'] as const) {
+    const value = draft[key].trim();
+    if (value !== '') {
+      fields[key] = value;
+    }
+  }
+  return fields;
+};
 
 export const ContactsTab = ({
   busy,
@@ -253,11 +273,12 @@ export const ContactsTab = ({
   submit,
   writable,
 }: ClientCardTabProps & { readonly writable: boolean }) => {
+  const { t } = useModernI18n();
   const toaster = useToast();
-  const [editing, setEditing] = useState<string | 'new' | undefined>(undefined);
-  const [removing, setRemoving] = useState<ContactPerson | undefined>(undefined);
+  const [editing, setEditing] = useState<string | undefined>();
+  const [removing, setRemoving] = useState<ContactPerson | undefined>();
   const [showRemoved, setShowRemoved] = useState(false);
-  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [failure, setFailure] = useState<string | undefined>();
   const active = activeContactsOf(records, client.id);
   const removed = records.state.clients.contacts.filter(
     (contact) => contact.clientId === client.id && contact.status === 'archived',
@@ -265,14 +286,20 @@ export const ContactsTab = ({
 
   const run = (command: Parameters<typeof submit>[0], success: string, done: () => void) => {
     setFailure(undefined);
-    void submit(command).then((outcome) => {
-      if (outcome.ok) {
-        toaster.create({ title: success, type: 'success' });
-        done();
-      } else {
-        setFailure(outcome.message ?? 'Uložení se nezdařilo.');
-      }
-    });
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.ok) {
+              toaster.create({ title: success, type: 'success' });
+              done();
+            } else {
+              setFailure(outcome.message ?? 'Uložení se nezdařilo.');
+            }
+          }),
+        ),
+      ),
+    );
   };
 
   return (
@@ -294,19 +321,18 @@ export const ContactsTab = ({
           busy={busy}
           isFirst={active.length === 0}
           onCancel={() => setEditing(undefined)}
-          onSave={(draft) =>
-            run(
-              {
-                _tag: 'AddContactPerson',
-                clientId: client.id,
-                name: draft.name.trim(),
-                ...optionalText(draft),
-                ...(draft.primary ? { primary: true } : {}),
-              },
-              `Kontaktní osoba ${draft.name.trim()} přidána`,
-              () => setEditing(undefined),
-            )
-          }
+          onSave={(draft) => {
+            const command: Parameters<typeof submit>[0] = {
+              _tag: 'AddContactPerson',
+              clientId: client.id,
+              name: draft.name.trim(),
+              ...optionalText(draft),
+            };
+            if (draft.primary) {
+              Object.assign(command, { primary: true });
+            }
+            run(command, `Kontaktní osoba ${draft.name.trim()} přidána`, () => setEditing(undefined));
+          }}
         />
       )}
       {active.length === 0 && editing !== 'new' ? (
@@ -316,7 +342,7 @@ export const ContactsTab = ({
               ? 'Přidejte první kontaktní osobu klienta.'
               : 'U klienta zatím není evidovaná žádná kontaktní osoba.'
           }
-          title="Bez kontaktních osob"
+          title={t('crm.ciClientsVisits.contacts.empty')}
         />
       ) : (
         <ul className="grid grid-cols-1 gap-150">
@@ -367,13 +393,7 @@ export const ContactsTab = ({
           {showRemoved && (
             <ul className="grid grid-cols-1 gap-150">
               {removed.map((contact) => (
-                <ContactCard
-                  contact={contact}
-                  key={contact.id}
-                  onEdit={() => undefined}
-                  onRemove={() => undefined}
-                  writable={false}
-                />
+                <ContactCard contact={contact} key={contact.id} writable={false} />
               ))}
             </ul>
           )}

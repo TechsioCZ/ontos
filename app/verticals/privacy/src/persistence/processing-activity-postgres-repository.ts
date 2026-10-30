@@ -3,8 +3,7 @@ import type { ProcessingActivityRepositoryService } from './processing-activity-
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { flow, DateTime, Effect, Option, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { flow, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import { PrivacyApplicabilityDecisionSchema } from '../../shared/domain/privacy-applicability.ts';
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
@@ -86,10 +85,13 @@ const prerequisiteRejected = (reason: string) =>
     reason,
   });
 
-const makeRepository = (
+const makeRepository = Effect.fn('ProcessingActivityPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   trustedScope: Readonly<{ legalEntityId: string; tenantId: string }>,
-): ProcessingActivityRepositoryService => {
+): Effect.fn.Return<ProcessingActivityRepositoryService, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  const nextIdentifier = (reason: string) =>
+    crypto.randomUUIDv4().pipe(Effect.mapError((cause) => failure(reason, cause)));
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void
@@ -327,7 +329,20 @@ const makeRepository = (
       const nowDateTime = yield* DateTime.now;
       const now = DateTime.toDateUtc(nowDateTime);
       const createdAt = DateTime.formatIso(nowDateTime);
-      const activity = buildProcessingActivity({ actor, createdAt, legalEntityId, request: input, tenantId });
+      const resourceId =
+        input.activityRef?.resourceId ??
+        (yield* nextIdentifier('Processing Activity identifier could not be generated'));
+      const lifecycleEventId = yield* nextIdentifier(
+        'Processing Activity lifecycle event identifier could not be generated',
+      );
+      const activity = buildProcessingActivity({
+        actor,
+        createdAt,
+        legalEntityId,
+        request: input,
+        resourceId,
+        tenantId,
+      });
       yield* transaction
         .insert(processingActivities)
         .values({
@@ -348,7 +363,7 @@ const makeRepository = (
           eventRecord: activity.lifecycle[0],
           fromLifecycle: null,
           legalEntityId,
-          lifecycleEventId: randomUUID(),
+          lifecycleEventId,
           processingActivityId: activity.activityRef.resourceId,
           recordedAt: now,
           tenantId,
@@ -434,6 +449,9 @@ const makeRepository = (
       if (event === undefined) {
         return yield* failure('Processing Activity transition evidence is missing');
       }
+      const lifecycleEventId = yield* nextIdentifier(
+        'Processing Activity lifecycle event identifier could not be generated',
+      );
       yield* transaction
         .insert(processingActivityLifecycleEvents)
         .values({
@@ -442,7 +460,7 @@ const makeRepository = (
           eventRecord: event,
           fromLifecycle: current.value.currentLifecycle,
           legalEntityId,
-          lifecycleEventId: randomUUID(),
+          lifecycleEventId,
           processingActivityId: resourceId,
           recordedAt: now,
           tenantId,
@@ -454,16 +472,16 @@ const makeRepository = (
       return updated;
     }),
   };
-};
+});
 
 export const processingActivityRepositoryForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-): Effect.Effect<ProcessingActivityRepositoryService, OperationContextUnavailable> =>
-  scope.legalEntityId === undefined
+): Effect.Effect<ProcessingActivityRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+  const { legalEntityId, tenantId } = scope;
+  return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : Effect.succeed(
-        ProcessingActivityRepository.of(
-          makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }),
-        ),
+    : makeRepository(transaction, { legalEntityId, tenantId }).pipe(
+        Effect.map((repository) => ProcessingActivityRepository.of(repository)),
       );
+};

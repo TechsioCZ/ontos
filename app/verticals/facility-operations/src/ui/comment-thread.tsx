@@ -1,8 +1,10 @@
-// @effect-diagnostics asyncFunction:off
+import { Effect } from 'effect';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // Reusable persistent comment thread (S14) — OWNED BY THE documents LANE (ops-documents). Embed anywhere inside
 // AgendaFrame:   <CommentThread subject={{ kind: 'task', id: task.id, label: task.title }} />
 // Comments are stored in the `documents` agenda (restricted): only roles with read_all see them; the server never
 // returns them to the external persona. Author/time are set by the server; edits keep the previous wording.
+import { optionalField } from '../../shared/domain/common.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -17,7 +19,7 @@ import { sameSubject } from '../../shared/domain/documents.ts';
 import { formatWhen, isoOf } from './documents-kit.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
-import type { FailureReason } from './use-agenda.ts';
+import type { CommandOutcome, FailureReason } from './use-agenda.ts';
 import { surfaceTileClassName } from '@app/admin-ui';
 
 const k = 'facility-operations.documents.comments';
@@ -25,7 +27,7 @@ const NO_ATTACHMENT = '__none__';
 
 /** Highlights @mentions in a comment body. */
 const renderBody = (body: string): ReactNode =>
-  body.split(/(@[\p{L}\p{N}._-]+)/u).map((part, index) =>
+  body.split(/(?<mention>@[\p{L}\p{N}._-]+)/u).map((part, index) =>
     part.startsWith('@') ? (
       <span className="rounded-sm bg-primary-light px-50 font-medium" key={`${index}-${part}`}>
         {part}
@@ -36,27 +38,32 @@ const renderBody = (body: string): ReactNode =>
   );
 
 const mentionsOf = (body: string) => [
-  ...new Set([...body.matchAll(/@([\p{L}\p{N}._-]+)/gu)].map((match) => match[1] ?? '').filter((name) => name !== '')),
+  ...new Set(
+    [...body.matchAll(/@(?<name>[\p{L}\p{N}._-]+)/gu)].flatMap((match) => {
+      const name = match.groups?.['name'];
+      return name === undefined || name === '' ? [] : [name];
+    }),
+  ),
 ];
 
 export interface CommentThreadProps {
+  /** Offer a link to a stored document in the composer (S14.R2). Default: true for chat. */
+  readonly allowAttachment?: boolean;
+  /** Render nothing (instead of a quiet note) when the viewer may not read comments. */
+  readonly hideWhenForbidden?: boolean;
+  /** Called when the user clicks a linked document chip. */
+  readonly onOpenAttachment?: (attachment: SubjectRef) => void;
+  /**
+   * Optional: the page's own `useAgendaRecords([...,'documents'])` result, so the page and the thread share one
+   * documents revision (avoids a stale-revision conflict when the page also writes documents).
+   */
+  readonly records?: ReturnType<typeof useAgendaRecords>;
   /** The record the thread belongs to: `{ kind, id, label }` (label is a display snapshot). */
   readonly subject: SubjectRef;
   /** Heading; defaults to „Komentáře“. Pass `null` to hide the heading row. */
   readonly title?: string | null;
   /** `chat` renders a conversation (send button wording, composer at the bottom, taller list). */
   readonly variant?: 'thread' | 'chat';
-  /** Offer a link to a stored document in the composer (S14.R2). Default: true for chat. */
-  readonly allowAttachment?: boolean;
-  /** Called when the user clicks a linked document chip. */
-  readonly onOpenAttachment?: (attachment: SubjectRef) => void;
-  /** Render nothing (instead of a quiet note) when the viewer may not read comments. */
-  readonly hideWhenForbidden?: boolean;
-  /**
-   * Optional: the page's own `useAgendaRecords([...,'documents'])` result, so the page and the thread share one
-   * documents revision (avoids a stale-revision conflict when the page also writes documents).
-   */
-  readonly records?: ReturnType<typeof useAgendaRecords>;
 }
 
 const CommentItem = ({
@@ -85,32 +92,45 @@ const CommentItem = ({
   const fail = (reason: FailureReason) =>
     toast.create({ title: t(`facility-operations.common.errors.${reason}`), type: 'error' });
 
-  const saveEdit = async () => {
-    const body = draft.trim();
-    if (body === '' || body === comment.body) {
-      setEditing(false);
-      return;
-    }
-    setBusy(true);
-    const outcome = await run({ _tag: 'DocumentCommentEdit', body, commentId: comment.id });
-    setBusy(false);
-    if (outcome.ok) {
-      setEditing(false);
-      toast.create({ title: t('facility-operations.common.saved'), type: 'success' });
-    } else {
-      fail(outcome.reason);
-    }
-  };
+  const finishSave = (outcome: CommandOutcome) =>
+    Effect.sync(() => {
+      setBusy(false);
+      if (outcome.ok) {
+        setEditing(false);
+        toast.create({ title: t('facility-operations.common.saved'), type: 'success' });
+      } else {
+        fail(outcome.reason);
+      }
+    });
+  const finishRetract = (outcome: CommandOutcome) =>
+    Effect.sync(() => {
+      setBusy(false);
+      setConfirmRetract(false);
+      if (!outcome.ok) {
+        fail(outcome.reason);
+      }
+    });
+  const saveEdit = (): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const body = draft.trim();
+      if (body === '' || body === comment.body) {
+        return Effect.sync(() => setEditing(false));
+      }
+      setBusy(true);
+      return run({ _tag: 'DocumentCommentEdit', body, commentId: comment.id }).pipe(
+        Effect.tap(finishSave),
+        Effect.asVoid,
+      );
+    });
 
-  const retract = async () => {
-    setBusy(true);
-    const outcome = await run({ _tag: 'DocumentCommentRetract', commentId: comment.id });
-    setBusy(false);
-    setConfirmRetract(false);
-    if (!outcome.ok) {
-      fail(outcome.reason);
-    }
-  };
+  const retract = (): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      setBusy(true);
+      return run({ _tag: 'DocumentCommentRetract', commentId: comment.id }).pipe(
+        Effect.tap(finishRetract),
+        Effect.asVoid,
+      );
+    });
 
   return (
     <li className="flex gap-150" data-comment-id={comment.id}>
@@ -130,11 +150,12 @@ const CommentItem = ({
             </button>
           )}
         </div>
-        {retracted ? (
+        {retracted && (
           <p className="text-fg-secondary text-sm italic">
             {t(`${k}.retracted`, { when: formatWhen(comment.retractedAt ?? comment.updatedAt) })}
           </p>
-        ) : editing ? (
+        )}
+        {!retracted && editing && (
           <div className="flex flex-col gap-100">
             <Textarea
               aria-label={t(`${k}.edit`)}
@@ -144,7 +165,14 @@ const CommentItem = ({
               value={draft}
             />
             <div className="flex gap-100">
-              <Button isLoading={busy} onClick={() => void saveEdit()} size="sm" variant="primary">
+              <Button
+                isLoading={busy}
+                onClick={() => {
+                  browserRuntime.runFork(saveEdit());
+                }}
+                size="sm"
+                variant="primary"
+              >
                 {t(`${k}.save`)}
               </Button>
               <Button
@@ -160,7 +188,8 @@ const CommentItem = ({
               </Button>
             </div>
           </div>
-        ) : (
+        )}
+        {!retracted && !editing && (
           <div className="whitespace-pre-wrap break-words rounded-md bg-highlight px-150 py-100 text-sm">
             {renderBody(comment.body)}
           </div>
@@ -169,9 +198,12 @@ const CommentItem = ({
           <button
             className="inline-flex w-fit items-center gap-50 rounded-md border border-border-primary bg-surface px-100 py-50 text-xs hover:bg-highlight"
             onClick={() => {
-              if (comment.attachment === undefined) return;
-              if (onOpenAttachment !== undefined) onOpenAttachment(comment.attachment);
-              else if (comment.attachment.kind === 'document') {
+              if (comment.attachment === undefined) {
+                return;
+              }
+              if (onOpenAttachment !== undefined) {
+                onOpenAttachment(comment.attachment);
+              } else if (comment.attachment.kind === 'document') {
                 globalThis.location.assign(
                   `/${language ?? 'cs'}/provoz/dokumenty?doc=${encodeURIComponent(comment.attachment.id)}`,
                 );
@@ -210,7 +242,14 @@ const CommentItem = ({
             {confirmRetract ? (
               <span className="flex items-center gap-100 text-xs">
                 <span className="text-fg-secondary">{t(`${k}.retractConfirm`)}</span>
-                <Button isLoading={busy} onClick={() => void retract()} size="sm" variant="danger">
+                <Button
+                  isLoading={busy}
+                  onClick={() => {
+                    browserRuntime.runFork(retract());
+                  }}
+                  size="sm"
+                  variant="danger"
+                >
                   {t(`${k}.retract`)}
                 </Button>
                 <Button onClick={() => setConfirmRetract(false)} size="sm" theme="outlined" variant="secondary">
@@ -233,6 +272,50 @@ const CommentItem = ({
   );
 };
 
+const threadViewOf = (ops: ReturnType<typeof useAgendaRecords>, subject: SubjectRef) => {
+  const envelope = ops.data?.agendas.documents;
+  const state: DocumentsState | undefined = envelope?.state;
+  const comments = (state?.comments ?? [])
+    .filter((comment) => sameSubject(comment.subject, subject))
+    .toSorted((left, right) => isoOf(left.createdAt).localeCompare(isoOf(right.createdAt)));
+  return state === undefined
+    ? undefined
+    : {
+        canWrite: envelope?.canWrite === true,
+        comments,
+        documents: state.documents.filter((document) => !(subject.kind === 'document' && document.id === subject.id)),
+        meId: ops.data?.actorPrincipalRef.principalId,
+        visibleCount: comments.filter((comment) => comment.retractedAt === undefined).length,
+      };
+};
+
+const postCommentCommand = (
+  text: string,
+  context: {
+    readonly attachment: string;
+    readonly documents: DocumentsState['documents'];
+    readonly subject: SubjectRef;
+  },
+) => {
+  const linked = context.documents.find((document) => document.id === context.attachment);
+  const mentions = mentionsOf(text);
+  return {
+    _tag: 'DocumentCommentPost' as const,
+    body: text,
+    subject: context.subject,
+    ...optionalField(
+      'attachment',
+      linked === undefined ? undefined : { id: linked.id, kind: 'document' as const, label: linked.title },
+    ),
+    ...optionalField('mentions', mentions.length === 0 ? undefined : mentions),
+  };
+};
+
+const threadPresentation = (variant: 'thread' | 'chat') =>
+  variant === 'chat'
+    ? { attachments: true, listClassName: 'max-h-[60vh] overflow-y-auto pr-100', rows: 2 }
+    : { attachments: false, listClassName: '', rows: 3 };
+
 export const CommentThread = ({
   allowAttachment,
   hideWhenForbidden = false,
@@ -247,18 +330,19 @@ export const CommentThread = ({
   // The page's records when it passes them (same store entry, no second read), else this panel's own documents read.
   const own = useAgendaRecords(['documents'], { enabled: records === undefined });
   const ops = records ?? own;
-  const envelope = ops.data?.agendas.documents;
-  const state: DocumentsState | undefined = envelope?.state;
+  const view = threadViewOf(ops, subject);
   const [body, setBody] = useState('');
   const [attachment, setAttachment] = useState(NO_ATTACHMENT);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<FailureReason | undefined>(undefined);
-  const withAttachment = allowAttachment ?? variant === 'chat';
+  const [error, setError] = useState<FailureReason | undefined>();
+  const presentation = threadPresentation(variant);
+  const withAttachment = allowAttachment ?? presentation.attachments;
+  const heading = title ?? t(`${k}.title`);
 
   if (ops.status === 'loading') {
     return <LoadingSkeleton rows={2} />;
   }
-  if (ops.status !== 'ready' || state === undefined) {
+  if (ops.status !== 'ready' || view === undefined) {
     return hideWhenForbidden ? null : (
       <p className="rounded-md border border-border-primary border-dashed px-200 py-150 text-fg-secondary text-sm">
         {ops.status === 'error' ? t('facility-operations.common.states.errorTitle') : t(`${k}.forbidden`)}
@@ -266,45 +350,36 @@ export const CommentThread = ({
     );
   }
 
-  const comments = (state.comments ?? [])
-    .filter((comment) => sameSubject(comment.subject, subject))
-    .toSorted((left, right) => isoOf(left.createdAt).localeCompare(isoOf(right.createdAt)));
-  const visibleCount = comments.filter((comment) => comment.retractedAt === undefined).length;
-  const canWrite = envelope?.canWrite === true;
-  const meId = ops.data?.actorPrincipalRef.principalId;
-  const documents = state.documents.filter((document) => !(subject.kind === 'document' && document.id === subject.id));
-
-  const submit = async () => {
-    const text = body.trim();
-    if (text === '' || busy) {
-      return;
-    }
-    setBusy(true);
-    setError(undefined);
-    const linked = documents.find((document) => document.id === attachment);
-    const mentions = mentionsOf(text);
-    const outcome = await ops.run({
-      _tag: 'DocumentCommentPost',
-      body: text,
-      subject,
-      ...(linked === undefined ? {} : { attachment: { id: linked.id, kind: 'document', label: linked.title } }),
-      ...(mentions.length === 0 ? {} : { mentions }),
+  const { canWrite, comments, documents, meId, visibleCount } = view;
+  const finishPost = (outcome: CommandOutcome) =>
+    Effect.sync(() => {
+      setBusy(false);
+      if (outcome.ok) {
+        setBody('');
+        setAttachment(NO_ATTACHMENT);
+        toast.create({ title: t(`${k}.posted`), type: 'success' });
+      } else {
+        setError(outcome.reason);
+      }
     });
-    setBusy(false);
-    if (outcome.ok) {
-      setBody('');
-      setAttachment(NO_ATTACHMENT);
-      toast.create({ title: t(`${k}.posted`), type: 'success' });
-    } else {
-      setError(outcome.reason);
-    }
-  };
+  const submit = (): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const text = body.trim();
+      if (text === '' || busy) {
+        return Effect.void;
+      }
+      setBusy(true);
+      setError(undefined);
+      return ops
+        .run(postCommentCommand(text, { attachment, documents, subject }))
+        .pipe(Effect.tap(finishPost), Effect.asVoid);
+    });
 
   return (
-    <section aria-label={title ?? t(`${k}.title`)} className="flex flex-col gap-200" data-testid="comment-thread">
+    <section aria-label={heading} className="flex flex-col gap-200" data-testid="comment-thread">
       {title !== null && (
         <div className="flex items-center justify-between gap-100">
-          <h3 className="font-semibold text-md">{title ?? t(`${k}.title`)}</h3>
+          <h3 className="font-semibold text-md">{heading}</h3>
           <Badge size="sm" variant="outline">
             {t(`${k}.count`, { count: visibleCount })}
           </Badge>
@@ -313,7 +388,7 @@ export const CommentThread = ({
       {comments.length === 0 ? (
         <p className="text-fg-secondary text-sm">{t(`${k}.empty`)}</p>
       ) : (
-        <ol className={`flex flex-col gap-250 ${variant === 'chat' ? 'max-h-[60vh] overflow-y-auto pr-100' : ''}`}>
+        <ol className={`flex flex-col gap-250 ${presentation.listClassName}`}>
           {comments.map((comment) => (
             <CommentItem
               canWrite={canWrite}
@@ -340,11 +415,11 @@ export const CommentThread = ({
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                 event.preventDefault();
-                void submit();
+                browserRuntime.runFork(submit());
               }
             }}
             placeholder={t(`${k}.placeholder`)}
-            rows={variant === 'chat' ? 2 : 3}
+            rows={presentation.rows}
             value={body}
           />
           <div className="flex flex-wrap items-end justify-between gap-100">
@@ -373,7 +448,9 @@ export const CommentThread = ({
               disabled={busy || body.trim() === ''}
               isLoading={busy}
               loadingText={t('facility-operations.common.saving')}
-              onClick={() => void submit()}
+              onClick={() => {
+                browserRuntime.runFork(submit());
+              }}
               size="sm"
               variant="primary"
             >

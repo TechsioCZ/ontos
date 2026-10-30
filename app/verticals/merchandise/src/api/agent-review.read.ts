@@ -7,6 +7,7 @@ import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../share
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { ProductRecordSchema } from '../../shared/apis/records.ts';
 import type { RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
+import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { reviewProductProposal, targetProductId } from './agent-review.ts';
 
@@ -15,7 +16,13 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const moduleKey = 'demo.merchandise';
 
 const reviewProductIds = (input: AgentReviewRequest) => [
-  ...new Set(input.items.flatMap((item) => Option.toArray(Option.fromUndefinedOr(targetProductId(item.command))))),
+  ...new Set(
+    input.items.flatMap((item) =>
+      Option.toArray(
+        Option.flatMap(Option.fromUndefinedOr(targetProductId(item.command)), Schema.decodeOption(ProductIdSchema)),
+      ),
+    ),
+  ),
 ];
 /** The person's own records read for a review: catalog rights and only the targeted products. */
 const reviewRecordsRequest = (input: AgentReviewRequest, scope: OperationalScope) => {
@@ -48,7 +55,33 @@ const makeAgentReviewServices: ReadServiceFactory<Services, Effect.Services<Retu
     ),
   );
 
-const encodeProduct = Schema.encodeSync(ProductRecordSchema);
+const encodeProduct = Schema.encodeEffect(ProductRecordSchema);
+const reviewItem = Effect.fn('Merchandise.agentReview.item')(function* reviewItem(
+  request: AgentReviewRequest['items'][number],
+  records: RecordsResponse | undefined,
+) {
+  const productId = targetProductId(request.command);
+  const product = productId === undefined ? undefined : records?.products.find((entry) => entry.id === productId);
+  return reviewProductProposal({
+    product:
+      product === undefined
+        ? undefined
+        : yield* encodeProduct(product).pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'Owner records services are temporarily unavailable',
+                }),
+                'cause',
+                { value: cause },
+              ),
+            ),
+          ),
+    request,
+    rights: records,
+  });
+});
 
 export const agentReviewRead = defineRead(
   {
@@ -68,7 +101,6 @@ export const agentReviewRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     // The person's rights, resolved before the transaction; a failed check leaves every answer open.
     prepare: (input: AgentReviewRequest, context) =>
       merchandiseRecordsGrants(context.scope, reviewRecordsRequest(input, context.scope)).pipe(
@@ -76,39 +108,34 @@ export const agentReviewRead = defineRead(
         Effect.orElseSucceed(Option.none),
       ),
     load: (input: AgentReviewRequest, context) =>
-      Effect.gen(function* () {
-        const live = input.items.some(
-          (item) => item.stage === 'proposed' || (item.stage === 'undo' && targetProductId(item.command) !== undefined),
-        );
-        const productIds = reviewProductIds(input);
-        // The person's own records read (catalog rights and only the targeted products); a failed read leaves every
-        // answer open.
-        const grants = context.prepared;
-        const records: RecordsResponse | undefined =
-          live && Option.isSome(grants)
-            ? yield* context.services
-                .records(reviewRecordsRequest(input, context.scope), grants.value, {
-                  detailLimit: productIds.length,
-                })
-                .pipe(
-                  Effect.map(Option.some<RecordsResponse>),
-                  Effect.orElseSucceed(Option.none<RecordsResponse>),
-                  Effect.map(Option.getOrUndefined),
-                )
-            : undefined;
-        const items = input.items.map((request) => {
-          const productId = targetProductId(request.command);
-          const product =
-            productId === undefined ? undefined : records?.products.find((entry) => entry.id === productId);
-          return reviewProductProposal({
-            product: product === undefined ? undefined : encodeProduct(product),
-            request,
-            rights: records,
+      Effect.suspend(() =>
+        Effect.gen(function* loadReview() {
+          const live = input.items.some(
+            (item) =>
+              item.stage === 'proposed' || (item.stage === 'undo' && targetProductId(item.command) !== undefined),
+          );
+          const productIds = reviewProductIds(input);
+          // The person's own records read (catalog rights and only the targeted products); a failed read leaves every
+          // answer open.
+          const grants = context.prepared;
+          const records: RecordsResponse | undefined =
+            live && Option.isSome(grants)
+              ? yield* context.services
+                  .records(reviewRecordsRequest(input, context.scope), grants.value, {
+                    detailLimit: productIds.length,
+                  })
+                  .pipe(
+                    Effect.map(Option.some<RecordsResponse>),
+                    Effect.orElseSucceed(Option.none<RecordsResponse>),
+                    Effect.map(Option.getOrUndefined),
+                  )
+              : undefined;
+          const items = yield* Effect.forEach(input.items, (request) => reviewItem(request, records), {
+            concurrency: 1,
           });
-        });
-        return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
-      }),
-    // oxlint-enable perfectionist/sort-objects
+          return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
+        }),
+      ).pipe(Effect.withSpan('Merchandise.agentReview.load')),
   },
   makeAgentReviewServices,
   () => ({ kind: 'module', moduleId: moduleKey }),

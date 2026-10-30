@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -169,7 +170,7 @@ describe('Catalog Selection Current basis', () => {
         expect(result.basis).toEqual([]);
         expect(result.basis.some(({ source }) => source.revisionId === revisionId)).toBe(false);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a selected non-Unit reference before projecting its matching ID', () =>
@@ -226,7 +227,7 @@ describe('Catalog Selection Current basis', () => {
         const result = yield* reader.read({ purpose: 'PURCHASE_ACCEPTANCE', selection: bad });
         expect(result).toMatchObject({ basis: [], status: 'INVALID' });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('never queries a foreign tenant selection', () =>
@@ -247,7 +248,7 @@ describe('Catalog Selection Current basis', () => {
       });
       expect(result.status).toBe('INDETERMINATE');
       expect(result.basis).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('retains exact owner revisions but does not invent indirect proof', () =>
@@ -278,7 +279,7 @@ describe('Catalog Selection Current basis', () => {
       if (result.status !== 'OBSERVED') {
         expect(result.reason).toBe('Current Product Type readiness cannot be proved');
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a bare Set selection and fails closed when Set ownership cannot be read', () =>
@@ -294,7 +295,7 @@ describe('Catalog Selection Current basis', () => {
       if (unavailable.status !== 'OBSERVED') {
         expect(unavailable.reason).toBe('Set ownership source is unavailable');
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('observes an indirect Product Type revision change without a Variant edit', () =>
@@ -560,7 +561,7 @@ describe('Catalog Selection Current basis', () => {
       expect(inheritedAfter.basis.find(({ role }) => role === 'INHERITED_VALUE')?.source.resourceRef.resourceId).toBe(
         valueSetId,
       );
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('accepts confirmed-untyped Current proof after axes were cleared at a later revision', () =>
@@ -623,7 +624,7 @@ describe('Catalog Selection Current basis', () => {
         assessCatalogSelection({ assessedAt: current.assessedAt, current, purpose: 'PURCHASE_ACCEPTANCE', selection })
           .status,
       ).toBe('VALID');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a Variant owned by a different Product without membership proof', () =>
@@ -643,7 +644,7 @@ describe('Catalog Selection Current basis', () => {
       const result = yield* reader.read({ purpose: 'PURCHASE_ACCEPTANCE', selection });
       expect(result.status).toBe('INVALID');
       expect(result.basis.map(({ role }) => role)).toEqual(['PRODUCT']);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not promote a missing Configuration or Set revision to Current', () =>
@@ -696,7 +697,7 @@ describe('Catalog Selection Current basis', () => {
       const setResult = yield* reader.read({ purpose: 'PURCHASE_ACCEPTANCE', selection: setSelection });
       expect(setResult.status).toBe('INDETERMINATE');
       expect(setResult.basis.map(({ role }) => role)).toEqual(['PRODUCT', 'VARIANT']);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a caller-invented Configuration or Set revision ID before emitting owner basis', () =>
@@ -758,7 +759,7 @@ describe('Catalog Selection Current basis', () => {
         expect(result.basis.map(({ role }) => role)).toEqual(['PRODUCT', 'VARIANT']);
         expect(result.basis.some(({ source }) => source.revisionId === forgedId)).toBe(false);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a stale Set revision only after the owner resolves its Current revision', () =>
@@ -861,7 +862,7 @@ describe('Catalog Selection Current basis', () => {
       });
       expect(currentButNested).toMatchObject({ reason: 'Set component Current proof: NESTED_SET', status: 'INVALID' });
       expect(currentButNested.basis.some(({ role }) => role === 'SET_COMPOSITION')).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
 
@@ -1121,5 +1122,5 @@ it.effect('reassesses an unchanged Set selection against component Current facts
     const unavailable = yield* assess();
     expect(unavailable.status).toBe('INDETERMINATE');
     expect(unavailable.basis.some(({ role }) => role === 'SET_COMPOSITION')).toBe(false);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

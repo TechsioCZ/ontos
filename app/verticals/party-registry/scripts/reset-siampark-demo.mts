@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';

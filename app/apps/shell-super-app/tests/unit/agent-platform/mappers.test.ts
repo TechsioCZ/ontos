@@ -1,14 +1,21 @@
+import {
+  AgentActivityEntrySchema,
+  AgentActivityRequestSchema,
+  AgentRecordReferenceSchema,
+} from '@app/shared-contracts/agent-proposals';
+import { DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   accessRowToEntry,
   auditRowToEntry,
   buildActivityResponse,
-  type AgentProposalRow,
-  type ModuleTexts,
   proposalRowToEntries,
   rowsToQueueBatches,
 } from '../../../api/agent-platform/mappers.ts';
+import type { AgentProposalRow, ModuleTexts } from '../../../api/agent-platform/mappers.ts';
+
+const instant = (iso: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(iso));
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const LEGAL = '22222222-2222-4222-8222-222222222222';
@@ -17,16 +24,17 @@ const JANA = '44444444-4444-4444-8444-444444444444';
 const BATCH = '55555555-5555-4555-8555-555555555555';
 const names = new Map<string, string>([[JANA, 'Jana Nováková']]);
 /** Composed modules as their contributions describe them (CRM keeps its own AI change engine). */
-const LABELS: Readonly<Record<string, string>> = { 'demo.crm': 'CRM', 'demo.sales-pipeline': 'Obchodní případy' };
+const LABELS = new Map([
+  ['demo.crm', 'CRM'],
+  ['demo.sales-pipeline', 'Obchodní případy'],
+]);
 /** Command field names a module declares in its contribution. */
-const FIELD_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  'facility-operations': { name: 'Název měřidla' },
-};
+const FIELD_LABELS = new Map([['facility-operations', { name: 'Název měřidla' }]]);
 const modules: ModuleTexts = {
-  commandFieldLabelsOf: (appId) => FIELD_LABELS[appId] ?? {},
-  hasOwnProposalEngine: (moduleKey) => moduleKey in LABELS,
+  commandFieldLabelsOf: (appId) => FIELD_LABELS.get(appId) ?? {},
+  hasOwnProposalEngine: (moduleKey) => LABELS.has(moduleKey),
   labelOf: (moduleKey) =>
-    moduleKey === null || moduleKey === undefined ? 'Platforma' : (LABELS[moduleKey] ?? moduleKey),
+    moduleKey === null || moduleKey === undefined ? 'Platforma' : (LABELS.get(moduleKey) ?? moduleKey),
 };
 
 const baseRow: AgentProposalRow = {
@@ -34,19 +42,19 @@ const baseRow: AgentProposalRow = {
   agentLabel: 'Obchodní agent',
   agentPrincipalId: AGENT,
   appId: 'crm',
-  applyResult: null,
   appliedAt: null,
+  applyResult: null,
   batchId: BATCH,
   batchInstruction: 'Aktualizuj CRM',
-  batchRevertNote: null,
   batchRevertedAt: null,
   batchRevertedByPrincipalId: null,
+  batchRevertNote: null,
   command: { _tag: 'UpdateContact' },
-  createdAt: new Date('2026-10-20T10:00:00.000Z'),
+  createdAt: instant('2026-10-20T10:00:00.000Z'),
   decidedAt: null,
   decidedByPrincipalId: null,
   decisionNote: null,
-  diff: [{ field: 'phone', label: 'Telefon', after: '+420 601 000 000' }],
+  diff: [{ after: '+420 601 000 000', field: 'phone', label: 'Telefon' }],
   failure: null,
   legalEntityId: LEGAL,
   moduleKey: 'demo.crm',
@@ -103,7 +111,7 @@ it('reports a reverted batch with the reverting person and disables revert-all',
     [
       {
         ...baseRow,
-        batchRevertedAt: new Date('2026-10-20T11:00:00.000Z'),
+        batchRevertedAt: instant('2026-10-20T11:00:00.000Z'),
         batchRevertedByPrincipalId: JANA,
         batchRevertNote: 'Omyl',
         status: 'applied',
@@ -122,7 +130,7 @@ it('maps a denied audit event to a denied CRM activity entry', () => {
       actionKey: 'demo.crm.apply-command',
       auditEventId: 'a1',
       displayName: 'Obchodní agent',
-      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+      occurredAt: instant('2026-10-20T09:00:00.000Z'),
       outcome: 'denied',
       outcomeCode: 'forbidden',
       principalId: AGENT,
@@ -130,7 +138,7 @@ it('maps a denied audit event to a denied CRM activity entry', () => {
     { modules, proposalOnly: false },
   );
   expect(entry.kind).toBe('denied');
-  expect(entry.moduleKey).toBe('demo.crm');
+  expect(Schema.encodeSync(AgentActivityEntrySchema)(entry).moduleKey).toBe('demo.crm');
   expect(entry.moduleLabel).toBe('CRM');
   expect(entry.actionLabel).toBe('Pokus o zápis odmítnut');
 });
@@ -141,7 +149,7 @@ it('maps an allowed list read to the Czech list label', () => {
       accessKind: 'list',
       dataAccessEventId: 'r1',
       displayName: 'Obchodní agent',
-      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+      occurredAt: instant('2026-10-20T09:00:00.000Z'),
       outcome: 'allowed',
       outcomeCode: 'ok',
       principalId: AGENT,
@@ -159,7 +167,7 @@ it('emits proposal and decision entries for an applied proposal', () => {
   const entries = proposalRowToEntries(
     {
       ...baseRow,
-      decidedAt: new Date('2026-10-20T10:30:00.000Z'),
+      decidedAt: instant('2026-10-20T10:30:00.000Z'),
       decidedByPrincipalId: JANA,
       status: 'applied',
     },
@@ -178,7 +186,7 @@ it('keeps the agent list unfiltered when filtering by kind and applies the limit
         actionKey: 'demo.crm.apply-command',
         auditEventId: 'a1',
         displayName: 'Obchodní agent',
-        occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+        occurredAt: instant('2026-10-20T09:00:00.000Z'),
         outcome: 'denied',
         outcomeCode: 'forbidden',
         principalId: AGENT,
@@ -190,7 +198,7 @@ it('keeps the agent list unfiltered when filtering by kind and applies the limit
         accessKind: 'list',
         dataAccessEventId: 'r1',
         displayName: 'Hanák agent',
-        occurredAt: new Date('2026-10-20T08:00:00.000Z'),
+        occurredAt: instant('2026-10-20T08:00:00.000Z'),
         outcome: 'allowed',
         outcomeCode: 'ok',
         principalId: '77777777-7777-4777-8777-777777777777',
@@ -204,7 +212,7 @@ it('keeps the agent list unfiltered when filtering by kind and applies the limit
         accessKind: 'read',
         dataAccessEventId: 'r2',
         displayName: 'Obchodní agent',
-        occurredAt: new Date('2026-10-20T07:00:00.000Z'),
+        occurredAt: instant('2026-10-20T07:00:00.000Z'),
         outcome: 'allowed',
         outcomeCode: 'ok',
         principalId: AGENT,
@@ -281,7 +289,11 @@ it('marks commands the platform does not understand as agent-described', () => {
 });
 
 it('does not report a pending claim as a decision', () => {
-  const claimed: AgentProposalRow = { ...baseRow, decidedAt: new Date(), decidedByPrincipalId: JANA };
+  const claimed: AgentProposalRow = {
+    ...baseRow,
+    decidedAt: instant('2026-10-23T10:00:00.000Z'),
+    decidedByPrincipalId: JANA,
+  };
   const [batch] = rowsToQueueBatches([claimed], { canDecide: canDecideAll, modules, names });
   expect(batch?.items[0]?.decidedAt).toBeUndefined();
   expect(proposalRowToEntries(claimed, names, modules)).toHaveLength(1);
@@ -293,7 +305,7 @@ it('labels a successful legacy write of an approval-only agent as a proposal', (
       actionKey: 'demo.sales-pipeline.apply-command',
       auditEventId: 'a2',
       displayName: 'AI agent C',
-      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+      occurredAt: instant('2026-10-20T09:00:00.000Z'),
       outcome: 'succeeded',
       outcomeCode: 'action_executed',
       principalId: AGENT,
@@ -325,26 +337,31 @@ it('preserves audit record references and their owning module even without an ac
     {
       actionKey: null,
       auditEventId: 'audit-1',
-      occurredAt: new Date('2026-10-23T10:00:00Z'),
-      principalId: AGENT,
       displayName: 'Agent',
+      occurredAt: instant('2026-10-23T10:00:00Z'),
       outcome: 'succeeded',
       outcomeCode: 'ok',
+      principalId: AGENT,
       targetModuleKey: 'fixture.notes',
-      targetResourceType: 'fixture.note',
       targetResourceId: 'note-1',
+      targetResourceType: 'fixture.note',
     },
     { modules, proposalOnly: false },
   );
-  expect(entry.moduleKey).toBe('fixture.notes');
-  expect(entry.recordReference).toEqual({ resourceType: 'fixture.note', resourceId: 'note-1' });
+  expect(Schema.encodeSync(AgentActivityEntrySchema)(entry).moduleKey).toBe('fixture.notes');
+  expect(entry.recordReference).toEqual({ resourceId: 'note-1', resourceType: 'fixture.note' });
 });
 
 it('carries an exact proposal and module-owned record reference for every proposal decision', () => {
-  const entries = proposalRowToEntries({ ...baseRow, status: 'applied', decidedAt: new Date() }, names, {
-    ...modules,
-    recordReferenceOf: () => ({ resourceId: 'record-1', resourceType: 'fixture.note' }),
-  });
+  const entries = proposalRowToEntries(
+    { ...baseRow, decidedAt: instant('2026-10-23T10:00:00.000Z'), status: 'applied' },
+    names,
+    {
+      ...modules,
+      recordReferenceOf: () =>
+        Schema.decodeUnknownSync(AgentRecordReferenceSchema)({ resourceId: 'record-1', resourceType: 'fixture.note' }),
+    },
+  );
   for (const entry of entries) {
     expect(entry.proposal).toEqual({ batchKey: `core:${baseRow.batchId}`, itemKey: `core:${baseRow.proposalId}` });
     expect(entry.recordReference).toEqual({ resourceId: 'record-1', resourceType: 'fixture.note' });
@@ -352,15 +369,15 @@ it('carries an exact proposal and module-owned record reference for every propos
 });
 
 it('pages timestamp ties by the complete event ID without gaps or repeated entries', () => {
-  const at = new Date('2026-10-23T10:00:00.000Z');
+  const at = instant('2026-10-23T10:00:00.000Z');
   const entries = Array.from({ length: 41 }, (_, index) =>
     proposalRowToEntries(
       {
         ...baseRow,
         createdAt: at,
         decidedAt: at,
-        status: 'rejected',
         proposalId: `66666666-6666-4666-8666-${String(index).padStart(12, '0')}`,
+        status: 'rejected',
       },
       names,
       modules,
@@ -371,7 +388,9 @@ it('pages timestamp ties by the complete event ID without gaps or repeated entri
   expect(page.entries).toHaveLength(30);
   while (true) {
     ids.push(...page.entries.map((entry) => entry.id));
-    if (page.nextCursor === undefined) break;
+    if (page.nextCursor === undefined) {
+      break;
+    }
     page = buildActivityResponse(entries, { cursor: page.nextCursor });
   }
   expect(ids).toHaveLength(entries.length);
@@ -387,8 +406,8 @@ it('applies activity filters before page size and finds a recent decision on an 
     ...proposalRowToEntries(
       {
         ...baseRow,
-        createdAt: new Date('2025-01-01T00:00:00.000Z'),
-        decidedAt: new Date('2026-10-23T10:00:00.000Z'),
+        createdAt: instant('2025-01-01T00:00:00.000Z'),
+        decidedAt: instant('2026-10-23T10:00:00.000Z'),
         proposalId: '66666666-6666-4666-8666-666666666661',
         status: 'rejected',
       },
@@ -396,16 +415,22 @@ it('applies activity filters before page size and finds a recent decision on an 
       modules,
     ),
   ];
-  const first = buildActivityResponse(entries, {
-    kind: 'decision',
-    limit: 1,
-    agentPrincipalId: AGENT,
-    moduleKey: 'demo.crm',
-  });
+  const first = buildActivityResponse(
+    entries,
+    Schema.decodeUnknownSync(AgentActivityRequestSchema)({
+      agentPrincipalId: AGENT,
+      kind: 'decision',
+      limit: 1,
+      moduleKey: 'demo.crm',
+    }),
+  );
   expect(first.entries.map((entry) => entry.id)).toEqual(['decision:66666666-6666-4666-8666-666666666661']);
   expect(first.nextCursor).toBeUndefined();
   expect(buildActivityResponse(entries, { kind: 'read' }).entries).toEqual([]);
-  expect(buildActivityResponse(entries, { cursor: { at: '2024-01-01T00:00:00.000Z', id: 'last' } }).entries).toEqual(
-    [],
-  );
+  expect(
+    buildActivityResponse(
+      entries,
+      Schema.decodeUnknownSync(AgentActivityRequestSchema)({ cursor: { at: '2024-01-01T00:00:00.000Z', id: 'last' } }),
+    ).entries,
+  ).toEqual([]);
 });

@@ -1,5 +1,5 @@
 import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,8 +8,8 @@ import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import { ChildProcess } from 'effect/unstable/process';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { ChildProcess } from 'effect/process';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';

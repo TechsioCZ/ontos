@@ -3,11 +3,11 @@
 // @ontos-action-http-slug apply-command
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Match, Option, Redacted, Schema } from 'effect';
 import { crmApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
-import { makePartyIntake } from '../src/services/party-intake.ts';
+import { observeClientPartySync, PartyIntake } from '../src/services/party-intake.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import {
   applyCommandActionProblem,
@@ -18,6 +18,42 @@ import {
 const runActionHttp = bindActionHttpRunner({
   authentication: applyCommandActionProblem.authentication,
   unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
+});
+
+const AssertionClaimsSchema = Schema.fromJsonString(
+  Schema.Struct({
+    principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LegalEntityId'))) }),
+  }),
+);
+/** Company of the (already verified and redeemed) gateway assertion of this request. */
+const legalEntityOfAssertion = (authorization: Redacted.Redacted<string | undefined>) => {
+  const payload = Redacted.value(authorization)?.split('.')[1];
+  const decoded = Option.fromUndefinedOr(payload).pipe(
+    Option.flatMap((value) =>
+      Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(value, 'base64url').toString('utf-8')),
+    ),
+  );
+  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
+};
+
+const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(function* reconcileClients(
+  request: HttpServerRequest.HttpServerRequest,
+  revision: number,
+  clientIds?: readonly string[],
+) {
+  const legalEntityId = legalEntityOfAssertion(Redacted.make(request.headers['authorization']));
+  const compositionRevision = request.headers['x-ontos-composition-revision'];
+  if (legalEntityId === undefined || compositionRevision === undefined) {
+    return yield* Effect.fail(applyCommandActionProblem.unavailable('operation_context_unavailable'));
+  }
+  const intake = yield* PartyIntake;
+  return yield* intake
+    .forRequest({
+      compositionRevision,
+      correlationId: request.headers['x-correlation-id'] ?? `crm-intake-${revision}`,
+      legalEntityId,
+    })
+    .reconcile(clientIds);
 });
 
 const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeApplyCommand(
@@ -46,47 +82,25 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
       'x-correlation-id': correlationId,
     },
   });
-  // CRM.md §3: after the command COMMITTED, clients it made active get their Party Registry identity through the
-  // governed intake principal (outside this command's transaction). A failure leaves the client unlinked for the
-  // správce's "Propojit s Party Registry"; the committed command itself stays successful.
+  // Intake runs only after commit. Report its own observed outcome separately, never claim that a committed
+  // selection of targets proves their identities were linked, or turn it into a retryable Action failure.
   const intakeEntityIds = Match.value(decoded.command).pipe(
-    Match.tag('CreateClient', ({ partyRef }) => (partyRef === undefined ? Option.some([]) : Option.none())),
-    Match.tag('AiDecideChanges', () => Option.some([])),
-    Match.tag('SyncClientParties', 'RestoreClient', () => Option.some(result.entityIds)),
+    Match.tag('CreateClient', ({ partyRef }) =>
+      partyRef === undefined ? Option.some(result.entityIds) : Option.none(),
+    ),
+    Match.tag('AiDecideChanges', () => Option.some(result.entityIds)),
+    Match.tag('SyncClientParties', ({ clientIds }) => Option.some(clientIds)),
+    Match.tag('RestoreClient', () => Option.some(result.entityIds)),
     Match.orElse(() => Option.none()),
   );
-  if (Option.isSome(intakeEntityIds)) {
-    const legalEntityId = legalEntityOfAssertion(request.headers['authorization']);
-    const compositionRevision = request.headers['x-ontos-composition-revision'];
-    if (legalEntityId !== undefined && compositionRevision !== undefined) {
-      yield* makePartyIntake({
-        compositionRevision,
-        correlationId: correlationId ?? `crm-intake-${result.revision}`,
-        legalEntityId,
-      })
-        .reconcile(intakeEntityIds.value)
-        .pipe(
-          Effect.uninterruptible,
-          Effect.tapError((error) => Effect.logWarning('CRM Party Registry intake failed', error)),
-          Effect.ignore,
-        );
-    }
+  if (Option.isNone(intakeEntityIds)) {
+    return result;
   }
-  return result;
+  const clientPartySync = yield* observeClientPartySync(
+    reconcileClients(request, result.revision, intakeEntityIds.value).pipe(Effect.uninterruptible),
+  );
+  return { ...result, clientPartySync };
 });
-
-const AssertionClaimsSchema = Schema.fromJsonString(
-  Schema.Struct({ principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String) }) }),
-);
-/** Company of the (already verified and redeemed) gateway assertion of this request. */
-const legalEntityOfAssertion = (authorization: string | undefined) => {
-  const payload = authorization?.split('.')[1];
-  if (payload === undefined) {
-    return undefined;
-  }
-  const decoded = Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(payload, 'base64url').toString('utf8'));
-  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
-};
 
 export const applyCommandActionApiLive = HttpApiBuilder.group(crmApi, 'applyCommandAction', (handlers) =>
   handlers.handle('execute', ({ payload, request }) => execute(payload, request)),

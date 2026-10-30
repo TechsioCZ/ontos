@@ -10,10 +10,14 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScopeRequest } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { ConnectionStatusSchema } from '@app/shared-contracts/agent-access';
+import {
+  ConnectionStatusSchema,
+  ConnectionSummarySchema as AdminConnectionSummarySchema,
+} from '@app/shared-contracts/agent-access';
 import type { ConnectionLimits, ConnectionSummary } from '@app/shared-contracts/agent-access';
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import type { ConnectionSummary as ServiceConnectionSummary } from '@app/shared-contracts/oauth-connections';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { OAuthCredentials } from '../auth/db/oauth-credentials.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
@@ -23,6 +27,7 @@ import {
   revokeConnection,
   updateConnection,
 } from '../oauth-connections/connection-service.ts';
+import { toGrantRow } from '../oauth-connections/grant-store.ts';
 import { OAuthFlow } from '../oauth-connections/oauth-flow.ts';
 import type { GrantRow } from '../oauth-connections/types.ts';
 import { ConnectionsUnavailable } from './connections-unavailable.ts';
@@ -64,39 +69,50 @@ const limitsOf = (rows: readonly GrantRow[]) =>
     { concurrency: 2 },
   ).pipe(Effect.map((entries) => new Map<string, ConnectionLimits>(entries)));
 
-const toAdminSummary = (
-  summary: ServiceConnectionSummary,
-  row: GrantRow,
-  limits: ConnectionLimits,
-  revokeNote: string | null,
-): ConnectionSummary | undefined => {
-  const { status } = summary;
-  if (!isListed(status)) {
-    return undefined;
-  }
-  return {
-    acting: summary.acting,
-    allModules: row.modules === 'all',
-    client: summary.client,
-    createdAt: summary.createdAt,
-    delegatedBy: summary.delegatedBy,
-    granted: { modules: row.modules === 'all' ? [] : [...row.modules], writePolicy: row.writePolicy },
-    grantId: summary.grantId,
-    lastUsedAt: summary.lastUsedAt,
-    legalEntityId: summary.legalEntityId,
-    legalName: summary.legalName,
-    limits,
-    modules: summary.modules,
-    profileId: summary.profileId,
-    revokedAt: row.revokedAt === null ? null : row.revokedAt.toISOString(),
-    revokeNote,
-    revokeReason: row.revokeReason,
-    status,
-    tenantId: summary.tenantId,
-    user: { displayName: summary.userDisplayName, principalId: row.userPrincipalId },
-    writePolicy: summary.writePolicy,
-  };
-};
+const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
+  (
+    summary: ServiceConnectionSummary,
+    row: GrantRow,
+    limits: ConnectionLimits,
+    revokeNote: string | null,
+  ): Effect.Effect<Option.Option<ConnectionSummary>> =>
+    Effect.sync(() => {
+      const { status } = summary;
+      if (!isListed(status)) {
+        return Option.none();
+      }
+      return Option.some(
+        AdminConnectionSummarySchema.make({
+          acting: summary.acting,
+          allModules: row.modules === 'all',
+          client: summary.client,
+          createdAt: summary.createdAt,
+          delegatedBy: summary.delegatedBy,
+          granted: {
+            modules:
+              row.modules === 'all'
+                ? []
+                : row.modules.map((module) => ({ ...module, moduleId: AgentModuleKeySchema.make(module.moduleId) })),
+            writePolicy: row.writePolicy,
+          },
+          grantId: summary.grantId,
+          lastUsedAt: summary.lastUsedAt,
+          legalEntityId: summary.legalEntityId,
+          legalName: summary.legalName,
+          limits,
+          modules: summary.modules,
+          profileId: summary.profileId,
+          revokedAt: Option.map(Option.fromNullOr(row.revokedAt), (instant) => DateTime.makeUnsafe(instant)),
+          revokeNote: Option.fromNullOr(revokeNote),
+          revokeReason: Option.fromNullOr(row.revokeReason),
+          status,
+          tenantId: summary.tenantId,
+          user: { displayName: summary.userDisplayName, principalId: AgentPrincipalIdSchema.make(row.userPrincipalId) },
+          writePolicy: summary.writePolicy,
+        }),
+      );
+    }),
+);
 
 /** Capture native connection and governed Read dependencies once for this original request. */
 export const GrantAdminLive = (request: GrantAdminRequest) =>
@@ -149,20 +165,23 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
         const listed = rows.filter((row) => isListed(row.status));
         const limits = yield* limitsOf(listed);
         const notes = yield* revokeNotesOf(listed);
-        return summaries.flatMap((summary) => {
-          const row = rowsById.get(summary.grantId);
-          const rowLimits = row === undefined ? undefined : limits.get(actingKey(row));
-          const result =
-            row === undefined || rowLimits === undefined
-              ? undefined
+        const joined = yield* Effect.forEach(
+          summaries,
+          (summary): Effect.Effect<Option.Option<ConnectionSummary>, ConnectionsUnavailable> => {
+            const row = rowsById.get(summary.grantId);
+            const rowLimits = row === undefined ? undefined : limits.get(actingKey(row));
+            return row === undefined || rowLimits === undefined
+              ? Effect.succeed(Option.none<ConnectionSummary>())
               : toAdminSummary(summary, row, rowLimits, notes.get(row.grantId) ?? null);
-          return result === undefined ? [] : [result];
-        });
+          },
+          { concurrency: 1 },
+        );
+        return joined.flatMap(Option.toArray);
       });
 
       const list = Effect.fn('GrantAdmin.list')(
         function* list(filter: GrantListFilter) {
-          const rows = yield* registry.listGrants(filter);
+          const rows = (yield* registry.listGrants(filter)).map(toGrantRow);
           const summaries = yield* connectionSummariesOf(filter.tenantId, rows);
           const joined: readonly ConnectionSummary[] = yield* joinSummaries(rows, summaries);
           return joined;
@@ -177,7 +196,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
           if (Option.isNone(retained) || !isListed(retained.value.status)) {
             return Option.none<ConnectionSummary>();
           }
-          const row = retained.value;
+          const row = toGrantRow(retained.value);
           const summaries = yield* connectionSummariesOf(row.tenantId, [row]);
           const [joined] = yield* joinSummaries([row], summaries);
           return Option.fromUndefinedOr(joined);

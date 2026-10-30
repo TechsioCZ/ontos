@@ -5,7 +5,7 @@
  *   - **B3** "Convert consequential operational scripts into Effect programs" —
  *     "Approximately 79 of 103 scripts are primarily async/await […] Prioritize migration,
  *     bootstrap, authorization, topology, and scaffold scripts—not trivial wrappers. Use **scoped
- *     resources**, shared Layers, typed errors, Schema decoders, and `effect/unstable/cli`."
+ *     resources**, shared Layers, typed errors, Schema decoders, and `effect/cli`."
  *     Evidence sites that open files and spawn processes by hand:
  *     `scripts/migrate-contacts-authorization.mts`, `scripts/postgres/bootstrap-runtime-role.mts`,
  *     `scripts/initialize-local-development.mts`, `scripts/check-ontos-module-contracts.mts`,
@@ -183,7 +183,7 @@ export const rule = defineRule({
         'child processes belong to no Scope, its errors are untyped ErrnoException defects, and it can only ' +
         'be tested against the real disk. Yield the services instead — `const fs = yield* FileSystem.FileSystem` ' +
         '(effect/FileSystem), `const path = yield* Path.Path` (effect/Path), a command/process service ' +
-        '(effect/unstable/process) — and provide the Node platform layer once at the executable edge.',
+        '(effect/process) — and provide the Node platform layer once at the executable edge.',
       nodeIoDynamicImport:
         'Audit B3/A8: dynamically importing "{{module}}" is the same unscoped filesystem/process dependency, ' +
         'loaded at an unpredictable point. Yield FileSystem.FileSystem / Path.Path / the process service from ' +

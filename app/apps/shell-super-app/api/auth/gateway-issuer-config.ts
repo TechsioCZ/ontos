@@ -41,7 +41,7 @@ const PrivateJwkInputSchema = Schema.Struct({
   alg: Schema.Literal('EdDSA'),
   crv: Schema.Literal('Ed25519'),
   d: Base64UrlSchema,
-  key_ops: Schema.optional(Schema.Array(Schema.Literal('sign')).check(Schema.isLengthBetween(1, 1))),
+  key_ops: Schema.optional(Schema.Array(Schema.Literal('sign')).check(Schema.isBetweenLength(1, 1))),
   kid: Base64UrlSchema,
   kty: Schema.Literal('OKP'),
   use: Schema.Literal('sig'),

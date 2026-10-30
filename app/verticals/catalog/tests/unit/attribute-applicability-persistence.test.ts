@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
@@ -213,7 +214,7 @@ describe('Product-local Attribute applicability', () => {
         const result = yield* Effect.flip(persistence.change(input));
         expect(result).toMatchObject({ conflict: 'INVALID_INPUT' });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('appends revision 2 for a clean DRAFT move and retains a removal tombstone', () =>
@@ -241,7 +242,7 @@ describe('Product-local Attribute applicability', () => {
           value: { revision: 2, ...levels },
         });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('requires affected live values and axes to be repaired before removing their level', () =>
@@ -275,7 +276,7 @@ describe('Product-local Attribute applicability', () => {
         expect(error).toMatchObject({ conflict: conflictKind });
         expect(writes).toHaveLength(0);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('ignores values for another Attribute Definition on a clean DRAFT declaration', () =>
@@ -291,7 +292,7 @@ describe('Product-local Attribute applicability', () => {
       const persistence = yield* attributeApplicabilityPersistenceForScope(transaction, scope);
       expect(yield* persistence.change(base)).toMatchObject({ revision: 1 });
       expect(writes).toHaveLength(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a level the Attribute Definition does not permit', () =>
@@ -306,7 +307,7 @@ describe('Product-local Attribute applicability', () => {
       const error = yield* Effect.flip(persistence.change({ ...base, productLevel: false, variantLevel: true }));
       expect(error).toMatchObject({ conflict: 'INAPPLICABLE' });
       expect(writes).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a level the Current Product Type does not allow', () =>
@@ -321,7 +322,7 @@ describe('Product-local Attribute applicability', () => {
       const error = yield* Effect.flip(persistence.change(base));
       expect(error).toMatchObject({ conflict: 'INAPPLICABLE' });
       expect(writes).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('requires an authoritative Current Product Type assignment', () =>
@@ -333,7 +334,7 @@ describe('Product-local Attribute applicability', () => {
       const error = yield* Effect.flip(persistence.change(base));
       expect(error).toMatchObject({ conflict: 'INAPPLICABLE' });
       expect(writes).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('cannot remove a level the Current Product Type requires', () =>
@@ -356,7 +357,7 @@ describe('Product-local Attribute applicability', () => {
       const error = yield* Effect.flip(persistence.change({ ...base, productLevel: false, variantLevel: true }));
       expect(error).toMatchObject({ conflict: 'REQUIRED' });
       expect(writes).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('moves a clean DRAFT declaration to Variant without manufacturing values or axes', () =>
@@ -384,7 +385,7 @@ describe('Product-local Attribute applicability', () => {
         value: { evidenceRefs: ['type-rule-review-2'], productLevel: false, revision: 2, variantLevel: true },
       });
       expect(writes.every(({ table }) => table !== attributeValueSets && table !== productVariantAxes)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('refuses to merge Variant-only values into a Product declaration', () =>
@@ -413,7 +414,7 @@ describe('Product-local Attribute applicability', () => {
       );
       expect(error).toMatchObject({ conflict: 'VALUE_IMPACT' });
       expect(writes).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed on non-DRAFT Products until a governed selection-impact basis exists', () =>
@@ -425,7 +426,7 @@ describe('Product-local Attribute applicability', () => {
       const error = yield* Effect.flip(persistence.change(base));
       expect(error).toMatchObject({ conflict: 'SELECTION_IMPACT' });
       expect(writes).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('accepts a used applicability change with complete owner impact and remediation evidence', () =>
@@ -461,7 +462,7 @@ describe('Product-local Attribute applicability', () => {
         table: productAttributeApplicabilityRevisions,
         value: { evidenceRefs: ['applicability-remediation-1'], revision: 2 },
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the complete Cart owner population is unavailable or malformed', () =>
@@ -494,7 +495,7 @@ describe('Product-local Attribute applicability', () => {
         );
         expect(Schema.is(CatalogPersistenceUnavailable)(failure)).toBe(true);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects stale impact identity and a population change during the write attempt', () =>
@@ -553,7 +554,7 @@ describe('Product-local Attribute applicability', () => {
           }),
         ),
       ).toMatchObject({ conflict: 'SELECTION_IMPACT' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects impact evidence when an affected selection is not Current-VALID', () =>
@@ -584,6 +585,6 @@ describe('Product-local Attribute applicability', () => {
           }),
         ),
       ).toMatchObject({ conflict: 'SELECTION_IMPACT' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

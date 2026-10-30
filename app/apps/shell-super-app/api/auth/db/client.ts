@@ -15,7 +15,7 @@ import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import type { Scope } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { BetterAuthNativeAdapter } from '../better-auth-native-adapter.ts';
 import { AuthConfig } from '../config.ts';

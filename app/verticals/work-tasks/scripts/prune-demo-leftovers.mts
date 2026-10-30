@@ -1,4 +1,3 @@
-// @effect-diagnostics *:off
 /**
  * Removes rehearsal leftovers from the demo task lists, so a presenter never scrolls past them. LOCAL DEMO ONLY.
  *
@@ -14,12 +13,19 @@
  * Each company row is rewritten in one UPDATE that bumps its revision, so open clients get a revision conflict and
  * reload instead of writing the old list back. Core audit events of the removed tasks stay untouched.
  */
-import { NodeRuntime } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Console, Effect, Layer } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Config, ConfigProvider, Console, Effect, Layer, Schema } from 'effect';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 
-const apply = process.argv.includes('--apply');
+const LeftoverTaskRowSchema = Schema.Struct({
+  // This repair must also read malformed legacy dates (including years before 2000) verbatim.
+  dueDate: Schema.OptionFromNullOr(Schema.String),
+  legalEntityId: Schema.String.pipe(Schema.brand('LegalEntityId')),
+  title: Schema.String,
+});
+type LeftoverTaskRow = typeof LeftoverTaskRowSchema.Encoded;
 
 const admin = Layer.effect(
   PgClient.PgClient,
@@ -31,10 +37,11 @@ const admin = Layer.effect(
 const proofTitle = 'AI: zavolat zákazníkovi kvůli nabídce (%';
 const proofDescription = 'Vytvořil AI agent úrovně B (%';
 
-const program = Effect.gen(function* prune() {
-  const sql = yield* PgClient.PgClient;
-  // `t` is one task of row `ws`; `newest` is the createdAt of that row's newest proof task.
-  const isLeftover = sql.unsafe(`(
+const prune = (apply: boolean) =>
+  Effect.gen(function* pruneLeftovers() {
+    const sql = yield* PgClient.PgClient;
+    // `t` is one task of row `ws`; `newest` is the createdAt of that row's newest proof task.
+    const isLeftover = sql.unsafe(`(
     t->>'state' = 'CANCELLED' and (
       (t->>'title' like '${proofTitle}' and t->>'description' like '${proofDescription}'
         and t->>'createdAt' < coalesce((
@@ -45,18 +52,18 @@ const program = Effect.gen(function* prune() {
       or coalesce(t->>'dueDate', '9999-12-31') < '2000-01-01'
     )
   )`);
-  const matches = yield* sql<{ legalEntityId: string; title: string; dueDate: string | null }>`
+    const matches = yield* sql<LeftoverTaskRow>`
     select ws.legal_entity_id as "legalEntityId", t->>'title' as title, t->>'dueDate' as "dueDate"
     from work_tasks.work_states ws, jsonb_array_elements(ws.state->'tasks') t
     where ${isLeftover}
     order by 1, 2`;
-  for (const match of matches) {
-    yield* Console.log(`${match.legalEntityId}  ${match.dueDate ?? '—'}  ${match.title}`);
-  }
-  if (!apply) {
-    return yield* Console.log(`${matches.length} leftover task(s) found; dry run, nothing changed (use --apply).`);
-  }
-  const updated = yield* sql<{ legalEntityId: string; revision: number; tasks: number }>`
+    for (const match of matches) {
+      yield* Console.log(`${match.legalEntityId}  ${match.dueDate ?? '—'}  ${match.title}`);
+    }
+    if (!apply) {
+      return yield* Console.log(`${matches.length} leftover task(s) found; dry run, nothing changed (use --apply).`);
+    }
+    const updated = yield* sql<{ legalEntityId: string; revision: number; tasks: number }>`
     update work_tasks.work_states ws
     set state = jsonb_set(ws.state, '{tasks}', coalesce((
           select jsonb_agg(t order by position)
@@ -67,10 +74,19 @@ const program = Effect.gen(function* prune() {
         updated_at = now()
     where exists (select 1 from jsonb_array_elements(ws.state->'tasks') t where ${isLeftover})
     returning ws.legal_entity_id as "legalEntityId", ws.revision, jsonb_array_length(ws.state->'tasks') as tasks`;
-  for (const row of updated) {
-    yield* Console.log(`${row.legalEntityId}: ${row.tasks} tasks left, revision ${row.revision}`);
-  }
-  return yield* Console.log(`${matches.length} leftover task(s) removed.`);
-});
+    for (const row of updated) {
+      yield* Console.log(`${row.legalEntityId}: ${row.tasks} tasks left, revision ${row.revision}`);
+    }
+    return yield* Console.log(`${matches.length} leftover task(s) removed.`);
+  });
 
-NodeRuntime.runMain(program.pipe(Effect.provide(admin)));
+const command = Command.make(
+  'prune-demo-leftovers',
+  { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)) },
+  ({ apply }) => prune(apply),
+);
+const mainLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
+  Layer.provide(admin),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnv()))),
+);
+NodeRuntime.runMain(Effect.scoped(Layer.build(mainLive)));

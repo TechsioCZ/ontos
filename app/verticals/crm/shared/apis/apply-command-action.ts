@@ -3,10 +3,29 @@
 // @ontos-action-http-slug apply-command
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { ApplyCommandPayloadSchema, ApplyCommandResultSchema } from '../actions/apply-command.ts';
 
 export { ApplyCommandPayloadSchema } from '../actions/apply-command.ts';
+
+const SyncCountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+/** Post-commit observations, not the committed CRM Action result or an authorization grant. */
+export const ClientPartySyncSchema = Schema.Union([
+  Schema.Struct({
+    failed: SyncCountSchema,
+    linked: SyncCountSchema,
+    remaining: SyncCountSchema,
+    review: SyncCountSchema,
+    status: Schema.Literals(['complete', 'partial', 'unchanged']),
+  }),
+  Schema.Struct({ status: Schema.Literal('unavailable') }),
+]);
+export type ClientPartySync = typeof ClientPartySyncSchema.Type;
+export const ApplyCommandResponseSchema = Schema.Struct({
+  ...ApplyCommandResultSchema.fields,
+  clientPartySync: Schema.optionalKey(ClientPartySyncSchema),
+});
+export type ApplyCommandResponse = typeof ApplyCommandResponseSchema.Type;
 
 export const ApplyCommandActionInvalidProblemSchema = makeProblemDetailsSchema('ApplyCommandActionInvalidProblem', 400);
 export const ApplyCommandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -143,7 +162,7 @@ export const applyCommandActionGroupDefinition = HttpApiGroup.make('applyCommand
     HttpApiEndpoint.post('execute', '/crm/actions/apply-command', {
       error: actionErrors,
       payload: Schema.toEncoded(ApplyCommandPayloadSchema),
-      success: ApplyCommandResultSchema,
+      success: ApplyCommandResponseSchema,
     }),
   )
   .middleware(ApplyCommandActionSchemaErrorMiddleware);

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { Effect, Match, Schema } from 'effect';
@@ -141,14 +142,16 @@ it.live('publishes only a proven flat fixed Set with one shelf and two brackets'
               scope,
             ),
           );
-          return service.publish({
-            actingPrincipalId: principalId,
-            actionInvocationId: randomUUID(),
-            effectiveFrom: at,
-            expectedRevision: 0,
-            lifecycleState: 'ACTIVE',
-            revision: revisionFor(compositionId, components, scopedTenantId, selectedSetVariantId),
-          });
+          return service
+            .publish({
+              actingPrincipalId: principalId,
+              actionInvocationId: randomUUID(),
+              effectiveFrom: at,
+              expectedRevision: 0,
+              lifecycleState: 'ACTIVE',
+              revision: revisionFor(compositionId, components, scopedTenantId, selectedSetVariantId),
+            })
+            .pipe(Effect.provide(NodeCrypto.layer));
         });
 
       const productIds = [setProductId, shelfId, bracketId, cleanerId, lightId];

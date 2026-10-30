@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug release-inventory-reservation
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { inventoryApi } from '../shared/api.ts';
 import { releaseInventoryReservationAction } from '../src/actions/release-inventory-reservation.action.ts';

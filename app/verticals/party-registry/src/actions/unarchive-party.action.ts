@@ -26,6 +26,9 @@ import { decodeParty, recordPartyInvariantAccess } from './party-lifecycle-actio
 import { createUnarchivePartyPartyRegistryPartyUnarchivedV1OutboxMessage } from './unarchive-party.party-registry-party-unarchived-v1.outbox-message.ts';
 
 export type { UnarchivePartyPayload } from '../../shared/actions/unarchive-party.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   PartyNotFound,
   PartyLifecycleConflict,
@@ -102,8 +105,8 @@ const handle = Effect.fn('UnarchivePartyAction.handle')(function* unarchiveParty
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.party-unarchived.v1',
       payloadJson: { partyRef: result.party.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: result.party.partyRef.resourceId,
       subjectResourceType: result.party.partyRef.resourceType,
     });
@@ -133,12 +136,12 @@ export const unarchivePartyAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.unarchive-party',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: UnarchivePartyPayloadSchema,
     policies: [],
     resultSchema: UnarchivePartyResultSchema,

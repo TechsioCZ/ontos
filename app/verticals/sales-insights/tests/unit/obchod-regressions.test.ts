@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { RecordsResponseSchema } from '@app/work-tasks/contracts/records';
 import { computeMetric, computePipelineSummary } from '../../shared/metrics.ts';
@@ -15,26 +15,27 @@ it('uses the same Czech opportunity labels in summary and chart/table/CSV series
     employees: [],
     invoices: [],
     movements: [],
-    orders: [],
-    products: [],
-    tasks: [],
     opportunities: [
-      { id: 'a', partyId: 'p', amountMinor: 10000, expectedCloseDate: '2026-10-20', probability: 10, stage: 'LEAD' },
+      { amountMinor: 10_000, expectedCloseDate: '2026-10-20', id: 'a', partyId: 'p', probability: 10, stage: 'LEAD' },
       {
+        amountMinor: 20_000,
+        expectedCloseDate: '2026-10-20',
         id: 'b',
         partyId: 'p',
-        amountMinor: 20000,
-        expectedCloseDate: '2026-10-20',
         probability: 25,
         stage: 'QUALIFIED',
       },
     ],
+    orders: [],
+    products: [],
+    tasks: [],
   };
-  const range = { from: '2026-01-01', to: '2026-12-31', groupBy: 'stage' as const };
+  const range = { from: '2026-01-01', groupBy: 'stage' as const, to: '2026-12-31' };
   expect(
-    computeMetric('pipeline_weighted_value', inputs, range)
-      .series.map((point) => point.label)
-      .sort(),
+    EffectArray.sort(
+      computeMetric('pipeline_weighted_value', inputs, range).series.map((point) => point.label),
+      Order.String,
+    ),
   ).toEqual(['Kvalifikovaná', 'Nová']);
   expect(JSON.stringify(computePipelineSummary(inputs, range))).not.toMatch(/Lead|Kvalifikace/u);
 });

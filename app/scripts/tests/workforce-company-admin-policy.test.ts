@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
-import { Config, Crypto, Effect, Option, Redacted, Schema } from 'effect';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { Config, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
@@ -112,12 +112,12 @@ const workforceCompanyAdministratorPolicy = Effect.gen(function* workforceCompan
   const crypto = yield* Crypto.Crypto;
   const [tenantId, companyAId, companyBId, adminA, adminB, memberOnly] = yield* Effect.all(
     [
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
     ],
     { concurrency: 1 },
   );
@@ -243,7 +243,7 @@ const workforceCompanyAdministratorPolicy = Effect.gen(function* workforceCompan
 // acceptance explicitly with --project integration --include scripts/tests/workforce-company-admin-policy.test.ts.
 // Requires a fresh, operation-owned, TLS-enabled loopback SpiceDB with no schema; never use a shared engine.
 // This evaluates authorization only, not Workforce CreateEmployee persistence or principal assignment eligibility.
-it.layer(NodeServices.layer, { excludeTestServices: true })(
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServices: true })(
   'native company administrator Workforce policy',
   (suite) => {
     suite.effect(

@@ -210,8 +210,6 @@ const toEmployee = (item: { readonly fullName: string; readonly id: string }): E
 });
 
 const subjectKinds = ['customer', 'employee', 'opportunity', 'order', 'product'] as const;
-/** The entity reads whose ids address the tag assignments: one per subject kind. */
-const subjectSourceKeys = ['customers', 'employees', 'opportunities', 'orders', 'products'] as const;
 
 type SourceData<K extends SourceKey> = PageData<StatisticsPageInput, SourceValues[K], SourceProblem>;
 
@@ -287,40 +285,34 @@ const entityData = {
 const valuesOf = <A>(snapshot: PageDataSnapshot<readonly A[], SourceProblem>): readonly A[] =>
   snapshot.state === 'ready' ? snapshot.value : [];
 
-const idsOf = <T extends { readonly id: string }>(
-  data: PageData<StatisticsPageInput, readonly T[], SourceProblem>,
-  input: StatisticsPageInput,
-): readonly string[] => valuesOf(data.snapshot(input)).map((item) => item.id);
+const idsOf = (items: readonly { readonly id: string }[]): readonly string[] => items.map((item) => item.id);
 
-/** One tagging read covers all five subject kinds, so it waits until every subject entity has settled. */
+/** One tagging read covers all five subject kinds; every dependency must be fresh, or its failure propagates. */
 const tagAssignmentsData = definePageData({
   key: inputKey,
   load: (input: StatisticsPageInput): Effect.Effect<readonly TagAssignmentInput[], SourceProblem> =>
-    Effect.forEach(subjectSourceKeys, (key) => entityData[key].preload(input), {
-      concurrency: SOURCE_READ_CONCURRENCY,
-      discard: true,
-    }).pipe(
-      Effect.andThen(
-        Effect.suspend(() => {
-          const idsByKind = {
-            customer: idsOf(entityData.customers, input),
-            employee: idsOf(entityData.employees, input),
-            opportunity: idsOf(entityData.opportunities, input),
-            order: idsOf(entityData.orders, input),
-            product: idsOf(entityData.products, input),
-          } satisfies Record<(typeof subjectKinds)[number], readonly string[]>;
-          return sourceRead(
-            'tags',
-            assignmentsForSubjects(subjectKinds.flatMap((kind) => idsByKind[kind].map((id) => ({ id, kind })))).pipe(
-              Effect.map((items) =>
-                items.map((item): TagAssignmentInput => ({
-                  subject: { id: item.subject.id, kind: item.subject.kind },
-                  tagId: item.tagId,
-                })),
-              ),
+    Effect.all(
+      {
+        customer: entityData.customers.read(input).pipe(Effect.map(idsOf)),
+        employee: entityData.employees.read(input).pipe(Effect.map(idsOf)),
+        opportunity: entityData.opportunities.read(input).pipe(Effect.map(idsOf)),
+        order: entityData.orders.read(input).pipe(Effect.map(idsOf)),
+        product: entityData.products.read(input).pipe(Effect.map(idsOf)),
+      },
+      { concurrency: SOURCE_READ_CONCURRENCY },
+    ).pipe(
+      Effect.flatMap((idsByKind) =>
+        sourceRead(
+          'tags',
+          assignmentsForSubjects(subjectKinds.flatMap((kind) => idsByKind[kind].map((id) => ({ id, kind })))).pipe(
+            Effect.map((items) =>
+              items.map((item): TagAssignmentInput => ({
+                subject: { id: item.subject.id, kind: item.subject.kind },
+                tagId: item.tagId,
+              })),
             ),
-          );
-        }),
+          ),
+        ),
       ),
     ),
   runtime: browserRuntime,

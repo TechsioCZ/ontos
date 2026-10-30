@@ -35,4 +35,4 @@ export const gatewayAssertionRedemptions = crmSchema.table(
   ],
 );
 
-export const crmRelations = defineRelations({ gatewayAssertionRedemptions, crmStates });
+export const crmRelations = defineRelations({ crmStates, gatewayAssertionRedemptions });

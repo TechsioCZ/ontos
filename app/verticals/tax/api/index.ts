@@ -19,11 +19,12 @@ import {
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { taxApi, taxOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
@@ -102,6 +103,7 @@ const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 /** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
 export const governedReadRuntimeLive = readRuntimeLive;
@@ -124,6 +126,7 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 /** Action runtime bound by generated governed Action HTTP handlers mounted in the slot below. */
 export const governedActionRuntimeLive = actionRuntimeLive;
@@ -158,6 +161,7 @@ const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActi
   Layer.provideMerge(compositionSourceLive),
   Layer.provideMerge(runtimeObservabilityLive),
   Layer.provideMerge(databaseIdentitiesLive),
+  Layer.provideMerge(NodeCrypto.layer),
   Layer.orDie,
 );
 const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

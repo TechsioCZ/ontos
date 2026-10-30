@@ -28,7 +28,7 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, importJWK, SignJWT } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';

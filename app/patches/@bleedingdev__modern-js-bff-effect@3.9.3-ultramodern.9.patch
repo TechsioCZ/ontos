@@ -1,0 +1,3434 @@
+diff --git a/dist/cjs/assembly.js b/dist/cjs/assembly.js
+--- a/dist/cjs/assembly.js
++++ b/dist/cjs/assembly.js
+@@ -1,50 +1,55 @@
+-"use strict";
+-var __webpack_require__ = {};
+-(()=>{
+-    __webpack_require__.d = (exports1, getters, values)=>{
+-        var define = (defs, kind)=>{
+-            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
+-                enumerable: true,
+-                [kind]: defs[key]
+-            });
+-        };
+-        define(getters, "get");
+-        define(values, "value");
++/** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */ "use strict";
++Object.defineProperty(exports, "__esModule", {
++    value: true
++});
++Object.defineProperty(exports, "assembleEffectBffRuntime", {
++    enumerable: true,
++    get: function() {
++        return assembleEffectBffRuntime;
++    }
++});
++const _Layer = /*#__PURE__*/ _interop_require_wildcard(require("effect/Layer"));
++const _httpapi = require("effect/http-api");
++const _definition = require("./effect/handler/definition.js");
++function _getRequireWildcardCache(nodeInterop) {
++    if (typeof WeakMap !== "function") return null;
++    var cacheBabelInterop = new WeakMap();
++    var cacheNodeInterop = new WeakMap();
++    return (_getRequireWildcardCache = function(nodeInterop) {
++        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
++    })(nodeInterop);
++}
++function _interop_require_wildcard(obj, nodeInterop) {
++    if (!nodeInterop && obj && obj.__esModule) return obj;
++    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return {
++        default: obj
+     };
+-})();
+-(()=>{
+-    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
+-})();
+-(()=>{
+-    __webpack_require__.r = (exports1)=>{
+-        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
+-            value: 'Module'
+-        });
+-        Object.defineProperty(exports1, '__esModule', {
+-            value: true
+-        });
++    var cache = _getRequireWildcardCache(nodeInterop);
++    if (cache && cache.has(obj)) return cache.get(obj);
++    var newObj = {
++        __proto__: null
+     };
+-})();
+-var __webpack_exports__ = {};
+-__webpack_require__.r(__webpack_exports__);
+-__webpack_require__.d(__webpack_exports__, {
+-    assembleEffectBffRuntime: ()=>assembleEffectBffRuntime
+-});
+-const http_api_namespaceObject = require("effect/http-api");
+-const Layer_namespaceObject = require("effect/Layer");
+-const definition_js_namespaceObject = require("./effect/handler/definition.js");
+-const assembleEffectBffRuntime = ({ api, handlers, transport })=>{
+-    const apiLayer = http_api_namespaceObject.HttpApiBuilder.layer(api).pipe(Layer_namespaceObject.provide(handlers));
+-    const layer = void 0 === transport ? apiLayer : apiLayer.pipe(Layer_namespaceObject.merge(transport));
+-    return (0, definition_js_namespaceObject.defineEffectBff)({
++    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
++    for(var key in obj){
++        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
++            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
++            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
++            else newObj[key] = obj[key];
++        }
++    }
++    newObj.default = obj;
++    if (cache) cache.set(obj, newObj);
++    return newObj;
++}
++const assembleEffectBffRuntime = (assembly)=>{
++    const { api, handlers, services, transport } = assembly;
++    const apiLayer = _httpapi.HttpApiBuilder.layer(api).pipe(_Layer.provide(handlers));
++    const layer = transport === undefined ? apiLayer : apiLayer.pipe(_Layer.merge(transport));
++    // Every requirement outside the runtime's own is checked above against `services`, which
++    // createHttpApiHandler supplies per request (Workers) or once (Node).
++    return (0, _definition.defineEffectBff)({
+         api,
+-        layer
++        layer: layer,
++        services
+     });
+ };
+-exports.assembleEffectBffRuntime = __webpack_exports__.assembleEffectBffRuntime;
+-for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "assembleEffectBffRuntime"
+-].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+-Object.defineProperty(exports, '__esModule', {
+-    value: true
+-});
+diff --git a/dist/cjs/effect/dispatch.js b/dist/cjs/effect/dispatch.js
+--- a/dist/cjs/effect/dispatch.js
++++ b/dist/cjs/effect/dispatch.js
+@@ -1,44 +1,27 @@
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off strictBooleanExpressions:off
+ "use strict";
+-var __webpack_require__ = {};
+-(()=>{
+-    __webpack_require__.d = (exports1, getters, values)=>{
+-        var define = (defs, kind)=>{
+-            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
+-                enumerable: true,
+-                [kind]: defs[key]
+-            });
+-        };
+-        define(getters, "get");
+-        define(values, "value");
+-    };
+-})();
+-(()=>{
+-    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
+-})();
+-(()=>{
+-    __webpack_require__.r = (exports1)=>{
+-        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
+-            value: 'Module'
+-        });
+-        Object.defineProperty(exports1, '__esModule', {
+-            value: true
+-        });
+-    };
+-})();
+-var __webpack_exports__ = {};
+-__webpack_require__.r(__webpack_exports__);
+-__webpack_require__.d(__webpack_exports__, {
+-    dispatchEffectBffRequestWithContext: ()=>dispatchEffectBffRequestWithContext
++Object.defineProperty(exports, "__esModule", {
++    value: true
+ });
+-const safe_failure_namespaceObject = require("@modern-js/runtime-extensions/safe-failure");
+-const external_operation_context_js_namespaceObject = require("./operation-context.js");
++Object.defineProperty(exports, "dispatchEffectBffRequestWithContext", {
++    enumerable: true,
++    get: function() {
++        return dispatchEffectBffRequestWithContext;
++    }
++});
++const _safefailure = require("@modern-js/runtime-extensions/safe-failure");
++const _operationcontext = require("./operation-context.js");
+ function normalizeEffectBffPrefix(prefix) {
+-    if (!prefix || '/' === prefix) return '';
++    if (!prefix || prefix === '/') {
++        return '';
++    }
+     return prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+ }
+ function removeEffectBffPrefixFromPath(pathname, prefix) {
+     const normalized = normalizeEffectBffPrefix(prefix);
+-    if (!normalized || pathname !== normalized && !pathname.startsWith(`${normalized}/`)) return pathname;
++    if (!normalized || pathname !== normalized && !pathname.startsWith(`${normalized}/`)) {
++        return pathname;
++    }
+     const sliced = pathname.slice(normalized.length);
+     return sliced.startsWith('/') ? sliced : `/${sliced}`;
+ }
+@@ -64,7 +47,10 @@
+         env,
+         path,
+         method,
+-        operationContext: (0, external_operation_context_js_namespaceObject.createEffectOperationContext)({
++        ...options.waitUntil === undefined ? {} : {
++            waitUntil: options.waitUntil
++        },
++        operationContext: (0, _operationcontext.createEffectOperationContext)({
+             request: mountedRequest,
+             env,
+             path,
+@@ -74,28 +60,29 @@
+ }
+ async function dispatchEffectBffRequestWithContext(handler, request, options) {
+     const requestPath = new URL(request.url).pathname;
+-    if (!matchesEffectBffPrefix(requestPath, options.prefix)) return new Response('', {
+-        status: 404
+-    });
++    if (!matchesEffectBffPrefix(requestPath, options.prefix)) {
++        return new Response('', {
++            status: 404
++        });
++    }
+     const mountedRequest = createEffectBffMountedRequest(request, options.prefix);
+     const effectContext = createEffectBffDispatchContext(request, mountedRequest, options);
+     try {
+         const response = await options.runWithEffectContext(effectContext, ()=>handler(mountedRequest, effectContext));
+-        if (!(response instanceof Response)) throw new Error('[BFF][Effect] Effect handler must return Response instance.');
++        if (!(response instanceof Response)) {
++            throw new Error('[BFF][Effect] Effect handler must return Response instance.');
++        }
+         return new Response(response.body, response);
+     } catch (error) {
+-        if (error instanceof Response) return new Response(error.body, error);
++        if (error instanceof Response) {
++            return new Response(error.body, error);
++        }
+         if (options.onError) {
+             const errorResponse = await options.onError(error, effectContext);
+-            if (errorResponse instanceof Response) return errorResponse;
++            if (errorResponse instanceof Response) {
++                return errorResponse;
++            }
+         }
+-        return (0, safe_failure_namespaceObject.createSafeFailureResponse)(error);
++        return (0, _safefailure.createSafeFailureResponse)(error);
+     }
+ }
+-exports.dispatchEffectBffRequestWithContext = __webpack_exports__.dispatchEffectBffRequestWithContext;
+-for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "dispatchEffectBffRequestWithContext"
+-].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+-Object.defineProperty(exports, '__esModule', {
+-    value: true
+-});
+diff --git a/dist/cjs/effect/edge-dispatcher.js b/dist/cjs/effect/edge-dispatcher.js
+--- a/dist/cjs/effect/edge-dispatcher.js
++++ b/dist/cjs/effect/edge-dispatcher.js
+@@ -1,117 +1,265 @@
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off strictBooleanExpressions:off
+ "use strict";
+-var __webpack_require__ = {};
+-(()=>{
+-    __webpack_require__.d = (exports1, getters, values)=>{
+-        var define = (defs, kind)=>{
+-            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
+-                enumerable: true,
+-                [kind]: defs[key]
+-            });
+-        };
+-        define(getters, "get");
+-        define(values, "value");
++Object.defineProperty(exports, "__esModule", {
++    value: true
++});
++function _export(target, all) {
++    for(var name in all)Object.defineProperty(target, name, {
++        enumerable: true,
++        get: Object.getOwnPropertyDescriptor(all, name).get
++    });
++}
++_export(exports, {
++    get Config () {
++        return _Config;
++    },
++    get Cookies () {
++        return _http.Cookies;
++    },
++    get Effect () {
++        return _Effect;
++    },
++    get Etag () {
++        return _http.Etag;
++    },
++    get FetchHttpClient () {
++        return _http.FetchHttpClient;
++    },
++    get FindMyWay () {
++        return _http.FindMyWay;
++    },
++    get Headers () {
++        return _http.Headers;
++    },
++    get HttpApi () {
++        return _httpapi.HttpApi;
++    },
++    get HttpApiBuilder () {
++        return _httpapi.HttpApiBuilder;
++    },
++    get HttpApiClient () {
++        return _httpapi.HttpApiClient;
++    },
++    get HttpApiEndpoint () {
++        return _httpapi.HttpApiEndpoint;
++    },
++    get HttpApiError () {
++        return _httpapi.HttpApiError;
++    },
++    get HttpApiGroup () {
++        return _httpapi.HttpApiGroup;
++    },
++    get HttpApiMiddleware () {
++        return _httpapi.HttpApiMiddleware;
++    },
++    get HttpApiSchema () {
++        return _httpapi.HttpApiSchema;
++    },
++    get HttpApiSecurity () {
++        return _httpapi.HttpApiSecurity;
++    },
++    get HttpApiTest () {
++        return _httpapi.HttpApiTest;
++    },
++    get HttpBody () {
++        return _http.HttpBody;
++    },
++    get HttpClient () {
++        return _http.HttpClient;
++    },
++    get HttpClientError () {
++        return _http.HttpClientError;
++    },
++    get HttpClientRequest () {
++        return _http.HttpClientRequest;
++    },
++    get HttpClientResponse () {
++        return _http.HttpClientResponse;
++    },
++    get HttpEffect () {
++        return _http.HttpEffect;
++    },
++    get HttpIncomingMessage () {
++        return _http.HttpIncomingMessage;
++    },
++    get HttpMethod () {
++        return _http.HttpMethod;
++    },
++    get HttpMiddleware () {
++        return _http.HttpMiddleware;
++    },
++    get HttpPlatform () {
++        return _http.HttpPlatform;
++    },
++    get HttpRouter () {
++        return _http.HttpRouter;
++    },
++    get HttpServer () {
++        return _http.HttpServer;
++    },
++    get HttpServerError () {
++        return _http.HttpServerError;
++    },
++    get HttpServerRequest () {
++        return _http.HttpServerRequest;
++    },
++    get HttpServerRespondable () {
++        return _http.HttpServerRespondable;
++    },
++    get HttpServerResponse () {
++        return _http.HttpServerResponse;
++    },
++    get HttpStaticServer () {
++        return _http.HttpStaticServer;
++    },
++    get HttpStatus () {
++        return _http.HttpStatus;
++    },
++    get HttpTraceContext () {
++        return _http.HttpTraceContext;
++    },
++    get Layer () {
++        return _Layer;
++    },
++    get Multipart () {
++        return _http.Multipart;
++    },
++    get MultipartParser () {
++        return _http.MultipartParser;
++    },
++    get OpenApi () {
++        return _httpapi.OpenApi;
++    },
++    get Option () {
++        return _Option;
++    },
++    get Rpc () {
++        return _rpc.Rpc;
++    },
++    get RpcClient () {
++        return _rpc.RpcClient;
++    },
++    get RpcClientError () {
++        return _rpc.RpcClientError;
++    },
++    get RpcGroup () {
++        return _rpc.RpcGroup;
++    },
++    get RpcMessage () {
++        return _rpc.RpcMessage;
++    },
++    get RpcMiddleware () {
++        return _rpc.RpcMiddleware;
++    },
++    get RpcSchema () {
++        return _rpc.RpcSchema;
++    },
++    get RpcSerialization () {
++        return _rpc.RpcSerialization;
++    },
++    get RpcServer () {
++        return _rpc.RpcServer;
++    },
++    get RpcTest () {
++        return _rpc.RpcTest;
++    },
++    get RpcWorker () {
++        return _rpc.RpcWorker;
++    },
++    get Schema () {
++        return _Schema;
++    },
++    get Template () {
++        return _http.Template;
++    },
++    get Url () {
++        return _http.Url;
++    },
++    get UrlParams () {
++        return _http.UrlParams;
++    },
++    get Utils () {
++        return _rpc.Utils;
++    },
++    get createEffectBffEdgeDispatcher () {
++        return createEffectBffEdgeDispatcher;
++    },
++    get createEffectBffEdgeHandler () {
++        return createEffectBffEdgeHandler;
++    },
++    get createEffectBffTestHandler () {
++        return createEffectBffTestHandler;
++    },
++    get createEffectOperationContext () {
++        return _operationcontext.createEffectOperationContext;
++    },
++    get createHttpApiHandler () {
++        return _handler.createHttpApiHandler;
++    },
++    get defineEffectBff () {
++        return _handler.defineEffectBff;
++    },
++    get defineEffectRpcBff () {
++        return _handler.defineEffectRpcBff;
++    },
++    get dispatchEffectBffRequest () {
++        return dispatchEffectBffRequest;
++    },
++    get runWithEffectContext () {
++        return _context.runWithEffectContext;
++    },
++    get useEffectContext () {
++        return _context.useEffectContext;
++    },
++    get useOperationContext () {
++        return _context.useOperationContext;
++    }
++});
++const _context = require("@modern-js/bff-effect/context");
++const _bffpolicy = require("@modern-js/server-runtime-extensions/bff-policy");
++const _Effect = /*#__PURE__*/ _interop_require_wildcard(require("effect/Effect"));
++const _headers = require("../headers.js");
++const _dispatch = require("./dispatch.js");
++const _module = require("./module.js");
++const _Config = /*#__PURE__*/ _interop_require_wildcard(require("effect/Config"));
++const _http = require("effect/http");
++const _httpapi = require("effect/http-api");
++const _Layer = /*#__PURE__*/ _interop_require_wildcard(require("effect/Layer"));
++const _Option = /*#__PURE__*/ _interop_require_wildcard(require("effect/Option"));
++const _rpc = require("effect/rpc");
++const _Schema = /*#__PURE__*/ _interop_require_wildcard(require("effect/Schema"));
++const _handler = require("./handler.js");
++const _operationcontext = require("./operation-context.js");
++function _getRequireWildcardCache(nodeInterop) {
++    if (typeof WeakMap !== "function") return null;
++    var cacheBabelInterop = new WeakMap();
++    var cacheNodeInterop = new WeakMap();
++    return (_getRequireWildcardCache = function(nodeInterop) {
++        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
++    })(nodeInterop);
++}
++function _interop_require_wildcard(obj, nodeInterop) {
++    if (!nodeInterop && obj && obj.__esModule) return obj;
++    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return {
++        default: obj
+     };
+-})();
+-(()=>{
+-    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
+-})();
+-(()=>{
+-    __webpack_require__.r = (exports1)=>{
+-        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
+-            value: 'Module'
+-        });
+-        Object.defineProperty(exports1, '__esModule', {
+-            value: true
+-        });
++    var cache = _getRequireWildcardCache(nodeInterop);
++    if (cache && cache.has(obj)) return cache.get(obj);
++    var newObj = {
++        __proto__: null
+     };
+-})();
+-var __webpack_exports__ = {};
+-__webpack_require__.r(__webpack_exports__);
+-__webpack_require__.d(__webpack_exports__, {
+-    Config: ()=>Config_namespaceObject,
+-    Cookies: ()=>http_namespaceObject.Cookies,
+-    Effect: ()=>Effect_namespaceObject,
+-    Etag: ()=>http_namespaceObject.Etag,
+-    FetchHttpClient: ()=>http_namespaceObject.FetchHttpClient,
+-    FindMyWay: ()=>http_namespaceObject.FindMyWay,
+-    Headers: ()=>http_namespaceObject.Headers,
+-    HttpApi: ()=>http_api_namespaceObject.HttpApi,
+-    HttpApiBuilder: ()=>http_api_namespaceObject.HttpApiBuilder,
+-    HttpApiClient: ()=>http_api_namespaceObject.HttpApiClient,
+-    HttpApiEndpoint: ()=>http_api_namespaceObject.HttpApiEndpoint,
+-    HttpApiError: ()=>http_api_namespaceObject.HttpApiError,
+-    HttpApiGroup: ()=>http_api_namespaceObject.HttpApiGroup,
+-    HttpApiMiddleware: ()=>http_api_namespaceObject.HttpApiMiddleware,
+-    HttpApiSchema: ()=>http_api_namespaceObject.HttpApiSchema,
+-    HttpApiSecurity: ()=>http_api_namespaceObject.HttpApiSecurity,
+-    HttpApiTest: ()=>http_api_namespaceObject.HttpApiTest,
+-    HttpBody: ()=>http_namespaceObject.HttpBody,
+-    HttpClient: ()=>http_namespaceObject.HttpClient,
+-    HttpClientError: ()=>http_namespaceObject.HttpClientError,
+-    HttpClientRequest: ()=>http_namespaceObject.HttpClientRequest,
+-    HttpClientResponse: ()=>http_namespaceObject.HttpClientResponse,
+-    HttpEffect: ()=>http_namespaceObject.HttpEffect,
+-    HttpIncomingMessage: ()=>http_namespaceObject.HttpIncomingMessage,
+-    HttpMethod: ()=>http_namespaceObject.HttpMethod,
+-    HttpMiddleware: ()=>http_namespaceObject.HttpMiddleware,
+-    HttpPlatform: ()=>http_namespaceObject.HttpPlatform,
+-    HttpRouter: ()=>http_namespaceObject.HttpRouter,
+-    HttpServer: ()=>http_namespaceObject.HttpServer,
+-    HttpServerError: ()=>http_namespaceObject.HttpServerError,
+-    HttpServerRequest: ()=>http_namespaceObject.HttpServerRequest,
+-    HttpServerRespondable: ()=>http_namespaceObject.HttpServerRespondable,
+-    HttpServerResponse: ()=>http_namespaceObject.HttpServerResponse,
+-    HttpStaticServer: ()=>http_namespaceObject.HttpStaticServer,
+-    HttpStatus: ()=>http_namespaceObject.HttpStatus,
+-    HttpTraceContext: ()=>http_namespaceObject.HttpTraceContext,
+-    Layer: ()=>Layer_namespaceObject,
+-    Multipart: ()=>http_namespaceObject.Multipart,
+-    MultipartParser: ()=>http_namespaceObject.MultipartParser,
+-    OpenApi: ()=>http_api_namespaceObject.OpenApi,
+-    Option: ()=>Option_namespaceObject,
+-    Rpc: ()=>rpc_namespaceObject.Rpc,
+-    RpcClient: ()=>rpc_namespaceObject.RpcClient,
+-    RpcClientError: ()=>rpc_namespaceObject.RpcClientError,
+-    RpcGroup: ()=>rpc_namespaceObject.RpcGroup,
+-    RpcMessage: ()=>rpc_namespaceObject.RpcMessage,
+-    RpcMiddleware: ()=>rpc_namespaceObject.RpcMiddleware,
+-    RpcSchema: ()=>rpc_namespaceObject.RpcSchema,
+-    RpcSerialization: ()=>rpc_namespaceObject.RpcSerialization,
+-    RpcServer: ()=>rpc_namespaceObject.RpcServer,
+-    RpcTest: ()=>rpc_namespaceObject.RpcTest,
+-    RpcWorker: ()=>rpc_namespaceObject.RpcWorker,
+-    Schema: ()=>Schema_namespaceObject,
+-    Template: ()=>http_namespaceObject.Template,
+-    Url: ()=>http_namespaceObject.Url,
+-    UrlParams: ()=>http_namespaceObject.UrlParams,
+-    Utils: ()=>rpc_namespaceObject.Utils,
+-    createEffectBffEdgeDispatcher: ()=>createEffectBffEdgeDispatcher,
+-    createEffectBffEdgeHandler: ()=>createEffectBffEdgeHandler,
+-    createEffectBffTestHandler: ()=>createEffectBffTestHandler,
+-    createEffectOperationContext: ()=>external_operation_context_js_namespaceObject.createEffectOperationContext,
+-    createHttpApiHandler: ()=>external_handler_js_namespaceObject.createHttpApiHandler,
+-    defineEffectBff: ()=>external_handler_js_namespaceObject.defineEffectBff,
+-    defineEffectRpcBff: ()=>external_handler_js_namespaceObject.defineEffectRpcBff,
+-    dispatchEffectBffRequest: ()=>dispatchEffectBffRequest,
+-    runWithEffectContext: ()=>context_namespaceObject.runWithEffectContext,
+-    useEffectContext: ()=>context_namespaceObject.useEffectContext,
+-    useOperationContext: ()=>context_namespaceObject.useOperationContext
+-});
+-const context_namespaceObject = require("@modern-js/bff-effect/context");
+-const bff_policy_namespaceObject = require("@modern-js/server-runtime-extensions/bff-policy");
+-const Effect_namespaceObject = require("effect/Effect");
+-const external_headers_js_namespaceObject = require("../headers.js");
+-const external_dispatch_js_namespaceObject = require("./dispatch.js");
+-const external_module_js_namespaceObject = require("./module.js");
+-const Config_namespaceObject = require("effect/Config");
+-const http_namespaceObject = require("effect/http");
+-const http_api_namespaceObject = require("effect/http-api");
+-const Layer_namespaceObject = require("effect/Layer");
+-const Option_namespaceObject = require("effect/Option");
+-const rpc_namespaceObject = require("effect/rpc");
+-const Schema_namespaceObject = require("effect/Schema");
+-const external_handler_js_namespaceObject = require("./handler.js");
+-const external_operation_context_js_namespaceObject = require("./operation-context.js");
++    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
++    for(var key in obj){
++        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
++            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
++            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
++            else newObj[key] = obj[key];
++        }
++    }
++    newObj.default = obj;
++    if (cache) cache.set(obj, newObj);
++    return newObj;
++}
+ const NORMALIZED_POLICY_BOOLEAN_FIELDS = [
+     'enabled',
+     'requireEnvelope',
+@@ -122,40 +270,57 @@
+     'allowUnknownOperations'
+ ];
+ function assertNormalizedCrossProjectPolicy(policy) {
+-    if (void 0 === policy) return;
+-    if (!policy || 'object' != typeof policy || Array.isArray(policy)) throw new Error('[BFF][Effect] Edge cross-project policy must be a normalized object.');
+-    for (const field of NORMALIZED_POLICY_BOOLEAN_FIELDS)if ('boolean' != typeof policy[field]) throw new Error(`[BFF][Effect] Edge cross-project policy requires boolean ${field}.`);
+-    if (!policy.expectedOperationContracts || 'object' != typeof policy.expectedOperationContracts || Array.isArray(policy.expectedOperationContracts)) throw new Error('[BFF][Effect] Edge cross-project policy requires expectedOperationContracts object.');
++    if (policy === undefined) {
++        return;
++    }
++    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
++        throw new Error('[BFF][Effect] Edge cross-project policy must be a normalized object.');
++    }
++    for (const field of NORMALIZED_POLICY_BOOLEAN_FIELDS){
++        if (typeof policy[field] !== 'boolean') {
++            throw new Error(`[BFF][Effect] Edge cross-project policy requires boolean ${field}.`);
++        }
++    }
++    if (!policy.expectedOperationContracts || typeof policy.expectedOperationContracts !== 'object' || Array.isArray(policy.expectedOperationContracts)) {
++        throw new Error('[BFF][Effect] Edge cross-project policy requires expectedOperationContracts object.');
++    }
+ }
+ function restoreEffectBffMountPath(request, prefix) {
+     const pathname = new URL(request.url).pathname;
+-    if (!prefix || '/' === prefix) return pathname;
++    if (!prefix || prefix === '/') {
++        return pathname;
++    }
+     const normalizedPrefix = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+-    return '/' === pathname ? normalizedPrefix : `${normalizedPrefix}${pathname}`;
++    return pathname === '/' ? normalizedPrefix : `${normalizedPrefix}${pathname}`;
+ }
+ async function dispatchEffectBffRequest(handler, request, options = {}) {
+-    return (0, external_dispatch_js_namespaceObject.dispatchEffectBffRequestWithContext)(handler, request, {
++    return (0, _dispatch.dispatchEffectBffRequestWithContext)(handler, request, {
+         ...options,
+-        runWithEffectContext: context_namespaceObject.runWithEffectContext
++        runWithEffectContext: _context.runWithEffectContext
+     });
+ }
+ async function createEffectBffEdgeDispatcher(options) {
+     const crossProjectPolicy = options.crossProjectPolicy;
+     assertNormalizedCrossProjectPolicy(crossProjectPolicy);
+-    const loaded = await (0, external_module_js_namespaceObject.resolveEffectBffModuleHandler)(options.module, {
++    // One dispatcher serves every request of a Worker isolate: the api is built once and the
++    // module's services are built for each request (workerd binds sockets to their request).
++    const loaded = await (0, _module.resolveEffectBffModuleHandler)(options.module, {
++        servicesLifetime: 'request',
+         openapi: options.openapi,
+         dataPlatform: options.dataPlatform,
+         validateRequest: crossProjectPolicy?.enabled === true ? (request)=>{
+             const pathname = new URL(request.url).pathname;
+-            const observedRequest = (0, bff_policy_namespaceObject.resolveCrossProjectRequestObservation)({
++            const observedRequest = (0, _bffpolicy.resolveCrossProjectRequestObservation)({
+                 method: request.method,
+                 pathname
+             }, crossProjectPolicy) ?? {
+                 method: request.method,
+                 routePath: restoreEffectBffMountPath(request, options.prefix)
+             };
+-            const violation = (0, bff_policy_namespaceObject.evaluateCrossProjectPolicy)((0, external_headers_js_namespaceObject.toHeaderRecord)(request.headers), crossProjectPolicy, observedRequest);
+-            if (!violation) return null;
++            const violation = (0, _bffpolicy.evaluateCrossProjectPolicy)((0, _headers.toHeaderRecord)(request.headers), crossProjectPolicy, observedRequest);
++            if (!violation) {
++                return null;
++            }
+             return new Response(JSON.stringify({
+                 code: violation.code,
+                 reason: violation.reason,
+@@ -166,10 +331,18 @@
+                     'content-type': 'application/json; charset=utf-8'
+                 }
+             });
+-        } : void 0,
++        } : undefined,
+         onWarning: options.onWarning
+     });
+-    if (!loaded) throw new Error('[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.');
++    if (!loaded) {
++        throw new Error('[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.');
++    }
++    try {
++        await loaded.ready;
++    } catch (error) {
++        await loaded.dispose?.().catch(()=>undefined);
++        throw error;
++    }
+     const retiredError = new Error('[BFF][Effect] Edge dispatcher is disposing or has been disposed.');
+     let acceptingRequests = true;
+     let activeDispatches = 0;
+@@ -177,7 +350,9 @@
+     let disposePromise;
+     return {
+         dispatch: (request, dispatchOptions = {})=>{
+-            if (!acceptingRequests) return Promise.reject(retiredError);
++            if (!acceptingRequests) {
++                return Promise.reject(retiredError);
++            }
+             activeDispatches += 1;
+             return dispatchEffectBffRequest(loaded.handler, request, {
+                 ...dispatchOptions,
+@@ -185,18 +360,20 @@
+                 onError: options.onError
+             }).finally(()=>{
+                 activeDispatches -= 1;
+-                if (0 === activeDispatches) {
++                if (activeDispatches === 0) {
+                     resolveDrain?.();
+-                    resolveDrain = void 0;
++                    resolveDrain = undefined;
+                 }
+             });
+         },
+         dispose: ()=>{
+             disposePromise ??= (async ()=>{
+                 acceptingRequests = false;
+-                if (activeDispatches > 0) await Effect_namespaceObject.runPromise(Effect_namespaceObject.callback((resume)=>{
+-                    resolveDrain = ()=>resume(Effect_namespaceObject["void"]);
+-                }));
++                if (activeDispatches > 0) {
++                    await _Effect.runPromise(_Effect.callback((resume)=>{
++                        resolveDrain = ()=>resume(_Effect.void);
++                    }));
++                }
+                 await loaded.dispose?.();
+             })();
+             return disposePromise;
+@@ -211,144 +388,3 @@
+         dispose: dispatcher.dispose
+     };
+ }
+-exports.Config = __webpack_exports__.Config;
+-exports.Cookies = __webpack_exports__.Cookies;
+-exports.Effect = __webpack_exports__.Effect;
+-exports.Etag = __webpack_exports__.Etag;
+-exports.FetchHttpClient = __webpack_exports__.FetchHttpClient;
+-exports.FindMyWay = __webpack_exports__.FindMyWay;
+-exports.Headers = __webpack_exports__.Headers;
+-exports.HttpApi = __webpack_exports__.HttpApi;
+-exports.HttpApiBuilder = __webpack_exports__.HttpApiBuilder;
+-exports.HttpApiClient = __webpack_exports__.HttpApiClient;
+-exports.HttpApiEndpoint = __webpack_exports__.HttpApiEndpoint;
+-exports.HttpApiError = __webpack_exports__.HttpApiError;
+-exports.HttpApiGroup = __webpack_exports__.HttpApiGroup;
+-exports.HttpApiMiddleware = __webpack_exports__.HttpApiMiddleware;
+-exports.HttpApiSchema = __webpack_exports__.HttpApiSchema;
+-exports.HttpApiSecurity = __webpack_exports__.HttpApiSecurity;
+-exports.HttpApiTest = __webpack_exports__.HttpApiTest;
+-exports.HttpBody = __webpack_exports__.HttpBody;
+-exports.HttpClient = __webpack_exports__.HttpClient;
+-exports.HttpClientError = __webpack_exports__.HttpClientError;
+-exports.HttpClientRequest = __webpack_exports__.HttpClientRequest;
+-exports.HttpClientResponse = __webpack_exports__.HttpClientResponse;
+-exports.HttpEffect = __webpack_exports__.HttpEffect;
+-exports.HttpIncomingMessage = __webpack_exports__.HttpIncomingMessage;
+-exports.HttpMethod = __webpack_exports__.HttpMethod;
+-exports.HttpMiddleware = __webpack_exports__.HttpMiddleware;
+-exports.HttpPlatform = __webpack_exports__.HttpPlatform;
+-exports.HttpRouter = __webpack_exports__.HttpRouter;
+-exports.HttpServer = __webpack_exports__.HttpServer;
+-exports.HttpServerError = __webpack_exports__.HttpServerError;
+-exports.HttpServerRequest = __webpack_exports__.HttpServerRequest;
+-exports.HttpServerRespondable = __webpack_exports__.HttpServerRespondable;
+-exports.HttpServerResponse = __webpack_exports__.HttpServerResponse;
+-exports.HttpStaticServer = __webpack_exports__.HttpStaticServer;
+-exports.HttpStatus = __webpack_exports__.HttpStatus;
+-exports.HttpTraceContext = __webpack_exports__.HttpTraceContext;
+-exports.Layer = __webpack_exports__.Layer;
+-exports.Multipart = __webpack_exports__.Multipart;
+-exports.MultipartParser = __webpack_exports__.MultipartParser;
+-exports.OpenApi = __webpack_exports__.OpenApi;
+-exports.Option = __webpack_exports__.Option;
+-exports.Rpc = __webpack_exports__.Rpc;
+-exports.RpcClient = __webpack_exports__.RpcClient;
+-exports.RpcClientError = __webpack_exports__.RpcClientError;
+-exports.RpcGroup = __webpack_exports__.RpcGroup;
+-exports.RpcMessage = __webpack_exports__.RpcMessage;
+-exports.RpcMiddleware = __webpack_exports__.RpcMiddleware;
+-exports.RpcSchema = __webpack_exports__.RpcSchema;
+-exports.RpcSerialization = __webpack_exports__.RpcSerialization;
+-exports.RpcServer = __webpack_exports__.RpcServer;
+-exports.RpcTest = __webpack_exports__.RpcTest;
+-exports.RpcWorker = __webpack_exports__.RpcWorker;
+-exports.Schema = __webpack_exports__.Schema;
+-exports.Template = __webpack_exports__.Template;
+-exports.Url = __webpack_exports__.Url;
+-exports.UrlParams = __webpack_exports__.UrlParams;
+-exports.Utils = __webpack_exports__.Utils;
+-exports.createEffectBffEdgeDispatcher = __webpack_exports__.createEffectBffEdgeDispatcher;
+-exports.createEffectBffEdgeHandler = __webpack_exports__.createEffectBffEdgeHandler;
+-exports.createEffectBffTestHandler = __webpack_exports__.createEffectBffTestHandler;
+-exports.createEffectOperationContext = __webpack_exports__.createEffectOperationContext;
+-exports.createHttpApiHandler = __webpack_exports__.createHttpApiHandler;
+-exports.defineEffectBff = __webpack_exports__.defineEffectBff;
+-exports.defineEffectRpcBff = __webpack_exports__.defineEffectRpcBff;
+-exports.dispatchEffectBffRequest = __webpack_exports__.dispatchEffectBffRequest;
+-exports.runWithEffectContext = __webpack_exports__.runWithEffectContext;
+-exports.useEffectContext = __webpack_exports__.useEffectContext;
+-exports.useOperationContext = __webpack_exports__.useOperationContext;
+-for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "Config",
+-    "Cookies",
+-    "Effect",
+-    "Etag",
+-    "FetchHttpClient",
+-    "FindMyWay",
+-    "Headers",
+-    "HttpApi",
+-    "HttpApiBuilder",
+-    "HttpApiClient",
+-    "HttpApiEndpoint",
+-    "HttpApiError",
+-    "HttpApiGroup",
+-    "HttpApiMiddleware",
+-    "HttpApiSchema",
+-    "HttpApiSecurity",
+-    "HttpApiTest",
+-    "HttpBody",
+-    "HttpClient",
+-    "HttpClientError",
+-    "HttpClientRequest",
+-    "HttpClientResponse",
+-    "HttpEffect",
+-    "HttpIncomingMessage",
+-    "HttpMethod",
+-    "HttpMiddleware",
+-    "HttpPlatform",
+-    "HttpRouter",
+-    "HttpServer",
+-    "HttpServerError",
+-    "HttpServerRequest",
+-    "HttpServerRespondable",
+-    "HttpServerResponse",
+-    "HttpStaticServer",
+-    "HttpStatus",
+-    "HttpTraceContext",
+-    "Layer",
+-    "Multipart",
+-    "MultipartParser",
+-    "OpenApi",
+-    "Option",
+-    "Rpc",
+-    "RpcClient",
+-    "RpcClientError",
+-    "RpcGroup",
+-    "RpcMessage",
+-    "RpcMiddleware",
+-    "RpcSchema",
+-    "RpcSerialization",
+-    "RpcServer",
+-    "RpcTest",
+-    "RpcWorker",
+-    "Schema",
+-    "Template",
+-    "Url",
+-    "UrlParams",
+-    "Utils",
+-    "createEffectBffEdgeDispatcher",
+-    "createEffectBffEdgeHandler",
+-    "createEffectBffTestHandler",
+-    "createEffectOperationContext",
+-    "createHttpApiHandler",
+-    "defineEffectBff",
+-    "defineEffectRpcBff",
+-    "dispatchEffectBffRequest",
+-    "runWithEffectContext",
+-    "useEffectContext",
+-    "useOperationContext"
+-].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+-Object.defineProperty(exports, '__esModule', {
+-    value: true
+-});
+diff --git a/dist/cjs/effect/handler/definition.js b/dist/cjs/effect/handler/definition.js
+--- a/dist/cjs/effect/handler/definition.js
++++ b/dist/cjs/effect/handler/definition.js
+@@ -1,54 +1,44 @@
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
+ "use strict";
+-var __webpack_require__ = {};
+-(()=>{
+-    __webpack_require__.d = (exports1, getters, values)=>{
+-        var define = (defs, kind)=>{
+-            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
+-                enumerable: true,
+-                [kind]: defs[key]
+-            });
+-        };
+-        define(getters, "get");
+-        define(values, "value");
+-    };
+-})();
+-(()=>{
+-    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
+-})();
+-(()=>{
+-    __webpack_require__.r = (exports1)=>{
+-        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
+-            value: 'Module'
+-        });
+-        Object.defineProperty(exports1, '__esModule', {
+-            value: true
+-        });
+-    };
+-})();
+-var __webpack_exports__ = {};
+-__webpack_require__.r(__webpack_exports__);
+-__webpack_require__.d(__webpack_exports__, {
+-    defineEffectBff: ()=>defineEffectBff,
+-    defineEffectRpcBff: ()=>defineEffectRpcBff
++Object.defineProperty(exports, "__esModule", {
++    value: true
+ });
+-const external_entry_shape_js_namespaceObject = require("../entry-shape.js");
+-const external_envelope_js_namespaceObject = require("./envelope.js");
+-const external_http_js_namespaceObject = require("./http.js");
+-const external_rpc_js_namespaceObject = require("./rpc.js");
++function _export(target, all) {
++    for(var name in all)Object.defineProperty(target, name, {
++        enumerable: true,
++        get: Object.getOwnPropertyDescriptor(all, name).get
++    });
++}
++_export(exports, {
++    get defineEffectBff () {
++        return defineEffectBff;
++    },
++    get defineEffectRpcBff () {
++        return defineEffectRpcBff;
++    }
++});
++const _entryshape = require("../entry-shape.js");
++const _envelope = require("./envelope.js");
++const _http = require("./http.js");
++const _rpc = require("./rpc.js");
+ function defineEffectBff(definition) {
+-    const createHandler = (0, external_entry_shape_js_namespaceObject.registerValidatorAwareHandlerFactory)((options)=>{
++    const createHandler = (0, _entryshape.registerValidatorAwareHandlerFactory)((options)=>{
+         const rpcDefinition = definition.rpc;
+         let mergedRpcOptions = rpcDefinition;
+-        if (rpcDefinition && options?.rpc) mergedRpcOptions = {
+-            ...rpcDefinition,
+-            ...options.rpc
+-        };
+-        return (0, external_http_js_namespaceObject.createHttpApiHandler)({
++        if (rpcDefinition && options?.rpc) {
++            mergedRpcOptions = {
++                ...rpcDefinition,
++                ...options.rpc
++            };
++        }
++        return (0, _http.createHttpApiHandler)({
+             api: definition.api,
+             layer: definition.layer,
++            services: definition.services,
++            servicesLifetime: options?.servicesLifetime,
+             openapi: options?.openapi,
+             rpc: mergedRpcOptions,
+-            dataPlatform: (0, external_envelope_js_namespaceObject.mergeDataPlatformOptions)(definition.dataPlatform, options?.dataPlatform),
++            dataPlatform: (0, _envelope.mergeDataPlatformOptions)(definition.dataPlatform, options?.dataPlatform),
+             interceptRequest: definition.interceptRequest,
+             validateRequest: options?.validateRequest
+         });
+@@ -59,7 +49,7 @@
+     };
+ }
+ function defineEffectRpcBff(definition) {
+-    const createHandler = (options)=>(0, external_rpc_js_namespaceObject.createRpcApiHandler)({
++    const createHandler = (options)=>(0, _rpc.createRpcApiHandler)({
+             ...definition,
+             ...options
+         });
+@@ -68,12 +58,3 @@
+         createHandler
+     };
+ }
+-exports.defineEffectBff = __webpack_exports__.defineEffectBff;
+-exports.defineEffectRpcBff = __webpack_exports__.defineEffectRpcBff;
+-for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "defineEffectBff",
+-    "defineEffectRpcBff"
+-].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+-Object.defineProperty(exports, '__esModule', {
+-    value: true
+-});
+diff --git a/dist/cjs/effect/handler/http.js b/dist/cjs/effect/handler/http.js
+--- a/dist/cjs/effect/handler/http.js
++++ b/dist/cjs/effect/handler/http.js
+@@ -1,96 +1,207 @@
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
+ "use strict";
+-var __webpack_require__ = {};
+-(()=>{
+-    __webpack_require__.d = (exports1, getters, values)=>{
+-        var define = (defs, kind)=>{
+-            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
+-                enumerable: true,
+-                [kind]: defs[key]
++Object.defineProperty(exports, "__esModule", {
++    value: true
++});
++Object.defineProperty(exports, "createHttpApiHandler", {
++    enumerable: true,
++    get: function() {
++        return createHttpApiHandler;
++    }
++});
++const _Context = /*#__PURE__*/ _interop_require_wildcard(require("effect/Context"));
++const _Effect = /*#__PURE__*/ _interop_require_wildcard(require("effect/Effect"));
++const _Exit = /*#__PURE__*/ _interop_require_wildcard(require("effect/Exit"));
++const _Scope = /*#__PURE__*/ _interop_require_wildcard(require("effect/Scope"));
++const _http = require("effect/http");
++const _Layer = /*#__PURE__*/ _interop_require_wildcard(require("effect/Layer"));
++const _batch = require("./batch.js");
++const _batchhandler = require("./batch-handler.js");
++const _envelope = require("./envelope.js");
++const _openapi = require("./openapi.js");
++const _routing = require("./routing.js");
++const _rpc = require("./rpc.js");
++const _types = require("./types.js");
++function _getRequireWildcardCache(nodeInterop) {
++    if (typeof WeakMap !== "function") return null;
++    var cacheBabelInterop = new WeakMap();
++    var cacheNodeInterop = new WeakMap();
++    return (_getRequireWildcardCache = function(nodeInterop) {
++        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
++    })(nodeInterop);
++}
++function _interop_require_wildcard(obj, nodeInterop) {
++    if (!nodeInterop && obj && obj.__esModule) return obj;
++    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return {
++        default: obj
++    };
++    var cache = _getRequireWildcardCache(nodeInterop);
++    if (cache && cache.has(obj)) return cache.get(obj);
++    var newObj = {
++        __proto__: null
++    };
++    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
++    for(var key in obj){
++        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
++            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
++            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
++            else newObj[key] = obj[key];
++        }
++    }
++    newObj.default = obj;
++    if (cache) cache.set(obj, newObj);
++    return newObj;
++}
++/**
++ * Builds the api's router, handlers, codecs and OpenAPI route once. Services the handlers resolve
++ * at call time come from each request's context, so nothing request-bound lives in this scope.
++ */ function createSharedWebHandler(layer) {
++    const scope = _Scope.makeUnsafe();
++    let webHandler;
++    const ready = _Effect.runPromise(_Effect.gen(function*() {
++        const context = yield* _Layer.buildWithScope(_Layer.provideMerge(layer, _http.HttpRouter.layer), scope);
++        webHandler = _http.HttpEffect.toWebHandlerWith(context)(_Context.get(context, _http.HttpRouter.HttpRouter).asHttpEffect(), _http.HttpMiddleware.logger);
++    })).catch(async (error)=>{
++        await _Effect.runPromise(_Scope.close(scope, _Exit.void)).catch(()=>undefined);
++        throw error;
++    });
++    // A failed build must not be an unhandled rejection; every request rejects with it instead.
++    ready.catch(()=>undefined);
++    return {
++        ready,
++        handler: (request, context)=>webHandler === undefined ? ready.then(()=>webHandler(request, context)) : webHandler(request, context),
++        dispose: ()=>_Effect.runPromise(_Scope.close(scope, _Exit.void))
++    };
++}
++const waitUntilOf = (context)=>{
++    if (typeof context !== 'object' || context === null) {
++        return undefined;
++    }
++    const waitUntil = context.waitUntil;
++    return typeof waitUntil === 'function' ? waitUntil : undefined;
++};
++/** Closes the request's service scope once the response body has been delivered (or abandoned). */ function releaseAfterBody(response, release, waitUntil) {
++    const keep = (promise)=>{
++        const settled = promise.catch(()=>undefined);
++        waitUntil?.(settled);
++    };
++    if (response.body === null) {
++        keep(release());
++        return response;
++    }
++    const { readable, writable } = new TransformStream();
++    keep(response.body.pipeTo(writable).catch(()=>undefined).then(release));
++    return new Response(readable, response);
++}
++/**
++ * Builds the request services in a scope owned by one request and hands their context to the
++ * shared handler. workerd binds every socket to the request that opened it, so a database pool
++ * or client built here never serves another request.
++ */ function withRequestServices(services, handle, pendingReleases) {
++    return async (request, context)=>{
++        const scope = _Scope.makeUnsafe();
++        let released;
++        const release = ()=>{
++            released ??= _Effect.runPromise(_Scope.close(scope, _Exit.void)).finally(()=>{
++                pendingReleases.delete(release);
+             });
++            return released;
+         };
+-        define(getters, "get");
+-        define(values, "value");
+-    };
+-})();
+-(()=>{
+-    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
+-})();
+-(()=>{
+-    __webpack_require__.r = (exports1)=>{
+-        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
+-            value: 'Module'
+-        });
+-        Object.defineProperty(exports1, '__esModule', {
+-            value: true
+-        });
+-    };
+-})();
+-var __webpack_exports__ = {};
+-__webpack_require__.r(__webpack_exports__);
+-__webpack_require__.d(__webpack_exports__, {
+-    createHttpApiHandler: ()=>createHttpApiHandler
+-});
+-const http_namespaceObject = require("effect/http");
+-const Layer_namespaceObject = require("effect/Layer");
+-const external_batch_js_namespaceObject = require("./batch.js");
+-const external_batch_handler_js_namespaceObject = require("./batch-handler.js");
+-const external_envelope_js_namespaceObject = require("./envelope.js");
+-const external_openapi_js_namespaceObject = require("./openapi.js");
+-const external_routing_js_namespaceObject = require("./routing.js");
+-const external_rpc_js_namespaceObject = require("./rpc.js");
+-const external_types_js_namespaceObject = require("./types.js");
++        pendingReleases.add(release);
++        const waitUntil = waitUntilOf(context);
++        let response;
++        try {
++            const requestContext = await _Effect.runPromise(_Layer.buildWithScope(services, scope));
++            response = await handle(request, _Context.merge((0, _types.toEffectServiceContext)(context), requestContext));
++        } catch (error) {
++            const released = release().catch(()=>undefined);
++            waitUntil?.(released);
++            throw error;
++        }
++        return releaseAfterBody(response, release, waitUntil);
++    };
++}
+ function createHttpApiHandler(options) {
+-    const apiLayer = options.layer.pipe(Layer_namespaceObject.provide(http_namespaceObject.HttpServer.layerServices));
+-    const openApiLayer = (0, external_openapi_js_namespaceObject.createOpenApiLayer)(options.api, options.openapi);
+-    const mergedLayer = openApiLayer ? Layer_namespaceObject.mergeAll(apiLayer, openApiLayer) : apiLayer;
+-    const httpApiHandler = http_namespaceObject.HttpRouter.toWebHandler(mergedLayer);
++    const pendingReleases = new Set();
++    const releaseRequests = ()=>Promise.all(Array.from(pendingReleases, (release)=>release()));
++    const requestScopedServices = options.servicesLifetime === 'request' ? options.services : undefined;
++    const runtimeLayer = options.services === undefined || requestScopedServices !== undefined ? options.layer : options.layer.pipe(_Layer.provideMerge(options.services));
++    const apiLayer = runtimeLayer.pipe(_Layer.provide(_http.HttpServer.layerServices));
++    const openApiLayer = (0, _openapi.createOpenApiLayer)(options.api, options.openapi);
++    const mergedLayer = openApiLayer ? _Layer.mergeAll(apiLayer, openApiLayer) : apiLayer;
++    const httpApiHandler = options.servicesLifetime === 'request' ? createSharedWebHandler(mergedLayer) : _http.HttpRouter.toWebHandler(mergedLayer);
+     const dispatchHttpApiRequest = async (request, context)=>{
+-        const preparedRequest = await (0, external_batch_js_namespaceObject.prepareJsonRequestBody)(request);
+-        if (preparedRequest instanceof Response) return preparedRequest;
+-        const validationError = (0, external_envelope_js_namespaceObject.validateDataPlatformRequestEnvelope)(preparedRequest, options.dataPlatform);
+-        if (validationError) return validationError;
+-        return httpApiHandler.handler(preparedRequest, (0, external_types_js_namespaceObject.toEffectServiceContext)(context));
++        const preparedRequest = await (0, _batch.prepareJsonRequestBody)(request);
++        if (preparedRequest instanceof Response) {
++            return preparedRequest;
++        }
++        const validationError = (0, _envelope.validateDataPlatformRequestEnvelope)(preparedRequest, options.dataPlatform);
++        if (validationError) {
++            return validationError;
++        }
++        return httpApiHandler.handler(preparedRequest, (0, _types.toEffectServiceContext)(context));
+     };
+     const withRequestPolicy = async (request, context)=>{
++        // Policy seam first: every HttpApi request, direct or batched item,
++        // passes through here, so batch fan-out cannot bypass validator. The
++        // interceptor receives the original request; delegated requests still
++        // pass through body validation.
+         const policyDenial = options.validateRequest?.(request);
+-        if (policyDenial) return policyDenial;
++        if (policyDenial) {
++            return policyDenial;
++        }
+         const next = ()=>dispatchHttpApiRequest(request, context);
+         return options.interceptRequest ? options.interceptRequest({
+             request,
+             next
+         }) : next();
+     };
+-    const batchHandler = (0, external_batch_handler_js_namespaceObject.createDataPlatformBatchRequestHandler)({
++    const batchHandler = (0, _batchhandler.createDataPlatformBatchRequestHandler)({
+         dataPlatform: options.dataPlatform,
+         handleItem: withRequestPolicy
+     });
+-    const handleHttpApiRequest = async (request, context)=>{
+-        const pathname = (0, external_routing_js_namespaceObject.getRequestPathname)(request);
+-        if (batchHandler.enabled && pathname === batchHandler.path) return batchHandler.handle(request, context);
++    const routeHttpApiRequest = async (request, context)=>{
++        const pathname = (0, _routing.getRequestPathname)(request);
++        if (batchHandler.enabled && pathname === batchHandler.path) {
++            // Outer batch POST transport, not an API operation: each batched item is
++            // dispatched through withDataPlatformValidation and hits policy handling.
++            return batchHandler.handle(request, context);
++        }
+         return withRequestPolicy(request, context);
+     };
+-    if (!options.rpc) return {
+-        handler: handleHttpApiRequest,
+-        dispose: async ()=>{
+-            await httpApiHandler.dispose();
+-        }
+-    };
+-    const rpcPath = (0, external_rpc_js_namespaceObject.normalizeRpcPath)(options.rpc.path);
+-    const rpcHandler = (0, external_rpc_js_namespaceObject.createRpcApiHandler)(options.rpc);
++    // Batched items share their outer request's services.
++    const withServices = (handler)=>requestScopedServices === undefined ? handler : withRequestServices(requestScopedServices, handler, pendingReleases);
++    const handleHttpApiRequest = withServices(routeHttpApiRequest);
++    if (!options.rpc) {
++        return {
++            handler: handleHttpApiRequest,
++            ready: httpApiHandler.ready,
++            dispose: async ()=>{
++                await releaseRequests();
++                await httpApiHandler.dispose();
++            }
++        };
++    }
++    const rpcPath = (0, _rpc.normalizeRpcPath)(options.rpc.path);
++    const rpcHandler = (0, _rpc.createRpcApiHandler)(options.rpc);
+     return {
+-        handler: async (request, context)=>{
+-            if ((0, external_routing_js_namespaceObject.isRpcRequest)(request, rpcPath)) {
++        handler: withServices(async (request, context)=>{
++            if ((0, _routing.isRpcRequest)(request, rpcPath)) {
+                 const policyDenial = options.validateRequest?.(request);
+-                if (policyDenial) return policyDenial;
+-                const next = ()=>rpcHandler.handler(request, (0, external_types_js_namespaceObject.toEffectServiceContext)(context));
++                if (policyDenial) {
++                    return policyDenial;
++                }
++                const next = ()=>rpcHandler.handler(request, (0, _types.toEffectServiceContext)(context));
+                 return options.interceptRequest ? options.interceptRequest({
+                     request,
+                     next
+                 }) : next();
+             }
+-            return handleHttpApiRequest(request, context);
+-        },
++            return routeHttpApiRequest(request, context);
++        }),
++        ready: httpApiHandler.ready,
+         dispose: async ()=>{
++            await releaseRequests();
+             await Promise.all([
+                 httpApiHandler.dispose(),
+                 rpcHandler.dispose()
+@@ -98,10 +209,3 @@
+         }
+     };
+ }
+-exports.createHttpApiHandler = __webpack_exports__.createHttpApiHandler;
+-for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "createHttpApiHandler"
+-].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+-Object.defineProperty(exports, '__esModule', {
+-    value: true
+-});
+diff --git a/dist/cjs/effect/module.js b/dist/cjs/effect/module.js
+--- a/dist/cjs/effect/module.js
++++ b/dist/cjs/effect/module.js
+@@ -1,40 +1,19 @@
++// @effect-diagnostics strictBooleanExpressions:off
+ "use strict";
+-var __webpack_require__ = {};
+-(()=>{
+-    __webpack_require__.d = (exports1, getters, values)=>{
+-        var define = (defs, kind)=>{
+-            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
+-                enumerable: true,
+-                [kind]: defs[key]
+-            });
+-        };
+-        define(getters, "get");
+-        define(values, "value");
+-    };
+-})();
+-(()=>{
+-    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
+-})();
+-(()=>{
+-    __webpack_require__.r = (exports1)=>{
+-        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
+-            value: 'Module'
+-        });
+-        Object.defineProperty(exports1, '__esModule', {
+-            value: true
+-        });
+-    };
+-})();
+-var __webpack_exports__ = {};
+-__webpack_require__.r(__webpack_exports__);
+-__webpack_require__.d(__webpack_exports__, {
+-    resolveEffectBffModuleHandler: ()=>resolveEffectBffModuleHandler
++Object.defineProperty(exports, "__esModule", {
++    value: true
+ });
+-const http_api_namespaceObject = require("effect/http-api");
+-const external_entry_shape_js_namespaceObject = require("./entry-shape.js");
+-const external_handler_js_namespaceObject = require("./handler.js");
++Object.defineProperty(exports, "resolveEffectBffModuleHandler", {
++    enumerable: true,
++    get: function() {
++        return resolveEffectBffModuleHandler;
++    }
++});
++const _httpapi = require("effect/http-api");
++const _entryshape = require("./entry-shape.js");
++const _handler = require("./handler.js");
+ function isRequestHandler(value) {
+-    return 'function' == typeof value;
++    return typeof value === 'function';
+ }
+ function shareDispose(dispose) {
+     let disposePromise;
+@@ -44,64 +23,76 @@
+     };
+ }
+ function rejectUnsupportedEffectModuleShape(options, shape) {
+-    options.onWarning?.(`${external_entry_shape_js_namespaceObject.strictEffectApproachMessage} Rejected ${shape}.`);
++    options.onWarning?.(`${_entryshape.strictEffectApproachMessage} Rejected ${shape}.`);
+     return true;
+ }
+ function callEffectBffRequestHandler(handler, request, context) {
+-    return void 0 === context ? handler(request) : handler(request, context);
++    return context === undefined ? handler(request) : handler(request, context);
+ }
+ function createLoadedHandler(webHandler) {
+     return {
+         handler: (request, context)=>callEffectBffRequestHandler(webHandler.handler, request, context),
+-        dispose: shareDispose(webHandler.dispose)
++        dispose: shareDispose(webHandler.dispose),
++        ...webHandler.ready === undefined ? {} : {
++            ready: webHandler.ready
++        }
+     };
+ }
+ function createLoadedHttpApiHandler(webHandler) {
+     return createLoadedHandler({
+         handler: webHandler.handler,
+-        dispose: webHandler.dispose
++        dispose: webHandler.dispose,
++        ready: webHandler.ready
+     });
+ }
+ function classifyEffectBffRuntimeEntryShape(module) {
+-    return (0, external_entry_shape_js_namespaceObject.classifyEffectBffEntryModule)(module, {
++    return (0, _entryshape.classifyEffectBffEntryModule)(module, {
+         isRequestHandler,
+-        isValidatorAwareHandlerFactory: external_entry_shape_js_namespaceObject.isValidatorAwareHandlerFactory,
+-        isHttpApi: http_api_namespaceObject.HttpApi.isHttpApi
++        isValidatorAwareHandlerFactory: _entryshape.isValidatorAwareHandlerFactory,
++        isHttpApi: _httpapi.HttpApi.isHttpApi
+     });
+ }
+ function resolveClassifiedEffectBffModuleHandler(facts, options = {}) {
+-    if (!facts) return null;
++    if (!facts) {
++        return null;
++    }
+     if (facts.unsupportedShape) {
+-        if (rejectUnsupportedEffectModuleShape(options, facts.unsupportedShape)) return null;
++        if (rejectUnsupportedEffectModuleShape(options, facts.unsupportedShape)) {
++            return null;
++        }
+     }
+-    if (void 0 !== facts.module.rpc && !facts.createHandlerValidatorAware) {
++    if (facts.module.rpc !== undefined && !facts.createHandlerValidatorAware) {
+         rejectUnsupportedEffectModuleShape(options, 'unbranded RPC runtime');
+         return null;
+     }
+-    if ('function' == typeof facts.createHandler) {
++    if (typeof facts.createHandler === 'function') {
+         if (facts.createHandlerValidatorAware) {
+             const factory = facts.createHandler;
+             const webHandler = factory({
+                 openapi: options.openapi,
+                 dataPlatform: options.dataPlatform,
+-                validateRequest: options.validateRequest
++                validateRequest: options.validateRequest,
++                servicesLifetime: options.servicesLifetime
+             });
+             return createLoadedHandler(webHandler);
+         }
+-        if (void 0 === facts.api || !facts.hasRuntimeLayer) {
++        if (facts.api === undefined || !facts.hasRuntimeLayer) {
+             rejectUnsupportedEffectModuleShape(options, 'unbranded `createHandler` export');
+             return null;
+         }
+-        options.onWarning?.(`${external_entry_shape_js_namespaceObject.strictEffectApproachMessage} Ignored unbranded \`createHandler\` export and rebuilt the handler from its { api, layer } exports.`);
++        options.onWarning?.(`${_entryshape.strictEffectApproachMessage} Ignored unbranded \`createHandler\` export and rebuilt the handler from its { api, layer } exports.`);
+     }
+-    if (void 0 !== facts.api && facts.hasRuntimeLayer) {
+-        if (void 0 === facts.createHandler) options.onWarning?.('[BFF][Effect] Detected { api, layer } export without createHandler. Prefer `defineEffectBff(...)` from @modern-js/bff-effect/effect to avoid module instance mismatch.');
+-        const webHandler = (0, external_handler_js_namespaceObject.createHttpApiHandler)({
++    if (facts.api !== undefined && facts.hasRuntimeLayer) {
++        if (facts.createHandler === undefined) {
++            options.onWarning?.('[BFF][Effect] Detected { api, layer } export without createHandler. Prefer `defineEffectBff(...)` from @modern-js/bff-effect/effect to avoid module instance mismatch.');
++        }
++        const webHandler = (0, _handler.createHttpApiHandler)({
+             api: facts.api,
+             layer: facts.layer,
+             openapi: options.openapi,
+             dataPlatform: options.dataPlatform,
+-            validateRequest: options.validateRequest
++            validateRequest: options.validateRequest,
++            servicesLifetime: options.servicesLifetime
+         });
+         return createLoadedHttpApiHandler(webHandler);
+     }
+@@ -113,10 +104,3 @@
+ function resolveEffectBffModuleHandler(mod, options = {}) {
+     return Promise.resolve(resolveNormalizedEffectBffModuleHandler(mod, options));
+ }
+-exports.resolveEffectBffModuleHandler = __webpack_exports__.resolveEffectBffModuleHandler;
+-for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "resolveEffectBffModuleHandler"
+-].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+-Object.defineProperty(exports, '__esModule', {
+-    value: true
+-});
+diff --git a/dist/esm/assembly.mjs b/dist/esm/assembly.mjs
+--- a/dist/esm/assembly.mjs
++++ b/dist/esm/assembly.mjs
+@@ -1,12 +1,15 @@
+-import { HttpApiBuilder } from "effect/http-api";
+-import { defineEffectBff } from "./effect/handler/definition.mjs";
+-import * as __rspack_external_effect_Layer_69c46453 from "effect/Layer";
+-const assembleEffectBffRuntime = ({ api, handlers, transport })=>{
+-    const apiLayer = HttpApiBuilder.layer(api).pipe(__rspack_external_effect_Layer_69c46453.provide(handlers));
+-    const layer = void 0 === transport ? apiLayer : apiLayer.pipe(__rspack_external_effect_Layer_69c46453.merge(transport));
++/** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */ import * as Layer from 'effect/Layer';
++import { HttpApiBuilder } from 'effect/http-api';
++import { defineEffectBff } from './effect/handler/definition.mjs';
++export const assembleEffectBffRuntime = (assembly)=>{
++    const { api, handlers, services, transport } = assembly;
++    const apiLayer = HttpApiBuilder.layer(api).pipe(Layer.provide(handlers));
++    const layer = transport === undefined ? apiLayer : apiLayer.pipe(Layer.merge(transport));
++    // Every requirement outside the runtime's own is checked above against `services`, which
++    // createHttpApiHandler supplies per request (Workers) or once (Node).
+     return defineEffectBff({
+         api,
+-        layer
++        layer: layer,
++        services
+     });
+ };
+-export { assembleEffectBffRuntime };
+diff --git a/dist/esm/effect/dispatch.mjs b/dist/esm/effect/dispatch.mjs
+--- a/dist/esm/effect/dispatch.mjs
++++ b/dist/esm/effect/dispatch.mjs
+@@ -1,12 +1,17 @@
+-import { createSafeFailureResponse } from "@modern-js/runtime-extensions/safe-failure";
+-import { createEffectOperationContext } from "./operation-context.mjs";
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off strictBooleanExpressions:off
++import { createSafeFailureResponse } from '@modern-js/runtime-extensions/safe-failure';
++import { createEffectOperationContext } from './operation-context.mjs';
+ function normalizeEffectBffPrefix(prefix) {
+-    if (!prefix || '/' === prefix) return '';
++    if (!prefix || prefix === '/') {
++        return '';
++    }
+     return prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+ }
+ function removeEffectBffPrefixFromPath(pathname, prefix) {
+     const normalized = normalizeEffectBffPrefix(prefix);
+-    if (!normalized || pathname !== normalized && !pathname.startsWith(`${normalized}/`)) return pathname;
++    if (!normalized || pathname !== normalized && !pathname.startsWith(`${normalized}/`)) {
++        return pathname;
++    }
+     const sliced = pathname.slice(normalized.length);
+     return sliced.startsWith('/') ? sliced : `/${sliced}`;
+ }
+@@ -32,6 +37,9 @@
+         env,
+         path,
+         method,
++        ...options.waitUntil === undefined ? {} : {
++            waitUntil: options.waitUntil
++        },
+         operationContext: createEffectOperationContext({
+             request: mountedRequest,
+             env,
+@@ -40,24 +48,31 @@
+         })
+     };
+ }
+-async function dispatchEffectBffRequestWithContext(handler, request, options) {
++export async function dispatchEffectBffRequestWithContext(handler, request, options) {
+     const requestPath = new URL(request.url).pathname;
+-    if (!matchesEffectBffPrefix(requestPath, options.prefix)) return new Response('', {
+-        status: 404
+-    });
++    if (!matchesEffectBffPrefix(requestPath, options.prefix)) {
++        return new Response('', {
++            status: 404
++        });
++    }
+     const mountedRequest = createEffectBffMountedRequest(request, options.prefix);
+     const effectContext = createEffectBffDispatchContext(request, mountedRequest, options);
+     try {
+         const response = await options.runWithEffectContext(effectContext, ()=>handler(mountedRequest, effectContext));
+-        if (!(response instanceof Response)) throw new Error('[BFF][Effect] Effect handler must return Response instance.');
++        if (!(response instanceof Response)) {
++            throw new Error('[BFF][Effect] Effect handler must return Response instance.');
++        }
+         return new Response(response.body, response);
+     } catch (error) {
+-        if (error instanceof Response) return new Response(error.body, error);
++        if (error instanceof Response) {
++            return new Response(error.body, error);
++        }
+         if (options.onError) {
+             const errorResponse = await options.onError(error, effectContext);
+-            if (errorResponse instanceof Response) return errorResponse;
++            if (errorResponse instanceof Response) {
++                return errorResponse;
++            }
+         }
+         return createSafeFailureResponse(error);
+     }
+ }
+-export { dispatchEffectBffRequestWithContext };
+diff --git a/dist/esm/effect/edge-dispatcher.mjs b/dist/esm/effect/edge-dispatcher.mjs
+--- a/dist/esm/effect/edge-dispatcher.mjs
++++ b/dist/esm/effect/edge-dispatcher.mjs
+@@ -1,13 +1,21 @@
+-import { runWithEffectContext, useEffectContext, useOperationContext } from "@modern-js/bff-effect/context";
+-import { evaluateCrossProjectPolicy, resolveCrossProjectRequestObservation } from "@modern-js/server-runtime-extensions/bff-policy";
+-import * as __rspack_external_effect_Effect_41060786 from "effect/Effect";
+-import { toHeaderRecord } from "../headers.mjs";
+-import { dispatchEffectBffRequestWithContext } from "./dispatch.mjs";
+-import { resolveEffectBffModuleHandler } from "./module.mjs";
+-import * as __rspack_external_effect_Config_76cfa59d from "effect/Config";
+-import * as __rspack_external_effect_Option_0498e63a from "effect/Option";
+-import * as __rspack_external_effect_Schema_6065f72d from "effect/Schema";
+-import * as __rspack_external_effect_Layer_69c46453 from "effect/Layer";
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off strictBooleanExpressions:off
++import { runWithEffectContext } from '@modern-js/bff-effect/context';
++import { evaluateCrossProjectPolicy, resolveCrossProjectRequestObservation } from '@modern-js/server-runtime-extensions/bff-policy';
++import * as Effect from 'effect/Effect';
++import { toHeaderRecord } from '../headers.mjs';
++import { dispatchEffectBffRequestWithContext } from './dispatch.mjs';
++import { resolveEffectBffModuleHandler } from './module.mjs';
++export { runWithEffectContext, useEffectContext, useOperationContext } from '@modern-js/bff-effect/context';
++export * as Config from 'effect/Config';
++export * as Effect from 'effect/Effect';
++export { Cookies, Etag, FetchHttpClient, FindMyWay, Headers, HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse, HttpEffect, HttpIncomingMessage, HttpMethod, HttpMiddleware, HttpPlatform, HttpRouter, HttpServer, HttpServerError, HttpServerRequest, HttpServerRespondable, HttpServerResponse, HttpStaticServer, HttpStatus, HttpTraceContext, Multipart, MultipartParser, Template, Url, UrlParams } from 'effect/http';
++export { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, HttpApiTest, OpenApi } from 'effect/http-api';
++export * as Layer from 'effect/Layer';
++export * as Option from 'effect/Option';
++export { Rpc, RpcClient, RpcClientError, RpcGroup, RpcMessage, RpcMiddleware, RpcSchema, RpcSerialization, RpcServer, RpcTest, RpcWorker, Utils } from 'effect/rpc';
++export * as Schema from 'effect/Schema';
++export { createHttpApiHandler, defineEffectBff, defineEffectRpcBff } from './handler.mjs';
++export { createEffectOperationContext } from './operation-context.mjs';
+ const NORMALIZED_POLICY_BOOLEAN_FIELDS = [
+     'enabled',
+     'requireEnvelope',
+@@ -18,27 +26,42 @@
+     'allowUnknownOperations'
+ ];
+ function assertNormalizedCrossProjectPolicy(policy) {
+-    if (void 0 === policy) return;
+-    if (!policy || 'object' != typeof policy || Array.isArray(policy)) throw new Error('[BFF][Effect] Edge cross-project policy must be a normalized object.');
+-    for (const field of NORMALIZED_POLICY_BOOLEAN_FIELDS)if ('boolean' != typeof policy[field]) throw new Error(`[BFF][Effect] Edge cross-project policy requires boolean ${field}.`);
+-    if (!policy.expectedOperationContracts || 'object' != typeof policy.expectedOperationContracts || Array.isArray(policy.expectedOperationContracts)) throw new Error('[BFF][Effect] Edge cross-project policy requires expectedOperationContracts object.');
++    if (policy === undefined) {
++        return;
++    }
++    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
++        throw new Error('[BFF][Effect] Edge cross-project policy must be a normalized object.');
++    }
++    for (const field of NORMALIZED_POLICY_BOOLEAN_FIELDS){
++        if (typeof policy[field] !== 'boolean') {
++            throw new Error(`[BFF][Effect] Edge cross-project policy requires boolean ${field}.`);
++        }
++    }
++    if (!policy.expectedOperationContracts || typeof policy.expectedOperationContracts !== 'object' || Array.isArray(policy.expectedOperationContracts)) {
++        throw new Error('[BFF][Effect] Edge cross-project policy requires expectedOperationContracts object.');
++    }
+ }
+ function restoreEffectBffMountPath(request, prefix) {
+     const pathname = new URL(request.url).pathname;
+-    if (!prefix || '/' === prefix) return pathname;
++    if (!prefix || prefix === '/') {
++        return pathname;
++    }
+     const normalizedPrefix = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+-    return '/' === pathname ? normalizedPrefix : `${normalizedPrefix}${pathname}`;
++    return pathname === '/' ? normalizedPrefix : `${normalizedPrefix}${pathname}`;
+ }
+-async function dispatchEffectBffRequest(handler, request, options = {}) {
++export async function dispatchEffectBffRequest(handler, request, options = {}) {
+     return dispatchEffectBffRequestWithContext(handler, request, {
+         ...options,
+-        runWithEffectContext: runWithEffectContext
++        runWithEffectContext
+     });
+ }
+-async function createEffectBffEdgeDispatcher(options) {
++export async function createEffectBffEdgeDispatcher(options) {
+     const crossProjectPolicy = options.crossProjectPolicy;
+     assertNormalizedCrossProjectPolicy(crossProjectPolicy);
++    // One dispatcher serves every request of a Worker isolate: the api is built once and the
++    // module's services are built for each request (workerd binds sockets to their request).
+     const loaded = await resolveEffectBffModuleHandler(options.module, {
++        servicesLifetime: 'request',
+         openapi: options.openapi,
+         dataPlatform: options.dataPlatform,
+         validateRequest: crossProjectPolicy?.enabled === true ? (request)=>{
+@@ -51,7 +74,9 @@
+                 routePath: restoreEffectBffMountPath(request, options.prefix)
+             };
+             const violation = evaluateCrossProjectPolicy(toHeaderRecord(request.headers), crossProjectPolicy, observedRequest);
+-            if (!violation) return null;
++            if (!violation) {
++                return null;
++            }
+             return new Response(JSON.stringify({
+                 code: violation.code,
+                 reason: violation.reason,
+@@ -62,10 +87,18 @@
+                     'content-type': 'application/json; charset=utf-8'
+                 }
+             });
+-        } : void 0,
++        } : undefined,
+         onWarning: options.onWarning
+     });
+-    if (!loaded) throw new Error('[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.');
++    if (!loaded) {
++        throw new Error('[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.');
++    }
++    try {
++        await loaded.ready;
++    } catch (error) {
++        await loaded.dispose?.().catch(()=>undefined);
++        throw error;
++    }
+     const retiredError = new Error('[BFF][Effect] Edge dispatcher is disposing or has been disposed.');
+     let acceptingRequests = true;
+     let activeDispatches = 0;
+@@ -73,7 +106,9 @@
+     let disposePromise;
+     return {
+         dispatch: (request, dispatchOptions = {})=>{
+-            if (!acceptingRequests) return Promise.reject(retiredError);
++            if (!acceptingRequests) {
++                return Promise.reject(retiredError);
++            }
+             activeDispatches += 1;
+             return dispatchEffectBffRequest(loaded.handler, request, {
+                 ...dispatchOptions,
+@@ -81,35 +116,31 @@
+                 onError: options.onError
+             }).finally(()=>{
+                 activeDispatches -= 1;
+-                if (0 === activeDispatches) {
++                if (activeDispatches === 0) {
+                     resolveDrain?.();
+-                    resolveDrain = void 0;
++                    resolveDrain = undefined;
+                 }
+             });
+         },
+         dispose: ()=>{
+             disposePromise ??= (async ()=>{
+                 acceptingRequests = false;
+-                if (activeDispatches > 0) await __rspack_external_effect_Effect_41060786.runPromise(__rspack_external_effect_Effect_41060786.callback((resume)=>{
+-                    resolveDrain = ()=>resume(__rspack_external_effect_Effect_41060786["void"]);
+-                }));
++                if (activeDispatches > 0) {
++                    await Effect.runPromise(Effect.callback((resume)=>{
++                        resolveDrain = ()=>resume(Effect.void);
++                    }));
++                }
+                 await loaded.dispose?.();
+             })();
+             return disposePromise;
+         }
+     };
+ }
+-const createEffectBffTestHandler = createEffectBffEdgeHandler;
+-async function createEffectBffEdgeHandler(options) {
++export const createEffectBffTestHandler = createEffectBffEdgeHandler;
++export async function createEffectBffEdgeHandler(options) {
+     const dispatcher = await createEffectBffEdgeDispatcher(options);
+     return {
+         handler: dispatcher.dispatch,
+         dispose: dispatcher.dispose
+     };
+ }
+-export { Cookies, Etag, FetchHttpClient, FindMyWay, Headers, HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse, HttpEffect, HttpIncomingMessage, HttpMethod, HttpMiddleware, HttpPlatform, HttpRouter, HttpServer, HttpServerError, HttpServerRequest, HttpServerRespondable, HttpServerResponse, HttpStaticServer, HttpStatus, HttpTraceContext, Multipart, MultipartParser, Template, Url, UrlParams } from "effect/http";
+-export { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, HttpApiTest, OpenApi } from "effect/http-api";
+-export { Rpc, RpcClient, RpcClientError, RpcGroup, RpcMessage, RpcMiddleware, RpcSchema, RpcSerialization, RpcServer, RpcTest, RpcWorker, Utils } from "effect/rpc";
+-export { createHttpApiHandler, defineEffectBff, defineEffectRpcBff } from "./handler.mjs";
+-export { createEffectOperationContext } from "./operation-context.mjs";
+-export { __rspack_external_effect_Config_76cfa59d as Config, __rspack_external_effect_Effect_41060786 as Effect, __rspack_external_effect_Layer_69c46453 as Layer, __rspack_external_effect_Option_0498e63a as Option, __rspack_external_effect_Schema_6065f72d as Schema, createEffectBffEdgeDispatcher, createEffectBffEdgeHandler, createEffectBffTestHandler, dispatchEffectBffRequest, runWithEffectContext, useEffectContext, useOperationContext };
+diff --git a/dist/esm/effect/handler/definition.mjs b/dist/esm/effect/handler/definition.mjs
+--- a/dist/esm/effect/handler/definition.mjs
++++ b/dist/esm/effect/handler/definition.mjs
+@@ -1,18 +1,23 @@
+-import { registerValidatorAwareHandlerFactory } from "../entry-shape.mjs";
+-import { mergeDataPlatformOptions } from "./envelope.mjs";
+-import { createHttpApiHandler } from "./http.mjs";
+-import { createRpcApiHandler } from "./rpc.mjs";
+-function defineEffectBff(definition) {
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
++import { registerValidatorAwareHandlerFactory } from '../entry-shape.mjs';
++import { mergeDataPlatformOptions } from './envelope.mjs';
++import { createHttpApiHandler } from './http.mjs';
++import { createRpcApiHandler } from './rpc.mjs';
++export function defineEffectBff(definition) {
+     const createHandler = registerValidatorAwareHandlerFactory((options)=>{
+         const rpcDefinition = definition.rpc;
+         let mergedRpcOptions = rpcDefinition;
+-        if (rpcDefinition && options?.rpc) mergedRpcOptions = {
+-            ...rpcDefinition,
+-            ...options.rpc
+-        };
++        if (rpcDefinition && options?.rpc) {
++            mergedRpcOptions = {
++                ...rpcDefinition,
++                ...options.rpc
++            };
++        }
+         return createHttpApiHandler({
+             api: definition.api,
+             layer: definition.layer,
++            services: definition.services,
++            servicesLifetime: options?.servicesLifetime,
+             openapi: options?.openapi,
+             rpc: mergedRpcOptions,
+             dataPlatform: mergeDataPlatformOptions(definition.dataPlatform, options?.dataPlatform),
+@@ -25,7 +30,7 @@
+         createHandler
+     };
+ }
+-function defineEffectRpcBff(definition) {
++export function defineEffectRpcBff(definition) {
+     const createHandler = (options)=>createRpcApiHandler({
+             ...definition,
+             ...options
+@@ -35,4 +40,3 @@
+         createHandler
+     };
+ }
+-export { defineEffectBff, defineEffectRpcBff };
+diff --git a/dist/esm/effect/handler/http.mjs b/dist/esm/effect/handler/http.mjs
+--- a/dist/esm/effect/handler/http.mjs
++++ b/dist/esm/effect/handler/http.mjs
+@@ -1,27 +1,115 @@
+-import { HttpRouter, HttpServer } from "effect/http";
+-import { prepareJsonRequestBody } from "./batch.mjs";
+-import { createDataPlatformBatchRequestHandler } from "./batch-handler.mjs";
+-import { validateDataPlatformRequestEnvelope } from "./envelope.mjs";
+-import { createOpenApiLayer } from "./openapi.mjs";
+-import { getRequestPathname, isRpcRequest } from "./routing.mjs";
+-import { createRpcApiHandler, normalizeRpcPath } from "./rpc.mjs";
+-import { toEffectServiceContext } from "./types.mjs";
+-import * as __rspack_external_effect_Layer_69c46453 from "effect/Layer";
+-function createHttpApiHandler(options) {
+-    const apiLayer = options.layer.pipe(__rspack_external_effect_Layer_69c46453.provide(HttpServer.layerServices));
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
++import * as Context from 'effect/Context';
++import * as Effect from 'effect/Effect';
++import * as Exit from 'effect/Exit';
++import * as Scope from 'effect/Scope';
++import { HttpEffect, HttpMiddleware, HttpRouter, HttpServer } from 'effect/http';
++import * as Layer from 'effect/Layer';
++import { prepareJsonRequestBody } from './batch.mjs';
++import { createDataPlatformBatchRequestHandler } from './batch-handler.mjs';
++import { validateDataPlatformRequestEnvelope } from './envelope.mjs';
++import { createOpenApiLayer } from './openapi.mjs';
++import { getRequestPathname, isRpcRequest } from './routing.mjs';
++import { createRpcApiHandler, normalizeRpcPath } from './rpc.mjs';
++import { toEffectServiceContext } from './types.mjs';
++/**
++ * Builds the api's router, handlers, codecs and OpenAPI route once. Services the handlers resolve
++ * at call time come from each request's context, so nothing request-bound lives in this scope.
++ */ function createSharedWebHandler(layer) {
++    const scope = Scope.makeUnsafe();
++    let webHandler;
++    const ready = Effect.runPromise(Effect.gen(function*() {
++        const context = yield* Layer.buildWithScope(Layer.provideMerge(layer, HttpRouter.layer), scope);
++        webHandler = HttpEffect.toWebHandlerWith(context)(Context.get(context, HttpRouter.HttpRouter).asHttpEffect(), HttpMiddleware.logger);
++    })).catch(async (error)=>{
++        await Effect.runPromise(Scope.close(scope, Exit.void)).catch(()=>undefined);
++        throw error;
++    });
++    // A failed build must not be an unhandled rejection; every request rejects with it instead.
++    ready.catch(()=>undefined);
++    return {
++        ready,
++        handler: (request, context)=>webHandler === undefined ? ready.then(()=>webHandler(request, context)) : webHandler(request, context),
++        dispose: ()=>Effect.runPromise(Scope.close(scope, Exit.void))
++    };
++}
++const waitUntilOf = (context)=>{
++    if (typeof context !== 'object' || context === null) {
++        return undefined;
++    }
++    const waitUntil = context.waitUntil;
++    return typeof waitUntil === 'function' ? waitUntil : undefined;
++};
++/** Closes the request's service scope once the response body has been delivered (or abandoned). */ function releaseAfterBody(response, release, waitUntil) {
++    const keep = (promise)=>{
++        const settled = promise.catch(()=>undefined);
++        waitUntil?.(settled);
++    };
++    if (response.body === null) {
++        keep(release());
++        return response;
++    }
++    const { readable, writable } = new TransformStream();
++    keep(response.body.pipeTo(writable).catch(()=>undefined).then(release));
++    return new Response(readable, response);
++}
++/**
++ * Builds the request services in a scope owned by one request and hands their context to the
++ * shared handler. workerd binds every socket to the request that opened it, so a database pool
++ * or client built here never serves another request.
++ */ function withRequestServices(services, handle, pendingReleases) {
++    return async (request, context)=>{
++        const scope = Scope.makeUnsafe();
++        let released;
++        const release = ()=>{
++            released ??= Effect.runPromise(Scope.close(scope, Exit.void)).finally(()=>{
++                pendingReleases.delete(release);
++            });
++            return released;
++        };
++        pendingReleases.add(release);
++        const waitUntil = waitUntilOf(context);
++        let response;
++        try {
++            const requestContext = await Effect.runPromise(Layer.buildWithScope(services, scope));
++            response = await handle(request, Context.merge(toEffectServiceContext(context), requestContext));
++        } catch (error) {
++            const released = release().catch(()=>undefined);
++            waitUntil?.(released);
++            throw error;
++        }
++        return releaseAfterBody(response, release, waitUntil);
++    };
++}
++export function createHttpApiHandler(options) {
++    const pendingReleases = new Set();
++    const releaseRequests = ()=>Promise.all(Array.from(pendingReleases, (release)=>release()));
++    const requestScopedServices = options.servicesLifetime === 'request' ? options.services : undefined;
++    const runtimeLayer = options.services === undefined || requestScopedServices !== undefined ? options.layer : options.layer.pipe(Layer.provideMerge(options.services));
++    const apiLayer = runtimeLayer.pipe(Layer.provide(HttpServer.layerServices));
+     const openApiLayer = createOpenApiLayer(options.api, options.openapi);
+-    const mergedLayer = openApiLayer ? __rspack_external_effect_Layer_69c46453.mergeAll(apiLayer, openApiLayer) : apiLayer;
+-    const httpApiHandler = HttpRouter.toWebHandler(mergedLayer);
++    const mergedLayer = openApiLayer ? Layer.mergeAll(apiLayer, openApiLayer) : apiLayer;
++    const httpApiHandler = options.servicesLifetime === 'request' ? createSharedWebHandler(mergedLayer) : HttpRouter.toWebHandler(mergedLayer);
+     const dispatchHttpApiRequest = async (request, context)=>{
+         const preparedRequest = await prepareJsonRequestBody(request);
+-        if (preparedRequest instanceof Response) return preparedRequest;
++        if (preparedRequest instanceof Response) {
++            return preparedRequest;
++        }
+         const validationError = validateDataPlatformRequestEnvelope(preparedRequest, options.dataPlatform);
+-        if (validationError) return validationError;
++        if (validationError) {
++            return validationError;
++        }
+         return httpApiHandler.handler(preparedRequest, toEffectServiceContext(context));
+     };
+     const withRequestPolicy = async (request, context)=>{
++        // Policy seam first: every HttpApi request, direct or batched item,
++        // passes through here, so batch fan-out cannot bypass validator. The
++        // interceptor receives the original request; delegated requests still
++        // pass through body validation.
+         const policyDenial = options.validateRequest?.(request);
+-        if (policyDenial) return policyDenial;
++        if (policyDenial) {
++            return policyDenial;
++        }
+         const next = ()=>dispatchHttpApiRequest(request, context);
+         return options.interceptRequest ? options.interceptRequest({
+             request,
+@@ -32,33 +120,48 @@
+         dataPlatform: options.dataPlatform,
+         handleItem: withRequestPolicy
+     });
+-    const handleHttpApiRequest = async (request, context)=>{
++    const routeHttpApiRequest = async (request, context)=>{
+         const pathname = getRequestPathname(request);
+-        if (batchHandler.enabled && pathname === batchHandler.path) return batchHandler.handle(request, context);
++        if (batchHandler.enabled && pathname === batchHandler.path) {
++            // Outer batch POST transport, not an API operation: each batched item is
++            // dispatched through withDataPlatformValidation and hits policy handling.
++            return batchHandler.handle(request, context);
++        }
+         return withRequestPolicy(request, context);
+     };
+-    if (!options.rpc) return {
+-        handler: handleHttpApiRequest,
+-        dispose: async ()=>{
+-            await httpApiHandler.dispose();
+-        }
+-    };
++    // Batched items share their outer request's services.
++    const withServices = (handler)=>requestScopedServices === undefined ? handler : withRequestServices(requestScopedServices, handler, pendingReleases);
++    const handleHttpApiRequest = withServices(routeHttpApiRequest);
++    if (!options.rpc) {
++        return {
++            handler: handleHttpApiRequest,
++            ready: httpApiHandler.ready,
++            dispose: async ()=>{
++                await releaseRequests();
++                await httpApiHandler.dispose();
++            }
++        };
++    }
+     const rpcPath = normalizeRpcPath(options.rpc.path);
+     const rpcHandler = createRpcApiHandler(options.rpc);
+     return {
+-        handler: async (request, context)=>{
++        handler: withServices(async (request, context)=>{
+             if (isRpcRequest(request, rpcPath)) {
+                 const policyDenial = options.validateRequest?.(request);
+-                if (policyDenial) return policyDenial;
++                if (policyDenial) {
++                    return policyDenial;
++                }
+                 const next = ()=>rpcHandler.handler(request, toEffectServiceContext(context));
+                 return options.interceptRequest ? options.interceptRequest({
+                     request,
+                     next
+                 }) : next();
+             }
+-            return handleHttpApiRequest(request, context);
+-        },
++            return routeHttpApiRequest(request, context);
++        }),
++        ready: httpApiHandler.ready,
+         dispose: async ()=>{
++            await releaseRequests();
+             await Promise.all([
+                 httpApiHandler.dispose(),
+                 rpcHandler.dispose()
+@@ -66,4 +169,3 @@
+         }
+     };
+ }
+-export { createHttpApiHandler };
+diff --git a/dist/esm/effect/module.mjs b/dist/esm/effect/module.mjs
+--- a/dist/esm/effect/module.mjs
++++ b/dist/esm/effect/module.mjs
+@@ -1,8 +1,9 @@
+-import { HttpApi } from "effect/http-api";
+-import { classifyEffectBffEntryModule, isValidatorAwareHandlerFactory, strictEffectApproachMessage } from "./entry-shape.mjs";
+-import { createHttpApiHandler } from "./handler.mjs";
++// @effect-diagnostics strictBooleanExpressions:off
++import { HttpApi } from 'effect/http-api';
++import { classifyEffectBffEntryModule, isValidatorAwareHandlerFactory, strictEffectApproachMessage } from './entry-shape.mjs';
++import { createHttpApiHandler } from './handler.mjs';
+ function isRequestHandler(value) {
+-    return 'function' == typeof value;
++    return typeof value === 'function';
+ }
+ function shareDispose(dispose) {
+     let disposePromise;
+@@ -16,60 +17,72 @@
+     return true;
+ }
+ function callEffectBffRequestHandler(handler, request, context) {
+-    return void 0 === context ? handler(request) : handler(request, context);
++    return context === undefined ? handler(request) : handler(request, context);
+ }
+ function createLoadedHandler(webHandler) {
+     return {
+         handler: (request, context)=>callEffectBffRequestHandler(webHandler.handler, request, context),
+-        dispose: shareDispose(webHandler.dispose)
++        dispose: shareDispose(webHandler.dispose),
++        ...webHandler.ready === undefined ? {} : {
++            ready: webHandler.ready
++        }
+     };
+ }
+ function createLoadedHttpApiHandler(webHandler) {
+     return createLoadedHandler({
+         handler: webHandler.handler,
+-        dispose: webHandler.dispose
++        dispose: webHandler.dispose,
++        ready: webHandler.ready
+     });
+ }
+ function classifyEffectBffRuntimeEntryShape(module) {
+     return classifyEffectBffEntryModule(module, {
+-        isRequestHandler: isRequestHandler,
+-        isValidatorAwareHandlerFactory: isValidatorAwareHandlerFactory,
++        isRequestHandler,
++        isValidatorAwareHandlerFactory,
+         isHttpApi: HttpApi.isHttpApi
+     });
+ }
+ function resolveClassifiedEffectBffModuleHandler(facts, options = {}) {
+-    if (!facts) return null;
++    if (!facts) {
++        return null;
++    }
+     if (facts.unsupportedShape) {
+-        if (rejectUnsupportedEffectModuleShape(options, facts.unsupportedShape)) return null;
++        if (rejectUnsupportedEffectModuleShape(options, facts.unsupportedShape)) {
++            return null;
++        }
+     }
+-    if (void 0 !== facts.module.rpc && !facts.createHandlerValidatorAware) {
++    if (facts.module.rpc !== undefined && !facts.createHandlerValidatorAware) {
+         rejectUnsupportedEffectModuleShape(options, 'unbranded RPC runtime');
+         return null;
+     }
+-    if ('function' == typeof facts.createHandler) {
++    if (typeof facts.createHandler === 'function') {
+         if (facts.createHandlerValidatorAware) {
+             const factory = facts.createHandler;
+             const webHandler = factory({
+                 openapi: options.openapi,
+                 dataPlatform: options.dataPlatform,
+-                validateRequest: options.validateRequest
++                validateRequest: options.validateRequest,
++                servicesLifetime: options.servicesLifetime
+             });
+             return createLoadedHandler(webHandler);
+         }
+-        if (void 0 === facts.api || !facts.hasRuntimeLayer) {
++        if (facts.api === undefined || !facts.hasRuntimeLayer) {
+             rejectUnsupportedEffectModuleShape(options, 'unbranded `createHandler` export');
+             return null;
+         }
+         options.onWarning?.(`${strictEffectApproachMessage} Ignored unbranded \`createHandler\` export and rebuilt the handler from its { api, layer } exports.`);
+     }
+-    if (void 0 !== facts.api && facts.hasRuntimeLayer) {
+-        if (void 0 === facts.createHandler) options.onWarning?.('[BFF][Effect] Detected { api, layer } export without createHandler. Prefer `defineEffectBff(...)` from @modern-js/bff-effect/effect to avoid module instance mismatch.');
++    if (facts.api !== undefined && facts.hasRuntimeLayer) {
++        if (facts.createHandler === undefined) {
++            options.onWarning?.('[BFF][Effect] Detected { api, layer } export without createHandler. Prefer `defineEffectBff(...)` from @modern-js/bff-effect/effect to avoid module instance mismatch.');
++        }
+         const webHandler = createHttpApiHandler({
+             api: facts.api,
+             layer: facts.layer,
+             openapi: options.openapi,
+             dataPlatform: options.dataPlatform,
+-            validateRequest: options.validateRequest
++            validateRequest: options.validateRequest,
++            servicesLifetime: options.servicesLifetime
+         });
+         return createLoadedHttpApiHandler(webHandler);
+     }
+@@ -78,7 +91,6 @@
+ function resolveNormalizedEffectBffModuleHandler(normalizedModule, options = {}) {
+     return resolveClassifiedEffectBffModuleHandler(classifyEffectBffRuntimeEntryShape(normalizedModule), options);
+ }
+-function resolveEffectBffModuleHandler(mod, options = {}) {
++export function resolveEffectBffModuleHandler(mod, options = {}) {
+     return Promise.resolve(resolveNormalizedEffectBffModuleHandler(mod, options));
+ }
+-export { resolveEffectBffModuleHandler };
+diff --git a/dist/esm-node/assembly.mjs b/dist/esm-node/assembly.mjs
+--- a/dist/esm-node/assembly.mjs
++++ b/dist/esm-node/assembly.mjs
+@@ -1,13 +1,15 @@
+-import "node:module";
+-import { HttpApiBuilder } from "effect/http-api";
+-import { defineEffectBff } from "./effect/handler/definition.mjs";
+-import * as __rspack_external_effect_Layer_69c46453 from "effect/Layer";
+-const assembleEffectBffRuntime = ({ api, handlers, transport })=>{
+-    const apiLayer = HttpApiBuilder.layer(api).pipe(__rspack_external_effect_Layer_69c46453.provide(handlers));
+-    const layer = void 0 === transport ? apiLayer : apiLayer.pipe(__rspack_external_effect_Layer_69c46453.merge(transport));
++/** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */ import * as Layer from 'effect/Layer';
++import { HttpApiBuilder } from 'effect/http-api';
++import { defineEffectBff } from './effect/handler/definition.mjs';
++export const assembleEffectBffRuntime = (assembly)=>{
++    const { api, handlers, services, transport } = assembly;
++    const apiLayer = HttpApiBuilder.layer(api).pipe(Layer.provide(handlers));
++    const layer = transport === undefined ? apiLayer : apiLayer.pipe(Layer.merge(transport));
++    // Every requirement outside the runtime's own is checked above against `services`, which
++    // createHttpApiHandler supplies per request (Workers) or once (Node).
+     return defineEffectBff({
+         api,
+-        layer
++        layer: layer,
++        services
+     });
+ };
+-export { assembleEffectBffRuntime };
+diff --git a/dist/esm-node/effect/dispatch.mjs b/dist/esm-node/effect/dispatch.mjs
+--- a/dist/esm-node/effect/dispatch.mjs
++++ b/dist/esm-node/effect/dispatch.mjs
+@@ -1,13 +1,17 @@
+-import "node:module";
+-import { createSafeFailureResponse } from "@modern-js/runtime-extensions/safe-failure";
+-import { createEffectOperationContext } from "./operation-context.mjs";
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off strictBooleanExpressions:off
++import { createSafeFailureResponse } from '@modern-js/runtime-extensions/safe-failure';
++import { createEffectOperationContext } from './operation-context.mjs';
+ function normalizeEffectBffPrefix(prefix) {
+-    if (!prefix || '/' === prefix) return '';
++    if (!prefix || prefix === '/') {
++        return '';
++    }
+     return prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+ }
+ function removeEffectBffPrefixFromPath(pathname, prefix) {
+     const normalized = normalizeEffectBffPrefix(prefix);
+-    if (!normalized || pathname !== normalized && !pathname.startsWith(`${normalized}/`)) return pathname;
++    if (!normalized || pathname !== normalized && !pathname.startsWith(`${normalized}/`)) {
++        return pathname;
++    }
+     const sliced = pathname.slice(normalized.length);
+     return sliced.startsWith('/') ? sliced : `/${sliced}`;
+ }
+@@ -33,6 +37,9 @@
+         env,
+         path,
+         method,
++        ...options.waitUntil === undefined ? {} : {
++            waitUntil: options.waitUntil
++        },
+         operationContext: createEffectOperationContext({
+             request: mountedRequest,
+             env,
+@@ -41,24 +48,31 @@
+         })
+     };
+ }
+-async function dispatchEffectBffRequestWithContext(handler, request, options) {
++export async function dispatchEffectBffRequestWithContext(handler, request, options) {
+     const requestPath = new URL(request.url).pathname;
+-    if (!matchesEffectBffPrefix(requestPath, options.prefix)) return new Response('', {
+-        status: 404
+-    });
++    if (!matchesEffectBffPrefix(requestPath, options.prefix)) {
++        return new Response('', {
++            status: 404
++        });
++    }
+     const mountedRequest = createEffectBffMountedRequest(request, options.prefix);
+     const effectContext = createEffectBffDispatchContext(request, mountedRequest, options);
+     try {
+         const response = await options.runWithEffectContext(effectContext, ()=>handler(mountedRequest, effectContext));
+-        if (!(response instanceof Response)) throw new Error('[BFF][Effect] Effect handler must return Response instance.');
++        if (!(response instanceof Response)) {
++            throw new Error('[BFF][Effect] Effect handler must return Response instance.');
++        }
+         return new Response(response.body, response);
+     } catch (error) {
+-        if (error instanceof Response) return new Response(error.body, error);
++        if (error instanceof Response) {
++            return new Response(error.body, error);
++        }
+         if (options.onError) {
+             const errorResponse = await options.onError(error, effectContext);
+-            if (errorResponse instanceof Response) return errorResponse;
++            if (errorResponse instanceof Response) {
++                return errorResponse;
++            }
+         }
+         return createSafeFailureResponse(error);
+     }
+ }
+-export { dispatchEffectBffRequestWithContext };
+diff --git a/dist/esm-node/effect/edge-dispatcher.mjs b/dist/esm-node/effect/edge-dispatcher.mjs
+--- a/dist/esm-node/effect/edge-dispatcher.mjs
++++ b/dist/esm-node/effect/edge-dispatcher.mjs
+@@ -1,14 +1,21 @@
+-import "node:module";
+-import { runWithEffectContext, useEffectContext, useOperationContext } from "@modern-js/bff-effect/context";
+-import { evaluateCrossProjectPolicy, resolveCrossProjectRequestObservation } from "@modern-js/server-runtime-extensions/bff-policy";
+-import * as __rspack_external_effect_Effect_41060786 from "effect/Effect";
+-import { toHeaderRecord } from "../headers.mjs";
+-import { dispatchEffectBffRequestWithContext } from "./dispatch.mjs";
+-import { resolveEffectBffModuleHandler } from "./module.mjs";
+-import * as __rspack_external_effect_Config_76cfa59d from "effect/Config";
+-import * as __rspack_external_effect_Option_0498e63a from "effect/Option";
+-import * as __rspack_external_effect_Schema_6065f72d from "effect/Schema";
+-import * as __rspack_external_effect_Layer_69c46453 from "effect/Layer";
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off strictBooleanExpressions:off
++import { runWithEffectContext } from '@modern-js/bff-effect/context';
++import { evaluateCrossProjectPolicy, resolveCrossProjectRequestObservation } from '@modern-js/server-runtime-extensions/bff-policy';
++import * as Effect from 'effect/Effect';
++import { toHeaderRecord } from '../headers.mjs';
++import { dispatchEffectBffRequestWithContext } from './dispatch.mjs';
++import { resolveEffectBffModuleHandler } from './module.mjs';
++export { runWithEffectContext, useEffectContext, useOperationContext } from '@modern-js/bff-effect/context';
++export * as Config from 'effect/Config';
++export * as Effect from 'effect/Effect';
++export { Cookies, Etag, FetchHttpClient, FindMyWay, Headers, HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse, HttpEffect, HttpIncomingMessage, HttpMethod, HttpMiddleware, HttpPlatform, HttpRouter, HttpServer, HttpServerError, HttpServerRequest, HttpServerRespondable, HttpServerResponse, HttpStaticServer, HttpStatus, HttpTraceContext, Multipart, MultipartParser, Template, Url, UrlParams } from 'effect/http';
++export { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, HttpApiTest, OpenApi } from 'effect/http-api';
++export * as Layer from 'effect/Layer';
++export * as Option from 'effect/Option';
++export { Rpc, RpcClient, RpcClientError, RpcGroup, RpcMessage, RpcMiddleware, RpcSchema, RpcSerialization, RpcServer, RpcTest, RpcWorker, Utils } from 'effect/rpc';
++export * as Schema from 'effect/Schema';
++export { createHttpApiHandler, defineEffectBff, defineEffectRpcBff } from './handler.mjs';
++export { createEffectOperationContext } from './operation-context.mjs';
+ const NORMALIZED_POLICY_BOOLEAN_FIELDS = [
+     'enabled',
+     'requireEnvelope',
+@@ -19,27 +26,42 @@
+     'allowUnknownOperations'
+ ];
+ function assertNormalizedCrossProjectPolicy(policy) {
+-    if (void 0 === policy) return;
+-    if (!policy || 'object' != typeof policy || Array.isArray(policy)) throw new Error('[BFF][Effect] Edge cross-project policy must be a normalized object.');
+-    for (const field of NORMALIZED_POLICY_BOOLEAN_FIELDS)if ('boolean' != typeof policy[field]) throw new Error(`[BFF][Effect] Edge cross-project policy requires boolean ${field}.`);
+-    if (!policy.expectedOperationContracts || 'object' != typeof policy.expectedOperationContracts || Array.isArray(policy.expectedOperationContracts)) throw new Error('[BFF][Effect] Edge cross-project policy requires expectedOperationContracts object.');
++    if (policy === undefined) {
++        return;
++    }
++    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
++        throw new Error('[BFF][Effect] Edge cross-project policy must be a normalized object.');
++    }
++    for (const field of NORMALIZED_POLICY_BOOLEAN_FIELDS){
++        if (typeof policy[field] !== 'boolean') {
++            throw new Error(`[BFF][Effect] Edge cross-project policy requires boolean ${field}.`);
++        }
++    }
++    if (!policy.expectedOperationContracts || typeof policy.expectedOperationContracts !== 'object' || Array.isArray(policy.expectedOperationContracts)) {
++        throw new Error('[BFF][Effect] Edge cross-project policy requires expectedOperationContracts object.');
++    }
+ }
+ function restoreEffectBffMountPath(request, prefix) {
+     const pathname = new URL(request.url).pathname;
+-    if (!prefix || '/' === prefix) return pathname;
++    if (!prefix || prefix === '/') {
++        return pathname;
++    }
+     const normalizedPrefix = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+-    return '/' === pathname ? normalizedPrefix : `${normalizedPrefix}${pathname}`;
++    return pathname === '/' ? normalizedPrefix : `${normalizedPrefix}${pathname}`;
+ }
+-async function dispatchEffectBffRequest(handler, request, options = {}) {
++export async function dispatchEffectBffRequest(handler, request, options = {}) {
+     return dispatchEffectBffRequestWithContext(handler, request, {
+         ...options,
+-        runWithEffectContext: runWithEffectContext
++        runWithEffectContext
+     });
+ }
+-async function createEffectBffEdgeDispatcher(options) {
++export async function createEffectBffEdgeDispatcher(options) {
+     const crossProjectPolicy = options.crossProjectPolicy;
+     assertNormalizedCrossProjectPolicy(crossProjectPolicy);
++    // One dispatcher serves every request of a Worker isolate: the api is built once and the
++    // module's services are built for each request (workerd binds sockets to their request).
+     const loaded = await resolveEffectBffModuleHandler(options.module, {
++        servicesLifetime: 'request',
+         openapi: options.openapi,
+         dataPlatform: options.dataPlatform,
+         validateRequest: crossProjectPolicy?.enabled === true ? (request)=>{
+@@ -52,7 +74,9 @@
+                 routePath: restoreEffectBffMountPath(request, options.prefix)
+             };
+             const violation = evaluateCrossProjectPolicy(toHeaderRecord(request.headers), crossProjectPolicy, observedRequest);
+-            if (!violation) return null;
++            if (!violation) {
++                return null;
++            }
+             return new Response(JSON.stringify({
+                 code: violation.code,
+                 reason: violation.reason,
+@@ -63,10 +87,18 @@
+                     'content-type': 'application/json; charset=utf-8'
+                 }
+             });
+-        } : void 0,
++        } : undefined,
+         onWarning: options.onWarning
+     });
+-    if (!loaded) throw new Error('[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.');
++    if (!loaded) {
++        throw new Error('[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.');
++    }
++    try {
++        await loaded.ready;
++    } catch (error) {
++        await loaded.dispose?.().catch(()=>undefined);
++        throw error;
++    }
+     const retiredError = new Error('[BFF][Effect] Edge dispatcher is disposing or has been disposed.');
+     let acceptingRequests = true;
+     let activeDispatches = 0;
+@@ -74,7 +106,9 @@
+     let disposePromise;
+     return {
+         dispatch: (request, dispatchOptions = {})=>{
+-            if (!acceptingRequests) return Promise.reject(retiredError);
++            if (!acceptingRequests) {
++                return Promise.reject(retiredError);
++            }
+             activeDispatches += 1;
+             return dispatchEffectBffRequest(loaded.handler, request, {
+                 ...dispatchOptions,
+@@ -82,35 +116,31 @@
+                 onError: options.onError
+             }).finally(()=>{
+                 activeDispatches -= 1;
+-                if (0 === activeDispatches) {
++                if (activeDispatches === 0) {
+                     resolveDrain?.();
+-                    resolveDrain = void 0;
++                    resolveDrain = undefined;
+                 }
+             });
+         },
+         dispose: ()=>{
+             disposePromise ??= (async ()=>{
+                 acceptingRequests = false;
+-                if (activeDispatches > 0) await __rspack_external_effect_Effect_41060786.runPromise(__rspack_external_effect_Effect_41060786.callback((resume)=>{
+-                    resolveDrain = ()=>resume(__rspack_external_effect_Effect_41060786["void"]);
+-                }));
++                if (activeDispatches > 0) {
++                    await Effect.runPromise(Effect.callback((resume)=>{
++                        resolveDrain = ()=>resume(Effect.void);
++                    }));
++                }
+                 await loaded.dispose?.();
+             })();
+             return disposePromise;
+         }
+     };
+ }
+-const createEffectBffTestHandler = createEffectBffEdgeHandler;
+-async function createEffectBffEdgeHandler(options) {
++export const createEffectBffTestHandler = createEffectBffEdgeHandler;
++export async function createEffectBffEdgeHandler(options) {
+     const dispatcher = await createEffectBffEdgeDispatcher(options);
+     return {
+         handler: dispatcher.dispatch,
+         dispose: dispatcher.dispose
+     };
+ }
+-export { Cookies, Etag, FetchHttpClient, FindMyWay, Headers, HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse, HttpEffect, HttpIncomingMessage, HttpMethod, HttpMiddleware, HttpPlatform, HttpRouter, HttpServer, HttpServerError, HttpServerRequest, HttpServerRespondable, HttpServerResponse, HttpStaticServer, HttpStatus, HttpTraceContext, Multipart, MultipartParser, Template, Url, UrlParams } from "effect/http";
+-export { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, HttpApiTest, OpenApi } from "effect/http-api";
+-export { Rpc, RpcClient, RpcClientError, RpcGroup, RpcMessage, RpcMiddleware, RpcSchema, RpcSerialization, RpcServer, RpcTest, RpcWorker, Utils } from "effect/rpc";
+-export { createHttpApiHandler, defineEffectBff, defineEffectRpcBff } from "./handler.mjs";
+-export { createEffectOperationContext } from "./operation-context.mjs";
+-export { __rspack_external_effect_Config_76cfa59d as Config, __rspack_external_effect_Effect_41060786 as Effect, __rspack_external_effect_Layer_69c46453 as Layer, __rspack_external_effect_Option_0498e63a as Option, __rspack_external_effect_Schema_6065f72d as Schema, createEffectBffEdgeDispatcher, createEffectBffEdgeHandler, createEffectBffTestHandler, dispatchEffectBffRequest, runWithEffectContext, useEffectContext, useOperationContext };
+diff --git a/dist/esm-node/effect/handler/definition.mjs b/dist/esm-node/effect/handler/definition.mjs
+--- a/dist/esm-node/effect/handler/definition.mjs
++++ b/dist/esm-node/effect/handler/definition.mjs
+@@ -1,19 +1,23 @@
+-import "node:module";
+-import { registerValidatorAwareHandlerFactory } from "../entry-shape.mjs";
+-import { mergeDataPlatformOptions } from "./envelope.mjs";
+-import { createHttpApiHandler } from "./http.mjs";
+-import { createRpcApiHandler } from "./rpc.mjs";
+-function defineEffectBff(definition) {
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
++import { registerValidatorAwareHandlerFactory } from '../entry-shape.mjs';
++import { mergeDataPlatformOptions } from './envelope.mjs';
++import { createHttpApiHandler } from './http.mjs';
++import { createRpcApiHandler } from './rpc.mjs';
++export function defineEffectBff(definition) {
+     const createHandler = registerValidatorAwareHandlerFactory((options)=>{
+         const rpcDefinition = definition.rpc;
+         let mergedRpcOptions = rpcDefinition;
+-        if (rpcDefinition && options?.rpc) mergedRpcOptions = {
+-            ...rpcDefinition,
+-            ...options.rpc
+-        };
++        if (rpcDefinition && options?.rpc) {
++            mergedRpcOptions = {
++                ...rpcDefinition,
++                ...options.rpc
++            };
++        }
+         return createHttpApiHandler({
+             api: definition.api,
+             layer: definition.layer,
++            services: definition.services,
++            servicesLifetime: options?.servicesLifetime,
+             openapi: options?.openapi,
+             rpc: mergedRpcOptions,
+             dataPlatform: mergeDataPlatformOptions(definition.dataPlatform, options?.dataPlatform),
+@@ -26,7 +30,7 @@
+         createHandler
+     };
+ }
+-function defineEffectRpcBff(definition) {
++export function defineEffectRpcBff(definition) {
+     const createHandler = (options)=>createRpcApiHandler({
+             ...definition,
+             ...options
+@@ -36,4 +40,3 @@
+         createHandler
+     };
+ }
+-export { defineEffectBff, defineEffectRpcBff };
+diff --git a/dist/esm-node/effect/handler/http.mjs b/dist/esm-node/effect/handler/http.mjs
+--- a/dist/esm-node/effect/handler/http.mjs
++++ b/dist/esm-node/effect/handler/http.mjs
+@@ -1,28 +1,115 @@
+-import "node:module";
+-import { HttpRouter, HttpServer } from "effect/http";
+-import { prepareJsonRequestBody } from "./batch.mjs";
+-import { createDataPlatformBatchRequestHandler } from "./batch-handler.mjs";
+-import { validateDataPlatformRequestEnvelope } from "./envelope.mjs";
+-import { createOpenApiLayer } from "./openapi.mjs";
+-import { getRequestPathname, isRpcRequest } from "./routing.mjs";
+-import { createRpcApiHandler, normalizeRpcPath } from "./rpc.mjs";
+-import { toEffectServiceContext } from "./types.mjs";
+-import * as __rspack_external_effect_Layer_69c46453 from "effect/Layer";
+-function createHttpApiHandler(options) {
+-    const apiLayer = options.layer.pipe(__rspack_external_effect_Layer_69c46453.provide(HttpServer.layerServices));
++// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
++import * as Context from 'effect/Context';
++import * as Effect from 'effect/Effect';
++import * as Exit from 'effect/Exit';
++import * as Scope from 'effect/Scope';
++import { HttpEffect, HttpMiddleware, HttpRouter, HttpServer } from 'effect/http';
++import * as Layer from 'effect/Layer';
++import { prepareJsonRequestBody } from './batch.mjs';
++import { createDataPlatformBatchRequestHandler } from './batch-handler.mjs';
++import { validateDataPlatformRequestEnvelope } from './envelope.mjs';
++import { createOpenApiLayer } from './openapi.mjs';
++import { getRequestPathname, isRpcRequest } from './routing.mjs';
++import { createRpcApiHandler, normalizeRpcPath } from './rpc.mjs';
++import { toEffectServiceContext } from './types.mjs';
++/**
++ * Builds the api's router, handlers, codecs and OpenAPI route once. Services the handlers resolve
++ * at call time come from each request's context, so nothing request-bound lives in this scope.
++ */ function createSharedWebHandler(layer) {
++    const scope = Scope.makeUnsafe();
++    let webHandler;
++    const ready = Effect.runPromise(Effect.gen(function*() {
++        const context = yield* Layer.buildWithScope(Layer.provideMerge(layer, HttpRouter.layer), scope);
++        webHandler = HttpEffect.toWebHandlerWith(context)(Context.get(context, HttpRouter.HttpRouter).asHttpEffect(), HttpMiddleware.logger);
++    })).catch(async (error)=>{
++        await Effect.runPromise(Scope.close(scope, Exit.void)).catch(()=>undefined);
++        throw error;
++    });
++    // A failed build must not be an unhandled rejection; every request rejects with it instead.
++    ready.catch(()=>undefined);
++    return {
++        ready,
++        handler: (request, context)=>webHandler === undefined ? ready.then(()=>webHandler(request, context)) : webHandler(request, context),
++        dispose: ()=>Effect.runPromise(Scope.close(scope, Exit.void))
++    };
++}
++const waitUntilOf = (context)=>{
++    if (typeof context !== 'object' || context === null) {
++        return undefined;
++    }
++    const waitUntil = context.waitUntil;
++    return typeof waitUntil === 'function' ? waitUntil : undefined;
++};
++/** Closes the request's service scope once the response body has been delivered (or abandoned). */ function releaseAfterBody(response, release, waitUntil) {
++    const keep = (promise)=>{
++        const settled = promise.catch(()=>undefined);
++        waitUntil?.(settled);
++    };
++    if (response.body === null) {
++        keep(release());
++        return response;
++    }
++    const { readable, writable } = new TransformStream();
++    keep(response.body.pipeTo(writable).catch(()=>undefined).then(release));
++    return new Response(readable, response);
++}
++/**
++ * Builds the request services in a scope owned by one request and hands their context to the
++ * shared handler. workerd binds every socket to the request that opened it, so a database pool
++ * or client built here never serves another request.
++ */ function withRequestServices(services, handle, pendingReleases) {
++    return async (request, context)=>{
++        const scope = Scope.makeUnsafe();
++        let released;
++        const release = ()=>{
++            released ??= Effect.runPromise(Scope.close(scope, Exit.void)).finally(()=>{
++                pendingReleases.delete(release);
++            });
++            return released;
++        };
++        pendingReleases.add(release);
++        const waitUntil = waitUntilOf(context);
++        let response;
++        try {
++            const requestContext = await Effect.runPromise(Layer.buildWithScope(services, scope));
++            response = await handle(request, Context.merge(toEffectServiceContext(context), requestContext));
++        } catch (error) {
++            const released = release().catch(()=>undefined);
++            waitUntil?.(released);
++            throw error;
++        }
++        return releaseAfterBody(response, release, waitUntil);
++    };
++}
++export function createHttpApiHandler(options) {
++    const pendingReleases = new Set();
++    const releaseRequests = ()=>Promise.all(Array.from(pendingReleases, (release)=>release()));
++    const requestScopedServices = options.servicesLifetime === 'request' ? options.services : undefined;
++    const runtimeLayer = options.services === undefined || requestScopedServices !== undefined ? options.layer : options.layer.pipe(Layer.provideMerge(options.services));
++    const apiLayer = runtimeLayer.pipe(Layer.provide(HttpServer.layerServices));
+     const openApiLayer = createOpenApiLayer(options.api, options.openapi);
+-    const mergedLayer = openApiLayer ? __rspack_external_effect_Layer_69c46453.mergeAll(apiLayer, openApiLayer) : apiLayer;
+-    const httpApiHandler = HttpRouter.toWebHandler(mergedLayer);
++    const mergedLayer = openApiLayer ? Layer.mergeAll(apiLayer, openApiLayer) : apiLayer;
++    const httpApiHandler = options.servicesLifetime === 'request' ? createSharedWebHandler(mergedLayer) : HttpRouter.toWebHandler(mergedLayer);
+     const dispatchHttpApiRequest = async (request, context)=>{
+         const preparedRequest = await prepareJsonRequestBody(request);
+-        if (preparedRequest instanceof Response) return preparedRequest;
++        if (preparedRequest instanceof Response) {
++            return preparedRequest;
++        }
+         const validationError = validateDataPlatformRequestEnvelope(preparedRequest, options.dataPlatform);
+-        if (validationError) return validationError;
++        if (validationError) {
++            return validationError;
++        }
+         return httpApiHandler.handler(preparedRequest, toEffectServiceContext(context));
+     };
+     const withRequestPolicy = async (request, context)=>{
++        // Policy seam first: every HttpApi request, direct or batched item,
++        // passes through here, so batch fan-out cannot bypass validator. The
++        // interceptor receives the original request; delegated requests still
++        // pass through body validation.
+         const policyDenial = options.validateRequest?.(request);
+-        if (policyDenial) return policyDenial;
++        if (policyDenial) {
++            return policyDenial;
++        }
+         const next = ()=>dispatchHttpApiRequest(request, context);
+         return options.interceptRequest ? options.interceptRequest({
+             request,
+@@ -33,33 +120,48 @@
+         dataPlatform: options.dataPlatform,
+         handleItem: withRequestPolicy
+     });
+-    const handleHttpApiRequest = async (request, context)=>{
++    const routeHttpApiRequest = async (request, context)=>{
+         const pathname = getRequestPathname(request);
+-        if (batchHandler.enabled && pathname === batchHandler.path) return batchHandler.handle(request, context);
++        if (batchHandler.enabled && pathname === batchHandler.path) {
++            // Outer batch POST transport, not an API operation: each batched item is
++            // dispatched through withDataPlatformValidation and hits policy handling.
++            return batchHandler.handle(request, context);
++        }
+         return withRequestPolicy(request, context);
+     };
+-    if (!options.rpc) return {
+-        handler: handleHttpApiRequest,
+-        dispose: async ()=>{
+-            await httpApiHandler.dispose();
+-        }
+-    };
++    // Batched items share their outer request's services.
++    const withServices = (handler)=>requestScopedServices === undefined ? handler : withRequestServices(requestScopedServices, handler, pendingReleases);
++    const handleHttpApiRequest = withServices(routeHttpApiRequest);
++    if (!options.rpc) {
++        return {
++            handler: handleHttpApiRequest,
++            ready: httpApiHandler.ready,
++            dispose: async ()=>{
++                await releaseRequests();
++                await httpApiHandler.dispose();
++            }
++        };
++    }
+     const rpcPath = normalizeRpcPath(options.rpc.path);
+     const rpcHandler = createRpcApiHandler(options.rpc);
+     return {
+-        handler: async (request, context)=>{
++        handler: withServices(async (request, context)=>{
+             if (isRpcRequest(request, rpcPath)) {
+                 const policyDenial = options.validateRequest?.(request);
+-                if (policyDenial) return policyDenial;
++                if (policyDenial) {
++                    return policyDenial;
++                }
+                 const next = ()=>rpcHandler.handler(request, toEffectServiceContext(context));
+                 return options.interceptRequest ? options.interceptRequest({
+                     request,
+                     next
+                 }) : next();
+             }
+-            return handleHttpApiRequest(request, context);
+-        },
++            return routeHttpApiRequest(request, context);
++        }),
++        ready: httpApiHandler.ready,
+         dispose: async ()=>{
++            await releaseRequests();
+             await Promise.all([
+                 httpApiHandler.dispose(),
+                 rpcHandler.dispose()
+@@ -67,4 +169,3 @@
+         }
+     };
+ }
+-export { createHttpApiHandler };
+diff --git a/dist/esm-node/effect/module.mjs b/dist/esm-node/effect/module.mjs
+--- a/dist/esm-node/effect/module.mjs
++++ b/dist/esm-node/effect/module.mjs
+@@ -1,9 +1,9 @@
+-import "node:module";
+-import { HttpApi } from "effect/http-api";
+-import { classifyEffectBffEntryModule, isValidatorAwareHandlerFactory, strictEffectApproachMessage } from "./entry-shape.mjs";
+-import { createHttpApiHandler } from "./handler.mjs";
++// @effect-diagnostics strictBooleanExpressions:off
++import { HttpApi } from 'effect/http-api';
++import { classifyEffectBffEntryModule, isValidatorAwareHandlerFactory, strictEffectApproachMessage } from './entry-shape.mjs';
++import { createHttpApiHandler } from './handler.mjs';
+ function isRequestHandler(value) {
+-    return 'function' == typeof value;
++    return typeof value === 'function';
+ }
+ function shareDispose(dispose) {
+     let disposePromise;
+@@ -17,60 +17,72 @@
+     return true;
+ }
+ function callEffectBffRequestHandler(handler, request, context) {
+-    return void 0 === context ? handler(request) : handler(request, context);
++    return context === undefined ? handler(request) : handler(request, context);
+ }
+ function createLoadedHandler(webHandler) {
+     return {
+         handler: (request, context)=>callEffectBffRequestHandler(webHandler.handler, request, context),
+-        dispose: shareDispose(webHandler.dispose)
++        dispose: shareDispose(webHandler.dispose),
++        ...webHandler.ready === undefined ? {} : {
++            ready: webHandler.ready
++        }
+     };
+ }
+ function createLoadedHttpApiHandler(webHandler) {
+     return createLoadedHandler({
+         handler: webHandler.handler,
+-        dispose: webHandler.dispose
++        dispose: webHandler.dispose,
++        ready: webHandler.ready
+     });
+ }
+ function classifyEffectBffRuntimeEntryShape(module) {
+     return classifyEffectBffEntryModule(module, {
+-        isRequestHandler: isRequestHandler,
+-        isValidatorAwareHandlerFactory: isValidatorAwareHandlerFactory,
++        isRequestHandler,
++        isValidatorAwareHandlerFactory,
+         isHttpApi: HttpApi.isHttpApi
+     });
+ }
+ function resolveClassifiedEffectBffModuleHandler(facts, options = {}) {
+-    if (!facts) return null;
++    if (!facts) {
++        return null;
++    }
+     if (facts.unsupportedShape) {
+-        if (rejectUnsupportedEffectModuleShape(options, facts.unsupportedShape)) return null;
++        if (rejectUnsupportedEffectModuleShape(options, facts.unsupportedShape)) {
++            return null;
++        }
+     }
+-    if (void 0 !== facts.module.rpc && !facts.createHandlerValidatorAware) {
++    if (facts.module.rpc !== undefined && !facts.createHandlerValidatorAware) {
+         rejectUnsupportedEffectModuleShape(options, 'unbranded RPC runtime');
+         return null;
+     }
+-    if ('function' == typeof facts.createHandler) {
++    if (typeof facts.createHandler === 'function') {
+         if (facts.createHandlerValidatorAware) {
+             const factory = facts.createHandler;
+             const webHandler = factory({
+                 openapi: options.openapi,
+                 dataPlatform: options.dataPlatform,
+-                validateRequest: options.validateRequest
++                validateRequest: options.validateRequest,
++                servicesLifetime: options.servicesLifetime
+             });
+             return createLoadedHandler(webHandler);
+         }
+-        if (void 0 === facts.api || !facts.hasRuntimeLayer) {
++        if (facts.api === undefined || !facts.hasRuntimeLayer) {
+             rejectUnsupportedEffectModuleShape(options, 'unbranded `createHandler` export');
+             return null;
+         }
+         options.onWarning?.(`${strictEffectApproachMessage} Ignored unbranded \`createHandler\` export and rebuilt the handler from its { api, layer } exports.`);
+     }
+-    if (void 0 !== facts.api && facts.hasRuntimeLayer) {
+-        if (void 0 === facts.createHandler) options.onWarning?.('[BFF][Effect] Detected { api, layer } export without createHandler. Prefer `defineEffectBff(...)` from @modern-js/bff-effect/effect to avoid module instance mismatch.');
++    if (facts.api !== undefined && facts.hasRuntimeLayer) {
++        if (facts.createHandler === undefined) {
++            options.onWarning?.('[BFF][Effect] Detected { api, layer } export without createHandler. Prefer `defineEffectBff(...)` from @modern-js/bff-effect/effect to avoid module instance mismatch.');
++        }
+         const webHandler = createHttpApiHandler({
+             api: facts.api,
+             layer: facts.layer,
+             openapi: options.openapi,
+             dataPlatform: options.dataPlatform,
+-            validateRequest: options.validateRequest
++            validateRequest: options.validateRequest,
++            servicesLifetime: options.servicesLifetime
+         });
+         return createLoadedHttpApiHandler(webHandler);
+     }
+@@ -79,7 +91,6 @@
+ function resolveNormalizedEffectBffModuleHandler(normalizedModule, options = {}) {
+     return resolveClassifiedEffectBffModuleHandler(classifyEffectBffRuntimeEntryShape(normalizedModule), options);
+ }
+-function resolveEffectBffModuleHandler(mod, options = {}) {
++export function resolveEffectBffModuleHandler(mod, options = {}) {
+     return Promise.resolve(resolveNormalizedEffectBffModuleHandler(mod, options));
+ }
+-export { resolveEffectBffModuleHandler };
+diff --git a/dist/types/assembly.d.ts b/dist/types/assembly.d.ts
+--- a/dist/types/assembly.d.ts
++++ b/dist/types/assembly.d.ts
+@@ -1,10 +1,29 @@
+ /** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */
++import * as Layer from 'effect/Layer';
++import type * as Scope from 'effect/Scope';
++import type { HttpRouter, HttpServerRequest } from 'effect/http';
+ import type { HttpApi, HttpApiGroup } from 'effect/http-api';
+-import * as Layer from 'effect/Layer';
+-import type { EffectRuntimeRequirements } from './effect/handler/types.js';
+-export interface EffectBffRuntimeAssembly<ApiId extends string, Groups extends HttpApiGroup.Constraint, HandlerRequirements extends EffectRuntimeRequirements, TransportRequirements extends EffectRuntimeRequirements = never> {
++import type { EffectRuntimeLayer, EffectRuntimeRequirements } from './effect/handler/types.js';
++export interface EffectBffRuntimeAssembly<ApiId extends string, Groups extends HttpApiGroup.Constraint, HandlerRequirements, Services = never, TransportRequirements extends EffectRuntimeRequirements = never> {
+     readonly api: HttpApi.HttpApi<ApiId, Groups>;
++    /**
++     * The api's handler groups. They are built once per runtime (once per Worker isolate), so
++     * building them must not read a service: handlers resolve their services when they run.
++     */
+     readonly handlers: Layer.Layer<HttpApiGroup.ToService<ApiId, Groups>, never, HandlerRequirements>;
++    /**
++     * Every service the handlers resolve when they run. Workers build it for each request, so its
++     * database pool and clients never outlive the request; Node builds it once with the handler.
++     */
++    readonly services?: Layer.Layer<Services, never, never>;
+     readonly transport?: Layer.Layer<never, never, TransportRequirements>;
+ }
+-export declare const assembleEffectBffRuntime: <ApiId extends string, Groups extends HttpApiGroup.Constraint, HandlerRequirements extends EffectRuntimeRequirements, TransportRequirements extends EffectRuntimeRequirements = never>({ api, handlers, transport, }: EffectBffRuntimeAssembly<ApiId, Groups, HandlerRequirements, TransportRequirements>) => import("./effect/index.js").EffectBffDefinition<HttpApi.HttpApi<ApiId, Groups>, Layer.Layer<never, never, HandlerRequirements | TransportRequirements | Exclude<import("effect/FileSystem").FileSystem, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/http/Etag").Generator, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/http/HttpPlatform").HttpPlatform, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/http/HttpRouter").HttpRouter, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/Path").Path, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<HttpApiGroup.ToService<ApiId, Groups>, HttpApiGroup.ToService<ApiId, Groups>>>, import("effect/rpc/Rpc").Any> & import("./effect/index.js").EffectBffRuntime<HttpApi.HttpApi<ApiId, Groups>, Layer.Layer<never, never, HandlerRequirements | TransportRequirements | Exclude<import("effect/FileSystem").FileSystem, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/http/Etag").Generator, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/http/HttpPlatform").HttpPlatform, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/http/HttpRouter").HttpRouter, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<import("effect/Path").Path, HttpApiGroup.ToService<ApiId, Groups>> | Exclude<HttpApiGroup.ToService<ApiId, Groups>, HttpApiGroup.ToService<ApiId, Groups>>>>;
++/** Shown when a handler requires a service that `services` does not provide. */
++export interface EffectBffMissingServices<Missing> {
++    readonly 'handlers require services that `services` does not provide': Missing;
++}
++/** Services the handlers need when they run (HttpApiBuilder marks them as request requirements). */
++type RequiredServices<HandlerRequirements> = HttpRouter.Request.Only<'Requires', HandlerRequirements> | HttpRouter.Request.Only<'GlobalRequires', HandlerRequirements> | Exclude<HandlerRequirements, EffectRuntimeRequirements>;
++type MissingServices<HandlerRequirements, Services> = Exclude<RequiredServices<HandlerRequirements>, Services | Scope.Scope | HttpServerRequest.HttpServerRequest>;
++export declare const assembleEffectBffRuntime: <ApiId extends string, Groups extends HttpApiGroup.Constraint, HandlerRequirements, Services = never, TransportRequirements extends EffectRuntimeRequirements = never>(assembly: EffectBffRuntimeAssembly<ApiId, Groups, HandlerRequirements, Services, TransportRequirements> & ([MissingServices<HandlerRequirements | TransportRequirements, Services>] extends [never] ? unknown : EffectBffMissingServices<MissingServices<HandlerRequirements | TransportRequirements, Services>>)) => import("./effect/index.js").EffectBffDefinition<HttpApi.HttpApi<ApiId, Groups>, EffectRuntimeLayer, import("effect/rpc/Rpc").Any> & import("./effect/index.js").EffectBffRuntime<HttpApi.HttpApi<ApiId, Groups>, EffectRuntimeLayer>;
++export {};
+diff --git a/dist/types/effect/dispatch.d.ts b/dist/types/effect/dispatch.d.ts
+--- a/dist/types/effect/dispatch.d.ts
++++ b/dist/types/effect/dispatch.d.ts
+@@ -4,6 +4,8 @@
+ export type DispatchEffectBffRequestOptions = {
+     prefix?: string;
+     env?: Record<string, unknown>;
++    /** Keeps the request alive until request-scoped services are released after the response body. */
++    waitUntil?: (promise: Promise<unknown>) => void;
+     path?: string;
+     method?: string;
+     runWithEffectContext: EffectDispatchContextRunner;
+diff --git a/dist/types/effect/handler/http.d.ts b/dist/types/effect/handler/http.d.ts
+--- a/dist/types/effect/handler/http.d.ts
++++ b/dist/types/effect/handler/http.d.ts
+@@ -1,15 +1,25 @@
++import type * as Context from 'effect/Context';
++import type { EffectContext } from '../operation-context.js';
+ import type { HttpApi } from 'effect/http-api';
+ import type { Rpc } from 'effect/rpc';
+-import type { EffectBffOpenApiConfig, EffectDataPlatformValidationOptions, EffectRequestInterceptor, EffectRequestValidator, EffectRpcBffDefinition, EffectRuntimeLayer } from './types.js';
++import type * as Layer from 'effect/Layer';
++import type { EffectBffOpenApiConfig, EffectDataPlatformValidationOptions, EffectRequestInterceptor, EffectRequestValidator, EffectRpcBffDefinition, EffectRuntimeLayer, EffectServicesLifetime } from './types.js';
+ export declare function createHttpApiHandler<TApi extends HttpApi.Constraint = HttpApi.Top, TRpcs extends Rpc.Any = Rpc.Any>(options: {
+     api: TApi;
+     layer: EffectRuntimeLayer;
++    /**
++     * Services the api's handlers resolve when they run. With `servicesLifetime: 'request'` they are
++     * built for every request and the api layer is built once; otherwise they are built once with it.
++     */
++    services?: Layer.Layer<any, any, never>;
++    servicesLifetime?: EffectServicesLifetime;
+     openapi?: EffectBffOpenApiConfig;
+     rpc?: EffectRpcBffDefinition<TRpcs>;
+     dataPlatform?: EffectDataPlatformValidationOptions;
+     interceptRequest?: EffectRequestInterceptor;
+     validateRequest?: EffectRequestValidator;
+ }): {
+-    handler: (request: Request, context?: Parameters<(request: globalThis.Request, context: import("effect/Context").Context<unknown>) => Promise<Response>>[1]) => Promise<Response>;
++    handler: (request: Request, context?: Context.Context<any> | EffectContext) => Promise<Response>;
++    ready: Promise<void> | undefined;
+     dispose: () => Promise<void>;
+ };
+diff --git a/dist/types/effect/handler/types.d.ts b/dist/types/effect/handler/types.d.ts
+--- a/dist/types/effect/handler/types.d.ts
++++ b/dist/types/effect/handler/types.d.ts
+@@ -7,6 +7,11 @@
+ import type { createHttpApiHandler } from './http.js';
+ import type { createRpcApiHandler } from './rpc.js';
+ export type EffectRuntimeRequirements = Etag.Generator | FileSystem.FileSystem | HttpPlatform.HttpPlatform | HttpRouter.HttpRouter | HttpRouter.Request<'Error', unknown> | HttpRouter.Request<'GlobalError', unknown> | HttpRouter.Request<'GlobalRequires', unknown> | HttpRouter.Request<'Requires', unknown> | Path.Path;
++/**
++ * When the services of a strict Effect BFF are built: once with the handler (`'handler'`, Node), or
++ * for every request while the api layer is shared (`'request'`, workerd).
++ */
++export type EffectServicesLifetime = 'request' | 'handler';
+ export type EffectRuntimeLayer = Layer.Layer<never, never, EffectRuntimeRequirements>;
+ export declare const toEffectServiceContext: (context: unknown) => Context.Context<any>;
+ export type EffectRpcSerialization = 'json' | 'ndjson' | 'jsonRpc' | 'ndJsonRpc';
+@@ -26,6 +31,8 @@
+ export type EffectBffDefinition<TApi extends HttpApi.Constraint = HttpApi.Top, TLayer extends EffectRuntimeLayer = EffectRuntimeLayer, TRpcs extends Rpc.Any = Rpc.Any> = {
+     api: TApi;
+     layer: TLayer;
++    /** Services the api's handlers resolve at call time; see {@link EffectServicesLifetime}. */
++    services?: Layer.Layer<any, any, never>;
+     rpc?: EffectRpcBffDefinition<TRpcs>;
+     dataPlatform?: EffectDataPlatformValidationOptions;
+     interceptRequest?: EffectRequestInterceptor;
+@@ -128,6 +135,7 @@
+     rpc?: Partial<EffectRpcBffHandlerOptions>;
+     dataPlatform?: Partial<EffectDataPlatformValidationOptions>;
+     validateRequest?: EffectRequestValidator;
++    servicesLifetime?: EffectServicesLifetime;
+ }) => ReturnType<typeof createHttpApiHandler>;
+ export type EffectBffRuntime<TApi extends HttpApi.Constraint = HttpApi.Top, TLayer extends EffectRuntimeLayer = EffectRuntimeLayer> = {
+     createHandler: EffectBffHandlerFactory<TApi, TLayer>;
+diff --git a/dist/types/effect/handler.d.ts b/dist/types/effect/handler.d.ts
+--- a/dist/types/effect/handler.d.ts
++++ b/dist/types/effect/handler.d.ts
+@@ -10,4 +10,4 @@
+ export * as Schema from 'effect/Schema';
+ export { defineEffectBff, defineEffectRpcBff } from './handler/definition.js';
+ export { createHttpApiHandler } from './handler/http.js';
+-export type { EffectApiClientFromApi, EffectBffDefinition, EffectBffHandlerFactory, EffectBffOpenApiConfig, EffectBffRuntime, EffectDataPlatformBatchOptions, EffectDataPlatformSelectionValidationOptions, EffectDataPlatformValidationOptions, EffectRequestValidator, EffectRpcBffDefinition, EffectRpcBffHandlerFactory, EffectRpcBffHandlerOptions, EffectRpcRuntimeLayer, EffectRpcSerialization, EffectRuntimeLayer, EffectRuntimeRequirements, } from './handler/types.js';
++export type { EffectApiClientFromApi, EffectBffDefinition, EffectBffHandlerFactory, EffectBffOpenApiConfig, EffectBffRuntime, EffectDataPlatformBatchOptions, EffectDataPlatformSelectionValidationOptions, EffectDataPlatformValidationOptions, EffectRequestValidator, EffectRpcBffDefinition, EffectRpcBffHandlerFactory, EffectRpcBffHandlerOptions, EffectRpcRuntimeLayer, EffectRpcSerialization, EffectRuntimeLayer, EffectRuntimeRequirements, EffectServicesLifetime, } from './handler/types.js';
+diff --git a/dist/types/effect/module.d.ts b/dist/types/effect/module.d.ts
+--- a/dist/types/effect/module.d.ts
++++ b/dist/types/effect/module.d.ts
+@@ -1,14 +1,16 @@
+ import type * as EffectServiceContext from 'effect/Context';
+-import { type EffectBffOpenApiConfig, type EffectDataPlatformValidationOptions, type EffectRequestValidator, type EffectRpcBffDefinition } from './handler.js';
++import { type EffectBffOpenApiConfig, type EffectDataPlatformValidationOptions, type EffectRequestValidator, type EffectRpcBffDefinition, type EffectServicesLifetime } from './handler.js';
+ import type { EffectContext } from './operation-context.js';
+ export type EffectBffRequestHandler = (request: Request, context?: EffectServiceContext.Context<any> | EffectContext) => Promise<Response> | Response;
+ export type EffectBffHandlerFactory = (options?: {
+     openapi?: EffectBffOpenApiConfig;
+     dataPlatform?: EffectDataPlatformValidationOptions;
+     validateRequest?: EffectRequestValidator;
++    servicesLifetime?: EffectServicesLifetime;
+ }) => {
+     handler: EffectBffRequestHandler;
+     dispose: () => Promise<void>;
++    ready?: Promise<void> | undefined;
+ };
+ export type EffectApiModule = {
+     api?: unknown;
+@@ -21,6 +23,8 @@
+ type LoadedEffectBffHandler = {
+     handler: EffectBffRequestHandler;
+     dispose?: () => Promise<void>;
++    /** Settles once the shared part of the handler is built; requests may be served after it. */
++    ready?: Promise<void> | undefined;
+ };
+ type ResolveEffectBffModuleHandlerOptions = {
+     openapi?: EffectBffOpenApiConfig;
+@@ -31,6 +35,7 @@
+      * direct, batched and rpc requests.
+      */
+     validateRequest?: EffectRequestValidator;
++    servicesLifetime?: EffectServicesLifetime;
+     onWarning?: (message: string) => void;
+ };
+ export declare function resolveEffectBffModuleHandler(mod: EffectApiModule, options?: ResolveEffectBffModuleHandlerOptions): Promise<LoadedEffectBffHandler | null>;
+diff --git a/dist/types/effect/operation-context.d.ts b/dist/types/effect/operation-context.d.ts
+--- a/dist/types/effect/operation-context.d.ts
++++ b/dist/types/effect/operation-context.d.ts
+@@ -5,6 +5,7 @@
+     path: string;
+     method: string;
+     operationContext: OperationContext;
++    waitUntil?: (promise: Promise<unknown>) => void;
+ };
+ export type EffectContextStorage = {
+     getStore: () => EffectContext | undefined;
+diff --git a/src/assembly.ts b/src/assembly.ts
+--- a/src/assembly.ts
++++ b/src/assembly.ts
+@@ -1,44 +1,88 @@
+ /** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */
+-
++import * as Layer from 'effect/Layer';
++import type * as Scope from 'effect/Scope';
++import type { HttpRouter, HttpServerRequest } from 'effect/http';
+ import type { HttpApi, HttpApiGroup } from 'effect/http-api';
+ import { HttpApiBuilder } from 'effect/http-api';
+-import * as Layer from 'effect/Layer';
+ import { defineEffectBff } from './effect/handler/definition';
+-import type { EffectRuntimeRequirements } from './effect/handler/types';
++import type {
++  EffectRuntimeLayer,
++  EffectRuntimeRequirements,
++} from './effect/handler/types';
+ 
+ export interface EffectBffRuntimeAssembly<
+   ApiId extends string,
+   Groups extends HttpApiGroup.Constraint,
+-  HandlerRequirements extends EffectRuntimeRequirements,
++  HandlerRequirements,
++  Services = never,
+   TransportRequirements extends EffectRuntimeRequirements = never,
+ > {
+   readonly api: HttpApi.HttpApi<ApiId, Groups>;
++  /**
++   * The api's handler groups. They are built once per runtime (once per Worker isolate), so
++   * building them must not read a service: handlers resolve their services when they run.
++   */
+   readonly handlers: Layer.Layer<
+     HttpApiGroup.ToService<ApiId, Groups>,
+     never,
+     HandlerRequirements
+   >;
++  /**
++   * Every service the handlers resolve when they run. Workers build it for each request, so its
++   * database pool and clients never outlive the request; Node builds it once with the handler.
++   */
++  readonly services?: Layer.Layer<Services, never, never>;
++  /** Extra routes, built once with the api; like handlers, they resolve services when they run. */
+   readonly transport?: Layer.Layer<never, never, TransportRequirements>;
+ }
++
++/** Shown when a handler requires a service that `services` does not provide. */
++export interface EffectBffMissingServices<Missing> {
++  readonly 'handlers require services that `services` does not provide': Missing;
++}
++
++/** Services the handlers need when they run (HttpApiBuilder marks them as request requirements). */
++type RequiredServices<HandlerRequirements> =
++  | HttpRouter.Request.Only<'Requires', HandlerRequirements>
++  | HttpRouter.Request.Only<'GlobalRequires', HandlerRequirements>
++  | Exclude<HandlerRequirements, EffectRuntimeRequirements>;
++
++type MissingServices<HandlerRequirements, Services> = Exclude<
++  RequiredServices<HandlerRequirements>,
++  Services | Scope.Scope | HttpServerRequest.HttpServerRequest
++>;
+ 
+ export const assembleEffectBffRuntime = <
+   ApiId extends string,
+   Groups extends HttpApiGroup.Constraint,
+-  HandlerRequirements extends EffectRuntimeRequirements,
++  HandlerRequirements,
++  Services = never,
+   TransportRequirements extends EffectRuntimeRequirements = never,
+->({
+-  api,
+-  handlers,
+-  transport,
+-}: EffectBffRuntimeAssembly<
+-  ApiId,
+-  Groups,
+-  HandlerRequirements,
+-  TransportRequirements
+->) => {
++>(
++  assembly: EffectBffRuntimeAssembly<
++    ApiId,
++    Groups,
++    HandlerRequirements,
++    Services,
++    TransportRequirements
++  > &
++    ([
++      MissingServices<HandlerRequirements | TransportRequirements, Services>,
++    ] extends [never]
++      ? unknown
++      : EffectBffMissingServices<
++          MissingServices<HandlerRequirements | TransportRequirements, Services>
++        >),
++) => {
++  const { api, handlers, services, transport } = assembly;
+   const apiLayer = HttpApiBuilder.layer(api).pipe(Layer.provide(handlers));
+   const layer =
+     transport === undefined ? apiLayer : apiLayer.pipe(Layer.merge(transport));
+-
+-  return defineEffectBff({ api, layer });
++  // Every requirement outside the runtime's own is checked above against `services`, which
++  // createHttpApiHandler supplies per request (Workers) or once (Node).
++  return defineEffectBff({
++    api,
++    layer: layer as unknown as EffectRuntimeLayer,
++    services,
++  });
+ };
+diff --git a/src/effect/dispatch.ts b/src/effect/dispatch.ts
+--- a/src/effect/dispatch.ts
++++ b/src/effect/dispatch.ts
+@@ -14,6 +14,8 @@
+ export type DispatchEffectBffRequestOptions = {
+   prefix?: string;
+   env?: Record<string, unknown>;
++  /** Keeps the request alive until request-scoped services are released after the response body. */
++  waitUntil?: (promise: Promise<unknown>) => void;
+   path?: string;
+   method?: string;
+   runWithEffectContext: EffectDispatchContextRunner;
+@@ -81,6 +83,7 @@
+     env,
+     path,
+     method,
++    ...(options.waitUntil === undefined ? {} : { waitUntil: options.waitUntil }),
+     operationContext: createEffectOperationContext({
+       request: mountedRequest,
+       env,
+diff --git a/src/effect/edge-dispatcher.ts b/src/effect/edge-dispatcher.ts
+--- a/src/effect/edge-dispatcher.ts
++++ b/src/effect/edge-dispatcher.ts
+@@ -205,7 +205,10 @@
+ ) {
+   const crossProjectPolicy = options.crossProjectPolicy;
+   assertNormalizedCrossProjectPolicy(crossProjectPolicy);
++  // One dispatcher serves every request of a Worker isolate: the api is built once and the
++  // module's services are built for each request (workerd binds sockets to their request).
+   const loaded = await resolveEffectBffModuleHandler(options.module, {
++    servicesLifetime: 'request',
+     openapi: options.openapi,
+     dataPlatform: options.dataPlatform,
+     validateRequest:
+@@ -249,6 +252,12 @@
+       '[BFF][Effect] Invalid Effect edge module. Export defineEffectBff(...) or a { api, layer } HttpApi module.',
+     );
+   }
++  try {
++    await loaded.ready;
++  } catch (error) {
++    await loaded.dispose?.().catch(() => undefined);
++    throw error;
++  }
+ 
+   const retiredError = new Error(
+     '[BFF][Effect] Edge dispatcher is disposing or has been disposed.',
+diff --git a/src/effect/handler/definition.ts b/src/effect/handler/definition.ts
+--- a/src/effect/handler/definition.ts
++++ b/src/effect/handler/definition.ts
+@@ -39,6 +39,8 @@
+     return createHttpApiHandler<TApi, TRpcs>({
+       api: definition.api,
+       layer: definition.layer,
++      services: definition.services,
++      servicesLifetime: options?.servicesLifetime,
+       openapi: options?.openapi,
+       rpc: mergedRpcOptions,
+       dataPlatform: mergeDataPlatformOptions(
+diff --git a/src/effect/handler/http.ts b/src/effect/handler/http.ts
+--- a/src/effect/handler/http.ts
++++ b/src/effect/handler/http.ts
+@@ -1,6 +1,10 @@
+ // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
+ 
+-import { HttpRouter, HttpServer } from 'effect/http';
++import * as Context from 'effect/Context';
++import * as Effect from 'effect/Effect';
++import * as Exit from 'effect/Exit';
++import * as Scope from 'effect/Scope';
++import { HttpEffect, HttpMiddleware, HttpRouter, HttpServer } from 'effect/http';
+ import type { HttpApi } from 'effect/http-api';
+ import * as Layer from 'effect/Layer';
+ import type { Rpc } from 'effect/rpc';
+@@ -18,8 +22,122 @@
+   EffectRequestValidator,
+   EffectRpcBffDefinition,
+   EffectRuntimeLayer,
++  EffectServicesLifetime,
+ } from './types';
+ import { toEffectServiceContext } from './types';
++import type { EffectContext } from '../operation-context';
++
++type EffectWebHandler = (
++  request: Request,
++  context?: Context.Context<any> | EffectContext,
++) => Promise<Response>;
++
++/**
++ * Builds the api's router, handlers, codecs and OpenAPI route once. Services the handlers resolve
++ * at call time come from each request's context, so nothing request-bound lives in this scope.
++ */
++function createSharedWebHandler(layer: Layer.Layer<any, any, never>) {
++  const scope = Scope.makeUnsafe();
++  let webHandler: EffectWebHandler | undefined;
++  const ready = Effect.runPromise(
++    Effect.gen(function* () {
++      const context = yield* Layer.buildWithScope(
++        Layer.provideMerge(layer, HttpRouter.layer),
++        scope,
++      );
++      webHandler = HttpEffect.toWebHandlerWith(context)(
++        Context.get(context, HttpRouter.HttpRouter).asHttpEffect(),
++        HttpMiddleware.logger,
++      ) as EffectWebHandler;
++    }),
++  ).catch(async (error) => {
++    await Effect.runPromise(Scope.close(scope, Exit.void)).catch(() => undefined);
++    throw error;
++  });
++  // A failed build must not be an unhandled rejection; every request rejects with it instead.
++  ready.catch(() => undefined);
++  return {
++    ready,
++    handler: (request: Request, context?: Context.Context<any> | EffectContext) =>
++      webHandler === undefined
++        ? ready.then(() => (webHandler as EffectWebHandler)(request, context))
++        : webHandler(request, context),
++    dispose: () => Effect.runPromise(Scope.close(scope, Exit.void)),
++  };
++}
++
++type WaitUntil = (promise: Promise<unknown>) => void;
++
++const waitUntilOf = (context: unknown): WaitUntil | undefined => {
++  if (typeof context !== 'object' || context === null) {
++    return undefined;
++  }
++  const waitUntil = (context as { waitUntil?: unknown }).waitUntil;
++  return typeof waitUntil === 'function' ? (waitUntil as WaitUntil) : undefined;
++};
++
++/** Closes the request's service scope once the response body has been delivered (or abandoned). */
++function releaseAfterBody(
++  response: Response,
++  release: () => Promise<void>,
++  waitUntil: WaitUntil | undefined,
++) {
++  const keep = (promise: Promise<unknown>) => {
++    const settled = promise.catch(() => undefined);
++    waitUntil?.(settled);
++  };
++  if (response.body === null) {
++    keep(release());
++    return response;
++  }
++  const { readable, writable } = new TransformStream();
++  keep(
++    response.body
++      .pipeTo(writable)
++      .catch(() => undefined)
++      .then(release),
++  );
++  return new Response(readable, response);
++}
++
++/**
++ * Builds the request services in a scope owned by one request and hands their context to the
++ * shared handler. workerd binds every socket to the request that opened it, so a database pool
++ * or client built here never serves another request.
++ */
++function withRequestServices(
++  services: Layer.Layer<any, any, never>,
++  handle: EffectWebHandler,
++  pendingReleases: Set<() => Promise<void>>,
++): EffectWebHandler {
++  return async (request, context) => {
++    const scope = Scope.makeUnsafe();
++    let released: Promise<void> | undefined;
++    const release = () => {
++      released ??= Effect.runPromise(Scope.close(scope, Exit.void)).finally(() => {
++        pendingReleases.delete(release);
++      });
++      return released;
++    };
++    pendingReleases.add(release);
++    const waitUntil = waitUntilOf(context);
++    let response: Response;
++    try {
++      const requestContext = await Effect.runPromise(
++        Layer.buildWithScope(services, scope),
++      );
++      response = await handle(
++        request,
++        Context.merge(toEffectServiceContext(context), requestContext),
++      );
++    } catch (error) {
++      const released = release().catch(() => undefined);
++      waitUntil?.(released);
++      throw error;
++    }
++    return releaseAfterBody(response, release, waitUntil);
++  };
++}
+ 
+ export function createHttpApiHandler<
+   TApi extends HttpApi.Constraint = HttpApi.Top,
+@@ -27,18 +145,43 @@
+ >(options: {
+   api: TApi;
+   layer: EffectRuntimeLayer;
++  /**
++   * Services the api's handlers resolve when they run. With `servicesLifetime: 'request'` they are
++   * built for every request and the api layer is built once; otherwise they are built once with it.
++   */
++  services?: Layer.Layer<any, any, never>;
++  servicesLifetime?: EffectServicesLifetime;
+   openapi?: EffectBffOpenApiConfig;
+   rpc?: EffectRpcBffDefinition<TRpcs>;
+   dataPlatform?: EffectDataPlatformValidationOptions;
+   interceptRequest?: EffectRequestInterceptor;
+   validateRequest?: EffectRequestValidator;
+ }) {
+-  const apiLayer = options.layer.pipe(Layer.provide(HttpServer.layerServices));
++  const pendingReleases = new Set<() => Promise<void>>();
++  const releaseRequests = () => Promise.all(Array.from(pendingReleases, release => release()));
++  const requestScopedServices =
++    options.servicesLifetime === 'request' ? options.services : undefined;
++  const runtimeLayer =
++    options.services === undefined || requestScopedServices !== undefined
++      ? options.layer
++      : // Node: one context for the process; route effects (transport) read it at request time too.
++        options.layer.pipe(Layer.provideMerge(options.services));
++  const apiLayer = runtimeLayer.pipe(Layer.provide(HttpServer.layerServices));
+   const openApiLayer = createOpenApiLayer(options.api, options.openapi);
+   const mergedLayer = openApiLayer
+     ? Layer.mergeAll(apiLayer, openApiLayer)
+     : apiLayer;
+-  const httpApiHandler = HttpRouter.toWebHandler(mergedLayer);
++  const httpApiHandler: {
++    readonly handler: EffectWebHandler;
++    readonly dispose: () => Promise<void>;
++    readonly ready?: Promise<void>;
++  } =
++    options.servicesLifetime === 'request'
++      ? createSharedWebHandler(mergedLayer as Layer.Layer<any, any, never>)
++      : (HttpRouter.toWebHandler(mergedLayer) as {
++          readonly handler: EffectWebHandler;
++          readonly dispose: () => Promise<void>;
++        });
+ 
+   const dispatchHttpApiRequest = async (
+     request: Request,
+@@ -84,7 +227,7 @@
+     handleItem: withRequestPolicy,
+   });
+ 
+-  const handleHttpApiRequest = async (
++  const routeHttpApiRequest = async (
+     request: Request,
+     context?: Parameters<typeof httpApiHandler.handler>[1],
+   ) => {
+@@ -96,11 +239,19 @@
+     }
+     return withRequestPolicy(request, context);
+   };
++  // Batched items share their outer request's services.
++  const withServices = (handler: EffectWebHandler): EffectWebHandler =>
++    requestScopedServices === undefined
++      ? handler
++      : withRequestServices(requestScopedServices, handler, pendingReleases);
++  const handleHttpApiRequest = withServices(routeHttpApiRequest);
+ 
+   if (!options.rpc) {
+     return {
+       handler: handleHttpApiRequest,
++      ready: httpApiHandler.ready,
+       dispose: async () => {
++        await releaseRequests();
+         await httpApiHandler.dispose();
+       },
+     };
+@@ -110,7 +261,7 @@
+   const rpcHandler = createRpcApiHandler(options.rpc);
+ 
+   return {
+-    handler: async (
++    handler: withServices(async (
+       request: Request,
+       context?: Parameters<typeof httpApiHandler.handler>[1],
+     ) => {
+@@ -125,9 +276,11 @@
+           ? options.interceptRequest({ request, next })
+           : next();
+       }
+-      return handleHttpApiRequest(request, context);
+-    },
++      return routeHttpApiRequest(request, context);
++    }),
++    ready: httpApiHandler.ready,
+     dispose: async () => {
++      await releaseRequests();
+       await Promise.all([httpApiHandler.dispose(), rpcHandler.dispose()]);
+     },
+   };
+diff --git a/src/effect/handler/types.ts b/src/effect/handler/types.ts
+--- a/src/effect/handler/types.ts
++++ b/src/effect/handler/types.ts
+@@ -19,6 +19,12 @@
+   | HttpRouter.Request<'GlobalRequires', unknown>
+   | HttpRouter.Request<'Requires', unknown>
+   | Path.Path;
++/**
++ * When the services of a strict Effect BFF are built: once with the handler (`'handler'`, Node), or
++ * for every request while the api layer is shared (`'request'`, workerd, where sockets are bound to
++ * the request that opened them).
++ */
++export type EffectServicesLifetime = 'request' | 'handler';
+ export type EffectRuntimeLayer = Layer.Layer<
+   never,
+   never,
+@@ -89,6 +95,8 @@
+ > = {
+   api: TApi;
+   layer: TLayer;
++  /** Services the api's handlers resolve at call time; see {@link EffectServicesLifetime}. */
++  services?: Layer.Layer<any, any, never>;
+   rpc?: EffectRpcBffDefinition<TRpcs>;
+   dataPlatform?: EffectDataPlatformValidationOptions;
+   interceptRequest?: EffectRequestInterceptor;
+@@ -202,6 +210,7 @@
+   rpc?: Partial<EffectRpcBffHandlerOptions>;
+   dataPlatform?: Partial<EffectDataPlatformValidationOptions>;
+   validateRequest?: EffectRequestValidator;
++  servicesLifetime?: EffectServicesLifetime;
+ }) => ReturnType<typeof createHttpApiHandler>;
+ 
+ export type EffectBffRuntime<
+diff --git a/src/effect/handler.ts b/src/effect/handler.ts
+--- a/src/effect/handler.ts
++++ b/src/effect/handler.ts
+@@ -29,4 +29,5 @@
+   EffectRpcSerialization,
+   EffectRuntimeLayer,
+   EffectRuntimeRequirements,
++  EffectServicesLifetime,
+ } from './handler/types';
+diff --git a/src/effect/module.ts b/src/effect/module.ts
+--- a/src/effect/module.ts
++++ b/src/effect/module.ts
+@@ -14,6 +14,7 @@
+   type EffectRequestValidator,
+   type EffectRpcBffDefinition,
+   type EffectRuntimeLayer,
++  type EffectServicesLifetime,
+ } from './handler';
+ import type { EffectContext } from './operation-context';
+ 
+@@ -26,9 +27,11 @@
+   openapi?: EffectBffOpenApiConfig;
+   dataPlatform?: EffectDataPlatformValidationOptions;
+   validateRequest?: EffectRequestValidator;
++  servicesLifetime?: EffectServicesLifetime;
+ }) => {
+   handler: EffectBffRequestHandler;
+   dispose: () => Promise<void>;
++  ready?: Promise<void> | undefined;
+ };
+ 
+ export type EffectApiModule = {
+@@ -43,6 +46,8 @@
+ type LoadedEffectBffHandler = {
+   handler: EffectBffRequestHandler;
+   dispose?: () => Promise<void>;
++  /** Settles once the shared part of the handler is built; requests may be served after it. */
++  ready?: Promise<void> | undefined;
+ };
+ 
+ type ResolveEffectBffModuleHandlerOptions = {
+@@ -54,6 +59,7 @@
+    * direct, batched and rpc requests.
+    */
+   validateRequest?: EffectRequestValidator;
++  servicesLifetime?: EffectServicesLifetime;
+   onWarning?: (message: string) => void;
+ };
+ 
+@@ -88,11 +94,13 @@
+ function createLoadedHandler(webHandler: {
+   handler: EffectBffRequestHandler;
+   dispose: () => Promise<void>;
++  ready?: Promise<void> | undefined;
+ }): LoadedEffectBffHandler {
+   return {
+     handler: (request, context) =>
+       callEffectBffRequestHandler(webHandler.handler, request, context),
+     dispose: shareDispose(webHandler.dispose),
++    ...(webHandler.ready === undefined ? {} : { ready: webHandler.ready }),
+   };
+ }
+ 
+@@ -102,6 +110,7 @@
+   return createLoadedHandler({
+     handler: webHandler.handler as EffectBffRequestHandler,
+     dispose: webHandler.dispose,
++    ready: webHandler.ready,
+   });
+ }
+ 
+@@ -139,6 +148,7 @@
+         openapi: options.openapi,
+         dataPlatform: options.dataPlatform,
+         validateRequest: options.validateRequest,
++        servicesLifetime: options.servicesLifetime,
+       });
+       return createLoadedHandler(webHandler);
+     }
+@@ -168,6 +178,7 @@
+       openapi: options.openapi,
+       dataPlatform: options.dataPlatform,
+       validateRequest: options.validateRequest,
++      servicesLifetime: options.servicesLifetime,
+     });
+     return createLoadedHttpApiHandler(webHandler);
+   }
+diff --git a/src/effect/operation-context.ts b/src/effect/operation-context.ts
+--- a/src/effect/operation-context.ts
++++ b/src/effect/operation-context.ts
+@@ -14,6 +14,7 @@
+   path: string;
+   method: string;
+   operationContext: OperationContext;
++  waitUntil?: (promise: Promise<unknown>) => void;
+ };
+ 
+ export type EffectContextStorage = {

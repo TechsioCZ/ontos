@@ -45,11 +45,72 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # The org runs at most 20 jobs at once, and a push to the sales demo branch starts the Stage Demo Deploy and
+  # its pull request's gates in the same second: the gates' first wave alone takes 19 runners. Pull request and
+  # merge queue gates therefore wait (behind queue-proof, which every gate needs) while a stage demo deploy run
+  # still has jobs queued for a runner, its final verification excepted, for at most 20 minutes. It never fails
+  # a run: on any error or at the ceiling the gates simply start. Main pushes and dispatches pass at once.
+  stage-deploy-yield:
+    name: Yield runners to a stage demo deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    permissions:
+      actions: read
+    steps:
+      - name: Wait while a stage demo deploy has jobs queued for a runner
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          deploy_runs="repos/$GITHUB_REPOSITORY/actions/workflows/stage-demo-deploy.yml/runs?branch=demo/sales-crm&per_page=20"
+          started=$SECONDS
+          # A push to the demo branch creates its deploy run in about the same second as this run.
+          expect_sha=""
+          if [[ "$HEAD_REF" == demo/sales-crm ]]; then expect_sha="$HEAD_SHA"; fi
+          busy() {
+            local runs id
+            runs="$(gh api "$deploy_runs" --jq '[.workflow_runs[] | select(.status != "completed") | {id, status, head_sha}]')" || return 1
+            if [[ -n "$expect_sha" ]] && (( SECONDS - started < 90 )) &&
+               ! jq -e --arg sha "$expect_sha" 'any(.[]; .head_sha == $sha)' <<<"$runs" >/dev/null; then
+              echo "waiting for the deploy run of $expect_sha to appear"
+              return 0
+            fi
+            # A run waiting for its first runner, or one whose plan has not yet created its build jobs.
+            if jq -e 'any(.[]; .status == "queued" or .status == "requested")' <<<"$runs" >/dev/null; then
+              echo 'a stage demo deploy run is queued'
+              return 0
+            fi
+            for id in $(jq -r '.[] | select(.status == "in_progress") | .id' <<<"$runs"); do
+              # shellcheck disable=SC2016 # $jobs is a jq variable.
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq '
+                  [.jobs[] | select(.name != "Verify stage once")] as $jobs
+                  | any($jobs[]; .status == "queued" or .status == "waiting")
+                    or any($jobs[]; .name == "Plan the changed units"
+                      and (.status != "completed" or ((now - (.completed_at | fromdateiso8601)) < 30)))' |
+                 grep -qx true; then
+                echo "stage demo deploy run $id still has jobs waiting for a runner"
+                return 0
+              fi
+            done
+            return 1
+          }
+          while (( SECONDS - started < 1200 )) && busy; do
+            sleep 15
+          done
+          if (( SECONDS - started >= 1200 )); then
+            echo '::notice title=Gates no longer yield::The stage demo deploy still queues jobs after 20 minutes; the gates start now.'
+          fi
+          echo "The gates start after $((SECONDS - started)) s."
+
   # A push to main or a dispatch on main carries a commit the merge queue may already have proven: its
   # merge_group run of this workflow ran every gate on this exact commit and succeeded. Such a commit skips
   # the gates and deploys. Any other commit (pushed before the queue, or by a ruleset bypass) runs them.
   queue-proof:
     name: Find the merge queue proof of this commit
+    needs: [stage-deploy-yield]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -185,6 +246,7 @@ jobs:
               pnpm api:check:ontos
           - name: Repository Tooling, Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests
             commands: |
+              pnpm shell:ui-candidates:check
               pnpm test:scripts
               pnpm module-entrypoints:check
               pnpm test:deployment-impact
@@ -194,15 +256,15 @@ jobs:
           # do not name, so a new package is always tested; Repository Tooling Tests check the split.
           - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
             commands: |
-              pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
-              pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
+              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
+              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
           - name: Unit and Component Tests (every other package)
             # Pricing's issue #890 traceability test compares immutable historical revisions and the
             # branch's latest main integration merge. Keep that bounded history in this shard only.
             fetch_depth: 512
             commands: |
-              pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
-              pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
+              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
+              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -224,6 +286,9 @@ jobs:
         working-directory: app
         env:
           COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
@@ -378,7 +443,9 @@ jobs:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 00000000000000000000000000000000
           ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 00000000000000000000000000000000
           ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
@@ -458,10 +525,14 @@ jobs:
       ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
       ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
       ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
       POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
       SPICEDB_ENDPOINT: localhost:50051
       SPICEDB_GRPC_PORT: '50051'
       SPICEDB_HTTP_PORT: '8443'
@@ -553,6 +624,15 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      # Compose seeds only the shared role. Provision every manifest identity in this ephemeral
+      # loopback database before either suite's fail-closed reconcile bootstrap.
+      - name: Initialize the fresh CI database identities from the grant manifest
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
       - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
         if: matrix.suite == 'integration'
         working-directory: app
@@ -594,6 +674,12 @@ jobs:
           mise exec -- pnpm db:migrate
           mise exec -- pnpm db:verify
 
+      # Every runtime login role must hold exactly the grants the checked-in manifest assigns it.
+      - name: Audit runtime database identities against the checked-in grant manifest
+        if: matrix.suite == 'integration'
+        working-directory: app
+        run: mise exec -- pnpm database-trust:audit
+
       # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
       # database until /ready, then drains on SIGTERM.
@@ -605,6 +691,9 @@ jobs:
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         if: matrix.suite == 'integration'
         working-directory: app
+        env:
+          MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
+          MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
         run: mise exec -- pnpm test:integration
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
@@ -705,9 +794,27 @@ jobs:
           - {
               shard: 5,
               proof: node,
-              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy,
+              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects,
             }
+    # Only the proving shard starts PostgreSQL; its complete handler layers acquire real pools.
+    services:
+      proof-postgres:
+        image: ${{ matrix.proof == 'node' && 'postgres:18.6-alpine' || '' }}
+        env:
+          POSTGRES_DB: ontos_proof
+          POSTGRES_PASSWORD: ontos_proof_admin
+          POSTGRES_USER: ontos_proof_admin
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U ontos_proof_admin -d ontos_proof"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     env:
+      DATABASE_ADMIN_URL: postgresql://ontos_proof_admin:ontos_proof_admin@localhost:5433/ontos_proof
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_proof
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_proof
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_proof
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_proof
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
@@ -788,11 +895,23 @@ jobs:
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
 
-      - name: Prove Node backend-federation artifacts
+      # The bare PostgreSQL service has no runtime roles. Keep creation outside migration policy.
+      - name: Initialize the fresh CI database identities from the grant manifest
         if: matrix.proof == 'node'
         working-directory: app
         env:
-          DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
+      - name: Migrate the Node proof database and provision its runtime identities
+        if: matrix.proof == 'node'
+        working-directory: app
+        run: mise exec -- pnpm db:migrate
+
+      - name: Prove Node backend-federation artifacts
+        if: matrix.proof == 'node'
+        working-directory: app
         run: mise exec -- pnpm node:proof
 
       # The deployed publisher derives the snapshot from exactly these artifact kinds; this proves its output
@@ -840,7 +959,7 @@ jobs:
           - {
               shard: 5,
               proof: none,
-              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog verticals/privacy verticals/crm-activities,
+              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog verticals/privacy verticals/crm-activities verticals/projects,
             }
     env:
       # Placeholder data-plane IDs: locally a Worker's Hyperdrive bindings connect to the proof's
@@ -889,6 +1008,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
+          ULTRAMODERN_PUBLIC_URL_PROJECTS: https://projects.invalid
           ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING: https://property-leasing.invalid
           ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO: https://property-portfolio.invalid
           ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS: https://sales-insights.invalid
@@ -937,6 +1057,9 @@ jobs:
           DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
           DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
           ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+          PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+          PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+          SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
           POSTGRES_DB: ontos_ci
           POSTGRES_PASSWORD: ontos_ci_admin
           POSTGRES_PORT: '5433'
@@ -951,7 +1074,7 @@ jobs:
           ONTOS_GATEWAY_ISSUER: http://localhost:3020
           ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
           ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
-        run: printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' >> "$GITHUB_ENV"
+        run: printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_|PARTY_REGISTRY_DATABASE_URL=|PARTY_REGISTRY_WORKER_DATABASE_URL=|SHELL_GATEWAY_ISSUER_DATABASE_URL=)' >> "$GITHUB_ENV"
 
       # The topology proof's services start and migrate from source while the other shards still build.
       - name: Create the local SpiceDB TLS certificate
@@ -973,6 +1096,14 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      - name: Initialize the fresh CI database identities from the grant manifest
+        if: matrix.proof == 'topology'
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
       - name: Migrate and initialize the local tenant for the Worker topology
         if: matrix.proof == 'topology'
         working-directory: app
@@ -980,7 +1111,7 @@ jobs:
         # development-only service values so every tool sees the same database and SpiceDB.
         run: |
           # SPICEDB_CA_CERT spans lines, so it goes in as one double-quoted dotenv value.
-          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' | grep -v '^SPICEDB_CA_CERT=' > .env
+          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_|PARTY_REGISTRY_DATABASE_URL=|PARTY_REGISTRY_WORKER_DATABASE_URL=|SHELL_GATEWAY_ISSUER_DATABASE_URL=)' | grep -v '^SPICEDB_CA_CERT=' > .env
           awk 'BEGIN { printf "SPICEDB_CA_CERT=\"" } NF { printf "%s\\n", $0 } END { print "\"" }' .spicedb-tls/cert.pem >> .env
           mise exec -- pnpm db:migrate
           mise exec -- pnpm local:initialize
@@ -1027,6 +1158,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
+          ULTRAMODERN_PUBLIC_URL_PROJECTS: https://projects.invalid
           ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING: https://property-leasing.invalid
           ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO: https://property-portfolio.invalid
           ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS: https://sales-insights.invalid
@@ -1043,6 +1175,8 @@ jobs:
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm mf:types --target cloudflare
           mise exec -- pnpm cloudflare-output:verify
+          export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE="$SHELL_GATEWAY_ISSUER_DATABASE_URL"
+          export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE="$PARTY_REGISTRY_DATABASE_URL"
           mise exec -- pnpm cloudflare:ssr-proof
 
       # The built Workers, run together in workerd against real PostgreSQL and SpiceDB, prove the
@@ -1537,11 +1671,85 @@ jobs:
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
+  # The Outbox Worker host never builds on Zerops. When the plan deploys it, CI builds its musl artifact once,
+  # beside the migrations, under the host digest the artifact must carry, and deploy-zerops only deploys it.
+  # It is its own job so the Alpine build's musl files never reach the runner that later runs the workspace.
+  build-outbox-host:
+    name: Build the Outbox Worker host after merge to main
+    if: >-
+      ${{ !cancelled() && needs.deploy-plan.result == 'success'
+      && contains(needs.deploy-plan.outputs.providers, '"outbox-worker-host"') }}
+    needs: [deploy-target, deploy-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup the pinned Node
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          working_directory: app
+
+      - name: Compute the Outbox Worker host digest
+        id: digest
+        working-directory: app
+        env:
+          DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+        run: |
+          digest="$(mise exec -- node scripts/ci/deploy-plan.mts host-digest --output "$RUNNER_TEMP/host-inputs.json")"
+          if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error title=Outbox Worker host digest::deploy-plan.mts host-digest printed no digest" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+          # Main builds every hosted owner at HEAD.
+          echo "owner_revisions=$(jq -c .ownerRevisions "$RUNNER_TEMP/host-inputs.json")" >>"$GITHUB_OUTPUT"
+
+      - name: Build the host in Alpine
+        env:
+          ONTOS_OUTBOX_HOST_DIGEST: ${{ steps.digest.outputs.digest }}
+          ONTOS_OUTBOX_HOST_OWNER_REVISIONS: ${{ steps.digest.outputs.owner_revisions }}
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          docker run --rm \
+            --env ONTOS_OUTBOX_HOST_DIGEST --env ONTOS_OUTBOX_HOST_OWNER_REVISIONS --env ULTRAMODERN_SOURCE_REVISION \
+            --env RUNNER_TEMP=/runner-temp \
+            --volume "$GITHUB_WORKSPACE:/src" --volume "$RUNNER_TEMP:/runner-temp" --workdir /src \
+            alpine:3.23 sh app/scripts/ci/build-outbox-host.sh
+          ls -lh "$RUNNER_TEMP/outbox-host.tar.zst"
+
+      - name: Upload the host artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: outbox-host-${{ steps.digest.outputs.digest }}
+          path: ${{ runner.temp }}/outbox-host.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
   # The environment's deployment: the providers, outbox workers and Shell that run on Zerops, beside the edge deploy.
+  # A planned Outbox Worker host deploys only the artifact build-outbox-host built; a failed build stops the deploy.
   deploy-zerops:
     name: Deploy the environment's Zerops services after merge to main
-    if: ${{ !cancelled() && needs.deploy-migrations.result == 'success' }}
-    needs: [deploy-target, deploy-plan, deploy-migrations]
+    if: >-
+      ${{ !cancelled() && needs.deploy-migrations.result == 'success'
+      && (needs.build-outbox-host.result == 'success' || needs.build-outbox-host.result == 'skipped') }}
+    needs: [deploy-target, deploy-plan, deploy-migrations, build-outbox-host]
     runs-on: ubuntu-latest
     # Each Zerops push builds its unit remotely for about 12 minutes and units deploy one after another in
     # plan order, so a full topology deploy (12 units plus publication) needs about 3 hours.
@@ -1607,12 +1815,21 @@ jobs:
           mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
+      - name: Download the prebuilt Outbox Worker host
+        if: needs.build-outbox-host.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: outbox-host-${{ needs.build-outbox-host.outputs.digest }}
+          path: ${{ runner.temp }}/outbox-host
+
       - name: Deploy affected providers
         if: needs.deploy-plan.outputs.providers != '[]'
         env:
           UNITS_JSON: ${{ needs.deploy-plan.outputs.providers }}
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          OUTBOX_HOST_ARTIFACT: ${{ runner.temp }}/outbox-host/outbox-host.tar.zst
+          OUTBOX_HOST_DIGEST: ${{ needs.build-outbox-host.outputs.digest }}
         run: app/scripts/push-zerops-units.sh
 
       - name: Deploy Shell after affected providers
@@ -1737,7 +1954,7 @@ jobs:
           # plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service.
           while IFS= read -r key; do
             missing+=("buildEnvironment.$key")
-          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
+          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
             printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" >>"$GITHUB_OUTPUT"
@@ -2034,6 +2251,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
           ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+          # Each upload records the HMAC of its owner secrets on its backend Worker version; a failed-job rerun
+          # reuses an already-uploaded release only when that fingerprint proves the same secrets.
+          RELEASE_FINGERPRINT_KEY: ${{ secrets.RELEASE_FINGERPRINT_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: |

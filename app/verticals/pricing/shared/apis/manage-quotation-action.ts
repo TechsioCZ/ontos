@@ -3,7 +3,7 @@
 // @ontos-action-http-slug manage-quotation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { ManageQuotationPayloadSchema, ManageQuotationResultSchema } from '../actions/manage-quotation.ts';
 
 export { ManageQuotationPayloadSchema } from '../actions/manage-quotation.ts';

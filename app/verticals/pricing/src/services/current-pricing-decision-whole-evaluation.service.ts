@@ -787,56 +787,44 @@ const exactPriceObservationBoundary = (
   return latest;
 };
 
-const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.loadFresh')(
-  function* evaluateWholeAttemptProgram(
-    dependencies: {
-      readonly attemptSource: CurrentPricingDecisionAttemptSourcePort;
-      readonly composition: CurrentPricingDecisionWholeCompositionPort;
-      readonly discountReader: CurrentPricingDecisionDiscountSetReaderPort;
-      readonly externalOwnerEvidence: CurrentPricingDecisionExternalOwnerEvidencePort;
-      readonly feeReader: CurrentPricingDecisionFeeSetReaderPort;
-      readonly floorReader: CurrentPricingDecisionZeroFloorSetReaderPort;
-      readonly promotionEvaluation: PricingPromotionCurrentEvaluationService;
-      readonly tierReader: CurrentPricingDecisionTierSetReaderPort;
-    },
+interface WholeEvaluationDependencies {
+  readonly attemptSource: CurrentPricingDecisionAttemptSourcePort;
+  readonly composition: CurrentPricingDecisionWholeCompositionPort;
+  readonly discountReader: CurrentPricingDecisionDiscountSetReaderPort;
+  readonly externalOwnerEvidence: CurrentPricingDecisionExternalOwnerEvidencePort;
+  readonly feeReader: CurrentPricingDecisionFeeSetReaderPort;
+  readonly floorReader: CurrentPricingDecisionZeroFloorSetReaderPort;
+  readonly promotionEvaluation: PricingPromotionCurrentEvaluationService;
+  readonly tierReader: CurrentPricingDecisionTierSetReaderPort;
+}
+
+interface ReadyPriceLines {
+  readonly kind: 'PRICE_LINES_READY';
+  readonly readyUnitPrices: readonly PricingUnitPriceCalculationSuccess[];
+  readonly tierSetReads: readonly CurrentPricingDecisionTierSetRead[];
+}
+
+interface ReadyCommercialAdjustments {
+  readonly allocation: PricingDiscountFeeAllocationCompositionReady;
+  readonly discountComposition: PricingDiscountCompositionReady;
+  readonly discountSetRead: CurrentPricingDecisionDiscountSetRead;
+  readonly feeInputs: readonly CurrentPricingDecisionFeeSetRead[];
+  readonly feeResults: readonly PricingCommercialFeeCalculationResult[];
+  readonly kind: 'COMMERCIAL_ADJUSTMENTS_READY';
+  readonly promotionSelection: PricingPromotionCompositionSelection;
+}
+
+const evaluateExactPriceLines = Effect.fn('CurrentPricingDecisionWholeEvaluation.exactPriceLines')(
+  function* evaluateExactPriceLinesStage(
+    dependencies: WholeEvaluationDependencies,
     request: CurrentPricingDecisionRequest,
-    trustedScope: CurrentPricingDecisionTrustedScope,
-    ordinal: 1 | 2,
-  ): Effect.fn.Return<CurrentPricingDecisionWholeAttempt> {
-    const opened = yield* effectEither(dependencies.attemptSource.loadFresh(request, trustedScope, ordinal));
-    if (opened.failed) {
-      const [ownerRef, ...remainingOwnerRefs] = opened.failure.ownerRefs;
-      if (ownerRef === undefined) {
-        return yield* Effect.die('Owner-read failure omitted its required owner reference');
-      }
-      const requiredOwnerRefs: CurrentPricingDecisionRequiredOwnerRefs = [ownerRef, ...remainingOwnerRefs];
-      const attempt = yield* unavailableAttempt(request, ordinal, requiredOwnerRefs);
-      return wholeForFailure(request, attempt, requiredOwnerRefs, opened.failure);
-    }
-    const { attempt: draftAttempt, exactPriceLines, requiredOwnerRefs } = opened.success;
-    // This owner-read draft is finalized only after every internal and external read has returned.
-    let attempt = draftAttempt;
+    initialAttempt: PricingEvaluationAttempt,
+    exactPriceLines: CurrentPricingDecisionAttemptSourceResult['exactPriceLines'],
+    requiredOwnerRefs: CurrentPricingDecisionRequiredOwnerRefs,
+  ): Effect.fn.Return<CurrentPricingDecisionWholeAttempt | ReadyPriceLines> {
+    let attempt = initialAttempt;
     const closeFailure = (failure: CurrentPricingDecisionOwnerReadFailure) =>
       Effect.succeed(wholeForFailure(request, attempt, requiredOwnerRefs, failure));
-    if (
-      attempt.attemptOrdinal !== ordinal ||
-      !Schema.toEquivalence(PricingDecisionSchema)(attempt.snapshot.decision, request.decision) ||
-      !sourceLinesBindRequest(exactPriceLines, request)
-    ) {
-      return yield* closeFailure(
-        malformed(requiredOwnerRefs, 'Fresh attempt does not preserve the exact ordered request candidate'),
-      );
-    }
-    if (request.decision.currencyCode !== 'CZK') {
-      return yield* closeFailure(
-        sourceFailure(
-          'UNSUPPORTED_CURRENCY',
-          requiredOwnerRefs,
-          'The generalized Pricing contract accepts this currency, but the Launch calculation profile is CZK-only',
-        ),
-      );
-    }
-
     const retainedExactPrices = Schema.decodeOption(Schema.Array(ExactPriceResolutionSchema), {
       onExcessProperty: 'error',
     })(exactPriceLines.map(({ exactPrice }) => exactPrice));
@@ -978,8 +966,20 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
         malformed(requiredOwnerRefs, 'Unit Price could not bind exact Price, Quantity, and Tier evidence'),
       );
     }
-    const readyUnitPrices = unitPrices.success;
+    return { kind: 'PRICE_LINES_READY', readyUnitPrices: unitPrices.success, tierSetReads: tierRequests.success };
+  },
+);
 
+const evaluateCommercialAdjustments = Effect.fn('CurrentPricingDecisionWholeEvaluation.commercialAdjustments')(
+  function* evaluateCommercialAdjustmentsStage(
+    dependencies: WholeEvaluationDependencies,
+    request: CurrentPricingDecisionRequest,
+    attempt: PricingEvaluationAttempt,
+    readyUnitPrices: readonly PricingUnitPriceCalculationSuccess[],
+    requiredOwnerRefs: CurrentPricingDecisionRequiredOwnerRefs,
+  ): Effect.fn.Return<CurrentPricingDecisionWholeAttempt | ReadyCommercialAdjustments> {
+    const closeFailure = (failure: CurrentPricingDecisionOwnerReadFailure) =>
+      Effect.succeed(wholeForFailure(request, attempt, requiredOwnerRefs, failure));
     const feeInputs = yield* Effect.forEach(
       readyUnitPrices,
       (unitPrice) => dependencies.feeReader.loadCurrent(request, attempt, unitPrice),
@@ -1076,13 +1076,89 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
       }
       promotionSelection = { composition: promotion.success, kind: 'PROMOTION_SELECTED' };
     }
+    return {
+      allocation: allocation.success,
+      discountComposition,
+      discountSetRead: discountSetRead.success,
+      feeInputs: feeInputs.success,
+      feeResults: feeResults.success,
+      kind: 'COMMERCIAL_ADJUSTMENTS_READY',
+      promotionSelection,
+    };
+  },
+);
+
+const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.loadFresh')(
+  function* evaluateWholeAttemptProgram(
+    dependencies: WholeEvaluationDependencies,
+    request: CurrentPricingDecisionRequest,
+    trustedScope: CurrentPricingDecisionTrustedScope,
+    ordinal: 1 | 2,
+  ): Effect.fn.Return<CurrentPricingDecisionWholeAttempt> {
+    const opened = yield* effectEither(dependencies.attemptSource.loadFresh(request, trustedScope, ordinal));
+    if (opened.failed) {
+      const [ownerRef, ...remainingOwnerRefs] = opened.failure.ownerRefs;
+      if (ownerRef === undefined) {
+        return yield* Effect.die('Owner-read failure omitted its required owner reference');
+      }
+      const requiredOwnerRefs: CurrentPricingDecisionRequiredOwnerRefs = [ownerRef, ...remainingOwnerRefs];
+      const attempt = yield* unavailableAttempt(request, ordinal, requiredOwnerRefs);
+      return wholeForFailure(request, attempt, requiredOwnerRefs, opened.failure);
+    }
+    const { attempt: draftAttempt, exactPriceLines, requiredOwnerRefs } = opened.success;
+    // This owner-read draft is finalized only after every internal and external read has returned.
+    let attempt = draftAttempt;
+    const closeFailure = (failure: CurrentPricingDecisionOwnerReadFailure) =>
+      Effect.succeed(wholeForFailure(request, attempt, requiredOwnerRefs, failure));
+    if (
+      attempt.attemptOrdinal !== ordinal ||
+      !Schema.toEquivalence(PricingDecisionSchema)(attempt.snapshot.decision, request.decision) ||
+      !sourceLinesBindRequest(exactPriceLines, request)
+    ) {
+      return yield* closeFailure(
+        malformed(requiredOwnerRefs, 'Fresh attempt does not preserve the exact ordered request candidate'),
+      );
+    }
+    if (request.decision.currencyCode !== 'CZK') {
+      return yield* closeFailure(
+        sourceFailure(
+          'UNSUPPORTED_CURRENCY',
+          requiredOwnerRefs,
+          'The generalized Pricing contract accepts this currency, but the Launch calculation profile is CZK-only',
+        ),
+      );
+    }
+
+    const priceLines = yield* evaluateExactPriceLines(
+      dependencies,
+      request,
+      attempt,
+      exactPriceLines,
+      requiredOwnerRefs,
+    );
+    if (!('kind' in priceLines)) {
+      return priceLines;
+    }
+    const { readyUnitPrices, tierSetReads } = priceLines;
+
+    const adjustments = yield* evaluateCommercialAdjustments(
+      dependencies,
+      request,
+      attempt,
+      readyUnitPrices,
+      requiredOwnerRefs,
+    );
+    if (!('kind' in adjustments)) {
+      return adjustments;
+    }
+    const { allocation, discountComposition, discountSetRead, feeInputs, feeResults, promotionSelection } = adjustments;
 
     const lineComposition = yield* dependencies.composition
       .buildLineCompositionRequest({
-        allocation: allocation.success,
+        allocation,
         attempt,
         discountComposition,
-        feeResults: feeResults.success,
+        feeResults,
         promotionSelection,
         request,
         unitPrices: readyUnitPrices,
@@ -1151,16 +1227,16 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
       .buildMaterialEvidenceRequest({
         attempt,
         commercialTotal,
-        discountApplicabilityInputs: discountSetRead.success.applicabilityInputs,
-        discountCurrentSets: discountSetRead.success.currentSets,
+        discountApplicabilityInputs: discountSetRead.applicabilityInputs,
+        discountCurrentSets: discountSetRead.currentSets,
         externalOwnerEvidence: externalOwnerEvidence.success,
-        feeSetReads: feeInputs.success,
+        feeSetReads: feeInputs,
         priceCandidateSetReceipts: exactPriceLines.map(
           ({ priceCandidateSetAuthorities }) => priceCandidateSetAuthorities,
         ),
         purchaseContextEvidence: trustedScope.purchaseContextEvidence,
         request,
-        tierSetReads: tierRequests.success,
+        tierSetReads,
         zeroFloorSetReads: floorSet.success,
       })
       .pipe(effectEither);
@@ -1205,15 +1281,8 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
   },
 );
 
-export const makeCurrentPricingDecisionWholeEvaluationService = (dependencies: {
-  readonly attemptSource: CurrentPricingDecisionAttemptSourcePort;
-  readonly composition: CurrentPricingDecisionWholeCompositionPort;
-  readonly discountReader: CurrentPricingDecisionDiscountSetReaderPort;
-  readonly externalOwnerEvidence: CurrentPricingDecisionExternalOwnerEvidencePort;
-  readonly feeReader: CurrentPricingDecisionFeeSetReaderPort;
-  readonly floorReader: CurrentPricingDecisionZeroFloorSetReaderPort;
-  readonly promotionEvaluation: PricingPromotionCurrentEvaluationService;
-  readonly tierReader: CurrentPricingDecisionTierSetReaderPort;
-}): CurrentPricingDecisionWholeEvaluationPort => ({
+export const makeCurrentPricingDecisionWholeEvaluationService = (
+  dependencies: WholeEvaluationDependencies,
+): CurrentPricingDecisionWholeEvaluationPort => ({
   loadFresh: (request, trustedScope, ordinal) => evaluateWholeAttempt(dependencies, request, trustedScope, ordinal),
 });

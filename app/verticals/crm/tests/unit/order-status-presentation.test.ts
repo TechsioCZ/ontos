@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'effect-rstest';
 import { orderStatusLabel, statusReviewReasonLabel } from '../../src/crm/order-status-presentation.ts';
 
 describe('order status presentation', () => {

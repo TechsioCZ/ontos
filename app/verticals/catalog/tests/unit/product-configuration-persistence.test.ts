@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { SQL } from 'drizzle-orm';
 import { Effect, Exit, Option, Schema } from 'effect';
@@ -419,7 +420,7 @@ describe('Product Configuration private publication', () => {
         productConfigurationMeasuredRules,
         productConfigurationCompatibilityRules,
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
 
@@ -525,7 +526,7 @@ describe('Product Configuration effectiveness timeline', () => {
         choices: [{ ...input.choices[0], label: 'New label' }, input.choices[1]],
       });
       expect('reason' in conflict ? conflict.reason : null).toContain('different Configuration rule snapshot');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('supersedes at the next effective instant while preserving earlier replay', () =>
@@ -575,7 +576,7 @@ describe('Product Configuration effectiveness timeline', () => {
       });
       expect('actualRevision' in losingPublisher ? losingPublisher.actualRevision : null).toBe(2);
       expect(state.rows.get(productConfigurationDefinitionRevisions)).toHaveLength(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed on mismatched activation evidence and missing impact proof', () =>
@@ -621,7 +622,7 @@ describe('Product Configuration effectiveness timeline', () => {
       );
       expect(Exit.isFailure(result)).toBe(true);
       expect(state.rows.get(productConfigurationDefinitionRevisions)).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('refuses to read or extend a timeline with damaged non-Current revision evidence', () =>
@@ -667,7 +668,7 @@ describe('Product Configuration effectiveness timeline', () => {
       );
       expect(Exit.isFailure(third)).toBe(true);
       expect(state.rows.get(productConfigurationDefinitionRevisions)).toHaveLength(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not issue Current choice evidence from a retired Definition revision', () =>
@@ -693,7 +694,7 @@ describe('Product Configuration effectiveness timeline', () => {
         service.readCurrent({ at: input.effectiveFrom, definitionId: input.definitionId, productId: input.productId }),
       );
       expect(Exit.isFailure(result)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('pins the published Unit revision and fails closed after its Current meaning changes', () =>
@@ -739,7 +740,7 @@ describe('Product Configuration effectiveness timeline', () => {
           ),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not publish against a retired Configuration Unit', () =>
@@ -756,6 +757,6 @@ describe('Product Configuration effectiveness timeline', () => {
       );
       expect(Exit.isFailure(yield* Effect.exit(service.publish(input)))).toBe(true);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

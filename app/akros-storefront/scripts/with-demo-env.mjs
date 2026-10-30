@@ -12,7 +12,7 @@ const child = spawn(
     `${app}node_modules/next/dist/bin/next`,
     command,
     ...process.argv.slice(3),
-    ...(command === "start" ? ["-p", "3070", "-H", "localhost"] : []),
+    ...(command === "start" ? ["-p", "3070", "-H", "127.0.0.1"] : []),
   ],
   { cwd: app, env: process.env, stdio: "inherit" },
 );

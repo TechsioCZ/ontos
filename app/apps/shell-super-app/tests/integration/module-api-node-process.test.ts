@@ -15,8 +15,8 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Clock, Context, DateTime, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { HttpApi } from 'effect/unstable/httpapi';
+import { HttpClient, HttpClientRequest } from 'effect/http';
+import { HttpApi } from 'effect/http-api';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { MODULE_API_REVISION_HEADER } from '../../src/module-api/admission.ts';
@@ -316,6 +316,78 @@ const createFixture = Effect.fn('NativeModuleTransportTest.createFixture')(funct
   };
   return { authorize, layer, owner, request, server, snapshot };
 });
+
+it.live('forwards sanitized owner timings on the native held-assertion module API path', () =>
+  Effect.gen(function* heldAssertionOwnerTimings() {
+    const owner = yield* startShellServer(() =>
+      Promise.resolve(
+        new Response(new Uint8Array([0, 255, 1, 128]), {
+          headers: {
+            'content-length': '4',
+            'content-type': 'application/octet-stream',
+            location: 'https://untrusted.test',
+            refresh: '0;url=https://untrusted.test',
+            'server-timing':
+              'read-owner;dur=1.25, private;desc="secret, read-owner;dur=999", read-audit;dur=1;desc="secret", read-rls;dur=NaN, owner-dispatch;dur=999, read-encode;dur=2',
+            'set-cookie': 'staff.session_token=forged; Path=/; HttpOnly; SameSite=Lax',
+            'x-private-debug': 'secret',
+          },
+          status: 206,
+        }),
+      ),
+    );
+    const original = yield* makeCompositionSnapshot([
+      makeModuleContractFixture({ appId, buildMarker, moduleId: 'test.native.owner' }),
+    ]);
+    const snapshot = {
+      ...original,
+      composition: sealComposition({
+        ...original.composition,
+        modules: original.composition.modules.map((module) => ({
+          ...module,
+          backend: { baseUrl: new URL(owner.origin).href, transport: 'node-http' as const },
+        })),
+      }),
+    };
+    const router = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        assembleEffectBffRuntime({
+          api: HttpApi.make('HeldAssertionTimingProofApi'),
+          handlers: Layer.empty,
+          services: makeActiveApplicationCompositionLayer(Effect.succeed(snapshot)),
+          transport: ModuleApiTransportLive,
+        }).createHandler({ dataPlatform: { batch: { enabled: false }, enabled: false }, openapi: false }),
+      ),
+      (ownedRouter) => Effect.promise(() => ownedRouter.dispose()),
+    );
+    const shell = yield* startShellServer(router.handler);
+    const response = yield* shell.nativeHandler(
+      new Request(
+        `https://shell.ontos.test/module-api/${appId}/${encodeURIComponent(buildMarker)}/${appId}-api/records`,
+        {
+          body: '{}',
+          headers: {
+            authorization: 'Bearer held-owner-assertion',
+            [MODULE_API_REVISION_HEADER]: snapshot.composition.revision,
+          },
+          method: 'POST',
+        },
+      ),
+    );
+    expect(response.headers['server-timing']).toBe('read-owner;dur=1.25, read-encode;dur=2');
+    expect(response.status).toBe(206);
+    expect(response.headers['content-length']).toBe('4');
+    expect(response.headers['content-type']).toBe('application/octet-stream');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers['content-security-policy']).toBe("default-src 'none'; sandbox");
+    expect(response.headers['vary']).toBe('authorization');
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+    for (const name of ['set-cookie', 'refresh', 'location', 'x-private-debug']) {
+      expect(response.headers[name]).toBeUndefined();
+    }
+    expect([...new Uint8Array(yield* response.arrayBuffer)]).toEqual([0, 255, 1, 128]);
+  }).pipe(Effect.scoped),
+);
 
 it.live('forwards POST with dotted owner path, query, body and headers to an independent authorized process', () =>
   Effect.gen(function* preservesNativePost() {

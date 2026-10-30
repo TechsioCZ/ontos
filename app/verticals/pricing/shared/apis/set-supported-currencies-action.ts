@@ -4,7 +4,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { CurrencySupportScheduleAcknowledgementSchema } from '@app/pricing-contracts/domain/currency-support';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import {
   SetSupportedCurrenciesPayloadSchema,
   SetSupportedCurrenciesResultSchema,

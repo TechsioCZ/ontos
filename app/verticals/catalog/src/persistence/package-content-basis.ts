@@ -1,6 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import { resolvePackageContent } from '../../shared/domain/package-content.ts';
 import type { PackageContentRevision } from '../../shared/domain/package-content.ts';
@@ -238,72 +239,77 @@ const loadLower: (
   lower: CatalogSelectionRevision,
   seen: ReadonlySet<string>,
   at: Date,
-) => Effect.Effect<Option.Option<readonly PackageContentRevision[]>, PackagePersistenceUnavailable> = Effect.fn(
-  'PackageContentBasis.loadLower',
-)(function* loadLowerRows(
-  transaction: ScopedTransaction,
-  content: Content,
-  scope: OperationalScope,
-  lower: CatalogSelectionRevision,
-  seen: ReadonlySet<string>,
-  at: Date,
-) {
-  const { tenantId } = scope;
-  const lowerId = lower.resourceRef.resourceId;
-  if (lower.resourceRef.tenantId !== tenantId || lower.resourceRef.resourceType !== packageType || seen.has(lowerId)) {
-    return Option.none();
-  }
-  const [definition] = yield* transaction
-    .select()
-    .from(packageDefinitions)
-    .where(and(eq(packageDefinitions.tenantId, tenantId), eq(packageDefinitions.packageDefinitionId, lowerId)))
-    .for('update')
-    .limit(1);
-  if (
-    definition === undefined ||
-    definition.productId !== content.form.productRef.resourceId ||
-    definition.variantId !== content.form.variantRef.resourceId
+) => Effect.Effect<Option.Option<readonly PackageContentRevision[]>, PackagePersistenceUnavailable, Crypto.Crypto> =
+  Effect.fn('PackageContentBasis.loadLower')(function* loadLowerRows(
+    transaction: ScopedTransaction,
+    content: Content,
+    scope: OperationalScope,
+    lower: CatalogSelectionRevision,
+    seen: ReadonlySet<string>,
+    at: Date,
   ) {
-    return Option.none();
-  }
-  const row = Option.getOrUndefined(yield* effectiveLowerRow(transaction, tenantId, lower, at));
-  if (
-    row === undefined ||
-    row.productId !== definition.productId ||
-    row.variantId !== definition.variantId ||
-    hasIncompleteSetReference(row)
-  ) {
-    return Option.none();
-  }
-  const next =
-    row.lowerPackageDefinitionId === null || row.lowerRevision === null || row.lowerCount === null
-      ? undefined
-      : {
-          count: row.lowerCount,
-          revision: yield* Schema.decodeEffect(CatalogSelectionRevisionSchema)({
-            resourceRef: { moduleId, resourceId: row.lowerPackageDefinitionId, resourceType: packageType, tenantId },
-            revision: row.lowerRevision,
-          }),
-        };
-  const base = {
-    amount: row.amount,
-    form: content.form,
-    reference: yield* Schema.decodeEffect(CatalogSelectionRevisionSchema)(lower),
-    unitRef: { moduleId, resourceId: row.unitResourceId, resourceType: row.unitResourceType, tenantId } as const,
-  };
-  const configured = row.configurationKey === null ? base : { ...base, configurationKey: row.configurationKey };
-  const setComposition = yield* setCompositionFromRow(row, tenantId);
-  const withSet = Option.isNone(setComposition) ? configured : { ...configured, setComposition: setComposition.value };
-  const revision: PackageContentRevision = next === undefined ? withSet : { ...withSet, lower: next };
-  if (!(yield* currentSetComposition(transaction, revision, scope))) {
-    return Option.none();
-  }
-  if (next === undefined) {
-    return Option.some([revision]);
-  }
-  const tail = yield* loadLower(transaction, content, scope, next.revision, new Set([...seen, lowerId]), at);
-  return Option.isNone(tail) ? Option.none() : Option.some([revision, ...tail.value]);
-}, Effect.mapError(unavailable));
+    const { tenantId } = scope;
+    const lowerId = lower.resourceRef.resourceId;
+    if (
+      lower.resourceRef.tenantId !== tenantId ||
+      lower.resourceRef.resourceType !== packageType ||
+      seen.has(lowerId)
+    ) {
+      return Option.none();
+    }
+    const [definition] = yield* transaction
+      .select()
+      .from(packageDefinitions)
+      .where(and(eq(packageDefinitions.tenantId, tenantId), eq(packageDefinitions.packageDefinitionId, lowerId)))
+      .for('update')
+      .limit(1);
+    if (
+      definition === undefined ||
+      definition.productId !== content.form.productRef.resourceId ||
+      definition.variantId !== content.form.variantRef.resourceId
+    ) {
+      return Option.none();
+    }
+    const row = Option.getOrUndefined(yield* effectiveLowerRow(transaction, tenantId, lower, at));
+    if (
+      row === undefined ||
+      row.productId !== definition.productId ||
+      row.variantId !== definition.variantId ||
+      hasIncompleteSetReference(row)
+    ) {
+      return Option.none();
+    }
+    const next =
+      row.lowerPackageDefinitionId === null || row.lowerRevision === null || row.lowerCount === null
+        ? undefined
+        : {
+            count: row.lowerCount,
+            revision: yield* Schema.decodeEffect(CatalogSelectionRevisionSchema)({
+              resourceRef: { moduleId, resourceId: row.lowerPackageDefinitionId, resourceType: packageType, tenantId },
+              revision: row.lowerRevision,
+            }),
+          };
+    const base = {
+      amount: row.amount,
+      form: content.form,
+      reference: yield* Schema.decodeEffect(CatalogSelectionRevisionSchema)(lower),
+      unitRef: { moduleId, resourceId: row.unitResourceId, resourceType: row.unitResourceType, tenantId } as const,
+    };
+    const configured = row.configurationKey === null ? base : { ...base, configurationKey: row.configurationKey };
+    const setComposition = yield* setCompositionFromRow(row, tenantId);
+    const withSet = Option.isNone(setComposition)
+      ? configured
+      : { ...configured, setComposition: setComposition.value };
+    const revision: PackageContentRevision = next === undefined ? withSet : { ...withSet, lower: next };
+    if (!(yield* currentSetComposition(transaction, revision, scope))) {
+      return Option.none();
+    }
+    if (next === undefined) {
+      return Option.some([revision]);
+    }
+    const tail = yield* loadLower(transaction, content, scope, next.revision, new Set([...seen, lowerId]), at);
+    return Option.isNone(tail) ? Option.none() : Option.some([revision, ...tail.value]);
+  }, Effect.mapError(unavailable));
 
 /** All reads share Core's transaction and carry the trusted Tenant predicate. */
 export const packageContentBasisForTransaction = (transaction: ScopedTransaction, scope: OperationalScope) => ({

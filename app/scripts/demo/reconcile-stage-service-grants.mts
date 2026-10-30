@@ -4,8 +4,9 @@ import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   ActiveApplicationCompositionConfigLive,
@@ -142,7 +143,7 @@ const relationshipFrom = (
     resource: { objectId: resourceId, objectType: resourceType },
     subject: { object: { objectId: subjectId, objectType: subjectType }, optionalRelation: subjectRelation ?? '' },
   });
-const requestFor = (relationship: v1.Relationship) => {
+const requestFor = (relationship: v1.Relationship): Effect.Effect<v1.ReadRelationshipsRequest, ServiceGrantError> => {
   const { resource } = relationship;
   const subject = relationship.subject?.object;
   if (resource === undefined || subject === undefined || resource.objectId === '' || subject.objectId === '') {
@@ -256,6 +257,103 @@ export const desiredCompanyAdministratorWorkforceGrants = (): readonly v1.Relati
     ),
   );
 
+const GRANT_SCAN_PAGE_SIZE = 256;
+const GRANT_SCAN_MAX_PAGES = 128;
+
+const matchesGrantFilter = (relationship: v1.Relationship, filter: v1.RelationshipFilter) =>
+  relationship.resource?.objectType === filter.resourceType &&
+  relationship.relation === filter.optionalRelation &&
+  relationship.subject?.object?.objectType === filter.optionalSubjectFilter?.subjectType &&
+  relationship.subject?.object?.objectId === filter.optionalSubjectFilter?.optionalSubjectId;
+
+/** Cursor hashes include consistency: acquire a fresh revision before starting the exact-snapshot scan. */
+const readGrantRevision = (rpc: ServiceGrantRpc, relationshipFilter: v1.RelationshipFilter) =>
+  Effect.gen(function* readGrantRevisionEffect() {
+    const rows = yield* rpc.readRelationships(
+      v1.ReadRelationshipsRequest.create({
+        consistency: consistent,
+        optionalLimit: 1,
+        relationshipFilter,
+      }),
+    );
+    if (rows.length === 0) {
+      return Option.none<v1.ZedToken>();
+    }
+    const [first] = rows;
+    if (rows.length !== 1 || first.readAt === undefined || first.readAt.token === '') {
+      return yield* new ServiceGrantError({ reason: 'Service grant scan has no verifiable read revision' });
+    }
+    return Option.some(first.readAt);
+  });
+
+/** Bound each type/relation scan to one desired subject, never the entire stage population. */
+const readGrantSlice = (rpc: ServiceGrantRpc, relationshipFilter: v1.RelationshipFilter) =>
+  Effect.gen(function* readGrantSliceEffect() {
+    const present = new Set<string>();
+    const cursors = new Set<string>();
+    const revision = yield* readGrantRevision(rpc, relationshipFilter);
+    if (Option.isNone(revision)) {
+      return present;
+    }
+    let cursor: v1.Cursor | undefined;
+    for (let page = 0; page < GRANT_SCAN_MAX_PAGES; page += 1) {
+      const rows = yield* rpc.readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency: { requirement: { atExactSnapshot: revision.value, oneofKind: 'atExactSnapshot' } },
+          optionalCursor: cursor,
+          optionalLimit: GRANT_SCAN_PAGE_SIZE,
+          relationshipFilter,
+        }),
+      );
+      if (rows.length > GRANT_SCAN_PAGE_SIZE) {
+        return yield* new ServiceGrantError({ reason: 'Service grant scan exceeded its page limit' });
+      }
+      for (const row of rows) {
+        const { readAt, relationship } = row;
+        if (
+          readAt === undefined ||
+          readAt.token.length === 0 ||
+          readAt.token !== revision.value.token ||
+          relationship === undefined ||
+          !matchesGrantFilter(relationship, relationshipFilter)
+        ) {
+          return yield* new ServiceGrantError({ reason: 'Service grant scan returned unverifiable evidence' });
+        }
+        if (relationship.optionalCaveat === undefined && relationship.optionalExpiresAt === undefined) {
+          present.add(tupleKey(relationship));
+        }
+      }
+      if (rows.length < GRANT_SCAN_PAGE_SIZE) {
+        return present;
+      }
+      cursor = rows.at(-1)?.afterResultCursor;
+      if (cursor === undefined || cursor.token.length === 0 || cursors.has(cursor.token)) {
+        return yield* new ServiceGrantError({ reason: 'Service grant scan did not advance' });
+      }
+      cursors.add(cursor.token);
+    }
+    return yield* new ServiceGrantError({ reason: 'Service grant scan exceeded its page budget' });
+  });
+
+export const readMissingServiceGrants = (rpc: ServiceGrantRpc, desired: readonly v1.Relationship[]) =>
+  Effect.gen(function* readMissingServiceGrantsEffect() {
+    const filters = new Map<string, v1.RelationshipFilter>();
+    for (const relationship of desired) {
+      const request = yield* requestFor(relationship);
+      const filter = request.relationshipFilter;
+      if (filter === undefined || filter.resourceType === '' || filter.optionalRelation === '') {
+        return yield* new ServiceGrantError({ reason: 'Refusing an unscoped service grant scan' });
+      }
+      const slice = v1.RelationshipFilter.create({ ...filter, optionalResourceId: '' });
+      filters.set(v1.RelationshipFilter.toJsonString(slice), slice);
+    }
+    const slices = yield* Effect.forEach([...filters.values()], (filter) => readGrantSlice(rpc, filter), {
+      concurrency: 8,
+    });
+    const present = new Set(slices.flatMap((slice) => [...slice]));
+    return desired.filter((relationship) => !present.has(tupleKey(relationship)));
+  });
+
 export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(function* reconcileServiceGrantsEffect(
   rpc: ServiceGrantRpc,
   desired: readonly v1.Relationship[],
@@ -276,12 +374,7 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
       yield* Console.log(reason);
     }
   }
-  const missing: v1.Relationship[] = [];
-  for (const relationship of desired) {
-    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(relationship)), relationship)) {
-      missing.push(relationship);
-    }
-  }
+  const missing = yield* readMissingServiceGrants(rpc, desired);
   yield* Console.log(`Service grants ${mode}: desired=${desired.length} missing=${missing.length}`);
   if (mode === 'verify' && missing.length > 0) {
     return yield* new ServiceGrantError({ reason: `${missing.length} service grants are missing` });
@@ -296,14 +389,48 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
       ),
     }),
   );
-  for (const relationship of desired) {
-    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(relationship)), relationship)) {
-      return yield* new ServiceGrantError({ reason: 'A service grant could not be verified after apply' });
-    }
+  if ((yield* readMissingServiceGrants(rpc, desired)).length > 0) {
+    return yield* new ServiceGrantError({ reason: 'A service grant could not be verified after apply' });
   }
   yield* Console.log(`Service grants verified: desired=${desired.length} applied=${missing.length} missing=0`);
   return { applied: missing.length, desired: desired.length, missing: 0 };
 });
+
+/** Run only after native principal/account provisioning; the remaining grant writes are SpiceDB-only. */
+export const verifyDatabaseAndReconcileServiceGrants = <E, R>(
+  rpc: ServiceGrantRpc,
+  desired: readonly v1.Relationship[],
+  verify: Effect.Effect<void, E, R>,
+) => Effect.all([verify, reconcileServiceGrants(rpc, desired, 'apply')], { concurrency: 2, discard: true });
+
+/**
+ * Deploy credentials the grant reconciliation reads; the owner verifiers it fans out to never need them, so the child
+ * inherits the environment without them (Node omits undefined variables).
+ */
+const VERIFY_WITHHELD_ENVIRONMENT = Object.fromEntries(
+  [
+    'ALL_RELEASE_SECRETS_FILE',
+    'BETTER_AUTH_SECRET',
+    'ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN',
+    'ZEROPS_TOKEN',
+  ].map((name) => [name, undefined]),
+);
+
+const verifyStageDatabase = Effect.gen(function* verifyStageDatabaseEffect() {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const code = yield* spawner.exitCode(
+    ChildProcess.make(process.execPath, [new URL('../verify-application-db-schema.mts', import.meta.url).pathname], {
+      env: VERIFY_WITHHELD_ENVIRONMENT,
+      extendEnv: true,
+      stderr: 'inherit',
+      stdout: 'inherit',
+    }),
+  );
+  if (code !== ChildProcessSpawner.ExitCode(0)) {
+    return yield* new ServiceGrantError({ reason: 'Application database verification failed' });
+  }
+  return yield* Effect.void;
+}).pipe(Effect.scoped);
 
 const escapeWorkflowValue = (value: string): string =>
   value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
@@ -362,13 +489,17 @@ const command = Command.make(
     apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)),
     check: Flag.Boolean('check').pipe(Flag.withDefault(false)),
     verify: Flag.Boolean('verify').pipe(Flag.withDefault(false)),
+    verifyDatabase: Flag.Boolean('verify-database').pipe(Flag.withDefault(false)),
     zerops: Flag.Boolean('zerops').pipe(Flag.withDefault(false)),
   },
-  ({ apply, check, verify, zerops }) =>
+  ({ apply, check, verify, verifyDatabase, zerops }) =>
     Effect.scoped(
       Effect.gen(function* reconcileStageServiceGrantsCommand() {
         if ([apply, check, verify].filter(Boolean).length > 1) {
           return yield* new ServiceGrantError({ reason: 'Select only one of --check, --apply or --verify' });
+        }
+        if (verifyDatabase && !apply) {
+          return yield* new ServiceGrantError({ reason: '--verify-database requires --apply' });
         }
         const configuration = yield* zerops ? zeropsConfiguration : environmentConfiguration;
         if (configuration.deploymentEnvironment !== 'stage' || configuration.endpoint !== 'spicedb:50051') {
@@ -420,7 +551,10 @@ const command = Command.make(
           catch: () => new ServiceGrantError({ reason: 'Published scoped service policy is invalid' }),
           try: () => [...desiredServiceGrants(actions), ...desiredCompanyAdministratorWorkforceGrants()],
         });
-        return yield* reconcileServiceGrants(rpc, [...desired, ...verificationGrants], mode);
+        const grants = [...desired, ...verificationGrants];
+        return yield* verifyDatabase
+          ? verifyDatabaseAndReconcileServiceGrants(rpc, grants, verifyStageDatabase)
+          : reconcileServiceGrants(rpc, grants, mode).pipe(Effect.asVoid);
       }),
     ).pipe(Effect.tapError(reportFailure)),
 );

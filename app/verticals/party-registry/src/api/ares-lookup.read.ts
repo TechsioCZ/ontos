@@ -17,11 +17,14 @@ import type {
   AresSubjectServiceContract,
 } from '../integrations/ares/ares-subject.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+const ARES_LOOKUP_UNAVAILABLE_REASON = 'ARES lookup is temporarily unavailable' as const;
+
 export const aresLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.ares-lookup',
-  moduleKey: 'party.registry',
+  moduleKey: PARTY_REGISTRY_MODULE_ID,
   role: 'api',
 });
 
@@ -40,7 +43,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -80,7 +83,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -90,7 +93,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -100,7 +103,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -119,7 +122,7 @@ export const aresLookupRead = defineRead(
     },
     inputSchema: AresLookupRequestSchema,
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.ares-lookup',

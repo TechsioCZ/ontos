@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { dialogCloseLabel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -23,6 +24,7 @@ interface ResetDemoDialogProps {
  * baseline (six sample orders). The server scopes the write to the signed-in company; nothing else changes.
  */
 export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDemoDialogProps) => {
+  const { t } = useModernI18n();
   const [typed, setTyped] = useState('');
   const [reason, setReason] = useState(DEFAULT_REASON);
   const [busy, setBusy] = useState(false);
@@ -92,12 +94,12 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
       open={open}
       role="alertdialog"
       size="sm"
-      title="Obnovit ukázková data AKROS?"
+      title={t('merchandise.ui.resetAkrosDemo')}
     >
       <div className="flex flex-col gap-200">
         <FormInput
           id="reset-demo-reason"
-          label="Důvod (zapíše se do auditu)"
+          label={t('merchandise.ui.auditReason')}
           maxLength={500}
           name="reason"
           onChange={(event) => setReason(event.target.value)}

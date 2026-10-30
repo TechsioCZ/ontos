@@ -7,8 +7,6 @@ import { Schema } from 'effect';
 import { ExternalIdentityVerificationRequestSchema } from '@app/core-runtime/auth/external-identity-provider';
 import { CommerceEnrollmentAuthenticationReferenceSchema } from './portal-auth-enrollment-reference.ts';
 
-export { COMMERCE_CUSTOMER_CONTEXT_API_PREFIX } from './deployment-paths.ts';
-
 export const COMMERCE_AUTHENTICATION_NAMESPACE_ID = 'ontos.commerce.portal.better-auth.v1';
 export const COMMERCE_ADMISSION_DEADLINE_MS = 5000;
 /**

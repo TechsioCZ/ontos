@@ -35,7 +35,7 @@ import type {
 } from '@app/customer-market-retirement-contracts';
 import { eq, sql } from 'drizzle-orm';
 import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { SignJWT } from 'jose';
 
@@ -56,6 +56,7 @@ import {
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
@@ -614,7 +615,7 @@ it.live(
           ),
         );
       }),
-    ),
+    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
   30_000,
 );
 
@@ -775,7 +776,7 @@ it.live(
           expect(one(reservations, 'native reservation count').count, scenario.label).toBe('0');
         }
       }),
-    ),
+    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
   30_000,
 );
 
@@ -915,6 +916,6 @@ it.live(
           ),
         ).toMatchObject({ code: 'LIVE_REFERENCE_CONFLICT', status: 409 });
       }),
-    ),
+    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
   30_000,
 );

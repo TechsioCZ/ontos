@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import { Config, Duration, Effect, Option, Redacted, Schema, Stream } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import type { HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
+import type { HttpClientResponse } from 'effect/http';
 
 import { ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY } from '../packages/core-runtime/src/modules/active-application-composition-edge.ts';
 import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../packages/core-runtime/src/modules/application-composition-limits.ts';

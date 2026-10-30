@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -118,7 +119,7 @@ describe('Product Variant target snapshot read (#757)', () => {
         },
       });
       expect(result.snapshotId).toMatch(/^[0-9a-f]{64}$/u);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps a captured target set fixed and changes its identity for a later Variant', () =>
@@ -150,7 +151,7 @@ describe('Product Variant target snapshot read (#757)', () => {
       expect(original.targets.map(({ targetId }) => targetId)).toEqual([variantId]);
       expect(later.snapshotId).not.toBe(original.snapshotId);
       expect(later.targets.map(({ targetId }) => targetId)).toEqual([variantId, secondVariantId]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects foreign Products and empty target sets without estimating a Variant', () =>
@@ -178,7 +179,7 @@ describe('Product Variant target snapshot read (#757)', () => {
         services({ capturedAt, productRevision: 7, variants: [] }),
       ).pipe(Effect.flip);
       expect(Schema.is(ReadHandlerNotFound)(empty)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails the complete snapshot when one exact target is not VALID', () =>
@@ -199,7 +200,7 @@ describe('Product Variant target snapshot read (#757)', () => {
         source: source({ capturedAt, productRevision: 7, variants: [{ variantId, variantRevision: 3 }] }),
       }).pipe(Effect.flip);
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when exact evidence revisions do not bind the source cut', () =>
@@ -214,7 +215,7 @@ describe('Product Variant target snapshot read (#757)', () => {
       }).pipe(Effect.flip);
 
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the target set drifts during evidence preparation', () =>
@@ -246,6 +247,6 @@ describe('Product Variant target snapshot read (#757)', () => {
 
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(reads).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

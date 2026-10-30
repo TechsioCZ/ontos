@@ -3,7 +3,7 @@
 // @ontos-action-http-slug retire-payment-term
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { RetirePaymentTermPayloadSchema, RetirePaymentTermResultSchema } from '../actions/retire-payment-term.ts';
 
 export { RetirePaymentTermPayloadSchema } from '../actions/retire-payment-term.ts';

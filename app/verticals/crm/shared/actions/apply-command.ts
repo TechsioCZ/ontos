@@ -7,10 +7,11 @@ import { CrmPersistenceUnavailable } from '../errors/crm-persistence-unavailable
 import { CrmReferenceUnavailable } from '../errors/crm-reference-unavailable.ts';
 import { CrmReferenceIneligible } from '../errors/crm-reference-ineligible.ts';
 import { CrmPermissionDenied } from '../errors/crm-permission-denied.ts';
+import { EntityIdSchema } from '../domain/common.ts';
 import { CrmCommandSchema } from '../commands/index.ts';
 
 export { CrmCommandSchema } from '../commands/index.ts';
-export type { CrmCommand } from '../commands/index.ts';
+export type { CrmCommand, CrmCommandInput } from '../commands/index.ts';
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: CrmCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -18,7 +19,7 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
 /** `entityIds[0]` is the created / primary affected entity. */
 export const ApplyCommandResultSchema = Schema.Struct({
-  entityIds: Schema.Array(Schema.String),
+  entityIds: Schema.Array(EntityIdSchema),
   revision: Schema.Int,
 });
 export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;

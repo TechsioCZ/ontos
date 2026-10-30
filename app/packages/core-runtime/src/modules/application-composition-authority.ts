@@ -341,6 +341,31 @@ export const sealApplicationCompositionAuthority = Effect.fn('ApplicationComposi
   },
 );
 
+/** Starts another migration pass without reopening any admission on the retired release. */
+export const resealMigratedApplicationCompositionAuthority = Effect.fn(
+  'ApplicationCompositionAuthority.resealMigrated',
+)(function* resealMigratedAuthority(transaction: CoreTransaction, expectedRevision: string) {
+  yield* lockApplicationCompositionPublication(transaction);
+  yield* requireDrainedWork(transaction);
+  const changed = yield* transaction
+    .update(applicationCompositionAuthority)
+    .set({ phase: 'sealed', updatedAt: sql`clock_timestamp()` })
+    .where(
+      and(
+        eq(applicationCompositionAuthority.authorityKey, 'active'),
+        eq(applicationCompositionAuthority.revision, expectedRevision),
+        eq(applicationCompositionAuthority.phase, 'migrated'),
+        eq(applicationCompositionAuthority.durableWorkAdmission, 'closed'),
+      ),
+    )
+    .returning({ revision: applicationCompositionAuthority.revision })
+    .pipe(Effect.mapError((cause) => unavailable('Application Composition resealing is unavailable', cause)));
+  if (changed.length !== 1) {
+    return yield* unavailable('Only the exact migrated and closed Application Composition can be resealed');
+  }
+  return yield* Effect.void;
+});
+
 /** Records verified native migration completion; the publisher holds its session lock throughout migration. */
 export const markApplicationCompositionMigrationComplete = Effect.fn('ApplicationCompositionAuthority.markMigrated')(
   function* markApplicationCompositionMigrationCompleteEffect(transaction: CoreTransaction, expectedRevision: string) {

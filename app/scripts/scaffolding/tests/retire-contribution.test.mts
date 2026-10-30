@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
 import { insertSortedSlot, readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';

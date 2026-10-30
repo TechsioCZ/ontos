@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -176,7 +177,7 @@ describe('Revise Product Type Action contract', () => {
         producerModuleKey: 'commerce.catalog',
         topic: 'commerce.catalog.selection-source-changed.v1',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps an absent or changed owner basis to the declared stale conflict', () =>
@@ -201,7 +202,7 @@ describe('Revise Product Type Action contract', () => {
       expect(failure).toMatchObject({ code: 'product_type_stale_basis', reason: 'Cart population changed' });
       expect(events).toHaveLength(0);
       expect(outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails the transaction without an event when a revised outcome does not prove a Current change', () =>
@@ -226,7 +227,7 @@ describe('Revise Product Type Action contract', () => {
       expect(failure).toBeInstanceOf(CatalogPersistenceUnavailable);
       expect(events).toHaveLength(0);
       expect(outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preserves unavailable owner evidence as a typed retryable domain failure', () =>
@@ -240,7 +241,7 @@ describe('Revise Product Type Action contract', () => {
       );
       expect(actual).toBe(failure);
       expect(Schema.is(reviseProductTypeAction.descriptor.domainErrorSchema)(actual)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('declares stale basis and owner/persistence unavailability under the Action lifecycle', () => {

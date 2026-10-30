@@ -4,7 +4,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { PriceScheduleAcknowledgementSchema } from '@app/pricing-contracts/domain/price-schedule';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { RevisePricePayloadSchema, RevisePriceResultSchema } from '../actions/revise-price.ts';
 
 export { RevisePricePayloadSchema } from '../actions/revise-price.ts';

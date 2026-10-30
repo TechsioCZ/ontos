@@ -20,10 +20,11 @@ jobs:
   # in the middle of a deploy. GitHub keeps one pending job per concurrency group and cancels the older
   # pending one when another queues, so a refresh that queued behind a running deploy would cancel the
   # deploy job pending after it. A deploy re-publishes the composition anyway, and validity outlasts
-  # three refresh intervals, so a refresh that finds a main deploy run in flight yields to it. This job
+  # three refresh intervals, so a refresh that finds a deploy run in flight yields to it: a main deploy run,
+  # or a sales demo deploy run, whose release job takes the stage lock right after its plan. This job
   # sits outside the lock so it never queues there itself.
   deploy-guard:
-    name: Yield the refresh to a main deploy in flight
+    name: Yield the refresh to a deploy in flight
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -37,24 +38,25 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Find unfinished main deploy runs
+      - name: Find unfinished deploy runs
         id: active
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        # A push to main deploys stage; a dispatch deploys stage or production.
+        # A push to main deploys stage; a dispatch deploys stage or production. Every sales demo deploy run
+        # (push or dispatch, profile recovery included) takes the stage lock only.
         run: |
           unfinished() {
-            gh run list --workflow ultramodern-workspace-gates.yml --branch main --event "$1" --limit 20 \
-              --json status --jq '[.[] | select(.status != "completed")] | length'
+            gh run list "$@" --limit 20 --json status --jq '[.[] | select(.status != "completed")] | length'
           }
-          pushes="$(unfinished push)"
-          dispatches="$(unfinished workflow_dispatch)"
+          pushes="$(unfinished --workflow ultramodern-workspace-gates.yml --branch main --event push)"
+          dispatches="$(unfinished --workflow ultramodern-workspace-gates.yml --branch main --event workflow_dispatch)"
+          demo="$(unfinished --workflow stage-demo-deploy.yml --branch demo/sales-crm)"
           stage=false
           production=false
-          if (( pushes + dispatches > 0 )); then
+          if (( pushes + dispatches + demo > 0 )); then
             stage=true
-            echo "::notice title=Stage refresh skipped::A main deploy run is unfinished; it re-publishes the stage composition."
+            echo "::notice title=Stage refresh skipped::A stage deploy run is unfinished; a deploying run re-publishes the stage composition."
           fi
           if (( dispatches > 0 )); then
             production=true

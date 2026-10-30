@@ -185,7 +185,7 @@ export const runStockSharingLifecycleAcceptance = Effect.gen(function* runStockS
           verification: 'OWNER_VERIFIED_CURRENT' as const,
         }),
     },
-    makeEligibilityId: () => '66666666-6666-4666-8666-666666666666',
+    makeEligibilityId: Effect.succeed('66666666-6666-4666-8666-666666666666'),
     persistence,
   });
 

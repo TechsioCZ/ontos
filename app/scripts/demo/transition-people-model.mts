@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { inArray, sql } from 'drizzle-orm';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import {
   Array as EffectArray,
   Config,
@@ -20,8 +20,8 @@ import {
   Result,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import type { CoreTransaction } from '../../packages/core-runtime/src/db/types.ts';
 import { PrincipalRefSchema } from '../../packages/core-runtime/src/permissions/principal-ref.ts';
@@ -957,13 +957,8 @@ const command = Command.make(
     stageFile: Flag.String('stage-file'),
     stageSha256: Flag.String('stage-sha256').pipe(Flag.optional),
   },
-  (args) =>
-    program(args).pipe(
-      Effect.mapError(safeExecutableFailure),
-      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Executable operator composition root; --help must not acquire services.
-      Effect.provide(live),
-    ),
-);
+  (args) => program(args).pipe(Effect.mapError(safeExecutableFailure)),
+).pipe(Command.provide(live));
 if (import.meta.main) {
   await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));
 }

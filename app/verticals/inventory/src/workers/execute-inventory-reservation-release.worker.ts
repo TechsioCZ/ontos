@@ -3,12 +3,14 @@
 // @ontos-outbox-worker-owner commerce.inventory
 // @ontos-outbox-worker-producer commerce.inventory
 // @ontos-outbox-worker-topic commerce.inventory.inventory-reservation-release-requested.v1
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { defineOutboxWorkerCompletion, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { Context, DateTime, Effect, Match, Ref, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import type { OutboxPayload } from '@app/inventory/outbox/commerce-inventory-inventory-reservation-release-requested-v1';
 import {
   OutboxPayloadSchema,
@@ -65,9 +67,9 @@ const reconciliationRedispatch = defineOutboxWorkerCompletion({
 });
 
 const redispatchId = (context: OutboxWorkerHandlerContext, request: OutboxPayload['request']) => {
-  const digest = createHash('sha256')
-    .update(`${context.deliveryId}\u0000${request.mutationId}\u0000reservation-release-reconciliation`)
-    .digest('hex');
+  const digest = Hex.encode(
+    sha256(utf8ToBytes(`${context.deliveryId}\u0000${request.mutationId}\u0000reservation-release-reconciliation`)),
+  );
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 };
 

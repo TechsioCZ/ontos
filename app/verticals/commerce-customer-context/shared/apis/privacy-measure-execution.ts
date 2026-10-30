@@ -3,7 +3,7 @@
 /* jscpd:ignore-start -- Owner-local protocol code intentionally mirrors its peer owner while preserving separate deployment and persistence authority. */
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
 
 const IdempotencyKeySchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(

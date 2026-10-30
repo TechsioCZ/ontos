@@ -16,9 +16,9 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess } from 'effect/unstable/process';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess } from 'effect/process';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { parse as parseYaml } from 'yaml';
 
 import {

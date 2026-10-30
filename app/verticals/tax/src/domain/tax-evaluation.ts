@@ -1,7 +1,11 @@
 import { Array as Arr, Option, Order, Result, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
-import { SellerVatRegimeNotDeclaredSchema, evaluateLaunchTaxCoverage } from './launch-coverage.ts';
+import {
+  SellerVatRegimeNotDeclaredSchema,
+  evaluateLaunchTaxCoverage,
+  requireLaunchCurrency,
+} from './launch-coverage.ts';
 import type { LaunchTaxCoverageFailure } from './launch-coverage.ts';
 import type { PurchaseDemandOccurrence } from '../../shared/domain/tax-kernel/purchase-binding.ts';
 import { SELLER_NOT_VAT_PAYER_LEGAL_BASIS, SellerVatRegimeDeclaredSchema } from './seller-vat-regime-timeline.ts';
@@ -27,6 +31,7 @@ import type {
   TaxableDecisionUnit,
 } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import type { TaxEvaluationRequest } from './tax-evaluation-request.ts';
+import { establishSupportedTaxCase } from './tax-evaluation-request.ts';
 import { determineTaxJurisdiction } from './tax-jurisdiction.ts';
 import type { TaxJurisdictionDetermination } from './tax-jurisdiction.ts';
 import { TaxCaseUnsupportedSchema, TaxStateIndeterminateSchema } from './tax-non-success-outcome.ts';
@@ -96,7 +101,7 @@ const classifyOccurrence = (
   request: TaxEvaluationRequest,
   occurrence: PurchaseDemandOccurrence,
 ): Evaluated<TaxClassification> => {
-  const entry = request.catalog.find(({ occurrenceId }) => occurrenceId === occurrence.occurrenceId);
+  const entry = request.catalog?.find(({ occurrenceId }) => occurrenceId === occurrence.occurrenceId);
   return entry === undefined
     ? indeterminate()
     : classifyCatalogSelection(entry.classificationInput, launchTaxClassificationInterpretation);
@@ -472,7 +477,8 @@ export interface TaxEvaluationVerdict {
 /**
  * Prospective Launch Tax evaluation of one structurally bound request over one coherent TAX own state (#942, #937,
  * #941 F6). Evaluated parts, in order: place jurisdiction (scope is decided before the seller prerequisite,
- * #938 F7), Launch coverage (currency, regime, supply mapping, seller declaration), consistency of the published
+ * #938 F7), currency, purchase-scoped eligibility and Launch coverage (regime, treatment, supply mapping, seller
+ * declaration), independent supply scope, consistency of the published
  * line amount basis, then per unit in canonical order the published line and, for a VAT_PAYER seller only, the
  * classification and the complete applicable rule set, and the owner-issued Shipping charge's own source check
  * (Current and CZK; independent of the unit meanings; ignored, not an error, for a NON_PAYER seller). A NET or GROSS
@@ -490,13 +496,18 @@ export const evaluateProspectiveLaunchTax = (
     Arr.sort(request.purchase.purchaseDemandOccurrences, byOccurrenceId),
     Arr.map((occurrence) => supplyMeaningOf(request, occurrence)),
   );
-  const coverage = evaluateLaunchTaxCoverage({
-    currency: request.purchase.currency,
-    requiredTaxRegimes: ['ORDINARY_DOMESTIC'],
-    requiredTaxTreatments: ['TAXABLE'],
-    sellerVatRegime: ownState.sellerVatRegime,
-    supplyMeanings,
-  });
+  const coverage = pipe(
+    establishSupportedTaxCase(request),
+    Result.flatMap(({ requiredTaxRegimes, requiredTaxTreatments }) =>
+      evaluateLaunchTaxCoverage({
+        currency: request.purchase.currency,
+        requiredTaxRegimes,
+        requiredTaxTreatments,
+        sellerVatRegime: ownState.sellerVatRegime,
+        supplyMeanings,
+      }),
+    ),
+  );
   const jurisdiction = determineTaxJurisdiction(request.places);
   const units = mapTaxableSupplyUnits(supplyMeanings);
   const declaredSellerVatRegime = isDeclaredSellerVatRegime(ownState.sellerVatRegime)
@@ -527,7 +538,9 @@ export const evaluateProspectiveLaunchTax = (
       : Result.void;
   const parts: readonly AnyEvaluated[] = [
     jurisdiction,
+    requireLaunchCurrency(request.purchase.currency),
     coverage,
+    units,
     lineBasis,
     ...taxableMeanings,
     ...nonPayerMeanings,

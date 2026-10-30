@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
@@ -251,7 +252,7 @@ describe('Controlled value persistence lifecycle', () => {
       ]);
       expect(sets.get(p1)?.attributeDefinitionId).toBe(definitionId);
       expect(sets.get(p2)?.attributeDefinitionId).toBe(definitionId);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preserves P1 and V1 history while retirement gates only new Product and Variant assignments', () =>
@@ -507,6 +508,6 @@ describe('Controlled value persistence lifecycle', () => {
       expect((yield* assign(p2, 'assign-v2-active', v2)).state).toBe('SET');
       expect(writes.every(([table]) => table !== products && table !== productVariants)).toBe(true);
       expect(sets[0]).toMatchObject({ currentState: 'SET', productId: p1 });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

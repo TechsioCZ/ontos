@@ -59,9 +59,10 @@ it.effect('preserves a separate recipient through native command decoding, place
       deliveryRecipient: recipient,
     };
     expect(order).toMatchObject(expected);
-    const row = orderRowOf({ legalEntityId: 'company-1', tenantId: actor.tenantId }, order);
+    const row = yield* orderRowOf({ legalEntityId: 'company-1', tenantId: actor.tenantId }, order);
     expect(row.document).toMatchObject(expected);
-    expect(decodeOrderDocument(row.document)).toMatchObject(expected);
+    const storedOrder = yield* decodeOrderDocument(row.document);
+    expect(storedOrder).toMatchObject(expected);
 
     const replayed = yield* evolveMerchandiseState(
       placed.state,

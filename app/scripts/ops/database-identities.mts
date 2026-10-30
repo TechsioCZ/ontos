@@ -3,9 +3,9 @@ import { randomBytes } from 'node:crypto';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, Console, Context, Effect, FileSystem, Layer, Option, Redacted } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
-import type { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
+import type { Reactivity } from 'effect/reactivity';
 
 import { ensureDatabaseLoginRole } from '../postgres/database-login-roles.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';

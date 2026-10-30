@@ -1,13 +1,16 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, Effect } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Explicit CRM assignment, independent of kind, affiliation or role names. The governed people directory
 // supplies existing principals; account access remains in Lidé a role.
 import { SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect } from 'effect';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const REQUEST_TIMEOUT = '30 seconds';
@@ -21,14 +24,13 @@ export const TeamPanel = ({
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- React panel receives the existing parent event adapter; remove-when: CRM parent exposes Effect commands.
-  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
+  readonly submit: CrmCommandSubmit;
 }) => {
+  const { t } = useModernI18n();
   const toaster = useToast();
-  const run = (command: CrmCommand, success: string) => {
+  const run = (command: CrmCommandInput, success: string) => {
     browserRuntime.runFork(
-      // oxlint-disable-next-line typescript/promise-function-async -- Native parent React event adapter is already Promise-based; remove-when: parent exposes an Effect command.
-      Effect.promise(() => submit(command)).pipe(
+      submit(command).pipe(
         Effect.timeout(REQUEST_TIMEOUT),
         Effect.andThen((outcome) =>
           Effect.sync(() => {
@@ -68,7 +70,7 @@ export const TeamPanel = ({
       open
       resizeLabel="Změnit šířku panelu"
       size="md"
-      title="Obchodníci"
+      title={t('crm.ciClientsVisits.clients.salespeople')}
     >
       <div className="flex flex-col gap-250 py-100">
         <ul className="flex flex-col gap-100">
@@ -92,7 +94,9 @@ export const TeamPanel = ({
                     {[
                       person.email,
                       `${formatNumber(owned)} aktivních klientů`,
-                      person.registeredAt === undefined ? undefined : `zařazen ${formatDate(person.registeredAt)}`,
+                      person.registeredAt === undefined
+                        ? undefined
+                        : `zařazen ${pipe(person.registeredAt, orderDateText, formatDate)}`,
                     ]
                       .filter((part) => part !== undefined)
                       .join(' · ')}

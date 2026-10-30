@@ -386,10 +386,10 @@ export const OpportunityFormDialog = ({
 interface StageDialogProps {
   readonly busy: boolean;
   readonly currentStage?: OpportunityStage | undefined;
-  readonly selectedStages?: readonly OpportunityStage[] | undefined;
   readonly description: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSubmit: (stage: OpportunityStage, note: string | undefined) => void;
+  readonly selectedStages?: readonly OpportunityStage[] | undefined;
   readonly serverError?: string | undefined;
   readonly showNote: boolean;
 }
@@ -398,10 +398,10 @@ interface StageDialogProps {
 export const StageDialog = ({
   busy,
   currentStage,
-  selectedStages,
   description,
   onOpenChange,
   onSubmit,
+  selectedStages,
   serverError,
   showNote,
 }: StageDialogProps) => {

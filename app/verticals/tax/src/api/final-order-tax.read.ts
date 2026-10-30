@@ -19,7 +19,7 @@ interface FinalOrderTaxServices {
 }
 
 const finalOrderTaxEntrypoint = defineTenantModuleEntrypoint({
-  access: 'read',
+  access: 'historical_read',
   authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
   entrypointKey: 'commerce.tax.api.final-order-tax',
   moduleKey: MODULE_KEY,

@@ -1,8 +1,9 @@
 // Sign-in round trip for protected deep links: the module page sends an anonymous visitor to the login page with
 // the page it asked for, and the login page returns there after a successful sign-in.
 import { throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
-import { Option, Schema } from 'effect';
-import { Url, UrlParams } from 'effect/unstable/http';
+import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
+import { Effect, Option, Predicate, Schema } from 'effect';
+import { Url, UrlParams } from 'effect/http';
 
 const SignInRouteSearch = Schema.Struct({
   returnTo: Schema.optionalKey(Schema.String),
@@ -19,14 +20,21 @@ const isSafeReturnPath = (path: string, language: string): boolean =>
 export const signInReasons = ['account_forbidden', 'session_ended'] as const;
 export type SignInReason = (typeof signInReasons)[number];
 const SignInReasonSchema = Schema.Literals(signInReasons);
+const SignInLinkSearchSchema = Schema.Struct({
+  reason: Schema.optionalKey(SignInReasonSchema),
+  returnTo: Schema.optionalKey(Schema.String),
+});
 
 /** Login page URL that returns to `path` after sign-in, or the plain login page when `path` is not returnable. */
 export const signInHref = (language: string, path: string, reason?: SignInReason): string => {
   const login = `/${language}/login`;
-  const params = {
-    ...(isSafeReturnPath(path, language) ? { returnTo: path } : {}),
-    ...(reason === undefined ? {} : { reason }),
-  };
+  let params: typeof SignInLinkSearchSchema.Type = {};
+  if (isSafeReturnPath(path, language)) {
+    params = { ...params, returnTo: path };
+  }
+  if (reason !== undefined) {
+    params = { ...params, reason };
+  }
   return Object.keys(params).length === 0 ? login : `${login}?${UrlParams.toString(params)}`;
 };
 
@@ -72,3 +80,26 @@ export const signInReturnPath = (href: string, language: string): string | undef
   );
   return search.returnTo !== undefined && isSafeReturnPath(search.returnTo, language) ? search.returnTo : undefined;
 };
+
+/** Returns to a protected deep link after sign-in, or Home when that saved page no longer exists. */
+export const openSignedInPage = Effect.fn('SignInReturn.openSignedInPage')(function* openSignedInPageEffect(
+  router: Pick<AnyRouter, 'clearCache' | 'navigate' | 'state'>,
+  href: string,
+  language: string,
+) {
+  // Cached pages may still contain anonymous loader data from before sign-in.
+  router.clearCache();
+  const returnPath = signInReturnPath(href, language);
+  yield* Effect.tryPromise(() =>
+    router.navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath }),
+  );
+  if (
+    returnPath !== undefined &&
+    router.state.matches.some(
+      ({ loaderData }) => Predicate.hasProperty(loaderData, 'state') && loaderData.state === 'not_found',
+    )
+  ) {
+    // Replace the missing page so Back does not reopen the same broken destination.
+    yield* Effect.tryPromise(() => router.navigate({ replace: true, to: `/${language}/` }));
+  }
+}, Effect.timeout('10 seconds'));

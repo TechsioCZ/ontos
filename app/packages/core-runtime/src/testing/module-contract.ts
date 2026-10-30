@@ -1,6 +1,8 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { Clock, DateTime, Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { moduleReleaseWorkerName } from '../http/module-release-identity.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../modules/active-application-composition.ts';
@@ -74,7 +76,7 @@ export const makeModuleContractFixture = <Subscription extends object = never>({
   schemaVersion: '2' as const,
 });
 
-const digest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+const digest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
 const contractJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const shellRuntimeJsonSchema = Schema.fromJsonString(OntosShellRuntimeContractSchema);
 const fixtureShellOrigin = 'https://shell-fixture.example';
@@ -97,7 +99,7 @@ const buildCompositionSnapshotFixture = function* buildCompositionSnapshotFixtur
         makeModuleContractFixture({ appId, buildMarker, moduleId }),
       );
       const contractDocument = yield* Schema.encodeEffect(contractJsonSchema)(document);
-      const sha256 = digest(contractDocument);
+      const contractSha256 = digest(contractDocument);
       const workerName = yield* moduleReleaseWorkerName(appId, document.deployment.buildMarker);
       const versionId = yield* Schema.decodeEffect(
         ApplicationCompositionCloudflareWorkerBackendSchema.fields.versionId,
@@ -110,13 +112,13 @@ const buildCompositionSnapshotFixture = function* buildCompositionSnapshotFixtur
           versionId,
           workerName,
         },
-        contract: { sha256, url: `https://${appId}.example/.well-known/ontos-module-manifest.json` },
+        contract: { sha256: contractSha256, url: `https://${appId}.example/.well-known/ontos-module-manifest.json` },
         contractDocument,
         dependencies: [],
         deployment: document.deployment,
         federation: { execution: 'server' },
         moduleId,
-        publicContract: { id: moduleId, sha256, version: document.schemaVersion },
+        publicContract: { id: moduleId, sha256: contractSha256, version: document.schemaVersion },
         requiredCoreCapabilities: [],
         requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
         sharedSingletons: [],

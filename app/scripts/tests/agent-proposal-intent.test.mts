@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, Exit, FileSystem, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
-import type { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { prepareAgentPlatformBatch, SubmissionIntentSchema } from '../demo/prepare-agent-platform-batch.mts';

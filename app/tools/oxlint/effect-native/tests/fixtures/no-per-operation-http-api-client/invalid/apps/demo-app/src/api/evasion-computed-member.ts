@@ -2,7 +2,7 @@
 // EVASION: a literal-string computed member is statically resolvable but `effectMember` and
 // `constructorText` both bail on `computed`.
 import { Effect } from 'effect';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 export const readiness = (baseUrl: string) =>

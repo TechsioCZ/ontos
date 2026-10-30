@@ -1,9 +1,9 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { EmployeeIdSchema } from '../shared/resources/employee.ts';

@@ -14,6 +14,7 @@ import {
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
 import { Effect, Option, Predicate, Ref, Schema } from 'effect';
+import type { Crypto } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
@@ -87,7 +88,7 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
   ): Effect.fn.Return<
     void,
     DraftInvoiceFromWonOpportunityRejected,
-    OpportunityInvoiceLedger | OutboxWorkerLegalEntityScopeFanout
+    Crypto.Crypto | OpportunityInvoiceLedger | OutboxWorkerLegalEntityScopeFanout
   > {
     if (!deliveryMatchesWorker(context)) {
       return yield* rejected(

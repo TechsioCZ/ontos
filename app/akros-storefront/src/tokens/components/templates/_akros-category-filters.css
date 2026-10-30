@@ -1,0 +1,19 @@
+[data-akros-category-filters] {
+  --height-form-control-sm: var(--dimension-60);
+  --text-input-sm: var(--dimension-20);
+  --text-label-sm: var(--dimension-20);
+  --text-select-trigger-sm: var(--dimension-20);
+  --text-select-value-sm: var(--dimension-20);
+  --text-button-sm: var(--dimension-20);
+  --font-weight-input: var(--font-weight-medium);
+  --font-weight-label: var(--font-weight-medium);
+  --border-width-form-control: 2px;
+  --border-width-input: var(--border-width-form-control);
+  --radius-input-sm: var(--dimension-8);
+  --padding-input-sm: var(--dimension-24);
+  --padding-button-sm: var(--dimension-16);
+  --color-input-border-base: var(--color-base-dark);
+  --color-input-border-hover: var(--color-base-dark);
+  --color-form-control-border: var(--color-base-dark);
+  --color-select-trigger-border: var(--color-base-dark);
+}

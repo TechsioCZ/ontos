@@ -1,6 +1,6 @@
 import { GatewayAssertionRedemptionUnavailableError } from '@app/core-runtime';
 import { Effect } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 // The HTTP admission seam converts only native SQL settlement defects. Every other defect
 // retains its original Cause for the framework's outer instrumentation boundary.

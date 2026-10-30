@@ -311,8 +311,8 @@ it('percent price changes round half-up to whole CZK', () => {
 
 it('order totals keep VAT per line in whole minor units', () => {
   const totals = orderTotals([
-    { productId: productIdOf('p'), productName: 'A', quantity: 1, sku: 'A', unitPriceMinor: 1050, vatRate: 21 },
-    { productId: productIdOf('p'), productName: 'B', quantity: 1, sku: 'B', unitPriceMinor: 1000, vatRate: 0 },
+    { quantity: 1, unitPriceMinor: 1050, vatRate: 21 },
+    { quantity: 1, unitPriceMinor: 1000, vatRate: 0 },
   ]);
   // 1050 at 21 % is 220.5, rounded half-up to 221; the 0 % line adds nothing.
   expect(totals).toEqual({ totalMinor: 2271, totalVatMinor: 221 });
@@ -386,16 +386,14 @@ it('metadata rejects negative, fractional and excessive measurements and unnamed
 });
 
 it('unit gross prices use the same half-up VAT arithmetic for zero and non-zero rates', () => {
-  expect(
-    orderTotals([
-      { productId: productIdOf('p'), productName: 'A', quantity: 1, sku: 'A', unitPriceMinor: 1050, vatRate: 21 },
-    ]),
-  ).toEqual({ totalMinor: 1271, totalVatMinor: 221 });
-  expect(
-    orderTotals([
-      { productId: productIdOf('p'), productName: 'A', quantity: 1, sku: 'A', unitPriceMinor: 1050, vatRate: 0 },
-    ]),
-  ).toEqual({ totalMinor: 1050, totalVatMinor: 0 });
+  expect(orderTotals([{ quantity: 1, unitPriceMinor: 1050, vatRate: 21 }])).toEqual({
+    totalMinor: 1271,
+    totalVatMinor: 221,
+  });
+  expect(orderTotals([{ quantity: 1, unitPriceMinor: 1050, vatRate: 0 }])).toEqual({
+    totalMinor: 1050,
+    totalVatMinor: 0,
+  });
 });
 
 it.effect('CreateProduct retains informational metadata and encodes optional measurements', () =>

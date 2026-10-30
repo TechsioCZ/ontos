@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Fiber, Order, Schema } from 'effect';

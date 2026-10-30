@@ -44,9 +44,7 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   Effect.gen(function* makeRedemption() {
     const executor = yield* makeWithDefaults({ relations: financeRelations });
     return {
-      consume: Effect.fn('finance-billing.redeemAssertion')(function* consume(
-        input: GatewayAssertionRedemptionInput,
-      ) {
+      consume: Effect.fn('finance-billing.redeemAssertion')(function* consume(input: GatewayAssertionRedemptionInput) {
         const now = yield* Clock.currentTimeMillis;
         if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(now / 1000)) {
           return yield* replay();

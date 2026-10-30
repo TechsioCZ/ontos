@@ -2,7 +2,6 @@ import "server-only";
 import { readRecords } from "./gateway";
 
 import { orderStatusLabels, type OntosOrderStatus } from "./order-model";
-export { orderStatusLabels, type OntosOrderStatus } from "./order-model";
 export interface OrderStatusRequest {
   orderId: string;
   clientRequestId: string;

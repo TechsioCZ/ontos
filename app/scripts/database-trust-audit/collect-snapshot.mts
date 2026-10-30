@@ -1,6 +1,6 @@
 import type { PgClient } from '@effect/sql-pg';
 import { Effect, Exit, Option, Schema } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
 import type { DatabaseTrustBoundarySnapshot, GlobalTrustSnapshot } from './report.mts';

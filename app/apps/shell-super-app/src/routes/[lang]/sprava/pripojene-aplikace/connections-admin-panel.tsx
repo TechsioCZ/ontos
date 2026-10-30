@@ -1,5 +1,8 @@
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { Option, Schema } from 'effect';
+import { AgentAccessClientIdSchema } from '@app/shared-contracts/agent-access';
+import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
+import { Effect, Option, Schema } from 'effect';
+import { Url } from 'effect/http';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -31,14 +34,28 @@ import {
   writePolicyLabel,
 } from '../../profile/connected-apps-model.ts';
 
-const ConnectionDetailSearchSchema = Schema.Struct({
-  agent: Schema.optionalKey(Schema.String),
-  grant: Schema.optionalKey(Schema.String),
-});
+const DetailValueSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
+const ConnectionDetailQuerySchema = Schema.RecordFromUrlParams.pipe(
+  Schema.decodeTo(
+    Schema.Struct({
+      agent: Schema.optionalKey(DetailValueSchema),
+      grant: Schema.optionalKey(DetailValueSchema),
+    }),
+  ),
+);
+const firstDetailValue = (value: typeof DetailValueSchema.Type | undefined): string | undefined =>
+  Schema.is(Schema.String)(value) ? value : value?.[0];
+const initialFilter = (grant: string | undefined, agent: string | undefined): ConnectionAdminFilter => {
+  if (grant !== undefined) {
+    return {};
+  }
+  return agent === undefined ? DEFAULT_CONNECTIONS_FILTER : { actingPrincipalId: AgentPrincipalIdSchema.make(agent) };
+};
 
-type FilterKey = 'actingPrincipalId' | 'clientId' | 'status' | 'userPrincipalId';
+const FilterKeySchema = Schema.Literals(['actingPrincipalId', 'clientId', 'status', 'userPrincipalId']);
+type FilterKey = typeof FilterKeySchema.Type;
 
-const statusOptions: readonly { readonly value: ConnectionStatus; readonly label: string }[] = [
+const statusOptions: readonly { readonly label: string; readonly value: ConnectionStatus }[] = [
   { label: 'Aktivní', value: 'active' },
   { label: 'Odpojené', value: 'revoked' },
   { label: 'Nahrazené', value: 'superseded' },
@@ -48,7 +65,40 @@ const statusOptions: readonly { readonly value: ConnectionStatus; readonly label
 /** Sets one filter key; an empty choice removes the key, so "Všichni" means no restriction. */
 const withFilterValue = (filter: ConnectionAdminFilter, key: FilterKey, value: string): ConnectionAdminFilter => {
   const kept = Object.fromEntries(Object.entries(filter).filter(([name]) => name !== key));
-  return (value === '' ? kept : { ...kept, [key]: value }) as ConnectionAdminFilter;
+  if (value === '') {
+    return kept;
+  }
+  if (key === 'status') {
+    return { ...kept, status: value };
+  }
+  if (key === 'clientId') {
+    return { ...kept, clientId: AgentAccessClientIdSchema.make(value) };
+  }
+  return key === 'actingPrincipalId'
+    ? { ...kept, actingPrincipalId: AgentPrincipalIdSchema.make(value) }
+    : { ...kept, userPrincipalId: AgentPrincipalIdSchema.make(value) };
+};
+
+const useConnectionFilter = () => {
+  const searchStr = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const search = Option.getOrElse(
+    Schema.decodeOption(ConnectionDetailQuerySchema)(Url.urlParams(new URL(searchStr, 'https://shell.invalid/'))),
+    (): typeof ConnectionDetailQuerySchema.Type => ({}),
+  );
+  const targetGrantId = firstDetailValue(search.grant);
+  const targetAgentId = firstDetailValue(search.agent);
+  const defaultFilter = initialFilter(targetGrantId, targetAgentId);
+  const routeKey = targetGrantId === undefined ? `agent:${targetAgentId ?? ''}` : `grant:${targetGrantId}`;
+  const [choice, setChoice] = useState<{ readonly filter: ConnectionAdminFilter; readonly routeKey: string }>();
+  const filter = choice?.routeKey === routeKey ? choice.filter : defaultFilter;
+  const onFilterChange = (key: FilterKey) => (event: ChangeEvent<HTMLSelectElement>) => {
+    const { value } = event.target;
+    setChoice((previous) => ({
+      filter: withFilterValue(previous?.routeKey === routeKey ? previous.filter : defaultFilter, key, value),
+      routeKey,
+    }));
+  };
+  return { filter, onFilterChange, targetGrantId };
 };
 
 const tiles = (stats: ConnectionAdminListResponse['stats']) => [
@@ -73,25 +123,71 @@ const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary })
   );
 };
 
-export const ConnectionsAdminPanel = () => {
-  const [filter, setFilter] = useState<ConnectionAdminFilter>(DEFAULT_CONNECTIONS_FILTER);
-  const targetGrantId = useRouterState({
-    select: (routerState) =>
-      Option.getOrUndefined(Schema.decodeOption(ConnectionDetailSearchSchema)(routerState.location.search))?.grant,
-  });
-  const targetAgentId = useRouterState({
-    select: (routerState) =>
-      Option.getOrUndefined(Schema.decodeOption(ConnectionDetailSearchSchema)(routerState.location.search))?.agent,
-  });
-  useEffect(() => {
-    if (targetGrantId !== undefined) {
-      setFilter({});
-    } else if (targetAgentId !== undefined) {
-      setFilter({ actingPrincipalId: targetAgentId });
+const ConnectionRevokeDialog = ({
+  busy,
+  closeRevoke,
+  reason,
+  revokeError,
+  setReason,
+  submitRevoke,
+  target,
+}: {
+  readonly busy: boolean;
+  readonly closeRevoke: () => void;
+  readonly reason: string;
+  readonly revokeError: string;
+  readonly setReason: (reason: string) => void;
+  readonly submitRevoke: () => void;
+  readonly target: ConnectionSummary | undefined;
+}) => (
+  <Dialog
+    actions={
+      <>
+        <Button onClick={closeRevoke} size="sm" theme="outlined" variant="secondary">
+          Zrušit
+        </Button>
+        <Button disabled={busy} onClick={submitRevoke} size="sm" variant="danger">
+          Odpojit
+        </Button>
+      </>
     }
-  }, [targetGrantId, targetAgentId]);
+    closeLabel="Zavřít dialog"
+    customTrigger
+    description="Aplikace ztratí přístup hned při dalším požadavku. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
+    onOpenChange={({ open }) => {
+      if (!open) {
+        closeRevoke();
+      }
+    }}
+    open={target !== undefined}
+    role="alertdialog"
+    size="sm"
+    title={target === undefined ? '' : `Odpojit ${target.client.name} (${target.user.displayName})?`}
+  >
+    <div className="grid gap-150">
+      <label className={labelClass}>
+        Důvod odpojení
+        <textarea
+          className="w-full rounded-md border border-border-primary bg-base p-100"
+          maxLength={500}
+          onChange={(event) => setReason(event.target.value)}
+          rows={3}
+          value={reason}
+        />
+      </label>
+      {revokeError === '' ? null : (
+        <StatusText aria-live="polite" showIcon status="error">
+          {revokeError}
+        </StatusText>
+      )}
+    </div>
+  </Dialog>
+);
+
+export const ConnectionsAdminPanel = () => {
+  const { filter, onFilterChange, targetGrantId } = useConnectionFilter();
   const [notice, setNotice] = useState('');
-  const [target, setTarget] = useState<ConnectionSummary | undefined>(undefined);
+  const [target, setTarget] = useState<ConnectionSummary | undefined>();
   const [reason, setReason] = useState('');
   const [revokeError, setRevokeError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -102,7 +198,24 @@ export const ConnectionsAdminPanel = () => {
     () => companyConnectionsData.snapshot(filter),
     () => pageDataPending,
   );
-  useEffect(() => companyConnectionsData.ensure(filter), [filter]);
+  const { actingPrincipalId, clientId, status, userPrincipalId } = filter;
+  useEffect(() => {
+    // Reconstruct the exact optional fields from scalar dependencies; filter object identity is not a request key.
+    let selected: ConnectionAdminFilter = {};
+    if (actingPrincipalId !== undefined) {
+      selected = { ...selected, actingPrincipalId };
+    }
+    if (clientId !== undefined) {
+      selected = { ...selected, clientId };
+    }
+    if (status !== undefined) {
+      selected = { ...selected, status };
+    }
+    if (userPrincipalId !== undefined) {
+      selected = { ...selected, userPrincipalId };
+    }
+    companyConnectionsData.ensure(selected);
+  }, [actingPrincipalId, clientId, status, userPrincipalId]);
   // While another filter loads, the last settled list stays on screen.
   const [settled, setSettled] = useState(snapshot);
   if (snapshot.state !== 'pending' && snapshot !== settled) {
@@ -130,27 +243,28 @@ export const ConnectionsAdminPanel = () => {
     }
     setBusy(true);
     setRevokeError('');
-    browserRuntime.runPromise(revokeConnection({ grantId: target.grantId, reason: trimmed })).then((outcome) => {
-      setBusy(false);
-      if (outcome.status === 'ok') {
-        setNotice(`Připojení ${target.client.name} je odpojené.`);
-        closeRevoke();
-        reload();
-        return;
-      }
-      if (isStale(outcome.reason)) {
-        setNotice(`${failureText(outcome.reason, outcome.detail)} Seznam je znovu načtený.`);
-        closeRevoke();
-        reload();
-        return;
-      }
-      setRevokeError(failureText(outcome.reason, outcome.detail));
-    });
-  };
-
-  const onFilterChange = (key: FilterKey) => (event: ChangeEvent<HTMLSelectElement>) => {
-    const { value } = event.target;
-    setFilter((current) => withFilterValue(current, key, value));
+    browserRuntime.runFork(
+      revokeConnection({ grantId: target.grantId, reason: trimmed }).pipe(
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            setBusy(false);
+            if (outcome.status === 'ok') {
+              setNotice(`Připojení ${target.client.name} je odpojené.`);
+              closeRevoke();
+              reload();
+              return;
+            }
+            if (isStale(outcome.reason)) {
+              setNotice(`${failureText(outcome.reason, outcome.detail)} Seznam je znovu načtený.`);
+              closeRevoke();
+              reload();
+              return;
+            }
+            setRevokeError(failureText(outcome.reason, outcome.detail));
+          }),
+        ),
+      ),
+    );
   };
 
   if (state.state === 'pending') {
@@ -276,7 +390,9 @@ export const ConnectionsAdminPanel = () => {
                   <th className="p-100 font-semibold">Stav</th>
                   <th className="p-100 font-semibold">Připojeno</th>
                   <th className="p-100 font-semibold">Naposledy použito</th>
-                  <th className="p-100" />
+                  <th className="p-100">
+                    <span className="sr-only">Odpojit</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -349,48 +465,15 @@ export const ConnectionsAdminPanel = () => {
         </>
       )}
 
-      <Dialog
-        actions={
-          <>
-            <Button onClick={closeRevoke} size="sm" theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button disabled={busy} onClick={submitRevoke} size="sm" variant="danger">
-              Odpojit
-            </Button>
-          </>
-        }
-        closeLabel="Zavřít dialog"
-        customTrigger
-        description="Aplikace ztratí přístup hned při dalším požadavku. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
-        onOpenChange={({ open }) => {
-          if (!open) {
-            closeRevoke();
-          }
-        }}
-        open={target !== undefined}
-        role="alertdialog"
-        size="sm"
-        title={target === undefined ? '' : `Odpojit ${target.client.name} (${target.user.displayName})?`}
-      >
-        <div className="grid gap-150">
-          <label className={labelClass}>
-            Důvod odpojení
-            <textarea
-              className="w-full rounded-md border border-border-primary bg-base p-100"
-              maxLength={500}
-              onChange={(event) => setReason(event.target.value)}
-              rows={3}
-              value={reason}
-            />
-          </label>
-          {revokeError === '' ? null : (
-            <StatusText aria-live="polite" showIcon status="error">
-              {revokeError}
-            </StatusText>
-          )}
-        </div>
-      </Dialog>
+      <ConnectionRevokeDialog
+        busy={busy}
+        closeRevoke={closeRevoke}
+        reason={reason}
+        revokeError={revokeError}
+        setReason={setReason}
+        submitRevoke={submitRevoke}
+        target={target}
+      />
     </div>
   );
 };

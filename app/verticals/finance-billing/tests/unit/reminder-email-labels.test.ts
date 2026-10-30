@@ -1,14 +1,12 @@
-import { describe, expect, test } from '@rstest/core';
-import {
-  deliveryLabel,
-  emailStatusVariant,
-  type EmailDeliveryView,
-} from '../../src/routes/[lang]/finance/reminder-email-labels.ts';
+import { describe, expect, test } from 'effect-rstest';
+import { deliveryLabel, emailStatusVariant } from '../../src/routes/[lang]/finance/reminder-email-labels.ts';
+import type { EmailDeliveryView } from '../../src/routes/[lang]/finance/reminder-email-labels.ts';
 
 const delivery = (overrides: Partial<EmailDeliveryView>): EmailDeliveryView => ({
   createdAt: '2026-10-21T08:40:00.000Z',
   event: 'PAYMENT_REMINDER',
   eventAt: '2026-10-21T08:40:00.000Z',
+  eventLabel: null,
   sentAt: null,
   source: 'rent-reminder',
   status: 'SENDING',
@@ -19,10 +17,7 @@ const delivery = (overrides: Partial<EmailDeliveryView>): EmailDeliveryView => (
 
 describe('reminder e-mail labels', () => {
   test('SENT with sentAt shows the formatted send time', () => {
-    const label = deliveryLabel(
-      delivery({ sentAt: '2026-10-21T08:41:00.000Z', status: 'SENT' }),
-      (iso) => `T(${iso})`,
-    );
+    const label = deliveryLabel(delivery({ sentAt: '2026-10-21T08:41:00.000Z', status: 'SENT' }), (iso) => `T(${iso})`);
     expect(label).toBe('Odesláno e-mailem · T(2026-10-21T08:41:00.000Z)');
   });
 

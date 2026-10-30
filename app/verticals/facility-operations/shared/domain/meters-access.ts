@@ -1,4 +1,5 @@
 // Explicit operational meter boundary. Full meter aggregates remain restricted.
+import { optionalField } from './common.ts';
 import { Match } from 'effect';
 import type { MetersCommand } from '../commands/meters.ts';
 import type { MetersState } from './meters.ts';
@@ -29,33 +30,34 @@ export const canApplyMeterCommand = (grants: MeterGrants, command: MetersCommand
 /** Allowlist, not a cost-only denylist: contracts, attachments and internal free text stay on the server. */
 export const operationalMetersState = (state: MetersState): MetersState => ({
   meters: state.meters.map((meter) => ({
-    id: meter.id,
-    serialNumber: meter.serialNumber,
-    medium: meter.medium,
-    unit: meter.unit,
     createdAt: meter.createdAt,
     createdBy: meter.createdBy,
+    id: meter.id,
+    medium: meter.medium,
+    serialNumber: meter.serialNumber,
+    unit: meter.unit,
     updatedAt: meter.updatedAt,
     updatedBy: meter.updatedBy,
-    ...(meter.location === undefined ? {} : { location: meter.location }),
-    ...(meter.supplyPoint === undefined ? {} : { supplyPoint: meter.supplyPoint }),
-    ...(meter.status === undefined ? {} : { status: meter.status }),
+    ...optionalField('location', meter.location),
+    ...optionalField('supplyPoint', meter.supplyPoint),
+    ...optionalField('status', meter.status),
     readings: (meter.readings ?? []).map((reading) => ({
-      id: reading.id,
-      date: reading.date,
-      value: reading.value,
-      unit: reading.unit,
       createdAt: reading.createdAt,
       createdBy: reading.createdBy,
+      date: reading.date,
+      id: reading.id,
+      unit: reading.unit,
       updatedAt: reading.updatedAt,
       updatedBy: reading.updatedBy,
-      ...(reading.readBy === undefined ? {} : { readBy: reading.readBy }),
+      value: reading.value,
+      ...optionalField('readBy', reading.readBy),
       // Keep the cancellation marker for correct consumption calculations, without internal reasons.
-      ...(reading.voided === undefined
-        ? {}
-        : {
-            voided: { at: reading.voided.at, by: reading.voided.by, reason: 'Interní údaj' },
-          }),
+      ...optionalField(
+        'voided',
+        reading.voided === undefined
+          ? undefined
+          : { at: reading.voided.at, by: reading.voided.by, reason: 'Interní údaj' },
+      ),
     })),
   })),
 });

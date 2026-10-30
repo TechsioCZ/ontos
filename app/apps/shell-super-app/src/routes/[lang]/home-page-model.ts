@@ -1,5 +1,5 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Effect, Match, Option } from 'effect';
+import { Effect, Fiber, Match, Option } from 'effect';
 
 import type {
   AvailableTenant,
@@ -429,9 +429,20 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
 const warmAssertions = (compositionRevision: string, audiences: readonly string[]) =>
   audiences.length === 0 ? Effect.void : warmDocumentGatewayAssertions(compositionRevision, audiences);
 
+/** Starts module admission only after the browser has authenticated a selected company and obtained a revision. */
+type BrowserCompanyReady = (
+  identity: SafeAuthenticatedIdentity,
+  compositionRevision: string,
+  options: ShellAuthenticationClientOptions,
+) => Effect.Effect<void>;
+
 /** Browser loaders: every read is shared and kept in the browser cache, so a navigation rarely waits for any. */
 const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageModel')(
-  function* loadBrowserHomePageModelEffect(request: Request, options: ShellAuthenticationClientOptions) {
+  function* loadBrowserHomePageModelEffect(
+    request: Request,
+    options: ShellAuthenticationClientOptions,
+    onCompanyReady?: BrowserCompanyReady,
+  ) {
     const session = yield* sessionFor(options);
     if (session.state === 'anonymous') {
       return anonymousModel;
@@ -472,6 +483,35 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
       );
     }
     const requestedRevision = yield* requestedCompositionRevision(request);
+    if (requestedRevision !== undefined && onCompanyReady !== undefined) {
+      yield* onCompanyReady(session.identity, requestedRevision, options);
+    }
+    // Speculative only after company authentication. Join after composition to retain its failure precedence;
+    // child fibers remain interruptible with the loader and never outlive an abandoned navigation.
+    const people = yield* Effect.forkChild(peopleCapabilityFor(session.identity, options), { startImmediately: true });
+    const choices = yield* Effect.forkChild(
+      Effect.all(
+        {
+          legalEntities: legalEntitiesFor(session.identity, options).pipe(
+            Effect.map((response) => ({
+              items: response.legalEntities,
+              state: 'available' as const,
+              tenantContextAvailable: response.tenantContextAvailable,
+            })),
+            Effect.orElseSucceed(() => unavailableLegalEntities),
+          ),
+          tenants: tenantsFor(session.identity, options).pipe(
+            Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+            Effect.matchEffect({
+              onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
+              onSuccess: Effect.succeed,
+            }),
+          ),
+        },
+        { concurrency: 2 },
+      ),
+      { startImmediately: true },
+    );
     const composition = yield* compositionFor(requestedRevision, session.identity, options);
     if (composition.state !== 'available') {
       return unavailableModel;
@@ -481,7 +521,10 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
     if ('document' in globalThis) {
       yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
     }
-    const canManagePeople = yield* peopleCapabilityFor(session.identity, options);
+    if (requestedRevision === undefined && onCompanyReady !== undefined) {
+      yield* onCompanyReady(session.identity, compositionRevision, options);
+    }
+    const canManagePeople = yield* Fiber.join(people);
     const navigation = presentedNavigation(composition, canManagePeople);
     const homeCandidates = homeContributionCandidates(
       request,
@@ -490,31 +533,17 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
     );
     return yield* Effect.all(
       {
+        choices: Fiber.join(choices),
         homeContribution:
           homeCandidates === undefined
             ? Effect.succeedNone
             : resolveHomeContributionWithWelcome(session.identity, compositionRevision, homeCandidates, options).pipe(
                 Effect.asSome,
               ),
-        legalEntities: legalEntitiesFor(session.identity, options).pipe(
-          Effect.map((response) => ({
-            items: response.legalEntities,
-            state: 'available' as const,
-            tenantContextAvailable: response.tenantContextAvailable,
-          })),
-          Effect.orElseSucceed(() => unavailableLegalEntities),
-        ),
-        tenants: tenantsFor(session.identity, options).pipe(
-          Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
-          Effect.matchEffect({
-            onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
-            onSuccess: Effect.succeed,
-          }),
-        ),
       },
-      { concurrency: 3 },
+      { concurrency: 2 },
     ).pipe(
-      Effect.map(({ homeContribution, legalEntities, tenants }): HomePageModel => {
+      Effect.map(({ choices: { legalEntities, tenants }, homeContribution }): HomePageModel => {
         if (tenants.state === 'stale') {
           return sessionEndedModel;
         }
@@ -536,14 +565,14 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
 );
 
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
-  function* loadHomePageModelEffect(request: Request) {
+  function* loadHomePageModelEffect(request: Request, onCompanyReady?: BrowserCompanyReady) {
     const options = yield* shellAuthenticationClientOptionsFromRequest(request);
     if (isServerRenderWithoutSession(options)) {
       return anonymousModel;
     }
     return yield* isServerRender()
       ? loadServerHomePageModel(request, options)
-      : loadBrowserHomePageModel(request, options);
+      : loadBrowserHomePageModel(request, options, onCompanyReady);
   },
   Effect.matchEffect({
     onFailure: (error) =>

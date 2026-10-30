@@ -16,8 +16,8 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Reactivity } from 'effect/reactivity';
+import { Command, Flag } from 'effect/cli';
 import { FinanceStateSchema, InvoiceLinesSchema } from '../shared/apis/records.ts';
 import type { FinanceState } from '../shared/apis/records.ts';
 import { computeInvoiceTotals, INVOICE_NUMBER_PREFIX } from '../shared/domain/invoice-totals.ts';
@@ -62,7 +62,7 @@ const writeState = Effect.fn('Finance.writeDemoState')(function* writeDemoState(
       set: { revision: 0, state, updatedAt: DateTime.toDateUtc(now) },
       target: [financeStates.tenantId, financeStates.legalEntityId],
     });
-  yield* Console.log('Siampark finance demo state reset to revision 0');
+  yield* Console.log('Nájempark finance demo state reset to revision 0');
 });
 
 const reset = Effect.fn('Finance.resetDemo')(function* resetDemo(fixturePath: string) {

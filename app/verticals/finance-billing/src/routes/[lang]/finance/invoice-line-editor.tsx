@@ -9,14 +9,16 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
+import type { ComponentProps } from 'react';
 import {
   czkToMinor,
   newDraftLine,
   VAT_RATE_CHOICES,
   withProductSnapshot,
+  draftLineDiscount,
+  toInvoiceLine,
 } from '../../../../shared/domain/invoice-draft.ts';
 import type { DraftDiscountKind, DraftLine, DraftLineIssue } from '../../../../shared/domain/invoice-draft.ts';
-import { draftLineDiscount, toInvoiceLine } from '../../../../shared/domain/invoice-draft.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
 import type { PriceListItem } from '../../../../shared/apis/records.ts';
 import { formLabelProps } from './invoice-view.ts';
@@ -44,10 +46,63 @@ const DISCOUNT_KINDS: readonly (readonly [DraftDiscountKind, string])[] = [
   ['AMOUNT', 'Částkou'],
 ];
 
+const noPriceList: readonly PriceListItem[] = [];
+
 const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2, minimumFractionDigits: 0 };
 // Without a format the input parses with parseFloat, which stops at the decimal comma: `2,25` became 2.
 // Three digits keep a typed fraction visible so `lineIssue` can reject it with a message.
 const quantityFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 3, minimumFractionDigits: 0 };
+
+const InvoiceLineDiscount = ({ line, onChange }: Pick<InvoiceLineEditorProps, 'line' | 'onChange'>) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <div className="finance-invoice-line-discount grid grid-cols-1 items-end gap-150 sm:grid-cols-[10rem_8rem_minmax(0,1fr)]">
+        <SelectTemplate
+          items={DISCOUNT_KINDS.map(([value, label]) => ({ displayValue: label, label, value }))}
+          label={t('finance-billing.financeUi.line.discount')}
+          labelProps={formLabelProps}
+          name={`invoice-line-discount-kind-${line.key}`}
+          onValueChange={({ value }) => {
+            const kind = DISCOUNT_KINDS.find(([entry]) => entry === value[0])?.[0] ?? 'NONE';
+            const next = { ...line, discountKind: kind };
+            onChange(
+              kind === 'NONE' ? { ...next, discountInput: '', discountReason: '', discountValue: Number.NaN } : next,
+            );
+          }}
+          value={[line.discountKind ?? 'NONE']}
+        />
+        {(line.discountKind ?? 'NONE') !== 'NONE' && (
+          <>
+            <FormInput
+              id={`invoice-line-discount-value-${line.key}`}
+              inputMode="decimal"
+              label={line.discountKind === 'PERCENT' ? 'Sleva (%)' : 'Sleva (Kč)'}
+              onChange={(event) => {
+                const raw = event.target.value;
+                const parsed = Number(raw.replaceAll(/\s/gu, '').replace(',', '.'));
+                onChange({ ...line, discountInput: raw, discountValue: raw.trim() === '' ? Number.NaN : parsed });
+              }}
+              value={line.discountInput ?? ''}
+            />
+            <FormInput
+              id={`invoice-line-discount-reason-${line.key}`}
+              label={t('finance-billing.financeUi.line.discountReason')}
+              onChange={(event) => onChange({ ...line, discountReason: event.target.value })}
+              placeholder={t('finance-billing.financeUi.line.discountExample')}
+              value={line.discountReason ?? ''}
+            />
+          </>
+        )}
+      </div>
+      {draftLineDiscount(line) !== undefined && (
+        <p className="text-fg-secondary text-xs">
+          Sleva {formatMoney(lineDiscountMinor(toInvoiceLine(line)))} se na dokladu zobrazí samostatně i s důvodem.
+        </p>
+      )}
+    </>
+  );
+};
 
 /** One invoice line: a product (snapshot on pick) or free text, then quantity, and price and VAT for free text. */
 export const InvoiceLineEditor = ({
@@ -57,7 +112,7 @@ export const InvoiceLineEditor = ({
   onChange,
   onRemove,
   position,
-  priceList = [],
+  priceList = noPriceList,
   products,
   productsReadable,
 }: InvoiceLineEditorProps) => {
@@ -85,6 +140,10 @@ export const InvoiceLineEditor = ({
     label: `${rate} %`,
     value: String(rate),
   }));
+  let priceInputProps: Pick<ComponentProps<typeof FormNumericInput>, 'value'> = {};
+  if (Number.isFinite(line.unitPriceMinor)) {
+    priceInputProps = { value: line.unitPriceMinor / 100 };
+  }
 
   return (
     // A named fieldset per line, so the line's inputs and its remove button read as "Položka 2" and not as a
@@ -192,7 +251,7 @@ export const InvoiceLineEditor = ({
                 }
                 step={0.01}
                 // A NaN price leaves the field uncontrolled, so the typed text stays visible next to the error.
-                {...(Number.isFinite(line.unitPriceMinor) ? { value: line.unitPriceMinor / 100 } : {})}
+                {...priceInputProps}
               >
                 <NumericInput.Control>
                   <NumericInput.Input />
@@ -224,11 +283,12 @@ export const InvoiceLineEditor = ({
             items={[
               { displayValue: 'Ruční zadání', label: 'Ruční zadání', value: 'MANUAL' },
               ...priceList.map((item) => {
-                const label = `${item.name} · ${formatMoney(item.unitPriceMinor)}${item.unit === undefined ? '' : ` / ${item.unit}`}`;
+                const unit = item.unit === undefined ? '' : ` / ${item.unit}`;
+                const label = `${item.name} · ${formatMoney(item.unitPriceMinor)}${unit}`;
                 return { displayValue: label, label, value: item.id };
               }),
             ]}
-            label="Z ceníku"
+            label={t('finance-billing.financeUi.line.fromPriceList')}
             labelProps={formLabelProps}
             name={`invoice-line-price-list-${line.key}`}
             onValueChange={({ value }) => {
@@ -249,50 +309,7 @@ export const InvoiceLineEditor = ({
           />
         </div>
       )}
-      <div className="finance-invoice-line-discount grid grid-cols-1 items-end gap-150 sm:grid-cols-[10rem_8rem_minmax(0,1fr)]">
-        <SelectTemplate
-          items={DISCOUNT_KINDS.map(([value, label]) => ({ displayValue: label, label, value }))}
-          label="Sleva"
-          labelProps={formLabelProps}
-          name={`invoice-line-discount-kind-${line.key}`}
-          onValueChange={({ value }) => {
-            const kind = DISCOUNT_KINDS.find(([entry]) => entry === value[0])?.[0] ?? 'NONE';
-            onChange({
-              ...line,
-              discountKind: kind,
-              ...(kind === 'NONE' ? { discountInput: '', discountReason: '', discountValue: Number.NaN } : {}),
-            });
-          }}
-          value={[line.discountKind ?? 'NONE']}
-        />
-        {(line.discountKind ?? 'NONE') !== 'NONE' && (
-          <>
-            <FormInput
-              id={`invoice-line-discount-value-${line.key}`}
-              inputMode="decimal"
-              label={line.discountKind === 'PERCENT' ? 'Sleva (%)' : 'Sleva (Kč)'}
-              onChange={(event) => {
-                const raw = event.target.value;
-                const parsed = Number(raw.replaceAll(/\s/gu, '').replace(',', '.'));
-                onChange({ ...line, discountInput: raw, discountValue: raw.trim() === '' ? Number.NaN : parsed });
-              }}
-                value={line.discountInput ?? ''}
-            />
-            <FormInput
-              id={`invoice-line-discount-reason-${line.key}`}
-              label="Důvod schválené slevy"
-              onChange={(event) => onChange({ ...line, discountReason: event.target.value })}
-              placeholder="např. věrnostní sleva podle smlouvy"
-                value={line.discountReason ?? ''}
-            />
-          </>
-        )}
-      </div>
-      {draftLineDiscount(line) !== undefined && (
-        <p className="text-fg-secondary text-xs">
-          Sleva {formatMoney(lineDiscountMinor(toInvoiceLine(line)))} se na dokladu zobrazí samostatně i s důvodem.
-        </p>
-      )}
+      <InvoiceLineDiscount line={line} onChange={onChange} />
       {line.kind === 'product' && product !== undefined && (
         <p className="text-fg-secondary text-xs">
           {t(`${ns}.form.productMeta`, {

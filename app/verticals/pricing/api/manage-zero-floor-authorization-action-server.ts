@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug manage-zero-floor-authorization
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { pricingApi } from '../shared/api.ts';
 import { manageZeroFloorAuthorizationAction } from '../src/actions/manage-zero-floor-authorization.action.ts';

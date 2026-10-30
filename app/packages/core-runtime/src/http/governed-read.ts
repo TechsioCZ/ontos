@@ -1,11 +1,12 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
 import { Cause, Clock, Effect, Match, Option, Random, Redacted, Ref, Result, Schema } from 'effect';
-import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import { HttpEffect, HttpServerResponse } from 'effect/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
+import { withRequestPermissionDecisions } from '../permissions/context-access.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
 import { isReadCoreError } from '../reads/errors.ts';
@@ -243,18 +244,6 @@ type GovernedReadDomainMapperResult<Mapper> = Mapper extends (...arguments_: nev
   ? Problem
   : never;
 
-const invokeGovernedReadDomainMapper = <
-  DomainFailure,
-  Mapper extends (error: DomainFailure) => GovernedReadDomainProblem,
->(
-  mapper: Mapper,
-  error: DomainFailure,
-): GovernedReadDomainMapperResult<Mapper> =>
-  // SAFETY: calling the exact mapper produces its declared ReturnType; TypeScript cannot
-  // retain that relationship for a still-generic function value.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Validated generic invocation; expires: 2027-03-31.
-  mapper(error) as GovernedReadDomainMapperResult<Mapper>;
-
 interface GovernedReadHttpOptions<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -454,7 +443,7 @@ export function makeGovernedReadHttpHandler<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
-  DomainErrorMapper extends ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem) | undefined = undefined,
+  DomainProblem extends GovernedReadDomainProblem = never,
 >(
   options: {
     /** Trusted receiver configuration, never supplied by the HTTP caller. */
@@ -483,7 +472,7 @@ export function makeGovernedReadHttpHandler<
       ReadRequirements,
       DomainErrorSchema
     >;
-  } & Readonly<{ mapDomainError?: DomainErrorMapper }>,
+  } & Readonly<{ mapDomainError?: ((error: DomainErrorSchema['Type']) => DomainProblem) | undefined }>,
 ) {
   return Effect.fn('GovernedReadHttp.handle')(function* handleGovernedRead({
     payload,
@@ -522,7 +511,7 @@ export function makeGovernedReadHttpHandler<
       // The correlation identifier is persisted into read evidence and log annotations, so an unbounded
       // caller-chosen value must be refused here rather than stored. Branching on the decode result keeps the
       // schema's diagnostic out of the problem shape without discarding it in an error callback.
-      if (Result.isFailure(Schema.decodeResult(ReadCorrelationIdSchema)(correlationId))) {
+      if (Result.isFailure(Schema.decodeUnknownResult(ReadCorrelationIdSchema)(correlationId))) {
         return yield* Effect.fail(options.problems.invalid());
       }
       const principal = yield* options
@@ -554,7 +543,7 @@ export function makeGovernedReadHttpHandler<
               never,
               | Authentication
               | Forbidden
-              | GovernedReadDomainMapperResult<DomainErrorMapper>
+              | DomainProblem
               | Internal
               | Invalid
               | NotFound
@@ -587,15 +576,7 @@ export function makeGovernedReadHttpHandler<
               if (Option.isNone(decoded)) {
                 return failProblem(options.problems.internal());
               }
-              const problem = invokeGovernedReadDomainMapper<
-                DomainErrorSchema['Type'],
-                Exclude<DomainErrorMapper, undefined>
-              >(
-                // SAFETY: the undefined branch returned above; this is the exact declared mapper.
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Narrowed generic optional mapper; expires: 2027-03-31.
-                options.mapDomainError as Exclude<DomainErrorMapper, undefined>,
-                decoded.value,
-              );
+              const problem = options.mapDomainError(decoded.value);
               return isGovernedReadDomainProblem(problem)
                 ? Effect.fail(problem)
                 : failProblem(options.problems.internal());
@@ -605,6 +586,7 @@ export function makeGovernedReadHttpHandler<
     });
 
     return yield* execute.pipe(
+      withRequestPermissionDecisions,
       Effect.catchCauseIf(Cause.hasDies, () =>
         Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
           correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,

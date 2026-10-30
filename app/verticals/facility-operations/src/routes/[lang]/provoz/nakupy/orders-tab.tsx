@@ -1,14 +1,8 @@
-// @effect-diagnostics asyncFunction:off
+import { optionalField } from '../../../../../shared/domain/common.ts';
+import { Effect, Result, Schema } from 'effect';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // S06: purchase orders list + detail panel (lines with delivered/remaining, deliveries, invoices, history).
-import {
-  DetailList,
-  EmptyState,
-  SectionCard,
-  SidePanel,
-  formatDate,
-  formatDateTime,
-  surfaceTileClassName,
-} from '@app/admin-ui';
+import { DetailList, EmptyState, SectionCard, SidePanel, formatDate, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -18,12 +12,13 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { CommentThread } from '../../../../ui/comment-thread.tsx';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
+import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { PurchaseOrder, PurchasingState } from '../../../../../shared/domain/purchasing.ts';
 import {
   OPEN_ORDER_STATUSES,
@@ -34,6 +29,7 @@ import {
 } from '../../../../../shared/domain/purchasing-stock.ts';
 import {
   dateTimeIso,
+  historyRows,
   formatStamp,
   failureKey,
   formatAmount,
@@ -50,15 +46,24 @@ import { TextLink } from './stock-tab.tsx';
 import { FinanceInvoiceLink, useIncomingInvoiceLinks } from './finance-links.tsx';
 import { InvoiceDraftForm } from './invoice-draft-form.tsx';
 
-const statusVariant: Readonly<Record<PurchaseOrder['status'], 'outline' | 'info' | 'warning' | 'success' | 'danger'>> =
-  {
-    approved: 'info',
-    cancelled: 'outline',
-    completed: 'success',
-    draft: 'outline',
-    ordered: 'info',
-    partially_delivered: 'warning',
-  };
+const noteLabelKey = 'facility-operations.common.note';
+const cancelLabelKey = 'facility-operations.common.cancel';
+
+const ignoredReceiptQuantities = new Set(['', '0']);
+
+type PurchaseReceiveLine = Extract<
+  Parameters<RunCommand>[0],
+  { readonly _tag: 'PurchaseOrderReceive' }
+>['lines'][number];
+
+const statusVariant = {
+  approved: 'info',
+  cancelled: 'outline',
+  completed: 'success',
+  draft: 'outline',
+  ordered: 'info',
+  partially_delivered: 'warning',
+} as const satisfies Readonly<Record<PurchaseOrder['status'], 'outline' | 'info' | 'warning' | 'success' | 'danger'>>;
 
 export const OrderStatusBadge = ({ status }: { readonly status: PurchaseOrder['status'] }) => {
   const k = usePurchasingT();
@@ -86,14 +91,71 @@ const DeliveryProgress = ({ order }: { readonly order: PurchaseOrder }) => {
   );
 };
 
+const OrderLookupContext = createContext<ReturnType<typeof lookupOf> | undefined>(undefined);
+const OrderQuotesContext = createContext<PurchasingState['quotes']>([]);
+const OrderFinanceContext = createContext<ReturnType<typeof useIncomingInvoiceLinks>>({ status: 'loading' });
+
+const OrderNumberCell = ({ row }: CellContext<PurchaseOrder>) => {
+  const lookup = useContext(OrderLookupContext);
+  return (
+    <div className="flex flex-col">
+      <span className="font-medium">{row.original.number}</span>
+      <span className="text-fg-secondary text-xs">{lookup?.supplier(row.original.supplierId)?.name ?? '—'}</span>
+    </div>
+  );
+};
+
+const OrderStatusCell = ({ row }: CellContext<PurchaseOrder>) => <OrderStatusBadge status={row.original.status} />;
+
+const OrderDeliveryCell = ({ row }: CellContext<PurchaseOrder>) => <DeliveryProgress order={row.original} />;
+
+const OrderTotalCell = ({ row }: CellContext<PurchaseOrder>) => (
+  <span className="tabular-nums">{formatAmount(orderTotalMinor(row.original), row.original.currency)}</span>
+);
+
+const OrderExpectedCell = ({ row }: CellContext<PurchaseOrder>) =>
+  row.original.expectedDate === undefined ? '—' : formatDate(row.original.expectedDate);
+
+const OrderQuoteCell = ({ row }: CellContext<PurchaseOrder>) => {
+  const quotes = useContext(OrderQuotesContext);
+  const k = usePurchasingT();
+  return row.original.quoteId === undefined ? (
+    <span className="text-fg-secondary">{k('orders.direct')}</span>
+  ) : (
+    (quotes.find((quote) => quote.id === row.original.quoteId)?.number ?? '—')
+  );
+};
+
+const OrderInvoicesCell = ({ row }: CellContext<PurchaseOrder>) => {
+  const financeLinks = useContext(OrderFinanceContext);
+  const k = usePurchasingT();
+  const numbers = [
+    ...new Set([
+      ...row.original.invoices.map((invoice) => invoice.number),
+      ...(financeLinks.status === 'ready'
+        ? financeLinks.invoices.flatMap((invoice) =>
+            invoice.sourceOrder?.id === row.original.id ? [invoice.number] : [],
+          )
+        : []),
+    ]),
+  ];
+  return numbers.length === 0 ? (
+    <span className="text-fg-secondary">
+      {k(financeLinks.status === 'ready' ? 'orders.noInvoice' : `orders.finance.${financeLinks.status}`)}
+    </span>
+  ) : (
+    numbers.join(', ')
+  );
+};
+
 export const OrdersTab = ({
   financeRefresh = 0,
   onOpen,
   state,
 }: {
-  readonly state: PurchasingState;
   readonly financeRefresh?: number;
   readonly onOpen: (orderId: string) => void;
+  readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
@@ -105,59 +167,29 @@ export const OrdersTab = ({
     .toReversed();
   const columns: ColumnDef<PurchaseOrder>[] = [
     {
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-medium">{row.original.number}</span>
-          <span className="text-fg-secondary text-xs">{lookup.supplier(row.original.supplierId)?.name ?? '—'}</span>
-        </div>
-      ),
+      cell: OrderNumberCell,
       header: k('fields.order'),
       id: 'number',
     },
-    { cell: ({ row }) => <OrderStatusBadge status={row.original.status} />, header: k('fields.status'), id: 'status' },
-    { cell: ({ row }) => <DeliveryProgress order={row.original} />, header: k('fields.delivered'), id: 'delivered' },
+    { cell: OrderStatusCell, header: k('fields.status'), id: 'status' },
+    { cell: OrderDeliveryCell, header: k('fields.delivered'), id: 'delivered' },
     {
-      cell: ({ row }) => (
-        <span className="tabular-nums">{formatAmount(orderTotalMinor(row.original), row.original.currency)}</span>
-      ),
+      cell: OrderTotalCell,
       header: k('fields.total'),
       id: 'total',
     },
     {
-      cell: ({ row }) => (row.original.expectedDate === undefined ? '—' : formatDate(row.original.expectedDate)),
+      cell: OrderExpectedCell,
       header: k('fields.expectedDate'),
       id: 'expectedDate',
     },
     {
-      cell: ({ row }) =>
-        row.original.quoteId === undefined ? (
-          <span className="text-fg-secondary">{k('orders.direct')}</span>
-        ) : (
-          (state.quotes.find((quote) => quote.id === row.original.quoteId)?.number ?? '—')
-        ),
+      cell: OrderQuoteCell,
       header: k('fields.quote'),
       id: 'quote',
     },
     {
-      cell: ({ row }) => {
-        const numbers = [
-          ...new Set([
-            ...row.original.invoices.map((invoice) => invoice.number),
-            ...(financeLinks.status === 'ready'
-              ? financeLinks.invoices
-                  .filter((invoice) => invoice.sourceOrder?.id === row.original.id)
-                  .map((invoice) => invoice.number)
-              : []),
-          ]),
-        ];
-        return numbers.length === 0 ? (
-          <span className="text-fg-secondary">
-            {k(financeLinks.status === 'ready' ? 'orders.noInvoice' : `orders.finance.${financeLinks.status}`)}
-          </span>
-        ) : (
-          numbers.join(', ')
-        );
-      },
+      cell: OrderInvoicesCell,
       header: k('fields.invoices'),
       id: 'invoices',
     },
@@ -167,408 +199,33 @@ export const OrdersTab = ({
       <Switch checked={openOnly} onCheckedChange={setOpenOnly}>
         {k('filters.openOrders')}
       </Switch>
-      <DataTable
-        columns={columns}
-        data={rows}
-        getRowId={(row) => row.id}
-        getRowLabel={(row) => row.original.number}
-        interactive
-        loading={false}
-        onRowClick={(row) => onOpen(row.original.id)}
-        size="sm"
-        translations={{ emptyDescription: k('empty.orders'), emptyTitle: t('facility-operations.common.states.emptyTitle') }}
-      />
+      <OrderLookupContext value={lookup}>
+        <OrderQuotesContext value={state.quotes}>
+          <OrderFinanceContext value={financeLinks}>
+            <DataTable
+              columns={columns}
+              data={rows}
+              getRowId={(row) => row.id}
+              getRowLabel={(row) => row.original.number}
+              interactive
+              loading={false}
+              onRowClick={(row) => onOpen(row.original.id)}
+              size="sm"
+              translations={{
+                emptyDescription: k('empty.orders'),
+                emptyTitle: t('facility-operations.common.states.emptyTitle'),
+              }}
+            />
+          </OrderFinanceContext>
+        </OrderQuotesContext>
+      </OrderLookupContext>
     </div>
   );
 };
 
-type OrderAction = 'receive' | 'invoice' | 'prepare-invoice' | 'close' | 'cancel';
-
-export const OrderPanel = ({
-  canWrite,
-  me,
-  onClose,
-  onOpenItem,
-  onOpenQuote,
-  onInvoiceCreated,
-  orderId,
-  run,
-  state,
-}: {
-  readonly state: PurchasingState;
-  readonly orderId: string;
-  readonly canWrite: boolean;
-  readonly me: PrincipalRef | undefined;
-  readonly run: RunCommand;
-  readonly onClose: () => void;
-  readonly onOpenItem: (itemId: string) => void;
-  readonly onOpenQuote: (quoteId: string) => void;
-  readonly onInvoiceCreated: () => void;
-}) => {
-  const k = usePurchasingT();
-  const { t } = useModernI18n();
-  const toast = useToast();
-  const [financeRefresh, setFinanceRefresh] = useState(0);
-  const financeLinks = useIncomingInvoiceLinks(financeRefresh);
-  const [action, setAction] = useState<OrderAction | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const lookup = lookupOf(state);
-  const order = state.orders.find((entry) => entry.id === orderId);
-  if (order === undefined) {
-    return null;
-  }
-  const sourceInvoices =
-    financeLinks.status === 'ready'
-      ? financeLinks.invoices.filter((invoice) => invoice.sourceOrder?.id === order.id)
-      : [];
-  const supplier = lookup.supplier(order.supplierId);
-  const you = t('facility-operations.common.you');
-  const quote = state.quotes.find((entry) => entry.id === order.quoteId);
-  const transition = async (to: 'approved' | 'ordered' | 'cancelled' | 'completed', note?: string) => {
-    setError(undefined);
-    setBusy(true);
-    const outcome = await run({
-      _tag: 'PurchaseOrderTransition',
-      orderId: order.id,
-      to,
-      ...(note === undefined || note === '' ? {} : { note }),
-    });
-    setBusy(false);
-    if (outcome.ok) {
-      toast.create({ duration: 5000, title: k(`orders.transitioned.${to}`), type: 'success' });
-      setAction(undefined);
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
-  };
-  const receivable = order.status === 'ordered' || order.status === 'partially_delivered';
-  return (
-    <SidePanel
-      closeOnInteractOutside={action === undefined}
-      description={`${lookup.supplier(order.supplierId)?.name ?? ''} · ${lookup.warehouse(order.warehouseId)?.name ?? ''}`}
-      onOpenChange={(open) => !open && onClose()}
-      open
-      resizeLabel={t('facility-operations.common.close')}
-      size="xl"
-      title={k('orders.panelTitle', { number: order.number })}
-    >
-      <div className="flex flex-col gap-250 py-200">
-        <div className="flex flex-wrap items-center gap-150">
-          <OrderStatusBadge status={order.status} />
-          <span className="font-semibold text-lg tabular-nums">
-            {formatAmount(orderTotalMinor(order), order.currency)}
-          </span>
-          {orderRemainingQuantity(order) > 0 && OPEN_ORDER_STATUSES.has(order.status) && (
-            <Badge size="sm" variant="warning">
-              {k('orders.openValue', { value: formatAmount(orderOpenValueMinor(order), order.currency) })}
-            </Badge>
-          )}
-        </div>
-        {error !== undefined && (
-          <StatusText showIcon status="error">
-            {error}
-          </StatusText>
-        )}
-        {canWrite && action === undefined && (
-          <div className="flex flex-wrap gap-100">
-            {order.status === 'draft' && (
-              <Button
-                icon="icon-[mdi--check]"
-                isLoading={busy}
-                onClick={() => void transition('approved')}
-                size="sm"
-                variant="primary"
-              >
-                {k('orders.approve')}
-              </Button>
-            )}
-            {order.status === 'approved' && (
-              <Button
-                icon="icon-[mdi--send]"
-                isLoading={busy}
-                onClick={() => void transition('ordered')}
-                size="sm"
-                variant="primary"
-              >
-                {k('orders.markOrdered')}
-              </Button>
-            )}
-            {receivable && (
-              <Button
-                icon="icon-[mdi--truck-delivery]"
-                onClick={() => setAction('receive')}
-                size="sm"
-                variant="primary"
-              >
-                {k('orders.receive')}
-              </Button>
-            )}
-            {order.status !== 'draft' &&
-              order.status !== 'cancelled' &&
-              supplier !== undefined &&
-              sourceInvoices.length === 0 &&
-              financeLinks.status === 'ready' &&
-              financeLinks.canWrite && (
-                <Button
-                  icon="icon-[mdi--file-document-plus-outline]"
-                  onClick={() => setAction('prepare-invoice')}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  Připravit návrh faktury
-                </Button>
-              )}
-            {order.status !== 'draft' && order.status !== 'cancelled' && (
-              <Button
-                icon="icon-[mdi--file-link]"
-                onClick={() => setAction('invoice')}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {k('orders.linkInvoice')}
-              </Button>
-            )}
-            {order.status === 'partially_delivered' && (
-              <Button onClick={() => setAction('close')} size="sm" theme="outlined" variant="secondary">
-                {k('orders.close')}
-              </Button>
-            )}
-            {(order.status === 'draft' || order.status === 'approved' || order.status === 'ordered') &&
-              order.deliveries.length === 0 && (
-                <Button onClick={() => setAction('cancel')} size="sm" theme="borderless" variant="danger">
-                  {k('orders.cancel')}
-                </Button>
-              )}
-          </div>
-        )}
-        {order.status !== 'draft' &&
-          order.status !== 'cancelled' &&
-          supplier !== undefined &&
-          sourceInvoices.length === 0 &&
-          financeLinks.status === 'ready' &&
-          !financeLinks.canWrite && (
-            <p className="text-fg-secondary text-xs" data-testid="invoice-draft-readonly">
-              Návrh přijaté faktury z této objednávky připraví účetní nebo vedení ve Financích. Vaše role má ve
-              Financích jen čtení.
-            </p>
-          )}
-        {action === 'receive' && (
-          <ReceiveForm onDone={() => setAction(undefined)} order={order} run={run} state={state} />
-        )}
-        {action === 'prepare-invoice' &&
-          supplier !== undefined &&
-          financeLinks.status === 'ready' &&
-          financeLinks.canWrite && (
-          <InvoiceDraftForm
-            order={order}
-            supplier={supplier}
-            onCancel={() => setAction(undefined)}
-            onCreated={() => {
-              setAction(undefined);
-              setFinanceRefresh((value) => value + 1);
-              onInvoiceCreated();
-              toast.create({ duration: 5000, title: 'Návrh faktury byl uložen ve Financích', type: 'success' });
-            }}
-          />
-        )}
-        {action === 'invoice' && <InvoiceForm onDone={() => setAction(undefined)} order={order} run={run} />}
-        {(action === 'close' || action === 'cancel') && (
-          <NoteForm
-            busy={busy}
-            onCancel={() => setAction(undefined)}
-            onSubmit={(note) => void transition(action === 'close' ? 'completed' : 'cancelled', note)}
-            required={action === 'close'}
-            submitLabel={k(action === 'close' ? 'orders.closeSubmit' : 'orders.cancelSubmit')}
-            title={k(action === 'close' ? 'orders.closeTitle' : 'orders.cancelTitle')}
-          />
-        )}
-        <SectionCard title={k('orders.lines')}>
-          <div className="overflow-x-auto">
-            <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{k('fields.ordered')}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{k('fields.received')}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{k('fields.remaining')}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{k('fields.unitPrice')}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{k('fields.lineTotal')}</Table.ColumnHeader>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {order.lines.map((line) => {
-                  const item = lookup.item(line.itemId);
-                  const unit = item?.unit ?? '';
-                  return (
-                    <Table.Row key={line.id}>
-                      <Table.Cell style={{ minWidth: '12rem' }}>
-                        {item === undefined ? (
-                          <span className="flex flex-col">
-                            <span>{line.description}</span>
-                            <span className="text-fg-secondary text-xs">{k('lines.service')}</span>
-                          </span>
-                        ) : (
-                          <span className="flex flex-col">
-                            <TextLink onClick={() => onOpenItem(item.id)}>{line.description}</TextLink>
-                            <span className="text-fg-secondary text-xs">{item.sku}</span>
-                          </span>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell align="end">{formatQuantity(line.quantity, unit)}</Table.Cell>
-                      <Table.Cell align="end">{formatQuantity(line.receivedQuantity, unit)}</Table.Cell>
-                      <Table.Cell align="end">
-                        <span
-                          className={
-                            lineRemaining(line) > 0 ? 'font-semibold tabular-nums' : 'text-fg-secondary tabular-nums'
-                          }
-                        >
-                          {formatQuantity(lineRemaining(line), unit)}
-                        </span>
-                      </Table.Cell>
-                      <Table.Cell align="end">{formatAmount(line.unitPriceMinor, order.currency)}</Table.Cell>
-                      <Table.Cell align="end">
-                        {formatAmount(line.unitPriceMinor * line.quantity, order.currency)}
-                      </Table.Cell>
-                    </Table.Row>
-                  );
-                })}
-              </Table.Body>
-            </Table>
-          </div>
-        </SectionCard>
-        <SectionCard title={k('panel.detail')}>
-          <DetailList
-            items={[
-              { label: k('fields.supplier'), value: lookup.supplier(order.supplierId)?.name ?? '—' },
-              { label: k('fields.deliverTo'), value: lookup.warehouse(order.warehouseId)?.name ?? '—' },
-              {
-                label: k('fields.expectedDate'),
-                value:
-                  order.expectedDate === undefined
-                    ? t('facility-operations.common.notProvided')
-                    : formatDate(order.expectedDate),
-              },
-              {
-                label: k('fields.quote'),
-                value:
-                  quote === undefined ? (
-                    k('orders.direct')
-                  ) : (
-                    <TextLink onClick={() => onOpenQuote(quote.id)}>
-                      {k('orders.fromQuote', { number: quote.number })}
-                    </TextLink>
-                  ),
-              },
-              ...(order.note === undefined || order.note === ''
-                ? []
-                : [{ label: t('facility-operations.common.note'), value: order.note }]),
-              {
-                label: t('facility-operations.common.createdBy'),
-                value: `${formatStamp(order.createdAt)} · ${principalLabel(order.createdBy, me, you)}`,
-              },
-            ]}
-          />
-        </SectionCard>
-        <SectionCard title={k('orders.deliveries', { count: order.deliveries.length })}>
-          {order.deliveries.length === 0 ? (
-            <p className="text-fg-secondary text-sm">{k('orders.noDeliveries')}</p>
-          ) : (
-            <ul className="flex flex-col gap-150">
-              {order.deliveries.map((delivery) => (
-                <li className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`} key={delivery.id}>
-                  <span className="font-medium">
-                    {`${formatDate(delivery.date)}${delivery.deliveryNote === undefined ? '' : ` · ${k('fields.deliveryNote')} ${delivery.deliveryNote}`}`}
-                  </span>
-                  {delivery.lines.map((entry) => {
-                    const line = order.lines.find((candidate) => candidate.id === entry.lineId);
-                    const unit = lookup.item(line?.itemId)?.unit ?? '';
-                    return (
-                      <span className="text-fg-secondary" key={entry.lineId}>
-                        {`${line?.description ?? ''}: ${formatQuantity(entry.quantity, unit)}${entry.batch === undefined ? '' : ` · ${k('fields.batch')} ${entry.batch}`}${
-                          entry.serialNumbers === undefined ? '' : ` · SN ${entry.serialNumbers.join(', ')}`
-                        }`}
-                      </span>
-                    );
-                  })}
-                  <span className="text-fg-secondary text-xs">{`${k('orders.receivedBy')} ${principalLabel(delivery.receivedBy, me, you)} · ${formatStamp(delivery.receivedAt)}`}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </SectionCard>
-        <SectionCard title={k('orders.invoices')}>
-          {sourceInvoices.map((invoice) => (
-            <div
-              className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-150 text-sm"
-              key={invoice.resourceId}
-            >
-              <Badge size="sm" variant="warning">
-                Doklad z objednávky
-              </Badge>
-              <span>{invoice.number}</span>
-              <FinanceInvoiceLink links={financeLinks} number={invoice.number} supplier={supplier?.name ?? ''} />
-            </div>
-          ))}
-          <p className="text-fg-secondary text-xs">{k('orders.invoiceNote')}</p>
-          {order.invoices.length === 0 && sourceInvoices.length === 0 ? (
-            <p className="text-fg-secondary text-sm">{k('orders.noInvoice')}</p>
-          ) : (
-            <ul className="flex flex-col gap-100 text-sm">
-              {order.invoices.map((invoice) => (
-                <li className="flex flex-wrap items-center justify-between gap-100" key={invoice.number}>
-                  <span className="flex flex-wrap items-center gap-100">
-                    <span className="icon-[mdi--file-document-outline]" />
-                    <span className="font-medium">{invoice.number}</span>
-                    <FinanceInvoiceLink
-                      links={financeLinks}
-                      number={invoice.number}
-                      supplier={lookup.supplier(order.supplierId)?.name ?? ''}
-                    />
-                    {invoice.invoiceDate !== undefined && (
-                      <span className="text-fg-secondary">{formatDate(invoice.invoiceDate)}</span>
-                    )}
-                    {invoice.note !== undefined && <span className="text-fg-secondary">{`· ${invoice.note}`}</span>}
-                  </span>
-                  <span className="tabular-nums">
-                    {invoice.amountMinor === undefined
-                      ? t('facility-operations.common.notProvided')
-                      : formatAmount(invoice.amountMinor, order.currency)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </SectionCard>
-        <SectionCard title={k('orders.discussion')}>
-          <CommentThread
-            hideWhenForbidden
-            subject={{ id: order.id, kind: 'purchase', label: k('orders.panelTitle', { number: order.number }) }}
-            title={null}
-          />
-        </SectionCard>
-        <SectionCard>
-          <ChangeHistory entityId={order.id} refreshKey={dateTimeIso(order.updatedAt)} />
-        </SectionCard>
-        <SectionCard title={k('orders.history')}>
-          <ol className="flex flex-col gap-100 border-border-primary border-l pl-200 text-sm">
-            {order.history.toReversed().map((entry, index) => (
-              <li className="flex flex-col" key={`${dateTimeIso(entry.at)}-${index}`}>
-                <span className="flex flex-wrap items-center gap-100">
-                  <span className="font-medium">{k(`historyEvent.${entry.event}`)}</span>
-                  <OrderStatusBadge status={entry.status} />
-                </span>
-                <span className="text-fg-secondary text-xs">{`${formatStamp(entry.at)} · ${principalLabel(entry.by, me, you)}${entry.note === undefined ? '' : ` · ${entry.note}`}`}</span>
-              </li>
-            ))}
-          </ol>
-        </SectionCard>
-      </div>
-    </SidePanel>
-  );
-};
+const prepareInvoiceAction = 'prepare-invoice';
+const OrderActionSchema = Schema.Literals(['receive', 'invoice', prepareInvoiceAction, 'close', 'cancel']);
+type OrderAction = typeof OrderActionSchema.Type;
 
 const NoteForm = ({
   busy,
@@ -578,12 +235,12 @@ const NoteForm = ({
   submitLabel,
   title,
 }: {
-  readonly title: string;
-  readonly submitLabel: string;
-  readonly required: boolean;
   readonly busy: boolean;
   readonly onCancel: () => void;
   readonly onSubmit: (note: string) => void;
+  readonly required: boolean;
+  readonly submitLabel: string;
+  readonly title: string;
 }) => {
   const { t } = useModernI18n();
   const [note, setNote] = useState('');
@@ -597,7 +254,7 @@ const NoteForm = ({
       )}
       <FormTextarea
         id="order-note"
-        label={t('facility-operations.common.note')}
+        label={t(noteLabelKey)}
         onChange={(event) => setNote(event.target.value)}
         required={required}
         rows={2}
@@ -605,7 +262,7 @@ const NoteForm = ({
       />
       <div className="flex justify-end gap-100">
         <Button onClick={onCancel} size="sm" theme="outlined" variant="secondary">
-          {t('facility-operations.common.cancel')}
+          {t(cancelLabelKey)}
         </Button>
         <Button
           isLoading={busy}
@@ -626,86 +283,142 @@ const NoteForm = ({
   );
 };
 
+interface SubmitOrderReceiptInput {
+  readonly batches: Readonly<Record<string, string>>;
+  readonly date: string;
+  readonly deliveryNote: string;
+  readonly k: ReturnType<typeof usePurchasingT>;
+  readonly lookup: ReturnType<typeof lookupOf>;
+  readonly onDone: () => void;
+  readonly open: readonly PurchaseOrder['lines'][number][];
+  readonly order: PurchaseOrder;
+  readonly quantities: Readonly<Record<string, string>>;
+  readonly run: RunCommand;
+  readonly serials: Readonly<Record<string, string>>;
+  readonly setBusy: (value: boolean) => void;
+  readonly setError: (value: string | undefined) => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+}
+const submitOrderReceipt = Effect.fn('FacilityOperations.Purchasing.submitOrderReceipt')(function* receiveOrder(
+  input: SubmitOrderReceiptInput,
+) {
+  const {
+    batches,
+    date,
+    deliveryNote,
+    k,
+    lookup,
+    onDone,
+    open,
+    order,
+    quantities,
+    run,
+    serials,
+    setBusy,
+    setError,
+    t,
+    toast,
+  } = input;
+  setError(undefined);
+  const lines: PurchaseReceiveLine[] = [];
+  for (const line of open) {
+    const text = (quantities[line.id] ?? '').trim();
+    if (ignoredReceiptQuantities.has(text)) {
+      continue;
+    }
+    const quantity = Number(text);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setError(t('facility-operations.common.errors.invalid'));
+      return;
+    }
+    if (quantity > lineRemaining(line)) {
+      setError(k('orders.overRemaining', { item: line.description, remaining: lineRemaining(line) }));
+      return;
+    }
+    const item = lookup.item(line.itemId);
+    const tracking = item === undefined ? 'none' : item.tracking;
+    const batch = (batches[line.id] ?? '').trim();
+    const serialList = parseSerials(serials[line.id] ?? '');
+    if (tracking === 'batch' && batch === '') {
+      setError(k('orders.batchFor', { item: line.description }));
+      return;
+    }
+    if (tracking === 'serial' && serialList.length !== quantity) {
+      setError(k('orders.serialsFor', { count: quantity, item: line.description }));
+      return;
+    }
+    lines.push({
+      lineId: line.id,
+      quantity,
+      ...optionalField('batch', batch === '' ? undefined : batch),
+      ...optionalField('serialNumbers', tracking === 'serial' ? serialList : undefined),
+    });
+  }
+  if (lines.length === 0) {
+    setError(k('orders.nothingReceived'));
+    return;
+  }
+  setBusy(true);
+  const outcome = yield* run({
+    _tag: 'PurchaseOrderReceive',
+    date,
+    lines,
+    orderId: order.id,
+    ...optionalField('deliveryNote', deliveryNote.trim() === '' ? undefined : deliveryNote.trim()),
+  });
+  setBusy(false);
+  if (outcome.ok) {
+    toast.create({ duration: 5000, title: k('orders.received'), type: 'success' });
+    onDone();
+  } else {
+    setError(t(failureKey(outcome.reason)));
+  }
+});
+
 const ReceiveForm = ({
   onDone,
   order,
   run,
   state,
 }: {
-  readonly order: PurchaseOrder;
-  readonly state: PurchasingState;
-  readonly run: RunCommand;
   readonly onDone: () => void;
+  readonly order: PurchaseOrder;
+  readonly run: RunCommand;
+  readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const toast = useToast();
   const lookup = lookupOf(state);
   const open = order.lines.filter((line) => lineRemaining(line) > 0);
-  const [date, setDate] = useState(todayIso());
+  const [date, setDate] = useState(todayIso);
   const [deliveryNote, setDeliveryNote] = useState('');
-  const [quantities, setQuantities] = useState<Record<string, string>>(
+  const [quantities, setQuantities] = useState<Record<string, string>>(() =>
     Object.fromEntries(open.map((line) => [line.id, String(lineRemaining(line))])),
   );
   const [batches, setBatches] = useState<Record<string, string>>({});
   const [serials, setSerials] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    setError(undefined);
-    const lines = [];
-    for (const line of open) {
-      const text = (quantities[line.id] ?? '').trim();
-      if (text === '' || text === '0') {
-        continue;
-      }
-      const quantity = Number(text);
-      if (!Number.isInteger(quantity) || quantity < 0) {
-        setError(t('facility-operations.common.errors.invalid'));
-        return;
-      }
-      if (quantity > lineRemaining(line)) {
-        setError(k('orders.overRemaining', { item: line.description, remaining: lineRemaining(line) }));
-        return;
-      }
-      const item = lookup.item(line.itemId);
-      const batch = (batches[line.id] ?? '').trim();
-      const serialList = parseSerials(serials[line.id] ?? '');
-      if (item?.tracking === 'batch' && batch === '') {
-        setError(k('orders.batchFor', { item: line.description }));
-        return;
-      }
-      if (item?.tracking === 'serial' && serialList.length !== quantity) {
-        setError(k('orders.serialsFor', { count: quantity, item: line.description }));
-        return;
-      }
-      lines.push({
-        lineId: line.id,
-        quantity,
-        ...(batch === '' ? {} : { batch }),
-        ...(item?.tracking === 'serial' ? { serialNumbers: serialList } : {}),
-      });
-    }
-    if (lines.length === 0) {
-      setError(k('orders.nothingReceived'));
-      return;
-    }
-    setBusy(true);
-    const outcome = await run({
-      _tag: 'PurchaseOrderReceive',
+  const submit = () =>
+    submitOrderReceipt({
+      batches,
       date,
-      lines,
-      orderId: order.id,
-      ...(deliveryNote.trim() === '' ? {} : { deliveryNote: deliveryNote.trim() }),
+      deliveryNote,
+      k,
+      lookup,
+      onDone,
+      open,
+      order,
+      quantities,
+      run,
+      serials,
+      setBusy,
+      setError,
+      t,
+      toast,
     });
-    setBusy(false);
-    if (outcome.ok) {
-      toast.create({ duration: 5000, title: k('orders.received'), type: 'success' });
-      onDone();
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
-  };
   return (
     <SectionCard title={k('orders.receiveTitle')}>
       {error !== undefined && (
@@ -781,12 +494,14 @@ const ReceiveForm = ({
       </div>
       <div className="flex justify-end gap-100">
         <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
-          {t('facility-operations.common.cancel')}
+          {t(cancelLabelKey)}
         </Button>
         <Button
           isLoading={busy}
           loadingText={t('facility-operations.common.saving')}
-          onClick={() => void submit()}
+          onClick={() => {
+            browserRuntime.runFork(submit());
+          }}
           size="sm"
           variant="primary"
         >
@@ -797,25 +512,24 @@ const ReceiveForm = ({
   );
 };
 
-const InvoiceForm = ({
-  onDone,
-  order,
-  run,
-}: {
+interface SubmitOrderInvoiceLinkInput {
+  readonly amount: string;
+  readonly date: string;
+  readonly k: ReturnType<typeof usePurchasingT>;
+  readonly note: string;
+  readonly number: string;
+  readonly onDone: () => void;
   readonly order: PurchaseOrder;
   readonly run: RunCommand;
-  readonly onDone: () => void;
-}) => {
-  const k = usePurchasingT();
-  const { t } = useModernI18n();
-  const toast = useToast();
-  const [number, setNumber] = useState('');
-  const [date, setDate] = useState('');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
+  readonly setBusy: (value: boolean) => void;
+  readonly setError: (value: string | undefined) => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+}
+
+const submitOrderInvoiceLink = Effect.fn('FacilityOperations.Purchasing.submitOrderInvoiceLink')(
+  function* linkOrderInvoice(input: SubmitOrderInvoiceLinkInput) {
+    const { amount, date, k, note, number, onDone, order, run, setBusy, setError, t, toast } = input;
     setError(undefined);
     const amountMinor = amount.trim() === '' ? undefined : parseAmountMinor(amount);
     if (number.trim() === '' || (amount.trim() !== '' && amountMinor === undefined)) {
@@ -823,13 +537,13 @@ const InvoiceForm = ({
       return;
     }
     setBusy(true);
-    const outcome = await run({
+    const outcome = yield* run({
       _tag: 'PurchaseOrderLinkInvoice',
       number: number.trim(),
       orderId: order.id,
-      ...(date === '' ? {} : { invoiceDate: date }),
-      ...(amountMinor === undefined ? {} : { amountMinor }),
-      ...(note.trim() === '' ? {} : { note: note.trim() }),
+      ...optionalField('invoiceDate', date === '' ? undefined : date),
+      ...optionalField('amountMinor', amountMinor),
+      ...optionalField('note', note.trim() === '' ? undefined : note.trim()),
     });
     setBusy(false);
     if (outcome.ok) {
@@ -838,7 +552,29 @@ const InvoiceForm = ({
     } else {
       setError(t(failureKey(outcome.reason)));
     }
-  };
+  },
+);
+
+const InvoiceForm = ({
+  onDone,
+  order,
+  run,
+}: {
+  readonly onDone: () => void;
+  readonly order: PurchaseOrder;
+  readonly run: RunCommand;
+}) => {
+  const k = usePurchasingT();
+  const { t } = useModernI18n();
+  const toast = useToast();
+  const [number, setNumber] = useState('');
+  const [date, setDate] = useState('');
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+  const submit = () =>
+    submitOrderInvoiceLink({ amount, date, k, note, number, onDone, order, run, setBusy, setError, t, toast });
   return (
     <SectionCard title={k('orders.linkInvoice')}>
       {error !== undefined && (
@@ -872,19 +608,21 @@ const InvoiceForm = ({
       </div>
       <FormInput
         id="invoice-note"
-        label={t('facility-operations.common.note')}
+        label={t(noteLabelKey)}
         maxLength={300}
         onChange={(event) => setNote(event.target.value)}
         value={note}
       />
       <div className="flex justify-end gap-100">
         <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
-          {t('facility-operations.common.cancel')}
+          {t(cancelLabelKey)}
         </Button>
         <Button
           isLoading={busy}
           loadingText={t('facility-operations.common.saving')}
-          onClick={() => void submit()}
+          onClick={() => {
+            browserRuntime.runFork(submit());
+          }}
           size="sm"
           variant="primary"
         >
@@ -892,6 +630,519 @@ const InvoiceForm = ({
         </Button>
       </div>
     </SectionCard>
+  );
+};
+
+type OrderTransitionTarget = Extract<OpsCommand, { readonly _tag: 'PurchaseOrderTransition' }>['to'];
+
+interface SubmitOrderTransitionInput {
+  readonly k: ReturnType<typeof usePurchasingT>;
+  readonly order: PurchaseOrder;
+  readonly run: RunCommand;
+  readonly setAction: (value: OrderAction | undefined) => void;
+  readonly setBusy: (value: boolean) => void;
+  readonly setError: (value: string | undefined) => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+}
+const submitOrderTransition = Effect.fn('FacilityOperations.Purchasing.submitOrderTransition')(
+  function* transitionOrder(input: SubmitOrderTransitionInput, to: OrderTransitionTarget, note?: string) {
+    const { k, order, run, setAction, setBusy, setError, t, toast } = input;
+    setError(undefined);
+    setBusy(true);
+    const outcome = yield* run({
+      _tag: 'PurchaseOrderTransition',
+      orderId: order.id,
+      to,
+      ...optionalField('note', note === '' ? undefined : note),
+    });
+    setBusy(false);
+    if (outcome.ok) {
+      toast.create({ duration: 5000, title: k(`orders.transitioned.${to}`), type: 'success' });
+      setAction(undefined);
+    } else {
+      setError(t(failureKey(outcome.reason)));
+    }
+  },
+);
+
+interface OrderRecordSectionsProps {
+  readonly financeLinks: ReturnType<typeof useIncomingInvoiceLinks>;
+  readonly me: PrincipalRef | undefined;
+  readonly onOpenItem: (id: string) => void;
+  readonly onOpenQuote: (id: string) => void;
+  readonly order: PurchaseOrder;
+  readonly sourceInvoices: readonly Extract<
+    ReturnType<typeof useIncomingInvoiceLinks>,
+    { readonly status: 'ready' }
+  >['invoices'][number][];
+  readonly state: PurchasingState;
+}
+const purchaseDeliveryHeading = (
+  delivery: PurchaseOrder['deliveries'][number],
+  k: ReturnType<typeof usePurchasingT>,
+) => {
+  const note = delivery.deliveryNote === undefined ? '' : ` · ${k('fields.deliveryNote')} ${delivery.deliveryNote}`;
+  return `${formatDate(delivery.date)}${note}`;
+};
+
+const OrderRecordSections = ({
+  financeLinks,
+  me,
+  onOpenItem,
+  onOpenQuote,
+  order,
+  sourceInvoices,
+  state,
+}: OrderRecordSectionsProps) => {
+  const k = usePurchasingT();
+  const { t } = useModernI18n();
+  const lookup = lookupOf(state);
+  const supplier = lookup.supplier(order.supplierId);
+  const quote = state.quotes.find((entry) => entry.id === order.quoteId);
+  const you = t('facility-operations.common.you');
+  const history = historyRows(order.history);
+  return (
+    <>
+      <SectionCard title={k('orders.lines')}>
+        <div className="overflow-x-auto">
+          <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">{k('fields.ordered')}</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">{k('fields.received')}</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">{k('fields.remaining')}</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">{k('fields.unitPrice')}</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">{k('fields.lineTotal')}</Table.ColumnHeader>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {order.lines.map((line) => {
+                const item = lookup.item(line.itemId);
+                const unit = item?.unit ?? '';
+                return (
+                  <Table.Row key={line.id}>
+                    <Table.Cell style={{ minWidth: '12rem' }}>
+                      {item === undefined ? (
+                        <span className="flex flex-col">
+                          <span>{line.description}</span>
+                          <span className="text-fg-secondary text-xs">{k('lines.service')}</span>
+                        </span>
+                      ) : (
+                        <span className="flex flex-col">
+                          <TextLink onClick={() => onOpenItem(item.id)}>{line.description}</TextLink>
+                          <span className="text-fg-secondary text-xs">{item.sku}</span>
+                        </span>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell align="end">{formatQuantity(line.quantity, unit)}</Table.Cell>
+                    <Table.Cell align="end">{formatQuantity(line.receivedQuantity, unit)}</Table.Cell>
+                    <Table.Cell align="end">
+                      <span
+                        className={
+                          lineRemaining(line) > 0 ? 'font-semibold tabular-nums' : 'text-fg-secondary tabular-nums'
+                        }
+                      >
+                        {formatQuantity(lineRemaining(line), unit)}
+                      </span>
+                    </Table.Cell>
+                    <Table.Cell align="end">{formatAmount(line.unitPriceMinor, order.currency)}</Table.Cell>
+                    <Table.Cell align="end">
+                      {formatAmount(line.unitPriceMinor * line.quantity, order.currency)}
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+            </Table.Body>
+          </Table>
+        </div>
+      </SectionCard>
+      <SectionCard title={k('panel.detail')}>
+        <DetailList
+          items={[
+            { label: k('fields.supplier'), value: lookup.supplier(order.supplierId)?.name ?? '—' },
+            { label: k('fields.deliverTo'), value: lookup.warehouse(order.warehouseId)?.name ?? '—' },
+            {
+              label: k('fields.expectedDate'),
+              value:
+                order.expectedDate === undefined
+                  ? t('facility-operations.common.notProvided')
+                  : formatDate(order.expectedDate),
+            },
+            {
+              label: k('fields.quote'),
+              value:
+                quote === undefined ? (
+                  k('orders.direct')
+                ) : (
+                  <TextLink onClick={() => onOpenQuote(quote.id)}>
+                    {k('orders.fromQuote', { number: quote.number })}
+                  </TextLink>
+                ),
+            },
+            ...(order.note === undefined || order.note === '' ? [] : [{ label: t(noteLabelKey), value: order.note }]),
+            {
+              label: t('facility-operations.common.createdBy'),
+              value: `${formatStamp(order.createdAt)} · ${principalLabel(order.createdBy, me, you)}`,
+            },
+          ]}
+        />
+      </SectionCard>
+      <SectionCard title={k('orders.deliveries', { count: order.deliveries.length })}>
+        {order.deliveries.length === 0 ? (
+          <p className="text-fg-secondary text-sm">{k('orders.noDeliveries')}</p>
+        ) : (
+          <ul className="flex flex-col gap-150">
+            {order.deliveries.map((delivery) => (
+              <li className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`} key={delivery.id}>
+                <span className="font-medium">{purchaseDeliveryHeading(delivery, k)}</span>
+                {delivery.lines.map((entry) => {
+                  const line = order.lines.find((candidate) => candidate.id === entry.lineId);
+                  const unit = lookup.item(line?.itemId)?.unit ?? '';
+                  const batchLabel = entry.batch === undefined ? '' : ` · ${k('fields.batch')} ${entry.batch}`;
+                  const serialLabel =
+                    entry.serialNumbers === undefined ? '' : ` · SN ${entry.serialNumbers.join(', ')}`;
+                  return (
+                    <span className="text-fg-secondary" key={entry.lineId}>
+                      {`${line?.description ?? ''}: ${formatQuantity(entry.quantity, unit)}${batchLabel}${serialLabel}`}
+                    </span>
+                  );
+                })}
+                <span className="text-fg-secondary text-xs">{`${k('orders.receivedBy')} ${principalLabel(delivery.receivedBy, me, you)} · ${formatStamp(delivery.receivedAt)}`}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+      <SectionCard title={k('orders.invoices')}>
+        {sourceInvoices.map((invoice) => (
+          <div
+            className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-150 text-sm"
+            key={invoice.resourceId}
+          >
+            <Badge size="sm" variant="warning">
+              Doklad z objednávky
+            </Badge>
+            <span>{invoice.number}</span>
+            <FinanceInvoiceLink links={financeLinks} number={invoice.number} supplier={supplier?.name ?? ''} />
+          </div>
+        ))}
+        <p className="text-fg-secondary text-xs">{k('orders.invoiceNote')}</p>
+        {order.invoices.length === 0 && sourceInvoices.length === 0 ? (
+          <p className="text-fg-secondary text-sm">{k('orders.noInvoice')}</p>
+        ) : (
+          <ul className="flex flex-col gap-100 text-sm">
+            {order.invoices.map((invoice) => (
+              <li className="flex flex-wrap items-center justify-between gap-100" key={invoice.number}>
+                <span className="flex flex-wrap items-center gap-100">
+                  <span className="icon-[mdi--file-document-outline]" />
+                  <span className="font-medium">{invoice.number}</span>
+                  <FinanceInvoiceLink
+                    links={financeLinks}
+                    number={invoice.number}
+                    supplier={lookup.supplier(order.supplierId)?.name ?? ''}
+                  />
+                  {invoice.invoiceDate !== undefined && (
+                    <span className="text-fg-secondary">{formatDate(invoice.invoiceDate)}</span>
+                  )}
+                  {invoice.note !== undefined && <span className="text-fg-secondary">{`· ${invoice.note}`}</span>}
+                </span>
+                <span className="tabular-nums">
+                  {invoice.amountMinor === undefined
+                    ? t('facility-operations.common.notProvided')
+                    : formatAmount(invoice.amountMinor, order.currency)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+      <SectionCard title={k('orders.discussion')}>
+        <CommentThread
+          hideWhenForbidden
+          subject={{ id: order.id, kind: 'purchase', label: k('orders.panelTitle', { number: order.number }) }}
+          title={null}
+        />
+      </SectionCard>
+      <SectionCard>
+        <ChangeHistory entityId={order.id} refreshKey={dateTimeIso(order.updatedAt)} />
+      </SectionCard>
+      <SectionCard title={k('orders.history')}>
+        {Result.isFailure(history) ? (
+          <StatusText showIcon status="error">
+            {t('facility-operations.common.errors.unavailable')}
+          </StatusText>
+        ) : (
+          <ol className="flex flex-col gap-100 border-border-primary border-l pl-200 text-sm">
+            {history.success.map(({ entry, key }) => {
+              const note = entry.note === undefined ? '' : ` · ${entry.note}`;
+              return (
+                <li className="flex flex-col" key={key}>
+                  <span className="flex flex-wrap items-center gap-100">
+                    <span className="font-medium">{k(`historyEvent.${entry.event}`)}</span>
+                    <OrderStatusBadge status={entry.status} />
+                  </span>
+                  <span className="text-fg-secondary text-xs">{`${formatStamp(entry.at)} · ${principalLabel(entry.by, me, you)}${note}`}</span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </SectionCard>
+    </>
+  );
+};
+
+const orderCapabilities = (
+  order: PurchaseOrder,
+  supplier: PurchasingState['suppliers'][number] | undefined,
+  finance: ReturnType<typeof useIncomingInvoiceLinks>,
+  invoiceCount: number,
+) => {
+  const persisted = order.status !== 'draft' && order.status !== 'cancelled';
+  const invoiceDraft = persisted && supplier !== undefined && invoiceCount === 0 && finance.status === 'ready';
+  return {
+    cancellable:
+      (order.status === 'draft' || order.status === 'approved' || order.status === 'ordered') &&
+      order.deliveries.length === 0,
+    invoiceDraftReadOnly: invoiceDraft && finance.status === 'ready' && !finance.canWrite,
+    invoiceDraftWritable: invoiceDraft && finance.status === 'ready' && finance.canWrite,
+    linkable: persisted,
+    receivable: order.status === 'ordered' || order.status === 'partially_delivered',
+  };
+};
+
+interface OrderActionFormsProps {
+  readonly action: OrderAction | undefined;
+  readonly busy: boolean;
+  readonly financeLinks: ReturnType<typeof useIncomingInvoiceLinks>;
+  readonly onCancel: () => void;
+  readonly onInvoiceCreated: () => void;
+  readonly order: PurchaseOrder;
+  readonly run: RunCommand;
+  readonly state: PurchasingState;
+  readonly supplier: PurchasingState['suppliers'][number] | undefined;
+  readonly transition: (to: OrderTransitionTarget, note?: string) => ReturnType<typeof submitOrderTransition>;
+}
+const OrderActionForms = ({
+  action,
+  busy,
+  financeLinks,
+  onCancel,
+  onInvoiceCreated,
+  order,
+  run,
+  state,
+  supplier,
+  transition,
+}: OrderActionFormsProps) => {
+  const k = usePurchasingT();
+  return (
+    <>
+      {action === 'receive' && <ReceiveForm onDone={onCancel} order={order} run={run} state={state} />}
+      {action === prepareInvoiceAction &&
+        supplier !== undefined &&
+        financeLinks.status === 'ready' &&
+        financeLinks.canWrite && (
+          <InvoiceDraftForm onCancel={onCancel} onCreated={onInvoiceCreated} order={order} supplier={supplier} />
+        )}
+      {action === 'invoice' && <InvoiceForm onDone={onCancel} order={order} run={run} />}
+      {(action === 'close' || action === 'cancel') && (
+        <NoteForm
+          busy={busy}
+          onCancel={onCancel}
+          onSubmit={(note) => {
+            browserRuntime.runFork(transition(action === 'close' ? 'completed' : 'cancelled', note));
+          }}
+          required={action === 'close'}
+          submitLabel={k(action === 'close' ? 'orders.closeSubmit' : 'orders.cancelSubmit')}
+          title={k(action === 'close' ? 'orders.closeTitle' : 'orders.cancelTitle')}
+        />
+      )}
+    </>
+  );
+};
+
+export const OrderPanel = ({
+  canWrite,
+  me,
+  onClose,
+  onInvoiceCreated,
+  onOpenItem,
+  onOpenQuote,
+  orderId,
+  run,
+  state,
+}: {
+  readonly canWrite: boolean;
+  readonly me: PrincipalRef | undefined;
+  readonly onClose: () => void;
+  readonly onInvoiceCreated: () => void;
+  readonly onOpenItem: (itemId: string) => void;
+  readonly onOpenQuote: (quoteId: string) => void;
+  readonly orderId: string;
+  readonly run: RunCommand;
+  readonly state: PurchasingState;
+}) => {
+  const k = usePurchasingT();
+  const { t } = useModernI18n();
+  const toast = useToast();
+  const [financeRefresh, setFinanceRefresh] = useState(0);
+  const financeLinks = useIncomingInvoiceLinks(financeRefresh);
+  const [action, setAction] = useState<OrderAction | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const lookup = lookupOf(state);
+  const order = state.orders.find((entry) => entry.id === orderId);
+  if (order === undefined) {
+    return null;
+  }
+  const sourceInvoices =
+    financeLinks.status === 'ready'
+      ? financeLinks.invoices.filter((invoice) => invoice.sourceOrder?.id === order.id)
+      : [];
+  const supplier = lookup.supplier(order.supplierId);
+  const transition = (to: OrderTransitionTarget, note?: string) =>
+    submitOrderTransition({ k, order, run, setAction, setBusy, setError, t, toast }, to, note);
+  const capabilities = orderCapabilities(order, supplier, financeLinks, sourceInvoices.length);
+  return (
+    <SidePanel
+      closeOnInteractOutside={action === undefined}
+      description={`${lookup.supplier(order.supplierId)?.name ?? ''} · ${lookup.warehouse(order.warehouseId)?.name ?? ''}`}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel={t('facility-operations.common.close')}
+      size="xl"
+      title={k('orders.panelTitle', { number: order.number })}
+    >
+      <div className="flex flex-col gap-250 py-200">
+        <div className="flex flex-wrap items-center gap-150">
+          <OrderStatusBadge status={order.status} />
+          <span className="font-semibold text-lg tabular-nums">
+            {formatAmount(orderTotalMinor(order), order.currency)}
+          </span>
+          {orderRemainingQuantity(order) > 0 && OPEN_ORDER_STATUSES.has(order.status) && (
+            <Badge size="sm" variant="warning">
+              {k('orders.openValue', { value: formatAmount(orderOpenValueMinor(order), order.currency) })}
+            </Badge>
+          )}
+        </div>
+        {error !== undefined && (
+          <StatusText showIcon status="error">
+            {error}
+          </StatusText>
+        )}
+        {canWrite && action === undefined && (
+          <div className="flex flex-wrap gap-100">
+            {order.status === 'draft' && (
+              <Button
+                icon="icon-[mdi--check]"
+                isLoading={busy}
+                onClick={() => {
+                  browserRuntime.runFork(transition('approved'));
+                }}
+                size="sm"
+                variant="primary"
+              >
+                {k('orders.approve')}
+              </Button>
+            )}
+            {order.status === 'approved' && (
+              <Button
+                icon="icon-[mdi--send]"
+                isLoading={busy}
+                onClick={() => {
+                  browserRuntime.runFork(transition('ordered'));
+                }}
+                size="sm"
+                variant="primary"
+              >
+                {k('orders.markOrdered')}
+              </Button>
+            )}
+            {capabilities.receivable && (
+              <Button
+                icon="icon-[mdi--truck-delivery]"
+                onClick={() => setAction('receive')}
+                size="sm"
+                variant="primary"
+              >
+                {k('orders.receive')}
+              </Button>
+            )}
+            {capabilities.invoiceDraftWritable && (
+              <Button
+                icon="icon-[mdi--file-document-plus-outline]"
+                onClick={() => setAction(prepareInvoiceAction)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                Připravit návrh faktury
+              </Button>
+            )}
+            {capabilities.linkable && (
+              <Button
+                icon="icon-[mdi--file-link]"
+                onClick={() => setAction('invoice')}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {k('orders.linkInvoice')}
+              </Button>
+            )}
+            {order.status === 'partially_delivered' && (
+              <Button onClick={() => setAction('close')} size="sm" theme="outlined" variant="secondary">
+                {k('orders.close')}
+              </Button>
+            )}
+            {capabilities.cancellable && (
+              <Button onClick={() => setAction('cancel')} size="sm" theme="borderless" variant="danger">
+                {k('orders.cancel')}
+              </Button>
+            )}
+          </div>
+        )}
+        {capabilities.invoiceDraftReadOnly && (
+          <p className="text-fg-secondary text-xs" data-testid="invoice-draft-readonly">
+            Návrh přijaté faktury z této objednávky připraví účetní nebo vedení ve Financích. Vaše role má ve Financích
+            jen čtení.
+          </p>
+        )}
+        <OrderActionForms
+          action={action}
+          busy={busy}
+          financeLinks={financeLinks}
+          onCancel={() => setAction(undefined)}
+          onInvoiceCreated={() => {
+            setAction(undefined);
+            setFinanceRefresh((value) => value + 1);
+            onInvoiceCreated();
+            toast.create({ duration: 5000, title: 'Návrh faktury byl uložen ve Financích', type: 'success' });
+          }}
+          order={order}
+          run={run}
+          state={state}
+          supplier={supplier}
+          transition={transition}
+        />
+        <OrderRecordSections
+          financeLinks={financeLinks}
+          me={me}
+          onOpenItem={onOpenItem}
+          onOpenQuote={onOpenQuote}
+          order={order}
+          sourceInvoices={sourceInvoices}
+          state={state}
+        />
+      </div>
+    </SidePanel>
   );
 };
 

@@ -6,14 +6,20 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
+import type { ReadServiceFactory } from '@app/core-runtime';
 import { readAssignablePrincipals } from '@app/core-runtime/auth/assignable-principals';
 import { crmAssignmentPermission } from '../services/assignment-policy.ts';
-import { Effect, Match } from 'effect';
-import type { ReadServiceFactory } from '@app/core-runtime';
+import { Effect, Match, Schema } from 'effect';
+
 import { authorizedImportSamples } from '../../api/authorized-import-samples.ts';
+import {
+  RecordsAssignmentDirectorySchema,
+  RecordsRequestSchema,
+  RecordsResponseSchema,
+} from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
-import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+
 import { clientReadEvidence } from './agent-review.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -109,13 +115,26 @@ export const recordsRead = defineRead(
                 { value: cause },
               ),
             ),
-            Effect.map((assignmentCandidates) => ({
-              ...result,
-              assignmentCandidates,
-              departedPrincipalIds: context.loaded.directory.members.flatMap((member) =>
-                member.membershipStatus === 'departed' ? [member.principalRef.principalId] : [],
+            Effect.flatMap((assignmentCandidates) =>
+              Schema.decodeEffect(RecordsAssignmentDirectorySchema)({
+                assignmentCandidates,
+                departedPrincipalIds: context.loaded.directory.members.flatMap((member) =>
+                  member.membershipStatus === 'departed' ? [member.principalRef.principalId] : [],
+                ),
+              }).pipe(
+                Effect.mapError((cause) =>
+                  Object.defineProperty(
+                    new ReadHandlerUnavailable({
+                      code: 'read_handler_unavailable',
+                      reason: 'Seznam obchodníků je dočasně nedostupný.',
+                    }),
+                    'cause',
+                    { value: cause },
+                  ),
+                ),
+                Effect.map((directory) => ({ ...result, ...directory })),
               ),
-            })),
+            ),
           ),
         ),
         Effect.map((result) => ({

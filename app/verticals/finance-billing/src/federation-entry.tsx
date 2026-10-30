@@ -19,12 +19,8 @@ const FinanceBillingRouteContent = () => {
       data-modern-boundary-id="verticalFinanceBilling"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="financebilling:text-2xl financebilling:font-black">
-        {t('finance-billing.title')}
-      </h2>
-      <p className="financebilling:mt-2 financebilling:text-stone-600">
-        {t('finance-billing.routeSurface')}
-      </p>
+      <h2 className="financebilling:text-2xl financebilling:font-black">{t('finance-billing.title')}</h2>
+      <p className="financebilling:mt-2 financebilling:text-stone-600">{t('finance-billing.routeSurface')}</p>
     </section>
   );
 };

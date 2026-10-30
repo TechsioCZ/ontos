@@ -46,7 +46,7 @@ export const ConnectionsAdminView = ({ model }: { readonly model: ConnectionsAdm
       controls={controls}
       currentEntrypointKey="shell-super-app.page.connected-apps"
       shell={model.shell}
-      title="Připojené aplikace"
+      title={t('shell.profile.connections.title')}
     >
       <div className="grid min-w-0 gap-300">
         <ConnectionsAdminPanel />

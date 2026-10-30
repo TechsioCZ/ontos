@@ -1,13 +1,50 @@
 // Shared CRM UI helpers (owned by crm-scaffold): load-state gate, scope note, Czech table labels.
-import { EmptyState, PageHeader, dataTableRowLabels, paginationTranslations, surfaceTileClassName } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  dataTableRowLabels,
+  paginationTranslations,
+  surfaceTileClassName,
+} from '@app/admin-ui';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { Option, Schema } from 'effect';
+import { CrmQueryStringSchema } from '../../shared/route-search.ts';
+import type { CrmRouteSearch } from '../../shared/route-search.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import type { DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { canSeeEverything } from '../../shared/domain/access.ts';
 import type { CrmRecordsState } from './records.ts';
 import './loading-skeleton.css';
+
+/** Decode the provider's original query string, preserving opaque IDs that resemble JSON. */
+export const useCrmRouteSearch = (): CrmRouteSearch => {
+  const query = useRouterState({ select: (state) => state.location.searchStr });
+  return Option.getOrElse(Schema.decodeOption(CrmQueryStringSchema)(query), (): CrmRouteSearch => ({}));
+};
+
+/** A local selection applies only to the router location where the user made it. */
+export const useCrmRouteSelection = (key: keyof Pick<CrmRouteSearch, 'klient' | 'objednavka'>) => {
+  const location = useRouterState({
+    select: (state) => ({
+      href: state.location.href,
+      key: state.location.state.__TSR_key,
+      searchStr: state.location.searchStr,
+    }),
+  });
+  const search = Option.getOrElse(
+    Schema.decodeOption(CrmQueryStringSchema)(location.searchStr),
+    (): CrmRouteSearch => ({}),
+  );
+  const [selection, setSelection] = useState({ id: search[key], location });
+  const selected =
+    selection.location.href === location.href && selection.location.key === location.key ? selection.id : search[key];
+  const select = (id: string | undefined) => setSelection({ id, location });
+  return [selected, select] as const;
+};
 
 /** Renders children only with loaded records; loading / error / forbidden states otherwise. */
 export const CrmStateGate = ({
@@ -59,11 +96,12 @@ export const CrmStateGate = ({
 export const CrmScopeNote = ({ records }: { readonly records: RecordsResponse }) => {
   const { t } = useModernI18n();
   const all = canSeeEverything(records.viewer);
-  const key = all
-    ? 'crm.common.scopeAll'
-    : records.state.clients.items.length === 0
-      ? 'crm.common.scopeNone'
-      : 'crm.common.scopeAssigned';
+  let key = 'crm.common.scopeAssigned';
+  if (all) {
+    key = 'crm.common.scopeAll';
+  } else if (records.state.clients.items.length === 0) {
+    key = 'crm.common.scopeNone';
+  }
   return (
     <p className="inline-flex w-fit items-center gap-100 rounded-full bg-surface px-150 py-50 text-fg-secondary text-xs">
       <span

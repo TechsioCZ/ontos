@@ -6,8 +6,11 @@ import {
   defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
+import type { Crypto } from 'effect';
 
 import type { CatalogQuantityHandoffReady } from '../../shared/domain/catalog-quantity-handoff.ts';
 import { CatalogQuantityBasisSchema } from '../../shared/domain/catalog-quantity-handoff.ts';
@@ -52,7 +55,7 @@ const sameQuantityBasis = Schema.toEquivalence(CatalogQuantityBasisSchema);
 const sameSelectionBasis = Schema.toEquivalence(CatalogSelectionBasisListSchema);
 const sameResourceRef = Schema.toEquivalence(CatalogResourceRefSchema);
 
-const fingerprint = (value: string): string => createHash('sha256').update(value).digest('hex');
+const fingerprint = (value: string): string => Hex.encode(sha256(utf8ToBytes(value)));
 const resourceRefKey = (resourceRef: {
   readonly moduleId: string;
   readonly resourceId: string;
@@ -221,7 +224,7 @@ const hasConflictingRepeatedSelection = (targets: readonly PreparedTarget[]): bo
 export const resolvePricingPurposeEquivalence = Effect.fn('PricingPurposeEquivalenceRead.resolve')(function* resolve(
   request: PricingPurposeEquivalenceRequest,
   services: Pick<Services, 'prepare'>,
-): Effect.fn.Return<PricingPurposeEquivalenceResponse> {
+): Effect.fn.Return<PricingPurposeEquivalenceResponse, never, Crypto.Crypto> {
   const [first] = request.members;
   if (first === undefined) {
     return {
@@ -431,7 +434,7 @@ export const readPricingPurposeEquivalence = Effect.fn('PricingPurposeEquivalenc
     input: PricingPurposeEquivalenceRequest,
     tenantId: string,
     services: Pick<Services, 'prepare'>,
-  ): Effect.fn.Return<PricingPurposeEquivalenceResponse, ReadHandlerNotFound> {
+  ): Effect.fn.Return<PricingPurposeEquivalenceResponse, ReadHandlerNotFound, Crypto.Crypto> {
     if (input.anchorSelection.productRef.tenantId !== tenantId) {
       return yield* new ReadHandlerNotFound({
         code: 'read_handler_not_found',

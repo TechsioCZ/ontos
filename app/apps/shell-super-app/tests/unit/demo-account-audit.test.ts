@@ -1,6 +1,7 @@
 import { ReadRuntime } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -84,7 +85,7 @@ const fixture = (
     ownerAuthorizationDecision: 'allowed',
     permissionDecision: allowed ? 'allowed' : 'denied',
     scope: { ...caller.principal, correlationId: transport.correlationId },
-  });
+  }).pipe(Effect.provide(NodeCrypto.layer));
 const project = (evidence: AuditFixtureEvidence, eventType = 'action.executed', principalId = actorId) =>
   Effect.gen(function* projectNativeAudit() {
     const harness = yield* fixture(evidence, eventType, principalId);

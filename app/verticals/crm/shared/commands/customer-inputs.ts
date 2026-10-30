@@ -1,14 +1,15 @@
 // AREA: customer inputs (CRM.md §6). Správce / vedoucí keep the R01–R08 register: state, who asked, when, evidence,
 // and the version + approval date of a delivered sample. Every state change is kept in the entry history.
-import { Effect, Match, Schema } from 'effect';
-import { IsoTimeSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
-import type { CustomerInput } from '../domain/customer-inputs.ts';
+import { DateTime, Effect, Match, Schema } from 'effect';
+import { makeEntityId, CalendarDateSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
 import { CustomerInputIdSchema, CustomerInputStatusSchema, customerInputOf } from '../domain/customer-inputs.ts';
-import type { CrmState } from '../domain/state.ts';
-import type { Reducer } from './context.ts';
-import { invalid, requireWriteAll } from './context.ts';
+import type { CustomerInput } from '../domain/customer-inputs.ts';
 
-const DaySchema = IsoTimeSchema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}/u));
+import type { CrmState } from '../domain/state.ts';
+import { invalid, requireWriteAll } from './context.ts';
+import type { Reducer } from './context.ts';
+
+const DaySchema = CalendarDateSchema;
 
 export const customerInputsCommandSchemas = [
   Schema.TaggedStruct('UpdateCustomerInput', {
@@ -35,8 +36,11 @@ const withInput = (state: CrmState, next: CustomerInput): CrmState => ({
 
 export const applyCustomerInputsCommand: Reducer<CustomerInputsCommand> = (state, command, context) =>
   Match.value(command).pipe(
-    Match.tag('UpdateCustomerInput', (value) =>
-      Effect.gen(function* updateCustomerInput() {
+    Match.tag(
+      'UpdateCustomerInput',
+      Effect.fn('Crm.updateCustomerInput')(function* updateCustomerInput(
+        value: Extract<CustomerInputsCommand, { readonly _tag: 'UpdateCustomerInput' }>,
+      ) {
         yield* requireWriteAll(context);
         const current = customerInputOf(state.customerInputs, value.id);
         const evidence = value.evidence?.trim() ?? current.evidence;
@@ -44,44 +48,48 @@ export const applyCustomerInputsCommand: Reducer<CustomerInputsCommand> = (state
           return yield* invalid('Uveďte důkaz požadavku (dokument, e-mail, zápis z jednání)');
         }
         const sampleVersion = value.sampleVersion ?? current.sampleVersion;
-        let sampleApprovedAt = value.sampleApprovedAt ?? current.sampleApprovedAt;
-        if (value.status === 'approved') {
-          if (sampleVersion === undefined) {
-            return yield* invalid('Odsouhlasení potřebuje verzi schématu / vzorku, ke které se vztahuje');
-          }
-          sampleApprovedAt ??= context.now.slice(0, 10);
-        } else if (value.sampleApprovedAt === undefined) {
-          // Leaving "approved" withdraws the approval; the history keeps the earlier one.
-          sampleApprovedAt = undefined;
+        if (value.status === 'approved' && sampleVersion === undefined) {
+          return yield* invalid('Odsouhlasení potřebuje verzi schématu / vzorku, ke které se vztahuje');
+        }
+        // Leaving "approved" withdraws the earlier approval unless this command supplied its own date.
+        const sampleApprovedAt =
+          value.status === 'approved'
+            ? (value.sampleApprovedAt ??
+              current.sampleApprovedAt ??
+              CalendarDateSchema.make(DateTime.formatIsoDateUtc(context.now)))
+            : value.sampleApprovedAt;
+        const historyEntry: CustomerInput['history'][number] = {
+          at: context.now,
+          by: context.viewer.principalId,
+          status: value.status,
+        };
+        if (value.note !== undefined && value.note.trim() !== '') {
+          Object.assign(historyEntry, { note: value.note.trim() });
         }
         const next: CustomerInput = {
           evidence,
-          history: [
-            ...current.history,
-            {
-              at: context.now,
-              by: context.viewer.principalId,
-              ...(value.note === undefined || value.note.trim() === '' ? {} : { note: value.note.trim() }),
-              status: value.status,
-            },
-          ],
+          history: [...current.history, historyEntry],
           id: current.id,
-          ...(value.note === undefined
-            ? current.note === undefined
-              ? {}
-              : { note: current.note }
-            : value.note.trim() === ''
-              ? {}
-              : { note: value.note.trim() }),
           requestedAt: value.requestedAt ?? current.requestedAt,
           requestedBy: value.requestedBy ?? current.requestedBy,
-          ...(sampleApprovedAt === undefined ? {} : { sampleApprovedAt }),
-          ...(sampleVersion === undefined ? {} : { sampleVersion }),
           status: value.status,
           updatedAt: context.now,
           updatedBy: context.viewer.principalId,
         };
-        return { entityIds: [current.id], state: withInput(state, next) };
+        if (value.note === undefined) {
+          if (current.note !== undefined) {
+            Object.assign(next, { note: current.note });
+          }
+        } else if (value.note.trim() !== '') {
+          Object.assign(next, { note: value.note.trim() });
+        }
+        if (sampleApprovedAt !== undefined) {
+          Object.assign(next, { sampleApprovedAt });
+        }
+        if (sampleVersion !== undefined) {
+          Object.assign(next, { sampleVersion });
+        }
+        return { entityIds: [makeEntityId(current.id)], state: withInput(state, next) };
       }),
     ),
     Match.exhaustive,

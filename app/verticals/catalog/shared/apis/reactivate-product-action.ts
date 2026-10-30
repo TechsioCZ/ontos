@@ -3,7 +3,7 @@
 // @ontos-action-http-slug reactivate-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { ReactivateProductPayloadSchema, ReactivateProductResultSchema } from '../actions/reactivate-product.ts';
 
 export { ReactivateProductPayloadSchema } from '../actions/reactivate-product.ts';

@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -17,6 +18,7 @@ const InvitePersonForm = ({
   readonly onClose: () => void;
   readonly onCommitted: (change: PendingPeopleChange) => void;
 }) => {
+  const { t } = useModernI18n();
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [affiliation, setAffiliation] = useState<'employee' | 'external'>('external');
@@ -72,7 +74,7 @@ const InvitePersonForm = ({
         }
       }}
       open
-      title="Pozvat člověka"
+      title={t('shell.people.invite')}
     >
       <div className="grid gap-200">
         <p>
@@ -81,7 +83,7 @@ const InvitePersonForm = ({
         </p>
         <FormInput
           autoComplete="name"
-          label="Jméno a příjmení"
+          label={t('shell.people.fullName')}
           maxLength={200}
           onChange={(event) => setDisplayName(event.target.value)}
           required
@@ -89,7 +91,7 @@ const InvitePersonForm = ({
         />
         <FormInput
           autoComplete="email"
-          label="E-mail"
+          label={t('shell.auth.identity.email')}
           maxLength={254}
           onChange={(event) => setEmail(event.target.value)}
           required

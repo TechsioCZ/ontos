@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Schema } from 'effect';
 
@@ -378,7 +379,7 @@ const resolvedPrerequisites = (activity: ProcessingActivity): ProcessingActivity
 describe('Processing Activity registry', () => {
   it.effect('keeps a proposed activity distinct until complete approved inputs activate it', () =>
     Effect.gen(function* rejectsIncompleteActivation() {
-      const registry = makeInMemoryProcessingActivityRegistry();
+      const registry = yield* makeInMemoryProcessingActivityRegistry();
       const created = yield* registry.create(tenantId, purpose.legalEntityId, actor, createInvocationId, {
         ...input,
         legalBasisAssignmentRefs: [],
@@ -398,12 +399,12 @@ describe('Processing Activity registry', () => {
         ),
       );
       expect(Exit.isFailure(transition)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a Processing Purpose reference from another tenant before persistence', () =>
     Effect.gen(function* rejectsCrossTenantPurpose() {
-      const registry = makeInMemoryProcessingActivityRegistry();
+      const registry = yield* makeInMemoryProcessingActivityRegistry();
       const result = yield* Effect.exit(
         registry.create(tenantId, purpose.legalEntityId, actor, createInvocationId, {
           ...input,
@@ -414,12 +415,12 @@ describe('Processing Activity registry', () => {
         }),
       );
       expect(Exit.isFailure(result)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects Legal Basis and Retention Rule references from another tenant before persistence', () =>
     Effect.gen(function* rejectsCrossTenantPrerequisites() {
-      const registry = makeInMemoryProcessingActivityRegistry();
+      const registry = yield* makeInMemoryProcessingActivityRegistry();
       const foreignTenantId = '00000000-0000-4000-8000-000000000099';
       const foreignLegalBasisInput = Schema.decodeUnknownSync(CreateProcessingActivityInputSchema)({
         ...input,
@@ -443,12 +444,12 @@ describe('Processing Activity registry', () => {
       );
       expect(Exit.isFailure(legalBasisResult)).toBe(true);
       expect(Exit.isFailure(retentionResult)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('requires bijective full typed coverage references and owner bindings', () =>
     Effect.gen(function* rejectsNonExactCoverage() {
-      const registry = makeInMemoryProcessingActivityRegistry();
+      const registry = yield* makeInMemoryProcessingActivityRegistry();
       const activity = yield* registry.create(tenantId, purpose.legalEntityId, actor, createInvocationId, input);
       const prerequisites = resolvedPrerequisites(activity);
       const { coverage } = prerequisites;
@@ -600,14 +601,14 @@ describe('Processing Activity registry', () => {
           ),
         ).toBe(false);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect(
     'rejects applicability authority for another controller, purpose, version, tenant, legal entity, or time',
     () =>
       Effect.gen(function* rejectsForeignApplicabilityAuthority() {
-        const registry = makeInMemoryProcessingActivityRegistry();
+        const registry = yield* makeInMemoryProcessingActivityRegistry();
         const activity = yield* registry.create(tenantId, purpose.legalEntityId, actor, createInvocationId, input);
         const prerequisites = resolvedPrerequisites(activity);
         const baseAuthority = applicabilityDecision.authority;
@@ -657,7 +658,7 @@ describe('Processing Activity registry', () => {
             applicabilityDecisions: [foreignDecision],
             coverage: { ...prerequisites.coverage, applicabilityDecisions: [foreignDecision] },
           };
-          const foreignRegistry = makeInMemoryProcessingActivityRegistry({
+          const foreignRegistry = yield* makeInMemoryProcessingActivityRegistry({
             resolvePrerequisites: () => Effect.succeed(foreignPrerequisites),
           });
           const foreignActivity = yield* foreignRegistry.create(
@@ -681,12 +682,12 @@ describe('Processing Activity registry', () => {
           );
           expect(Exit.isFailure(transition)).toBe(true);
         }
-      }),
+      }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not resurrect an older APPLICABLE decision after a newer exact-scope UNRESOLVED decision', () =>
     Effect.gen(function* rejectsStaleApplicableDecision() {
-      const registry = makeInMemoryProcessingActivityRegistry({
+      const registry = yield* makeInMemoryProcessingActivityRegistry({
         resolvePrerequisites: (activity) => {
           const prerequisites = resolvedPrerequisites(activity);
           const newerUnresolved = Schema.decodeUnknownSync(PrivacyApplicabilityDecisionSchema)({
@@ -717,7 +718,7 @@ describe('Processing Activity registry', () => {
         ),
       );
       expect(Exit.isFailure(transition)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects foreign module and resource-type aliases in prerequisite references', () => {
@@ -747,7 +748,7 @@ describe('Processing Activity registry', () => {
 
   it.effect('requires explicit applicability and prevents resurrection after ending', () =>
     Effect.gen(function* preventsResurrection() {
-      const registry = makeInMemoryProcessingActivityRegistry({
+      const registry = yield* makeInMemoryProcessingActivityRegistry({
         resolvePrerequisites: (activity) => Effect.succeed(resolvedPrerequisites(activity)),
       });
       const created = yield* registry.create(tenantId, purpose.legalEntityId, actor, createInvocationId, input);
@@ -785,12 +786,12 @@ describe('Processing Activity registry', () => {
         ),
       );
       expect(Exit.isFailure(resurrection)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects lifecycle jumps outside the governed transition matrix', () =>
     Effect.gen(function* rejectsInvalidLifecycleJump() {
-      const registry = makeInMemoryProcessingActivityRegistry();
+      const registry = yield* makeInMemoryProcessingActivityRegistry();
       const created = yield* registry.create(tenantId, purpose.legalEntityId, actor, createInvocationId, input);
       const rejected = yield* Effect.exit(
         registry.transition(
@@ -805,6 +806,6 @@ describe('Processing Activity registry', () => {
         ),
       );
       expect(Exit.isFailure(rejected)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

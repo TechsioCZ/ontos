@@ -15,7 +15,7 @@ import type { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { Cause, Context, Effect, Layer, Predicate, Redacted, Result, Schema } from 'effect';
-import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
+import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
 import { AuthConfig } from './config.ts';
 import { AUTH_OPERATION_TIMEOUT_MS, observeAuthenticationPhase, withAuthenticationTimeout } from './observability.ts';

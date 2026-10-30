@@ -63,7 +63,7 @@ export const preflightRentalCrmOrders = (client: SeedClient, asOf: Date) =>
     const snapshot = yield* client.read('crm', Records);
     for (const spec of rentalCrmOrderPlan(asOf)) {
       if (!snapshot.state.clients.items.some((item) => item.id === spec.clientId)) {
-        return yield* new DemoSeedError({ reason: 'Seed the Siampark CRM clients before rental orders.' });
+        return yield* new DemoSeedError({ reason: 'Seed the Nájempark CRM clients before rental orders.' });
       }
       const links = snapshot.state.imports.customerLinks.filter(
         (link) => link.source === source && link.externalCustomerId === spec.clientId,
@@ -97,7 +97,7 @@ export const seedRentalCrmOrders = (client: SeedClient, asOf: Date) =>
     for (const clientId of new Set(plan.map((order) => order.clientId))) {
       if (!snapshot.state.clients.items.some((item) => item.id === clientId)) {
         return yield* new DemoSeedError({
-          reason: 'Seed the Siampark CRM clients before rental orders; no client is invented by the order seed.',
+          reason: 'Seed the Nájempark CRM clients before rental orders; no client is invented by the order seed.',
         });
       }
       const links = snapshot.state.imports.customerLinks.filter(

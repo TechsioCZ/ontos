@@ -9,6 +9,7 @@ import {
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const now = DateTime.makeUnsafe('2026-10-20T15:00:00Z');
 const decode = Schema.decodeUnknownSync(MerchandiseCommandSchema);
@@ -16,8 +17,12 @@ const apply = (state: MerchandiseState, command: typeof MerchandiseCommandSchema
   evolveMerchandiseState(state, decode(command), { actor, now, resourceId: 'admin-proof' });
 it('accepts 1 000 pieces in 500-piece packages and rejects stock/minimum/package violations', () => {
   const rules = orderQuantityRules({ minimumQuantity: 500, packageQuantity: 500, stockOnHand: 2000 });
-  for (const quantity of [500, 1000, 2000]) expect(isOrderQuantityValid(quantity, rules)).toBe(true);
-  for (const quantity of [0, 1, 600, 2500, NaN, Infinity]) expect(isOrderQuantityValid(quantity, rules)).toBe(false);
+  for (const quantity of [500, 1000, 2000]) {
+    expect(isOrderQuantityValid(quantity, rules)).toBe(true);
+  }
+  for (const quantity of [0, 1, 600, 2500, Number.NaN, Infinity]) {
+    expect(isOrderQuantityValid(quantity, rules)).toBe(false);
+  }
 });
 it('allows dispatch only status processing and stock movement while preserving other company behavior', () => {
   for (const tag of [
@@ -32,14 +37,15 @@ it('allows dispatch only status processing and stock movement while preserving o
     expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, tag)).toBe(false);
     expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, true, tag)).toBe(true);
   }
-  for (const tag of ['ChangeOrderStatus', 'RecordStockMovement'])
+  for (const tag of ['ChangeOrderStatus', 'RecordStockMovement']) {
     expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, tag)).toBe(true);
+  }
   expect(staffCommandAllowed(ESHOP_LEGAL_ENTITY_ID, false, 'EditOrder')).toBe(true);
   expect(staffCommandAllowed(ESHOP_LEGAL_ENTITY_ID, false, 'RemoveDemoOrder')).toBe(false);
 });
 const seeded = Effect.gen(function* seed() {
   const product = yield* apply(
-    { products: [], orders: [], movements: [] },
+    { movements: [], orders: [], products: [] },
     {
       _tag: 'CreateProduct',
       active: true,
@@ -60,12 +66,12 @@ const seeded = Effect.gen(function* seed() {
   });
   const placed = yield* apply(stock.state, {
     _tag: 'PlaceStorefrontOrder',
-    partyId: 'test-customer-party',
     clientRequestId: 'akros-admin-proof-1',
-    contact: { name: 'Jan Ukázkový', email: 'jan@example.invalid' },
+    contact: { email: 'jan@example.invalid', name: 'Jan Ukázkový' },
     deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Ukázková 1' },
+    lines: [{ expectedUnitPriceMinor: 121, productId: 'admin-proof', quantity: 1000 }],
+    partyId: 'test-customer-party',
     shippingMethod: 'OSOBNI_ODBER',
-    lines: [{ productId: 'admin-proof', quantity: 1000, expectedUnitPriceMinor: 121 }],
   });
   return placed.state;
 });
@@ -74,7 +80,7 @@ it.effect('saves a note on a 1 000-piece order without modifying quantity or sto
     const state = yield* seeded;
     const changed = yield* apply(state, {
       _tag: 'EditOrder',
-      id: state.orders[0]!.id,
+      id: state.orders[0].id,
       note: 'Upřesnění objednávky',
       reason: 'Dohoda se zákazníkem',
     });
@@ -92,7 +98,7 @@ it.effect('cleans a terminal DEMO order with retained audit and submission repla
     };
     const changed = yield* apply(terminal, {
       _tag: 'RemoveDemoOrder',
-      id: terminal.orders[0]!.id,
+      id: terminal.orders[0].id,
       reason: 'Úklid prezentace',
     });
     expect(changed.state.orders[0]?.demoCleanup?.actor).toEqual(actor);
@@ -106,7 +112,7 @@ it.effect('cleans a terminal DEMO order with retained audit and submission repla
     ).toBe(0);
     const repeat = yield* apply(changed.state, {
       _tag: 'RemoveDemoOrder',
-      id: terminal.orders[0]!.id,
+      id: terminal.orders[0].id,
       reason: 'Úklid prezentace',
     });
     expect(repeat.state).toBe(changed.state);
@@ -119,7 +125,7 @@ it.effect('never removes non-DEMO or staff orders', () =>
       const guarded = { ...state, orders: state.orders.map((order) => ({ ...order, ...patch })) };
       const failure = yield* apply(guarded, {
         _tag: 'RemoveDemoOrder',
-        id: state.orders[0]!.id,
+        id: state.orders[0].id,
         reason: 'Úklid prezentace',
       }).pipe(Effect.flip);
       expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);

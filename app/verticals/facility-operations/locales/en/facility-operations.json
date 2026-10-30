@@ -67,7 +67,8 @@
         "items_few": "{{count}} items",
         "items_many": "{{count}} items",
         "items_other": "{{count}} items",
-        "more": "Show older ({{count}})"
+        "more_one": "Show older ({{count}})",
+        "more_other": "Show older ({{count}})"
       }
     },
     "property": {
@@ -77,6 +78,35 @@
       "none": "No link",
       "loadFailed": "Properties could not be loaded.",
       "pick": "Choose a property or unit"
+    },
+    "ui": {
+      "recommendedReplenishment": "Recommended stock replenishment",
+      "prepareIncomingInvoice": "Prepare an incoming invoice draft",
+      "issueDate": "Issue date",
+      "dueDate": "Due date",
+      "supplierDocumentVat": "VAT according to the supplier document",
+      "selectVatRate": "Select a VAT rate",
+      "leaseAgreement": "Lease agreement",
+      "financeInvoiceFilesTitle": "Invoice files from Finance",
+      "financeInvoiceFilesCount": "Invoice files in Finance"
+    },
+    "propertyEquipment": {
+      "active": "Active",
+      "columns": {
+        "inventoryNumber": "Inventory no.",
+        "name": "Name",
+        "location": "Location",
+        "currentValue": "Current value",
+        "status": "Status"
+      },
+      "disposed": "Disposed · history retained",
+      "empty": "No assets are registered at this location.",
+      "failed": "Equipment could not be loaded.",
+      "forbidden": "You do not have permission to view equipment.",
+      "loading": "Loading equipment…",
+      "notProvided": "Not provided",
+      "retry": "Try again",
+      "title": "Registered equipment and assets"
     }
   }
 }

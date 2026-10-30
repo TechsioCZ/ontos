@@ -7,6 +7,7 @@ import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { Effect } from 'effect';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 
@@ -21,11 +22,21 @@ import {
   useDemoGuideProgress,
   useDemoGuideWidth,
 } from './demo-guide-store.ts';
-import { demoPasswordHint } from './demo-guide-types.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+
 import type { DemoGuide, DemoGuideBoundaries, DemoGuidePersona, DemoGuideStep } from './demo-guide-types.ts';
+
+const toggleGuideStep = (guideId: DemoGuide['id'], doneIds: readonly string[], stepId: string): void => {
+  browserRuntime.runFork(
+    Effect.fromResult(setDemoGuideProgress(guideId, toggleStep(doneIds, stepId))).pipe(
+      Effect.tapError(Effect.logError.bind(undefined, 'Demo progress could not be encoded')),
+    ),
+  );
+};
 
 export const demoGuidePanelId = 'demo-guide-panel';
 const guideIcon = 'icon-[mdi--presentation-play]';
+const guideTitleKey = 'shell.demoGuide.title';
 /** Same breakpoint as the shell's `lg:` utilities: below it the panel covers the page. */
 const desktopQuery = '(min-width: 64rem)';
 const widthStep = 32;
@@ -66,22 +77,25 @@ const writeScroll = (guideId: string, top: number): void => {
 };
 
 /** Header button that opens and closes the guide. */
-export const DemoGuideToggleButton = ({ open }: { readonly open: boolean }) => (
-  <Button
-    aria-controls={demoGuidePanelId}
-    aria-expanded={open}
-    aria-label="Průvodce ukázkou"
-    icon={guideIcon}
-    onClick={() => {
-      setDemoGuideOpen(!open);
-    }}
-    size="sm"
-    theme={open ? 'solid' : 'light'}
-    variant="primary"
-  >
-    <span className="hidden md:inline">Průvodce ukázkou</span>
-  </Button>
-);
+export const DemoGuideToggleButton = ({ open }: { readonly open: boolean }) => {
+  const { t } = useModernI18n();
+  return (
+    <Button
+      aria-controls={demoGuidePanelId}
+      aria-expanded={open}
+      aria-label={t(guideTitleKey)}
+      icon={guideIcon}
+      onClick={() => {
+        setDemoGuideOpen(!open);
+      }}
+      size="sm"
+      theme={open ? 'solid' : 'light'}
+      variant="primary"
+    >
+      <span className="hidden md:inline">{t(guideTitleKey)}</span>
+    </Button>
+  );
+};
 
 interface PanelDrag {
   readonly pointerId: number;
@@ -91,6 +105,7 @@ interface PanelDrag {
 
 /** Drag handle on the panel's inner edge; desktop only. */
 const ResizeHandle = () => {
+  const { t } = useModernI18n();
   const width = useDemoGuideWidth();
   const drag = useRef<PanelDrag | null>(null);
 
@@ -132,7 +147,7 @@ const ResizeHandle = () => {
   return (
     <ActionIcon
       aria-controls={demoGuidePanelId}
-      aria-label="Změnit šířku průvodce. Šipky vlevo a vpravo mění šířku, Home vrátí výchozí."
+      aria-label={t('shell.demoGuide.resize')}
       className="absolute inset-y-0 start-0 hidden h-full w-200 touch-none cursor-col-resize select-none rounded-none lg:flex"
       icon="icon-[mdi--drag-vertical]"
       onDoubleClick={() => {
@@ -330,6 +345,7 @@ const BoundariesSection = ({ boundaries }: { readonly boundaries: DemoGuideBound
  * reaches the panel through the `--demo-guide-width` variable the shell frame sets).
  */
 export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) => {
+  const { t } = useModernI18n();
   useEffect(() => {
     const onEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape' && !event.defaultPrevented) {
@@ -341,7 +357,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   }, []);
   const doneIds = useDemoGuideProgress(guide.id);
   const summary = summarizeGuideProgress(guide, doneIds);
-  const percent = summary.total === 0 ? 0 : Math.round((summary.done / summary.total) * 100);
+  const done = new Set(doneIds);
   const listRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (listRef.current !== null) {
@@ -351,7 +367,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
 
   return (
     <aside
-      aria-label="Průvodce ukázkou"
+      aria-label={t(guideTitleKey)}
       className="fixed end-0 bottom-0 z-5 flex w-full flex-col border-border-primary border-s bg-base shadow-dialog-content lg:w-(--demo-guide-width)"
       id={demoGuidePanelId}
       style={{ top: 'var(--spacing-700)' }}
@@ -362,11 +378,11 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           <Icon icon={guideIcon} size="md" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-50">
-          <span className="text-fg-secondary text-xs uppercase tracking-wide">Průvodce ukázkou</span>
+          <span className="text-fg-secondary text-xs uppercase tracking-wide">{t(guideTitleKey)}</span>
           <h2 className="truncate font-semibold text-fg-primary text-md">{guide.companyName}</h2>
         </div>
         <ActionIcon
-          aria-label="Zavřít průvodce"
+          aria-label={t('shell.demoGuide.close')}
           icon="token-icon-dialog-close"
           onClick={() => {
             setDemoGuideOpen(false);
@@ -382,13 +398,11 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
         }}
         ref={listRef}
       >
-        <section aria-label="Postup ukázky" className="grid gap-150">
+        <section aria-label={t('shell.demoGuide.progress')} className="grid gap-150">
           <p className="text-fg-primary text-sm">{guide.intro}</p>
           <p className="flex items-start gap-100 text-fg-secondary text-xs">
             <Icon className="shrink-0" icon="icon-[mdi--key-outline]" size="sm" />
-            <span>
-              {`Heslo všech ukázkových účtů: ${demoPasswordHint}. Pro jinou personu použijte samostatný profil prohlížeče, nebo se odhlaste a přihlaste znovu.`}
-            </span>
+            <span>{t('shell.demoGuide.publicDemoSignInHint')}</span>
           </p>
           <div className="flex items-center justify-between gap-150">
             <span className="font-medium text-fg-primary text-sm">{`Hotovo ${summary.done} z ${summary.total} kroků`}</span>
@@ -405,23 +419,19 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               Začít znovu
             </Button>
           </div>
-          <div
-            aria-label="Postup ukázky"
-            aria-valuemax={summary.total}
-            aria-valuemin={0}
-            aria-valuenow={summary.done}
-            className="h-100 w-full overflow-hidden rounded-full bg-surface"
-            role="progressbar"
-          >
-            <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
+          <progress
+            aria-label={t('shell.demoGuide.progress')}
+            className="h-100 w-full overflow-hidden rounded-full bg-surface accent-primary [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-surface [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
+            max={Math.max(1, summary.total)}
+            value={summary.done}
+          />
           {guide.boundaries === undefined ? null : (
             <Button
               className="justify-self-start"
               icon="icon-[mdi--information-outline]"
               onClick={() => {
                 document
-                  .getElementById('demo-guide-boundaries')
+                  .querySelector('#demo-guide-boundaries')
                   ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
               size="sm"
@@ -439,7 +449,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           ) : null}
         </section>
         {guide.chapters.map((chapter, chapterIndex) => {
-          const chapterDone = chapter.steps.filter((step) => doneIds.includes(step.id)).length;
+          const chapterDone = chapter.steps.filter((step) => done.has(step.id)).length;
           const headingId = `demo-guide-chapter-${chapter.id}`;
           return (
             <section aria-labelledby={headingId} className="grid gap-150" key={chapter.id}>
@@ -457,13 +467,11 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               <ol className="grid gap-150">
                 {chapter.steps.map((step) => (
                   <StepCard
-                    done={doneIds.includes(step.id)}
+                    done={done.has(step.id)}
                     identityEmail={identityEmail}
                     isNext={step.id === summary.nextStepId}
                     key={step.id}
-                    onToggle={() => {
-                      setDemoGuideProgress(guide.id, toggleStep(doneIds, step.id));
-                    }}
+                    onToggle={toggleGuideStep.bind(undefined, guide.id, doneIds, step.id)}
                     step={step}
                   />
                 ))}

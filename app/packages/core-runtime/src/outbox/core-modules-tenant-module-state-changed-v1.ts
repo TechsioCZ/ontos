@@ -3,9 +3,13 @@
 // @ontos-outbox-topic core.modules.tenant-module-state-changed.v1
 import { Schema } from 'effect';
 
+import { decodedStringBrand } from '../actions/string-schemas.ts';
+
+const ModuleKeySchema = decodedStringBrand(Schema.String.check(Schema.isNonEmpty()), 'ModuleKey');
+
 export const OutboxPayloadSchema = Schema.Struct({
   // This is a wake-up, never an authoritative installation snapshot.
-  data: Schema.Struct({ moduleKey: Schema.String.check(Schema.isNonEmpty()) }),
+  data: Schema.Struct({ moduleKey: ModuleKeySchema }),
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 

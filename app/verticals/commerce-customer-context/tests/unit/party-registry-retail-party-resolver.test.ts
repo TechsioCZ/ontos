@@ -5,7 +5,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { GatewayContextApi } from '@app/shared-contracts';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -193,7 +193,7 @@ const serveNativePartyContract = (compositionRevision: string) =>
     const gatewayHandlers = HttpApiBuilder.group(api, 'gatewayContext', (handlers) =>
       handlers
         .handle('issueGatewayContext', () => issue)
-        .handle('readWithApiKeyGatewayContext', () => Effect.succeed(null))
+        .handle('readWithApiKeyGatewayContext', () => Effect.succeed(new TextEncoder().encode('null')))
         .handle('issueApiKeyGatewayContext', ({ payload, request: incoming }) => {
           requests.push({ body: JSON.stringify(payload), headers: new Headers(incoming.headers), path: incoming.url });
           return issue;

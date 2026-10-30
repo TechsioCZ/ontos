@@ -23,9 +23,9 @@ import {
   Runtime,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import { Command, Flag } from 'effect/cli';
+import { HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 
 import { createSharedRuntimeConfig } from '../module-federation.shared.ts';
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
@@ -97,6 +97,7 @@ const UnitIdSchema = Schema.NonEmptyString.pipe(Schema.brand('UnitId'));
 
 export const HostWorkerArtifactSchema = Schema.Struct({
   appId: Schema.Literal(OUTBOX_WORKER_HOST.id),
+  artifactDigest: Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))),
   entry: Schema.Literal(OUTBOX_WORKER_BUNDLE),
   ownerBuildIdentities: Schema.Array(
     Schema.Struct({
@@ -106,7 +107,7 @@ export const HostWorkerArtifactSchema = Schema.Struct({
       unitId: UnitIdSchema,
     }),
   ),
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
   serviceId: Schema.Literal(OUTBOX_WORKER_HOST.id),
   sourceInputs: Schema.Array(Schema.NonEmptyString),
   sourceRevision: Schema.NonEmptyString,
@@ -125,7 +126,8 @@ export const HostProofTopologySchema = Schema.Struct({
     Schema.Struct({
       deliveryUnit: DeliveryIdentitySchema,
       id: Schema.NonEmptyString,
-      moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }),
+      // Headless (api-only) owners have no UI Module Federation boundary.
+      moduleFederation: Schema.optional(Schema.Struct({ name: Schema.NonEmptyString })),
       path: Schema.NonEmptyString,
     }),
   ),
@@ -341,6 +343,9 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
           if (contract.manifest.publicSurface.components.length === 0) {
             yield* Ref.set(ownerDocuments, ownerArtifacts);
             return common;
+          }
+          if (owner.moduleFederation === undefined) {
+            return yield* fail(`the ${owner.id} public components have no Module Federation boundary`);
           }
           const manifestPath = '/mf-manifest.json';
           const manifest = yield* Schema.encodeEffect(federationClaimsJson)({

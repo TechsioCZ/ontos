@@ -14,6 +14,8 @@ import type { OrganizationEngagementProfileRecord, PersonEngagementProfileRecord
 import { organizationEngagementProfiles, personEngagementProfiles } from '../db/engagement-schema.ts';
 import type { ContactsTransaction } from '../db/engagement-types.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 type ScopedTransaction = Pick<ContactsTransaction, 'insert' | 'select' | 'update'>;
 
 const lookupResultSchema = <Value>(value: Schema.Schema<Value>) =>
@@ -60,14 +62,14 @@ const mutationFailure = (failure: EffectDrizzleQueryError) =>
     : unavailable(failure);
 
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.party',
   tenantId,
 });
 
 const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.counterparty',
   tenantId,
@@ -82,7 +84,7 @@ export const organizationEngagementProfileFromRecord = (
   createdAt: row.createdAt.toISOString(),
   partyRef: partyRef(row.tenantId, row.partyResourceId),
   profileRef: {
-    moduleId: 'party.registry',
+    moduleId: PARTY_REGISTRY_MODULE_ID,
     resourceId: row.engagementProfileId,
     resourceType: 'party.registry.organization-engagement-profile',
     tenantId: row.tenantId,
@@ -97,7 +99,7 @@ const personDto = (row: PersonEngagementProfileRecord): PersonEngagementProfile 
   createdAt: row.createdAt.toISOString(),
   partyRef: partyRef(row.tenantId, row.partyResourceId),
   profileRef: {
-    moduleId: 'party.registry',
+    moduleId: PARTY_REGISTRY_MODULE_ID,
     resourceId: row.engagementProfileId,
     resourceType: 'party.registry.person-engagement-profile',
     tenantId: row.tenantId,

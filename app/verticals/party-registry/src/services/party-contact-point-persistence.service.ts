@@ -34,6 +34,9 @@ import type { PartyTransaction } from '../db/types.ts';
 import type { PartyAliasResolutionService as AliasOperations } from '../merge/party-alias-resolution.service.ts';
 import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+const CONTACT_POINT_RULE_VERSION = 'party-contact-point.v1' as const;
+
 type PartyScopedTransaction = Pick<PartyTransaction, 'insert' | 'select' | 'update'>;
 type PurposeRecord = typeof partyContactPointPurposes.$inferSelect;
 const transactionAliasService = (transaction: PartyScopedTransaction): AliasOperations => ({
@@ -55,14 +58,14 @@ const instantFromDate = (instant: Date): DateTime.Utc => DateTime.makeUnsafe(ins
 const toEpochMillis = (instant: Date): number => DateTime.toEpochMillis(DateTime.makeUnsafe(instant));
 
 const partyRef = (tenantId: string, partyId: string) => ({
-  moduleId: 'party.registry' as const,
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId: partyId,
   resourceType: 'party.registry.party' as const,
   tenantId,
 });
 
 const contactPointRef = (tenantId: string, contactPointId: string) => ({
-  moduleId: 'party.registry' as const,
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId: contactPointId,
   resourceType: 'party.registry.party-contact-point' as const,
   tenantId,
@@ -178,17 +181,15 @@ const hasExactEndSemantics = (row: EndRecord, command: EndContactPointCommand): 
   );
 };
 
-const isCurrentAt = (row: PartyContactPointRecord, now: Date): boolean =>
+type CurrentFactPeriod = Pick<PartyContactPointRecord, 'state' | 'isCurrent' | 'validFrom' | 'validTo'>;
+
+const isCurrentAt = (row: CurrentFactPeriod, now: Date): boolean =>
   row.state === 'ACTIVE' &&
   row.isCurrent &&
   toEpochMillis(row.validFrom) <= toEpochMillis(now) &&
   (row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(now));
 
-const isPurposeCurrentAt = (row: PurposeRecord, now: Date): boolean =>
-  row.state === 'ACTIVE' &&
-  row.isCurrent &&
-  toEpochMillis(row.validFrom) <= toEpochMillis(now) &&
-  (row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(now));
+const isPurposeCurrentAt = isCurrentAt;
 
 const purposeRegistryColumns = (context: AddressPurposeAssignment['registryContext']) => ({
   jurisdiction: context?.jurisdiction.toUpperCase() ?? 'ZZ',
@@ -651,7 +652,7 @@ export const addContactPointRecord = Effect.fn('PartyContactPointPersistenceServ
         externalEvidence,
         isCurrent: true,
         partyId: command.partyRef.resourceId,
-        policyVersion: 'party-contact-point.v1',
+        policyVersion: CONTACT_POINT_RULE_VERSION,
         privacyClassification: command.privacyClassification,
         provenanceAuthoritative: command.provenance.authoritative,
         provenanceMethod: command.provenance.method,
@@ -686,7 +687,7 @@ export const addContactPointRecord = Effect.fn('PartyContactPointPersistenceServ
             isCurrent: true,
             jurisdiction: context?.jurisdiction.toUpperCase() ?? 'ZZ',
             partyId: command.partyRef.resourceId,
-            policyVersion: 'party-contact-point.v1',
+            policyVersion: CONTACT_POINT_RULE_VERSION,
             preferred: assignment.preferred,
             provenanceAuthoritative: command.provenance.authoritative,
             provenanceMethod: command.provenance.method,
@@ -1116,7 +1117,7 @@ export const updateContactPointRecord = Effect.fn('PartyContactPointPersistenceS
             isCurrent: true,
             ...purposeRegistryColumns(assignment.registryContext),
             partyId: row.partyId,
-            policyVersion: 'party-contact-point.v1',
+            policyVersion: CONTACT_POINT_RULE_VERSION,
             preferred: assignment.preferred,
             provenanceAuthoritative: command.provenance.authoritative,
             provenanceMethod: command.provenance.method,

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
@@ -82,7 +83,7 @@ describe('Catalog open-selection impact', () => {
       const service = catalogOpenSelectionImpactForScope(untouchedTransaction, scope);
       const result = yield* Effect.flip(service.assess(productRef));
       expect(result.code).toBe('catalog_open_selection_impact_unavailable');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('proceeds when the injected Cart owner population is complete and references no open selection', () =>
@@ -91,7 +92,7 @@ describe('Catalog open-selection impact', () => {
       const service = catalogOpenSelectionImpactForScope(untouchedTransaction, scope, population([]));
       const result = yield* service.assess(productRef);
       expect(result).toBeUndefined();
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('injects the public Cart service into an affected Attribute Action factory', () =>
@@ -105,7 +106,7 @@ describe('Catalog open-selection impact', () => {
         snapshot.composition.revision,
       ).pipe(Effect.provideService(CartOpenSelectionPopulationService, port));
       expect(yield* services.assessOpenSelectionImpact(productRef)).toBeUndefined();
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a Cart population attested for another Tenant', () =>
@@ -127,7 +128,7 @@ describe('Catalog open-selection impact', () => {
       );
       const failure = yield* service.assess(productRef).pipe(Effect.flip);
       expect(failure.reason).toContain('different Tenant');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a complete population containing a Selection from another Tenant', () =>
@@ -183,7 +184,7 @@ describe('Catalog open-selection impact', () => {
       const result = yield* Effect.flip(service.assess(productRef));
       expect(result.code).toBe('catalog_open_selection_impact_unavailable');
       expect(result.reason).toContain('open Catalog selection');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the injected Cart owner read is unavailable', () =>
@@ -204,6 +205,6 @@ describe('Catalog open-selection impact', () => {
       );
       const result = yield* Effect.flip(service.assess(productRef));
       expect(result.code).toBe('catalog_open_selection_impact_unavailable');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

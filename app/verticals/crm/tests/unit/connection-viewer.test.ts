@@ -1,8 +1,10 @@
+import { Schema } from 'effect';
+import { CrmViewerSchema } from '../../shared/domain/access.ts';
 import { expect, it } from 'effect-rstest';
 
 import { reportedViewer } from '../../src/services/persistence.service.ts';
 
-const salesperson = {
+const salesperson = Schema.decodeUnknownSync(CrmViewerSchema)({
   assign: false,
   principalId: '70000000-0000-4000-8000-000000000101',
   readAll: false,
@@ -10,7 +12,7 @@ const salesperson = {
   salespersonId: 'sp-1',
   writeAll: false,
   writeAssigned: true,
-};
+});
 const manager = { ...salesperson, assign: true, readAll: true, writeAll: true };
 const readOnly = {
   authMethod: 'oauth_connection',

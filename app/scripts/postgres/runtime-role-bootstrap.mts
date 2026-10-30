@@ -3,7 +3,7 @@ import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Order, Predicate, Redacted, Schema } from 'effect';
-import type { Reactivity } from 'effect/unstable/reactivity';
+import type { Reactivity } from 'effect/reactivity';
 
 import type { DatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 
@@ -56,6 +56,7 @@ const SHARED_RUNTIME_SCHEMAS = [
   'demo_sales_insights',
   'finance_billing',
   'crm_activities',
+  'projects',
 ] as const;
 
 export interface ExplicitManifestEntry {
@@ -145,21 +146,6 @@ export const tableGrantTarget = (
   const present = columnList.filter((column) => existingColumns.includes(column));
   return present.length === 0 ? undefined : `${privilege} (${present.map(quoteIdentifier).join(', ')})`;
 };
-
-const grantTablePrivilege =
-  (
-    client: PgClient.PgClient,
-    table: string,
-    columns: DatabaseTableGrant['columns'],
-    existingColumns: readonly string[],
-    role: string,
-  ) =>
-  (privilege: DatabaseTablePrivilege): Effect.Effect<void, RuntimeRoleBootstrapError> => {
-    const target = tableGrantTarget(privilege, columns, existingColumns);
-    return target === undefined
-      ? Effect.void
-      : query(client, `grant ${target} on table ${qualifiedRelation(table)} to ${role}`).pipe(Effect.asVoid);
-  };
 
 const roleSettingStatement = (role: string, setting: string): string => {
   const separator = setting.indexOf('=');
@@ -372,10 +358,18 @@ export const grantExplicitRole = (
             for (const { attname } of attributes) {
               existingColumns.push(attname);
             }
-            yield* Effect.forEach(privileges, grantTablePrivilege(client, table, columns, existingColumns, role), {
-              concurrency: 1,
-              discard: true,
-            });
+            const targets: string[] = [];
+            for (const privilege of privileges) {
+              const target = tableGrantTarget(privilege, columns, existingColumns);
+              if (target !== undefined) {
+                targets.push(target);
+              }
+            }
+            // One GRANT accepts the same per-privilege column lists. Keep this inside the
+            // existing bootstrap transaction, after revocation and before exact assertions.
+            if (targets.length > 0) {
+              yield* query(client, `grant ${targets.join(', ')} on table ${qualifiedRelation(table)} to ${role}`);
+            }
           }
         }),
       { concurrency: 1, discard: true },

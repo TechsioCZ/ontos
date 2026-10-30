@@ -5,28 +5,43 @@ import type {
   StoredOAuthClientInformation,
   StoredOAuthTokens,
 } from '@modelcontextprotocol/client';
+import { Cause, Effect } from 'effect';
+import type { FiberSet } from 'effect';
 import { OAUTH_SCOPES } from './env.mts';
 
 export interface E2eOAuthProviderOptions {
-  readonly redirectUrl: string;
-  readonly clientName: string;
   readonly clientMetadataUrl?: string;
-  readonly onRedirect: (authorizationUrl: URL) => Promise<void>;
+  readonly clientName: string;
+  readonly redirectUrl: string;
 }
 
-/** In-memory OAuth client provider for the E2E proof; the consent page is driven by onRedirect. */
+/** Captured by the owning flow; every native callback fiber belongs to its Scope. */
+export type E2eOAuthProviderRuntime = Effect.Success<
+  ReturnType<typeof FiberSet.makeRuntimePromise<never, string, Cause.NoSuchElementError>>
+>;
+
+/** SDK state adapter. The owning Effect flow drives consent after the SDK reports REDIRECT. */
 export class E2eOAuthProvider implements OAuthClientProvider {
   readonly clientMetadataUrl: string | undefined;
-  #options: E2eOAuthProviderOptions;
+  readonly codeVerifier: OAuthClientProvider['codeVerifier'];
+  readonly #options: E2eOAuthProviderOptions;
   #clientInformation: StoredOAuthClientInformation | undefined = undefined;
   #tokens: StoredOAuthTokens | undefined = undefined;
   #codeVerifier: string | undefined = undefined;
   #discoveryState: OAuthDiscoveryState | undefined = undefined;
   lastAuthorizationUrl: URL | undefined = undefined;
 
-  constructor(options: E2eOAuthProviderOptions) {
+  constructor(options: E2eOAuthProviderOptions, runtime: E2eOAuthProviderRuntime) {
     this.#options = options;
     this.clientMetadataUrl = options.clientMetadataUrl;
+    const verifier = Effect.gen({ self: this }, function* readCodeVerifier() {
+      if (this.#codeVerifier === undefined) {
+        return yield* new Cause.NoSuchElementError('Chybí code verifier.');
+      }
+      return this.#codeVerifier;
+    });
+    // Native SDK entrypoint: the captured runner rejects with the original squashed failure.
+    this.codeVerifier = runtime.bind(undefined, verifier);
   }
 
   get redirectUrl(): string {
@@ -60,12 +75,13 @@ export class E2eOAuthProvider implements OAuthClientProvider {
     this.#tokens = tokens;
   }
 
-  /** Returns the stored token set or throws when the flow has not produced one. */
-  currentTokens(): StoredOAuthTokens {
-    if (this.#tokens === undefined) {
-      throw new Error('Žádné tokeny');
-    }
-    return this.#tokens;
+  currentTokens() {
+    return Effect.gen({ self: this }, function* storedTokens() {
+      if (this.#tokens === undefined) {
+        return yield* new Cause.NoSuchElementError('Žádné tokeny');
+      }
+      return this.#tokens;
+    });
   }
 
   /** Persisted with the code verifier so the SDK binds the callback leg to the same authorization server (SEP-2352). */
@@ -81,15 +97,7 @@ export class E2eOAuthProvider implements OAuthClientProvider {
     this.#codeVerifier = codeVerifier;
   }
 
-  codeVerifier(): string {
-    if (this.#codeVerifier === undefined) {
-      throw new Error('Chybí code verifier.');
-    }
-    return this.#codeVerifier;
-  }
-
-  async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+  redirectToAuthorization(authorizationUrl: URL): void {
     this.lastAuthorizationUrl = authorizationUrl;
-    await this.#options.onRedirect(authorizationUrl);
   }
 }

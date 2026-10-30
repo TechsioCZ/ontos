@@ -1,5 +1,5 @@
 import { Config, Effect, Redacted, Schema, Stream } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,

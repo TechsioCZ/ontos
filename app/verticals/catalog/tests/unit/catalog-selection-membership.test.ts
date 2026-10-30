@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -48,7 +49,7 @@ describe('Catalog Selection membership', () => {
         variantRef,
       );
       expect(result).toEqual({ reason: 'WRONG_SCOPE', status: 'INVALID' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('issues only for the locked Product and Variant Current rows', () =>
@@ -73,7 +74,7 @@ describe('Catalog Selection membership', () => {
         expect(result.membership.productRef).toEqual(productRef);
         expect(result.membership.source).toBe('CATALOG_OWNER_CURRENT_READ');
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a Variant belonging to another Product', () =>
@@ -93,6 +94,6 @@ describe('Catalog Selection membership', () => {
         reason: 'WRONG_PRODUCT',
         status: 'INVALID',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

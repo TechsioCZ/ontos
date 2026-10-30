@@ -1,9 +1,15 @@
-import { Effect, Exit, Match, Random, Schema } from 'effect';
+import { Effect, Exit, Match, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
-import type { Order, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
+import type {
+  Order,
+  ProductRecord,
+  RecordsRequestEncoded,
+  RecordsResponse,
+} from '../../../../../shared/apis/records.ts';
 import type { OrderStatus, ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
@@ -60,17 +66,25 @@ const randomToken = Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, 
 }).pipe(Effect.map((parts) => parts.map((part) => (part + 2 ** 31).toString(16).padStart(8, '0')).join('')));
 
 /** One page of orders and no products. */
-export const ordersView = (query: OrdersQuery) => ({
-  limit: 0,
-  ordersLimit: query.limit,
-  ordersOffset: query.offset,
-  ...(query.search.trim() === '' ? {} : { orderSearch: query.search.trim() }),
-  ...(query.search.trim() === '' || query.customerPartyIds.length === 0
-    ? {}
-    : { orderCustomerPartyIds: [...query.customerPartyIds] }),
-  ...(query.status === null ? {} : { orderStatus: query.status }),
-  ...(query.taggedIds === null ? {} : { taggedOrderIds: [...query.taggedIds] }),
-});
+type OrderViewDraft = {
+  -readonly [Key in keyof NonNullable<RecordsRequestEncoded['view']>]: NonNullable<RecordsRequestEncoded['view']>[Key];
+};
+export const ordersView = (query: OrdersQuery) => {
+  const view: OrderViewDraft = { limit: 0, ordersLimit: query.limit, ordersOffset: query.offset };
+  if (query.search.trim() !== '') {
+    view.orderSearch = query.search.trim();
+    if (query.customerPartyIds.length !== 0) {
+      view.orderCustomerPartyIds = [...query.customerPartyIds];
+    }
+  }
+  if (query.status !== null) {
+    view.orderStatus = query.status;
+  }
+  if (query.taggedIds !== null) {
+    view.taggedOrderIds = [...query.taggedIds];
+  }
+  return view;
+};
 
 const loadOrders = Effect.fn('OrdersRecords.load')(function* loadOrders(query: OrdersQuery) {
   const requestCorrelation = yield* correlation('records');
@@ -100,7 +114,8 @@ const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitC
 ) {
   const requestCorrelation = yield* correlation('command');
   const idempotencyKey = yield* randomToken;
-  return yield* executeApplyCommand({ command, expectedRevision }, requestCorrelation, { idempotencyKey });
+  const payload = yield* Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision });
+  return yield* executeApplyCommand(payload, requestCorrelation, { idempotencyKey });
 });
 
 export const createOrder = Effect.fn('OrdersRecords.createOrder')(function* createOrder(input: {
@@ -156,19 +171,24 @@ const applyStatusStep = (
   order: Order,
   status: OrderStatus,
   reason: string | undefined,
-): Effect.Effect<StatusProgress> =>
-  Effect.exit(
-    submitCommand(
-      { _tag: 'ChangeOrderStatus', id: order.id, status, ...(reason === undefined ? {} : { reason }) },
-      progress.revision,
-    ),
-  ).pipe(
+): Effect.Effect<StatusProgress> => {
+  const command: {
+    -readonly [Key in keyof Extract<MerchandiseCommand, { readonly _tag: 'ChangeOrderStatus' }>]: Extract<
+      MerchandiseCommand,
+      { readonly _tag: 'ChangeOrderStatus' }
+    >[Key];
+  } = { _tag: 'ChangeOrderStatus', id: order.id, status };
+  if (reason !== undefined) {
+    command.reason = reason;
+  }
+  return Effect.exit(submitCommand(command, progress.revision)).pipe(
     Effect.map((outcome): StatusProgress =>
       Exit.isSuccess(outcome)
         ? { ...progress, changed: progress.changed + 1, revision: outcome.value.revision }
         : { ...progress, failed: progress.failed + 1 },
     ),
   );
+};
 
 export const changeOrderStatuses = (input: {
   readonly orders: readonly Order[];
@@ -277,6 +297,11 @@ const ordersState = (
       };
 };
 
+// Scalar effect dependencies retain array order and distinguish no tag filter from an empty match.
+const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
+const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
+
 /**
  * One page of orders for `query` with the header counts. While a new query loads the last page stays on screen
  * (`state.query` tells which query it answers). `load` reads the page and the counts again after a change.
@@ -293,10 +318,23 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery) => {
     () => orderCountsData.snapshot(legalEntityId),
     () => pageDataPending,
   );
-  // Cold mounts only: under the Shell the first page and the counts are prepared before the page shows.
+  const { limit, offset, search, status } = query;
+  const customerPartyIdsJson = Result.getOrThrow(encodeQueryIds(query.customerPartyIds));
+  const taggedIdsJson = query.taggedIds === null ? null : Result.getOrThrow(encodeQueryIds(query.taggedIds));
+  // Rebuild the request in the effect; equal query values need no object-identity memo or new ensure.
   useEffect(() => {
-    ordersPageData.ensure({ legalEntityId, query });
-  }, [legalEntityId, query]);
+    ordersPageData.ensure({
+      legalEntityId,
+      query: {
+        customerPartyIds: Result.getOrThrow(decodeQueryIds(customerPartyIdsJson)),
+        limit,
+        offset,
+        search,
+        status,
+        taggedIds: taggedIdsJson === null ? null : Result.getOrThrow(decodeQueryIds(taggedIdsJson)),
+      },
+    });
+  }, [customerPartyIdsJson, legalEntityId, limit, offset, search, status, taggedIdsJson]);
   useEffect(() => {
     orderCountsData.ensure(legalEntityId);
   }, [legalEntityId]);
@@ -371,7 +409,8 @@ const loadOrderById = (orderId: string) =>
   );
 
 export type OrderDetailState =
-  | { readonly status: 'idle' | 'loading' | 'error' | 'not-found' }
+  | { readonly status: 'idle' | 'loading' | 'not-found' }
+  | { readonly cause: Effect.Error<ReturnType<typeof loadOrderDetail>>; readonly status: 'error' }
   | ({ readonly order: Order; readonly status: 'ready' } & OrderDetailRecords);
 
 /**
@@ -396,7 +435,7 @@ export const useOrderDetail = (orderId: string | null, version: number): OrderDe
                     ),
               ),
               Effect.match({
-                onFailure: (): OrderDetailState => ({ status: 'error' }),
+                onFailure: (cause): OrderDetailState => ({ cause, status: 'error' }),
                 onSuccess: (state): OrderDetailState => state,
               }),
               Effect.map((state) => setAnswer({ request, state })),

@@ -8,7 +8,7 @@ import './ui-kit.css';
 import './index.css';
 
 // Before any remote loads, so every remote's module requests share one cache for this document.
-if (__ONTOS_BROWSER_BUILD__ && 'document' in globalThis) {
+if ('document' in globalThis) {
   installBrowserRequestCache();
 }
 

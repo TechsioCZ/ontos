@@ -1,5 +1,6 @@
 import StoreLink from "@/components/store-link";
 import { AccountOrderDetail } from "@/features/account/account-order-detail";
+import { OrderEmailStatus } from "./order-email-status";
 import type { CustomerOrder } from "@/ontos/order-model";
 
 export function OrderConfirmation({ order }: { order: CustomerOrder }) {
@@ -12,6 +13,9 @@ export function OrderConfirmation({ order }: { order: CustomerOrder }) {
           objednávky nebyla provedena platba.
         </p>
       </header>
+      {order.contact?.email && (
+        <OrderEmailStatus email={order.contact.email} orderNumber={order.number} />
+      )}
       <AccountOrderDetail order={order} />
       <StoreLink className="underline" href="/historie-objednavek">
         Moje objednávky

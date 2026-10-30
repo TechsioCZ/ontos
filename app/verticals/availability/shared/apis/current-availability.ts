@@ -8,7 +8,7 @@ import {
   AvailabilityConsumerRequestSchema,
   AvailabilityConsumerResponseSchema,
 } from '../domain/availability-consumer-contract.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const CurrentAvailabilityRequestSchema = AvailabilityConsumerRequestSchema;
 export type CurrentAvailabilityRequest = typeof CurrentAvailabilityRequestSchema.Type;

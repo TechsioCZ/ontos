@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, Result, Schema } from 'effect';
 import type { Redacted } from 'effect';
-import type { Headers } from 'effect/unstable/http';
+import type { Headers } from 'effect/http';
 
 import type { ActionTransportMetadata } from '../actions/context.ts';
 import type { ActionRegistration } from '../actions/definition.ts';
@@ -233,7 +233,7 @@ export const runGovernedActionHttp = <
     // The correlation identifier is written verbatim into the invocation row and log annotations, so an
     // unbounded caller-chosen value must be refused here rather than persisted. Branching on the decode result
     // keeps the schema's diagnostic out of the response shape without discarding it in an error callback.
-    if (Result.isFailure(Schema.decodeResult(ActionCorrelationIdSchema)(correlationId))) {
+    if (Result.isFailure(Schema.decodeUnknownResult(ActionCorrelationIdSchema)(correlationId))) {
       return yield* Effect.fail(input.invalidCorrelationProblem());
     }
 

@@ -7,7 +7,7 @@ import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { lt } from 'drizzle-orm';
 import { Clock, DateTime, Duration, Effect, Layer } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import { PriceGroupCatalogDatabase } from '../database/client.ts';
 import { gatewayAssertionRedemptions } from '../database/schema.ts';

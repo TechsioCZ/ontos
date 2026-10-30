@@ -12,7 +12,7 @@ import type {
 } from '@app/core-runtime/auth/external-identity-provider';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Option } from 'effect';
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { ExternalIdentityProviderConfigurationService } from '../external-identity-provider.ts';
 import type {

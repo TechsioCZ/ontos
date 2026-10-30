@@ -2,10 +2,13 @@
 # lefthook package's own postinstall. Never bypass them with --no-verify.
 pre-commit:
   jobs:
+    - name: shell-ui-candidates
+      root: "app/"
+      run: pnpm shell:ui-candidates:check
     # oxfmt skips unsupported file types and its own ignorePatterns, matching `pnpm format`.
     - name: format
       root: "app/"
-      run: pnpm exec oxfmt --no-error-on-unmatched-pattern {staged_files}
+      run: pnpm exec oxfmt --threads=9 --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
     # Globs match repository-root paths; they select exactly the files `pnpm lint` covers.
     - name: lint
@@ -16,15 +19,15 @@ pre-commit:
         - "app/tools/ontos-agent-mcp/**/*.{ts,mts,js,mjs}"
       exclude:
         - "app/tools/oxlint/effect-native/tests/fixtures/*"
-      run: pnpm exec oxlint --fix --no-error-on-unmatched-pattern {staged_files}
+      run: pnpm exec oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
 
 pre-push:
-  parallel: true
+  parallel: false
   jobs:
     - name: typecheck
       root: "app/"
-      run: pnpm typecheck
+      run: GOMAXPROCS=9 ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
     - name: contract
       root: "app/"
-      run: pnpm contract:check
+      run: GOMAXPROCS=9 GOMEMLIMIT=12GiB pnpm contract:check

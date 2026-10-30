@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect';
 import type { Redacted } from 'effect';
-import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import { HttpEffect, HttpServerResponse } from 'effect/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 

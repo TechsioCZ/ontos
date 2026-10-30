@@ -1,8 +1,9 @@
 /** Reviewed one-time policy cutover. Runtime authorization remains entirely graph-native. */
-import { createHash } from 'node:crypto';
-
 import { v1 } from '@authzed/authzed-node';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
 import { buildPrincipalSelfCredentialUpdates } from '../permissions/action-authorization-lifecycle.ts';
@@ -472,39 +473,41 @@ export const planPeopleModelTransition = (input: PeopleModelTransitionInput): Pe
   }
   const deleted = new Set(deletions.map(identity));
   const additions = [...desired.values()].filter((r) => !current.has(identity(r)) || deleted.has(identity(r)));
-  const fingerprint = createHash('sha256')
-    .update(
-      [
-        input.reviewedInputSha256,
-        input.compositionRevision,
-        input.observed.schema,
-        ONTOS_SPICEDB_SCHEMA,
-        ...sorted([...current.values()]).map(serialized),
-        '--target--',
-        ...sorted([...desired.values()]).map(serialized),
-        '--deferred-native-replay--',
-        ...input.deferredAgentPrincipalIds.toSorted(),
-        '--memberships--',
-        ...input.memberships
-          .map((m) =>
-            [
-              m.tenantId,
-              m.legalEntityId,
-              m.principalId,
-              m.kind,
-              m.affiliation ?? '',
-              m.status,
-              ...m.scopedRoles.map(toScopedRoleObjectId).toSorted(),
-            ]
-              .map(encodeURIComponent)
-              .join(':'),
-          )
-          .toSorted(),
-      ]
-        .map((part) => `${Buffer.byteLength(part)}:${part}`)
-        .join(''),
-    )
-    .digest('hex');
+  const fingerprint = Hex.encode(
+    sha256(
+      utf8ToBytes(
+        [
+          input.reviewedInputSha256,
+          input.compositionRevision,
+          input.observed.schema,
+          ONTOS_SPICEDB_SCHEMA,
+          ...sorted([...current.values()]).map(serialized),
+          '--target--',
+          ...sorted([...desired.values()]).map(serialized),
+          '--deferred-native-replay--',
+          ...input.deferredAgentPrincipalIds.toSorted(),
+          '--memberships--',
+          ...input.memberships
+            .map((m) =>
+              [
+                m.tenantId,
+                m.legalEntityId,
+                m.principalId,
+                m.kind,
+                m.affiliation ?? '',
+                m.status,
+                ...m.scopedRoles.map(toScopedRoleObjectId).toSorted(),
+              ]
+                .map(encodeURIComponent)
+                .join(':'),
+            )
+            .toSorted(),
+        ]
+          .map((part) => `${Buffer.byteLength(part)}:${part}`)
+          .join(''),
+      ),
+    ),
+  );
   return {
     additions: sorted(additions),
     deletions: sorted(deletions),

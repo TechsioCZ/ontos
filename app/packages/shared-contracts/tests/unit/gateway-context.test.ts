@@ -1,6 +1,6 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { Effect, Redacted, Result, Schema, SchemaAST, Struct } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
   ApiKeyGatewayHeadersSchema,
@@ -421,21 +421,60 @@ it.effect('issues API-key gateway context through the server-only credential bou
 
 it('lets server API keys bind the active revision without weakening session revision pinning', () => {
   const payload = { audience: 'merchandise' };
-  expect(Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
+  expect(Schema.decodeSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
   expect(() => Schema.decodeUnknownSync(GatewayContextRequestSchema)(payload)).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
+    Schema.decodeSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
   ).toThrow();
 });
 
-it('constrains the combined gateway protocol to named reads rather than arbitrary URLs or actions', () => {
+it('declares the combined gateway protocol as whole-body JSON bytes rather than a shared owner DTO', () => {
   const decode = Schema.decodeUnknownSync(ApiKeyGatewayReadRequestSchema);
-  const payload = { audience: 'merchandise', query: { view: { storefront: true } }, readName: 'records' };
-  expect(decode(payload)).toEqual(payload);
-  for (const readName of ['../actions/order', 'https://other.test', '%2e%2e', 'records/../../actions']) {
-    expect(() => decode({ ...payload, readName })).toThrow();
-  }
+  const payload = new TextEncoder().encode(
+    '{"audience":"merchandise","query":{"view":{"storefront":true}},"readName":"records"}',
+  );
+  expect(decode(payload)).toBe(payload);
+  expect(() => decode({ audience: 'merchandise', query: {}, readName: 'records' })).toThrow();
+  expect(() => decode(new TextDecoder().decode(payload))).toThrow();
   expect(endpointStatuses(GatewayContextApiGroup.endpoints.readWithApiKeyGatewayContext)).toEqual([
-    400, 401, 403, 409, 429, 500, 503,
+    400, 400, 401, 403, 409, 429, 500, 503,
   ]);
 });
+
+it.effect('isolates API-key transport options between concurrent requests', () =>
+  Effect.gen(function* isolatedApiKeyGatewayTransport() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(
+        Response.json({
+          apiBaseUrl: '/payment-term-catalog-api',
+          compositionRevision: claims.compositionRevision,
+          expiresAt: claims.exp,
+          token: 'fresh-signed-assertion',
+        }),
+      );
+    };
+    const targets = [
+      { apiKey: 'first-key', baseUrl: 'https://first.example.test', requestCorrelation: 'first-request' },
+      { apiKey: 'second-key', baseUrl: 'https://second.example.test', requestCorrelation: 'second-request' },
+    ];
+    yield* Effect.forEach(
+      targets,
+      (target) =>
+        issueApiKeyGatewayContext(
+          { audience: 'payment-term-catalog' },
+          { ...target, apiKey: Redacted.make(target.apiKey) },
+        ),
+      { concurrency: 'unbounded' },
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(requests).toHaveLength(targets.length);
+    for (const target of targets) {
+      const request = requests.find((candidate) => new URL(candidate.url).origin === target.baseUrl);
+      expect(request?.headers.get('x-api-key')).toBe(target.apiKey);
+      expect(request?.headers.get('x-correlation-id')).toBe(target.requestCorrelation);
+      expect(request?.headers.get('cookie')).toBeNull();
+      expect(request?.headers.get('authorization')).toBeNull();
+    }
+  }),
+);

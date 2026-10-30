@@ -1,6 +1,6 @@
 // `isCookieNamespaceMember` falls back to the raw identifier name when the binding is unknown, so
 // any local/vendored value named `Cookies` or `HttpServerResponse` silences the header-write check
-// even though nothing here comes from `effect/unstable/http`.
+// even though nothing here comes from `effect/http`.
 import { Cookies } from './hand-rolled-cookies.ts';
 
 declare const HttpServerResponse: { readonly setCookie: (name: string, value: string) => string };

@@ -1,6 +1,6 @@
 import { X509Certificate } from 'node:crypto';
 
-import { DateTime, Effect, Layer, Option, Redacted } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
@@ -17,6 +17,7 @@ import {
   fakeFiles,
   fakeStage,
   fakeZeropsApi,
+  openssl,
   spicedbTlsSecrets,
 } from './stage-operations-fixture.mts';
 import type { FakeCloudflareAccount, FakeStage, FakeZeropsApi } from './stage-operations-fixture.mts';
@@ -67,6 +68,29 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>, fakes: Fakes, dryRun = fal
   );
 
 const storedValue = (fakes: Fakes, key: string) => fakes.stage.projectValues.get(key) ?? '';
+
+it.effect('encodes generated gRPC certificate and gateway CSR with a named curve accepted by SpiceDB', () =>
+  Effect.gen(function* generatesNamedCurveParameters() {
+    const fakes = newFakes();
+    yield* run(ensureSpicedbTls(TARGET), fakes);
+
+    const request = fakes.account.requests.find(({ url }) => url.pathname === '/client/v4/certificates');
+    const { csr } = Schema.decodeUnknownSync(Schema.Struct({ csr: Schema.String }))(
+      Option.getOrElse(request?.body ?? Option.none(), () => null),
+    );
+    const publicKeys = yield* Effect.sync(() => [
+      openssl(['x509', '-pubkey', '-noout'], storedValue(fakes, GRPC_CERTIFICATE)),
+      openssl(['req', '-pubkey', '-noout'], csr),
+    ]);
+    for (const publicKey of publicKeys) {
+      const parameters = yield* Effect.sync(() => openssl(['asn1parse', '-inform', 'PEM'], publicKey));
+      // Go's X.509 parser requires a named-curve OID instead of explicit EC field parameters.
+      expect(parameters).toMatch(/OBJECT\s+:id-ecPublicKey/u);
+      expect(parameters).toMatch(/OBJECT\s+:prime256v1/u);
+      expect(parameters).not.toContain('prime-field');
+    }
+  }),
+);
 
 it.effect('creates both pairs on the spicedb service and keeps them on a re-run', () =>
   Effect.gen(function* createsBothPairs() {

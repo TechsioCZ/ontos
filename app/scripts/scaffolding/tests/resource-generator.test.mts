@@ -89,7 +89,7 @@ const createFixture = (): Effect.Effect<string, unknown> =>
     yield* write(
       root,
       'verticals/property-registry/shared/api.ts',
-      `import { HttpApi } from 'effect/unstable/httpapi';
+      `import { HttpApi } from 'effect/http-api';
 
 export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
 `,
@@ -97,15 +97,13 @@ export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
     yield* write(
       root,
       'verticals/property-registry/api/index.ts',
-      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+      `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { Layer } from '@modern-js/bff-effect/effect-edge';
 import { propertyRegistryApi } from '../shared/api.ts';
 
-const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(
-  Layer.provide(Layer.empty),
-) satisfies EffectRuntimeLayer;
+const handlersLive = Layer.empty;
 
-export default defineEffectBff({ api: propertyRegistryApi, layer });
+export default assembleEffectBffRuntime({ api: propertyRegistryApi, handlers: handlersLive, services: Layer.empty });
 `,
     );
     yield* write(

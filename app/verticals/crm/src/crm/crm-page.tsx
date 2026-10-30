@@ -5,6 +5,7 @@ import { Helmet } from '@modern-js/runtime/head';
 import type { ReactNode } from 'react';
 import '../routes/index.css';
 import { crmI18nResources } from './i18n.ts';
+import { CrmMoneyFormatsProvider } from './number-formats.tsx';
 
 const CrmHead = ({ titleKey }: { readonly titleKey: string }) => {
   const { language, t } = useModernI18n();
@@ -23,8 +24,10 @@ export const CrmPage = ({ children, titleKey }: { readonly children: ReactNode; 
     resources={crmI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <CrmHead titleKey={titleKey} />
-    <section className="flex min-w-0 flex-col gap-250">{children}</section>
-    <Toaster />
+    <CrmMoneyFormatsProvider>
+      <CrmHead titleKey={titleKey} />
+      <section className="flex min-w-0 flex-col gap-250">{children}</section>
+      <Toaster />
+    </CrmMoneyFormatsProvider>
   </FederatedI18nBoundary>
 );

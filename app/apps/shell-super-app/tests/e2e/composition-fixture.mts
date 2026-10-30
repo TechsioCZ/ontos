@@ -6,7 +6,7 @@ import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { and, eq } from 'drizzle-orm';
 import { Config, Context, DateTime, Duration, Effect, FileSystem, Layer, Redacted, Schema, Scope } from 'effect';
-import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { parseDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';

@@ -1,3 +1,5 @@
+import { ConnectionLegalEntityIdSchema, ConnectionPrincipalIdSchema } from '@app/shared-contracts/oauth-connections';
+import { Option } from 'effect';
 import type { ConnectCompanyOption } from '@app/shared-contracts/oauth-connections';
 import { expect, test } from 'effect-rstest';
 
@@ -17,8 +19,13 @@ const verified = (state: string | null): VerifiedOAuthQuery => ({
 });
 
 const company = (legalEntityId: string, agentIds: readonly string[] = []): ConnectCompanyOption => ({
-  agents: agentIds.map((principalId) => ({ displayName: principalId, modules: [], principalId, writePolicy: 'approval' })),
-  legalEntityId,
+  agents: agentIds.map((principalId) => ({
+    displayName: principalId,
+    modules: [],
+    principalId: ConnectionPrincipalIdSchema.make(principalId),
+    writePolicy: 'approval',
+  })),
+  legalEntityId: ConnectionLegalEntityIdSchema.make(legalEntityId),
   legalName: `Firma ${legalEntityId}`,
   modules: [],
 });
@@ -46,7 +53,7 @@ test('choosePreselect prefers the requested company when it is offered', () => {
       requestedAgent: null,
       requestedCompany: 'le-b',
     }),
-  ).toStrictEqual({ agentPrincipalId: null, legalEntityId: 'le-b' });
+  ).toStrictEqual({ agentPrincipalId: Option.none(), legalEntityId: Option.some('le-b') });
 });
 
 test('choosePreselect falls back to the active company for an unknown requested company', () => {
@@ -57,13 +64,18 @@ test('choosePreselect falls back to the active company for an unknown requested 
       requestedAgent: null,
       requestedCompany: 'le-unknown',
     }),
-  ).toStrictEqual({ agentPrincipalId: null, legalEntityId: 'le-a' });
+  ).toStrictEqual({ agentPrincipalId: Option.none(), legalEntityId: Option.some('le-a') });
 });
 
 test('choosePreselect selects the only company and nothing when several are offered without a hint', () => {
   expect(
-    choosePreselect({ activeLegalEntityId: null, companies: [company('le-a')], requestedAgent: null, requestedCompany: null }),
-  ).toStrictEqual({ agentPrincipalId: null, legalEntityId: 'le-a' });
+    choosePreselect({
+      activeLegalEntityId: null,
+      companies: [company('le-a')],
+      requestedAgent: null,
+      requestedCompany: null,
+    }),
+  ).toStrictEqual({ agentPrincipalId: Option.none(), legalEntityId: Option.some('le-a') });
   expect(
     choosePreselect({
       activeLegalEntityId: null,
@@ -71,15 +83,15 @@ test('choosePreselect selects the only company and nothing when several are offe
       requestedAgent: null,
       requestedCompany: null,
     }),
-  ).toStrictEqual({ agentPrincipalId: null, legalEntityId: null });
+  ).toStrictEqual({ agentPrincipalId: Option.none(), legalEntityId: Option.none() });
 });
 
 test('choosePreselect keeps the requested agent only when the chosen company offers it', () => {
   const companies = [company('le-a', ['agent-1']), company('le-b', ['agent-2'])];
   expect(
     choosePreselect({ activeLegalEntityId: null, companies, requestedAgent: 'agent-1', requestedCompany: 'le-a' }),
-  ).toStrictEqual({ agentPrincipalId: 'agent-1', legalEntityId: 'le-a' });
+  ).toStrictEqual({ agentPrincipalId: Option.some('agent-1'), legalEntityId: Option.some('le-a') });
   expect(
     choosePreselect({ activeLegalEntityId: null, companies, requestedAgent: 'agent-2', requestedCompany: 'le-a' }),
-  ).toStrictEqual({ agentPrincipalId: null, legalEntityId: 'le-a' });
+  ).toStrictEqual({ agentPrincipalId: Option.none(), legalEntityId: Option.some('le-a') });
 });

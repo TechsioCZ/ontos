@@ -16,9 +16,9 @@ import type {
   OntosMcpTool,
   OntosMcpToolCatalog,
 } from '@app/core-runtime/modules/mcp-contribution';
-import { Data, Duration, Effect, Option, Ref, Result, Schema } from 'effect';
+import { Array as Arr, Data, Duration, Effect, Option, Ref, Result, Schema } from 'effect';
 
-export type JsonObject = { readonly [key: string]: Schema.Json };
+export type JsonObject = Readonly<Record<string, Schema.Json>>;
 
 export interface McpCatalogTool extends Omit<OntosMcpTool, 'inputSchema'> {
   readonly appId: string;
@@ -29,8 +29,8 @@ export interface McpCatalogTool extends Omit<OntosMcpTool, 'inputSchema'> {
 
 /** A module's MCP contribution as its contract states it: everything but the tools. */
 export interface McpModule {
-  readonly appId: string;
   readonly agentAdministrationPage?: OntosMcpContribution['agentAdministrationPage'];
+  readonly appId: string;
   /** The module's agent review read the approval platform asks (undefined: generic handling). */
   readonly approvalReview: OntosMcpContribution['approvalReview'];
   readonly approvals: boolean;
@@ -76,24 +76,25 @@ const ContractMcpSchema = Schema.Struct({
 });
 const decodeContractMcp = Schema.decodeUnknownOption(Schema.fromJsonString(ContractMcpSchema));
 
-const isObject = (value: Schema.Json | undefined): value is JsonObject =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isObject = Schema.is(Schema.JsonObject);
 
-const REF = /^#\/\$defs\/(.+)$/u;
+const REF = /^#\/\$defs\/(?<name>.+)$/u;
 
 /** The tool schema plus exactly the shared definitions it references (transitively). */
 export const selfContainedSchema = (schema: JsonObject, definitions: JsonObject): JsonObject => {
   const needed = new Map<string, Schema.Json>();
   const visit = (node: Schema.Json): void => {
-    if (Array.isArray(node)) {
-      node.forEach(visit);
+    if (Arr.isArray<Schema.Json>(node)) {
+      for (const child of node) {
+        visit(child);
+      }
       return;
     }
     if (!isObject(node)) {
       return;
     }
     const ref = node['$ref'];
-    const name = typeof ref === 'string' ? REF.exec(ref)?.[1] : undefined;
+    const name = Schema.is(Schema.String)(ref) ? REF.exec(ref)?.groups?.['name'] : undefined;
     if (name !== undefined && !needed.has(name)) {
       const definition = definitions[name];
       if (definition !== undefined) {
@@ -101,7 +102,9 @@ export const selfContainedSchema = (schema: JsonObject, definitions: JsonObject)
         visit(definition);
       }
     }
-    Object.values(node).forEach(visit);
+    for (const child of Object.values(node)) {
+      visit(child);
+    }
   };
   visit(schema);
   return needed.size === 0 ? schema : { ...schema, $defs: Object.fromEntries(needed) };
@@ -112,9 +115,11 @@ const uniqueNames = (modules: readonly McpCatalogModule[]): McpCatalogModule[] =
   const used = new Set<string>();
   const claim = (name: string): string => {
     let candidate = name;
-    for (let n = 2; used.has(candidate); n += 1) {
-      const suffix = `_${n}`;
+    let suffixNumber = 2;
+    while (used.has(candidate)) {
+      const suffix = `_${suffixNumber}`;
       candidate = `${name.slice(0, 64 - suffix.length)}${suffix}`;
+      suffixNumber += 1;
     }
     used.add(candidate);
     return candidate;
@@ -147,8 +152,8 @@ export const buildMcpModules = (composition: ComposedRevision): McpModules => {
       }
       return [
         {
-          appId: module.deployment.appId,
           agentAdministrationPage: contribution.agentAdministrationPage,
+          appId: module.deployment.appId,
           approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
           approvalsPage: contribution.approvalsPage,
@@ -169,18 +174,8 @@ export const buildMcpModules = (composition: ComposedRevision): McpModules => {
   return { compositionRevision: composition.revision, modules, warnings };
 };
 
-const directories = new WeakMap<ComposedRevision, McpModules>();
-
-/** One module directory per admitted composition value (contracts of a revision never change). */
-export const mcpModulesOf = (composition: ComposedRevision): McpModules => {
-  const known = directories.get(composition);
-  if (known !== undefined) {
-    return known;
-  }
-  const directory = buildMcpModules(composition);
-  directories.set(composition, directory);
-  return directory;
-};
+/** Build the small module directory from the request's admitted composition; tool releases have their own cache. */
+export const mcpModulesOf = (composition: ComposedRevision): McpModules => buildMcpModules(composition);
 
 /**
  * The complete catalog from the contributions and the tool catalogs loaded for them (by module id); `unavailable`

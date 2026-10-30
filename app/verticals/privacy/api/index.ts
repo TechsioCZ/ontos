@@ -19,11 +19,12 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -172,7 +173,7 @@ const operationAttributes = (operationContext: OperationContext) => {
 // fallow-ignore-next-line code-duplication -- Generated MicroVertical readiness and runtime-layer assembly follows the shared deployable-owner contract.
 const privacyReadinessLayer = HttpApiBuilder.group(privacyApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
-    Schema.decodeUnknownEffect(privacyMarkerSchema)(ultramodernApiMarker).pipe(
+    Schema.decodeEffect(privacyMarkerSchema)(ultramodernApiMarker).pipe(
       Effect.orDie,
       Effect.map((marker) => ({
         checks: {
@@ -237,6 +238,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
   Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
 );
 const productionActionRuntimeLive = privacyConsentAuthorityActionRuntimeLive.pipe(
@@ -257,6 +259,7 @@ const productionActionRuntimeLive = privacyConsentAuthorityActionRuntimeLive.pip
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
@@ -345,6 +348,7 @@ export const makePrivacyApiRuntime = (
     Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
     Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   return assembleEffectBffRuntime({

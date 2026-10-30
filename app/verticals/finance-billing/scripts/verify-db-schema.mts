@@ -5,8 +5,8 @@ import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 
 import { FinanceStateSchema } from '../shared/apis/records.ts';
 import { financeDocumentContents, financeRelations, financeStates } from '../src/database/schema.ts';
@@ -40,10 +40,10 @@ const InfrastructureSchema = Schema.Struct({
   runtimeSuper: Schema.Boolean,
   runtimeUsage: Schema.Boolean,
 });
-class FinanceDatabaseVerificationError extends Schema.TaggedError<FinanceDatabaseVerificationError>()(
-  'FinanceDatabaseVerificationError',
-  { reason: Schema.String },
-) {}
+class FinanceDatabaseVerificationError extends Schema.TaggedError<
+  FinanceDatabaseVerificationError,
+  { readonly brand: unique symbol }
+>()('FinanceDatabaseVerificationError', { reason: Schema.String }) {}
 const failure = (reason: string) => new FinanceDatabaseVerificationError({ reason });
 const hasRuntimeGrants = (table: typeof CatalogSchema.Type, adminOwner: string) =>
   table.owner === adminOwner &&

@@ -1,4 +1,5 @@
-import { Reactivity } from 'effect/unstable/reactivity';
+import { NodeCrypto } from '@effect/platform-node';
+import { Reactivity } from 'effect/reactivity';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 
@@ -25,7 +26,7 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
@@ -132,6 +133,7 @@ const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
   GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
   GovernedReadLayer.provideMerge(databaseIdentitiesLive),
+  GovernedReadLayer.provideMerge(NodeCrypto.layer),
   GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),

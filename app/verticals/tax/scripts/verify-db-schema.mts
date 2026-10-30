@@ -2,7 +2,7 @@ import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Console, Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { TaxDatabase, TaxDatabaseLive, TaxPgClientLive } from '../src/database/client.ts';
 import { TAX_SCHEMA_NAME, TAX_TABLES, TAX_TABLE_INVENTORY } from '../src/database/schema.ts';
 

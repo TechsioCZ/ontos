@@ -1,5 +1,6 @@
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { Effect, Redacted } from 'effect';
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect } from 'effect';
+import type { Redacted } from 'effect';
 import { CommerceConsentAuthorityApi, CommerceConsentNoticeAuthorityApi } from './api.ts';
 import type { RecordNoticeProvisionPayload } from './index.ts';
 import type { CommerceConsentAuthorityPayload } from './api.ts';
@@ -14,28 +15,26 @@ export const resolveCommerceConsentAuthorityWithAuthorization = (
   payload: CommerceConsentAuthorityPayload,
   context: CommerceConsentAuthorityClientContext,
 ) =>
-  makeEffectBffClient({
-    api: CommerceConsentAuthorityApi,
-    baseUrl: context.baseUrl,
-    defaultApiPrefix: '/commerce-customer-context-api',
-    transportHeaders: {
-      authorization: Redacted.value(context.credential),
-      'x-correlation-id': context.requestCorrelation,
-      'x-ontos-composition-revision': context.compositionRevision,
+  makeGovernedEffectBffClient(
+    {
+      api: CommerceConsentAuthorityApi,
+      credential: context.credential,
+      defaultApiPrefix: '/commerce-customer-context-api',
+      requestCorrelation: context.requestCorrelation,
     },
-  }).pipe(Effect.flatMap((client) => client.commerceConsentAuthority.execute({ payload })));
+    { baseUrl: context.baseUrl, compositionRevision: context.compositionRevision },
+  ).pipe(Effect.flatMap((client) => client.commerceConsentAuthority.execute({ payload })));
 
 export const resolveCommerceConsentNoticeAuthorityWithAuthorization = (
   payload: RecordNoticeProvisionPayload,
   context: CommerceConsentAuthorityClientContext,
 ) =>
-  makeEffectBffClient({
-    api: CommerceConsentNoticeAuthorityApi,
-    baseUrl: context.baseUrl,
-    defaultApiPrefix: '/commerce-customer-context-api',
-    transportHeaders: {
-      authorization: Redacted.value(context.credential),
-      'x-correlation-id': context.requestCorrelation,
-      'x-ontos-composition-revision': context.compositionRevision,
+  makeGovernedEffectBffClient(
+    {
+      api: CommerceConsentNoticeAuthorityApi,
+      credential: context.credential,
+      defaultApiPrefix: '/commerce-customer-context-api',
+      requestCorrelation: context.requestCorrelation,
     },
-  }).pipe(Effect.flatMap((client) => client.commerceConsentNoticeAuthority.execute({ payload })));
+    { baseUrl: context.baseUrl, compositionRevision: context.compositionRevision },
+  ).pipe(Effect.flatMap((client) => client.commerceConsentNoticeAuthority.execute({ payload })));

@@ -1,3 +1,4 @@
+import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -14,8 +15,8 @@ const MISSING_BEFORE = 'Chybí původní hodnoty, změnu nelze automaticky vrát
 const allRights: MerchandiseRights = { canEditOrders: true, canManageCatalog: true, canWrite: true };
 
 const review = (
-  request: Partial<Parameters<typeof reviewProductProposal>[0]['request']> & { command: Record<string, unknown> },
-  product?: Record<string, unknown>,
+  request: Partial<Parameters<typeof reviewProductProposal>[0]['request']> & { command: AgentCommand },
+  product?: AgentCommand,
   /** `null`: the records read failed. */
   rights: MerchandiseRights | null = allRights,
 ) =>
@@ -27,26 +28,30 @@ const review = (
 
 it('a price change shows the live price before and the new price after, in Czech crowns', () => {
   expect(productDiff({ _tag: 'ChangePrice', id: 'p', priceMinor: 366_000 }, { currentPriceMinor: 349_000 })).toEqual([
-    { after: '3\u00a0660,00\u00a0Kč', before: '3\u00a0490,00\u00a0Kč', field: 'priceMinor', label: 'Cena bez DPH' },
+    { after: '3\u00A0660,00\u00A0Kč', before: '3\u00A0490,00\u00A0Kč', field: 'priceMinor', label: 'Cena bez DPH' },
   ]);
   expect(
     productDiff(
       { _tag: 'ChangePrice', id: 'p', priceMinor: 3000, variantId: 'V2' },
       { variants: [{ id: 'V2', priceMinor: 2000 }] },
     ),
-  ).toEqual([{ after: '30,00\u00a0Kč', before: '20,00\u00a0Kč', field: 'priceMinor', label: 'Cena varianty bez DPH' }]);
-  expect(productDiff({ _tag: 'RecordStockMovement', delta: 1 }, undefined)).toBeUndefined();
+  ).toEqual([{ after: '30,00\u00A0Kč', before: '20,00\u00A0Kč', field: 'priceMinor', label: 'Cena varianty bez DPH' }]);
+  expect(productDiff({ _tag: 'RecordStockMovement', delta: 1 })).toBeUndefined();
 });
 
 it('a product edit and a new product list their fields with Czech labels', () => {
-  expect(productDiff({ _tag: 'UpdateProduct', id: 'p', patch: { active: false, name: 'Nový' } }, { active: true, name: 'Starý' }))
-    .toEqual([
-      { after: 'Ne', before: 'Ano', field: 'active', label: 'Aktivní v nabídce' },
-      { after: 'Nový', before: 'Starý', field: 'name', label: 'Název' },
-    ]);
-  expect(productDiff({ _tag: 'CreateProduct', id: 'x', name: 'Mýdlo', priceMinor: 12_900 }, undefined)).toEqual([
+  expect(
+    productDiff(
+      { _tag: 'UpdateProduct', id: 'p', patch: { active: false, name: 'Nový' } },
+      { active: true, name: 'Starý' },
+    ),
+  ).toEqual([
+    { after: 'Ne', before: 'Ano', field: 'active', label: 'Aktivní v nabídce' },
+    { after: 'Nový', before: 'Starý', field: 'name', label: 'Název' },
+  ]);
+  expect(productDiff({ _tag: 'CreateProduct', id: 'x', name: 'Mýdlo', priceMinor: 12_900 })).toEqual([
     { after: 'Mýdlo', field: 'name', label: 'Název' },
-    { after: '129,00\u00a0Kč', field: 'priceMinor', label: 'Cena bez DPH' },
+    { after: '129,00\u00A0Kč', field: 'priceMinor', label: 'Cena bez DPH' },
   ]);
 });
 
@@ -54,20 +59,22 @@ it('detects a price a person changed after the approval', () => {
   const command = { _tag: 'ChangePrice', id: 'p', priceMinor: 360_000 };
   expect(productStillInPlace(command, { currentPriceMinor: 360_000 })).toBe(true);
   expect(productStillInPlace(command, { currentPriceMinor: 365_000 })).toBe(false);
-  expect(productStillInPlace(command, undefined)).toBe(false);
+  expect(productStillInPlace(command)).toBe(false);
   const variant = { _tag: 'ChangePrice', id: 'p', priceMinor: 10, variantId: 'V1' };
   expect(productStillInPlace(variant, { variants: [{ id: 'V1', priceMinor: 10 }] })).toBe(true);
   expect(productStillInPlace(variant, { variants: [] })).toBe(false);
-  expect(productStillInPlace({ _tag: 'UpdateProduct', id: 'p', patch: { name: 'A' } }, { name: 'A', sku: 'X' })).toBe(true);
-  expect(productStillInPlace({ _tag: 'CreateProduct', name: 'X' }, undefined)).toBeUndefined();
+  expect(productStillInPlace({ _tag: 'UpdateProduct', id: 'p', patch: { name: 'A' } }, { name: 'A', sku: 'X' })).toBe(
+    true,
+  );
+  expect(productStillInPlace({ _tag: 'CreateProduct', name: 'X' })).toBeUndefined();
 });
 
 it('ChangePrice without variant restores currentPriceMinor', () => {
-  expect(productRevert({ _tag: 'ChangePrice', id: 'P1', priceMinor: 14900 }, { currentPriceMinor: 12900 })).toEqual({
-    commands: [{ _tag: 'ChangePrice', id: 'P1', priceMinor: 12900 }],
+  expect(productRevert({ _tag: 'ChangePrice', id: 'P1', priceMinor: 14_900 }, { currentPriceMinor: 12_900 })).toEqual({
+    commands: [{ _tag: 'ChangePrice', id: 'P1', priceMinor: 12_900 }],
     kind: 'commands',
   });
-  expect(productRevert({ _tag: 'ChangePrice', id: 'P1', priceMinor: 14900 }, undefined)).toEqual({
+  expect(productRevert({ _tag: 'ChangePrice', id: 'P1', priceMinor: 14_900 })).toEqual({
     kind: 'none',
     reason: MISSING_BEFORE,
   });
@@ -102,12 +109,12 @@ it('UpdateProduct with a patch key missing from before is not revertible', () =>
 });
 
 it('CreateProduct is undone by deactivating the created product', () => {
-  expect(productRevert({ _tag: 'CreateProduct', name: 'X' }, undefined)).toEqual({
+  expect(productRevert({ _tag: 'CreateProduct', name: 'X' })).toEqual({
     commands: [{ _tag: 'UpdateProduct', id: '$createdId', patch: { active: false } }],
     createdIdPath: 'entityIds.0',
     kind: 'commands',
   });
-  expect(productRevert({ _tag: 'EditOrder', id: 'o' }, undefined)).toEqual({
+  expect(productRevert({ _tag: 'EditOrder', id: 'o' })).toEqual({
     kind: 'none',
     reason: 'Tuto změnu nelze automaticky vrátit.',
   });
@@ -126,11 +133,13 @@ it('a catalog change needs catalog management, any change needs module write', (
     'Změny katalogu a cen schvaluje jen člověk se správou katalogu.',
   );
   expect(blockedReasonOf(changePrice, { canManageCatalog: true, canWrite: true })).toBeUndefined();
-  expect(blockedReasonOf({ _tag: 'CreateOrder' }, { canWrite: false })).toBe('V tomto modulu nemáte oprávnění k zápisu.');
+  expect(blockedReasonOf({ _tag: 'CreateOrder' }, { canWrite: false })).toBe(
+    'V tomto modulu nemáte oprávnění k zápisu.',
+  );
   expect(blockedReasonOf({ _tag: 'EditOrder', id: 'o' }, { canEditOrders: false, canWrite: true })).toBe(
     'Úpravy objednávek schvaluje jen člověk s oprávněním k úpravám objednávek.',
   );
-  expect(blockedReasonOf({ _tag: 'EditOrder', id: 'o' }, undefined)).toBeUndefined();
+  expect(blockedReasonOf({ _tag: 'EditOrder', id: 'o' })).toBeUndefined();
 });
 
 it('a pending price change shows the live product, its name and its undo plan', () => {
@@ -139,7 +148,7 @@ it('a pending price change shows the live product, its name and its undo plan', 
     { currentPriceMinor: 100, id: 'p', name: 'Mýdlo' },
   );
   expect(item).toEqual({
-    diff: [{ after: '2,00\u00a0Kč', before: '1,00\u00a0Kč', field: 'priceMinor', label: 'Cena bez DPH' }],
+    diff: [{ after: '2,00\u00A0Kč', before: '1,00\u00A0Kč', field: 'priceMinor', label: 'Cena bez DPH' }],
     key: 'k',
     revert: { commands: [{ _tag: 'ChangePrice', id: 'p', priceMinor: 100 }], kind: 'commands' },
     targetName: 'Mýdlo',
@@ -180,7 +189,7 @@ it('undo leaves a change alone when the product was edited since or cannot be re
 
 it('history shows the command lines without a live before', () => {
   expect(review({ command: { _tag: 'ChangePrice', id: 'p', priceMinor: 200 }, stage: 'history' })).toEqual({
-    diff: [{ after: '2,00\u00a0Kč', field: 'priceMinor', label: 'Cena bez DPH' }],
+    diff: [{ after: '2,00\u00A0Kč', field: 'priceMinor', label: 'Cena bez DPH' }],
     key: 'k',
     visible: true,
   });

@@ -39,13 +39,15 @@ export const ExternalIdentityProviderNamespaceRegistryLive = Layer.effect(
     );
     return {
       lookup: (authenticationNamespaceId) =>
-        staff.lookup(authenticationNamespaceId).pipe(
-          Effect.filterOrElse(Option.isSome, () =>
-            authenticationNamespaceId === configuration.authenticationNamespaceId
-              ? providerRegistration
-              : Effect.succeedNone,
+        staff
+          .lookup(authenticationNamespaceId)
+          .pipe(
+            Effect.filterOrElse(Option.isSome, () =>
+              authenticationNamespaceId === configuration.authenticationNamespaceId
+                ? providerRegistration
+                : Effect.succeedNone,
+            ),
           ),
-        ),
     };
   }),
 );

@@ -10,11 +10,13 @@ import { buildCrmHomeSummary } from '../../shared/domain/reports.ts';
 import { crmI18nResources } from '../crm/i18n.ts';
 import { useCrmRecords } from '../crm/records.ts';
 import { CrmStateGate } from '../crm/ui.tsx';
-import { formatDecimalMoney } from '../routes/[lang]/crm/prehled-prodeju/report-format.ts';
+import { useFormatDecimalMoney } from '../routes/[lang]/crm/prehled-prodeju/report-format.ts';
+import { CrmMoneyFormatsProvider } from '../crm/number-formats.tsx';
 import '../routes/index.css';
 
 const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
-  const { language } = useModernI18n();
+  const formatDecimalMoney = useFormatDecimalMoney();
+  const { language, t } = useModernI18n();
   const lang = language ?? 'cs';
   const all = canSeeEverything(records.viewer);
   const facts = buildCrmHomeSummary(records);
@@ -33,29 +35,29 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
       </div>
       <StatRow>
         <StatCard
+          hint="Bez archivovaných klientů"
           label={all ? 'Aktivní klienti firmy' : 'Moji aktivní klienti'}
           value={formatNumber(facts.clients)}
-          hint="Bez archivovaných klientů"
         />
         <StatCard
-          label="K oslovení dnes"
-          value={formatNumber(facts.dueToday)}
           hint={`${formatNumber(facts.overdue)} po termínu · pouze ruční plán`}
+          label={t('crm.ciWorkflow.contactToday')}
+          value={formatNumber(facts.dueToday)}
         />
         <StatCard
-          label="Otevřené kontakty"
-          value={formatNumber(facts.openContacts)}
           hint="Ručně naplánované, dosud nevyřízené"
+          label={t('crm.ciWorkflow.openContacts')}
+          value={formatNumber(facts.openContacts)}
         />
         {all && (
           <StatCard
-            label="Objednávky k dořešení"
-            value={formatNumber(facts.toResolve ?? 0)}
             hint="Nespárované, sporné vazby a možné duplicity"
+            label={t('crm.ciWorkflow.ordersToResolve')}
+            value={formatNumber(facts.toResolve ?? 0)}
           />
         )}
       </StatRow>
-      <SectionCard title="Hodnota objednávek tento měsíc">
+      <SectionCard title={t('crm.ciWorkflow.monthlyOrderValue')}>
         <p className="text-fg-secondary text-sm">
           Pouze spárované importované objednávky bez duplicit. Každá měna zvlášť; nejde o tržbu ani zisk. Bez částky:{' '}
           {formatNumber(facts.month.withoutAmount)}.
@@ -63,17 +65,17 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
         <StatRow>
           {facts.month.totals.length === 0 ? (
             <StatCard
-              label="Hodnota evidovaných objednávek"
-              value="Bez dat"
               hint="Tento měsíc nejsou objednávky s poskytnutou částkou a měnou"
+              label={t('crm.ciWorkflow.recordedOrderValue')}
+              value="Bez dat"
             />
           ) : (
             facts.month.totals.map((total) => (
               <StatCard
+                hint={`Počet objednávek: ${formatNumber(total.count)} · včetně případných storen`}
                 key={total.currency}
                 label={`Hodnota v ${total.currency}`}
                 value={formatDecimalMoney(total.amount, total.currency)}
-                hint={`Počet objednávek: ${formatNumber(total.count)} · včetně případných storen`}
               />
             ))
           )}
@@ -97,6 +99,7 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
 };
 
 const HomeSummaryContent = () => {
+  const { t } = useModernI18n();
   const { load, state } = useCrmRecords();
   return (
     <SectionCard
@@ -105,7 +108,7 @@ const HomeSummaryContent = () => {
           Obnovit údaje
         </Button>
       }
-      title="Obchodní přehled"
+      title={t('crm.ciWorkflow.businessOverview')}
     >
       <CrmStateGate onRetry={load} state={state}>
         {(records) => <HomeFacts records={records} />}
@@ -121,7 +124,9 @@ export const HomeSummary = () => (
     resources={crmI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <HomeSummaryContent />
+    <CrmMoneyFormatsProvider>
+      <HomeSummaryContent />
+    </CrmMoneyFormatsProvider>
   </FederatedI18nBoundary>
 );
 /** The Shell awaits this before it reveals Home, so the summary renders with its facts. */

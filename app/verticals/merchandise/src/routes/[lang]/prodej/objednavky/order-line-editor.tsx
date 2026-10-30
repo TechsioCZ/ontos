@@ -16,11 +16,11 @@ export interface DraftLine {
   readonly key: string;
   /** The picked list row; its full record arrives in `record`. */
   readonly picked: Pick<ProductRecord, 'id' | 'name' | 'sku'> | null;
-  /** Full record of the picked product (variants, prices), read on pick. */
-  readonly record: ProductRecordState;
   readonly quantity: number;
   /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
   readonly quantityText: string;
+  /** Full record of the picked product (variants, prices), read on pick. */
+  readonly record: ProductRecordState;
   /** Chosen variant of a product with sellable variants. */
   readonly variantId: VariantId | null;
 }

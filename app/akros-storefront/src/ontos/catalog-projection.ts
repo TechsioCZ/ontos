@@ -66,7 +66,7 @@ const imageHosts = (): Set<string> =>
       .filter(Boolean),
   ]);
 /** Only images next/image can serve: same-origin "/…" paths or https on a configured host. */
-export const safeImage = (v: unknown): string | undefined => {
+const safeImage = (v: unknown): string | undefined => {
   const src = text(v).trim();
   if (!src) return undefined;
   if (src.startsWith("/") && !src.startsWith("//")) return src;
@@ -107,7 +107,7 @@ const paragraphsOf = (record: Raw): string[] => {
 /** Only CZK prices are sold here; anything else is shown as „cena není dostupná“. */
 const SUPPORTED_CURRENCY = "CZK";
 /** Why an owner price cannot be sold, or undefined when it can (positive CZK gross and net). */
-export const priceUnavailableReason = (
+const priceUnavailableReason = (
   gross: number | undefined,
   net: number | undefined,
   currency: unknown,
@@ -123,7 +123,7 @@ export const priceUnavailableReason = (
   return undefined;
 };
 /** Owner availability: UNKNOWN, untracked stock or a missing value is never shown as „skladem“. */
-export const isAvailabilityUnknown = (availability: unknown, stockTracked: unknown): boolean =>
+const isAvailabilityUnknown = (availability: unknown, stockTracked: unknown): boolean =>
   stockTracked === false || !["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK"].includes(text(availability));
 /** Sellable quantity from the owner ledger; OUT_OF_STOCK is 0 whatever the raw count says. */
 const stockOf = (stockOnHand: unknown, availability: unknown): number =>

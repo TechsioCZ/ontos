@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
+import type { Crypto } from 'effect';
 
 import { legalEntities, personInvitations, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
@@ -27,7 +26,10 @@ const invalid = () =>
   });
 
 /** Core rows and the provider writer are bound to the same owning Action transaction. */
-export const personInvitationManagementFromTransaction = (transaction: ScopedTransactionExecutor) => ({
+export const personInvitationManagementFromTransaction = (
+  transaction: ScopedTransactionExecutor,
+  crypto: Crypto.Crypto,
+) => ({
   create: Effect.fn('PersonInvitationManagement.create')(function* create(
     input: InvitePersonPayload,
     actionInvocationId: string,
@@ -48,12 +50,15 @@ export const personInvitationManagementFromTransaction = (transaction: ScopedTra
     if (company?.companyStatus !== 'active' || company.tenantStatus !== 'active') {
       return yield* invalid();
     }
-    const identities = yield* Effect.sync(() => ({
-      invitationId: randomUUID(),
-      principalId: randomUUID(),
-      providerSubjectId: randomUUID(),
-      verificationId: randomUUID(),
-    }));
+    const identities = yield* Effect.all(
+      {
+        invitationId: crypto.randomUUIDv4(),
+        principalId: crypto.randomUUIDv4(),
+        providerSubjectId: crypto.randomUUIDv4(),
+        verificationId: crypto.randomUUIDv4(),
+      },
+      { concurrency: 1 },
+    ).pipe(Effect.mapError(unavailable));
     const instant = yield* DateTime.now;
     const now = DateTime.toDateUtc(instant);
     const expiresAt = DateTime.toDateUtc(DateTime.add(instant, { hours: 24 }));

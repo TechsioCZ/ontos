@@ -16,7 +16,7 @@ const input = (resourceId: string, iso = '2026-10-20T08:00:00Z'): OpsCommandInpu
   resourceId,
 });
 
-const apply = (state: SecurityState, command: unknown, resourceId = 'cmd') =>
+const apply = (state: SecurityState, command: typeof SecurityCommandSchema.Encoded, resourceId = 'cmd') =>
   Schema.decodeUnknownEffect(SecurityCommandSchema)(command).pipe(
     Effect.orDie,
     Effect.flatMap((decoded) => evolveSecurity(state, decoded, input(resourceId))),
@@ -42,7 +42,7 @@ const withCamera = Effect.gen(function* withCamera() {
 it.effect('creates a device card in operation with an audit stamp and history', () =>
   Effect.gen(function* createCard() {
     const change = yield* withCamera;
-    const device = change.state.devices[0];
+    const [device] = change.state.devices;
     expect(change.entityIds).toEqual(['device-1']);
     expect(device?.state).toBe('in_operation');
     expect(device?.createdBy).toEqual(actor);
@@ -83,7 +83,9 @@ it.effect('S11-01: reporting a fault marks the device faulty, links a task once,
     const linked = yield* apply(reported.state, { _tag: 'SecurityIncidentLinkTask', incidentId: 'incident-1', task });
     expect(linked.state.incidents?.[0]?.task?.resourceId).toBe('task-9');
     expect(
-      yield* apply(linked.state, { _tag: 'SecurityIncidentLinkTask', incidentId: 'incident-1', task }).pipe(Effect.flip),
+      yield* apply(linked.state, { _tag: 'SecurityIncidentLinkTask', incidentId: 'incident-1', task }).pipe(
+        Effect.flip,
+      ),
     ).toBeInstanceOf(FacilityOperationsLifecycleConflict);
 
     const resolved = yield* apply(linked.state, {
@@ -120,7 +122,11 @@ it.effect('refuses invalid transitions, unknown records and faults on decommissi
         Effect.flip,
       ),
     ).toBeInstanceOf(FacilityOperationsNotFound);
-    const retired = yield* apply(created.state, { _tag: 'SecurityDeviceUpdate', deviceId: 'device-1', state: 'decommissioned' });
+    const retired = yield* apply(created.state, {
+      _tag: 'SecurityDeviceUpdate',
+      deviceId: 'device-1',
+      state: 'decommissioned',
+    });
     expect(retired.state.devices[0]?.history?.at(-1)?.event).toBe('state_changed');
     expect(
       yield* apply(retired.state, {

@@ -1,5 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 const PasswordSetSchema = Schema.Struct({ status: Schema.Literal(true) });
 export const InvitationTokenSchema = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/u));

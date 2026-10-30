@@ -14,7 +14,7 @@
  * ## What this detects (inside test files only)
  *
  * - **Value imports of a server module** — `import { createServer } from "node:http"`,
- *   `import http from "node:http"`, `import * as https from "node:https"`, `import "node:net"`;
+ *   `import http from "node:http"`, `import * as https from "node:https"`;
  *   one report per specifier (`serverModules`, glob-matched, so `http`, `node:http2`, … are covered).
  * - **Dynamic imports** — `await import("node:http")`, including a template literal with no
  *   substitutions.
@@ -25,6 +25,10 @@
  *   `const server = createServer(h); server.listen(0, "127.0.0.1", resolve)`, including
  *   `let server; server = createServer(h)` reassignment, optional chaining and computed access.
  *   Chained `createServer(h).listen(0)` reports once, on the factory call.
+ * - **Raw TCP HTTP bridges** from `node:net` / `net` when a locally resolved connection
+ *   handler writes an HTTP status line to its socket. A generic TCP listener is not evidence
+ *   of HTTP: SMTP and other native protocol fixtures remain valid. Local handler aliases and
+ *   separately registered `connection` handlers are followed; cross-file handlers are not.
  * - **Global `fetch` / `globalThis.fetch` calls**, only when `includeFetch` is enabled (default
  *   `false`): the in-memory client makes the ambient fetch unnecessary, but the audit does not list
  *   ambient `fetch` in tests as a driver, so it stays opt-in.
@@ -53,6 +57,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
+import { walk } from '../shared/ast.ts';
 import { globToRegExp, isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
 
 const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
@@ -222,6 +227,9 @@ export const rule = defineRule({
 
     const modulePatterns = options.serverModules.map(globToRegExp);
     const isServerModule = (source: string): boolean => modulePatterns.some((pattern) => pattern.test(source));
+    const isSocketModule = (source: string): boolean => source === 'node:net' || source === 'net';
+    const isHttpModule = (source: string): boolean => isServerModule(source) && !isSocketModule(source);
+    const namespaceOrigin = (source: string): string => (isSocketModule(source) ? 'socketNamespace' : 'namespace');
 
     type Variable = Scope['variables'][number];
     function variable(node: Extract<ESTree.Node, { type: 'Identifier' }>): Variable | undefined {
@@ -236,6 +244,7 @@ export const rule = defineRule({
     const writes = new Map<Variable, ESTree.Node[]>();
     const calls: Array<ESTree.CallExpression | ESTree.NewExpression> = [];
     const reports: Report[] = [];
+    const httpSocketBindings = new Set<Variable>();
     const factoryNames = new Set([...options.serverFactories, 'Server', 'Http2Server', 'Http2SecureServer']);
     // Provenance is local and scope-resolved, not type inference. Unknown writes invalidate
     // aliases; object fields, function returns and cross-file re-exports are not followed.
@@ -251,21 +260,23 @@ export const rule = defineRule({
       const name = spec.type === 'ImportSpecifier' ? staticKey(spec.imported, false) : '*';
       if (source === 'node:module' || source === 'module') return moduleMemberOrigin(name);
       if (!isServerModule(source)) return null;
-      return name === '*' ? 'namespace' : factoryOrigin(name);
+      const namespace = namespaceOrigin(source);
+      return name === '*' ? namespace : factoryOrigin(name, namespace);
     }
     function moduleMemberOrigin(name: string | null): string | null {
       if (name === 'createRequire') return 'createRequire';
       return name === '*' ? 'module' : null;
     }
-    function factoryOrigin(key: string | null): string | null {
-      return key !== null && factoryNames.has(key) ? 'factory' : null;
+    function factoryOrigin(key: string | null, namespace = 'namespace'): string | null {
+      if (key === null || !factoryNames.has(key)) return null;
+      return namespace === 'socketNamespace' ? 'socketFactory' : 'factory';
     }
     function destructuredOrigin(pattern: ESTree.ObjectPattern, name: string, value: string | null): string | null {
       const property = pattern.properties.find(
         (p) => p.type === 'Property' && p.value.type === 'Identifier' && p.value.name === name,
       );
-      if (property?.type !== 'Property' || value !== 'namespace') return null;
-      return factoryOrigin(staticKey(property.key, property.computed));
+      if (property?.type !== 'Property' || (value !== 'namespace' && value !== 'socketNamespace')) return null;
+      return factoryOrigin(staticKey(property.key, property.computed), value);
     }
     function variableOrigin(
       node: Extract<ESTree.Node, { type: 'Identifier' }>,
@@ -282,7 +293,8 @@ export const rule = defineRule({
         if (value === null) return null;
         values.push(value);
       }
-      return writtenOrigin(binding, values, next);
+      const value = writtenOrigin(binding, values, next);
+      return value === 'socketServer' && httpSocketBindings.has(binding) ? 'server' : value;
     }
     function writtenOrigin(binding: Variable, values: string[], next: Set<ESTree.Node>): string | null {
       for (const write of writes.get(binding) ?? []) {
@@ -303,16 +315,17 @@ export const rule = defineRule({
     function memberOrigin(node: ESTree.MemberExpression, next: Set<ESTree.Node>): string | null {
       const owner = origin(node.object, next);
       const key = staticKey(node.property, node.computed);
-      if (owner === 'namespace') return factoryOrigin(key);
+      if (owner === 'namespace' || owner === 'socketNamespace') return factoryOrigin(key, owner);
       return owner === 'module' && key === 'createRequire' ? 'createRequire' : null;
     }
     function sourceOrigin(node: ESTree.Node): string | null {
       const source = literalSource(node);
-      return source !== null && isServerModule(source) ? 'namespace' : null;
+      return source !== null && isServerModule(source) ? namespaceOrigin(source) : null;
     }
     function callOrigin(node: ESTree.CallExpression | ESTree.NewExpression, next: Set<ESTree.Node>): string | null {
       const callee = origin(node.callee, next);
       if (callee === 'factory') return 'server';
+      if (callee === 'socketFactory') return hasHttpHandler(node.arguments) ? 'server' : 'socketServer';
       if (callee === 'createRequire') return 'require';
       if (callee === 'require' && node.arguments[0] !== undefined) return sourceOrigin(unwrap(node.arguments[0]));
       return null;
@@ -336,6 +349,89 @@ export const rule = defineRule({
         default:
           return null;
       }
+    }
+    type ConnectionHandler = ESTree.ArrowFunctionExpression | ESTree.Function;
+    const httpHandlers = new Map<ConnectionHandler, boolean>();
+    function connectionHandler(input: ESTree.Node, seen = new Set<ESTree.Node>()): ConnectionHandler | null {
+      const node = unwrap(input);
+      if (seen.has(node)) return null;
+      if (
+        node.type === 'ArrowFunctionExpression' ||
+        node.type === 'FunctionExpression' ||
+        node.type === 'FunctionDeclaration'
+      ) {
+        return node;
+      }
+      if (node.type !== 'Identifier') return null;
+      const binding = variable(node);
+      if (binding === undefined || binding.defs.length !== 1 || writes.has(binding)) return null;
+      const declaration = binding.defs[0]!.node;
+      if (declaration.type === 'FunctionDeclaration') return declaration;
+      if (declaration.type !== 'VariableDeclarator' || declaration.init === null) return null;
+      return connectionHandler(declaration.init, new Set(seen).add(node));
+    }
+    function wirePrefix(input: ESTree.Node, seen = new Set<ESTree.Node>()): string | null {
+      const node = unwrap(input);
+      if (seen.has(node)) return null;
+      const text = literalSource(node);
+      if (text !== null) return text;
+      if (node.type === 'TemplateLiteral') return node.quasis[0]?.value.cooked ?? null;
+      if (node.type === 'BinaryExpression' && node.operator === '+') return wirePrefix(node.left, seen);
+      if (node.type !== 'Identifier') return null;
+      const binding = variable(node);
+      if (binding === undefined || binding.defs.length !== 1 || writes.has(binding)) return null;
+      const declaration = binding.defs[0]!.node;
+      return declaration.type === 'VariableDeclarator' && declaration.init !== null
+        ? wirePrefix(declaration.init, new Set(seen).add(node))
+        : null;
+    }
+    function hasHttpHandler(arguments_: readonly ESTree.Node[]): boolean {
+      for (const argument of arguments_) {
+        const handler = connectionHandler(argument);
+        const socket = handler?.params[0];
+        if (handler === null || handler.body === null || socket?.type !== 'Identifier') continue;
+        const known = httpHandlers.get(handler);
+        if (known === true) return true;
+        if (known === false) continue;
+        const socketBinding = variable(socket);
+        if (socketBinding === undefined) continue;
+        let http = false;
+        walk(handler.body, context.sourceCode.visitorKeys, (node) => {
+          if (node.type !== 'CallExpression') return;
+          const callee = unwrap(node.callee);
+          if (
+            callee.type !== 'MemberExpression' ||
+            !['write', 'end'].includes(staticKey(callee.property, callee.computed) ?? '')
+          )
+            return;
+          const receiver = unwrap(callee.object);
+          if (receiver.type !== 'Identifier' || variable(receiver) !== socketBinding || node.arguments[0] === undefined)
+            return;
+          const prefix = wirePrefix(node.arguments[0]);
+          http ||= prefix !== null && /^HTTP\/\d(?:\.\d)?\s/u.test(prefix);
+        });
+        httpHandlers.set(handler, http);
+        if (http) return true;
+      }
+      return false;
+    }
+    function socketConnectionCall(
+      node: ESTree.CallExpression | ESTree.NewExpression,
+    ): Extract<ESTree.Node, { type: 'Identifier' }> | null {
+      const callee = unwrap(node.callee);
+      if (callee.type !== 'MemberExpression') return null;
+      if (!['on', 'once', 'addListener'].includes(staticKey(callee.property, callee.computed) ?? '')) return null;
+      const object = unwrap(callee.object);
+      if (
+        object.type !== 'Identifier' ||
+        node.arguments[0] === undefined ||
+        literalSource(node.arguments[0]) !== 'connection'
+      )
+        return null;
+      const owner = origin(object);
+      return (owner === 'socketServer' || owner === 'server') && hasHttpHandler(node.arguments.slice(1))
+        ? object
+        : null;
     }
     function inspectMemberCall(
       node: ESTree.CallExpression | ESTree.NewExpression,
@@ -371,7 +467,7 @@ export const rule = defineRule({
     function inspectCall(node: ESTree.CallExpression | ESTree.NewExpression): void {
       const callee = unwrap(node.callee as ESTree.Node);
       const identity = origin(callee);
-      if (identity === 'factory') {
+      if (identity === 'factory' || (identity === 'socketFactory' && hasHttpHandler(node.arguments))) {
         reports.push({
           node,
           messageId: 'serverFactoryCall',
@@ -379,9 +475,13 @@ export const rule = defineRule({
         });
         return;
       }
+      const connection = socketConnectionCall(node);
+      if (connection !== null) {
+        reports.push({ node, messageId: 'serverFactoryCall', data: { name: context.sourceCode.getText(callee) } });
+      }
       if (identity === 'require' && node.arguments[0] !== undefined) {
         const source = literalSource(unwrap(node.arguments[0] as ESTree.Node));
-        if (source !== null && isServerModule(source))
+        if (source !== null && isHttpModule(source))
           reports.push({
             node,
             messageId: 'dynamicServerModuleImport',
@@ -395,7 +495,7 @@ export const rule = defineRule({
       }
     }
     function exported(node: ESTree.ExportNamedDeclaration | ESTree.ExportAllDeclaration): void {
-      if (node.source === null || node.exportKind === 'type' || !isServerModule(node.source.value)) return;
+      if (node.source === null || node.exportKind === 'type' || !isHttpModule(node.source.value)) return;
       if (node.type === 'ExportNamedDeclaration' && node.specifiers.every((spec) => spec.exportKind === 'type')) return;
       reports.push({
         node,
@@ -405,7 +505,7 @@ export const rule = defineRule({
     }
     return {
       ImportDeclaration(node) {
-        if (node.importKind === 'type' || !isServerModule(node.source.value)) return;
+        if (node.importKind === 'type' || !isHttpModule(node.source.value)) return;
         if (node.specifiers.length === 0)
           reports.push({
             node,
@@ -429,7 +529,7 @@ export const rule = defineRule({
       ExportAllDeclaration: exported,
       ImportExpression(node) {
         const source = literalSource(node.source as ESTree.Node);
-        if (source !== null && isServerModule(source))
+        if (source !== null && isHttpModule(source))
           reports.push({
             node,
             messageId: 'dynamicServerModuleImport',
@@ -451,6 +551,11 @@ export const rule = defineRule({
         calls.push(node);
       },
       'Program:exit'() {
+        for (const node of calls) {
+          const connection = socketConnectionCall(node);
+          const binding = connection === null ? undefined : variable(connection);
+          if (binding !== undefined) httpSocketBindings.add(binding);
+        }
         for (const node of calls) inspectCall(node);
         for (const report of reports.sort((a, b) => a.node.start - b.node.start)) context.report(report);
       },

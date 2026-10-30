@@ -199,7 +199,7 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
       const memory = memoryPersistence();
       const services = makeStockSharingEligibilityActionService({
         commerceValidator: unavailableStockSharingCommerceScopeValidator,
-        makeEligibilityId: () => relationId,
+        makeEligibilityId: Effect.succeed(relationId),
         persistence: memory.persistence,
       });
 
@@ -226,7 +226,7 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
               };
             }),
         },
-        makeEligibilityId: () => relationId,
+        makeEligibilityId: Effect.succeed(relationId),
         persistence: memory.persistence,
       });
       const sellerFailure = yield* Effect.flip(
@@ -254,7 +254,7 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
       const memory = memoryPersistence();
       const services = makeStockSharingEligibilityActionService({
         commerceValidator: validator,
-        makeEligibilityId: () => relationId,
+        makeEligibilityId: Effect.succeed(relationId),
         persistence: memory.persistence,
       });
       const collector = createActionCollector(
@@ -301,7 +301,7 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
       const memory = memoryPersistence(relation);
       const services = makeStockSharingEligibilityActionService({
         commerceValidator: validator,
-        makeEligibilityId: () => relationId,
+        makeEligibilityId: Effect.succeed(relationId),
         persistence: memory.persistence,
       });
       const changed = yield* services.change(changePayload, legalEntityId);

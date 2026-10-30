@@ -3,7 +3,7 @@
 // @ontos-action-http-slug correct-payment-term
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { CorrectPaymentTermPayloadSchema, CorrectPaymentTermResultSchema } from '../actions/correct-payment-term.ts';
 
 export { CorrectPaymentTermPayloadSchema } from '../actions/correct-payment-term.ts';

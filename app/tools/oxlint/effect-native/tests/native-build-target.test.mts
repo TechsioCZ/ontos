@@ -29,6 +29,11 @@ it('models only genuine Modern compiler target branches and retains runtime envi
         "if (process.env.MODERN_TARGET === 'browser') { void import('@module-federation/modern-js-v3/runtime'); }",
       conditional:
         "const runtime = process.env.MODERN_TARGET === 'browser' ? import('@module-federation/modern-js-v3/runtime') : null;",
+      importMetaBrowser:
+        "if (import.meta.env.MODERN_TARGET === 'browser') { void import('@module-federation/modern-js-v3/runtime'); }",
+      importMetaConditional:
+        "const runtime = import.meta.env.MODERN_TARGET === 'browser' ? import('@module-federation/modern-js-v3/runtime') : null;",
+      importMetaNode: "if (import.meta.env.MODERN_TARGET === 'node') { console.log('server'); }",
       node: "if (process.env.MODERN_TARGET === 'node') { console.log('server'); }",
     };
     const invalid = {
@@ -41,6 +46,14 @@ it('models only genuine Modern compiler target branches and retains runtime envi
       counterfeitTarget: "if (process.env.MODERN_TARGET === 'server') {}",
       globalContainer: "if (globalThis.process.env.MODERN_TARGET === 'browser') {}",
       importedProcess: "import process from 'node:process'; if (process.env.MODERN_TARGET === 'browser') {}",
+      importMetaCapturedEnvironment:
+        "const environment = import.meta.env; if (environment.MODERN_TARGET === 'browser') {}",
+      importMetaCapturedTarget: "const target = import.meta.env.MODERN_TARGET; if (target === 'browser') {}",
+      importMetaComputedTarget: "if (import.meta.env['MODERN_TARGET'] === 'browser') {}",
+      importMetaCounterfeitTarget: "if (import.meta.env.MODERN_TARGET === 'server') {}",
+      importMetaOptional: "if (import.meta.env?.MODERN_TARGET === 'browser') {}",
+      importMetaReversedComparison: "if ('browser' === import.meta.env.MODERN_TARGET) {}",
+      importMetaRuntime: "if (import.meta.env.FEATURE === 'browser') {}",
       looseComparison: "if (process.env.MODERN_TARGET == 'browser') {}",
       mutableProcess: "process = other; if (process.env.MODERN_TARGET === 'browser') {}",
       optional: "if (process.env?.MODERN_TARGET === 'browser') {}",
@@ -57,12 +70,28 @@ it('models only genuine Modern compiler target branches and retains runtime envi
       write(directory, file, source);
       return file;
     });
+    const generatedOwner = 'verticals/generated-owner';
+    write(
+      directory,
+      `${generatedOwner}/package.json`,
+      JSON.stringify({
+        ...manifest,
+        scripts: { build: 'pnpm routes-generate && modern build --deploy-target node' },
+      }),
+    );
+    write(directory, `${generatedOwner}/modern.config.ts`, nativeConfig);
+    const generatedSource = `${generatedOwner}/src/preview.tsx`;
+    write(directory, generatedSource, valid.browser);
+    validFiles.push(generatedSource);
     const runtimeScript = `${owner}/scripts/runtime.mts`;
     write(directory, runtimeScript, valid.browser);
     invalidFiles.push(runtimeScript);
     for (const [name, compilerManifest, config] of [
       ['missing-compiler', { dependencies: manifest.dependencies, scripts: manifest.scripts }, nativeConfig],
       ['runtime-build', { ...manifest, scripts: { build: 'node src/browser.tsx' } }, nativeConfig],
+      ['echo-build', { ...manifest, scripts: { build: 'echo modern build --deploy-target node' } }, nativeConfig],
+      ['quoted-build', { ...manifest, scripts: { build: "echo 'prepare && modern build'" } }, nativeConfig],
+      ['commented-build', { ...manifest, scripts: { build: 'echo prepare # && modern build' } }, nativeConfig],
       ['comment-config', manifest, `/* ${nativeConfig} */ export default {};`],
       ['counterfeit-config', manifest, 'const defineConfig = (value) => value; export default defineConfig({});'],
       [

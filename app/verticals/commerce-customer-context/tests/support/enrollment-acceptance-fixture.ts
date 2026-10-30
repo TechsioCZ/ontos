@@ -268,6 +268,28 @@ export const advanceEnrollmentAcceptanceAttemptRevision = (
     )
     .pipe(Effect.asVoid, Effect.orDie);
 
+/**
+ * Records that an Attempt's sweep budget was spent under an earlier release, which is what every
+ * Attempt swept before the budget was kept per composition looks like. Nothing else moves.
+ */
+export const spendEnrollmentAcceptanceSweepsUnderEarlierRelease = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<void> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute(
+        sql`
+          update commerce_customer_context.portal_enrollment_attempts
+             set sweep_composition_revision = null
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(Effect.asVoid, Effect.orDie);
+
 interface EnrollmentAcceptanceOwnerOperationRow extends Record<string, unknown> {
   readonly outcome_code: string | null;
   readonly reconciliation_ref: string | null;

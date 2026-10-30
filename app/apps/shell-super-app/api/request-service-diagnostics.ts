@@ -1,4 +1,4 @@
-import { Cause, Effect, Option, Predicate, Schema } from 'effect';
+import { Cause, Effect, Option, Predicate } from 'effect';
 
 const ERROR_TAGS = new Set([
   'AuthConfigError',
@@ -28,17 +28,19 @@ const CONFIG_KEYS = [
   'ONTOS_ACTIVE_APPLICATION_COMPOSITION',
 ] as const;
 
-const DiagnosticPropertySchema = Schema.Struct({ value: Schema.Unknown });
-type DiagnosticProperty = typeof DiagnosticPropertySchema.Type;
+interface DiagnosticProperty {
+  readonly value: unknown;
+}
 
 // Error evidence is an untrusted boundary: never invoke getters or serialize arbitrary objects.
-const dataProperty = (evidence: DiagnosticProperty, key: string) => {
+const dataProperty = (evidence: DiagnosticProperty, key: string): Option.Option<DiagnosticProperty> => {
   const { value } = evidence;
   if (!Predicate.isObject(value)) {
     return Option.none();
   }
   try {
-    return Schema.decodeUnknownOption(DiagnosticPropertySchema)(Object.getOwnPropertyDescriptor(value, key));
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor === undefined ? Option.none() : Option.some<DiagnosticProperty>({ value: descriptor.value });
   } catch {
     return Option.none();
   }

@@ -31,8 +31,10 @@ async function loadProgress(
 
 const admissionRechecks = 10;
 const admissionRecheckDelay = 1_000;
+const pendingRechecks = 20;
+const pendingRecheckDelay = 5_000;
 
-function waitForAdmissionRecheck(signal: AbortSignal): Promise<void> {
+function waitForProgressRecheck(signal: AbortSignal, delay: number): Promise<void> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const onAbort = () => {
@@ -42,7 +44,7 @@ function waitForAdmissionRecheck(signal: AbortSignal): Promise<void> {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
-    }, admissionRecheckDelay);
+    }, delay);
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
@@ -64,6 +66,8 @@ export function EnrollmentProgress() {
         .then(async (initial) => {
           let result = initial;
           signal.throwIfAborted();
+          // Keep confirmed progress and its recovery controls if the following request fails.
+          setProgress(result);
           let resumed = false;
           // Login may resume once. Reconciliation and terminal Attempts never replay automatically.
           if (
@@ -72,7 +76,22 @@ export function EnrollmentProgress() {
           ) {
             result = await loadProgress("resume", signal);
             signal.throwIfAborted();
+            setProgress(result);
             resumed = true;
+          }
+          // An accepted resume may leave the hosted worker in charge. Observe, never replay.
+          // Enter this phase only here, not after a later COMPLETE regresses to IN_PROGRESS.
+          for (
+            let attempt = 0;
+            (operation === "resume" || resumed) &&
+            result.state === "IN_PROGRESS" &&
+            attempt < pendingRechecks;
+            attempt++
+          ) {
+            await waitForProgressRecheck(signal, pendingRecheckDelay);
+            result = await loadProgress("read", signal);
+            signal.throwIfAborted();
+            setProgress(result);
           }
           if ((operation !== "read" || resumed) && result.state === "COMPLETE") {
             result = await loadProgress("read", signal);
@@ -86,7 +105,7 @@ export function EnrollmentProgress() {
             result.state === "COMPLETE" && attempt < admissionRechecks;
             attempt++
           ) {
-            await waitForAdmissionRecheck(signal);
+            await waitForProgressRecheck(signal, admissionRecheckDelay);
             result = await loadProgress("read", signal);
             signal.throwIfAborted();
             setProgress(result);

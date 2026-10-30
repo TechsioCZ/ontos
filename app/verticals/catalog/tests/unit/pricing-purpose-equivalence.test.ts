@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -360,7 +361,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         /^commerce\.catalog\.pricing-purpose-equivalence-generation:/u,
       );
       expectSchemaValid(result);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('issues a replayable owner generation and changes it only when owner-native revisions change', () =>
@@ -405,7 +406,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
           },
         }),
       ).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect(
@@ -439,7 +440,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         });
         expectSchemaValid(original);
         expectSchemaValid(renamed);
-      }),
+      }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reports stale supplied Unit and Package revisions against owner Current preparation', () =>
@@ -493,7 +494,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         outcome: 'CATALOG_EQUIVALENCE_STALE',
       });
       expectSchemaValid(staleParentage);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects caller-asserted equivalence and changed Configuration or Set revisions', () =>
@@ -548,7 +549,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         outcome: 'CATALOG_EQUIVALENCE_STALE',
       });
       expectSchemaValid(staleSet);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('accepts a fresh Current attestation when material selection and quantity still agree', () =>
@@ -566,7 +567,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
 
       expect(result).toMatchObject({ currentness: { status: 'CURRENT' }, outcome: 'CATALOG_EQUIVALENCE_CONFIRMED' });
       expectSchemaValid(result);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reports a conflict when one repeated exact selection has contradictory Current meaning', () =>
@@ -584,7 +585,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         reason: 'Catalog produced conflicting Current meanings for one exact selection',
       });
       expectSchemaValid(result);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('returns retryable unavailable when the owner Current reader is unavailable', () =>
@@ -610,7 +611,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         retryable: true,
       });
       expectSchemaValid(result);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('remains unverifiable when exact Current selections have no finite validity boundary', () =>
@@ -639,7 +640,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         reason: 'Catalog cannot prove a finite Current interval for every exact selection',
       });
       expectSchemaValid(mixed);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed before comparing meanings when boundaryless selections are not equivalent', () =>
@@ -661,7 +662,7 @@ describe('Catalog Pricing-purpose equivalence read', () => {
         reason: 'Catalog cannot prove a finite Current interval for every exact selection',
       });
       expectSchemaValid(result);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects internally inconsistent or non-Pricing owner handoffs without reissuing their evidence', () =>
@@ -684,6 +685,6 @@ describe('Catalog Pricing-purpose equivalence read', () => {
       });
       expect(result).not.toHaveProperty('evidenceRef');
       expectSchemaValid(result);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

@@ -75,10 +75,14 @@ interface SpiceDbRelationshipSpec {
 }
 
 /** The `action#executor` relationships one Principal needs for the Actions a scenario runs. */
-const executorOf = (principalId: string, actionKeys: readonly string[]): readonly SpiceDbRelationshipSpec[] =>
+const executorOf = (
+  principalId: string,
+  actionKeys: readonly string[],
+  realm: CounterpartyInvitationRealm,
+): readonly SpiceDbRelationshipSpec[] =>
   actionKeys.map((actionKey) => ({
     relation: 'executor',
-    resourceId: toSpiceDbActionObjectId(actionKey),
+    resourceId: toSpiceDbActionObjectId({ actionKey, legalEntityId: realm.legalEntityId, tenantId: realm.tenantId }),
     resourceType: 'action',
     subjectId: principalId,
     subjectType: 'principal',
@@ -271,8 +275,8 @@ const spiceDbSpecsFor = (
     ...memberOf(realm.inviterPrincipalId),
     ...memberOf(realm.recipientPrincipalId),
     ...memberOf(realm.storefrontPrincipalId),
-    ...executorOf(realm.recipientPrincipalId, grants.recipientActionKeys),
-    ...executorOf(realm.storefrontPrincipalId, grants.storefrontActionKeys),
+    ...executorOf(realm.recipientPrincipalId, grants.recipientActionKeys, realm),
+    ...executorOf(realm.storefrontPrincipalId, grants.storefrontActionKeys, realm),
   ];
 };
 

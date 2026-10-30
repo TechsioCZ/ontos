@@ -1,9 +1,7 @@
-import { randomUUID } from 'node:crypto';
-
 import { and, asc, eq, exists, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
 import {
@@ -187,7 +185,7 @@ const matchUnmatchedInTransaction = (executor: CoreDbExecutor, compositionRevisi
       Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
       Effect.mapError(compositionAuthorityOrPersistenceError),
     );
-export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepositoryService => ({
+export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Crypto): OutboxRepositoryService => ({
   claimNext: (registrations, claimOwner, now, compositionRevision) => {
     if (registrations.length === 0) {
       return Effect.succeedNone;
@@ -288,7 +286,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepository
               .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId));
             return Option.none();
           }
-          const claimId = `${claimOwner}:${randomUUID()}`;
+          const claimId = `${claimOwner}:${yield* crypto.randomUUIDv4()}`;
           const claimExpiresAt = addMilliseconds(now, registration.descriptor.leaseDurationMs);
           const [claimed] = yield* transaction
             .update(outboxDeliveries)
@@ -547,6 +545,7 @@ export const OutboxRepositoryLive = Layer.effect(
   OutboxRepository,
   Effect.gen(function* makeOutboxRepositoryService() {
     const database = yield* CoreDatabase;
-    return makeOutboxRepository(database.executor);
+    const crypto = yield* Crypto.Crypto;
+    return makeOutboxRepository(database.executor, crypto);
   }),
 );

@@ -1,5 +1,7 @@
 import type { Order, OrderLine } from './merchandise-model.ts';
 
+type OrderLineAmounts = Pick<OrderLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>;
+
 /** Fixed demo order series; numbers are `OBJ-2026-0001`, `OBJ-2026-0002`, … (same convention as invoices). */
 export const ORDER_NUMBER_PREFIX = 'OBJ-2026-';
 
@@ -7,11 +9,11 @@ export const ORDER_NUMBER_PREFIX = 'OBJ-2026-';
  * Line VAT in whole minor units, rounded half-up. Unit prices are net; VAT is computed per line from the
  * snapshot rate, matching finance-billing so an order and its invoice agree on the same arithmetic.
  */
-export const orderLineVatMinor = (line: Pick<OrderLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>): number =>
+export const orderLineVatMinor = (line: OrderLineAmounts): number =>
   Math.floor((line.quantity * line.unitPriceMinor * line.vatRate + 50) / 100);
 
 /** Order totals: `totalMinor` is gross (net plus VAT), `totalVatMinor` is the VAT part. */
-export const orderTotals = (lines: readonly OrderLine[]): Pick<Order, 'totalMinor' | 'totalVatMinor'> => {
+export const orderTotals = (lines: readonly OrderLineAmounts[]): Pick<Order, 'totalMinor' | 'totalVatMinor'> => {
   let netMinor = 0;
   let totalVatMinor = 0;
   for (const line of lines) {
@@ -45,7 +47,7 @@ export const vatInGrossMinor = (grossMinor: number, vatRate: number): number =>
  * keep the original per-line VAT arithmetic. Shipping price is always gross.
  */
 export const fullOrderTotals = (order: {
-  readonly lines: readonly OrderLine[];
+  readonly lines: readonly OrderLineAmounts[];
   readonly pricesIncludeVat?: boolean | undefined;
   readonly shipping?: Order['shipping'] | undefined;
 }): Pick<Order, 'totalMinor' | 'totalVatMinor'> => {
@@ -66,10 +68,7 @@ export const fullOrderTotals = (order: {
 };
 
 /** Gross total of one line as shown to a customer or in the admin detail. */
-export const lineGrossMinor = (
-  line: Pick<OrderLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>,
-  pricesIncludeVat: boolean | undefined,
-): number =>
-  pricesIncludeVat === true
+export const lineGrossMinor = (line: OrderLineAmounts, pricesIncludeVat = false): number =>
+  pricesIncludeVat
     ? Math.round(line.quantity * line.unitPriceMinor)
     : Math.round(line.quantity * line.unitPriceMinor) + orderLineVatMinor(line);

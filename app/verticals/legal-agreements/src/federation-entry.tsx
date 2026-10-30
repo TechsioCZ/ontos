@@ -20,9 +20,7 @@ const LegalAgreementsRouteContent = () => {
       data-modern-mf-expose="./Route"
     >
       <h2 className="legalagreements:text-2xl legalagreements:font-black">{t('legal-agreements.title')}</h2>
-      <p className="legalagreements:mt-2 legalagreements:text-stone-600">
-        {t('legal-agreements.routeSurface')}
-      </p>
+      <p className="legalagreements:mt-2 legalagreements:text-stone-600">{t('legal-agreements.routeSurface')}</p>
     </section>
   );
 };

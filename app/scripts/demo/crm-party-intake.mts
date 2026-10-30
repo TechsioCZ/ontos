@@ -9,7 +9,7 @@
  * customer list is company-wide). The CRM server therefore creates/reuses the registry Party + CUSTOMER
  * Counterparty itself, after checking the salesperson's CRM rights, authenticated as this non-human principal:
  *
- *   - member of every company that runs the CRM (Siampark 0021, Velkoobchod Hanák 0022);
+ *   - member of every company that runs the CRM (Nájempark 0021, Velkoobchod Hanák 0022);
  *   - party.registry module access + counterparty_manager/reader and party_identity_manager/reader/reviewer;
  *   - executor grants for exactly create-party, resolve-duplicate-candidate-create, counterparty-customer-onboard
  *     and add-contact-point. No archive/merge/update of Parties;
@@ -25,8 +25,8 @@ import { randomUUID } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';

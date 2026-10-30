@@ -20,7 +20,7 @@ export const lineGrossMinor = (line: Pick<InvoiceLine, 'quantity' | 'unitPriceMi
 
 /** Approved discount of one line in minor units (percent rounded half-up). Never more than the line amount. */
 export const lineDiscountMinor = (line: LineAmounts): number => {
-  const discount = line.discount;
+  const { discount } = line;
   if (discount === undefined) {
     return 0;
   }
@@ -32,7 +32,7 @@ export const lineDiscountMinor = (line: LineAmounts): number => {
 
 /** A stored discount must be a 1–100 % share or an amount no larger than the line amount, with a reason. */
 export const isLineDiscountValid = (line: LineAmounts): boolean => {
-  const discount = line.discount;
+  const { discount } = line;
   if (discount === undefined) {
     return true;
   }
@@ -60,7 +60,11 @@ const withinMoneyRange = (value: number) => Number.isSafeInteger(value) && value
  * recap sums those rounded line amounts per rate, so recap, subtotal and total always reconcile exactly.
  * Returns `undefined` when any amount leaves the bounded money range.
  */
-export const computeInvoiceTotals = (lines: readonly InvoiceLine[]): InvoiceTotals | undefined => {
+type InvoiceTotalsLine = LineAmounts & Pick<InvoiceLine, 'vatRate'>;
+
+export const computeInvoiceTotals = <Line extends InvoiceTotalsLine>(
+  lines: readonly Line[],
+): InvoiceTotals | undefined => {
   const byRate = new Map<number, { baseMinor: number; vatMinor: number }>();
   for (const line of lines) {
     if (!withinMoneyRange(lineGrossMinor(line)) || !isLineDiscountValid(line)) {

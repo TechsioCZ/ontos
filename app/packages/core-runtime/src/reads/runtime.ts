@@ -1,4 +1,4 @@
-import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
+import { SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
@@ -476,17 +476,15 @@ const resolveConditionalPermissionPlan = <Input>(
       ),
     try: () => {
       const plan = getReadConditionalPermissionPlan(declaration);
-      const selected = plan.select(input);
-      const branch = plan.branches[selected.kind];
-      if (branch === undefined || !declaration.branchTags.includes(selected.kind)) {
+      const { kind, requiredKinds, requirements } = plan.resolve(input, scope);
+      if (!declaration.branchTags.includes(kind)) {
         throw new Error('Unknown conditional Read permission branch');
       }
-      const requirements = branch.resolve(input, selected, scope);
       if (
-        requirements.length !== branch.requiredKinds.length ||
+        requirements.length !== requiredKinds.length ||
         requirements.length === 0 ||
         requirements.some((requirement, index) => {
-          const declaredKind = branch.requiredKinds[index];
+          const declaredKind = requiredKinds[index];
           if (declaredKind !== requirement.kind) {
             return true;
           }

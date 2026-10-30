@@ -71,11 +71,11 @@ const guestOrder = (
   overrides: Partial<Extract<CommandInput, { _tag: 'PlaceStorefrontOrder' }>> = {},
 ): CommandInput => ({
   _tag: 'PlaceStorefrontOrder',
-  partyId: 'test-customer-party',
   clientRequestId: 'client-request-0001',
   contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
   deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12' },
   lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 2, variantId: 'u1-v1' }],
+  partyId: 'test-customer-party',
   shippingMethod: 'ZASILKOVNA',
   ...overrides,
 });
@@ -84,7 +84,7 @@ it.effect('variants get identities, gross prices and their own availability', ()
   Effect.gen(function* variantRecords() {
     const state = yield* seeded;
     const [product] = state.products;
-    const record = recordOf(product!, state.movements);
+    const record = recordOf(product, state.movements);
     expect(
       record.variantRecords?.map((variant) => [variant.id, variant.grossPriceMinor, variant.availability]),
     ).toEqual([
@@ -102,7 +102,7 @@ it.effect('PlaceStorefrontOrder saves once and replays the same order for the sa
     const first = yield* apply(state, guestOrder(), 'inv-1');
     expect(first.storefrontOrder?.outcome).toBe('PLACED');
     expect(first.storefrontOrder?.orderNumber).toBe('OBJ-2026-0001');
-    expect(first.storefrontOrder?.totalMinor).toBe(2 * 28_900 + 7_900);
+    expect(first.storefrontOrder?.totalMinor).toBe(2 * 28_900 + 7900);
     const [order] = first.state.orders;
     expect(order?.demo).toBeUndefined();
     expect(order?.status).toBe('NEW');
@@ -323,7 +323,7 @@ it.effect('EditOrder recomputes totals and records before/after history; DELIVER
   Effect.gen(function* edit() {
     const state = yield* seeded;
     const placed = yield* apply(state, guestOrder(), 'inv-1');
-    const orderId = placed.state.orders[0]!.id;
+    const orderId = placed.state.orders[0].id;
     const edited = yield* apply(
       placed.state,
       {
@@ -331,12 +331,12 @@ it.effect('EditOrder recomputes totals and records before/after history; DELIVER
         id: orderId,
         lines: [{ productId: 'p1', quantity: 3, unitPriceMinor: 27_000, variantId: 'u1-v1' }],
         reason: 'Telefonická změna',
-        shipping: { method: 'PPL', priceMinor: 9_900 },
+        shipping: { method: 'PPL', priceMinor: 9900 },
       },
       'inv-2',
     );
-    const order = edited.state.orders[0]!;
-    expect(order.totalMinor).toBe(3 * 27_000 + 9_900);
+    const [order] = edited.state.orders;
+    expect(order.totalMinor).toBe(3 * 27_000 + 9900);
     expect(order.history?.map((entry) => entry.kind)).toEqual(['CREATED', 'LINES', 'SHIPPING']);
     expect(order.history?.[1]?.reason).toBe('Telefonická změna');
     const skip = yield* Effect.flip(
@@ -368,7 +368,7 @@ it.effect('ChangePrice on a variant appends its own price history', () =>
       { _tag: 'ChangePrice', id: 'p1', priceMinor: 26_696, variantId: 'u1-v1' },
       'c1',
     );
-    const record = recordOf(changed.state.products[0]!, changed.state.movements);
+    const record = recordOf(changed.state.products[0], changed.state.movements);
     const variant = record.variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(29_900);
     expect(variant?.priceHistory).toHaveLength(2);
@@ -403,7 +403,7 @@ it.effect('CreateProduct generates a public, unique slug without extra storefron
       category: 'Šrouby',
       lowStockThreshold: 0,
       name: 'Šroub DIN 933 / nerez M8',
-      priceMinor: 1_200,
+      priceMinor: 1200,
       sku: 'AKR-M8',
       unit: 'ks',
       vatRate: 21,
@@ -430,15 +430,15 @@ it.effect('CreateProduct generates a public, unique slug without extra storefron
 it.effect('generated slugs stay URL-safe and bounded even for punctuation or long names', () =>
   Effect.gen(function* safeSlugs() {
     const state = yield* seeded;
-    const source = state.products[0]!;
+    const [source] = state.products;
     const command = {
       _tag: 'CreateProduct' as const,
       active: true,
       category: source.category,
       lowStockThreshold: 0,
       priceMinor: 100,
-      unit: 'ks',
-      vatRate: 21,
+      unit: 'ks' as const,
+      vatRate: 21 as const,
     };
     const punctuation = yield* apply(state, { ...command, name: '🔩', sku: 'M8/Č' }, 'p2');
     expect(punctuation.state.products[1]?.slug).toBe('m8-c');

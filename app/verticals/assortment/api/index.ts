@@ -20,11 +20,12 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Logger, References, Result, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
@@ -69,7 +70,7 @@ const operationAttributes = (operationContext: OperationContext) => {
     : { ...attributes, 'modernjs.trace.id': operationContext.traceId };
 };
 
-const assortmentApiMarker = Result.getOrThrow(Schema.decodeUnknownResult(assortmentMarkerSchema)(ultramodernApiMarker));
+const assortmentApiMarker = Result.getOrThrow(Schema.decodeResult(assortmentMarkerSchema)(ultramodernApiMarker));
 
 const assortmentReadinessLayer = HttpApiBuilder.group(assortmentApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -116,6 +117,7 @@ const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRu
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
@@ -143,6 +145,7 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
 const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -199,6 +202,7 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
     Layer.provideMerge(runtimeObservabilityLive),
     Layer.provideMerge(compositionSourceLive),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

@@ -26,6 +26,7 @@ import {
   IdentityAdministrationDeniedAuditLive,
   ContextAccessLive,
   CorePersistenceLive,
+  DatabaseConfig,
   DatabaseConfigLive,
   GatewayScopeGrantRegistrarLive,
   LegalEntityContextLive,
@@ -84,12 +85,17 @@ import {
   Tracer,
 } from 'effect';
 import type { Types } from 'effect';
-import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/unstable/http';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
+import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
-import { EmailTransportLive } from './email/transport.ts';
+import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
+import { listDeliveries } from '@app/email-delivery/deliveries';
+import { PgClient } from '@effect/sql-pg';
+
+import { EmailDeliveryRequests, ShellEmailReceiptHandlersLive, EmailTransportLive } from './email/transport.ts';
+import type { EmailDeliveryQuery } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
 
 import {
@@ -143,6 +149,7 @@ import type {
   TenantInternalProblem,
 } from '../shared/api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
+import { decodeApiKeyGatewayReadRequest } from './auth/api-key-gateway-read-transport.ts';
 import {
   invitePeoplePerson,
   listPeople,
@@ -190,6 +197,7 @@ import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-r
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { demoAccountCapability } from './auth/demo-accounts.ts';
+import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
@@ -1309,7 +1317,11 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         document: Effect.gen(function* loadDocument() {
           if (context.state !== 'authenticated') {
             return {
-              composition: { navigation: [] as const, state: context.state },
+              // Tenant authentication is valid, but a company composition still requires a selected company.
+              composition: {
+                navigation: [] as const,
+                state: context.state === 'tenant_authenticated' ? ('selection_required' as const) : context.state,
+              },
               session,
               tenants,
             };
@@ -1674,6 +1686,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const response = yield* service
             .configureDemoCompanies({ ...context, payload })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+          yield* rebrandRentalDemoAccounts(context.principal.tenantId).pipe(
+            Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
+          );
           return yield* decodeResponse(ConfigureDemoCompaniesResponseSchema, response, shellInternalProblem);
         }),
       ),
@@ -2106,13 +2121,15 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
   const random = yield* Crypto.Crypto;
   yield* scopeResolver
     .resolve({
-      correlationId: yield* random.randomUUIDv4.pipe(
-        Effect.catch((error) =>
-          Effect.logError('Unable to create a gateway correlation identifier', error).pipe(
-            Effect.andThen(failApiKeyGatewayProblem(gatewayAuthorizationUnavailableProblem())),
+      correlationId: yield* random
+        .randomUUIDv4()
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logError('Unable to create a gateway correlation identifier', error).pipe(
+              Effect.andThen(failApiKeyGatewayProblem(gatewayAuthorizationUnavailableProblem())),
+            ),
           ),
         ),
-      ),
       legalEntityScope: 'optional',
       principal,
     })
@@ -2181,10 +2198,15 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         ),
       ),
     )
-    .handle('readWithApiKeyGatewayContext', ({ headers, payload, request }) =>
+    .handle('readWithApiKeyGatewayContext', ({ headers, payload: payloadBytes, request }) =>
       Effect.gen(function* readWithApiKeyGatewayContextHandler() {
         yield* noStore;
-        const context = yield* issueApiKeyContext(payload, headers['x-api-key'], request);
+        const payload = yield* decodeApiKeyGatewayReadRequest(payloadBytes);
+        const issuerMetadata =
+          payload.legalEntityId === undefined
+            ? { audience: payload.audience }
+            : { audience: payload.audience, legalEntityId: payload.legalEntityId };
+        const context = yield* issueApiKeyContext(issuerMetadata, headers['x-api-key'], request);
         const prefix = '/shell-super-app-api/module-api/';
         if (!context.apiBaseUrl.startsWith(prefix)) {
           return yield* failGatewayProblem(
@@ -2199,9 +2221,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         }
         // Dispatch in-process, through the very same composition/release admission and owner transport.
         // Never forward the API key, cookies or arbitrary caller headers to the owner.
-        const body = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload.query).pipe(
-          Effect.orDie,
-        );
+        const body = yield* payload.ownerBody.pipe(Effect.orDie);
         const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
           context,
         ).pipe(Effect.orDie);
@@ -2221,12 +2241,10 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
           observeGatewayPhase('owner-dispatch'),
           Effect.catch((error) =>
-            Effect.succeed(
-              Response.json(
-                { code: 'gateway_dispatch_failed' },
-                { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
-              ),
-            ),
+            HttpServerResponse.schemaJson(Schema.Struct({ code: Schema.Literal('gateway_dispatch_failed') }))(
+              { code: 'gateway_dispatch_failed' },
+              { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
+            ).pipe(Effect.map(HttpServerResponse.toWeb), Effect.orDie),
           ),
         );
         // The receiving runtime still redeems the assertion and rechecks principal/binding status,
@@ -2316,6 +2334,7 @@ const agentPlatformFailure = (error: AgentPlatformError) => {
   }
   return Match.value(error).pipe(
     Match.tags({
+      AgentModuleCallError: () => failIdentityProblem(shellCapabilityUnavailableProblem()),
       AgentPlatformForbidden: ({ reason }) =>
         failIdentityProblem(
           problemDetails(
@@ -2428,13 +2447,15 @@ const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(functi
   const random = yield* Crypto.Crypto;
   yield* scopeResolver
     .resolve({
-      correlationId: yield* random.randomUUIDv4.pipe(
-        Effect.catch((error) =>
-          Effect.logError('Unable to create an agent correlation identifier', error).pipe(
-            Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
+      correlationId: yield* random
+        .randomUUIDv4()
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logError('Unable to create an agent correlation identifier', error).pipe(
+              Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
+            ),
           ),
         ),
-      ),
       legalEntityScope: 'required',
       principal: caller.principal,
     })
@@ -2896,8 +2917,9 @@ const oauthEndpointGuardsLive = OAuthEndpointGuardsLive.pipe(
 );
 const authenticationServiceLive = AuthenticationServiceLive.pipe(
   Layer.provide(Layer.mergeAll(authenticationDependenciesLive, betterAuthFrameworkLive, oauthEndpointGuardsLive)),
+  Layer.provide(ShellCryptoLive),
 );
-const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
+const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(Layer.merge(authPersistenceLive, ShellCryptoLive)));
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
 }).pipe(Layer.provide(corePersistenceLive));
@@ -2953,7 +2975,7 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
-const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT);
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT);
 const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(
   Layer.provide(approvedModuleCatalogLive),
   Layer.provide(GatewayScopeGrantRegistrarLive),
@@ -2997,7 +3019,7 @@ export const mcpRequestIdentityMiddleware = HttpRouter.middleware()(
       }
       const correlationId =
         headers.value['x-correlation-id'] === undefined
-          ? yield* crypto.randomUUIDv4.pipe(Effect.option)
+          ? yield* crypto.randomUUIDv4().pipe(Effect.option)
           : Option.some(headers.value['x-correlation-id']);
       if (Option.isNone(correlationId)) {
         return yield* handler;
@@ -3197,7 +3219,27 @@ export const makeShellAuthenticationApiRuntime = (
         Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
       )
     : Layer.empty;
+  // These factories are installed with request services, but open a pool only after the email route has authorized its work.
+  // Each operation owns a fresh scope, retaining the per-operation pool lifetime on both Node and Workers.
+  const emailDatabaseLive = Layer.effect(
+    PgClient.PgClient,
+    Effect.gen(function* makeEmailRequestDatabase() {
+      const config = yield* DatabaseConfig;
+      return yield* PgClient.makeClient({ url: Redacted.make(config.connectionString) });
+    }),
+  ).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)));
+  const emailDeliveryRequestsLive = Layer.succeed(EmailDeliveryRequests, {
+    dispatch: Effect.gen(function* dispatchRequestEmailBatch() {
+      const database = yield* Layer.build(emailDatabaseLive);
+      return yield* dispatchEmailBatch.pipe(Effect.provideContext(database));
+    }).pipe(Effect.scoped),
+    list: Effect.fn('Shell.emailDeliveries')(function* listEmailDeliveries(query: EmailDeliveryQuery) {
+      const database = yield* Layer.build(emailDatabaseLive);
+      return yield* listDeliveries(query).pipe(Effect.provideContext(database));
+    }, Effect.scoped),
+  });
   const handlerDependenciesLive = Layer.mergeAll(
+    emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
     authenticationLayer,
@@ -3226,12 +3268,12 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
-    ShellCryptoLive,
     externalIdentityWorkloadAuthorizationLive,
     externalIdentityDeploymentLayer,
     OAuthFlowLive.pipe(Layer.provide(authPersistenceLive)),
-  );
+  ).pipe(Layer.provideMerge(ShellCryptoLive));
   const apiHandlersLive = Layer.mergeAll(
+    ShellEmailReceiptHandlersLive,
     authenticationGroupLive,
     identityGroupLive,
     tenantGroupLive,

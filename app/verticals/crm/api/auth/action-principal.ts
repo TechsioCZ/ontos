@@ -7,8 +7,9 @@ import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type { GatewayPrincipalVerificationWithRedemptionOptions } from '@app/gateway-principal-verifier/server';
-import type { Redacted } from 'effect';
+
 import { Effect, Layer } from 'effect';
+import type { Redacted } from 'effect';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 

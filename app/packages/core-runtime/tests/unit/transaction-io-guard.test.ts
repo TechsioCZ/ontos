@@ -2,11 +2,16 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import nodePath from 'node:path';
 
-import { Cause, Effect, Exit, Redacted } from 'effect';
+import { Cause, Effect, Exit, Option, Redacted } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { withPostgresSessionAdvisoryLock } from '../../src/db/session-advisory-lock.ts';
-import { IoInsideDatabaseTransaction, insideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
+import {
+  IoInsideDatabaseTransaction,
+  OpenDatabaseTransaction,
+  insideDatabaseTransaction,
+} from '../../src/db/transaction-io-guard.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const skippedDirectories = new Set(['.git', 'dist', 'node_modules', 'tests', 'test', 'fixtures', '.modern', 'build']);
@@ -78,5 +83,31 @@ it.effect('refuses a private advisory-lock session before connection acquisition
     expect(defect).toBeInstanceOf(IoInsideDatabaseTransaction);
     expect(defect).toMatchObject({ io: 'pool-acquisition', operationKey: 'test.private-session' });
     expect(operationRan).toBe(false);
+  }),
+);
+
+it.effect('restores transaction references after nested marks and defects', () =>
+  Effect.gen(function* restoreTransactionReferences() {
+    const originalMark = yield* OpenDatabaseTransaction;
+    const originalFetch = yield* FetchHttpClient.Fetch;
+    yield* Effect.gen(function* outerTransactionMark() {
+      const outerMark = yield* OpenDatabaseTransaction;
+      const outerFetch = yield* FetchHttpClient.Fetch;
+      expect(outerMark.pipe(Option.map((mark) => mark.operationKey))).toEqual(Option.some('outer'));
+      expect(outerFetch).not.toBe(originalFetch);
+      const innerMark = yield* OpenDatabaseTransaction.pipe(insideDatabaseTransaction('inner'));
+      expect(innerMark.pipe(Option.map((mark) => mark.operationKey))).toEqual(Option.some('inner'));
+      expect(yield* OpenDatabaseTransaction).toBe(outerMark);
+      expect(yield* FetchHttpClient.Fetch).toBe(outerFetch);
+      const failed = yield* Effect.die('transaction-test-defect').pipe(
+        insideDatabaseTransaction('failed-inner'),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(failed)).toBe(true);
+      expect(yield* OpenDatabaseTransaction).toBe(outerMark);
+      expect(yield* FetchHttpClient.Fetch).toBe(outerFetch);
+    }).pipe(insideDatabaseTransaction('outer'));
+    expect(yield* OpenDatabaseTransaction).toBe(originalMark);
+    expect(yield* FetchHttpClient.Fetch).toBe(originalFetch);
   }),
 );

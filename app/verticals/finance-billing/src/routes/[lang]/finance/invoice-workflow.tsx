@@ -1,6 +1,5 @@
-// @effect-diagnostics asyncFunction:off
-// @effect-diagnostics newPromise:off
-// @effect-diagnostics globalDate:off
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { dialogCloseLabel, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -8,11 +7,11 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { DateTime } from 'effect';
-import { useState } from 'react';
-import type { Invoice } from '../../../../shared/apis/records.ts';
+import { DateTime, Effect } from 'effect';
+import { useReducer, useState } from 'react';
+import type { AccountingExport, Invoice } from '../../../../shared/apis/records.ts';
 import { minorToInput, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceViewModel } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { invoiceLifecycle, latestHandover, LIFECYCLE_PRESENTATION } from './invoice-view.ts';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -26,6 +25,13 @@ const STEPS = [
 ] as const;
 type Step = (typeof STEPS)[number][0];
 const ORDER = ['DRAFT', 'PREPARED', 'APPROVED', 'HANDED_OVER', 'ACCOUNTANT_CONFIRMED'];
+
+const handoverDetail = (handover: AccountingExport) => {
+  const time = handover.handedOverAt === undefined ? '' : ` · ${at(handover.handedOverAt)}`;
+  const confirmation = handover.status === 'CONFIRMED_BY_ACCOUNTANT' ? ' · potvrdila účetní' : '';
+  return `${handover.batchNumber}${time}${confirmation}`;
+};
+const optionalAmount = (raw: string) => (raw.trim() === '' ? undefined : parseAmountMinor(raw));
 
 /** S07.R5: the four lifecycle steps with who did what and when. */
 export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
@@ -42,17 +48,18 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
     }
     return ORDER.indexOf(lifecycle) >= ORDER.indexOf(step);
   };
-  const detail: Record<Step, string | undefined> = {
+  const detail = {
     APPROVED:
-      invoice.approvedAt === undefined ? undefined : `${invoice.approvedByLabel ?? 'uživatel'} · ${at(invoice.approvedAt)}`,
-    DRAFT: at(invoice.createdAt),
-    HANDED_OVER:
-      handover === undefined
+      invoice.approvedAt === undefined
         ? undefined
-        : `${handover.batchNumber}${handover.handedOverAt === undefined ? '' : ` · ${at(handover.handedOverAt)}`}${handover.status === 'CONFIRMED_BY_ACCOUNTANT' ? ' · potvrdila účetní' : ''}`,
+        : `${invoice.approvedByLabel ?? 'uživatel'} · ${at(invoice.approvedAt)}`,
+    DRAFT: at(invoice.createdAt),
+    HANDED_OVER: handover === undefined ? undefined : handoverDetail(handover),
     PREPARED:
-      invoice.preparedAt === undefined ? undefined : `${invoice.preparedByLabel ?? 'uživatel'} · ${at(invoice.preparedAt)}`,
-  };
+      invoice.preparedAt === undefined
+        ? undefined
+        : `${invoice.preparedByLabel ?? 'uživatel'} · ${at(invoice.preparedAt)}`,
+  } satisfies Record<Step, string | undefined>;
   const presentation = LIFECYCLE_PRESENTATION[lifecycle];
   const pendingPackage = handover?.status === 'PREPARED' ? handover.batchNumber : undefined;
   return (
@@ -98,25 +105,110 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
  * S07.R2: a final or partial invoice lists the earlier advance/partial invoices it takes into account, with the
  * amounts a user confirmed by hand. The amount settles that part of the invoice once it is approved.
  */
-export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+interface SettlementDraft {
+  readonly amounts: Readonly<Record<string, string>>;
+  readonly confirmed: boolean;
+  readonly note: string;
+  readonly open: boolean;
+}
+interface SettlementPatch extends Partial<SettlementDraft> {
+  readonly amountId?: string;
+  readonly amountValue?: string;
+}
+const reduceSettlement = (current: SettlementDraft, action: SettlementPatch): SettlementDraft => {
+  const { amountId, amountValue, ...patch } = action;
+  if (amountId !== undefined && amountValue !== undefined) {
+    return { ...current, ...patch, amounts: { ...current.amounts, [amountId]: amountValue } };
+  }
+  return { ...current, ...patch };
+};
+const emptySettlementDraft: SettlementDraft = { amounts: {}, confirmed: false, note: '', open: false };
+
+const priorSettlementSaveProgram = Effect.fn('Finance.save')(function* priorSettlementSaveProgram(
+  context: Pick<
+    ReturnType<typeof usePriorSettlement>,
+    'amounts' | 'available' | 'candidates' | 'confirmed' | 'invoice' | 'note' | 'setError' | 'setOpen' | 'vm'
+  >,
+) {
+  const { amounts, available, candidates, confirmed, invoice, note, setError, setOpen, vm } = context;
+  const entries = candidates.flatMap((entry) => {
+    const raw = (amounts[entry.ref.resourceId] ?? '').trim();
+    if (raw === '') {
+      return [];
+    }
+    const amountMinor = parseAmountMinor(raw);
+    return [{ amountMinor: amountMinor ?? -1, invoiceResourceId: entry.ref.resourceId }];
+  });
+  if (entries.some((entry) => entry.amountMinor <= 0)) {
+    setError('Zadejte kladné částky, např. 25 000 nebo 25 000,50.');
+    return;
+  }
+  const over = entries.find((entry) => {
+    const source = candidates.find((item) => item.ref.resourceId === entry.invoiceResourceId);
+    return source === undefined || entry.amountMinor > available(source);
+  });
+  if (over !== undefined) {
+    setError('Částka přesahuje uhrazenou a dosud nezohledněnou část dřívějšího dokladu.');
+    return;
+  }
+  if (entries.reduce((sum, entry) => sum + entry.amountMinor, 0) > invoice.totalMinor) {
+    setError('Součet zohledněných částek přesahuje celkovou částku této faktury.');
+    return;
+  }
+  if (!confirmed) {
+    setError('Potvrďte, že jste částky zkontrolovali.');
+    return;
+  }
+  const setPriorSettlementCommand: FinanceCommandDraft<'SetPriorSettlement'> = {
+    _tag: 'SetPriorSettlement',
+    entries,
+    invoiceRef: invoice.ref,
+  };
+  if (vm.actorLabel !== undefined) {
+    setPriorSettlementCommand.actorLabel = vm.actorLabel;
+  }
+  if (note.trim() !== '') {
+    setPriorSettlementCommand.note = note.trim();
+  }
+  const outcome = yield* vm.execute(
+    setPriorSettlementCommand,
+    entries.length === 0 ? 'Zohlednění předchozích dokladů odebráno' : 'Zohlednění předchozích dokladů potvrzeno',
+  );
+  if (outcome.ok) {
+    setOpen(false);
+  } else {
+    setError(outcomeMessage(vm, outcome));
+  }
+});
+
+const usePriorSettlement = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const isTarget =
     invoice.direction === 'OUTGOING' && (invoice.documentKind === 'FINAL' || invoice.documentKind === 'PARTIAL');
   const invoices = vm.snapshot?.state.invoices ?? [];
   const settlement = invoice.priorSettlement;
-  const [open, setOpen] = useState(false);
-  const [amounts, setAmounts] = useState<Readonly<Record<string, string>>>({});
-  const [note, setNote] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
+  const [draft, updateDraft] = useReducer(reduceSettlement, emptySettlementDraft);
+  const { amounts, confirmed, note, open } = draft;
+  const setOpen = (nextOpen: boolean) => updateDraft({ open: nextOpen });
+  const setAmounts = (nextAmounts: SettlementDraft['amounts']) => updateDraft({ amounts: nextAmounts });
+  const setNote = (nextNote: string) => updateDraft({ note: nextNote });
+  const setConfirmed = (nextConfirmed: boolean) => updateDraft({ confirmed: nextConfirmed });
   const [error, setError] = useState<string>();
-  if (!isTarget && settlement === undefined) {
-    return null;
-  }
-  const usedElsewhere = (id: string) =>
-    invoices
-      .filter((entry) => entry.ref.resourceId !== invoice.ref.resourceId && entry.businessState !== 'VOIDED')
-      .flatMap((entry) => entry.priorSettlement?.entries ?? [])
-      .filter((entry) => entry.invoiceResourceId === id)
-      .reduce((sum, entry) => sum + entry.amountMinor, 0);
+  const visible = isTarget || settlement !== undefined;
+  const usedElsewhere = (id: string) => {
+    let total = 0;
+    for (const entry of invoices) {
+      if (entry.ref.resourceId === invoice.ref.resourceId || entry.businessState === 'VOIDED') {
+        continue;
+      }
+      for (const settlementEntry of entry.priorSettlement?.entries ?? []) {
+        if (settlementEntry.invoiceResourceId === id) {
+          total += settlementEntry.amountMinor;
+        }
+      }
+    }
+    return total;
+  };
+
   const candidates = invoices.filter(
     (entry) =>
       entry.ref.resourceId !== invoice.ref.resourceId &&
@@ -143,52 +235,66 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
     setError(undefined);
     setOpen(true);
   };
-  const save = async () => {
-    const entries = candidates.flatMap((entry) => {
-      const raw = (amounts[entry.ref.resourceId] ?? '').trim();
-      if (raw === '') {
-        return [];
-      }
-      const amountMinor = parseAmountMinor(raw);
-      return [{ amountMinor: amountMinor ?? -1, invoiceResourceId: entry.ref.resourceId }];
-    });
-    if (entries.some((entry) => entry.amountMinor <= 0)) {
-      setError('Zadejte kladné částky, např. 25 000 nebo 25 000,50.');
-      return;
-    }
-    const over = entries.find((entry) => {
-      const source = candidates.find((item) => item.ref.resourceId === entry.invoiceResourceId);
-      return source === undefined || entry.amountMinor > available(source);
-    });
-    if (over !== undefined) {
-      setError('Částka přesahuje uhrazenou a dosud nezohledněnou část dřívějšího dokladu.');
-      return;
-    }
-    if (entries.reduce((sum, entry) => sum + entry.amountMinor, 0) > invoice.totalMinor) {
-      setError('Součet zohledněných částek přesahuje celkovou částku této faktury.');
-      return;
-    }
-    if (!confirmed) {
-      setError('Potvrďte, že jste částky zkontrolovali.');
-      return;
-    }
-    const outcome = await vm.execute(
-      {
-        _tag: 'SetPriorSettlement',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        entries,
-        invoiceRef: invoice.ref,
-        ...(note.trim() === '' ? {} : { note: note.trim() }),
-      },
-      entries.length === 0 ? 'Zohlednění předchozích dokladů odebráno' : 'Zohlednění předchozích dokladů potvrzeno',
+  const save = (): void => {
+    void financeBrowserRuntime.runPromise(
+      priorSettlementSaveProgram({ amounts, available, candidates, confirmed, invoice, note, setError, setOpen, vm }),
     );
-    if (outcome.ok) {
-      setOpen(false);
-    } else {
-      setError(outcomeMessage(vm, outcome));
-    }
   };
+  return {
+    amounts,
+    available,
+    candidates,
+    confirmed,
+    draft,
+    editable,
+    error,
+    invoice,
+    invoices,
+    isTarget,
+    note,
+    open,
+    save,
+    setAmounts,
+    setConfirmed,
+    setError,
+    setNote,
+    setOpen,
+    settlement,
+    start,
+    total,
+    updateDraft,
+    usedElsewhere,
+    visible,
+    vm,
+  };
+};
 
+export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+  const { t } = useModernI18n();
+  const {
+    amounts,
+    available,
+    candidates,
+    confirmed,
+    editable,
+    error,
+    invoice,
+    note,
+    open,
+    save,
+    setConfirmed,
+    setNote,
+    setOpen,
+    settlement,
+    start,
+    total,
+    updateDraft,
+    visible,
+    vm,
+  } = usePriorSettlement(props);
+  if (!visible) {
+    return null;
+  }
   return (
     <SectionCard
       actions={
@@ -198,7 +304,7 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
           </Button>
         ) : undefined
       }
-      title="Předchozí zálohové a dílčí doklady"
+      title={t('finance-billing.financeUi.settlement.previousDocuments')}
     >
       <div className="flex flex-col gap-150 text-sm" data-finance-prior-settlement="">
         {settlement === undefined ? (
@@ -223,8 +329,7 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
               ))}
             </ul>
             <span>
-              Zohledněno celkem <strong className="tabular-nums">{formatMoney(total)}</strong> · k úhradě po
-              zohlednění{' '}
+              Zohledněno celkem <strong className="tabular-nums">{formatMoney(total)}</strong> · k úhradě po zohlednění{' '}
               <strong className="tabular-nums">{formatMoney(Math.max(0, invoice.totalMinor - total))}</strong>
             </span>
             <Badge className="self-start whitespace-normal" size="sm" variant="success">
@@ -244,7 +349,14 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
             <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
               Zrušit
             </Button>
-            <Button disabled={vm.busy} isLoading={vm.busy} onClick={() => void save()} variant="primary">
+            <Button
+              disabled={vm.busy}
+              isLoading={vm.busy}
+              onClick={() => {
+                save();
+              }}
+              variant="primary"
+            >
               Uložit potvrzení
             </Button>
           </>
@@ -256,7 +368,7 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
         open={open}
         placement="center"
         size="md"
-        title="Zohlednění předchozích dokladů"
+        title={t('finance-billing.financeUi.settlement.title')}
       >
         <div className="flex flex-col gap-150">
           {error !== undefined && (
@@ -284,11 +396,9 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
                 </span>
                 <FormInput
                   id={`prior-${entry.ref.resourceId}`}
-                  label="Zohlednit (Kč)"
                   inputMode="decimal"
-                  onChange={(event) =>
-                    setAmounts((current) => ({ ...current, [entry.ref.resourceId]: event.target.value }))
-                  }
+                  label={t('finance-billing.financeUi.settlement.amount')}
+                  onChange={(event) => updateDraft({ amountId: entry.ref.resourceId, amountValue: event.target.value })}
                   placeholder="0"
                   size="sm"
                   value={amounts[entry.ref.resourceId] ?? ''}
@@ -298,7 +408,7 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
           )}
           <FormInput
             id="prior-note"
-            label="Poznámka (např. číslo daňového dokladu k přijaté platbě)"
+            label={t('finance-billing.financeUi.settlement.note')}
             onChange={(event) => setNote(event.target.value)}
             size="sm"
             value={note}
@@ -306,7 +416,7 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
           <FormCheckbox
             checked={confirmed}
             id="prior-confirm"
-            label="Potvrzuji, že jsem částky zkontroloval(a) a mají se na této faktuře zohlednit."
+            label={t('finance-billing.financeUi.settlement.confirm')}
             onCheckedChange={setConfirmed}
             size="sm"
           />
@@ -317,7 +427,58 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
 };
 
 /** S09: agreed skonto and late-payment interest as text or a hand-approved amount; OntOS never computes them. */
-export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+const paymentTermsSaveProgram = Effect.fn('Finance.save')(function* paymentTermsSaveProgram(
+  context: Pick<ReturnType<typeof usePaymentTerms>, 'form' | 'invoice' | 'setError' | 'setOpen' | 'vm'>,
+) {
+  const { form, invoice, setError, setOpen, vm } = context;
+  const skontoAmount = optionalAmount(form.skontoAmount);
+  const lateAmount = optionalAmount(form.lateAmount);
+  if (
+    (form.skontoAmount.trim() !== '' && skontoAmount === undefined) ||
+    (form.lateAmount.trim() !== '' && lateAmount === undefined)
+  ) {
+    setError('Částky zadejte jako číslo, např. 1 250 nebo 1 250,50.');
+    return;
+  }
+  if (
+    (skontoAmount !== undefined && form.skontoText.trim() === '') ||
+    (lateAmount !== undefined && form.lateText.trim() === '')
+  ) {
+    setError('Ke schválené částce uveďte i sjednanou podmínku textem.');
+    return;
+  }
+  const setPaymentTermsCommand: FinanceCommandDraft<'SetPaymentTerms'> = {
+    _tag: 'SetPaymentTerms',
+    invoiceRef: invoice.ref,
+  };
+  if (vm.actorLabel !== undefined) {
+    setPaymentTermsCommand.actorLabel = vm.actorLabel;
+  }
+  if (lateAmount !== undefined) {
+    setPaymentTermsCommand.lateInterestApprovedMinor = lateAmount;
+  }
+  if (form.lateText.trim() !== '') {
+    setPaymentTermsCommand.lateInterestText = form.lateText.trim();
+  }
+  if (skontoAmount !== undefined) {
+    setPaymentTermsCommand.skontoApprovedMinor = skontoAmount;
+  }
+  if (form.skontoText.trim() !== '') {
+    setPaymentTermsCommand.skontoText = form.skontoText.trim();
+  }
+  const outcome = yield* vm.execute(setPaymentTermsCommand, 'Platební podmínky uloženy');
+  if (outcome.ok) {
+    setOpen(false);
+  } else {
+    setError(
+      outcome.reason?.includes('payment_terms_invalid') === true
+        ? 'Schválené skonto nesmí být vyšší než částka faktury a ke každé částce patří i text podmínky.'
+        : outcomeMessage(vm, outcome),
+    );
+  }
+});
+
+const usePaymentTerms = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const terms = invoice.paymentTerms;
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ lateAmount: '', lateText: '', skontoAmount: '', skontoText: '' });
@@ -333,46 +494,15 @@ export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; r
     setError(undefined);
     setOpen(true);
   };
-  const save = async () => {
-    const optionalAmount = (raw: string) => (raw.trim() === '' ? undefined : parseAmountMinor(raw));
-    const skontoAmount = optionalAmount(form.skontoAmount);
-    const lateAmount = optionalAmount(form.lateAmount);
-    if (
-      (form.skontoAmount.trim() !== '' && skontoAmount === undefined) ||
-      (form.lateAmount.trim() !== '' && lateAmount === undefined)
-    ) {
-      setError('Částky zadejte jako číslo, např. 1 250 nebo 1 250,50.');
-      return;
-    }
-    if (
-      (skontoAmount !== undefined && form.skontoText.trim() === '') ||
-      (lateAmount !== undefined && form.lateText.trim() === '')
-    ) {
-      setError('Ke schválené částce uveďte i sjednanou podmínku textem.');
-      return;
-    }
-    const outcome = await vm.execute(
-      {
-        _tag: 'SetPaymentTerms',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        invoiceRef: invoice.ref,
-        ...(lateAmount === undefined ? {} : { lateInterestApprovedMinor: lateAmount }),
-        ...(form.lateText.trim() === '' ? {} : { lateInterestText: form.lateText.trim() }),
-        ...(skontoAmount === undefined ? {} : { skontoApprovedMinor: skontoAmount }),
-        ...(form.skontoText.trim() === '' ? {} : { skontoText: form.skontoText.trim() }),
-      },
-      'Platební podmínky uloženy',
-    );
-    if (outcome.ok) {
-      setOpen(false);
-    } else {
-      setError(
-        outcome.reason?.includes('payment_terms_invalid') === true
-          ? 'Schválené skonto nesmí být vyšší než částka faktury a ke každé částce patří i text podmínky.'
-          : outcomeMessage(vm, outcome),
-      );
-    }
+  const save = (): void => {
+    void financeBrowserRuntime.runPromise(paymentTermsSaveProgram({ form, invoice, setError, setOpen, vm }));
   };
+  return { editable, error, form, invoice, open, save, setError, setForm, setOpen, start, terms, vm };
+};
+
+export const PaymentTermsCard = (props: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+  const { t } = useModernI18n();
+  const { editable, error, form, invoice, open, save, setForm, setOpen, start, terms, vm } = usePaymentTerms(props);
   return (
     <SectionCard
       actions={
@@ -382,7 +512,7 @@ export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; r
           </Button>
         ) : undefined
       }
-      title="Skonto a úrok z prodlení"
+      title={t('finance-billing.financeUi.paymentTerms.title')}
     >
       <div className="flex flex-col gap-150 text-sm" data-finance-payment-terms="">
         {terms === undefined ? (
@@ -426,7 +556,14 @@ export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; r
             <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
               Zrušit
             </Button>
-            <Button disabled={vm.busy} isLoading={vm.busy} onClick={() => void save()} variant="primary">
+            <Button
+              disabled={vm.busy}
+              isLoading={vm.busy}
+              onClick={() => {
+                save();
+              }}
+              variant="primary"
+            >
               Uložit
             </Button>
           </>
@@ -448,32 +585,32 @@ export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; r
           )}
           <FormInput
             id="terms-skonto-text"
-            label="Podmínka skonta"
+            label={t('finance-billing.financeUi.paymentTerms.discountCondition')}
             onChange={(event) => setForm((current) => ({ ...current, skontoText: event.target.value }))}
-            placeholder="např. 2 % při úhradě do 7 dnů od vystavení"
+            placeholder={t('finance-billing.financeUi.paymentTerms.discountExample')}
             size="sm"
             value={form.skontoText}
           />
           <FormInput
             id="terms-skonto-amount"
             inputMode="decimal"
-            label="Ručně schválená částka skonta (Kč, nepovinné)"
+            label={t('finance-billing.financeUi.paymentTerms.discountAmount')}
             onChange={(event) => setForm((current) => ({ ...current, skontoAmount: event.target.value }))}
             size="sm"
             value={form.skontoAmount}
           />
           <FormInput
             id="terms-late-text"
-            label="Sjednaný úrok z prodlení"
+            label={t('finance-billing.financeUi.paymentTerms.interestCondition')}
             onChange={(event) => setForm((current) => ({ ...current, lateText: event.target.value }))}
-            placeholder="např. 0,05 % z dlužné částky za každý den prodlení dle čl. 7 smlouvy"
+            placeholder={t('finance-billing.financeUi.paymentTerms.interestExample')}
             size="sm"
             value={form.lateText}
           />
           <FormInput
             id="terms-late-amount"
             inputMode="decimal"
-            label="Ručně schválená částka úroku (Kč, nepovinné)"
+            label={t('finance-billing.financeUi.paymentTerms.interestAmount')}
             onChange={(event) => setForm((current) => ({ ...current, lateAmount: event.target.value }))}
             size="sm"
             value={form.lateAmount}

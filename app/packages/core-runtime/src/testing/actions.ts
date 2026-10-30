@@ -1,11 +1,10 @@
 // @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { DateTime, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Crypto, DateTime, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
+import { Reactivity } from 'effect/reactivity';
+import type { Connection } from 'effect/sql/SqlConnection';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
 import { getActionServiceFactory } from '../actions/definition.ts';
@@ -13,6 +12,7 @@ import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
+  createActionInvocationPersistenceErrorWithCause,
 } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
 import type {
@@ -159,390 +159,402 @@ const persistenceFailure = () =>
 const queryRows = (result: { readonly rows: readonly object[] }) => result.rows;
 const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionError({ cause }) });
 
-const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTestHarness(
-  options: ActionTestHarnessOptions = {},
-) {
-  const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
-  const invocations = new Map<string, ActionTestInvocation>();
-  const idempotency = new Map<string, string>();
-  const committed: FlushActionSuccessInput[] = [];
-  const permissionDenials: RejectPermissionDeniedInput[] = [];
-  const policyDenials: FinalizeActionPolicyDenialInput[] = [];
-  const stages: ActionRuntimeStage[] = [];
-  let transactionCount = 0;
-  let loseCommitAcknowledgement = options.commitAcknowledgement === 'indeterminate-once';
-  let pendingCommit: Effect.Effect<void, ActionInvocationPersistenceError>[] = [];
-  let connectionQueue = Effect.void;
+const actionTestHarness = Effect.fn('ActionTestHarness.make')(
+  function* actionTestHarness(options: ActionTestHarnessOptions = {}) {
+    const crypto = yield* Crypto.Crypto;
+    const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
+    const invocations = new Map<string, ActionTestInvocation>();
+    const idempotency = new Map<string, string>();
+    const committed: FlushActionSuccessInput[] = [];
+    const permissionDenials: RejectPermissionDeniedInput[] = [];
+    const policyDenials: FinalizeActionPolicyDenialInput[] = [];
+    const stages: ActionRuntimeStage[] = [];
+    let transactionCount = 0;
+    let loseCommitAcknowledgement = options.commitAcknowledgement === 'indeterminate-once';
+    let pendingCommit: Effect.Effect<void, ActionInvocationPersistenceError>[] = [];
+    let connectionQueue = Effect.void;
 
-  const find = (id: string): Effect.Effect<ActionTestInvocation, ActionInvocationPersistenceError> => {
-    const invocation = invocations.get(id);
-    return invocation === undefined ? Effect.fail(persistenceFailure()) : Effect.succeed(invocation);
-  };
-  const prepare = Effect.fn('ActionTestHarness.prepare')(function* prepareTestInvocation(
-    input: PrepareActionInvocationInput,
-  ) {
-    const key =
-      input.idempotencyKey === undefined
-        ? undefined
-        : yield* encodeIdempotencyScope([
-            input.principal.tenantId,
-            input.principal.principalId,
-            input.actionKey,
-            input.idempotencyKey,
-          ]).pipe(Effect.orDie);
-    const existing = key === undefined ? undefined : idempotency.get(key);
-    if (existing !== undefined) {
-      return yield* find(existing);
-    }
-    const invocation: ActionTestInvocation = {
-      actionInvocationId: randomUUID(),
-      actionKey: input.actionKey,
-      completedAt: null,
-      idempotencyKey: input.idempotencyKey,
-      legalEntityId: input.principal.legalEntityId,
-      principalId: input.principal.principalId,
-      requestHash: input.requestHash,
-      status: 'received',
-      tenantId: input.principal.tenantId,
+    const find = (id: string): Effect.Effect<ActionTestInvocation, ActionInvocationPersistenceError> => {
+      const invocation = invocations.get(id);
+      return invocation === undefined ? Effect.fail(persistenceFailure()) : Effect.succeed(invocation);
     };
-    invocations.set(invocation.actionInvocationId, invocation);
-    if (key !== undefined) {
-      idempotency.set(key, invocation.actionInvocationId);
-    }
-    return invocation;
-  });
-  const commitSuccess = Effect.fn('ActionTestHarness.commitSuccess')(function* commitTestSuccess(
-    input: FlushActionSuccessInput,
-  ) {
-    const invocation = yield* find(input.actionInvocationId);
-    committed.push(input);
-    invocations.set(input.actionInvocationId, {
-      ...invocation,
-      completedAt: completionTime(),
-      status: 'succeeded',
-    });
-  });
-  const recordRejection = <Input extends { readonly actionInvocationId: string }>(input: Input, denials: Input[]) =>
-    find(input.actionInvocationId).pipe(
-      Effect.flatMap((invocation) =>
-        Effect.sync(() => {
-          denials.push(input);
-          invocations.set(input.actionInvocationId, {
-            ...invocation,
-            completedAt: completionTime(),
-            status: 'rejected',
-          });
-          return Option.none<ActionRecordedRejection>();
-        }),
-      ),
-    );
-  const repository: ActionRepositoryService = {
-    createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
-    finalizePolicyDenial: (_executor, input) => recordRejection(input, policyDenials),
-    flushSuccess: (_transaction, input) =>
-      Effect.sync(() => {
-        pendingCommit.push(commitSuccess(input));
-      }),
-    loadRecordedRejection: (_executor, id) =>
-      Effect.sync(() => {
-        const policyDenial = policyDenials.find((denial) => denial.actionInvocationId === id);
-        if (policyDenial !== undefined) {
-          return Option.some({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const });
-        }
-        return permissionDenials.some((denial) => denial.actionInvocationId === id)
-          ? Option.some({ stage: 'authz' as const })
-          : Option.none();
-      }),
-    lockInvocation: (_transaction, id) => Effect.suspend(() => find(id)),
-    rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
-    resolveInvocation: (_executor, input) =>
-      Effect.suspend(() => {
-        const hasInvocationId = input.invocationId !== undefined;
-        const invocation = hasInvocationId
-          ? invocations.get(input.invocationId)
-          : [...invocations.values()].find(
-              (candidate) =>
-                candidate.actionKey === input.actionKey &&
-                candidate.idempotencyKey === input.idempotencyKey &&
-                candidate.legalEntityId === input.principal.legalEntityId &&
-                candidate.tenantId === input.principal.tenantId &&
-                candidate.principalId === input.principal.principalId,
-            );
-        return invocation?.tenantId === input.principal.tenantId &&
-          invocation.legalEntityId === input.principal.legalEntityId &&
-          invocation.principalId === input.principal.principalId
-          ? Effect.succeed(invocation)
-          : Effect.fail(
-              new ActionInvocationNotFound({
-                code: 'action_invocation_not_found',
-                reason: 'The test invocation is outside this scope',
-              }),
-            );
-      }),
-    transitionInvocationToRunning: (_executor, id) =>
-      find(id).pipe(
-        Effect.map((invocation) => {
-          if (invocation.completedAt !== null) {
-            return invocation;
-          }
-          const running = { ...invocation, status: 'running' as const };
-          invocations.set(id, running);
-          return running;
-        }),
-      ),
-  };
-
-  const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(function* executeTestQueryEffect<Query, Values>(
-    scope: ActionTestConnectionScope,
-    query: Query,
-    values?: Values,
-  ) {
-    const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
-    const sql = Schema.is(Schema.String)(decoded) ? decoded : decoded.text;
-    if (sql === 'begin') {
-      transactionCount += 1;
-    } else if (sql === 'commit') {
-      yield* Effect.all(pendingCommit, { concurrency: 1, discard: true });
-      pendingCommit = [];
-      if (loseCommitAcknowledgement) {
-        loseCommitAcknowledgement = false;
-        return yield* new DatabaseCommitAcknowledgementAmbiguous({
-          code: testCommitAcknowledgementSqlState,
-          kind: 'sqlstate',
-        });
+    const prepare = Effect.fn('ActionTestHarness.prepare')(function* prepareTestInvocation(
+      input: PrepareActionInvocationInput,
+    ) {
+      const key =
+        input.idempotencyKey === undefined
+          ? undefined
+          : yield* encodeIdempotencyScope([
+              input.principal.tenantId,
+              input.principal.principalId,
+              input.actionKey,
+              input.idempotencyKey,
+            ]).pipe(Effect.orDie);
+      const existing = key === undefined ? undefined : idempotency.get(key);
+      if (existing !== undefined) {
+        return yield* find(existing);
       }
-    } else if (sql === 'rollback') {
-      pendingCommit = [];
-    } else if (sql === ESTABLISH_GATEWAY_SCOPE_SQL) {
-      // Models the grant Shell registered for this assertion: the database derives the scope
-      // from the redeemed assertion's principal claim, never from the request.
-      const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
-      const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
-      const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
-      if (Option.isNone(role)) {
-        return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
-      }
-      scope.tenantId = principal.tenantId;
-      scope.legalEntityId = principal.legalEntityId ?? '';
-      scope.role = role.value;
-      return {
-        rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
-      };
-    } else if (sql.includes('set_config')) {
-      [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
-    } else if (sql.includes('current_setting') || sql === READ_GATEWAY_SCOPE_SQL) {
-      return {
-        rows: [
-          {
-            legal_entity_id: scope.legalEntityId,
-            role: scope.role,
-            tenant_id: scope.tenantId,
-          },
-        ],
-      };
-    } else if (sql.includes('transaction_timestamp')) {
-      return {
-        rows: [{ operation_at: completionTime() }],
-      };
-    } else {
-      return yield* Effect.die('Owner SQL is unavailable in the Action test harness; bind typed services');
-    }
-    return { rows: [] };
-  });
-
-  const acquireConnection = Effect.suspend(() => {
-    const previous = connectionQueue;
-    const released = Deferred.makeUnsafe<null>();
-    connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
-    return Effect.gen(function* acquireTestConnection() {
-      yield* previous;
-      yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
-      const scope: ActionTestConnectionScope = {
-        legalEntityId: '',
-        role: SHARED_RUNTIME_IDENTITY.role,
-        tenantId: '',
-      };
-      pendingCommit = [];
-      const execute = (query: string, values: readonly unknown[]) =>
-        executeTestQuery(scope, query.toLowerCase(), values).pipe(Effect.map(queryRows), Effect.mapError(sqlFailure));
-      const unsupported = Effect.die('Owner SQL is unavailable in the Action test harness');
-      return {
-        execute,
-        executeRaw: execute,
-        executeStream: () => Stream.fromEffect(unsupported),
-        executeUnprepared: execute,
-        executeValues: () => unsupported,
-        executeValuesUnprepared: () => unsupported,
-      } satisfies Connection;
-    });
-  });
-  const database = yield* Effect.scoped(
-    Effect.gen(function* makeTestDatabase() {
-      return {
-        executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-          Effect.provide(scriptedPgClientLayer(acquireConnection)),
-          Effect.provide(Reactivity.layer),
+      const actionInvocationId = yield* crypto.randomUUIDv4().pipe(
+        Effect.mapError((cause) =>
+          createActionInvocationPersistenceErrorWithCause(
+            {
+              code: 'action_invocation_persistence_failed',
+              reason: 'The test invocation identifier could not be generated',
+            },
+            cause,
+          ),
         ),
+      );
+      const invocation: ActionTestInvocation = {
+        actionInvocationId,
+        actionKey: input.actionKey,
+        completedAt: null,
+        idempotencyKey: input.idempotencyKey,
+        legalEntityId: input.principal.legalEntityId,
+        principalId: input.principal.principalId,
+        requestHash: input.requestHash,
+        status: 'received',
+        tenantId: input.principal.tenantId,
       };
-    }),
-  );
-  const contextAccess: ContextAccessService = {
-    legalEntities: ({ legalEntityIds, permission }) =>
-      Effect.succeed(
-        legalEntityIds.map((key) => ({
-          decision:
-            permission === undefined || permission === 'access'
-              ? (options.legalEntityAccess ?? 'allowed')
-              : (options.legalEntityPermission ?? 'denied'),
-          key,
-        })),
-      ),
-    modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    resources: ({ resources }) =>
-      Effect.succeed(
-        resources.map((resource) => ({
-          decision: options.resourcePermission ?? 'denied',
-          key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-        })),
-      ),
-    tenants: ({ tenantIds }) =>
-      Effect.succeed(
-        tenantIds.map((key) => ({
-          decision: options.tenantPermission ?? 'denied',
-          key,
-        })),
-      ),
-  };
-  const scopeResolver = makeOperationalScopeResolver(
-    {
-      load: (principal) =>
-        options.scope === 'unavailable'
-          ? Effect.fail(
-              new OperationContextUnavailable({
-                code: 'operation_context_unavailable',
-                reason: 'Test scope unavailable',
-              }),
-            )
-          : Effect.succeed({
-              // Fixture principals carry no authenticationNamespaceId, so the persisted
-              // binding must claim none either, matching how the live repository always
-              // reports the column explicitly instead of leaving it unset.
-              bindingAuthenticationNamespaceId: principal.authenticationNamespaceId ?? null,
-              bindingPrincipalId: principal.principalId,
-              bindingRevokedAt: null,
-              bindingStatus: 'active',
-              bindingTenantId: principal.tenantId,
-              legalEntityStatus: 'active',
-              legalEntityTenantId: principal.tenantId,
-              principalStatus: options.scope === 'denied' ? 'inactive' : 'active',
-              principalTenantId: principal.tenantId,
-              tenantStatus: 'active',
-            }),
-    },
-    contextAccess,
-  );
-  const moduleStateGate: ModuleStateGateService = {
-    check: checkModuleEntrypoint,
-    prepareSnapshot: (tenantId, entrypoints) =>
-      Effect.succeed(
-        makeModuleStateSnapshot(
-          tenantId,
-          entrypoints,
-          [
-            ...new Set(
-              entrypoints
-                .filter((entrypoint) => entrypoint.scope === 'tenant')
-                .map((entrypoint) => entrypoint.moduleKey),
-            ),
-          ].map((moduleKey) => ({
-            moduleKey,
-            state: options.moduleState ?? 'active',
+      invocations.set(invocation.actionInvocationId, invocation);
+      if (key !== undefined) {
+        idempotency.set(key, invocation.actionInvocationId);
+      }
+      return invocation;
+    });
+    const commitSuccess = Effect.fn('ActionTestHarness.commitSuccess')(function* commitTestSuccess(
+      input: FlushActionSuccessInput,
+    ) {
+      const invocation = yield* find(input.actionInvocationId);
+      committed.push(input);
+      invocations.set(input.actionInvocationId, {
+        ...invocation,
+        completedAt: completionTime(),
+        status: 'succeeded',
+      });
+    });
+    const recordRejection = <Input extends { readonly actionInvocationId: string }>(input: Input, denials: Input[]) =>
+      find(input.actionInvocationId).pipe(
+        Effect.flatMap((invocation) =>
+          Effect.sync(() => {
+            denials.push(input);
+            invocations.set(input.actionInvocationId, {
+              ...invocation,
+              completedAt: completionTime(),
+              status: 'rejected',
+            });
+            return Option.none<ActionRecordedRejection>();
+          }),
+        ),
+      );
+    const repository: ActionRepositoryService = {
+      createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
+      finalizePolicyDenial: (_executor, input) => recordRejection(input, policyDenials),
+      flushSuccess: (_transaction, input) =>
+        Effect.sync(() => {
+          pendingCommit.push(commitSuccess(input));
+        }),
+      loadRecordedRejection: (_executor, id) =>
+        Effect.sync(() => {
+          const policyDenial = policyDenials.find((denial) => denial.actionInvocationId === id);
+          if (policyDenial !== undefined) {
+            return Option.some({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const });
+          }
+          return permissionDenials.some((denial) => denial.actionInvocationId === id)
+            ? Option.some({ stage: 'authz' as const })
+            : Option.none();
+        }),
+      lockInvocation: (_transaction, id) => Effect.suspend(() => find(id)),
+      rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
+      resolveInvocation: (_executor, input) =>
+        Effect.suspend(() => {
+          const hasInvocationId = input.invocationId !== undefined;
+          const invocation = hasInvocationId
+            ? invocations.get(input.invocationId)
+            : [...invocations.values()].find(
+                (candidate) =>
+                  candidate.actionKey === input.actionKey &&
+                  candidate.idempotencyKey === input.idempotencyKey &&
+                  candidate.legalEntityId === input.principal.legalEntityId &&
+                  candidate.tenantId === input.principal.tenantId &&
+                  candidate.principalId === input.principal.principalId,
+              );
+          return invocation?.tenantId === input.principal.tenantId &&
+            invocation.legalEntityId === input.principal.legalEntityId &&
+            invocation.principalId === input.principal.principalId
+            ? Effect.succeed(invocation)
+            : Effect.fail(
+                new ActionInvocationNotFound({
+                  code: 'action_invocation_not_found',
+                  reason: 'The test invocation is outside this scope',
+                }),
+              );
+        }),
+      transitionInvocationToRunning: (_executor, id) =>
+        find(id).pipe(
+          Effect.map((invocation) => {
+            if (invocation.completedAt !== null) {
+              return invocation;
+            }
+            const running = { ...invocation, status: 'running' as const };
+            invocations.set(id, running);
+            return running;
+          }),
+        ),
+    };
+
+    const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(function* executeTestQueryEffect<
+      Query,
+      Values,
+    >(scope: ActionTestConnectionScope, query: Query, values?: Values) {
+      const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
+      const sql = Schema.is(Schema.String)(decoded) ? decoded : decoded.text;
+      if (sql === 'begin') {
+        transactionCount += 1;
+      } else if (sql === 'commit') {
+        yield* Effect.all(pendingCommit, { concurrency: 1, discard: true });
+        pendingCommit = [];
+        if (loseCommitAcknowledgement) {
+          loseCommitAcknowledgement = false;
+          return yield* new DatabaseCommitAcknowledgementAmbiguous({
+            code: testCommitAcknowledgementSqlState,
+            kind: 'sqlstate',
+          });
+        }
+      } else if (sql === 'rollback') {
+        pendingCommit = [];
+      } else if (sql === ESTABLISH_GATEWAY_SCOPE_SQL) {
+        // Models the grant Shell registered for this assertion: the database derives the scope
+        // from the redeemed assertion's principal claim, never from the request.
+        const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
+        const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+        const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
+        if (Option.isNone(role)) {
+          return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
+        }
+        scope.tenantId = principal.tenantId;
+        scope.legalEntityId = principal.legalEntityId ?? '';
+        scope.role = role.value;
+        return {
+          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
+        };
+      } else if (sql.includes('set_config')) {
+        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
+      } else if (sql.includes('current_setting') || sql === READ_GATEWAY_SCOPE_SQL) {
+        return {
+          rows: [
+            {
+              legal_entity_id: scope.legalEntityId,
+              role: scope.role,
+              tenant_id: scope.tenantId,
+            },
+          ],
+        };
+      } else if (sql.includes('transaction_timestamp')) {
+        return {
+          rows: [{ operation_at: completionTime() }],
+        };
+      } else {
+        return yield* Effect.die('Owner SQL is unavailable in the Action test harness; bind typed services');
+      }
+      return { rows: [] };
+    });
+
+    const acquireConnection = Effect.suspend(() => {
+      const previous = connectionQueue;
+      const released = Deferred.makeUnsafe<null>();
+      connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
+      return Effect.gen(function* acquireTestConnection() {
+        yield* previous;
+        yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
+        const scope: ActionTestConnectionScope = {
+          legalEntityId: '',
+          role: SHARED_RUNTIME_IDENTITY.role,
+          tenantId: '',
+        };
+        pendingCommit = [];
+        const execute = (query: string, values: readonly unknown[]) =>
+          executeTestQuery(scope, query.toLowerCase(), values).pipe(Effect.map(queryRows), Effect.mapError(sqlFailure));
+        const unsupported = Effect.die('Owner SQL is unavailable in the Action test harness');
+        return {
+          execute,
+          executeRaw: execute,
+          executeStream: () => Stream.fromEffect(unsupported),
+          executeUnprepared: execute,
+          executeValues: () => unsupported,
+          executeValuesUnprepared: () => unsupported,
+        } satisfies Connection;
+      });
+    });
+    const database = yield* Effect.scoped(
+      Effect.gen(function* makeTestDatabase() {
+        return {
+          executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
+            Effect.provide(scriptedPgClientLayer(acquireConnection)),
+            Effect.provide(Reactivity.layer),
+          ),
+        };
+      }),
+    );
+    const contextAccess: ContextAccessService = {
+      legalEntities: ({ legalEntityIds, permission }) =>
+        Effect.succeed(
+          legalEntityIds.map((key) => ({
+            decision:
+              permission === undefined || permission === 'access'
+                ? (options.legalEntityAccess ?? 'allowed')
+                : (options.legalEntityPermission ?? 'denied'),
+            key,
           })),
         ),
-      ),
-    recheckWrite: () => Effect.void,
-  };
-  const bindings = new Map<object, unknown>();
-  for (const binding of options.services ?? []) {
-    if (isActionTestServiceBindingValue(binding)) {
-      const stored = binding.resolve();
-      bindings.set(stored.registration, stored.services);
-    }
-  }
-  const resolveServiceFactory: typeof getActionServiceFactory = <
-    PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{
-      readonly _tag: string;
-    }>,
-    DomainEvents extends DomainEventContractMap,
-    Owner extends string,
-    Services,
-    HandlerRequirements,
-  >(
-    registration: ActionRegistration<
-      PayloadSchema,
-      ResultSchema,
-      DomainErrorSchema,
-      DomainEvents,
-      Owner,
-      Services,
-      HandlerRequirements
-    >,
-  ): ActionServiceFactory<Services, HandlerRequirements> => {
-    if (!bindings.has(registration)) {
-      return getActionServiceFactory(registration);
-    }
-    return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
-  };
-  const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
-  let runtimeOptions: ActionRuntimeOptions = {
-    contextAccess,
-    databaseIdentities,
-    // This scripted harness rejects owner SQL and tests the Action lifecycle only.
-    lockCompositionAuthority: () => Effect.succeed([]),
-    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-    moduleStateGate,
-    onStage: (stage) => {
-      stages.push(stage);
-    },
-    resolveCompositionRevision: () => Effect.succeed(options.compositionRevision ?? 'a'.repeat(64)),
-    resolveServiceFactory,
-  };
-  if (Option.isSome(authorizationPreflight)) {
-    runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
-  }
-  const runtime = makeActionRuntime(
-    database,
-    repository,
-    {
-      checkActionPermission: () =>
-        options.actionPermission === 'unavailable'
-          ? Effect.fail(
-              new ActionPermissionCheckError({
-                code: 'action_permission_check_failed',
-                reason: 'Test authorization unavailable',
+      modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+      resources: ({ resources }) =>
+        Effect.succeed(
+          resources.map((resource) => ({
+            decision: options.resourcePermission ?? 'denied',
+            key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+          })),
+        ),
+      tenants: ({ tenantIds }) =>
+        Effect.succeed(
+          tenantIds.map((key) => ({
+            decision: options.tenantPermission ?? 'denied',
+            key,
+          })),
+        ),
+    };
+    const scopeResolver = yield* makeOperationalScopeResolver(
+      {
+        load: (principal) =>
+          options.scope === 'unavailable'
+            ? Effect.fail(
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'Test scope unavailable',
+                }),
+              )
+            : Effect.succeed({
+                // Fixture principals carry no authenticationNamespaceId, so the persisted
+                // binding must claim none either, matching how the live repository always
+                // reports the column explicitly instead of leaving it unset.
+                bindingAuthenticationNamespaceId: principal.authenticationNamespaceId ?? null,
+                bindingPrincipalId: principal.principalId,
+                bindingRevokedAt: null,
+                bindingStatus: 'active',
+                bindingTenantId: principal.tenantId,
+                legalEntityStatus: 'active',
+                legalEntityTenantId: principal.tenantId,
+                principalStatus: options.scope === 'denied' ? 'inactive' : 'active',
+                principalTenantId: principal.tenantId,
+                tenantStatus: 'active',
               }),
-            )
-          : Effect.succeed(options.actionPermission ?? 'denied'),
-    },
-    scopeResolver,
-    runtimeOptions,
-  );
-  return Object.freeze({
-    layer: Layer.succeed(ActionRuntime, runtime),
-    runtime,
-    snapshot: (): ActionTestSnapshot =>
-      Object.freeze({
-        committed: Object.freeze([...committed]),
-        invocations: Object.freeze([...invocations.values()].map((value) => Object.freeze({ ...value }))),
-        permissionDenials: Object.freeze([...permissionDenials]),
-        policyDenials: Object.freeze([...policyDenials]),
-        stages: Object.freeze([...stages]),
-        transactionCount,
-      }),
-  });
-});
+      },
+      contextAccess,
+    );
+    const moduleStateGate: ModuleStateGateService = {
+      check: checkModuleEntrypoint,
+      prepareSnapshot: (tenantId, entrypoints) =>
+        Effect.succeed(
+          makeModuleStateSnapshot(
+            tenantId,
+            entrypoints,
+            [
+              ...new Set(
+                entrypoints
+                  .filter((entrypoint) => entrypoint.scope === 'tenant')
+                  .map((entrypoint) => entrypoint.moduleKey),
+              ),
+            ].map((moduleKey) => ({
+              moduleKey,
+              state: options.moduleState ?? 'active',
+            })),
+          ),
+        ),
+      recheckWrite: () => Effect.void,
+    };
+    const bindings = new Map<object, unknown>();
+    for (const binding of options.services ?? []) {
+      if (isActionTestServiceBindingValue(binding)) {
+        const stored = binding.resolve();
+        bindings.set(stored.registration, stored.services);
+      }
+    }
+    const resolveServiceFactory: typeof getActionServiceFactory = <
+      PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+      ResultSchema extends Schema.ConstraintDecoder<unknown>,
+      DomainErrorSchema extends Schema.ConstraintDecoder<{
+        readonly _tag: string;
+      }>,
+      DomainEvents extends DomainEventContractMap,
+      Owner extends string,
+      Services,
+      HandlerRequirements,
+    >(
+      registration: ActionRegistration<
+        PayloadSchema,
+        ResultSchema,
+        DomainErrorSchema,
+        DomainEvents,
+        Owner,
+        Services,
+        HandlerRequirements
+      >,
+    ): ActionServiceFactory<Services, HandlerRequirements> => {
+      if (!bindings.has(registration)) {
+        return getActionServiceFactory(registration);
+      }
+      return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
+    };
+    const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+    let runtimeOptions: ActionRuntimeOptions = {
+      contextAccess,
+      databaseIdentities,
+      // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+      lockCompositionAuthority: () => Effect.succeed([]),
+      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+      moduleStateGate,
+      onStage: (stage) => {
+        stages.push(stage);
+      },
+      resolveCompositionRevision: () => Effect.succeed(options.compositionRevision ?? 'a'.repeat(64)),
+      resolveServiceFactory,
+    };
+    if (Option.isSome(authorizationPreflight)) {
+      runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+    }
+    const runtime = makeActionRuntime(
+      database,
+      repository,
+      {
+        checkActionPermission: () =>
+          options.actionPermission === 'unavailable'
+            ? Effect.fail(
+                new ActionPermissionCheckError({
+                  code: 'action_permission_check_failed',
+                  reason: 'Test authorization unavailable',
+                }),
+              )
+            : Effect.succeed(options.actionPermission ?? 'denied'),
+      },
+      scopeResolver,
+      runtimeOptions,
+    );
+    return Object.freeze({
+      layer: Layer.succeed(ActionRuntime, runtime),
+      runtime,
+      snapshot: (): ActionTestSnapshot =>
+        Object.freeze({
+          committed: Object.freeze([...committed]),
+          invocations: Object.freeze([...invocations.values()].map((value) => Object.freeze({ ...value }))),
+          permissionDenials: Object.freeze([...permissionDenials]),
+          policyDenials: Object.freeze([...policyDenials]),
+          stages: Object.freeze([...stages]),
+          transactionCount,
+        }),
+    });
+  },
+  (harness, _options?: ActionTestHarnessOptions) => Effect.provide(harness, NodeCrypto.layer),
+);
 
 export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
 

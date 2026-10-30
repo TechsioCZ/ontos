@@ -3,7 +3,7 @@
 export const renderApiClient = (name: string): string => {
 	const value = `${name}Api`;
 	return `import { Effect } from 'effect';
-import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 
 export const execute${name}WithAuthorization = (

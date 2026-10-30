@@ -31,7 +31,11 @@ it.effect('requires both executor and tenant identity permission before company 
         configure: () =>
           Effect.sync(() => {
             calls.push('configure');
-            return { companies: [commercialDemoCompany, rentalDemoCompany], previousCompanyCount: 1 };
+            return {
+              companies: [commercialDemoCompany, rentalDemoCompany],
+              previousCompanyCount: 1,
+              previousPrincipalCount: 4,
+            };
           }),
       }),
     ];
@@ -58,7 +62,7 @@ it.effect('requires both executor and tenant identity permission before company 
   ),
 );
 
-it.effect('audits fixed company configuration and refuses it outside development', () =>
+it.effect('audits fixed company and persona configuration in development and stage, rejecting production', () =>
   Effect.gen(function* auditedCompanyConfiguration() {
     const calls: string[] = [];
     const services = [
@@ -66,7 +70,11 @@ it.effect('audits fixed company configuration and refuses it outside development
         configure: () =>
           Effect.sync(() => {
             calls.push('configure');
-            return { companies: [commercialDemoCompany, rentalDemoCompany], previousCompanyCount: 1 };
+            return {
+              companies: [commercialDemoCompany, rentalDemoCompany],
+              previousCompanyCount: 1,
+              previousPrincipalCount: 4,
+            };
           }),
       }),
     ];
@@ -85,7 +93,22 @@ it.effect('audits fixed company configuration and refuses it outside development
       );
     expect(result.companies).toEqual([commercialDemoCompany, rentalDemoCompany]);
     expect(calls).toEqual(['configure']);
-    expect(harness.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(1);
+    expect(harness.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(2);
+    const stage = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      services,
+      tenantPermission: 'allowed',
+    });
+    const stageResult = yield* stage.runtime
+      .runAction(request)
+      .pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' }),
+        ),
+      );
+    expect(stageResult.companies).toEqual(result.companies);
+    expect(stage.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(2);
     const production = yield* makeActionTestHarness({
       actionPermission: 'allowed',
       services,
@@ -101,7 +124,7 @@ it.effect('audits fixed company configuration and refuses it outside development
         ),
       );
     expect(Predicate.isTagged(error, 'IdentityTargetInvalidError')).toBe(true);
-    expect(calls).toEqual(['configure']);
+    expect(calls).toEqual(['configure', 'configure']);
     expect(production.snapshot().committed).toHaveLength(0);
   }),
 );

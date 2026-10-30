@@ -10,7 +10,6 @@ import { CheckoutSelect } from "@/features/checkout/checkout-select";
 import { formatPrice } from "@/lib/format";
 import { orderHref, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
 import { ReorderAction } from "./reorder-action";
-export { orderHref } from "@/ontos/order-model";
 
 const columns: ColumnDef<CustomerOrder>[] = [
   {

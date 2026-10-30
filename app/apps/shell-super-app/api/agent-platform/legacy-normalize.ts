@@ -1,3 +1,20 @@
+import {
+  AgentActionInvocationIdSchema,
+  AgentActivityIdSchema,
+  AgentBatchIdSchema,
+  AgentPrincipalIdSchema,
+  AgentResourceIdSchema,
+  AgentResourceTypeSchema,
+  AgentActivityEntrySchema,
+  AgentCommandValueSchema,
+  AgentBatchKeySchema,
+  AgentItemKeySchema,
+  AgentModuleKeySchema,
+  AgentProposalReferenceSchema,
+  AgentQueueBatchSchema,
+  AgentQueueItemSchema,
+  AgentRecordReferenceSchema,
+} from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityEntry,
   AgentDiffLine,
@@ -7,13 +24,13 @@ import type {
   AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
 
-import { Predicate } from 'effect';
+import { DateTime, Option, Predicate, Schema } from 'effect';
 
 import { parseLegacyKey } from '../../shared/proposal-key.ts';
 
 import type { McpModule } from '../mcp/catalog.ts';
 
-type Rec = Readonly<Record<string, unknown>>;
+type Rec = Schema.JsonObject;
 
 /** A composed module that keeps its own AI change engine (`aiChanges` in its records read). */
 export interface LegacyEngineModule {
@@ -24,12 +41,15 @@ export interface LegacyEngineModule {
   readonly moduleKey: string;
 }
 
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = Schema.is(Schema.JsonObject);
+const isValueArray = Schema.is(Schema.Array(AgentCommandValueSchema));
 
-const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+const text = (value: Schema.Json | undefined): string | undefined =>
+  Schema.is(Schema.String)(value) ? value : undefined;
 
 const legacyStatuses: readonly AgentItemStatus[] = ['pending', 'applied', 'rejected', 'failed', 'reverted'];
 const legacyRisks: readonly AgentRisk[] = ['low', 'medium', 'high'];
+const unknownUser = 'Neznámý uživatel';
 
 const CONTACT_FIELDS = [
   ['name', 'Jméno'],
@@ -40,46 +60,61 @@ const CONTACT_FIELDS = [
   ['note', 'Poznámka'],
 ] as const;
 
-export const legacyBatchKey = (appId: string, batchId: string) => `legacy:${appId}:${batchId}`;
+export const legacyBatchKey = (appId: string, batchId: string) =>
+  AgentBatchKeySchema.make(`legacy:${appId}:${batchId}`);
 
-export const legacyItemKey = (appId: string, changeId: string) => `legacy:${appId}:${changeId}`;
+export const legacyItemKey = (appId: string, changeId: string) =>
+  AgentItemKeySchema.make(`legacy:${appId}:${changeId}`);
 
 /** Finds the `aiChanges` slice in a records response: top-level (sales, merchandise) or under `state` (CRM). */
-export const sliceFromRecords = (body: unknown): unknown => {
-  if (!isRecord(body)) return undefined;
-  if (body['aiChanges'] !== undefined) return body['aiChanges'];
+export const sliceFromRecords = (body: Schema.Json | undefined): Schema.Json | undefined => {
+  if (!isRecord(body)) {
+    return undefined;
+  }
+  if (body['aiChanges'] !== undefined) {
+    return body['aiChanges'];
+  }
   return isRecord(body['state']) ? body['state']['aiChanges'] : undefined;
 };
 
-const diffLinesOf = (raw: unknown): AgentDiffLine[] => {
-  if (!Array.isArray(raw)) return [];
+const diffLinesOf = (raw: Schema.Json | undefined): AgentDiffLine[] => {
+  if (!isValueArray(raw)) {
+    return [];
+  }
   return raw.flatMap((line): AgentDiffLine[] => {
-    if (!isRecord(line)) return [];
+    if (!isRecord(line)) {
+      return [];
+    }
     const field = text(line['field']);
     const label = text(line['label']);
-    if (field === undefined || label === undefined) return [];
+    if (field === undefined || label === undefined) {
+      return [];
+    }
     const before = text(line['before']);
     const after = text(line['after']);
-    return [
-      {
-        field,
-        label,
-        ...(before === undefined ? {} : { before }),
-        ...(after === undefined ? {} : { after }),
-      },
-    ];
+    let result: AgentDiffLine = { field, label };
+    if (before !== undefined) {
+      result = { ...result, before };
+    }
+    if (after !== undefined) {
+      result = { ...result, after };
+    }
+    return [result];
   });
 };
 
 /** Copy of the CRM `newClientContactsDiff` so CreateClient proposals read per contact. */
-const createClientContactLines = (contacts: readonly unknown[]): AgentDiffLine[] => {
+const createClientContactLines = (contacts: readonly Schema.Json[]): AgentDiffLine[] => {
   const firstPrimary = contacts.findIndex((contact) => isRecord(contact) && contact['primary'] === true);
   return contacts.flatMap((contact, index): AgentDiffLine[] => {
     const record: Rec = isRecord(contact) ? contact : {};
     return CONTACT_FIELDS.flatMap(([field, label]): AgentDiffLine[] => {
       const raw = record[field];
-      const value = field === 'primary' ? (index === firstPrimary ? 'ano' : 'ne') : raw;
-      return typeof value !== 'string' || value === ''
+      let value = raw;
+      if (field === 'primary') {
+        value = index === firstPrimary ? 'ano' : 'ne';
+      }
+      return !Schema.is(Schema.String)(value) || value === ''
         ? []
         : [{ after: value, field: `contacts.${index}.${field}`, label: `Kontakt ${index + 1} · ${label}` }];
     });
@@ -88,14 +123,15 @@ const createClientContactLines = (contacts: readonly unknown[]): AgentDiffLine[]
 
 const diffOfChange = (change: Rec): AgentDiffLine[] => {
   const diff = diffLinesOf(change['diff']);
-  const operation = change['operation'];
+  const { operation } = change;
   const contacts = isRecord(operation) ? operation['contacts'] : undefined;
-  if (!isRecord(operation) || !Predicate.isTagged(operation, 'CreateClient') || !Array.isArray(contacts)) return diff;
-  if (diff.some((line) => line.field.startsWith('contacts.'))) return diff;
-  return [
-    ...diff.filter((line) => line.field !== 'contacts'),
-    ...createClientContactLines(contacts as readonly unknown[]),
-  ];
+  if (!isRecord(operation) || !Predicate.isTagged(operation, 'CreateClient') || !isValueArray(contacts)) {
+    return diff;
+  }
+  if (diff.some((line) => line.field.startsWith('contacts.'))) {
+    return diff;
+  }
+  return [...diff.filter((line) => line.field !== 'contacts'), ...createClientContactLines(contacts)];
 };
 
 const itemOf = (
@@ -105,7 +141,7 @@ const itemOf = (
 ): AgentQueueItem | undefined => {
   const id = text(change['id']);
   const summary = text(change['summary']);
-  const target = change['target'];
+  const { target } = change;
   const targetLabel = isRecord(target) ? text(target['label']) : undefined;
   const proposedAt = text(change['proposedAt']);
   if (id === undefined || summary === undefined || targetLabel === undefined || proposedAt === undefined) {
@@ -117,7 +153,7 @@ const itemOf = (
   const decidedBy = text(change['decidedBy']);
   const decisionNote = text(change['decisionNote']);
   const failure = text(change['failure']);
-  return {
+  let item: typeof AgentQueueItemSchema.Encoded = {
     appId: module.appId,
     canDecide: options.canDecide,
     diff: diffOfChange(change),
@@ -130,29 +166,42 @@ const itemOf = (
     status,
     summary,
     targetLabel,
-    ...(decidedAt === undefined ? {} : { decidedAt }),
-    ...(decidedBy === undefined ? {} : { decidedByName: options.names.get(decidedBy) ?? 'Neznámý uživatel' }),
-    ...(decisionNote === undefined ? {} : { decisionNote }),
-    ...(failure === undefined ? {} : { failure }),
   };
+  if (decidedAt !== undefined) {
+    item = { ...item, decidedAt };
+  }
+  if (decidedBy !== undefined) {
+    item = { ...item, decidedByName: options.names.get(decidedBy) ?? unknownUser };
+  }
+  if (decisionNote !== undefined) {
+    item = { ...item, decisionNote };
+  }
+  if (failure !== undefined) {
+    item = { ...item, failure };
+  }
+  return Option.getOrUndefined(Schema.decodeOption(AgentQueueItemSchema)(item));
 };
 
 /** Turns one module's legacy `aiChanges` slice into queue batches. Malformed entries are skipped. */
 export const normalizeLegacySlice = (
   module: LegacyEngineModule,
-  slice: unknown,
+  slice: Schema.Json | undefined,
   options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
 ): AgentQueueBatch[] => {
-  if (!isRecord(slice)) return [];
-  const rawBatches: readonly unknown[] = Array.isArray(slice['batches']) ? slice['batches'] : [];
-  const rawChanges: readonly unknown[] = Array.isArray(slice['changes']) ? slice['changes'] : [];
+  if (!isRecord(slice)) {
+    return [];
+  }
+  const rawBatches: readonly Schema.Json[] = isValueArray(slice['batches']) ? slice['batches'] : [];
+  const rawChanges: readonly Schema.Json[] = isValueArray(slice['changes']) ? slice['changes'] : [];
   const changes = rawChanges.filter(isRecord);
   const batches = rawBatches.flatMap((raw): AgentQueueBatch[] => {
-    if (!isRecord(raw)) return [];
+    if (!isRecord(raw)) {
+      return [];
+    }
     const id = text(raw['id']);
     const agentLabel = text(raw['agentLabel']);
     const agentPrincipalId = text(raw['agentPrincipalId']);
-    const createdAt = text(raw['createdAt']);
+    const createdAt = Option.getOrUndefined(DateTime.make(text(raw['createdAt']) ?? ''));
     const instruction = text(raw['instruction']);
     if (
       id === undefined ||
@@ -163,54 +212,69 @@ export const normalizeLegacySlice = (
     ) {
       return [];
     }
-    const items = changes
-      .filter((change) => change['batchId'] === id)
-      .flatMap((change): AgentQueueItem[] => {
-        const item = itemOf(module, change, options);
-        return item === undefined ? [] : [item];
-      });
+    const items = changes.flatMap((change): AgentQueueItem[] => {
+      if (change['batchId'] !== id) {
+        return [];
+      }
+      const item = itemOf(module, change, options);
+      return item === undefined ? [] : [item];
+    });
     const revertedAt = text(raw['revertedAt']);
     const revertedBy = text(raw['revertedBy']);
     const revertNote = text(raw['revertNote']);
-    return [
-      {
-        agentLabel,
-        agentPrincipalId,
-        batchId: id,
-        canRevertAll: revertedAt === undefined && options.canDecide && items.some((item) => item.status === 'applied'),
-        createdAt,
-        instruction,
-        items,
-        key: legacyBatchKey(module.appId, id),
-        moduleLabels: [module.label],
-        source: 'legacy',
-        ...(module.approvalsPage === undefined ? {} : { modulePage: module.approvalsPage }),
-        ...(revertedAt === undefined ? {} : { revertedAt }),
-        ...(revertedBy === undefined ? {} : { revertedByName: options.names.get(revertedBy) ?? 'Neznámý uživatel' }),
-        ...(revertNote === undefined ? {} : { revertNote }),
-      },
-    ];
+    let batch = AgentQueueBatchSchema.make({
+      agentLabel,
+      agentPrincipalId: AgentPrincipalIdSchema.make(agentPrincipalId),
+      batchId: AgentBatchIdSchema.make(id),
+      canRevertAll: revertedAt === undefined && options.canDecide && items.some((item) => item.status === 'applied'),
+      createdAt,
+      instruction,
+      items,
+      key: legacyBatchKey(module.appId, id),
+      moduleLabels: [module.label],
+      source: 'legacy',
+    });
+    if (module.approvalsPage !== undefined) {
+      batch = { ...batch, modulePage: module.approvalsPage };
+    }
+    if (revertedAt !== undefined) {
+      const instant = Option.getOrUndefined(DateTime.make(revertedAt));
+      if (instant === undefined) {
+        return [];
+      }
+      batch = { ...batch, revertedAt: instant };
+    }
+    if (revertedBy !== undefined) {
+      batch = { ...batch, revertedByName: options.names.get(revertedBy) ?? unknownUser };
+    }
+    if (revertNote !== undefined) {
+      batch = { ...batch, revertNote };
+    }
+    return [batch];
   });
-  return batches.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return batches.toSorted(
+    (left, right) => DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+  );
 };
 
 /** Actual module-owned proposal records, not a guessed correlation with a generic audit action. */
 export const moduleActivityFromRecords = (
   module: LegacyEngineModule,
-  body: unknown,
+  body: Schema.Json | undefined,
   options: { readonly names: ReadonlyMap<string, string>; readonly recordLinks: McpModule['recordLinks'] },
 ): AgentActivityEntry[] => {
   const slice = sliceFromRecords(body);
-  if (!isRecord(slice)) return [];
-  const changes = Array.isArray(slice['changes']) ? slice['changes'].filter(isRecord) : [];
-  const logs = Array.isArray(slice['log']) ? slice['log'].filter(isRecord) : [];
+  if (!isRecord(slice)) {
+    return [];
+  }
+  const changes = isValueArray(slice['changes']) ? slice['changes'].filter(isRecord) : [];
+  const logs = isValueArray(slice['log']) ? slice['log'].filter(isRecord) : [];
   return normalizeLegacySlice(module, slice, { canDecide: false, names: options.names }).flatMap((batch) =>
     batch.items.flatMap((item): AgentActivityEntry[] => {
       const changeId = parseLegacyKey(item.key)?.id;
-      const change = changes.find(
-        (candidate) => candidate['id'] === changeId && candidate['batchId'] === batch.batchId,
-      );
-      const target = change?.['target'];
+      const change =
+        changes.find((candidate) => candidate['id'] === changeId && candidate['batchId'] === batch.batchId) ?? {};
+      const { target } = change;
       const kind = isRecord(target) ? text(target['kind']) : undefined;
       const resourceId = isRecord(target) ? text(target['id']) : undefined;
       const link = options.recordLinks?.find(
@@ -220,57 +284,72 @@ export const moduleActivityFromRecords = (
         (log) => log['changeId'] === changeId && log['batchId'] === batch.batchId && log['action'] === 'proposed',
       );
       const actionInvocationId = proposedLog === undefined ? undefined : text(proposedLog['invocationId']);
-      const base = {
+      let base: Pick<
+        AgentActivityEntry,
+        'agentName' | 'agentPrincipalId' | 'moduleKey' | 'moduleLabel' | 'proposal' | 'recordReference'
+      > = {
         agentName: batch.agentLabel,
         agentPrincipalId: batch.agentPrincipalId,
-        moduleKey: module.moduleKey,
+        moduleKey: Option.some(AgentModuleKeySchema.make(module.moduleKey)),
         moduleLabel: module.label,
-        proposal: { batchKey: batch.key, itemKey: item.key },
-        ...(resourceId === undefined || link === undefined
-          ? {}
-          : { recordReference: { resourceId, resourceType: link.resourceType } }),
+        proposal: AgentProposalReferenceSchema.make({ batchKey: batch.key, itemKey: item.key }),
       };
-      const entries: AgentActivityEntry[] = [
-        {
+      if (resourceId !== undefined && link !== undefined) {
+        base = {
           ...base,
-          actionLabel: `Návrh: ${item.summary}`,
-          detail: item.targetLabel,
-          id: `proposal:${item.key}`,
-          kind: 'proposal',
-          occurredAt: item.proposedAt,
-          outcomeCode: 'proposed',
-          ...(actionInvocationId === undefined ? {} : { actionInvocationId }),
-        },
-      ];
-      if (item.decidedAt !== undefined && item.status !== 'pending') {
-        const decider = item.decidedByName ?? 'Neznámý uživatel';
-        entries.push({
-          ...base,
-          actionLabel:
-            item.status === 'rejected'
-              ? `Zamítnuto: ${decider}`
-              : item.status === 'failed'
-                ? `Schváleno, ale nešlo provést: ${decider}`
-                : `Schváleno: ${decider}`,
-          detail: item.summary,
-          id: `decision:${item.key}`,
-          kind: 'decision',
-          occurredAt: item.decidedAt,
-          outcomeCode: item.status,
-        });
+          recordReference: AgentRecordReferenceSchema.make({
+            resourceId: AgentResourceIdSchema.make(resourceId),
+            resourceType: AgentResourceTypeSchema.make(link.resourceType),
+          }),
+        };
       }
-      const revertedAt = change === undefined ? undefined : text(change['revertedAt']);
+      let proposed = AgentActivityEntrySchema.make({
+        ...base,
+        actionLabel: `Návrh: ${item.summary}`,
+        detail: item.targetLabel,
+        id: AgentActivityIdSchema.make(`proposal:${item.key}`),
+        kind: 'proposal',
+        occurredAt: item.proposedAt,
+        outcomeCode: 'proposed',
+      });
+      if (actionInvocationId !== undefined) {
+        proposed = { ...proposed, actionInvocationId: AgentActionInvocationIdSchema.make(actionInvocationId) };
+      }
+      const entries: AgentActivityEntry[] = [proposed];
+      if (item.decidedAt !== undefined && item.status !== 'pending') {
+        const decider = item.decidedByName ?? unknownUser;
+        let actionLabel = `Schváleno: ${decider}`;
+        if (item.status === 'rejected') {
+          actionLabel = `Zamítnuto: ${decider}`;
+        } else if (item.status === 'failed') {
+          actionLabel = `Schváleno, ale nešlo provést: ${decider}`;
+        }
+        entries.push(
+          AgentActivityEntrySchema.make({
+            ...base,
+            actionLabel,
+            detail: item.summary,
+            id: AgentActivityIdSchema.make(`decision:${item.key}`),
+            kind: 'decision',
+            occurredAt: item.decidedAt,
+            outcomeCode: item.status,
+          }),
+        );
+      }
+      const revertedAt = Option.getOrUndefined(DateTime.make(text(change['revertedAt']) ?? ''));
       if (revertedAt !== undefined) {
-        const revertedBy = change === undefined ? undefined : text(change['revertedBy']);
-        entries.push({
-          ...base,
-          actionLabel: `Vráceno: ${options.names.get(revertedBy ?? '') ?? 'Neznámý uživatel'}`,
-          detail: item.summary,
-          id: `revert:${item.key}`,
-          kind: 'decision',
-          occurredAt: revertedAt,
-          outcomeCode: 'reverted',
-        });
+        const revertedBy = text(change['revertedBy']);
+        entries.push(
+          AgentActivityEntrySchema.make({
+            ...base,
+            actionLabel: `Vráceno: ${options.names.get(revertedBy ?? '') ?? unknownUser}`,
+            detail: item.summary,
+            id: AgentActivityIdSchema.make(`revert:${item.key}`),
+            kind: 'decision',
+            occurredAt: revertedAt,
+            outcomeCode: 'reverted',
+          }),
+        );
       }
       return entries;
     }),

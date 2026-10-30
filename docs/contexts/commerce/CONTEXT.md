@@ -822,6 +822,23 @@ name is execution routing, not the Payment Method. QR is an instruction/presenta
 not proof of collection.
 _Avoid_: Stripe/GoPay/Comgate as the business method, QR-created = paid, carrier delivery = paid.
 
+**Payment Gateway** — External payment-provider family used to execute the online-gateway Payment
+Method, such as GoPay, Stripe or Comgate. It identifies the provider family, not a particular merchant
+account.
+_Avoid_: provider family as Payment Method, merchant account as Payment Gateway, Core OperationGateway.
+
+**Gateway Enablement** — Current declarative configuration allowing one Payment Gateway family to be
+offered when selecting a gateway for a new Payment intent in an exact Customer Configuration + Selling
+Legal Entity scope. It is separate from the Principal Permission to administer that configuration.
+_Avoid_: administration Permission as enablement, Storefront as gateway-configuration owner, new
+Payment Operation as a new Payment intent.
+
+**Provider Account Binding** — Stable reference to one external merchant account/configuration,
+qualified by Payment Gateway, Tenant, Selling Legal Entity and provider environment. Replacing the
+account creates a different binding; rotating its credentials preserves the binding.
+_Avoid_: unqualified merchant account, provider-local account ID as globally unique identity,
+credential revision as account identity.
+
 **Payment** — Payment-owned canonical intent for one exact non-split purchase payment meaning, exact
 Monetary Amount + currency, selected Payment Method and resolved Payment Term. It owns its logical
 Payment Operations and derived monetary outcomes. At most one collection lineage may be live or
@@ -829,10 +846,18 @@ proven for that Payment; a different operation key never authorizes a second con
 collection. It is not an accounting receivable or an Order.
 _Avoid_: provider PaymentIntent/session as canonical Payment, invoice as Payment, Payment state as Order state.
 
-**Payment Operation** — One immutable logical attempt to cause or control one Payment monetary effect,
-such as collect, cancel/void, or refund. Safe transport/provider retry of the exact same operation
-retains its identity; changed amount/currency/method/refundable-item set is not the same operation.
-_Avoid_: HTTP request as operation identity, new idempotency key as timeout recovery, Order Commitment Attempt.
+**Payment Operation** — One immutable logical attempt to cause or control one Payment monetary effect:
+`COLLECT`, `CANCEL_OR_VOID` or `REFUND`. Safe transport/provider retry retains that identity; a change to
+its amount, currency, method or any applicable Operation Binding, Refund Basis or refundable-item set
+is not the same operation.
+_Avoid_: HTTP request as operation identity, new idempotency key as timeout recovery, Order Commitment
+Attempt, provider retrieval/verification or settlement observation as another monetary operation kind.
+
+**Operation Binding** — Immutable association of one provider-executed Payment Operation with the exact
+Provider Account Binding and provider environment used when it started. A refund of an original gateway
+collection retains that collection's binding even when Current Gateway Enablement or account selection
+has changed.
+_Avoid_: Current account as the automatic refund/recovery destination, credential rotation as rebinding.
 
 **Payment Observation** — Immutable qualified evidence from a gateway, bank/accounting source, carrier
 or explicitly authorized local/POS source about one Payment operation or monetary fact. An observation
@@ -850,6 +875,14 @@ Order was created and the predecessor is closed against late commit, the same Re
 instead compensate the exact remaining unrefunded collection without fabricating Order items.
 _Avoid_: refund request/provider acceptance as completed refund, timeout as compensation authority,
 refund erasing original collection.
+
+**Refund Basis** — Sole immutable authoritative business justification and scope of one `REFUND` Payment Operation:
+complete authoritative refundable items (`REFUNDABLE_ITEMS`), or the exact remaining unrefunded
+collection after authoritative proof that no Order was created for the exact purchase and that the
+corresponding predecessor is closed against late commit (`FAILED_COMMITMENT_COMPENSATION`). Both
+require Current refundable coverage that is safe to return.
+_Avoid_: requested amount as refund authority, timeout as compensation authority, mixed or changed
+basis, fabricated Order items for compensation.
 
 **Payment Settlement / Remittance** — Evidence that already-collected funds were subsequently settled
 or remitted to the merchant. Launch preserves authoritative settlement/remittance observations when

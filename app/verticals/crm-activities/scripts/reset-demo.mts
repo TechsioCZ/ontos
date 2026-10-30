@@ -1,4 +1,4 @@
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -48,7 +48,7 @@ const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: stri
       set: { revision: 0, state, updatedAt: DateTime.toDateUtc(now) },
       target: [relationshipsStates.tenantId, relationshipsStates.legalEntityId],
     });
-  return yield* Console.log('Siampark relationships demo state reset to revision 0');
+  return yield* Console.log('Nájempark relationships demo state reset to revision 0');
 });
 const resetPgLive = PgClient.layerFrom(
   Effect.gen(function* resetPool() {

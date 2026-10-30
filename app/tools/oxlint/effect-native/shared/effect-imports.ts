@@ -11,7 +11,7 @@ export interface EffectBindings {
 
 /**
  * Collect `import { Effect as E, Schema } from "effect"` and `import * as Schema from "effect/Schema"`
- * style bindings for the current program. Sub-path imports such as `effect/unstable/http` map their
+ * style bindings for the current program. Sub-path imports such as `effect/http` map their
  * named exports (e.g. `HttpApiClient`) exactly like root imports.
  */
 export function collectEffectBindings(program: ESTree.Program): EffectBindings {

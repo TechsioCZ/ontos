@@ -5,16 +5,16 @@ import { POST } from "@/app/api/ontos/account/consent/route";
 const input = {
   decision: "GRANTED",
   noticeAcknowledged: true,
-  noticeVersionId: "11111111-1111-4111-8111-111111111111",
-  purposeVersionId: "22222222-2222-4222-8222-222222222222",
+  noticeVersionId: "demo-newsletter.cs.v1",
+  expectedRevision: 0,
   requestId: "33333333-3333-4333-8333-333333333333",
 };
 const projection = {
   decision: "ABSENT",
+  revision: 0,
   notice: {
     language: "cs",
     noticeVersionId: input.noticeVersionId,
-    purposeVersionId: input.purposeVersionId,
     wording: "Skutečné informace od vlastníka souhlasu.",
   },
 };
@@ -26,6 +26,13 @@ describe("customer newsletter consent boundary", () => {
       ...input,
       decision: "WITHDRAWN",
     });
+    expect(
+      customerConsentInput({ ...input, decision: "WITHDRAWN", noticeAcknowledged: false }),
+    ).toEqual({
+      ...input,
+      decision: "WITHDRAWN",
+      noticeAcknowledged: false,
+    });
     for (const malformed of [
       null,
       [],
@@ -35,7 +42,9 @@ describe("customer newsletter consent boundary", () => {
       { ...input, noticeAcknowledged: false },
       { ...input, noticeAcknowledged: undefined },
       { ...input, noticeVersionId: "" },
-      { ...input, purposeVersionId: "invented" },
+      { ...input, expectedRevision: -1 },
+      { ...input, expectedRevision: 0.5 },
+      { ...input, expectedRevision: undefined },
       { ...input, requestId: "invalid" },
     ]) {
       expect(customerConsentInput(malformed)).toBeNull();
@@ -65,8 +74,9 @@ describe("customer newsletter consent boundary", () => {
       {},
       { ...projection, decision: "UNKNOWN" },
       { ...projection, notice: { ...projection.notice, wording: " " } },
-      { ...projection, notice: { ...projection.notice, noticeVersionId: "invented" } },
-      { ...projection, notice: { ...projection.notice, purposeVersionId: "invented" } },
+      { ...projection, notice: { ...projection.notice, noticeVersionId: "" } },
+      { ...projection, revision: -1 },
+      { ...projection, revision: undefined },
       { ...projection, notice: { ...projection.notice, language: "" } },
     ]) {
       expect(isCustomerNewsletterConsent(malformed)).toBe(false);

@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
@@ -45,7 +46,10 @@ const betterAuthOptions = { plugins: [apiKey({ references: 'user' })] };
 /** A shell Auth database whose fixture rows are removed when the test scope closes. */
 const authFixture = Effect.gen(function* authFixture() {
   const configuration = yield* loadAuthConfig();
-  const persistence = yield* makeAuthDatabase(configuration);
+  const persistence = yield* makeAuthDatabase({
+    connectionString: configuration.connectionString,
+    expectedRole: SHARED_RUNTIME_IDENTITY.role,
+  });
   const suffix = `-${randomUUID()}@adapter.example.test`;
   const cleanup = Effect.all(
     [

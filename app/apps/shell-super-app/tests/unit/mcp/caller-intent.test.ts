@@ -1,12 +1,13 @@
 // @rstest-environment node
+import { AgentProposalSubmitResponseSchema } from '@app/shared-contracts/agent-proposals';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from '@modelcontextprotocol/client';
-import { Crypto, Effect, Layer, Option } from 'effect';
-import { HttpRouter } from 'effect/unstable/http';
+import { Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { HttpRouter } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
@@ -48,12 +49,12 @@ const acquireServer = (submissions: Submission[], correlations: string[]) =>
           withMcpActionIntent(
             Effect.gen(function* observeSubmission() {
               submissions.push({ action: yield* Effect.serviceOption(AgentActionRequestIdentity), intent, request });
-              return {
+              return Schema.decodeUnknownSync(AgentProposalSubmitResponseSchema)({
                 batchId: 'observed-batch',
                 proposalIds: ['observed-proposal'],
                 replayed: false,
                 reviewPath: '/cs/sprava/ke-schvaleni',
-              };
+              });
             }),
             intent,
           ),

@@ -5,7 +5,8 @@ import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
-import * as publicSurface from '../../src/index.ts';
+
+const publicSurface = await import('../../src/index.ts');
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',

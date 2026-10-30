@@ -13,6 +13,7 @@ const swc = {
 const workerCycleIntegrationTest = 'tests/integration/party-identity-runtime.test.ts';
 
 export default defineConfig({
+  // Both integration projects mutate one database; serialize them even when invoked directly.
   pool: { maxWorkers: 1 },
   projects: [
     {
@@ -37,7 +38,8 @@ export default defineConfig({
       testTimeout: 30_000,
     },
     {
-      // A worker cycle can claim every tenant's outbox work, so run it separately.
+      // Party worker cycles claim outbox work across every tenant, so this file
+      // must never run alongside the other integration files.
       name: 'integration-worker-cycle',
       testEnvironment: 'node',
       setupFiles: ['./tests/integration/application-composition.setup.ts'],

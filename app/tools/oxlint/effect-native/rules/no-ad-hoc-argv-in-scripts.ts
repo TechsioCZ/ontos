@@ -1,12 +1,13 @@
 /**
- * Audit B3/A8: consequential scripts should declare arguments with effect/unstable/cli.
+ * Audit B3/A8: consequential scripts should declare arguments with effect/cli.
  * Detect raw argv indexing/manipulation, aliases, copies/iteration, node:util parseArgs and
  * configured third-party parser loads/re-exports. Import/global identity is lexical; wrappers
  * and literal computed keys are supported. Node entry indices 0/1 are allowed.
  * Passing full argv directly to a call is an opaque CLI seam, not proof of correct parsing.
- * A slice may be pass-through, so the diagnostic does not claim every hit validates arguments.
+ * A native SDK child argument spread of argv.slice(2) is pass-through when the entire module
+ * leaves raw argv otherwise untouched. Other slices remain migration candidates.
  * B3 prioritizes consequential scripts over trivial wrappers; this syntactic rule cannot
- * infer operational consequence or child-process flag ownership. No cross-file/mutable alias
+ * infer operational consequence beyond that native forwarding shape. No cross-file/mutable alias
  * analysis or arbitrary constant evaluation. Includes workspace-local script segments, not tests.
  * Report-only: no fixers or suggestions.
  */
@@ -15,6 +16,7 @@ import type { ESTree } from '@oxlint/plugins';
 
 import { literalText, propertyText, staticString, unwrap } from '../shared/ast.ts';
 import { importedName } from '../shared/imports.ts';
+import { nativeChildArgvForwardingProof } from '../shared/native-child-argv-forwarding.ts';
 import { stringList } from '../shared/options.ts';
 import { globToRegExp, inScriptScope, scriptScope } from '../shared/paths.ts';
 import { provenance } from '../shared/provenance.ts';
@@ -120,15 +122,15 @@ function boundIndices(pattern: AnyNode): readonly number[] | null {
   return indices;
 }
 
-/** Effect-native rule: a script declares its command line with `effect/unstable/cli`, never by hand. */
+/** Effect-native rule: a script declares its command line with `effect/cli`, never by hand. */
 export const rule = defineRule({
   meta: {
     type: 'problem',
     docs: {
       description:
-        'Audit B3/A8: scripts must declare their command line with effect/unstable/cli (Args, Options, Command) ' +
+        'Audit B3/A8: scripts must declare their command line with effect/cli (Args, Options, Command) ' +
         'instead of parsing process.argv by hand. Every member access, index and destructuring of argv under ' +
-        'scripts/** is reported — except the argv[0]/argv[1] entry guard — as are node:util parseArgs and ' +
+        'scripts/** is reported — except the argv[0]/argv[1] entry guard and proven native child argv forwarding — as are node:util parseArgs and ' +
         'third-party argument parsers. Static lexical provenance includes immutable aliases and literal computed keys; opaque call arguments remain permitted as CLI forwarding seams, not proven CLI identities. Copies and slices are syntactic migration candidates, not proof of parsing.',
       url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#b3-convert-consequential-operational-scripts-into-effect-programs',
     },
@@ -136,35 +138,35 @@ export const rule = defineRule({
       argvIndexAccess:
         'Audit B3/A8: `{{expression}}` reads a positional argument straight out of argv, so the value is an ' +
         'unvalidated string and a missing or extra argument becomes a throw instead of usage output. Do not parse ' +
-        'process.argv by hand: declare this positional with effect/unstable/cli (`Args.text`, `Args.path`, ' +
+        'process.argv by hand: declare this positional with effect/cli (`Args.text`, `Args.path`, ' +
         "`Args.choice('mode', ['prepare', 'verify', 'finalize'])`, `Args.withSchema(...)` for a decoded value), " +
         'attach it to `Command.make`, and run the Command once at the executable edge with ' +
         '`Command.run(command, { name, version })(process.argv)`.',
       argvMemberAccess:
         'Audit B3/A8: `{{expression}}` manipulates raw argv — review whether this is parsing or a trivial forwarding adapter. The repository has several ' +
         'independent ones, each producing untyped strings and throw-based validation. Declare the arguments and ' +
-        'flags of this script with effect/unstable/cli (`Args.*` for positionals, `Options.boolean` / ' +
+        'flags of this script with effect/cli (`Args.*` for positionals, `Options.boolean` / ' +
         '`Options.text` / `Options.integer` for flags, `Command.make` / `Command.withSubcommands` for the shape) ' +
         'and hand argv to `Command.run(command, { name, version })(process.argv)` at the executable edge instead ' +
         'of slicing, filtering or measuring it here.',
       argvDestructuring:
         'Audit B3/A8: `{{expression}}` destructures raw argv, so every positional arrives as an untyped string ' +
-        'and the arity contract lives only in this pattern. Declare the positionals with effect/unstable/cli ' +
+        'and the arity contract lives only in this pattern. Declare the positionals with effect/cli ' +
         '(`Args.text` / `Args.choice` / `Args.path`, `Args.optional`, `Args.repeated`) on a `Command`, decode ' +
         'them through Schema, and run the Command at the executable edge; only the `process.argv[0]` / ' +
         '`process.argv[1]` entry guard may read argv directly.',
       parseArgsImport:
         'Audit B3/A8: importing `parseArgs` from "{{module}}" declares this script\'s command line a second time, ' +
         'in an untyped vocabulary (`string | boolean` values, a thrown `ERR_PARSE_ARGS_*` on bad input, hand-written ' +
-        'usage text). Declare Args/Options with effect/unstable/cli `Command` instead and run the Command at the ' +
+        'usage text). Declare Args/Options with effect/cli `Command` instead and run the Command at the ' +
         'executable edge.',
       parseArgsCall:
         "Audit B3/A8: `{{expression}}` parses the command line with Node's untyped parser — values come back as " +
         '`string | boolean`, errors are thrown rather than typed, and there is no shared usage or `--help` output. ' +
-        'Declare Args/Options with effect/unstable/cli `Command` and run the Command at the executable edge.',
+        'Declare Args/Options with effect/cli `Command` and run the Command at the executable edge.',
       cliPackageImport:
         'Audit B3/A8: "{{module}}" is a second CLI framework in a repository that already standardises on ' +
-        "effect/unstable/cli. Declare this script's Args and Options with `Command.make` (Schema-decoded values, " +
+        "effect/cli. Declare this script's Args and Options with `Command.make` (Schema-decoded values, " +
         'typed failures, generated help) and run it with `Command.run(command, { name, version })(process.argv)` ' +
         'at the executable edge.',
     },
@@ -178,7 +180,7 @@ export const rule = defineRule({
             items: { type: 'string' },
             description:
               'Globs of script files exempted from this rule, matched against the workspace-relative path ' +
-              '(default: none — every script declares its command line with effect/unstable/cli).',
+              '(default: none — every script declares its command line with effect/cli).',
           },
           allowEntryGuardIndices: {
             type: 'array',
@@ -226,6 +228,10 @@ export const rule = defineRule({
 
     const isArgvSource = (node: AnyNode | null): boolean =>
       ['process.argv', 'Bun.argv'].includes(provenance(context, node) ?? '');
+    const nativeChildForwarding = nativeChildArgvForwardingProof(context, (member) => {
+      const index = staticIndex(member);
+      return index !== null && allowedIndices.has(index);
+    });
 
     /** Report a binding/assignment target that is fed directly from argv, unless it is the entry guard. */
     const reportPattern = (target: AnyNode, source: AnyNode, whole: AnyNode): void => {
@@ -284,6 +290,7 @@ export const rule = defineRule({
           });
           return;
         }
+        if (nativeChildForwarding(member)) return;
         report(member as unknown as AnyNode, 'argvMemberAccess', {
           expression: printed(member as unknown as AnyNode),
         });

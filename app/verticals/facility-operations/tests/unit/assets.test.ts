@@ -1,3 +1,4 @@
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { AssetsCommandSchema, evolveAssets } from '../../shared/commands/assets.ts';
@@ -14,14 +15,14 @@ import { seedAssetsState } from '../../scripts/seed/assets.mts';
 
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId: '70000000-0000-4000-8000-000000000020' };
 const input = (resourceId: string): OpsCommandInput => ({
-  actor: actor as OpsCommandInput['actor'],
+  actor: Schema.decodeUnknownSync(PrincipalRefSchema)(actor),
   now: DateTime.makeUnsafe('2026-10-20T08:00:00Z'),
   resourceId,
 });
 const decodeCommand = Schema.decodeUnknownEffect(AssetsCommandSchema);
 const empty = Schema.decodeUnknownEffect(AssetsStateSchema)(emptyAssetsState);
 
-const apply = (state: AssetsState, command: unknown, resourceId: string) =>
+const apply = (state: AssetsState, command: typeof AssetsCommandSchema.Encoded, resourceId: string) =>
   Effect.flatMap(decodeCommand(command), (decoded: AssetsCommand) => evolveAssets(state, decoded, input(resourceId)));
 
 const withAsset = Effect.gen(function* withAssetEffect() {
@@ -58,7 +59,7 @@ it.effect('S02-02 value change keeps the original value and the reason in histor
       },
       'value-1',
     );
-    const asset = changed.state.assets[0];
+    const [asset] = changed.state.assets;
     expect(asset?.currentValueMinor).toBe(12_000_000);
     const event = asset?.events?.find((entry) => entry.kind === 'value_change');
     expect(event?.previousValueMinor).toBe(10_000_000);
@@ -90,7 +91,7 @@ it.effect('S02-04 disposed asset leaves the active list, keeps history and refus
       { _tag: 'AssetDispose', assetId: 'asset-1', date: '2026-10-15', kind: 'retirement', reason: 'Nefunkční' },
       'dispose-1',
     );
-    const asset = disposed.state.assets[0];
+    const [asset] = disposed.state.assets;
     expect(asset?.status).toBe('disposed');
     expect(asset?.events?.map((entry) => entry.kind)).toEqual(['acquisition', 'retirement']);
     const exit = yield* Effect.exit(
@@ -353,8 +354,8 @@ it.effect('disposed depreciation evidence stays read-only for confirmation and a
     );
     for (const command of [
       { _tag: 'AssetDepreciationPlanConfirm', assetId: 'asset-1', planId },
-      { _tag: 'AssetDepreciationEntryRecord', assetId: 'asset-1', planId, amountMinor: 150_000, period: '2026' },
-    ]) {
+      { _tag: 'AssetDepreciationEntryRecord', amountMinor: 150_000, assetId: 'asset-1', period: '2026', planId },
+    ] satisfies readonly (typeof AssetsCommandSchema.Encoded)[]) {
       expect(Exit.isFailure(yield* Effect.exit(apply(disposed.state, command, 'readonly-change')))).toBe(true);
     }
     expect(disposed.state.assets[0]?.depreciationPlans?.[0]?.entries).toEqual([]);

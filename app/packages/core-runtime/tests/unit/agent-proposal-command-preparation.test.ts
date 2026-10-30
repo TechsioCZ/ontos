@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { sha256 as sha256Hash } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 
 import { Context, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -77,7 +79,7 @@ const compositionFixture = () => {
       },
     }),
   );
-  const sha256 = createHash('sha256').update(contractDocument).digest('hex');
+  const sha256 = Hex.encode(sha256Hash(utf8ToBytes(contractDocument)));
   const next = {
     ...base,
     modules: [
@@ -91,9 +93,9 @@ const compositionFixture = () => {
   };
   return {
     ...next,
-    revision: createHash('sha256')
-      .update(canonicalizeApplicationComposition({ ...next, revision: '0'.repeat(64) }))
-      .digest('hex'),
+    revision: Hex.encode(
+      sha256Hash(utf8ToBytes(canonicalizeApplicationComposition({ ...next, revision: '0'.repeat(64) }))),
+    ),
   };
 };
 const composition = compositionFixture();

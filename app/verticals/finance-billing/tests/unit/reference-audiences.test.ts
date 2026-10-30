@@ -1,5 +1,6 @@
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { formatProblemReason, isProblemReason } from '../../shared/domain/problem-reason.ts';
@@ -72,7 +73,7 @@ describe('Finance reference credentials', () => {
     expect(commandReferenceAudiences(manualDraft, [])).toEqual(['party-registry']);
   });
 
-  it('adds one single-use credential per Siampark anchor the validators read', () => {
+  it('adds one single-use credential per Nájempark anchor the validators read', () => {
     expect(invoiceReferenceAudiences({ propertyRef, unitRef })).toEqual([
       'party-registry',
       'property-portfolio',
@@ -88,11 +89,11 @@ describe('Finance reference credentials', () => {
   });
 
   it('lets the server read export partners from the party registry itself', () => {
-    const command = {
+    const command = Schema.decodeSync(FinanceCommandSchema)({
       _tag: 'CreateAccountingExport',
       format: 'POHODA_XML',
       invoiceResourceIds: ['a'],
-    } as const satisfies FinanceCommand;
+    });
 
     expect(commandReferenceAudiences(command, [])).toEqual(['party-registry']);
   });

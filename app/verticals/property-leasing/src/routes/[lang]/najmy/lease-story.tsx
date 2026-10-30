@@ -7,12 +7,14 @@ import type { Task } from '@app/work-tasks/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { Option } from 'effect';
 import type { Effect } from 'effect';
 import type { ReactNode } from 'react';
+import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
 import type { Occupancy, RentTerms } from '../../../../shared/apis/records.ts';
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
+type Translate = ReturnType<typeof useModernI18n>['t'];
 export type TenantDirectoryEntry = Effect.Success<ReturnType<typeof listCustomers>>[number];
 export type LeaseContract = Effect.Success<ReturnType<typeof readAgreements>>['contracts'][number];
 export type LeaseUnit = Effect.Success<ReturnType<typeof readProperty>>['units'][number];
@@ -22,19 +24,20 @@ export type LeaseInvoice = Invoice;
 
 /** Related records of one lease, each loaded independently so a missing permission hides only its own card. */
 export interface LeaseRelated {
-  readonly invoices: readonly LeaseInvoice[] | 'unavailable' | undefined;
-  readonly tasks: readonly LeaseTask[] | 'unavailable' | undefined;
+  readonly invoices: Option.Option<readonly LeaseInvoice[] | 'unavailable'>;
+  readonly tasks: Option.Option<readonly LeaseTask[] | 'unavailable'>;
 }
 
 const P = 'property-leasing';
 const mutedClass = 'propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)';
-const rowClass =
-  `${surfaceTileClassName} propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-3 propertyleasing:p-3 propertyleasing:text-sm`;
+const rowClass = `${surfaceTileClassName} propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-3 propertyleasing:p-3 propertyleasing:text-sm`;
 
-const isLoadedList = <A,>(value: readonly A[] | 'unavailable' | undefined): value is readonly A[] =>
-  value !== undefined && value !== 'unavailable';
-export const loadedList = <A,>(value: readonly A[] | 'unavailable' | undefined): readonly A[] =>
-  isLoadedList(value) ? value : [];
+export const loadedList = <A,>(value: Option.Option<readonly A[] | 'unavailable'>): readonly A[] => {
+  if (Option.isNone(value) || value.value === 'unavailable') {
+    return [];
+  }
+  return value.value;
+};
 export const monthlyTotal = (terms: RentTerms) => terms.monthlyRentMinor + terms.serviceChargesMinor;
 export const sameRentTerms = (left: RentTerms, right: RentTerms) =>
   left.monthlyRentMinor === right.monthlyRentMinor &&
@@ -44,7 +47,7 @@ export const sameRentTerms = (left: RentTerms, right: RentTerms) =>
 /** Parses a Czech amount in whole crowns (`12 500`, `12500,50`) into haléře; `undefined` when not a number. */
 export const parseCrowns = (value: string): number | undefined => {
   const normalized = value.replaceAll(/\s/gu, '').replace(',', '.');
-  if (normalized.length === 0 || !/^\d+(\.\d{1,2})?$/u.test(normalized)) {
+  if (normalized.length === 0 || !/^\d+(?:\.\d{1,2})?$/u.test(normalized)) {
     return undefined;
   }
   return Math.round(Number(normalized) * 100);
@@ -52,7 +55,10 @@ export const parseCrowns = (value: string): number | undefined => {
 export const crownsInput = (minor: number) => (minor % 100 === 0 ? String(minor / 100) : (minor / 100).toFixed(2));
 
 /** The contract of a lease: the activated contract ref first, otherwise the newest contract drafted for it. */
-export const leaseContract = (record: Occupancy, contracts: readonly LeaseContract[] | undefined) => {
+export const leaseContract = (
+  record: Occupancy,
+  contracts: readonly LeaseContract[] | undefined,
+): LeaseContract | undefined => {
   if (contracts === undefined) {
     return undefined;
   }
@@ -108,10 +114,7 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
             ? 'propertyleasing:border-2 propertyleasing:border-(--color-fg-secondary) bg-base'
             : 'propertyleasing:border-transparent bg-base';
         return (
-          <li
-            className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2"
-            key={step.label}
-          >
+          <li className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2" key={step.label}>
             {step.href === undefined || step.current === true ? (
               <div
                 aria-current={step.current === true ? 'step' : undefined}
@@ -377,119 +380,129 @@ export const ContractCard = ({
 export const TasksCard = ({
   language,
   t,
-  tasks,
+  tasks: state,
 }: {
   readonly language: string;
   readonly t: Translate;
   readonly tasks: LeaseRelated['tasks'];
-}) => (
-  <SectionCard
-    actions={
-      <LinkButton
-        href={`/${language}/ukoly`}
-        icon="icon-[mdi--arrow-right]"
-        size="sm"
-        theme="borderless"
-        variant="secondary"
-      >
-        {t(`${P}.related.openTasks`)}
-      </LinkButton>
-    }
-    title={t(`${P}.related.tasksCard`)}
-  >
-    {tasks === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
-    {tasks === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.tasksUnavailable`)}</p>}
-    {isLoadedList(tasks) && tasks.length === 0 && <p className={mutedClass}>{t(`${P}.related.noTasks`)}</p>}
-    {isLoadedList(tasks) && tasks.length > 0 && (
-      <ul className="propertyleasing:space-y-2">
-        {tasks.map((task) => (
-          <li className={rowClass} key={task.ref.resourceId}>
-            <a
-              className="propertyleasing:min-w-0 propertyleasing:font-medium"
-              href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}
-            >
-              {task.title} →
-            </a>
-            <span className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2">
-              {task.dueDate !== undefined && (
-                <span className={mutedClass}>{t(`${P}.related.due`, { date: formatDate(task.dueDate) })}</span>
-              )}
-              <Badge size="sm" variant={taskBadge[task.state]}>
-                {t(`${P}.related.taskStates.${task.state}`)}
-              </Badge>
-            </span>
-          </li>
-        ))}
-      </ul>
-    )}
-  </SectionCard>
-);
+}) => {
+  const tasks = Option.getOrUndefined(state);
+  return (
+    <SectionCard
+      actions={
+        <LinkButton
+          href={`/${language}/ukoly`}
+          icon="icon-[mdi--arrow-right]"
+          size="sm"
+          theme="borderless"
+          variant="secondary"
+        >
+          {t(`${P}.related.openTasks`)}
+        </LinkButton>
+      }
+      title={t(`${P}.related.tasksCard`)}
+    >
+      {tasks === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
+      {tasks === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.tasksUnavailable`)}</p>}
+      {tasks !== undefined && tasks !== 'unavailable' && tasks.length === 0 && (
+        <p className={mutedClass}>{t(`${P}.related.noTasks`)}</p>
+      )}
+      {tasks !== undefined && tasks !== 'unavailable' && tasks.length > 0 && (
+        <ul className="propertyleasing:space-y-2">
+          {tasks.map((task) => (
+            <li className={rowClass} key={task.ref.resourceId}>
+              <a
+                className="propertyleasing:min-w-0 propertyleasing:font-medium"
+                href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}
+              >
+                {task.title} →
+              </a>
+              <span className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2">
+                {task.dueDate !== undefined && (
+                  <span className={mutedClass}>{t(`${P}.related.due`, { date: formatDate(task.dueDate) })}</span>
+                )}
+                <Badge size="sm" variant={taskBadge[task.state]}>
+                  {t(`${P}.related.taskStates.${task.state}`)}
+                </Badge>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
+  );
+};
 
 export const InvoicesCard = ({
-  invoices,
+  invoices: state,
   language,
   t,
 }: {
   readonly invoices: LeaseRelated['invoices'];
   readonly language: string;
   readonly t: Translate;
-}) => (
-  <SectionCard
-    actions={
-      <LinkButton
-        href={`/${language}/finance`}
-        icon="icon-[mdi--arrow-right]"
-        size="sm"
-        theme="borderless"
-        variant="secondary"
-      >
-        {t(`${P}.related.allInvoices`)}
-      </LinkButton>
-    }
-    title={t(`${P}.related.invoicesCard`)}
-  >
-    {invoices === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
-    {invoices === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.invoicesUnavailable`)}</p>}
-    {isLoadedList(invoices) && invoices.length === 0 && <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>}
-    {isLoadedList(invoices) && invoices.length > 0 && (
-      <ul className="propertyleasing:space-y-2">
-        {invoices.map((invoice) => (
-          <li className={rowClass} key={invoice.ref.resourceId}>
-            <span className="propertyleasing:min-w-0">
-              <span className="propertyleasing:block propertyleasing:font-medium">
-                {invoice.number ?? invoice.documentNumber}
+}) => {
+  const invoices = Option.getOrUndefined(state);
+  return (
+    <SectionCard
+      actions={
+        <LinkButton
+          href={`/${language}/finance`}
+          icon="icon-[mdi--arrow-right]"
+          size="sm"
+          theme="borderless"
+          variant="secondary"
+        >
+          {t(`${P}.related.allInvoices`)}
+        </LinkButton>
+      }
+      title={t(`${P}.related.invoicesCard`)}
+    >
+      {invoices === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
+      {invoices === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.invoicesUnavailable`)}</p>}
+      {invoices !== undefined && invoices !== 'unavailable' && invoices.length === 0 && (
+        <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>
+      )}
+      {invoices !== undefined && invoices !== 'unavailable' && invoices.length > 0 && (
+        <ul className="propertyleasing:space-y-2">
+          {invoices.map((invoice) => (
+            <li className={rowClass} key={invoice.ref.resourceId}>
+              <span className="propertyleasing:min-w-0">
+                <span className="propertyleasing:block propertyleasing:font-medium">
+                  {invoice.number ?? invoice.documentNumber}
+                </span>
+                <span className={mutedClass}>
+                  {formatDate(invoice.issueDate)} · {formatMoney(invoice.totalMinor, invoice.currency)}
+                </span>
               </span>
-              <span className={mutedClass}>
-                {formatDate(invoice.issueDate)} · {formatMoney(invoice.totalMinor, invoice.currency)}
+              <span className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
+                <Badge size="sm" variant={invoiceBadge[invoice.businessState]}>
+                  {t(`${P}.related.invoiceStates.${invoice.businessState}`)}
+                </Badge>
+                <Badge size="sm" variant={invoice.paymentState === 'PAID' ? 'success' : 'outline'}>
+                  {t(`${P}.related.paymentStates.${invoice.paymentState}`)}
+                </Badge>
+                <LinkButton
+                  href={`/${language}/finance?resourceId=${invoice.ref.resourceId}`}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(`${P}.related.openInvoice`)}
+                </LinkButton>
               </span>
-            </span>
-            <span className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
-              <Badge size="sm" variant={invoiceBadge[invoice.businessState]}>
-                {t(`${P}.related.invoiceStates.${invoice.businessState}`)}
-              </Badge>
-              <Badge size="sm" variant={invoice.paymentState === 'PAID' ? 'success' : 'outline'}>
-                {t(`${P}.related.paymentStates.${invoice.paymentState}`)}
-              </Badge>
-              <LinkButton
-                href={`/${language}/finance?resourceId=${invoice.ref.resourceId}`}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {t(`${P}.related.openInvoice`)}
-              </LinkButton>
-            </span>
-          </li>
-        ))}
-      </ul>
-    )}
-  </SectionCard>
-);
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
+  );
+};
 
 export const RentEditButton = ({
+  disabled,
   label,
   onClick,
-  disabled,
 }: {
   readonly disabled: boolean;
   readonly label: string;

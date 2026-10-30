@@ -1,4 +1,5 @@
-import type { AgentActivityEntry } from '@app/shared-contracts/agent-proposals';
+import { AgentActivityEntrySchema, AgentRecordReferenceSchema } from '@app/shared-contracts/agent-proposals';
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,7 +12,7 @@ import { buildMcpModules } from '../../../api/mcp/catalog.ts';
 import { fixtureComposition } from '../mcp/fixture-vertical.ts';
 
 const link = {
-  commands: [{ tag: 'UpdateNote', idField: 'noteId' }],
+  commands: [{ idField: 'noteId', tag: 'UpdateNote' }],
   idField: 'id',
   labelField: 'title',
   path: '/notes',
@@ -19,7 +20,7 @@ const link = {
   recordsPath: 'state.notes',
   resourceType: 'fixture.note',
 };
-const entry: AgentActivityEntry = {
+const entry = Schema.decodeUnknownSync(AgentActivityEntrySchema)({
   actionLabel: 'Návrh: Upravit poznámku',
   agentName: 'Agent',
   agentPrincipalId: 'agent-1',
@@ -29,20 +30,19 @@ const entry: AgentActivityEntry = {
   moduleLabel: 'Poznámky',
   occurredAt: '2026-10-23T10:00:00Z',
   outcomeCode: 'proposed',
-  recordReference: { resourceId: 'a /&?', resourceType: 'fixture.note' },
   proposal: { batchKey: 'core:batch', itemKey: 'core:proposal' },
-};
-const module = buildMcpModules(fixtureComposition).modules[0];
-if (module === undefined) throw new Error('Fixture module is missing');
+  recordReference: { resourceId: 'a /&?', resourceType: 'fixture.note' },
+});
+const absentDestinations: Partial<Pick<ActivityLinkAccess, 'identityPage' | 'module'>> = {};
+const [module] = buildMcpModules(fixtureComposition).modules;
+if (module === undefined) {
+  throw new Error('Fixture module is missing');
+}
 const access: ActivityLinkAccess = {
   agentExists: true,
   canManageAgents: true,
   canOpenModule: true,
   canReviewProposals: true,
-  identityPage: '/sprava/lide-a-role',
-  module: { ...module, page: '/notes', recordLinks: [link] },
-  personExists: false,
-  records: { state: { notes: [{ id: 'a /&?', title: 'Poznámka zákazníka' }] } },
   grants: [
     {
       actingKind: 'agent',
@@ -52,6 +52,10 @@ const access: ActivityLinkAccess = {
       writePolicy: 'approval',
     },
   ],
+  identityPage: '/sprava/lide-a-role',
+  module: { ...module, page: '/notes', recordLinks: [link] },
+  personExists: false,
+  records: { state: { notes: [{ id: 'a /&?', title: 'Poznámka zákazníka' }] } },
 };
 
 it('resolves record references from module-declared commands, never by guessing command fields', () => {
@@ -97,12 +101,23 @@ it('does not link a missing, deleted, invisible or unavailable record', () => {
   }
   expect(resolveActivityRecord([], entry.recordReference, access.records)).toBeUndefined();
   expect(resolveActivityRecord([link], undefined, access.records)).toBeUndefined();
-  expect(resolveActivityRecord([link], { resourceId: 'a /&?', resourceType: 'other' }, access.records)).toBeUndefined();
+  expect(
+    resolveActivityRecord(
+      [link],
+      Schema.decodeUnknownSync(AgentRecordReferenceSchema)({ resourceId: 'a /&?', resourceType: 'other' }),
+      access.records,
+    ),
+  ).toBeUndefined();
 });
 
 it('keeps unknown modules, absent agents and grants, and audit entries with no detail destination as text', () => {
   const { proposal: _proposal, ...audit } = entry;
-  const resolved = resolveActivityLinks(audit, { ...access, agentExists: false, grants: [], module: undefined });
+  const resolved = resolveActivityLinks(audit, {
+    ...access,
+    agentExists: false,
+    grants: [],
+    module: absentDestinations.module,
+  });
   expect(resolved.actionPath).toBeUndefined();
   expect(resolved.agentPath).toBeUndefined();
   expect(resolved.modulePath).toBeUndefined();
@@ -125,6 +140,8 @@ it('links human-delegated OAuth activity to its real person identity, not a fabr
 });
 
 it('does not substitute a connections filter when the real identity destination is unavailable', () => {
-  expect(resolveActivityLinks(entry, { ...access, identityPage: undefined }).agentPath).toBeUndefined();
+  expect(
+    resolveActivityLinks(entry, { ...access, identityPage: absentDestinations.identityPage }).agentPath,
+  ).toBeUndefined();
   expect(resolveActivityLinks(entry, { ...access, agentExists: false }).agentPath).toBeUndefined();
 });

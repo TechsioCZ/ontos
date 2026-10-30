@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as Arr,
@@ -17,9 +17,9 @@ import {
   Schedule,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 
 import {
   SHARED_RUNTIME_IDENTITY,
@@ -101,7 +101,7 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * `database-identities` login roles (from a host on the Zerops VPN), and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
  * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK, plus the caller credentials
  * ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY, ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY,
- * and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
+ * ONTOS_CRM_PARTY_INTAKE_API_KEY and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
  * locally authenticated `zcli`. No secret value is ever printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
@@ -278,6 +278,7 @@ export interface WorkerSecretSources {
   readonly betterAuthSecret: Redacted.Redacted;
   readonly commerceCustomerContextGatewayApiKey: Redacted.Redacted;
   readonly commerceMarketCatalogGatewayApiKey: Redacted.Redacted;
+  readonly crmPartyIntakeApiKey: Redacted.Redacted;
   readonly gatewayPrivateJwk: Redacted.Redacted;
   readonly gatewayPublicJwks: Redacted.Redacted;
   readonly pricingGatewayApiKey: Redacted.Redacted;
@@ -292,23 +293,61 @@ const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
     ['ONTOS_GATEWAY_PRIVATE_JWK', sources.gatewayPrivateJwk],
   ]);
 
+const gatewayApiKeys = new Map<string, { readonly binding: string; readonly source: keyof WorkerSecretSources }>([
+  [
+    'commerce-customer-context',
+    { binding: 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', source: 'commerceCustomerContextGatewayApiKey' },
+  ],
+  [
+    'commerce-market-catalog',
+    { binding: 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', source: 'commerceMarketCatalogGatewayApiKey' },
+  ],
+  ['crm', { binding: 'ONTOS_CRM_PARTY_INTAKE_API_KEY', source: 'crmPartyIntakeApiKey' }],
+  ['pricing', { binding: 'ONTOS_PRICING_GATEWAY_API_KEY', source: 'pricingGatewayApiKey' }],
+]);
+const SHELL_GATEWAY_BASE_URL = 'ONTOS_SHELL_GATEWAY_BASE_URL';
+
+/**
+ * Full cutover provisions every outbound client. Immutable release preserves the native unavailable
+ * client state in Market Catalog and Pricing; their dependent operations still fail closed.
+ * Configuring either binding requires both. CRM can derive its URL from the trusted stage issuer.
+ * Foundation, Shell, and the Commerce enrollment client's bindings remain mandatory.
+ */
+export const workerReleaseSecretNames = (
+  unit: EdgeUnit,
+  planned: SecretValues,
+  configured: Readonly<Record<string, string>>,
+): readonly string[] => {
+  const plannedNames = Object.keys(planned);
+  const issuer = planned.ONTOS_GATEWAY_ISSUER;
+  if (
+    unit.id === 'crm' &&
+    !Object.hasOwn(configured, SHELL_GATEWAY_BASE_URL) &&
+    issuer !== undefined &&
+    configured.ONTOS_GATEWAY_ISSUER === Redacted.value(issuer)
+  ) {
+    return plannedNames.filter((name) => name !== SHELL_GATEWAY_BASE_URL);
+  }
+  if (unit.id !== 'commerce-market-catalog' && unit.id !== 'pricing') {
+    return plannedNames;
+  }
+  const client = gatewayApiKeys.get(unit.id);
+  if (
+    client === undefined ||
+    Object.hasOwn(configured, client.binding) ||
+    Object.hasOwn(configured, SHELL_GATEWAY_BASE_URL)
+  ) {
+    return plannedNames;
+  }
+  return plannedNames.filter((name) => name !== client.binding && name !== SHELL_GATEWAY_BASE_URL);
+};
+
 const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerSecretSources) => {
   const secrets = new Map([['ONTOS_GATEWAY_PUBLIC_JWKS', sources.gatewayPublicJwks]]);
-  const gatewayApiKeys = new Map<string, readonly [string, Redacted.Redacted]>([
-    [
-      'commerce-customer-context',
-      ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', sources.commerceCustomerContextGatewayApiKey] as const,
-    ],
-    [
-      'commerce-market-catalog',
-      ['ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', sources.commerceMarketCatalogGatewayApiKey] as const,
-    ],
-    ['pricing', ['ONTOS_PRICING_GATEWAY_API_KEY', sources.pricingGatewayApiKey] as const],
-  ]);
   const gatewayApiKey = gatewayApiKeys.get(unit.id);
   if (gatewayApiKey !== undefined) {
-    secrets.set(gatewayApiKey[0], gatewayApiKey[1]);
-    secrets.set('ONTOS_SHELL_GATEWAY_BASE_URL', Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
+    secrets.set(gatewayApiKey.binding, sources[gatewayApiKey.source]);
+    secrets.set(SHELL_GATEWAY_BASE_URL, Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
   }
   return secrets;
 };
@@ -418,13 +457,14 @@ const readWorkerSecretSources = Effect.gen(function* readWorkerSecretSourcesEffe
     ...(yield* Config.all({
       commerceCustomerContextGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
       commerceMarketCatalogGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+      crmPartyIntakeApiKey: Config.Redacted('ONTOS_CRM_PARTY_INTAKE_API_KEY'),
       pricingGatewayApiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
     }).pipe(
       Effect.mapError(
         (cause) =>
           new StageOperationError({
             cause,
-            message: 'the workload gateway API keys are missing; provide all three caller keys in the settings',
+            message: 'the workload gateway API keys are missing; provide all four caller keys in the settings',
           }),
       ),
     )),

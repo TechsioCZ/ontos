@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Schema } from 'effect';
 
-import { PropertyDateSchema } from '../../shared/apis/records.ts';
+import { PropertyDateSchema, PropertyStateSchema } from '../../shared/apis/records.ts';
+import { isStaffOnlyPropertyCommand, PropertyCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
 import { applyPropertyCommand } from '../../src/services/persistence.service.ts';
 
@@ -76,39 +77,114 @@ it.effect('persists property operational metadata on creation and updates withou
       empty,
       {
         ...create,
+        lifecycleState: 'ACTIVE',
+        note: 'Areál u parku',
         propertyType: 'Administrativní budova',
         responsiblePerson: 'Jana Novotná',
-        note: 'Areál u parku',
-        lifecycleState: 'ACTIVE',
       },
       context,
     );
     const property = yield* Effect.fromNullishOr(created.state.properties[0]);
     expect(property).toMatchObject({
+      lifecycleState: 'ACTIVE',
+      note: 'Areál u parku',
       propertyType: 'Administrativní budova',
       responsiblePerson: 'Jana Novotná',
-      note: 'Areál u parku',
-      lifecycleState: 'ACTIVE',
     });
     const updated = yield* applyPropertyCommand(
       created.state,
       {
         _tag: 'UpdateProperty',
-        propertyRef: property.propertyRef,
-        name: property.name,
         address: property.address,
+        name: property.name,
         note: 'Nový správce areálu',
+        propertyRef: property.propertyRef,
         responsiblePerson: 'Petr Dvořák',
       },
       context,
     );
     expect(updated.state.properties[0]).toMatchObject({
+      lifecycleState: 'ACTIVE',
+      note: 'Nový správce areálu',
+      propertyRef: property.propertyRef,
       propertyType: 'Administrativní budova',
       responsiblePerson: 'Petr Dvořák',
-      note: 'Nový správce areálu',
-      lifecycleState: 'ACTIVE',
-      propertyRef: property.propertyRef,
     });
+  }),
+);
+
+it.effect('round-trips multiple responsible employees and replaces the selection when a property is edited', () =>
+  Effect.gen(function* responsibleEmployees() {
+    const employeeIds = ['75000000-0000-4000-8000-000000000001', '75000000-0000-4000-8000-000000000002'] as const;
+    const command = yield* Schema.decodeEffect(PropertyCommandSchema)({
+      ...create,
+      responsibleEmployeeIds: employeeIds,
+    });
+    const created = yield* applyPropertyCommand(empty, command, context);
+    const state = yield* Schema.decodeEffect(PropertyStateSchema)(created.state);
+    const property = yield* Effect.fromNullishOr(state.properties[0]);
+    expect(property.responsibleEmployeeIds).toEqual(employeeIds);
+    const updated = yield* applyPropertyCommand(
+      state,
+      yield* Schema.decodeEffect(PropertyCommandSchema)({
+        _tag: 'UpdateProperty',
+        address: property.address,
+        name: property.name,
+        note: property.note,
+        propertyRef: property.propertyRef,
+        responsibleEmployeeIds: [employeeIds[1]],
+      }),
+      context,
+    );
+    const updatedState = yield* Schema.decodeEffect(PropertyStateSchema)(updated.state);
+    expect(updatedState.properties[0]?.responsibleEmployeeIds).toEqual([employeeIds[1]]);
+    const unchanged = yield* applyPropertyCommand(
+      updatedState,
+      {
+        _tag: 'UpdateProperty',
+        address: property.address,
+        name: property.name,
+        note: property.note,
+        propertyRef: property.propertyRef,
+      },
+      context,
+    );
+    expect(unchanged.state.properties[0]?.responsibleEmployeeIds).toEqual([employeeIds[1]]);
+  }),
+);
+
+it.effect('rejects free text and an empty employee selection while retaining legacy property records', () =>
+  Effect.gen(function* employeeSelectionValidation() {
+    for (const responsibleEmployeeIds of [[], ['Já'], 'Jana Novotná']) {
+      const result = yield* Effect.exit(
+        Schema.decodeUnknownEffect(PropertyCommandSchema)({ ...create, responsibleEmployeeIds }),
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+    }
+    const legacy = yield* applyPropertyCommand(empty, { ...create, responsiblePerson: 'Původní správce' }, context);
+    const decoded = yield* Schema.decodeEffect(PropertyStateSchema)(legacy.state);
+    expect(decoded.properties[0]?.responsiblePerson).toBe('Původní správce');
+    expect(decoded.properties[0]?.responsibleEmployeeIds).toBeUndefined();
+  }),
+);
+
+it.effect('preserves optional note encoding and staff-only archive classification', () =>
+  Effect.gen(function* commandCompatibility() {
+    const commands = yield* Effect.forEach(
+      [create, { ...create, note: null }, { ...create, note: 'Poznámka' }],
+      (input) => Schema.decodeEffect(PropertyCommandSchema)(input),
+    );
+    expect(commands).toEqual([create, { ...create, note: null }, { ...create, note: 'Poznámka' }]);
+    expect(commands.map(isStaffOnlyPropertyCommand)).toEqual([false, false, false]);
+    const created = yield* applyPropertyCommand(empty, create, context);
+    const { propertyRef } = yield* Effect.fromNullishOr(created.state.properties[0]);
+    for (const raw of [
+      { _tag: 'ArchiveProperty', propertyRef, reason: 'Test' },
+      { _tag: 'RestoreProperty', propertyRef },
+    ]) {
+      const command = yield* Schema.decodeUnknownEffect(PropertyCommandSchema)(raw);
+      expect(isStaffOnlyPropertyCommand(command)).toBe(true);
+    }
   }),
 );
 
@@ -217,6 +293,19 @@ describe('Staff archive of demo records', () => {
         context,
       );
       expect(archived.state.units[0]?.archive?.reason).toBe('Test');
+      const asset = {
+        _tag: 'CreateAsset',
+        category: 'Vybavení',
+        code: 'ASSET-ARCHIVE',
+        name: 'Testovací vybavení',
+        propertyRef,
+        unitRef,
+      } as const;
+      const blockedAsset = yield* Effect.exit(applyPropertyCommand(archived.state, asset, context));
+      expect(Exit.isFailure(blockedAsset)).toBe(true);
+      const restored = yield* applyPropertyCommand(archived.state, { _tag: 'RestoreUnit', unitRef }, context);
+      const allowedAsset = yield* applyPropertyCommand(restored.state, asset, context);
+      expect(allowedAsset.state.assets[0]?.unitRef).toEqual(unitRef);
     }),
   );
 });

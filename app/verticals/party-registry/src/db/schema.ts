@@ -1,4 +1,7 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY, PARTY_REGISTRY_WORKER_IDENTITY } from '../../shared/database-identities.ts';
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import {
   gatewayScopedTenantLegalEntityRlsPolicies,
   gatewayScopedTenantRlsPolicies,

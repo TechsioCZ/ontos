@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -206,7 +207,7 @@ describe('Set composition component Current basis', () => {
       const unavailable = setCompositionBasisForScope(transactionFor({ unavailableProduct: true }), scope);
       const error = yield* unavailable.verify({ at, revision }).pipe(Effect.flip);
       expect(Schema.is(SetCompositionPersistenceUnavailable)(error)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
   it('preserves exact configured Definition and measurement Unit revisions', () => {
     const definitionId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
@@ -318,14 +319,14 @@ describe('Set composition component Current basis', () => {
         expect(result.dependencies).toHaveLength(8);
         expect(result.dependencies.map((item) => item.revision)).toEqual([3, 4, 6, 5, 3, 4, 6, 5]);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects nested and retired components without dropping a need', () =>
     Effect.gen(function* invalidComponents() {
       expect(yield* read({ nested: true })).toMatchObject({ code: 'NESTED_SET', status: 'INVALID' });
       expect(yield* read({ retired: true })).toMatchObject({ status: 'INVALID' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when an omitted component Configuration has an owner definition', () =>
@@ -333,7 +334,7 @@ describe('Set composition component Current basis', () => {
       expect(yield* read({ configurationDefinitionIds: ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'] })).toMatchObject({
         status: 'INDETERMINATE',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a Set Product even when the component selection hides it behind a Package Option', () =>
@@ -358,7 +359,7 @@ describe('Set composition component Current basis', () => {
         ],
       });
       expect(yield* read({ nested: true }, candidate)).toMatchObject({ code: 'NESTED_SET', status: 'INVALID' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('distinguishes confirmed missing Product or Variant from an unavailable owner read', () =>
@@ -373,7 +374,7 @@ describe('Set composition component Current basis', () => {
       });
       const error = yield* read({ unavailableProduct: true }).pipe(Effect.flip);
       expect(Schema.is(SetCompositionPersistenceUnavailable)(error)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects an exact Unit mismatch instead of treating a stale target basis as Current', () =>
@@ -382,7 +383,7 @@ describe('Set composition component Current basis', () => {
         code: 'COMPONENT_UNIT_MISMATCH',
         status: 'INVALID',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a stale selected Package Content revision', () =>
@@ -407,7 +408,7 @@ describe('Set composition component Current basis', () => {
         ],
       });
       expect(yield* read({}, candidate)).toMatchObject({ status: 'INVALID' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('issues fresh component-bound proofs when stable needs are re-keyed', () =>
@@ -425,6 +426,6 @@ describe('Set composition component Current basis', () => {
         expect(result.proofs[0]?.componentId).toBe('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
         expect(result.dependencies[0]?.componentId).toBe('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

@@ -18,6 +18,7 @@ import { Config, DateTime, Effect, Schema } from 'effect';
 
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { decodedStringBrand } from '../../actions/string-schemas.ts';
 import {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
@@ -33,32 +34,39 @@ import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from '
 const uuid = Schema.String.check(Schema.isUUID());
 const text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 const roleKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
+const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
+const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
+const RoleKeySchema = decodedStringBrand(roleKey, 'RoleKey');
+const AuditRoleKeySchema = decodedStringBrand(Schema.String, 'RoleKey');
+const AuditPrincipalIdSchema = decodedStringBrand(Schema.String, 'PrincipalId');
 const status = Schema.Literals(['active', 'disabled']);
 
 export const ManageDemoAccountPayloadSchema = Schema.Union([
   Schema.Struct({
-    authBindingId: uuid,
+    authBindingId: AuthBindingIdSchema,
     authUserId: text(120),
     displayName: text(200),
     email: text(320),
     operation: Schema.Literal('create'),
-    principalId: uuid,
-    roleKey,
+    principalId: PrincipalIdSchema,
+    roleKey: RoleKeySchema,
     roleLabel: text(120),
   }),
   Schema.Struct({
     operation: Schema.Literal('change-role'),
-    previousRoleKey: Schema.NullOr(roleKey),
-    previousRoleLabel: Schema.NullOr(text(120)),
-    principalId: uuid,
-    roleKey,
+    previousRoleKey: Schema.toEncoded(Schema.OptionFromNullOr(RoleKeySchema)).pipe(
+      Schema.decodeTo(Schema.toEncoded(Schema.OptionFromNullOr(roleKey))),
+    ),
+    previousRoleLabel: Schema.toEncoded(Schema.OptionFromNullOr(text(120))),
+    principalId: PrincipalIdSchema,
+    roleKey: RoleKeySchema,
     roleLabel: text(120),
   }),
   Schema.Struct({
     expectedStatus: status,
     newStatus: status,
     operation: Schema.Literal('change-status'),
-    principalId: uuid,
+    principalId: PrincipalIdSchema,
     reason: Schema.optionalKey(text(500)),
   }),
 ]);
@@ -66,26 +74,26 @@ export type ManageDemoAccountPayload = typeof ManageDemoAccountPayloadSchema.Typ
 
 export const ManageDemoAccountResultSchema = Schema.Struct({
   operation: Schema.Literals(['create', 'change-role', 'change-status']),
-  principalId: uuid,
+  principalId: PrincipalIdSchema,
   status,
 });
 export type ManageDemoAccountResult = typeof ManageDemoAccountResultSchema.Type;
 
-const nullableText = Schema.NullOr(Schema.String);
+const nullableText = Schema.toEncoded(Schema.OptionFromNullOr(Schema.String));
 /** Stored in `core.audit_events.evidence_json`; the admin UI renders the audit trail from it. */
 export const ManageDemoAccountAuditEvidenceSchema = Schema.Struct({
   displayName: nullableText,
   email: nullableText,
-  newRoleKey: nullableText,
+  newRoleKey: Schema.toEncoded(Schema.OptionFromNullOr(AuditRoleKeySchema)).pipe(Schema.decodeTo(nullableText)),
   newRoleLabel: nullableText,
   newStatus: nullableText,
   operation: Schema.String,
-  previousRoleKey: nullableText,
+  previousRoleKey: Schema.toEncoded(Schema.OptionFromNullOr(AuditRoleKeySchema)).pipe(Schema.decodeTo(nullableText)),
   previousRoleLabel: nullableText,
   previousStatus: nullableText,
   principalKind: nullableText,
   reason: nullableText,
-  targetPrincipalId: Schema.String,
+  targetPrincipalId: AuditPrincipalIdSchema,
 });
 type AuditEvidence = typeof ManageDemoAccountAuditEvidenceSchema.Type;
 

@@ -30,11 +30,13 @@ import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { resolveSearchNormalization } from '../search-normalization.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const partiesEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.search.parties',
-  moduleKey: 'party.registry',
+  moduleKey: PARTY_REGISTRY_MODULE_ID,
   role: 'search',
 });
 
@@ -133,7 +135,7 @@ export const makePartySearchProjectionGateway = (
             ? {
                 effectiveAt: input.effectiveAt,
                 includeArchived: input.includeArchived,
-                moduleId: 'party.registry',
+                moduleId: PARTY_REGISTRY_MODULE_ID,
                 query: input.query,
                 resourceType: 'party.registry.counterparty',
                 selectedLegalEntityId: input.legalEntityId,
@@ -143,7 +145,7 @@ export const makePartySearchProjectionGateway = (
                 effectiveAt: input.effectiveAt,
                 facets: [{ key: 'current-role', values: [input.role] }],
                 includeArchived: input.includeArchived,
-                moduleId: 'party.registry',
+                moduleId: PARTY_REGISTRY_MODULE_ID,
                 query: input.query,
                 resourceType: 'party.registry.counterparty',
                 selectedLegalEntityId: input.legalEntityId,
@@ -164,7 +166,7 @@ export const makePartySearchProjectionGateway = (
         .search(
           {
             includeArchived: input.includeArchived,
-            moduleId: 'party.registry',
+            moduleId: PARTY_REGISTRY_MODULE_ID,
             query: input.query,
             resourceType: 'party.registry.party',
             tenantId: input.tenantId,
@@ -222,7 +224,7 @@ export const partiesRead = defineRead(
     },
     inputSchema: PartiesProviderRequestSchema,
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.search.parties',

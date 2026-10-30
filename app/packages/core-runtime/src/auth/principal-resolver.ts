@@ -276,9 +276,6 @@ export interface PrincipalResolverConfiguration {
   readonly authenticationNamespaceId: string;
 }
 
-/** Last audited denial per deactivated principal (process-local rate limit for the denial audit). */
-const inactiveDenialAuditedAt = new Map<string, number>();
-
 export const makePrincipalResolver = (
   database: {
     readonly executor: CoreDatabaseExecutor;
@@ -286,6 +283,8 @@ export const makePrincipalResolver = (
   configuration: PrincipalResolverConfiguration,
 ): PrincipalResolverService => {
   const { authenticationNamespaceId } = configuration;
+  /** Last audited denial for this resolver runtime, scoped to its database and authentication namespace. */
+  const inactiveDenialAuditedAt = new Map<string, number>();
   const recordRepository: PrincipalResolutionRecordRepository = {
     load: (subject, tenantId) =>
       database.executor
@@ -363,7 +362,7 @@ export const makePrincipalResolver = (
               .pipe(Effect.ignore);
           }),
         ),
-      { discard: true },
+      { concurrency: 1, discard: true },
     );
   const loadRecords = (subject: ProviderSubject, tenantId?: string) =>
     loadPrincipalResolutionRecords(recordRepository, subject, tenantId).pipe(

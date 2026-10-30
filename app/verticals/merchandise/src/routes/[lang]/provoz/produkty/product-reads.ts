@@ -5,7 +5,7 @@ import type { Duration } from 'effect';
 import { useEffect, useState } from 'react';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import type { RecordsRequestEncoded, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CATEGORY_RESULT_LIMIT } from '../../../../../shared/domain/category-search.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 
@@ -32,24 +32,22 @@ const correlation = (purpose: string) =>
   Random.nextInt.pipe(Effect.map((nonce) => `merchandise:product-search:${purpose}:${nonce}`));
 
 /** One page of summary rows matching `search` (name, SKU), optionally only active products. */
-export const searchProducts = (search: string, activeOnly: boolean) =>
-  correlation('list').pipe(
-    Effect.flatMap((id) =>
-      executeRecords(
-        {
-          view: {
-            limit: PRODUCT_SEARCH_LIMIT,
-            ordersLimit: 0,
-            summary: true,
-            ...(search === '' ? {} : { search }),
-            ...(activeOnly ? { active: true } : {}),
-          },
-        },
-        id,
-      ),
-    ),
+type SearchView = {
+  -readonly [Key in keyof NonNullable<RecordsRequestEncoded['view']>]: NonNullable<RecordsRequestEncoded['view']>[Key];
+};
+export const searchProducts = (search: string, activeOnly: boolean) => {
+  const view: SearchView = { limit: PRODUCT_SEARCH_LIMIT, ordersLimit: 0, summary: true };
+  if (search !== '') {
+    view.search = search;
+  }
+  if (activeOnly) {
+    view.active = true;
+  }
+  return correlation('list').pipe(
+    Effect.flatMap((id) => executeRecords({ view }, id)),
     Effect.map((response) => response.products),
   );
+};
 
 /** Tree categories whose path matches `text` (blank = top-level ones), best first, with the match count. */
 export const searchCategoryTrails = (text: string) =>
@@ -74,7 +72,8 @@ export const readProductRecord = (productId: ProductId) =>
   );
 
 export type ProductRecordState =
-  | { readonly status: 'idle' | 'loading' | 'error' }
+  | { readonly status: 'idle' | 'loading' }
+  | { readonly cause?: Effect.Error<ReturnType<typeof readProductRecord>>; readonly status: 'error' }
   | { readonly product: ProductRecord; readonly status: 'ready' };
 
 /** Reads the full record of one picked product and reports the outcome; the caller drops it for a stale pick. */
@@ -82,7 +81,7 @@ export const loadProductRecord = (productId: ProductId, onLoaded: (state: Produc
   void browserRuntime.runPromise(
     readProductRecord(productId).pipe(
       Effect.match({
-        onFailure: (): ProductRecordState => ({ status: 'error' }),
+        onFailure: (cause): ProductRecordState => ({ cause, status: 'error' }),
         onSuccess: (product): ProductRecordState =>
           product === undefined ? { status: 'error' } : { product, status: 'ready' },
       }),

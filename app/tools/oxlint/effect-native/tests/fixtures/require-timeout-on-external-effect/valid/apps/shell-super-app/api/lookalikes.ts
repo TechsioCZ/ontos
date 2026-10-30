@@ -1,6 +1,6 @@
 // Shapes that look external but are not the tracked Effect/HttpClient calls.
 import { Effect } from 'effect';
-import { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClientRequest } from 'effect/http';
 
 declare const fetchJson: { get: (url: string) => Promise<string> };
 declare const repository: { execute: (sql: string) => Promise<void>; head: () => Promise<void> };

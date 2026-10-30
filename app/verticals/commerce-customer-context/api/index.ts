@@ -1,15 +1,11 @@
-import {
-  customerOwnConsentReadApiLive,
-  customerOwnConsentUpdateApiLive,
-  commerceConsentAuthorityApiLive,
-  commerceConsentNoticeAuthorityApiLive,
-} from './portal-auth/consent/http.ts';
+import { customerOwnConsentReadApiLive, customerOwnConsentUpdateApiLive } from './portal-auth/consent/http.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { EmailDeliveryService } from '@app/email-delivery/server';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -74,6 +70,7 @@ import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unav
 import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
 import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
 import { CommercePortalAuthPlatformEmailDeliveryLive } from './portal-auth/provider/platform-email-delivery.ts';
+import type { CommercePortalAuthPlatformEmailSubmit } from './portal-auth/provider/platform-email-delivery.ts';
 import { CommercePortalAuthRecoveryStoreLive } from '../src/portal-auth/persistence/portal-auth-recovery-store.ts';
 import { CommercePortalAuthTransactionalEmailLive } from './portal-auth/provider/transactional-email.ts';
 import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
@@ -125,7 +122,7 @@ import {
   commerceCustomerAuthorityUnavailableLive,
 } from './portal-auth/session/customer-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   CommerceEnrollmentOwnerTransitionPreparation,
   CommerceEnrollmentPreparedOwnerCapability,
@@ -283,6 +280,18 @@ import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramo
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
+const commercePortalAuthPlatformEmailDeliveryLive = CommercePortalAuthPlatformEmailDeliveryLive(
+  Effect.fn('CommercePortalAuth.submitPlatformEmail')(function* submitPortalEmail(
+    transport: Parameters<CommercePortalAuthPlatformEmailSubmit>[0],
+    from: Parameters<CommercePortalAuthPlatformEmailSubmit>[1],
+    message: Parameters<CommercePortalAuthPlatformEmailSubmit>[2],
+  ) {
+    const delivery = yield* Layer.build(transport.deliveryLayer(from, message.to));
+    const service = Context.get(delivery, EmailDeliveryService);
+    return yield* service.send(message);
+  }, Effect.scoped),
+).pipe(Layer.provide(commercePortalAuthPlatformCryptoLive));
+
 const commercePortalAuthRecoveryStoreLive = CommercePortalAuthRecoveryStoreLive.pipe(
   Layer.provideMerge(CommercePortalAuthDatabaseLive),
 );
@@ -353,7 +362,7 @@ const commercePortalAuthAccountCreationReconciliationRealmLive =
         CommercePortalAuthAccountCreationProviderLive.pipe(Layer.provide(commercePortalAuthProviderRealmLive)),
       ),
     ),
-    Layer.provide(Layer.mergeAll(CommercePortalAuthConfigLive, CommercePortalAuthPlatformEmailDeliveryLive)),
+    Layer.provide(Layer.mergeAll(CommercePortalAuthConfigLive, commercePortalAuthPlatformEmailDeliveryLive)),
   );
 /**
  * The private provider account-creation capability the enrollment start route dispatches through.
@@ -576,7 +585,7 @@ const commerceEnrollmentOwnerTransitionPreparationUnavailableLive = Layer.succee
 const portalAuthConfiguredRuntimeLive = commercePortalAuthRealmLive.pipe(
   Layer.provideMerge(CommercePortalAuthConfigLive),
   // The deployment's installed mail transport; a test composition provides its own.
-  Layer.provide(CommercePortalAuthPlatformEmailDeliveryLive),
+  Layer.provide(commercePortalAuthPlatformEmailDeliveryLive),
 );
 
 /**
@@ -608,7 +617,9 @@ const deploymentCustomerAuthorityLive = Layer.unwrap(
   coreIdentityTransportConfigured.pipe(
     Effect.map((configured) =>
       configured
-        ? commerceCustomerAuthorityLive.pipe(Layer.provide(commerceCoreIdentityRealmLive))
+        ? commerceCustomerAuthorityLive.pipe(
+            Layer.provide(Layer.mergeAll(commerceCoreIdentityRealmLive, commercePortalAuthPlatformCryptoLive)),
+          )
         : commerceCustomerAuthorityUnavailableLive,
     ),
   ),
@@ -782,7 +793,7 @@ const actionRuntimeAwaitingOwnerPreparation = enrollmentAwareActionRuntimeLive.p
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provideMerge(purchaseApprovalCurrentnessFactoryLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
   Layer.provide(databaseIdentitiesLive),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
@@ -794,7 +805,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
   Layer.provide(databaseIdentitiesLive),
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
@@ -892,8 +903,6 @@ export const makeCommerceCustomerContextApiRuntime = (
     commercePortalAuthVerificationApiLive,
     customerOwnConsentReadApiLive,
     customerOwnConsentUpdateApiLive,
-    commerceConsentAuthorityApiLive,
-    commerceConsentNoticeAuthorityApiLive,
     customerOwnProfileReadApiLive,
     customerOwnProfileUpdateApiLive,
     // <generated-governed-http-handler-layers>

@@ -4,7 +4,6 @@ import {
   createMicroVerticalOperationContext,
 } from '@modern-js/bff-effect/microvertical-api';
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
-/* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. expires: 2026-12-31. */
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { Brand, identity } from 'effect';
 
@@ -36,32 +35,478 @@ import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts'
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
 
-export * from './command-api.ts';
-export * from './engagement-profile-api.ts';
+export {
+  AcceptRetailEnrollmentEvidencePayloadSchema,
+  AcceptRetailEnrollmentEvidenceResultSchema,
+  RetailEnrollmentEvidenceSchema,
+  AddContactPointPayloadSchema,
+  AddContactPointResultSchema,
+  AddPartyOfficialIdentifierPayloadSchema,
+  AddPartyOfficialIdentifierResultSchema,
+  ArchivePartyPayloadSchema,
+  ArchivePartyResultSchema,
+  ConfirmDuplicatePartiesPayloadSchema,
+  ConfirmDuplicatePartiesResultSchema,
+  CorrectPartyFactPayloadSchema,
+  CorrectPartyFactResultSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
+  CounterpartyCustomerOnboardResultSchema,
+  CounterpartyCreatePayloadSchema,
+  CounterpartyCreateResultSchema,
+  CounterpartyRoleAddPayloadSchema,
+  CounterpartyRoleAddResultSchema,
+  CounterpartyRoleEndPayloadSchema,
+  CounterpartyRoleEndResultSchema,
+  CreatePartyRelationshipPayloadSchema,
+  CreatePartyRelationshipResultSchema,
+  CreatePartyPayloadJsonSchema,
+  CreatePartyPayloadSchema,
+  CreatePartyResultSchema,
+  DismissDuplicateCandidatePayloadSchema,
+  DismissDuplicateCandidateResultSchema,
+  EndContactPointPayloadSchema,
+  EndContactPointResultSchema,
+  EndPartyOfficialIdentifierPayloadSchema,
+  EndPartyOfficialIdentifierResultSchema,
+  EndPartyRelationshipPayloadSchema,
+  EndPartyRelationshipResultSchema,
+  MarkDuplicateCandidateNeedsEvidencePayloadSchema,
+  MarkDuplicateCandidateNeedsEvidenceResultSchema,
+  MatchPartyPayloadSchema,
+  MatchPartyResultSchema,
+  RequestSearchRebuildPayloadSchema,
+  RequestSearchRebuildResultSchema,
+  ResolveDuplicateCandidateCreatePayloadSchema,
+  ResolveDuplicateCandidateCreateResultSchema,
+  ResolveDuplicateCandidateMatchPayloadSchema,
+  ResolveDuplicateCandidateMatchResultSchema,
+  UnarchivePartyPayloadSchema,
+  UnarchivePartyResultSchema,
+  UpdateContactPointPayloadSchema,
+  UpdateContactPointResultSchema,
+  UpdatePartyOfficialIdentifierPayloadSchema,
+  UpdatePartyOfficialIdentifierResultSchema,
+  UpdatePartyRelationshipPayloadSchema,
+  UpdatePartyRelationshipResultSchema,
+  UpdatePartyPayloadSchema,
+  UpdatePartyResultSchema,
+  PartyCommandInvalidRequestProblemSchema,
+  PartyCommandSchemaErrorMiddleware,
+  PartyCommandAuthenticationProblemSchema,
+  PartyCommandForbiddenProblemSchema,
+  PartyCommandNotFoundProblemSchema,
+  PartyCommandConflictProblemSchema,
+  PartyCommandUnprocessableProblemSchema,
+  PartyCommandPreconditionRequiredProblemSchema,
+  PartyCommandUnavailableProblemSchema,
+  PartyCommandAlreadyCommittedProblemSchema,
+  PartyCommandCommitIndeterminateProblemSchema,
+  DuplicateCandidateResolutionActionKeySchema,
+  ResolvePartyCommandCommitPayloadSchema,
+  ResolvePartyCommandCommitResultSchema,
+  PartyCommandInternalProblemSchema,
+  PartyCommandAliasWriteRejectedProblemSchema,
+  partyRegistryCommandsApi,
+  partyRegistryCommandRecoveryApi,
+} from './command-api.ts';
+export type {
+  AcceptRetailEnrollmentEvidencePayload,
+  RetailEnrollmentEvidence,
+  AddContactPointPayload,
+  AddPartyOfficialIdentifierPayload,
+  ArchivePartyPayload,
+  ConfirmDuplicatePartiesPayload,
+  CorrectPartyFactPayload,
+  CounterpartyCustomerOnboardPayload,
+  CounterpartyCreatePayload,
+  CounterpartyRoleAddPayload,
+  CounterpartyRoleEndPayload,
+  CreatePartyRelationshipPayload,
+  CreatePartyPayload,
+  DismissDuplicateCandidatePayload,
+  EndContactPointPayload,
+  EndPartyOfficialIdentifierPayload,
+  EndPartyRelationshipPayload,
+  MarkDuplicateCandidateNeedsEvidencePayload,
+  MatchPartyPayload,
+  RequestSearchRebuildPayload,
+  ResolveDuplicateCandidateCreatePayload,
+  ResolveDuplicateCandidateMatchPayload,
+  UnarchivePartyPayload,
+  UpdateContactPointPayload,
+  UpdatePartyOfficialIdentifierPayload,
+  UpdatePartyRelationshipPayload,
+  UpdatePartyPayload,
+  ResolvePartyCommandCommitPayload,
+  ResolvePartyCommandCommitResult,
+  PartyCommandProblem,
+} from './command-api.ts';
+export {
+  EngagementProfileIdSchema,
+  EngagementProfileNotFound,
+  EngagementProfileConflict,
+  EngagementProfilePersistenceUnavailable,
+  PartyRegistryReferenceUnavailable,
+  EngagementIsoTimestampSchema,
+  OrganizationEngagementProfileSchema,
+  PersonEngagementProfileSchema,
+  AttachOrganizationEngagementPayloadSchema,
+  AttachPersonEngagementPayloadSchema,
+  OrganizationEngagementLifecyclePayloadSchema,
+  PersonEngagementLifecyclePayloadSchema,
+  OrganizationEngagementProfileRequestSchema,
+  OrganizationEngagementProfileResponseSchema,
+  OrganizationEngagementProfileAuthenticationProblemSchema,
+  OrganizationEngagementProfileInvalidProblemSchema,
+  OrganizationEngagementProfileUnavailableProblemSchema,
+  OrganizationEngagementProfileForbiddenProblemSchema,
+  OrganizationEngagementProfileNotFoundProblemSchema,
+  OrganizationEngagementProfilePolicyProblemSchema,
+  OrganizationEngagementProfilePolicyConflictProblemSchema,
+  OrganizationEngagementProfileInternalProblemSchema,
+  OrganizationEngagementProfileApi,
+  PersonEngagementProfileRequestSchema,
+  PersonEngagementProfileResponseSchema,
+  PersonEngagementProfileAuthenticationProblemSchema,
+  PersonEngagementProfileInvalidProblemSchema,
+  PersonEngagementProfileUnavailableProblemSchema,
+  PersonEngagementProfileForbiddenProblemSchema,
+  PersonEngagementProfileNotFoundProblemSchema,
+  PersonEngagementProfilePolicyProblemSchema,
+  PersonEngagementProfilePolicyConflictProblemSchema,
+  PersonEngagementProfileInternalProblemSchema,
+  PersonEngagementProfileApi,
+  ContactsInvalidRequestProblemSchema,
+  ContactsAuthenticationProblemSchema,
+  ContactsForbiddenProblemSchema,
+  ContactsNotFoundProblemSchema,
+  ContactsConflictProblemSchema,
+  ContactsPreconditionRequiredProblemSchema,
+  ContactsUnavailableProblemSchema,
+  ContactsInternalProblemSchema,
+  organizationEngagementMutationApi,
+  personEngagementMutationApi,
+  engagementProfileOperationContexts,
+} from './engagement-profile-api.ts';
+export type {
+  OrganizationEngagementProfile,
+  PersonEngagementProfile,
+  AttachOrganizationEngagementPayload,
+  AttachPersonEngagementPayload,
+  OrganizationEngagementLifecyclePayload,
+  PersonEngagementLifecyclePayload,
+  OrganizationEngagementProfileRequest,
+  OrganizationEngagementProfileResponse,
+  PersonEngagementProfileRequest,
+  PersonEngagementProfileResponse,
+  ContactsProblem,
+} from './engagement-profile-api.ts';
 export { normalizePhone } from './domain/contact-point.ts';
 export type { NormalizedPhone } from './domain/contact-point.ts';
 export { customerSegmentDefinitions } from './domain/customer-segment-definitions.ts';
 export type { CustomerSegmentCode, CustomerSegmentDefinition } from './domain/customer-segment-definitions.ts';
 
-export * from './apis/ares-lookup.ts';
-export * from './apis/counterparties-search.ts';
-export * from './apis/counterparty-read.ts';
-export * from './apis/counterparty-role-history.ts';
-export * from './apis/duplicate-candidate-detail.ts';
-export * from './apis/guest-party-resolution.ts';
-export * from './apis/parties-search.ts';
-export * from './apis/party-contact-point-detail.ts';
-export * from './apis/party-contact-points.ts';
-export * from './apis/party-correction.ts';
-export * from './apis/party-detail.ts';
-export * from './apis/party-match-decision.ts';
-export * from './apis/party-match.ts';
-export * from './apis/party-merge-readiness.ts';
-export * from './apis/party-official-identifier-detail.ts';
-export * from './apis/party-official-identifier-history.ts';
-export * from './apis/party-relationship-detail.ts';
-export * from './apis/execute-privacy-measure-action.ts';
-export * from './apis/privacy-measure-execution.ts';
+export {
+  AresLookupRequestSchema,
+  AresLookupResponseSchema,
+  AresLookupInvalidProblemSchema,
+  AresLookupAuthenticationProblemSchema,
+  AresLookupForbiddenProblemSchema,
+  AresLookupNotFoundProblemSchema,
+  AresLookupPolicyConflictProblemSchema,
+  AresLookupPolicyProblemSchema,
+  AresLookupUnavailableProblemSchema,
+  AresLookupInternalProblemSchema,
+  AresLookupApi,
+} from './apis/ares-lookup.ts';
+export type { AresLookupRequest, AresLookupResponse } from './apis/ares-lookup.ts';
+export {
+  CounterpartiesProviderRequestSchema,
+  CounterpartiesProviderResponseSchema,
+  CounterpartiesProviderUnavailableProblemSchema,
+  CounterpartiesProviderAuthenticationProblemSchema,
+  CounterpartiesProviderInvalidProblemSchema,
+  CounterpartiesProviderForbiddenProblemSchema,
+  CounterpartiesProviderNotFoundProblemSchema,
+  CounterpartiesProviderPolicyProblemSchema,
+  CounterpartiesProviderPolicyConflictProblemSchema,
+  CounterpartiesProviderInternalProblemSchema,
+  CounterpartiesSearchApi,
+} from './apis/counterparties-search.ts';
+export type { CounterpartiesProviderRequest, CounterpartiesProviderResponse } from './apis/counterparties-search.ts';
+export {
+  CounterpartyReadRequestSchema,
+  CounterpartyReadResponseSchema,
+  CounterpartyReadAuthenticationProblemSchema,
+  CounterpartyReadInvalidProblemSchema,
+  CounterpartyReadUnavailableProblemSchema,
+  CounterpartyReadForbiddenProblemSchema,
+  CounterpartyReadNotFoundProblemSchema,
+  CounterpartyReadPolicyProblemSchema,
+  CounterpartyReadPolicyConflictProblemSchema,
+  CounterpartyReadInternalProblemSchema,
+  CounterpartyReadApi,
+} from './apis/counterparty-read.ts';
+export type { CounterpartyReadRequest, CounterpartyReadResponse } from './apis/counterparty-read.ts';
+export {
+  CounterpartyRoleHistoryRequestSchema,
+  CounterpartyRoleHistoryResponseSchema,
+  CounterpartyRoleHistoryAuthenticationProblemSchema,
+  CounterpartyRoleHistoryInvalidProblemSchema,
+  CounterpartyRoleHistoryUnavailableProblemSchema,
+  CounterpartyRoleHistoryForbiddenProblemSchema,
+  CounterpartyRoleHistoryNotFoundProblemSchema,
+  CounterpartyRoleHistoryPolicyProblemSchema,
+  CounterpartyRoleHistoryPolicyConflictProblemSchema,
+  CounterpartyRoleHistoryInternalProblemSchema,
+  CounterpartyRoleHistoryApi,
+} from './apis/counterparty-role-history.ts';
+export type {
+  CounterpartyRoleHistoryRequest,
+  CounterpartyRoleHistoryResponse,
+} from './apis/counterparty-role-history.ts';
+export {
+  DuplicateCandidateDetailRequestSchema,
+  DuplicateCandidateDetailResponseSchema,
+  DuplicateCandidateDetailAuthenticationProblemSchema,
+  DuplicateCandidateDetailInvalidProblemSchema,
+  DuplicateCandidateDetailUnavailableProblemSchema,
+  DuplicateCandidateDetailForbiddenProblemSchema,
+  DuplicateCandidateDetailNotFoundProblemSchema,
+  DuplicateCandidateDetailPolicyProblemSchema,
+  DuplicateCandidateDetailPolicyConflictProblemSchema,
+  DuplicateCandidateDetailInternalProblemSchema,
+  DuplicateCandidateDetailApi,
+} from './apis/duplicate-candidate-detail.ts';
+export type {
+  DuplicateCandidateDetailRequest,
+  DuplicateCandidateDetailResponse,
+} from './apis/duplicate-candidate-detail.ts';
+export {
+  GuestPartyResolutionRequestSchema,
+  GuestPartyResolutionResponseSchema,
+  GuestPartyResolutionAuthenticationProblemSchema,
+  GuestPartyResolutionInvalidProblemSchema,
+  GuestPartyResolutionUnavailableProblemSchema,
+  GuestPartyResolutionForbiddenProblemSchema,
+  GuestPartyResolutionNotFoundProblemSchema,
+  GuestPartyResolutionPolicyProblemSchema,
+  GuestPartyResolutionPolicyConflictProblemSchema,
+  GuestPartyResolutionInternalProblemSchema,
+  GuestPartyResolutionApi,
+} from './apis/guest-party-resolution.ts';
+export type { GuestPartyResolutionRequest, GuestPartyResolutionResponse } from './apis/guest-party-resolution.ts';
+export {
+  PartiesProviderRequestSchema,
+  PartiesProviderResponseSchema,
+  PartiesProviderUnavailableProblemSchema,
+  PartiesProviderAuthenticationProblemSchema,
+  PartiesProviderInvalidProblemSchema,
+  PartiesProviderForbiddenProblemSchema,
+  PartiesProviderNotFoundProblemSchema,
+  PartiesProviderPolicyProblemSchema,
+  PartiesProviderPolicyConflictProblemSchema,
+  PartiesProviderInternalProblemSchema,
+  PartiesSearchApi,
+} from './apis/parties-search.ts';
+export type { PartiesProviderRequest, PartiesProviderResponse } from './apis/parties-search.ts';
+export {
+  PartyContactPointDetailRequestSchema,
+  PartyContactPointDetailResponseSchema,
+  PartyContactPointDetailAuthenticationProblemSchema,
+  PartyContactPointDetailInvalidProblemSchema,
+  PartyContactPointDetailUnavailableProblemSchema,
+  PartyContactPointDetailForbiddenProblemSchema,
+  PartyContactPointDetailNotFoundProblemSchema,
+  PartyContactPointDetailPolicyProblemSchema,
+  PartyContactPointDetailPolicyConflictProblemSchema,
+  PartyContactPointDetailInternalProblemSchema,
+  PartyContactPointDetailApi,
+} from './apis/party-contact-point-detail.ts';
+export type {
+  PartyContactPointDetailRequest,
+  PartyContactPointDetailResponse,
+} from './apis/party-contact-point-detail.ts';
+export {
+  PartyContactPointsRequestSchema,
+  PartyContactPointsResponseSchema,
+  PartyContactPointsAuthenticationProblemSchema,
+  PartyContactPointsInvalidProblemSchema,
+  PartyContactPointsUnavailableProblemSchema,
+  PartyContactPointsForbiddenProblemSchema,
+  PartyContactPointsNotFoundProblemSchema,
+  PartyContactPointsPolicyProblemSchema,
+  PartyContactPointsPolicyConflictProblemSchema,
+  PartyContactPointsInternalProblemSchema,
+  PartyContactPointsApi,
+} from './apis/party-contact-points.ts';
+export type { PartyContactPointsRequest, PartyContactPointsResponse } from './apis/party-contact-points.ts';
+export {
+  PartyCorrectionRequestSchema,
+  PartyCorrectionResponseSchema,
+  PartyCorrectionAuthenticationProblemSchema,
+  PartyCorrectionInvalidProblemSchema,
+  PartyCorrectionUnavailableProblemSchema,
+  PartyCorrectionForbiddenProblemSchema,
+  PartyCorrectionNotFoundProblemSchema,
+  PartyCorrectionPolicyProblemSchema,
+  PartyCorrectionPolicyConflictProblemSchema,
+  PartyCorrectionInternalProblemSchema,
+  PartyCorrectionApi,
+} from './apis/party-correction.ts';
+export type { PartyCorrectionRequest, PartyCorrectionResponse } from './apis/party-correction.ts';
+export {
+  PartyDetailRequestSchema,
+  PartyFactAssertionSchema,
+  PartyDetailResolutionSchema,
+  PartyDetailResponseSchema,
+  PartyDetailAuthenticationProblemSchema,
+  PartyDetailInvalidProblemSchema,
+  PartyDetailUnavailableProblemSchema,
+  PartyDetailForbiddenProblemSchema,
+  PartyDetailNotFoundProblemSchema,
+  PartyDetailPolicyProblemSchema,
+  PartyDetailPolicyConflictProblemSchema,
+  PartyDetailInternalProblemSchema,
+  PartyDetailApi,
+} from './apis/party-detail.ts';
+export type {
+  PartyDetailRequest,
+  PartyFactAssertion,
+  PartyDetailResolution,
+  PartyDetailResponse,
+} from './apis/party-detail.ts';
+export {
+  PartyMatchDecisionRequestSchema,
+  PartyMatchDecisionResponseSchema,
+  PartyMatchDecisionAuthenticationProblemSchema,
+  PartyMatchDecisionInvalidProblemSchema,
+  PartyMatchDecisionUnavailableProblemSchema,
+  PartyMatchDecisionForbiddenProblemSchema,
+  PartyMatchDecisionNotFoundProblemSchema,
+  PartyMatchDecisionPolicyProblemSchema,
+  PartyMatchDecisionPolicyConflictProblemSchema,
+  PartyMatchDecisionInternalProblemSchema,
+  PartyMatchDecisionApi,
+} from './apis/party-match-decision.ts';
+export type { PartyMatchDecisionRequest, PartyMatchDecisionResponse } from './apis/party-match-decision.ts';
+export {
+  PartyMatchRequestSchema,
+  PartyMatchResponseSchema,
+  PartyMatchAuthenticationProblemSchema,
+  PartyMatchInvalidProblemSchema,
+  PartyMatchUnavailableProblemSchema,
+  PartyMatchForbiddenProblemSchema,
+  PartyMatchNotFoundProblemSchema,
+  PartyMatchPolicyProblemSchema,
+  PartyMatchPolicyConflictProblemSchema,
+  PartyMatchInternalProblemSchema,
+  PartyMatchApi,
+} from './apis/party-match.ts';
+export type { PartyMatchRequest, PartyMatchResponse } from './apis/party-match.ts';
+export {
+  PartyMergeReadinessRequestSchema,
+  PartyMergeReadinessResponseSchema,
+  PartyMergeReadinessAuthenticationProblemSchema,
+  PartyMergeReadinessInvalidProblemSchema,
+  PartyMergeReadinessUnavailableProblemSchema,
+  PartyMergeReadinessForbiddenProblemSchema,
+  PartyMergeReadinessNotFoundProblemSchema,
+  PartyMergeReadinessPolicyProblemSchema,
+  PartyMergeReadinessPolicyConflictProblemSchema,
+  PartyMergeReadinessInternalProblemSchema,
+  PartyMergeReadinessApi,
+} from './apis/party-merge-readiness.ts';
+export type { PartyMergeReadinessRequest, PartyMergeReadinessResponse } from './apis/party-merge-readiness.ts';
+export {
+  PartyOfficialIdentifierDetailRequestSchema,
+  PartyOfficialIdentifierDetailResponseSchema,
+  PartyOfficialIdentifierDetailAuthenticationProblemSchema,
+  PartyOfficialIdentifierDetailInvalidProblemSchema,
+  PartyOfficialIdentifierDetailUnavailableProblemSchema,
+  PartyOfficialIdentifierDetailForbiddenProblemSchema,
+  PartyOfficialIdentifierDetailNotFoundProblemSchema,
+  PartyOfficialIdentifierDetailPolicyProblemSchema,
+  PartyOfficialIdentifierDetailPolicyConflictProblemSchema,
+  PartyOfficialIdentifierDetailInternalProblemSchema,
+  PartyOfficialIdentifierDetailApi,
+} from './apis/party-official-identifier-detail.ts';
+export type {
+  PartyOfficialIdentifierDetailRequest,
+  PartyOfficialIdentifierDetailResponse,
+} from './apis/party-official-identifier-detail.ts';
+export {
+  PartyOfficialIdentifierHistoryRequestSchema,
+  PartyOfficialIdentifierHistoryResponseSchema,
+  PartyOfficialIdentifierHistoryAuthenticationProblemSchema,
+  PartyOfficialIdentifierHistoryInvalidProblemSchema,
+  PartyOfficialIdentifierHistoryUnavailableProblemSchema,
+  PartyOfficialIdentifierHistoryForbiddenProblemSchema,
+  PartyOfficialIdentifierHistoryNotFoundProblemSchema,
+  PartyOfficialIdentifierHistoryPolicyProblemSchema,
+  PartyOfficialIdentifierHistoryPolicyConflictProblemSchema,
+  PartyOfficialIdentifierHistoryInternalProblemSchema,
+  PartyOfficialIdentifierHistoryApi,
+} from './apis/party-official-identifier-history.ts';
+export type {
+  PartyOfficialIdentifierHistoryRequest,
+  PartyOfficialIdentifierHistoryResponse,
+} from './apis/party-official-identifier-history.ts';
+export {
+  PartyRelationshipDetailRequestSchema,
+  PartyRelationshipDetailResponseSchema,
+  PartyRelationshipDetailAuthenticationProblemSchema,
+  PartyRelationshipDetailInvalidProblemSchema,
+  PartyRelationshipDetailUnavailableProblemSchema,
+  PartyRelationshipDetailForbiddenProblemSchema,
+  PartyRelationshipDetailNotFoundProblemSchema,
+  PartyRelationshipDetailPolicyProblemSchema,
+  PartyRelationshipDetailPolicyConflictProblemSchema,
+  PartyRelationshipDetailInternalProblemSchema,
+  PartyRelationshipDetailApi,
+} from './apis/party-relationship-detail.ts';
+export type {
+  PartyRelationshipDetailRequest,
+  PartyRelationshipDetailResponse,
+} from './apis/party-relationship-detail.ts';
+export {
+  ExecutePrivacyMeasurePayloadSchema,
+  ExecutePrivacyMeasureActionInvalidProblemSchema,
+  ExecutePrivacyMeasureActionAuthenticationProblemSchema,
+  ExecutePrivacyMeasureActionForbiddenProblemSchema,
+  ExecutePrivacyMeasureActionNotFoundProblemSchema,
+  ExecutePrivacyMeasureActionConflictProblemSchema,
+  ExecutePrivacyMeasureActionIneligibleProblemSchema,
+  ExecutePrivacyMeasureActionPreconditionProblemSchema,
+  ExecutePrivacyMeasureActionUnavailableProblemSchema,
+  ExecutePrivacyMeasureActionAlreadyCommittedProblemSchema,
+  ExecutePrivacyMeasureActionCommitIndeterminateProblemSchema,
+  ExecutePrivacyMeasureActionInternalProblemSchema,
+  ExecutePrivacyMeasureActionSchemaErrorMiddleware,
+  executePrivacyMeasureActionGroupDefinition,
+  ExecutePrivacyMeasureActionApi,
+} from './apis/execute-privacy-measure-action.ts';
+export type {
+  ExecutePrivacyMeasureActionProblem,
+  ExecutePrivacyMeasureActionGroupContract,
+} from './apis/execute-privacy-measure-action.ts';
+export {
+  PrivacyMeasureExecutionRequestSchema,
+  PrivacyMeasureExecutionResponseSchema,
+  PrivacyMeasureExecutionAuthenticationProblemSchema,
+  PrivacyMeasureExecutionInvalidProblemSchema,
+  PrivacyMeasureExecutionUnavailableProblemSchema,
+  PrivacyMeasureExecutionForbiddenProblemSchema,
+  PrivacyMeasureExecutionNotFoundProblemSchema,
+  PrivacyMeasureExecutionPolicyProblemSchema,
+  PrivacyMeasureExecutionPolicyConflictProblemSchema,
+  PrivacyMeasureExecutionInternalProblemSchema,
+  PrivacyMeasureExecutionApi,
+} from './apis/privacy-measure-execution.ts';
+export type {
+  PrivacyMeasureExecutionRequest,
+  PrivacyMeasureExecutionResponse,
+} from './apis/privacy-measure-execution.ts';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));

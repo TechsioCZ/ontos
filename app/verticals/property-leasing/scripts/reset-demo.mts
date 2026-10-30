@@ -4,8 +4,8 @@ import { PgClient } from '@effect/sql-pg';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 import { OccupancyStateSchema } from '../shared/apis/records.ts';
 import { occupancyState } from '../src/database/schema.ts';
 
@@ -25,15 +25,13 @@ const cli = Command.make(
     }
     const fs = yield* FileSystem.FileSystem;
     const input = yield* Schema.decodeEffect(Schema.fromJsonString(PayloadSchema))(yield* fs.readFileString(fixture));
-    const refs: readonly ({ readonly tenantId: string } | null)[] = [
-      ...input.state.occupancies.flatMap((row) => [
-        row.occupancyRef,
-        row.unitRef,
-        row.contractRef,
-        row.customerCounterpartyRef,
-        row.guestPartyRef,
-      ]),
-    ];
+    const refs: readonly ({ readonly tenantId: string } | null)[] = input.state.occupancies.flatMap((row) => [
+      row.occupancyRef,
+      row.unitRef,
+      row.contractRef,
+      row.customerCounterpartyRef,
+      row.guestPartyRef,
+    ]);
     if (refs.some((ref) => ref !== null && ref.tenantId !== input.tenantId)) {
       return yield* new ResetInputError({ reason: 'All fixture references must match the fixed demo tenant' });
     }

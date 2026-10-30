@@ -1,7 +1,9 @@
 import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import {
   PaymentTermAliasSchema,
   PaymentTermCompatibilityIdSchema,
@@ -252,7 +254,7 @@ export const paymentTermSemanticFingerprint = (
     semantics.kind === 'IMMEDIATE'
       ? `IMMEDIATE|${semantics.calculationRuleVersion}|NOT_APPLICABLE|${compatibilityKey}`
       : `NET_DAYS|${semantics.days}|${semantics.dueDateAnchor}|${semantics.calendarRule}|${semantics.calculationRuleVersion}|${compatibilityKey}`;
-  return createHash('sha256').update(canonical, 'utf-8').digest('hex');
+  return Hex.encode(sha256(utf8ToBytes(canonical)));
 };
 
 export interface PaymentTermCatalogPersistence {

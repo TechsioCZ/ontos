@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
 import { Deferred, Effect, Fiber, FileSystem, Ref, Schema, Stream } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
 import {

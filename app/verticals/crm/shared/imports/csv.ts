@@ -1,15 +1,17 @@
 // AREA: imports (C03) — owned by the crm-imports lane.
 // Pure parser of the documented CRM order CSV template (crm-orders-csv-v1). The browser uses it for the preview,
 // the server re-parses the same text inside the ImportOrdersCsv command, so the preview and the stored result match.
-import { DateTime, Option } from 'effect';
+import { DateTime, Option, Result, Schema } from 'effect';
+import { IsoTimeSchema } from '../domain/common.ts';
+import { OrderDateSchema } from '../domain/imports.ts';
 
 export const ORDERS_CSV_FORMAT = 'crm-orders-csv-v1';
 
 export interface CsvColumn {
-  readonly key: string;
-  readonly required: boolean;
-  readonly label: string;
   readonly example: string;
+  readonly key: string;
+  readonly label: string;
+  readonly required: boolean;
 }
 
 /** The documented template. Order of columns in a file does not matter; header names do. */
@@ -65,53 +67,55 @@ export const ordersCsvColumns: readonly CsvColumn[] = [
   },
 ];
 
-const aliases: Readonly<Record<string, string>> = {
-  amount: 'castka',
-  currency: 'mena',
-  customer_email: 'email_zakaznika',
-  customer_id: 'id_zakaznika',
-  customer_name: 'nazev_zakaznika',
-  customer_reg_no: 'ico_zakaznika',
-  event_id: 'id_udalosti',
-  event_time: 'cas_udalosti',
-  external_id: 'id_objednavky',
-  lines: 'polozky',
-  number: 'cislo_objednavky',
-  order_date: 'datum_objednavky',
-  order_id: 'id_objednavky',
-  source: 'zdroj',
-  status: 'stav',
-};
+const aliases = new Map(
+  Object.entries({
+    amount: 'castka',
+    currency: 'mena',
+    customer_email: 'email_zakaznika',
+    customer_id: 'id_zakaznika',
+    customer_name: 'nazev_zakaznika',
+    customer_reg_no: 'ico_zakaznika',
+    event_id: 'id_udalosti',
+    event_time: 'cas_udalosti',
+    external_id: 'id_objednavky',
+    lines: 'polozky',
+    number: 'cislo_objednavky',
+    order_date: 'datum_objednavky',
+    order_id: 'id_objednavky',
+    source: 'zdroj',
+    status: 'stav',
+  }),
+);
 
 export interface ParsedOrderLine {
-  readonly sku?: string;
+  readonly amount?: string;
   readonly name: string;
   readonly quantity: string;
-  readonly amount?: string;
+  readonly sku?: string;
 }
 
 export interface ParsedOrderRow {
+  readonly amount?: string;
+  readonly currency?: string;
+  readonly customerEmail?: string;
+  readonly customerName?: string;
+  readonly customerRegNo?: string;
+  readonly eventAt?: typeof IsoTimeSchema.Type;
+  readonly eventId?: string;
+  readonly externalCustomerId?: string;
+  readonly externalId: string;
+  readonly lines?: readonly ParsedOrderLine[];
+  readonly number?: string;
+  readonly orderedAt?: typeof OrderDateSchema.Type;
+  readonly rawStatus: string;
   /** Line number in the file (the header is line 1). */
   readonly row: number;
   readonly source: string;
-  readonly externalId: string;
-  readonly number?: string;
-  readonly orderedAt?: string;
-  readonly externalCustomerId?: string;
-  readonly customerName?: string;
-  readonly customerRegNo?: string;
-  readonly customerEmail?: string;
-  readonly amount?: string;
-  readonly currency?: string;
-  readonly rawStatus: string;
-  readonly eventAt?: string;
-  readonly eventId?: string;
-  readonly lines?: readonly ParsedOrderLine[];
 }
 
 export type ParsedRow =
   | { readonly kind: 'ok'; readonly value: ParsedOrderRow }
-  | { readonly kind: 'error'; readonly row: number; readonly message: string; readonly externalId?: string };
+  | { readonly externalId?: string; readonly kind: 'error'; readonly message: string; readonly row: number };
 
 export interface ParsedCsv {
   /** Set when the file as a whole cannot be read (no header, missing required columns). */
@@ -133,13 +137,13 @@ const detectDelimiter = (headerLine: string) => {
     candidate,
     count: headerLine.split(candidate).length - 1,
   }));
-  const best = counts.toSorted((left, right) => right.count - left.count)[0];
+  const [best] = counts.toSorted((left, right) => right.count - left.count);
   return best !== undefined && best.count > 0 ? best.candidate : ';';
 };
 
 interface RawRecord {
-  readonly line: number;
   readonly cells: readonly string[];
+  readonly line: number;
 }
 
 /** RFC 4180 tokenizer (quoted cells, doubled quotes, CRLF/LF, BOM). */
@@ -199,7 +203,7 @@ const tokenize = (text: string, delimiter: string): RawRecord[] => {
 /** "12 450,50" / "12450.5" -> "12450.50"; undefined when not an exact decimal. */
 export const normalizeDecimal = (value: string): string | undefined => {
   const compact = value.replaceAll(/[\s ]/gu, '').replace(',', '.');
-  const match = /^(-?)(\d{1,15})(?:\.(\d{1,4}))?$/u.exec(compact);
+  const match = /^(?<sign>-?)(?<whole>\d{1,15})(?:\.(?<fraction>\d{1,4}))?$/u.exec(compact);
   if (match === null) {
     return undefined;
   }
@@ -207,22 +211,20 @@ export const normalizeDecimal = (value: string): string | undefined => {
   return `${sign}${whole}.${fraction.padEnd(2, '0')}`;
 };
 
-const daysInMonth = (year: number, month: number) =>
-  month === 2
-    ? year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
-      ? 29
-      : 28
-    : [4, 6, 9, 11].includes(month)
-      ? 30
-      : 31;
+const daysInMonth = (year: number, month: number) => {
+  if (month === 2) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+};
 
 const pragueIso = (parts: {
-  readonly year: number;
-  readonly month: number;
   readonly day: number;
   readonly hours: number;
   readonly minutes: number;
+  readonly month: number;
   readonly seconds: number;
+  readonly year: number;
 }): string | undefined => {
   if (
     parts.month < 1 ||
@@ -248,10 +250,14 @@ const pragueIso = (parts: {
  */
 export const parseCsvTime = (value: string, asInstant: boolean): string | undefined => {
   const text = value.trim();
-  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(Z|[+-]\d{2}:?\d{2})?$/u.exec(
-    text,
-  );
-  const czech = /^(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/u.exec(text);
+  const iso =
+    /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.\d+)?)?)?(?<zone>Z|[+-]\d{2}:?\d{2})?$/u.exec(
+      text,
+    );
+  const czech =
+    /^(?<day>\d{1,2})\.\s?(?<month>\d{1,2})\.\s?(?<year>\d{4})(?:\s+(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?)?$/u.exec(
+      text,
+    );
   const groups = iso ?? czech;
   if (groups === null) {
     return undefined;
@@ -303,12 +309,14 @@ const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
     if (amountText !== undefined && amountText !== '' && amount === undefined) {
       return `Položka ${index + 1}: částka „${amountText}“ není číslo`;
     }
-    lines.push({
-      name,
-      quantity: quantity.replace(/\.00$/u, ''),
-      ...(sku === '' ? {} : { sku }),
-      ...(amount === undefined ? {} : { amount }),
-    });
+    const line: ParsedOrderLine = { name, quantity: quantity.replace(/\.00$/u, '') };
+    if (sku !== '') {
+      Object.assign(line, { sku });
+    }
+    if (amount !== undefined) {
+      Object.assign(line, { amount });
+    }
+    lines.push(line);
   }
   return lines;
 };
@@ -318,16 +326,70 @@ const optional = (value: string | undefined) => {
   return trimmed === '' ? undefined : trimmed;
 };
 
+interface ParsedMoney {
+  readonly amount: ParsedOrderRow['amount'];
+  readonly currency: ParsedOrderRow['currency'];
+}
+
+/** Preserve the source error priority: amount, currency spelling, then a missing currency. */
+const parseMoney = (get: (key: string) => string | undefined): Result.Result<ParsedMoney, string> => {
+  const amountText = optional(get('castka'));
+  const amount = amountText === undefined ? undefined : normalizeDecimal(amountText);
+  if (amountText !== undefined && amount === undefined) {
+    return Result.fail(`Částka „${amountText}“ není platné desetinné číslo`);
+  }
+  const currencyText = optional(get('mena'));
+  const currency = currencyText?.toUpperCase();
+  if (currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
+    return Result.fail(`Měna „${currencyText ?? ''}“ není kód ISO 4217 (např. CZK, EUR)`);
+  }
+  if (amount !== undefined && currency === undefined) {
+    return Result.fail('Částka bez měny: doplňte sloupec mena');
+  }
+  return Result.succeed({ amount, currency });
+};
+
+interface ParsedTimes {
+  readonly eventAt: ParsedOrderRow['eventAt'];
+  readonly orderedAt: ParsedOrderRow['orderedAt'];
+}
+
+/** An order may supply a civil day; an event supplies an instant. Do not mix these contracts. */
+const parseTimes = (get: (key: string) => string | undefined): Result.Result<ParsedTimes, string> => {
+  const orderedText = optional(get('datum_objednavky'));
+  const orderedAt =
+    orderedText === undefined
+      ? undefined
+      : Option.getOrUndefined(Schema.decodeUnknownOption(OrderDateSchema)(parseCsvTime(orderedText, false)));
+  if (orderedText !== undefined && orderedAt === undefined) {
+    return Result.fail(`Datum objednávky „${orderedText}“ není platné datum`);
+  }
+  const eventText = optional(get('cas_udalosti'));
+  const eventAt =
+    eventText === undefined
+      ? undefined
+      : Option.getOrUndefined(Schema.decodeUnknownOption(IsoTimeSchema)(parseCsvTime(eventText, true)));
+  if (eventText !== undefined && eventAt === undefined) {
+    return Result.fail(`Čas události „${eventText}“ není platné datum a čas`);
+  }
+  return Result.succeed({ eventAt, orderedAt });
+};
+
 const parseRecord = (line: number, get: (key: string) => string | undefined): ParsedRow => {
   const source = optional(get('zdroj'));
   const externalId = optional(get('id_objednavky'));
   const rawStatus = optional(get('stav'));
-  const fail = (message: string): ParsedRow => ({
-    kind: 'error',
-    message,
-    row: line,
-    ...(externalId === undefined ? {} : { externalId }),
-  });
+  const fail = (message: string): ParsedRow => {
+    const result: ParsedRow = {
+      kind: 'error',
+      message,
+      row: line,
+    };
+    if (externalId !== undefined) {
+      Object.assign(result, { externalId });
+    }
+    return result;
+  };
   if (source === undefined) {
     return fail('Chybí zdrojový systém (sloupec zdroj)');
   }
@@ -337,32 +399,19 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
   if (rawStatus === undefined) {
     return fail('Chybí stav objednávky (sloupec stav)');
   }
-  const amountText = optional(get('castka'));
-  const amount = amountText === undefined ? undefined : normalizeDecimal(amountText);
-  if (amountText !== undefined && amount === undefined) {
-    return fail(`Částka „${amountText}“ není platné desetinné číslo`);
+  const money = parseMoney(get);
+  if (Result.isFailure(money)) {
+    return fail(money.failure);
   }
-  const currencyText = optional(get('mena'));
-  const currency = currencyText?.toUpperCase();
-  if (currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
-    return fail(`Měna „${currencyText ?? ''}“ není kód ISO 4217 (např. CZK, EUR)`);
+  const { amount, currency } = money.success;
+  const times = parseTimes(get);
+  if (Result.isFailure(times)) {
+    return fail(times.failure);
   }
-  if (amount !== undefined && currency === undefined) {
-    return fail('Částka bez měny: doplňte sloupec mena');
-  }
-  const orderedText = optional(get('datum_objednavky'));
-  const orderedAt = orderedText === undefined ? undefined : parseCsvTime(orderedText, false);
-  if (orderedText !== undefined && orderedAt === undefined) {
-    return fail(`Datum objednávky „${orderedText}“ není platné datum`);
-  }
-  const eventText = optional(get('cas_udalosti'));
-  const eventAt = eventText === undefined ? undefined : parseCsvTime(eventText, true);
-  if (eventText !== undefined && eventAt === undefined) {
-    return fail(`Čas události „${eventText}“ není platné datum a čas`);
-  }
+  const { eventAt, orderedAt } = times.success;
   const linesText = optional(get('polozky'));
   const lines = linesText === undefined ? undefined : parseLines(linesText);
-  if (typeof lines === 'string') {
+  if (Schema.is(Schema.String)(lines)) {
     return fail(lines);
   }
   if (currency === undefined && lines?.some((entry) => entry.amount !== undefined) === true) {
@@ -387,8 +436,10 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
         orderedAt,
       }).filter(([, entry]) => entry !== undefined),
     ),
-    ...(lines === undefined || lines.length === 0 ? {} : { lines }),
   };
+  if (lines !== undefined && lines.length > 0) {
+    Object.assign(value, { lines });
+  }
   return { kind: 'ok', value };
 };
 
@@ -402,7 +453,7 @@ export const parseOrdersCsv = (text: string): ParsedCsv => {
   }
   const keys = header.cells.map((cell) => {
     const folded = foldHeader(cell);
-    return aliases[folded] ?? folded;
+    return aliases.get(folded) ?? folded;
   });
   const known = new Set(ordersCsvColumns.map((column) => column.key));
   const missing = ordersCsvColumns.filter((column) => column.required && !keys.includes(column.key));

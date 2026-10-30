@@ -8,7 +8,7 @@ import {
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { PriceResultLookupRequestSchema } from '../../shared/apis/price-result-lookup.ts';
 import { mapDefinePriceActionProblem } from '../../api/define-price-action-problems.ts';

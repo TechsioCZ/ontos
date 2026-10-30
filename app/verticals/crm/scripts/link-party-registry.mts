@@ -30,49 +30,54 @@ import {
   ResolveDuplicateCandidateCreatePayloadSchema,
   ResolveDuplicateCandidateCreateResultSchema,
 } from '@app/party-registry/api';
-import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
-import { connectSeedClient, DemoSeedError } from '../../../scripts/demo/seed-client.mts';
-import type { SeedClient } from '../../../scripts/demo/seed-client.mts';
+import { connectSeedClient } from '../../../scripts/demo/seed-client.mts';
+import type { SeedClient, DemoSeedError } from '../../../scripts/demo/seed-client.mts';
 
 const partyAudience = 'party-registry';
 const crmAudience = 'crm';
 const source = 'demo.crm.party-link-v1';
 
-const CrmClient = Schema.Struct({
+const CrmClientSchema = Schema.Struct({
   address: Schema.optionalKey(Schema.String),
   email: Schema.optionalKey(Schema.String),
   id: Schema.String,
   kind: Schema.Literals(['organization', 'person']),
   name: Schema.String,
-  partyRef: Schema.optionalKey(Schema.Struct({ counterpartyId: Schema.optionalKey(Schema.String) })),
+  partyRef: Schema.optionalKey(
+    Schema.Struct({ counterpartyId: Schema.optionalKey(Schema.String.pipe(Schema.brand('CounterpartyId'))) }),
+  ),
   phone: Schema.optionalKey(Schema.String),
   regNo: Schema.optionalKey(Schema.String),
   status: Schema.String,
   vatNo: Schema.optionalKey(Schema.String),
 });
-type CrmClient = typeof CrmClient.Type;
+type CrmClient = typeof CrmClientSchema.Type;
 const CrmRecords = Schema.Struct({
   revision: Schema.Int,
-  state: Schema.Struct({ clients: Schema.Struct({ items: Schema.Array(CrmClient) }) }),
+  state: Schema.Struct({ clients: Schema.Struct({ items: Schema.Array(CrmClientSchema) }) }),
 });
 const Empty = Schema.Struct({});
-const Customer = Schema.Struct({
-  companyId: Schema.NullOr(Schema.String),
-  counterpartyId: Schema.String,
-  displayName: Schema.NullOr(Schema.String),
-  partyId: Schema.String,
+const CustomerSchema = Schema.Struct({
+  companyId: Schema.OptionFromNullOr(Schema.String.pipe(Schema.brand('CompanyId'))),
+  counterpartyId: Schema.String.pipe(Schema.brand('PartyId')).pipe(Schema.brand('CounterpartyId')),
+  displayName: Schema.OptionFromNullOr(Schema.String),
+  partyId: Schema.String.pipe(Schema.brand('PartyId')),
   status: Schema.String,
 });
-type Customer = typeof Customer.Type;
-const Customers = Schema.Struct({ items: Schema.Array(Customer) });
+type Customer = typeof CustomerSchema.Type;
+const Customers = Schema.Struct({ items: Schema.Array(CustomerSchema) });
 const ListRequest = Schema.Struct({ includeArchived: Schema.Boolean, limit: Schema.Int });
-const PartyLink = Schema.Struct({ counterpartyId: Schema.String, partyId: Schema.String });
+const PartyLink = Schema.Struct({
+  counterpartyId: Schema.String.pipe(Schema.brand('PartyId')).pipe(Schema.brand('CounterpartyId')),
+  partyId: Schema.String.pipe(Schema.brand('PartyId')),
+});
 const LinkCommand = Schema.Struct({
   _tag: Schema.Literal('LinkClientParty'),
-  clientId: Schema.String,
+  clientId: CrmClientSchema.fields.id.pipe(Schema.brand('CrmClientId')),
   partyRef: PartyLink,
 });
 
@@ -84,36 +89,31 @@ const fold = (value: string) =>
     .trim();
 
 /** Czech IČO checksum (the registry rejects an invalid one). */
-export const validIco = (value: string | undefined): value is string => {
-  if (value === undefined || !/^\d{8}$/u.test(value)) {
-    return false;
-  }
-  const digits = [...value].map(Number);
-  const sum = digits.slice(0, 7).reduce((total, digit, index) => total + digit * (8 - index), 0);
-  const check = (11 - (sum % 11)) % 10;
-  return check === digits[7];
-};
+const IcoSchema = Schema.String.check(
+  Schema.isPattern(/^\d{8}$/u),
+  Schema.makeFilter((value) => {
+    const digits = Array.from(value, Number);
+    const sum = digits.slice(0, 7).reduce((total, digit, index) => total + digit * (8 - index), 0);
+    return (11 - (sum % 11)) % 10 === digits[7];
+  }),
+).pipe(Schema.brand('Ico'));
+export const validIco = Schema.is(IcoSchema);
 
 export const addressContactPoint = (address: string | undefined) => {
-  if (address === undefined) {
-    return undefined;
-  }
-  const parts = address.split(',').map((part) => part.trim());
-  const last = parts.at(-1) ?? '';
-  const zip = /^(\d{3}\s?\d{2})\s+(.+)$/u.exec(last);
-  if (zip === null || parts.length < 2) {
-    return undefined;
-  }
-  return {
-    address: {
-      addressLine1: parts.slice(0, -1).join(', '),
-      city: zip[2] ?? '',
-      countryCode: 'CZ',
-      postalCode: zip[1] ?? '',
-    },
-    purposes: [{ preferred: true, purpose: 'CORRESPONDENCE' as const }],
-    type: 'ADDRESS' as const,
-  };
+  const parts = (address ?? '').split(',').map((part) => part.trim());
+  const zip = /^(?<postalCode>\d{3}\s?\d{2})\s+(?<city>.+)$/u.exec(parts.at(-1) ?? '');
+  return zip === null || parts.length < 2
+    ? undefined
+    : {
+        address: {
+          addressLine1: parts.slice(0, -1).join(', '),
+          city: zip.groups?.city ?? '',
+          countryCode: 'CZ',
+          postalCode: zip.groups?.postalCode ?? '',
+        },
+        purposes: [{ preferred: true, purpose: 'CORRESPONDENCE' as const }],
+        type: 'ADDRESS' as const,
+      };
 };
 
 /** The registry customer this client already is: same IČO, or (no IČO) the same exact name. */
@@ -122,8 +122,8 @@ export const matchingCustomer = (client: CrmClient, customers: readonly Customer
     (customer) =>
       customer.status === 'ACTIVE' &&
       (client.regNo === undefined
-        ? customer.displayName !== null && fold(customer.displayName) === fold(client.name)
-        : customer.companyId === client.regNo),
+        ? Option.isSome(customer.displayName) && fold(customer.displayName.value) === fold(client.name)
+        : Option.getOrNull(customer.companyId) === client.regNo),
   );
 
 const createCustomer = (
@@ -282,13 +282,13 @@ const main = (apply: boolean) =>
     const seed = yield* connectSeedClient(target, email, password);
     const client = { ...seed, target };
     const records = yield* client.call(crmAudience, '/reads/records', Empty, {}, CrmRecords);
-    const customers = (yield* client.call(
+    const { items: customers } = yield* client.call(
       partyAudience,
       '/reads/customer-list',
       ListRequest,
       { includeArchived: true, limit: 500 },
       Customers,
-    )).items;
+    );
     const linked = new Set(
       records.state.clients.items.flatMap((entry) =>
         entry.partyRef?.counterpartyId === undefined ? [] : [entry.partyRef.counterpartyId],
@@ -301,7 +301,7 @@ const main = (apply: boolean) =>
     yield* Console.log(
       `CRM ${target.legalEntityId}: ${records.state.clients.items.length} klientů, ${pending.length} aktivních bez PartyRef; registr: ${customers.length} zákazníků.`,
     );
-    let revision = records.revision;
+    let { revision } = records;
     const now = DateTime.formatIso(yield* DateTime.now);
     const summary = { created: 0, linked: 0, reused: 0, review: 0 };
     for (const crmClient of pending) {
@@ -309,36 +309,43 @@ const main = (apply: boolean) =>
         crmClient,
         customers.filter((customer) => !linked.has(customer.counterpartyId)),
       );
-      yield* Console.log(
-        `- ${crmClient.name}${crmClient.regNo === undefined ? '' : ` (IČO ${crmClient.regNo}${validIco(crmClient.regNo) ? '' : ', neplatný kontrolní součet'})`}: ${existing === undefined ? 'založit v registru' : `existující zákazník ${existing.displayName ?? ''}`}`,
-      );
-      if (!apply) {
-        continue;
-      }
-      let link: { readonly counterpartyId: string; readonly partyId: string };
-      if (existing === undefined) {
-        const created = yield* createCustomer(client, crmClient, now);
-        if (created.needsReview) {
-          summary.review += 1;
-          yield* Console.log('  ! shoda s jinou Party čeká na rozhodnutí v Zákaznících; nepropojeno');
-          continue;
+      const checksumNote = validIco(crmClient.regNo) ? '' : ', neplatný kontrolní součet';
+      const identifierLabel = crmClient.regNo === undefined ? '' : ` (IČO ${crmClient.regNo}${checksumNote})`;
+      const decisionLabel =
+        existing === undefined
+          ? 'založit v registru'
+          : `existující zákazník ${Option.getOrElse(existing.displayName, () => '')}`;
+      yield* Console.log(`- ${crmClient.name}${identifierLabel}: ${decisionLabel}`);
+      if (apply) {
+        let link: typeof PartyLink.Type;
+        if (existing === undefined) {
+          const created = yield* createCustomer(client, crmClient, now);
+          if (created.needsReview) {
+            summary.review += 1;
+            yield* Console.log('  ! shoda s jinou Party čeká na rozhodnutí v Zákaznících; nepropojeno');
+            continue;
+          }
+          summary.created += 1;
+          link = yield* Schema.decodeUnknownEffect(PartyLink)(created.link);
+        } else {
+          summary.reused += 1;
+          link = { counterpartyId: existing.counterpartyId, partyId: existing.partyId };
         }
-        summary.created += 1;
-        ({ link } = created);
-      } else {
-        summary.reused += 1;
-        link = { counterpartyId: existing.counterpartyId, partyId: existing.partyId };
+        const result = yield* client.apply(
+          crmAudience,
+          LinkCommand,
+          yield* Schema.decodeUnknownEffect(LinkCommand)({
+            _tag: 'LinkClientParty',
+            clientId: crmClient.id,
+            partyRef: link,
+          }),
+          revision,
+          [partyAudience],
+        );
+        ({ revision } = result);
+        linked.add(link.counterpartyId);
+        summary.linked += 1;
       }
-      const result = yield* client.apply(
-        crmAudience,
-        LinkCommand,
-        { _tag: 'LinkClientParty', clientId: crmClient.id, partyRef: link },
-        revision,
-        [partyAudience],
-      );
-      revision = result.revision;
-      linked.add(link.counterpartyId);
-      summary.linked += 1;
     }
     yield* Console.log(
       apply
@@ -352,7 +359,7 @@ const command = Command.make(
   { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)) },
   ({ apply }) =>
     main(apply).pipe(
-      Effect.catchTag('DemoSeedError', (error: DemoSeedError) => Console.error(`Chyba: ${error.reason}`)),
+      Effect.catchTag('DemoSeedError', (failure: DemoSeedError) => Console.error(`Chyba: ${failure.reason}`)),
     ),
 );
 

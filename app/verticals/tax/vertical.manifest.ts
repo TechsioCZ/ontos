@@ -29,6 +29,7 @@ import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
 import { taxRuleRevisionResourceDescriptor } from './shared/resources/tax-rule-revision.ts';
 // </generated-module-manifest-imports>
 import { taxMcpContribution } from './shared/mcp/contribution.ts';
+
 export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',

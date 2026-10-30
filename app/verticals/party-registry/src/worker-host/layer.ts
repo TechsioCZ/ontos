@@ -19,7 +19,7 @@ import { Layer } from 'effect';
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_WORKER_IDENTITY,
-} from '../../shared/database-identities.ts';
+} from '@app/party-registry-identity-contracts';
 import { PartySearchIngestionRegistryLive } from './search-ingestion-registrations.ts';
 import { PartySearchProjectionSourceLive } from '../services/party-search-projection-source.service.ts';
 import type { PartySearchProjectionSource } from '../services/party-search-projection-source.service.ts';

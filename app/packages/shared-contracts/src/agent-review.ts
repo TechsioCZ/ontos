@@ -6,7 +6,12 @@
 // was approved. The platform names no module and interprets no command.
 import { Schema } from 'effect';
 
-import { AgentCommandSchema, AgentDiffLineSchema, AgentRevertPlanSchema } from './agent-proposals.ts';
+import {
+  AgentCommandSchema,
+  AgentDiffLineSchema,
+  AgentProposalIdSchema,
+  AgentRevertPlanSchema,
+} from './agent-proposals.ts';
 
 const ShortText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 
@@ -25,7 +30,11 @@ export const AgentReviewItemRequestSchema = Schema.Struct({
   key: ShortText,
   /** Who proposed the change, given when it is about to be approved, so the module can record the provenance. */
   proposal: Schema.optionalKey(
-    Schema.Struct({ agentLabel: ShortText, proposalId: ShortText, summary: Schema.String.check(Schema.isMaxLength(300)) }),
+    Schema.Struct({
+      agentLabel: ShortText,
+      proposalId: AgentProposalIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+      summary: Schema.String.check(Schema.isMaxLength(300)),
+    }),
   ),
   stage: AgentReviewStageSchema,
 });

@@ -1,10 +1,19 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
+import { SourceGroupIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
 import { AKROS_LEGAL_ENTITY_ID, assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+
+/** A missing fixture value fails the test before its fields are read. */
+const requireFixture = <T>(value: T | null | undefined): T => {
+  if (value === undefined || value === null) {
+    expect.unreachable('The fixture must be present before its fields are read');
+  }
+  return value;
+};
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
   toProductRecord(product, stockLevelsOf(movements, product.id));
@@ -12,40 +21,40 @@ const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Par
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
 const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
+  movements: [{ at, delta: 500, id: 'receipt', productId: 'product-1', reason: 'RECEIPT', variantId: 'item-1' }],
   orders: [],
-  movements: [{ id: 'receipt', productId: 'product-1', variantId: 'item-1', delta: 500, at, reason: 'RECEIPT' }],
   products: [
     {
-      id: 'product-1',
-      name: 'Nerezový šroub',
-      sku: 'DIN933',
-      category: 'Šrouby',
       active: true,
-      unit: 'ks',
-      vatRate: 21,
-      currentPriceMinor: 8,
-      lowStockThreshold: 5,
+      category: 'Šrouby',
       createdAt: at,
-      updatedAt: at,
+      currentPriceMinor: 8,
+      id: 'product-1',
+      lowStockThreshold: 5,
+      name: 'Nerezový šroub',
       priceHistory: [],
+      sku: 'DIN933',
+      unit: 'ks',
+      updatedAt: at,
       variants: [
         {
+          active: true,
+          attributes: '',
           id: 'item-1',
+          minimumQuantity: 10,
+          name: 'M6 × 20',
+          packageQuantity: 5,
+          priceMinor: 8,
+          priceTiers: [
+            { minimumQuantity: 1, priceExcludingVatMinor: 8, priceMinor: 10 },
+            { minimumQuantity: 100, priceExcludingVatMinor: 6, priceMinor: 7 },
+          ],
+          sku: 'DIN933-M6',
           sourceId: '1',
           sourceUnit: 'ks',
-          sku: 'DIN933-M6',
-          name: 'M6 × 20',
-          attributes: '',
-          active: true,
-          priceMinor: 8,
-          minimumQuantity: 10,
-          packageQuantity: 5,
-          priceTiers: [
-            { minimumQuantity: 1, priceMinor: 10, priceExcludingVatMinor: 8 },
-            { minimumQuantity: 100, priceMinor: 7, priceExcludingVatMinor: 6 },
-          ],
         },
       ],
+      vatRate: 21,
     },
   ],
 });
@@ -54,25 +63,25 @@ const place = (quantity: number, expectedUnitPriceMinor: number) =>
     state,
     Schema.decodeUnknownSync(MerchandiseCommandSchema)({
       _tag: 'PlaceStorefrontOrder',
-      partyId: 'test-customer-party',
       clientRequestId: 'akros-unit-order',
-      contact: { name: 'Jan Novák', email: 'jan@example.invalid' },
-      deliveryAddress: { street: 'Ukázková 1', city: 'Brno', postalCode: '60200' },
+      contact: { email: 'jan@example.invalid', name: 'Jan Novák' },
+      deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Ukázková 1' },
+      lines: [{ expectedUnitPriceMinor, productId: 'product-1', quantity, variantId: 'item-1' }],
+      partyId: 'test-customer-party',
       shippingMethod: 'OSOBNI_ODBER',
-      lines: [{ productId: 'product-1', variantId: 'item-1', quantity, expectedUnitPriceMinor }],
     }),
     { actor, now: DateTime.makeUnsafe(at), resourceId: 'order-1' },
   );
 
 it('retains exact source gross price, tiers and minimum in the read projection', () => {
-  const record = recordOf(state.products[0]!, state.movements).variantRecords?.[0];
+  const record = recordOf(state.products[0], state.movements).variantRecords?.[0];
   expect(record?.grossPriceMinor).toBe(10);
   expect(record?.priceTiers?.[1]?.priceMinor).toBe(7);
   expect(record?.minimumQuantity).toBe(10);
   expect(record?.sourceId).toBe('1');
 });
 it.effect('enforces minimum and package quantities without persisting rejected orders', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario1() {
     const minimum = yield* place(5, 10);
     expect(minimum.storefrontOrder?.issues[0]?.code).toBe('MINIMUM_QUANTITY');
     expect(minimum.state.orders).toHaveLength(0);
@@ -82,7 +91,7 @@ it.effect('enforces minimum and package quantities without persisting rejected o
   }),
 );
 it.effect('returns the exact current gross tier and snapshots the tier on placement', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario2() {
     const changed = yield* place(100, 10);
     expect(changed.storefrontOrder?.issues[0]?.code).toBe('PRICE_CHANGED');
     expect(changed.storefrontOrder?.issues[0]?.currentUnitPriceMinor).toBe(7);
@@ -95,7 +104,7 @@ it.effect('returns the exact current gross tier and snapshots the tier on placem
   }),
 );
 it.effect('AKROS API keys may only place storefront orders', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario3() {
     yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
     for (const tag of ['ChangePrice', 'UpdateProduct', 'CreateOrder', 'ChangeOrderStatus']) {
       const denied = yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
@@ -104,18 +113,18 @@ it.effect('AKROS API keys may only place storefront orders', () =>
   }),
 );
 it.effect('staff price edits update live tier prices without losing source metadata', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario4() {
     const changed = yield* evolveMerchandiseState(
       state,
       Schema.decodeUnknownSync(MerchandiseCommandSchema)({
         _tag: 'ChangePrice',
         id: 'product-1',
-        variantId: 'item-1',
         priceMinor: 16,
+        variantId: 'item-1',
       }),
       { actor, now: DateTime.makeUnsafe(at), resourceId: 'price-1' },
     );
-    const variant = recordOf(changed.state.products[0]!, changed.state.movements).variantRecords?.[0];
+    const variant = recordOf(changed.state.products[0], changed.state.movements).variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(19);
     expect(variant?.priceTiers?.[1]?.priceMinor).toBe(13);
     expect(variant?.sourceId).toBe('1');
@@ -123,13 +132,13 @@ it.effect('staff price edits update live tier prices without losing source metad
 );
 
 it.effect('first seeded variant edit snapshots its existing price through both staff commands', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario5() {
     for (const command of [
-      { _tag: 'ChangePrice', id: 'product-1', variantId: 'item-1', priceMinor: 9 },
+      { _tag: 'ChangePrice', id: 'product-1', priceMinor: 9, variantId: 'item-1' },
       {
         _tag: 'UpdateProduct',
         id: 'product-1',
-        patch: { variants: [{ ...state.products[0]!.variants![0]!, priceMinor: 9 }] },
+        patch: { variants: [{ ...requireFixture(state.products[0].variants)[0], priceMinor: 9 }] },
       },
     ]) {
       const changed = yield* evolveMerchandiseState(
@@ -137,7 +146,7 @@ it.effect('first seeded variant edit snapshots its existing price through both s
         Schema.decodeUnknownSync(MerchandiseCommandSchema)(command),
         { actor, now: DateTime.makeUnsafe(at), resourceId: 'first-price' },
       );
-      const history = recordOf(changed.state.products[0]!, changed.state.movements).variantRecords?.[0]?.priceHistory;
+      const history = recordOf(changed.state.products[0], changed.state.movements).variantRecords?.[0]?.priceHistory;
       expect(history).toHaveLength(1);
       expect(history?.[0]?.previousPriceMinor).toBe(8);
       expect(history?.[0]?.priceMinor).toBe(9);
@@ -146,30 +155,34 @@ it.effect('first seeded variant edit snapshots its existing price through both s
 );
 
 it.effect('AKROS pickup retains company identity when editing shipping and persisting history', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario6() {
     const placed = yield* place(10, 10);
     for (const akros of [true, false]) {
       const scoped = {
         ...placed.state,
-        products: placed.state.products.map((product) => ({
-          ...product,
-          ...(akros ? { sourceGroupId: 'source-1' } : {}),
-        })),
+        products: placed.state.products.map((product) => {
+          if (akros) {
+            return { ...product, sourceGroupId: Schema.decodeSync(SourceGroupIdSchema)('source-1') };
+          }
+          return { ...product };
+        }),
       };
       const edited = yield* evolveMerchandiseState(
         scoped,
         Schema.decodeUnknownSync(MerchandiseCommandSchema)({
           _tag: 'EditOrder',
-          id: placed.state.orders[0]!.id,
+          id: placed.state.orders[0].id,
           shipping: { method: 'OSOBNI_ODBER', priceMinor: 1000 },
         }),
         { actor, now: DateTime.makeUnsafe(at), resourceId: 'shipping-edit' },
       );
-      const order = edited.state.orders[0]!;
+      const [order] = edited.state.orders;
       const company = akros ? 'AKROS' : 'Osobní odběr';
       expect(order.shipping?.label).toContain(company);
       expect(order.history?.at(-1)?.after).toContain(company);
-      if (akros) expect(order.history?.at(-1)?.after).not.toContain('Kavárna');
+      if (akros) {
+        expect(order.history?.at(-1)?.after).not.toContain('Kavárna');
+      }
     }
   }),
 );

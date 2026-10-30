@@ -3,7 +3,7 @@
  * whether they keep their own AI change engine, and how their command revision is read. Everything comes from the
  * modules' own MCP contributions; the platform names no module.
  */
-import { Effect, Match } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 
 import { mcpModulesOf } from '../mcp/catalog.ts';
 import type { McpModule, McpModules } from '../mcp/catalog.ts';
@@ -36,17 +36,15 @@ export const loadComposedModules = Effect.gen(function* loadComposedModulesEffec
 });
 
 /** Query of the module's revision read, `{}` when the module declares none. */
-export const revisionQueryOf = (module: McpModule | undefined): Readonly<Record<string, unknown>> =>
-  module?.revision?.query ?? {};
+export const revisionQueryOf = (module?: McpModule): Schema.JsonObject => module?.revision?.query ?? {};
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = Schema.is(Schema.JsonObject);
 
 /** The revision a command must carry, read from the module's revision read answer as its contribution says. */
 export const commandRevisionFrom = (
   module: McpModule | undefined,
-  body: unknown,
-  command: Readonly<Record<string, unknown>>,
+  body: Schema.Json | undefined,
+  command: Schema.JsonObject,
 ): number | undefined => {
   const revision = module?.revision;
   const field =
@@ -58,9 +56,9 @@ export const commandRevisionFrom = (
     )?.field ??
     revision?.field ??
     'revision';
-  let current: unknown = body;
+  let current: Schema.Json | undefined = body;
   for (const segment of field.split('.')) {
     current = isRecord(current) ? current[segment] : undefined;
   }
-  return typeof current === 'number' ? current : undefined;
+  return Schema.is(Schema.Finite)(current) ? current : undefined;
 };

@@ -1,9 +1,16 @@
-import { Match } from 'effect';
+import { DateTime, Match, Result } from 'effect';
 
-import { isSameCatalogSelection } from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import {
+  isSameCatalogSelection,
+  isSameExactTaxPurchaseBinding,
+} from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import { requireLaunchCaseRequirements } from './launch-coverage.ts';
+import { taxNotEstablishedOutcome } from './tax-non-success-outcome.ts';
+import type { TaxNonSuccessOutcome } from './tax-non-success-outcome.ts';
 import type {
   TaxEvaluationRequest,
   TaxEvaluationRequestRejectionReason,
+  TaxSupportedCaseEligibility,
 } from '../../shared/domain/tax-evaluation-contracts.ts';
 
 export { TaxEvaluationRequestSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
@@ -14,18 +21,51 @@ export type {
 
 const subsetOf = (ids: readonly string[], known: ReadonlySet<string>) => ids.every((id) => known.has(id));
 
-/** Catalog evidence covers every occurrence exactly once and is issued for that occurrence's exact selection. */
+/** Any supplied rate evidence names a bound occurrence's exact selection. Completeness is a payer prerequisite. */
 const catalogBound = (request: TaxEvaluationRequest): boolean => {
-  const byOccurrence = new Map(request.catalog.map((entry) => [entry.occurrenceId, entry]));
-  return (
-    byOccurrence.size === request.purchase.purchaseDemandOccurrences.length &&
-    request.purchase.purchaseDemandOccurrences.every((occurrence) => {
-      const entry = byOccurrence.get(occurrence.occurrenceId);
-      return (
-        entry !== undefined &&
-        isSameCatalogSelection(entry.classificationInput.catalogSelection, occurrence.catalogSelection)
-      );
-    })
+  const occurrences = new Map(request.purchase.purchaseDemandOccurrences.map((entry) => [entry.occurrenceId, entry]));
+  return (request.catalog ?? []).every((entry) => {
+    const occurrence = occurrences.get(entry.occurrenceId);
+    return (
+      occurrence !== undefined &&
+      isSameCatalogSelection(entry.classificationInput.catalogSelection, occurrence.catalogSelection)
+    );
+  });
+};
+
+/** Exact purchase and relevant time are the subject of the handoff, never a reusable merchant scope checkbox. */
+const eligibilityBound = (request: TaxEvaluationRequest): boolean =>
+  request.eligibility === undefined ||
+  (isSameExactTaxPurchaseBinding(request.eligibility.purchase, request.purchase) &&
+    DateTime.toEpochMillis(request.eligibility.taxRelevantTime) === DateTime.toEpochMillis(request.taxRelevantTime));
+
+type CurrentEligibility = Extract<TaxSupportedCaseEligibility, { readonly _tag: 'CURRENT' }>;
+
+/**
+ * Establishes the scoped handoff's material meaning; missing, incomplete or unusable evidence never defaults to
+ * ordinary Tax. Authentic producer verification remains an unactivated foreign-owner integration (#892).
+ */
+export const establishSupportedTaxCase = (
+  request: TaxEvaluationRequest,
+): Result.Result<CurrentEligibility, TaxNonSuccessOutcome> => {
+  const { eligibility } = request;
+  if (eligibility === undefined || !eligibilityBound(request)) {
+    return Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' });
+  }
+  return Match.value(eligibility).pipe(
+    Match.tag('NOT_USABLE', ({ state }) => Result.fail(taxNotEstablishedOutcome(state))),
+    Match.tag('CURRENT', (current) =>
+      requireLaunchCaseRequirements(current).pipe(
+        Result.flatMap(() =>
+          Match.value(current.materialEvidenceCompleteness).pipe(
+            Match.tag('OWNER_QUALIFIED_COMPLETE', () => Result.succeed(current)),
+            Match.tag('NOT_ESTABLISHED', () => Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' as const })),
+            Match.exhaustive,
+          ),
+        ),
+      ),
+    ),
+    Match.exhaustive,
   );
 };
 
@@ -94,6 +134,7 @@ export const taxEvaluationRequestRejections = (
   );
   const structurallyBound =
     catalogBound(request) &&
+    eligibilityBound(request) &&
     pricingBound(request, occurrenceIds) &&
     shippingBound(request, occurrenceIds) &&
     subsetOf([...declared.keys()], setOccurrenceIds);

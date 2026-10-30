@@ -32,18 +32,17 @@ const {
   navigateMock,
   shellControlsMock,
   useLoaderDataMock,
-} =
-  rstest.hoisted(() => {
-    const renders: DashboardPageProps[] = [];
-    return {
-      attachResourceMediaMock: rstest.fn(),
-      browserRunPromiseMock: rstest.fn(),
-      navigateMock: rstest.fn(),
-      dashboardRenders: renders,
-      shellControlsMock: rstest.fn(),
-      useLoaderDataMock: rstest.fn(),
-    };
-  });
+} = rstest.hoisted(() => {
+  const renders: DashboardPageProps[] = [];
+  return {
+    attachResourceMediaMock: rstest.fn(),
+    browserRunPromiseMock: rstest.fn(),
+    dashboardRenders: renders,
+    navigateMock: rstest.fn(),
+    shellControlsMock: rstest.fn(),
+    useLoaderDataMock: rstest.fn(),
+  };
+});
 
 const translations = new Map(
   Object.entries({
@@ -268,11 +267,10 @@ it.each(closedStates)(
     expect(screen.queryByText('Timeline')).toBeNull();
     // A record page names the missing record, not a missing page.
     expect(lastDashboardProps().title).toBe(
-      state === 'not_found'
-        ? 'shell.recovery.recordMissing'
-        : state === 'forbidden'
-          ? 'shell.recovery.forbidden'
-          : 'shell.recovery.unavailable',
+      new Map([
+        ['not_found', 'shell.recovery.recordMissing'],
+        ['forbidden', 'shell.recovery.forbidden'],
+      ]).get(state) ?? 'shell.recovery.unavailable',
     );
     expect(lastDashboardProps().currentModuleId).toBeUndefined();
     expect(shellControlsMock).toHaveBeenCalledWith(shell);

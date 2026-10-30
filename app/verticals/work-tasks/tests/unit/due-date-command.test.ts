@@ -2,7 +2,7 @@ import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SingleWorkCommandSchema } from '../../shared/actions/apply-command.ts';
 
-const decode = (input: unknown) => Schema.decodeUnknownOption(SingleWorkCommandSchema)(input);
+const decode = Schema.decodeUnknownOption(SingleWorkCommandSchema);
 const taskRef = {
   moduleId: 'work.tasks',
   resourceId: '30000000-0000-4000-8000-000000000001',

@@ -4,12 +4,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 
-import {
-  makeTestDatabaseFromClient,
-  makeTestPgClient,
-} from '../../../../../packages/core-runtime/tests/support/database.ts';
+import { layerTestDatabase } from '../../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../../packages/core-runtime/tests/support/database.ts';
 import { MerchandiseStateSchema } from '../../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../../shared/apis/records.ts';
@@ -27,6 +24,7 @@ import { replaceSnapshot, whereScope } from '../../../src/services/merchandise-s
 import type { StoreScope } from '../../../src/services/merchandise-store.ts';
 
 export type MerchandiseTestDatabase = TestDatabaseFromClient<typeof merchandiseRelations>;
+const MerchandiseDatabase = Context.Service<MerchandiseTestDatabase>('MerchandiseTests.Database');
 
 export interface MerchandiseFixture {
   readonly db: MerchandiseTestDatabase;
@@ -58,8 +56,14 @@ export const withMerchandise = <A, E>(
   Effect.scoped(
     Effect.gen(function* merchandiseFixture() {
       const connections = yield* loadDatabaseConnectionPair();
-      const client = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 2 });
-      const db = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
+      const services = yield* Layer.build(
+        layerTestDatabase(MerchandiseDatabase, {
+          connectionString: connections.admin.connectionString,
+          poolOptions: { maxConnections: 2 },
+          relations: merchandiseRelations,
+        }),
+      );
+      const db = Context.get(services, MerchandiseDatabase);
       const scope: StoreScope = { legalEntityId: randomUUID(), tenantId: randomUUID() };
       yield* Effect.addFinalizer(() => deleteScope(db, scope).pipe(Effect.orDie));
       const revision = yield* db.transaction((transaction) => replaceSnapshot(transaction, scope, state));
@@ -171,8 +175,8 @@ export const catalogInput = {
       categoryId: 'x',
       currentPriceMinor: 50,
       id: 'p2',
-      lowStockThreshold: 1,
       isSale: true,
+      lowStockThreshold: 1,
       name: 'Podložka',
       sku: 'P2',
     },

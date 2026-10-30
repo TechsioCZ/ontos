@@ -1,5 +1,7 @@
-import { Effect, Exit, Option } from 'effect';
-import { expect, test } from 'effect-rstest';
+import { Effect, Exit, Option, Schema } from 'effect';
+import { expect, it, test } from 'effect-rstest';
+
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 
 import {
   CONNECTION_SCOPE_REASON_CODE,
@@ -8,11 +10,31 @@ import {
   isConnectionWriteAllowed,
 } from '../../src/auth/oauth-connection-scope.ts';
 
-const sessionPrincipal = { authMethod: 'session' } as never;
+const decodePrincipal = Schema.decodeSync(TrustedPrincipalContextSchema);
+const sessionPrincipal = decodePrincipal({
+  authBindingId: '00000000-0000-4000-8000-000000000001',
+  authContextRef: 'better-auth-session:connection-scope-test',
+  authMethod: 'session',
+  principalId: '00000000-0000-4000-8000-000000000002',
+  tenantId: '00000000-0000-4000-8000-000000000003',
+});
 const connectionPrincipal = (
   writePolicy: 'approval' | 'direct' | 'read_only',
   modules: 'all' | readonly { access: 'read' | 'write'; moduleId: string }[],
-) => ({ authMethod: 'oauth_connection', connection: { modules, writePolicy } }) as never;
+) =>
+  decodePrincipal({
+    ...sessionPrincipal,
+    authContextRef: 'oauth-grant:00000000-0000-4000-8000-000000000004',
+    authMethod: 'oauth_connection',
+    connection: {
+      clientId: 'scope-client',
+      clientName: 'Scope test client',
+      grantId: '00000000-0000-4000-8000-000000000004',
+      modules,
+      writePolicy,
+    },
+    legalEntityId: '00000000-0000-4000-8000-000000000005',
+  });
 
 test('session principals are unaffected by connection scope', () => {
   expect(isConnectionReadAllowed(sessionPrincipal, 'demo.crm')).toBe(true);
@@ -47,20 +69,22 @@ test('direct policy with all modules allows writes', () => {
   expect(isConnectionWriteAllowed(connectionPrincipal('direct', 'all'), 'demo.crm')).toBe(true);
 });
 
-test('connection scope policy denies writes with connection_scope reason', () => {
-  const principal = connectionPrincipal('approval', [{ access: 'write', moduleId: 'demo.crm' }]);
-  const exit = Effect.runSyncExit(
-    connectionScopePolicy.evaluate({
-      action: { actionKey: 'x', owningModuleKey: 'demo.crm', schemaVersion: '1' },
-      payload: undefined,
-      principal,
-      target: {},
-      transport: { correlationId: 'c' },
-    } as never),
-  );
-  expect(Exit.isFailure(exit)).toBe(true);
-  if (Exit.isFailure(exit)) {
-    const error = Option.getOrUndefined(Exit.findErrorOption(exit)) as { reasonCode?: string } | undefined;
-    expect(error?.reasonCode).toBe(CONNECTION_SCOPE_REASON_CODE);
-  }
-});
+it.effect('connection scope policy denies writes with connection_scope reason', () =>
+  Effect.gen(function* connectionScopeDenial() {
+    const principal = connectionPrincipal('approval', [{ access: 'write', moduleId: 'demo.crm' }]);
+    const exit = yield* Effect.exit(
+      connectionScopePolicy.evaluate({
+        action: { actionKey: 'x', owningModuleKey: 'demo.crm', schemaVersion: '1' },
+        payload: {},
+        principal,
+        target: {},
+        transport: { correlationId: 'c' },
+      }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const error = Option.getOrUndefined(Exit.findErrorOption(exit));
+      expect(error?.reasonCode).toBe(CONNECTION_SCOPE_REASON_CODE);
+    }
+  }),
+);

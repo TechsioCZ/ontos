@@ -4,6 +4,7 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import {
   GovernVariantAxesPayloadSchema,
@@ -30,7 +31,7 @@ const domainEvents = { 'commerce.catalog.variant-axes-changed.v1': OutboxPayload
 type GovernVariantAxesServices = VariantAxisPersistence & {
   readonly assessOpenSelectionImpact: (
     productRef: GovernVariantAxesPayload['productRef'],
-  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable>;
+  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, Crypto.Crypto>;
 };
 
 export const handleGovernVariantAxes = Effect.fn('GovernVariantAxesAction.handle')(function* handleGovernVariantAxes(

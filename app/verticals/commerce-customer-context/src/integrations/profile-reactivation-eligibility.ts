@@ -1,5 +1,5 @@
 import { defineScopedRoutine } from '@app/core-runtime';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import type { ProfileLifecyclePayload } from '../../shared/actions/suspend-customer-profile.ts';
 import { ProfileReconfirmationPolicy, ReactivationProfileFactsSchema } from './profile-reconfirmation-policy.ts';
@@ -21,8 +21,7 @@ export type { ReconfirmationEvaluator } from './profile-reconfirmation-policy.ts
 
 const ReactivationProfileRowSchema = Schema.Struct({
   outcome: Schema.String,
-  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL returns a NULL payload for unavailable or reconciliation-required profile outcomes; this owner adapter rejects those rows before domain use; expires: 2027-03-31.
-  payload: Schema.NullOr(ReactivationProfileFactsSchema),
+  payload: Schema.OptionFromNullOr(ReactivationProfileFactsSchema),
 });
 
 const readReactivationProfileRoutine = defineScopedRoutine({
@@ -63,11 +62,10 @@ const readExactProfileFacts = (
     .pipe(
       Effect.mapError((cause) => dependencyFailure('The current Customer Profile subject is unavailable', cause)),
       Effect.flatMap(([row]) => {
-        const facts = row?.payload;
+        const facts = row?.payload.pipe(Option.getOrUndefined);
         if (
           row === undefined ||
           row.outcome !== 'PROFILE_AVAILABLE' ||
-          facts === null ||
           facts === undefined ||
           facts.profileId !== payload.profileRef.resourceId ||
           facts.profileKind !== payload.profileRef.kind ||

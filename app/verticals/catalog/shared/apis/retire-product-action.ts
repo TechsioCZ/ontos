@@ -3,7 +3,7 @@
 // @ontos-action-http-slug retire-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { RetireProductPayloadSchema, RetireProductResultSchema } from '../actions/retire-product.ts';
 
 export { RetireProductPayloadSchema } from '../actions/retire-product.ts';

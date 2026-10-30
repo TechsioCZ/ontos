@@ -3,7 +3,7 @@
 // @ontos-action-http-slug assign-catalog-media
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { AssignCatalogMediaPayloadSchema, AssignCatalogMediaResultSchema } from '../actions/assign-catalog-media.ts';
 
 export { AssignCatalogMediaPayloadSchema } from '../actions/assign-catalog-media.ts';

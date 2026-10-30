@@ -11,6 +11,7 @@ import { FacilityOperationsNotImplemented } from '../errors/facility-operations-
 import { OpsCommandSchema } from '../agendas.ts';
 import { AgendaIdSchema, EntityIdSchema } from '../domain/common.ts';
 import { StoredFileRefSchema } from '../domain/documents.ts';
+import { BaseUpdatedAtSchema } from '../domain/change-log.ts';
 
 export { OpsCommandSchema } from '../agendas.ts';
 export type { OpsCommand } from '../agendas.ts';
@@ -27,7 +28,7 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
    * moved on, the command is re-applied to the current state unless a record it changes was itself changed after
    * this instant (per-record conflicts instead of whole-agenda conflicts).
    */
-  baseUpdatedAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(40))),
+  baseUpdatedAt: Schema.optionalKey(BaseUpdatedAtSchema),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
 /** Identifiers of the entities the command created or changed, the new revision of the owning agenda. */

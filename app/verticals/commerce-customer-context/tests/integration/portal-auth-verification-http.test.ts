@@ -1,7 +1,7 @@
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Clock, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';

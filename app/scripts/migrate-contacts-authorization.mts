@@ -5,8 +5,8 @@ import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Console, Effect, Exit, Layer, ManagedRuntime, Number as EffectNumber, Redacted, Result, Schema } from 'effect';
-import { Argument, Command } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Argument, Command } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { fullyConsistent } from '../packages/core-runtime/src/permissions/client.ts';

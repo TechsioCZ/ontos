@@ -3,7 +3,7 @@
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { requestSearchRebuild, requestSearchRebuildWithAuthorization } from '../../src/api/party-command-client.ts';
 

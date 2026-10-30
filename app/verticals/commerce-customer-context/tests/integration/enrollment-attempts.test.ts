@@ -861,11 +861,14 @@ it.live(
           .pipe(Effect.exit);
         expect(postgresErrorCode(rebind)).toBe('22023');
 
-        const changedIntentRevision = yield* fixture.run(fixture.scope, (transaction) =>
-          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
-            .create({ ...input, compositionRevision: 'b'.repeat(64) })
-            .pipe(Effect.exit),
-        );
+        const changedIntentRevision = yield* fixture
+          .run(fixture.scope, (transaction) =>
+            commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).create({
+              ...input,
+              compositionRevision: 'b'.repeat(64),
+            }),
+          )
+          .pipe(Effect.exit);
         expect(Exit.isFailure(changedIntentRevision)).toBe(true);
 
         yield* backdateEnrollmentAcceptanceAttempt(fixture, created.portalEnrollmentAttemptId, '2001-01-01T00:00:00Z');
@@ -1014,11 +1017,14 @@ it.live(
         yield* core.transaction((transaction) =>
           drainApplicationCompositionAuthority(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
         );
-        const deniedStart = yield* fixture.run(fixture.scope, (transaction) =>
-          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
-            .create({ ...input, intentKey: enrollmentKey('denied-during-draining') })
-            .pipe(Effect.exit),
-        );
+        const deniedStart = yield* fixture
+          .run(fixture.scope, (transaction) =>
+            commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).create({
+              ...input,
+              intentKey: enrollmentKey('denied-during-draining'),
+            }),
+          )
+          .pipe(Effect.exit);
         expect(Exit.isFailure(deniedStart)).toBe(true);
         const late = yield* makeTestPgSession(connections.runtime.connectionString);
         yield* late.unsafe('BEGIN');
@@ -1090,11 +1096,13 @@ it.live('closes owner admission while already claimed effects retain operation-s
           isApplicationCompositionDurableWorkDrained(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
         ),
       ).toBe(false);
-      const deniedStart = yield* fixture.run(fixture.scope, (transaction) =>
-        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
-          .create(startInput('closed-admission-new-attempt', 'd69b0000-0000-4000-8000-000000000002'))
-          .pipe(Effect.exit),
-      );
+      const deniedStart = yield* fixture
+        .run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).create(
+            startInput('closed-admission-new-attempt', 'd69b0000-0000-4000-8000-000000000002'),
+          ),
+        )
+        .pipe(Effect.exit);
       expect(Exit.isFailure(deniedStart)).toBe(true);
       const prematureTerminal = yield* fixture.admin
         .transaction((transaction) =>

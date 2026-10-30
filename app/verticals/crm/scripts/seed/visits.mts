@@ -1,7 +1,8 @@
 // Seed of the visits area (C02 visits, C06 manual plan) — owned by the crm-visits lane.
 // reset-demo.mts calls seedVisits(); every date is relative to the reset time so the demo always shows
 // "last 3 months of visits" and "a plan for the next 2 weeks". Ids are deterministic demoId()s.
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
+import type { PlanItemSchema, VisitSchema, VisitCorrectionSchema, VisitKind } from '../../shared/domain/visits.ts';
 import { demoId } from '../../../../scripts/demo/fixture-ids.mts';
 
 interface Rep {
@@ -10,43 +11,57 @@ interface Rep {
 }
 
 export interface VisitsSeedInput {
+  /** Principal of the sales lead (Vedoucí obchodu). */
+  readonly leadPrincipalId: string;
   readonly now: DateTime.Utc;
   readonly repA: Rep;
   readonly repB: Rep;
-  /** Principal of the sales lead (Vedoucí obchodu). */
-  readonly leadPrincipalId: string;
 }
 
-type Kind = 'visit' | 'call' | 'video' | 'email';
+const bakeryClientKey = 'pekarna-mala';
+const gooseRestaurantClientKey = 'zlata-husa';
+const castleHotelClientKey = 'hotel-podhradi';
+const blanskoSchoolClientKey = 'zs-blansko';
+const cernaShopClientKey = 'potraviny-cerna';
+const cornerCafeClientKey = 'kavarna-na-rohu';
+const kralBistroClientKey = 'bistro-kral';
+const spaHotelClientKey = 'lazensky-hotel';
+const castleRestaurantClientKey = 'zamecka-restaurace';
+const vsetinCateringClientKey = 'catering-vsetin';
+const hodoninMinimarketClientKey = 'minimarket-hodonin';
+
+type Kind = VisitKind;
+const SeedAuthorSchema = Schema.Literals(['a', 'b', 'lead']);
+type SeedAuthor = typeof SeedAuthorSchema.Type;
 
 interface VisitSeed {
-  readonly key: string;
   readonly client: string;
-  readonly rep: 'a' | 'b' | 'lead';
+  readonly corrections?: readonly {
+    readonly by: SeedAuthor;
+    readonly field: string;
+    readonly hoursAfter: number;
+    readonly next?: string;
+    readonly previous?: string;
+    readonly reason?: string;
+  }[];
   /** Days before the reset. */
   readonly daysAgo: number;
   /** Local (Prague) hour + minutes, e.g. 9.5 = 09:30. */
   readonly hour: number;
+  readonly key: string;
   readonly kind: Kind;
-  readonly result: string;
-  readonly note?: string;
   readonly nextStep?: string;
   /** Days after the reset (negative = already past). */
   readonly nextStepInDays?: number;
-  readonly corrections?: readonly {
-    readonly by: 'a' | 'b' | 'lead';
-    readonly field: string;
-    readonly previous?: string;
-    readonly next?: string;
-    readonly reason?: string;
-    readonly hoursAfter: number;
-  }[];
+  readonly note?: string;
+  readonly rep: SeedAuthor;
+  readonly result: string;
 }
 
 const VISITS: readonly VisitSeed[] = [
   // Jan Novák (A)
   {
-    client: 'pekarna-mala',
+    client: bakeryClientKey,
     daysAgo: 84,
     hour: 9,
     key: 'a-01',
@@ -56,7 +71,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Úvodní schůzka, předán katalog',
   },
   {
-    client: 'zlata-husa',
+    client: gooseRestaurantClientKey,
     daysAgo: 77,
     hour: 14,
     key: 'a-02',
@@ -65,7 +80,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Domluvena ochutnávka uzenin',
   },
   {
-    client: 'hotel-podhradi',
+    client: castleHotelClientKey,
     daysAgo: 70,
     hour: 10.5,
     key: 'a-03',
@@ -75,7 +90,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Prezentace sortimentu pro snídaně',
   },
   {
-    client: 'zs-blansko',
+    client: blanskoSchoolClientKey,
     daysAgo: 63,
     hour: 8.5,
     key: 'a-04',
@@ -84,7 +99,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Zaslána nabídka na školní rok',
   },
   {
-    client: 'potraviny-cerna',
+    client: cernaShopClientKey,
     daysAgo: 56,
     hour: 11,
     key: 'a-05',
@@ -94,7 +109,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Dohodnuty dodávky 1× týdně',
   },
   {
-    client: 'kavarna-na-rohu',
+    client: cornerCafeClientKey,
     daysAgo: 49,
     hour: 15,
     key: 'a-06',
@@ -103,7 +118,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Videohovor k sortimentu dezertů',
   },
   {
-    client: 'pekarna-mala',
+    client: bakeryClientKey,
     corrections: [
       {
         by: 'a',
@@ -123,7 +138,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Podepsána rámcová dohoda',
   },
   {
-    client: 'zlata-husa',
+    client: gooseRestaurantClientKey,
     daysAgo: 35,
     hour: 13,
     key: 'a-08',
@@ -133,7 +148,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Ochutnávka proběhla, zájem o uzeniny',
   },
   {
-    client: 'zs-blansko',
+    client: blanskoSchoolClientKey,
     daysAgo: 28,
     hour: 10,
     key: 'a-09',
@@ -142,7 +157,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Upřesněny alergeny v nabídce',
   },
   {
-    client: 'pekarna-mala',
+    client: bakeryClientKey,
     daysAgo: 21,
     hour: 9,
     key: 'v1',
@@ -152,7 +167,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Představení podzimní nabídky mouky',
   },
   {
-    client: 'hotel-podhradi',
+    client: castleHotelClientKey,
     daysAgo: 16,
     hour: 11,
     key: 'a-10',
@@ -163,7 +178,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Rekonstrukce kuchyně končí v listopadu',
   },
   {
-    client: 'kavarna-na-rohu',
+    client: cornerCafeClientKey,
     daysAgo: 12,
     hour: 14.5,
     key: 'a-11',
@@ -172,7 +187,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Odeslán ceník dezertů na zimní sezónu',
   },
   {
-    client: 'zlata-husa',
+    client: gooseRestaurantClientKey,
     daysAgo: 9,
     hour: 10,
     key: 'v2',
@@ -183,7 +198,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Dohodnuta zkušební objednávka',
   },
   {
-    client: 'potraviny-cerna',
+    client: cernaShopClientKey,
     daysAgo: 3,
     hour: 16,
     key: 'a-12',
@@ -195,7 +210,7 @@ const VISITS: readonly VisitSeed[] = [
   },
   // Petra Svobodová (B)
   {
-    client: 'bistro-kral',
+    client: kralBistroClientKey,
     daysAgo: 88,
     hour: 10,
     key: 'b-01',
@@ -205,7 +220,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Úvodní schůzka s jednatelem',
   },
   {
-    client: 'lazensky-hotel',
+    client: spaHotelClientKey,
     daysAgo: 80,
     hour: 13.5,
     key: 'b-02',
@@ -214,7 +229,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Prezentace pro F&B manažera',
   },
   {
-    client: 'minimarket-hodonin',
+    client: hodoninMinimarketClientKey,
     daysAgo: 72,
     hour: 9,
     key: 'b-03',
@@ -223,7 +238,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Minimarket má zájem jen o trvanlivé zboží',
   },
   {
-    client: 'catering-vsetin',
+    client: vsetinCateringClientKey,
     daysAgo: 65,
     hour: 11,
     key: 'b-04',
@@ -233,7 +248,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Videohovor k sezónním akcím',
   },
   {
-    client: 'zamecka-restaurace',
+    client: castleRestaurantClientKey,
     daysAgo: 58,
     hour: 15,
     key: 'b-05',
@@ -242,7 +257,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Ochutnávka s šéfkuchařem',
   },
   {
-    client: 'bistro-kral',
+    client: kralBistroClientKey,
     corrections: [
       {
         by: 'lead',
@@ -261,7 +276,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Objednávka masa na 4 týdny potvrzena',
   },
   {
-    client: 'lazensky-hotel',
+    client: spaHotelClientKey,
     daysAgo: 37,
     hour: 9.5,
     key: 'b-07',
@@ -270,7 +285,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Zaslán návrh ročního kontraktu',
   },
   {
-    client: 'catering-vsetin',
+    client: vsetinCateringClientKey,
     daysAgo: 24,
     hour: 14,
     key: 'b-08',
@@ -279,7 +294,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Řešena pozdní dodávka, omluva a sleva 5 %',
   },
   {
-    client: 'bistro-kral',
+    client: kralBistroClientKey,
     daysAgo: 14,
     hour: 11,
     key: 'v3',
@@ -289,7 +304,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Reklamace dodávky vyřešena',
   },
   {
-    client: 'minimarket-hodonin',
+    client: hodoninMinimarketClientKey,
     daysAgo: 10,
     hour: 16,
     key: 'b-09',
@@ -300,7 +315,7 @@ const VISITS: readonly VisitSeed[] = [
     result: 'Majitel chce vánoční nabídku',
   },
   {
-    client: 'lazensky-hotel',
+    client: spaHotelClientKey,
     daysAgo: 5,
     hour: 13,
     key: 'v4',
@@ -324,25 +339,25 @@ const VISITS: readonly VisitSeed[] = [
 ];
 
 interface PlanSeed {
-  readonly key: string;
   readonly client: string;
-  readonly rep: 'a' | 'b';
-  /** Days after the reset (negative = overdue). */
-  readonly dueInDays: number;
   readonly createdDaysAgo: number;
-  readonly note?: string;
-  readonly sourceVisit?: string;
   readonly done?: {
     readonly daysAgo: number;
     readonly note?: string;
     readonly visit?: string;
   };
+  /** Days after the reset (negative = overdue). */
+  readonly dueInDays: number;
+  readonly key: string;
+  readonly note?: string;
+  readonly rep: 'a' | 'b';
+  readonly sourceVisit?: string;
 }
 
 const PLAN: readonly PlanSeed[] = [
   // A — open
   {
-    client: 'kavarna-na-rohu',
+    client: cornerCafeClientKey,
     createdDaysAgo: 12,
     dueInDays: -2,
     key: 'p-a-1',
@@ -350,7 +365,7 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'a',
   },
   {
-    client: 'zs-blansko',
+    client: blanskoSchoolClientKey,
     createdDaysAgo: 6,
     dueInDays: 0,
     key: 'p-a-2',
@@ -358,7 +373,7 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'a',
   },
   {
-    client: 'zlata-husa',
+    client: gooseRestaurantClientKey,
     createdDaysAgo: 9,
     dueInDays: 2,
     key: 'p-a-3',
@@ -367,7 +382,7 @@ const PLAN: readonly PlanSeed[] = [
     sourceVisit: 'v2',
   },
   {
-    client: 'potraviny-cerna',
+    client: cernaShopClientKey,
     createdDaysAgo: 3,
     dueInDays: 4,
     key: 'p1',
@@ -376,7 +391,7 @@ const PLAN: readonly PlanSeed[] = [
     sourceVisit: 'a-12',
   },
   {
-    client: 'hotel-podhradi',
+    client: castleHotelClientKey,
     createdDaysAgo: 16,
     dueInDays: 9,
     key: 'p-a-4',
@@ -385,7 +400,7 @@ const PLAN: readonly PlanSeed[] = [
     sourceVisit: 'a-10',
   },
   {
-    client: 'pekarna-mala',
+    client: bakeryClientKey,
     createdDaysAgo: 2,
     dueInDays: 13,
     key: 'p-a-5',
@@ -394,7 +409,7 @@ const PLAN: readonly PlanSeed[] = [
   },
   // A — done
   {
-    client: 'kavarna-na-rohu',
+    client: cornerCafeClientKey,
     createdDaysAgo: 20,
     done: { daysAgo: 12, note: 'Ceník odeslán e-mailem', visit: 'a-11' },
     dueInDays: -12,
@@ -403,7 +418,7 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'a',
   },
   {
-    client: 'zs-blansko',
+    client: blanskoSchoolClientKey,
     createdDaysAgo: 35,
     done: { daysAgo: 28, visit: 'a-09' },
     dueInDays: -28,
@@ -413,7 +428,7 @@ const PLAN: readonly PlanSeed[] = [
   },
   // B — open
   {
-    client: 'minimarket-hodonin',
+    client: hodoninMinimarketClientKey,
     createdDaysAgo: 10,
     dueInDays: 3,
     key: 'p-b-1',
@@ -422,7 +437,7 @@ const PLAN: readonly PlanSeed[] = [
     sourceVisit: 'b-09',
   },
   {
-    client: 'zamecka-restaurace',
+    client: castleRestaurantClientKey,
     createdDaysAgo: 2,
     dueInDays: 7,
     key: 'p2',
@@ -430,7 +445,7 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'b',
   },
   {
-    client: 'lazensky-hotel',
+    client: spaHotelClientKey,
     createdDaysAgo: 5,
     dueInDays: 8,
     key: 'p-b-2',
@@ -439,7 +454,7 @@ const PLAN: readonly PlanSeed[] = [
     sourceVisit: 'v4',
   },
   {
-    client: 'catering-vsetin',
+    client: vsetinCateringClientKey,
     createdDaysAgo: 4,
     dueInDays: 1,
     key: 'p-b-3',
@@ -447,7 +462,7 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'b',
   },
   {
-    client: 'bistro-kral',
+    client: kralBistroClientKey,
     createdDaysAgo: 1,
     dueInDays: 12,
     key: 'p-b-4',
@@ -456,7 +471,7 @@ const PLAN: readonly PlanSeed[] = [
   },
   // B — done
   {
-    client: 'catering-vsetin',
+    client: vsetinCateringClientKey,
     createdDaysAgo: 30,
     done: { daysAgo: 24, note: 'Reklamace vyřízena po telefonu', visit: 'b-08' },
     dueInDays: -25,
@@ -465,6 +480,9 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'b',
   },
 ];
+
+const clientId = (key: string) => demoId('crm.client', key);
+const visitId = (key: string) => demoId('crm.visit', key);
 
 /** Encoded visits slice (VisitsSlice) for the reset time `now`. */
 export const seedVisits = ({ leadPrincipalId, now, repA, repB }: VisitsSeedInput) => {
@@ -475,11 +493,18 @@ export const seedVisits = ({ leadPrincipalId, now, repA, repB }: VisitsSeedInput
       DateTime.add(DateTime.subtract(today, { days: daysAgo }), { minutes: Math.round((hour - 1) * 60) }),
     );
   const day = (inDays: number) => DateTime.formatIso(DateTime.add(today, { days: inDays })).slice(0, 10);
-  const clientId = (key: string) => demoId('crm.client', key);
-  const visitId = (key: string) => demoId('crm.visit', key);
-  const principal = (who: 'a' | 'b' | 'lead') =>
-    who === 'a' ? repA.principalId : who === 'b' ? repB.principalId : leadPrincipalId;
-  const salesperson = (who: 'a' | 'b' | 'lead') => (who === 'a' ? repA.id : who === 'b' ? repB.id : undefined);
+  const principal = (who: SeedAuthor) => {
+    if (who === 'a') {
+      return repA.principalId;
+    }
+    return who === 'b' ? repB.principalId : leadPrincipalId;
+  };
+  const salesperson = (who: SeedAuthor) => {
+    if (who === 'a') {
+      return repA.id;
+    }
+    return who === 'b' ? repB.id : undefined;
+  };
   const plannedBy = new Map(
     PLAN.flatMap((item) =>
       item.done?.visit === undefined ? [] : [[item.done.visit, demoId('crm.plan', item.key)] as const],
@@ -489,57 +514,83 @@ export const seedVisits = ({ leadPrincipalId, now, repA, repB }: VisitsSeedInput
   const items = VISITS.map((seed) => {
     const occurredAt = localAt(seed.daysAgo, seed.hour);
     const createdAt = localAt(seed.daysAgo, seed.hour + 1.5);
-    const corrections = (seed.corrections ?? []).map((correction) => ({
-      at: localAt(seed.daysAgo, seed.hour + correction.hoursAfter),
-      by: principal(correction.by),
-      field: correction.field,
-      ...(correction.next === undefined ? {} : { next: correction.next }),
-      ...(correction.previous === undefined ? {} : { previous: correction.previous }),
-      ...(correction.reason === undefined ? {} : { reason: correction.reason }),
-    }));
+    const corrections: (typeof VisitCorrectionSchema.Encoded)[] = (seed.corrections ?? []).map((correction) => {
+      const result: typeof VisitCorrectionSchema.Encoded = {
+        at: localAt(seed.daysAgo, seed.hour + correction.hoursAfter),
+        by: principal(correction.by),
+        field: correction.field,
+      };
+      if (correction.next !== undefined) {
+        Object.assign(result, { next: correction.next });
+      }
+      if (correction.previous !== undefined) {
+        Object.assign(result, { previous: correction.previous });
+      }
+      if (correction.reason !== undefined) {
+        Object.assign(result, { reason: correction.reason });
+      }
+      return result;
+    });
     const salespersonId = salesperson(seed.rep);
     const planItemId = plannedBy.get(seed.key);
-    return {
+    const visit: typeof VisitSchema.Encoded = {
       authorPrincipalId: principal(seed.rep),
       clientId: clientId(seed.client),
       corrections,
       createdAt,
       id: visitId(seed.key),
       kind: seed.kind,
-      ...(seed.nextStep === undefined ? {} : { nextStep: seed.nextStep }),
-      ...(seed.nextStepInDays === undefined ? {} : { nextStepDate: day(seed.nextStepInDays) }),
-      ...(seed.note === undefined ? {} : { note: seed.note }),
       occurredAt,
-      ...(planItemId === undefined ? {} : { planItemId }),
       result: seed.result,
-      ...(salespersonId === undefined ? {} : { salespersonId }),
       updatedAt: corrections.at(-1)?.at ?? createdAt,
     };
+    if (seed.nextStep !== undefined) {
+      Object.assign(visit, { nextStep: seed.nextStep });
+    }
+    if (seed.nextStepInDays !== undefined) {
+      Object.assign(visit, { nextStepDate: day(seed.nextStepInDays) });
+    }
+    if (seed.note !== undefined) {
+      Object.assign(visit, { note: seed.note });
+    }
+    if (planItemId !== undefined) {
+      Object.assign(visit, { planItemId });
+    }
+    if (salespersonId !== undefined) {
+      Object.assign(visit, { salespersonId });
+    }
+    return visit;
   });
 
   const plan = PLAN.map((seed) => {
     const createdAt = localAt(seed.createdDaysAgo, 17);
     const doneAt = seed.done === undefined ? undefined : localAt(seed.done.daysAgo, 17);
-    return {
+    const item: typeof PlanItemSchema.Encoded = {
       clientId: clientId(seed.client),
       createdAt,
       createdBy: principal(seed.rep),
       dueDate: day(seed.dueInDays),
       id: demoId('crm.plan', seed.key),
-      ...(seed.note === undefined ? {} : { note: seed.note }),
-      salespersonId: salesperson(seed.rep),
-      ...(seed.sourceVisit === undefined ? {} : { sourceVisitId: visitId(seed.sourceVisit) }),
+      salespersonId: seed.rep === 'a' ? repA.id : repB.id,
       status: seed.done === undefined ? 'open' : 'done',
-      ...(seed.done === undefined
-        ? {}
-        : {
-            doneAt,
-            doneBy: principal(seed.rep),
-            ...(seed.done.note === undefined ? {} : { doneNote: seed.done.note }),
-            ...(seed.done.visit === undefined ? {} : { doneVisitId: visitId(seed.done.visit) }),
-          }),
       updatedAt: doneAt ?? createdAt,
     };
+    if (seed.note !== undefined) {
+      Object.assign(item, { note: seed.note });
+    }
+    if (seed.sourceVisit !== undefined) {
+      Object.assign(item, { sourceVisitId: visitId(seed.sourceVisit) });
+    }
+    if (seed.done !== undefined) {
+      Object.assign(item, { doneAt, doneBy: principal(seed.rep) });
+      if (seed.done.note !== undefined) {
+        Object.assign(item, { doneNote: seed.done.note });
+      }
+      if (seed.done.visit !== undefined) {
+        Object.assign(item, { doneVisitId: visitId(seed.done.visit) });
+      }
+    }
+    return item;
   });
 
   return { items, plan };

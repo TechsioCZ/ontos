@@ -42,8 +42,8 @@ const handleApplyCommand = Effect.fn('Occupancy.applyCommand')(function* handleA
     payload.command,
     {
       legalEntityId: context.scope.legalEntityId,
-      tenantId: context.scope.tenantId,
       principalId: context.scope.principalId,
+      tenantId: context.scope.tenantId,
     },
     context.services.validators,
   );

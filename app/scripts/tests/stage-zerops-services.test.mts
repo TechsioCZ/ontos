@@ -26,27 +26,96 @@ const OUTBOX_WORKERS = [
   'pricegroupcatalogworker',
   'inventoryworker',
   'privacyworker',
+  'financebillingworker',
+  'coresystemworker',
 ];
-const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
+const KEPT_ON_ZEROPS = new Set([
+  'cloudflared',
+  'coresystemworker',
+  'db18',
+  'migrator',
+  'outboxworkerhost',
+  'spicedb',
+  ...OUTBOX_WORKERS,
+]);
 
-// The original nine IDs come from the backup bundle; Inventory, Assortment and Tax are newer additions.
-const STAGE_SERVICE_IDS = new Map(
+const ImportInventorySchema = Schema.Struct({ services: Schema.Array(Schema.Struct({ hostname: Schema.String })) });
+const declaredHostnames = Schema.decodeUnknownSync(ImportInventorySchema)(
+  parse(readFileSync(`${APP_DIRECTORY}/zerops-import.yaml`, 'utf-8')),
+).services.map(({ hostname }) => hostname);
+const TopologyInventorySchema = Schema.fromJsonString(
+  Schema.Struct({
+    shell: Schema.Struct({ id: Schema.Literal('shell-super-app') }),
+    verticals: Schema.Array(Schema.Struct({ id: Schema.String })),
+  }),
+);
+const topology = Schema.decodeSync(TopologyInventorySchema)(
+  readFileSync(`${APP_DIRECTORY}/topology/reference-topology.json`, 'utf-8'),
+);
+const applicationSetups = new Map<string, string>([
+  ['shellsuperapp', 'shellsuperapp'],
+  ...topology.verticals.map(({ id }): [string, string] => [id.replaceAll('-', ''), id]),
+]);
+// Independent of the retirement allowlist: only currently declared topology applications belong here.
+const declaredApplications = declaredHostnames.flatMap((hostname) => {
+  const setup = applicationSetups.get(hostname);
+  return setup === undefined ? [] : [{ hostname, setup }];
+});
+const RuntimeEnvironmentSchema = Schema.Struct({
+  zerops: Schema.Array(
+    Schema.Struct({
+      run: Schema.optionalKey(
+        Schema.Struct({ envVariables: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)) }),
+      ),
+      setup: Schema.String,
+    }),
+  ),
+});
+const declaredRuntimeKeys = new Map(
+  Schema.decodeUnknownSync(RuntimeEnvironmentSchema)(
+    parse(readFileSync(`${APP_DIRECTORY}/zerops.yaml`, 'utf-8')),
+  ).zerops.map(({ run, setup }): [string, readonly string[]] => [setup, Object.keys(run?.envVariables ?? {})]),
+);
+
+// Recorded fixture IDs remain stable; newly declared applications receive synthetic IDs below.
+const RECORDED_STAGE_SERVICE_IDS = new Map(
   Object.entries({
     assortment: 'assortment-id',
     availability: 'availability-id',
     catalog: 'IGOF5E9vQ7izD4ygQgoNiQ',
     commercecustomercontext: 'omIBMTDCR7iARcXTt4SqJw',
     commercemarketcatalog: '7nJtt1fnQMKsGRDTl6Wv1w',
+    crm: 'crm-service-id',
+    crmactivities: 'crm-activities-service-id',
+    facilityoperations: 'facility-operations-service-id',
+    financebilling: 'finance-billing-service-id',
     inventory: 'inventory-service-id',
+    legalagreements: 'legal-agreements-service-id',
+    merchandise: 'merchandise-service-id',
     partyregistry: 'cxNTAHZJSbiJr3xTqkypOg',
     paymenttermcatalog: '2FgvrWn9RzCJrfbMapwM6Q',
     pricegroupcatalog: 'aHab72wuSDS4AjkgxNbHDw',
     pricing: 'll1Dd1AiRiKSLlB1QKDhQw',
     privacy: 'privacy-service-id',
+    projects: 'projects-service-id',
+    propertyleasing: 'property-leasing-service-id',
+    propertyportfolio: 'property-portfolio-service-id',
+    salesinsights: 'sales-insights-service-id',
+    salespipeline: 'sales-pipeline-service-id',
     shellsuperapp: 'E6Wy3B08Rn60XqS6T666fg',
     storefrontregistry: 't9lSg7HFRne0DJblYFwXbg',
+    tagging: 'tagging-service-id',
     tax: 'tax-service-id',
+    workforce: 'workforce-service-id',
+    worktasks: 'work-tasks-service-id',
   }),
+);
+
+const STAGE_SERVICE_IDS = new Map(
+  declaredApplications.map(({ hostname }): [string, string] => [
+    hostname,
+    RECORDED_STAGE_SERVICE_IDS.get(hostname) ?? `${hostname}-id`,
+  ]),
 );
 
 const STAGE_SHELL_ORIGIN = 'https://stage.example';
@@ -67,41 +136,66 @@ const VERTICAL_KEYS = [
   'ULTRAMODERN_MF_DEV_ORIGIN',
   'ULTRAMODERN_ZEROPS_SERVICE',
 ];
+const PARTY_KEYS = [...VERTICAL_KEYS.filter((key) => key !== 'DATABASE_URL'), 'PARTY_REGISTRY_DATABASE_URL'];
+const MIGRATOR_IDENTITY_SECRET_KEYS = [
+  'PARTY_REGISTRY_DB_PASSWORD',
+  'PARTY_REGISTRY_WORKER_DB_PASSWORD',
+  'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
+];
 const SHELL_KEYS = [
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_TRUSTED_ORIGINS',
   'BETTER_AUTH_URL',
-  'DATABASE_URL',
-  'MODERN_PUBLIC_SITE_URL',
-  'ONTOS_GATEWAY_ISSUER',
   'ONTOS_GATEWAY_PRIVATE_JWK',
+  'SHELL_GATEWAY_ISSUER_DATABASE_URL',
 ];
 
 const liveStage = (overrides: { readonly deployTarget?: string } = {}) =>
   fakeStage({
-    projectUserKeys: [...PROJECT_KEYS, 'partyregistry_DATABASE_URL', 'shellsuperapp_BETTER_AUTH_SECRET'],
+    projectUserKeys: [
+      ...PROJECT_KEYS,
+      ...MIGRATOR_IDENTITY_SECRET_KEYS.map((key) => `migrator_${key}`),
+      'partyregistry_PARTY_REGISTRY_DATABASE_URL',
+      'shellsuperapp_BETTER_AUTH_SECRET',
+    ],
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
+      { hostname: 'migrator', id: 'migrator-id', status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
       { hostname: 'outboxworkerhost', id: 'host-id', status: 'ACTIVE' },
+      { hostname: 'cloudflared', id: 'tunnel-id', status: 'ACTIVE' },
       ...OUTBOX_WORKERS.map((hostname) => ({ hostname, id: `${hostname}-id`, status: 'STOPPED' })),
-      ...RETIRED_STAGE_SERVICES.map(({ hostname }) => ({
+      ...declaredApplications.map(({ hostname }) => ({
         hostname,
         id: STAGE_SERVICE_IDS.get(hostname) ?? '',
         status: 'ACTIVE',
       })),
     ],
-    serviceUserKeys: Object.fromEntries(
-      RETIRED_STAGE_SERVICES.map(({ hostname }) => [
-        hostname,
-        hostname === 'shellsuperapp' ? SHELL_KEYS : VERTICAL_KEYS,
-      ]),
-    ),
+    serviceUserKeys: {
+      ...Object.fromEntries(
+        declaredApplications.map(({ hostname, setup }) => [
+          hostname,
+          [
+            ...new Set([
+              ...(declaredRuntimeKeys.get(setup) ?? []),
+              ...PROJECT_KEYS,
+              ...(hostname === 'shellsuperapp' ? SHELL_KEYS : ['ONTOS_GATEWAY_PUBLIC_JWKS']),
+            ]),
+          ],
+        ]),
+      ),
+      migrator: MIGRATOR_IDENTITY_SECRET_KEYS,
+      partyregistry: PARTY_KEYS,
+      partyregistryworker: [
+        ...VERTICAL_KEYS.filter((key) => key !== 'DATABASE_URL'),
+        'PARTY_REGISTRY_WORKER_DATABASE_URL',
+      ],
+    },
     variables: {
       stage: {
         DEPLOY_TARGET: overrides.deployTarget ?? 'cloudflare',
         ...Object.fromEntries(
-          RETIRED_STAGE_SERVICES.map(({ hostname, setup }) => [
+          declaredApplications.map(({ hostname, setup }) => [
             serviceIdVariable(setup),
             STAGE_SERVICE_IDS.get(hostname) ?? '',
           ]),
@@ -146,42 +240,35 @@ it('retires exactly the application services zerops-import.yaml declares, each w
   expect(new Set(RETIRED_STAGE_SERVICES.map(({ hostname }) => hostname))).toStrictEqual(
     new Set(declared.filter((hostname) => !KEPT_ON_ZEROPS.has(hostname))),
   );
+  expect(new Set(declaredApplications.map(({ hostname }) => hostname))).toStrictEqual(
+    new Set(declared.filter((hostname) => !KEPT_ON_ZEROPS.has(hostname))),
+  );
   for (const { setup } of RETIRED_STAGE_SERVICES) {
     expect(setups).toContain(setup);
   }
-  // The variables the stage deploy reads today (backup bundle `github-stage-env-variables.txt`).
+  // The stage variables follow the independently declared application setups, including generated verticals.
   expect(
     Arr.sort(
       RETIRED_STAGE_SERVICES.map(({ setup }) => serviceIdVariable(setup)),
       Order.String,
     ),
-  ).toStrictEqual([
-    'ZEROPS_ASSORTMENT_SERVICE_ID',
-    'ZEROPS_AVAILABILITY_SERVICE_ID',
-    'ZEROPS_CATALOG_SERVICE_ID',
-    'ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID',
-    'ZEROPS_COMMERCE_MARKET_CATALOG_SERVICE_ID',
-    'ZEROPS_INVENTORY_SERVICE_ID',
-    'ZEROPS_PARTY_REGISTRY_SERVICE_ID',
-    'ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID',
-    'ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID',
-    'ZEROPS_PRICING_SERVICE_ID',
-    'ZEROPS_PRIVACY_SERVICE_ID',
-    'ZEROPS_SHELL_SERVICE_ID',
-    'ZEROPS_STOREFRONT_REGISTRY_SERVICE_ID',
-    'ZEROPS_TAX_SERVICE_ID',
-  ]);
+  ).toStrictEqual(
+    Arr.sort(
+      declaredApplications.map(({ setup }) => serviceIdVariable(setup)),
+      Order.String,
+    ),
+  );
 });
 
 it('splits service keys into zerops.yaml, inherited project and service-secret keys', () => {
   expect(
     classifyEnvironmentKeys({
-      projectKeys: [...PROJECT_KEYS, 'partyregistry_DATABASE_URL'],
+      projectKeys: [...PROJECT_KEYS, 'partyregistry_PARTY_REGISTRY_DATABASE_URL'],
       serviceHostnames: ['partyregistry', 'db18'],
-      serviceKeys: VERTICAL_KEYS,
+      serviceKeys: PARTY_KEYS,
       zeropsYamlKeys: new Set([
-        'DATABASE_URL',
         'NODE_ENV',
+        'PARTY_REGISTRY_DATABASE_URL',
         'PORT',
         'SPICEDB_CA_CERT',
         'SPICEDB_ENDPOINT',
@@ -192,8 +279,8 @@ it('splits service keys into zerops.yaml, inherited project and service-secret k
     }),
   ).toStrictEqual({
     fromZeropsYaml: [
-      'DATABASE_URL',
       'NODE_ENV',
+      'PARTY_REGISTRY_DATABASE_URL',
       'PORT',
       'SPICEDB_CA_CERT',
       'SPICEDB_ENDPOINT',
@@ -232,6 +319,11 @@ it.effect('records every service without --confirm and deletes nothing', () =>
     expect(shell?.importEntry).toStrictEqual(
       Option.some({ enableSubdomainAccess: true, hostname: 'shellsuperapp', type: 'nodejs@24' }),
     );
+    expect(shell?.environmentKeys.fromZeropsYaml).toContain('SHELL_GATEWAY_ISSUER_DATABASE_URL');
+    const party = record.services.find(({ hostname }) => hostname === 'partyregistry');
+    expect(party?.environmentKeys.fromZeropsYaml).toContain('PARTY_REGISTRY_DATABASE_URL');
+    expect(party?.environmentKeys.fromZeropsYaml).not.toContain('DATABASE_URL');
+    expect(party?.environmentKeys.serviceSecrets).toStrictEqual(['ONTOS_GATEWAY_PUBLIC_JWKS']);
     // The record holds keys and IDs only; no service ever had its values read.
     expect(stage.commands.some(({ args }) => args.some((argument) => argument.includes('.Value')))).toBe(false);
   }),
@@ -281,8 +373,10 @@ it.effect('records, then deletes each retired service by ID with --confirm, keep
     // The Cloudflare target still deploys the migrator, SpiceDB and the host, and reads the stopped workers.
     expect(stage.services.map(({ hostname }) => hostname)).toStrictEqual([
       'db18',
+      'migrator',
       'spicedb',
       'outboxworkerhost',
+      'cloudflared',
       ...OUTBOX_WORKERS,
     ]);
     expect(stage.variables.get('stage')).toStrictEqual(variablesBefore);
@@ -304,10 +398,9 @@ const retiredFiles = Effect.gen(function* retiredFilesEffect() {
 const vaultExport = (overrides: Readonly<Record<string, string>> = {}) =>
   Object.entries({
     ...Object.fromEntries(
-      RETIRED_STAGE_SERVICES.filter(({ hostname }) => hostname !== 'shellsuperapp').map(({ hostname }) => [
-        `${hostname}_ONTOS_GATEWAY_PUBLIC_JWKS`,
-        PUBLIC_JWKS,
-      ]),
+      declaredApplications
+        .filter(({ hostname }) => hostname !== 'shellsuperapp')
+        .map(({ hostname }) => [`${hostname}_ONTOS_GATEWAY_PUBLIC_JWKS`, PUBLIC_JWKS]),
     ),
     shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
     shellsuperapp_BETTER_AUTH_TRUSTED_ORIGINS: STAGE_SHELL_ORIGIN,
@@ -358,10 +451,20 @@ it.effect('re-imports the retired services with their secrets, re-points the var
     expect(document.services.map(({ hostname }) => hostname)).toStrictEqual(
       RETIRED_STAGE_SERVICES.map(({ hostname }) => hostname),
     );
-    expect(document.services.find(({ hostname }) => hostname === 'shellsuperapp')?.envSecrets).toMatchObject({
+    expect(document.services.find(({ hostname }) => hostname === 'shellsuperapp')?.envSecrets).toStrictEqual({
       BETTER_AUTH_SECRET: AUTH_SECRET,
+      BETTER_AUTH_TRUSTED_ORIGINS: STAGE_SHELL_ORIGIN,
+      BETTER_AUTH_URL: STAGE_SHELL_ORIGIN,
       ONTOS_GATEWAY_PRIVATE_JWK: '{"d":"private-jwk-secret"}',
     });
+    expect(document.services.find(({ hostname }) => hostname === 'partyregistry')?.envSecrets).toStrictEqual({
+      ONTOS_GATEWAY_PUBLIC_JWKS: PUBLIC_JWKS,
+    });
+    // Dedicated passwords stay on the retained migrator; the next deploy rebuilds the identity URLs.
+    expect(stage.services.find(({ hostname }) => hostname === 'migrator')?.id).toBe('migrator-id');
+    expect(stage.serviceUserKeys.get('migrator')).toStrictEqual(MIGRATOR_IDENTITY_SECRET_KEYS);
+    expect(stage.serviceUserKeys.get('partyregistryworker')).toContain('PARTY_REGISTRY_WORKER_DATABASE_URL');
+    expect(stage.serviceUserKeys.get('partyregistryworker')).not.toContain('DATABASE_URL');
     const newIds = new Map(stage.services.map(({ hostname, id }) => [hostname, id]));
     for (const { hostname, setup } of RETIRED_STAGE_SERVICES) {
       expect(stage.variables.get('stage')?.get(serviceIdVariable(setup))).toBe(newIds.get(hostname));

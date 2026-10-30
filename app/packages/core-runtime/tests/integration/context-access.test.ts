@@ -73,20 +73,20 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     crossTenantPriceGroupId,
   ] = yield* Effect.all(
     [
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
-      crypto.randomUUIDv4,
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
     ],
     { concurrency: 'unbounded' },
   );
-  const customerId = yield* crypto.randomUUIDv4;
+  const customerId = yield* crypto.randomUUIDv4();
   const moduleId = 'property.registry';
   const resource = { moduleId, resourceId, resourceType: 'property.unit' };
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);

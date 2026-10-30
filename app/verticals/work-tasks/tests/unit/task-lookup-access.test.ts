@@ -25,26 +25,26 @@ const fakeAccess = (
     expect(input.legalEntityId).toBe(scope.legalEntityId);
     expect(input.principalId).toBe(scope.principalId);
     expect(input.tenantId).toBe(scope.tenantId);
-    return Effect.succeed(input.moduleIds.map((key) => ({ key, decision })));
+    return Effect.succeed(input.moduleIds.map((key) => ({ decision, key })));
   },
   resources: () => Effect.succeed([]),
   tenants: () => Effect.succeed([]),
 });
 
 it.effect('preserves scoped permitted lookups for manager and salesperson', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* permittedLookups() {
     const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('allowed')));
     expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
   }),
 );
 it.effect('marks inaccessible optional directories denied rather than failed', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* deniedLookups() {
     const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('denied')));
     expect(Object.values(result)).toEqual(['denied', 'denied', 'denied', 'denied']);
   }),
 );
 it.effect('requires customer legal-entity permission in addition to module access', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* customerPermission() {
     const result = yield* taskLookupAccess(scope).pipe(
       Effect.provideService(ContextAccess, fakeAccess('allowed', 'denied')),
     );
@@ -52,13 +52,13 @@ it.effect('requires customer legal-entity permission in addition to module acces
   }),
 );
 it.effect('keeps real authorization unavailability distinguishable from intentional denial', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* unavailableLookups() {
     const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('unavailable')));
     expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
   }),
 );
 it.effect('fails closed for absent or mismatched permission results', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* missingResults() {
     const result = yield* taskLookupAccess(scope).pipe(
       Effect.provideService(ContextAccess, {
         ...fakeAccess('allowed'),
@@ -69,7 +69,7 @@ it.effect('fails closed for absent or mismatched permission results', () =>
   }),
 );
 it.effect('uses the Core module.access alias, never an unrelated named permission', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* coreAlias() {
     const result = yield* taskLookupAccess(scope).pipe(
       Effect.provideService(ContextAccess, {
         ...fakeAccess('allowed'),

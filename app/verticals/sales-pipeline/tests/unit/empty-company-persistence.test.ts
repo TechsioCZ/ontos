@@ -1,4 +1,4 @@
-import { Effect, Predicate } from 'effect';
+import { Effect, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { SalesPipelineStateSchema, SalesPipelineState } from '../../shared/apis/records.ts';
 import { salesPipelineStateRepository } from '../../src/services/persistence.service.ts';
@@ -24,7 +24,7 @@ const fixture = (initial?: Row, conflictOnInsert = false) => {
       }),
     load: Effect.sync(() => {
       calls.push('load');
-      return row;
+      return Option.fromUndefinedOr(row);
     }),
     update: (state: EncodedState, revision: number) =>
       Effect.sync(() => {

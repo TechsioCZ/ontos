@@ -10,7 +10,8 @@ const BFF_PREFIX = '/shell-super-app-api';
 const PRM_ROOT = '/.well-known/oauth-protected-resource';
 
 export const mcpResourceUrlOf = (shellUrl: string): string => `${new URL(shellUrl).origin}${MCP_ENDPOINT_PATH}`;
-export const mcpMetadataUrlOf = (shellUrl: string): string => `${new URL(shellUrl).origin}${PRM_ROOT}${MCP_ENDPOINT_PATH}`;
+export const mcpMetadataUrlOf = (shellUrl: string): string =>
+  `${new URL(shellUrl).origin}${PRM_ROOT}${MCP_ENDPOINT_PATH}`;
 
 export const ROOT_ROUTES: ReadonlyMap<string, string> = new Map([
   [MCP_ENDPOINT_PATH, `${BFF_PREFIX}${MCP_BFF_ROUTE}`],

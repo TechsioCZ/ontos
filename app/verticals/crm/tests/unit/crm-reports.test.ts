@@ -1,6 +1,9 @@
-import { describe, expect, it } from '@rstest/core';
-import type { CrmViewer } from '../../shared/domain/access.ts';
-import type { ImportedOrder } from '../../shared/domain/imports.ts';
+import { DateTime, Schema } from 'effect';
+import { describe, expect, it } from 'effect-rstest';
+import type { ClientSchema } from '../../shared/domain/clients.ts';
+import { CrmViewerSchema } from '../../shared/domain/access.ts';
+import { ImportedOrderSchema, orderDateText } from '../../shared/domain/imports.ts';
+import type { ImportedOrder, OrderDecision } from '../../shared/domain/imports.ts';
 import {
   buildCrmHomeSummary,
   buildSalesReport,
@@ -9,27 +12,34 @@ import {
   groupsCsv,
   ordersCsv,
   reportStatusMeaning,
+  ReportPeriodSchema,
   unitsToDecimal,
 } from '../../shared/domain/reports.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
-import { initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
+import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
 
 const at = '2026-10-01T08:00:00.000Z';
-const client = (id: string, owner?: string) => ({
-  createdAt: at,
-  createdBy: 'p-admin',
-  id,
-  kind: 'organization' as const,
-  name: `Klient ${id.toUpperCase()}`,
-  status: 'active' as const,
-  updatedAt: at,
-  ...(owner === undefined ? {} : { ownerSalespersonId: owner }),
-});
+const client = (id: string, owner?: string): typeof ClientSchema.Encoded => {
+  const value = {
+    createdAt: at,
+    createdBy: 'p-admin',
+    id,
+    kind: 'organization' as const,
+    name: `Klient ${id.toUpperCase()}`,
+    status: 'active' as const,
+    updatedAt: at,
+  };
+  if (owner === undefined) {
+    return value;
+  }
+  return { ...value, ownerSalespersonId: owner };
+};
 
 let sequence = 0;
-const order = (patch: Partial<ImportedOrder> & Pick<ImportedOrder, 'pairing'>): ImportedOrder => {
+type ImportedOrderInput = typeof ImportedOrderSchema.Encoded;
+const order = (patch: Partial<ImportedOrderInput> & Pick<ImportedOrderInput, 'pairing'>): ImportedOrder => {
   sequence += 1;
-  return {
+  return Schema.decodeUnknownSync(ImportedOrderSchema)({
     externalId: `EXT-${sequence}`,
     id: `o-${sequence}`,
     number: `O-${sequence}`,
@@ -38,37 +48,41 @@ const order = (patch: Partial<ImportedOrder> & Pick<ImportedOrder, 'pairing'>): 
     source: 'E-shop',
     statusHistory: [],
     ...patch,
-  };
+  });
 };
 
-const base = (orders: readonly ImportedOrder[]): CrmState => ({
-  ...initialCrmState,
-  clients: { assignmentHistory: [], contacts: [], items: [client('x', 'a'), client('y', 'b'), client('z')] },
-  imports: { ...initialCrmState.imports, orders },
-  salespeople: [
-    { active: true, id: 'a', name: 'Jan Novák', principalId: 'p-a' },
-    { active: true, id: 'b', name: 'Petra Svobodová', principalId: 'p-b' },
-  ],
-  visits: {
-    items: [
-      {
-        authorPrincipalId: 'p-a',
-        clientId: 'x',
-        corrections: [],
-        createdAt: at,
-        id: 'v1',
-        kind: 'visit',
-        occurredAt: '2026-09-15T09:00:00.000Z',
-        result: 'Domluvena objednávka',
-        salespersonId: 'a',
-        updatedAt: at,
-      },
+const base = (orders: readonly ImportedOrder[]): CrmState =>
+  Schema.decodeUnknownSync(CrmStateSchema)({
+    ...Schema.encodeSync(CrmStateSchema)(initialCrmState),
+    clients: { assignmentHistory: [], contacts: [], items: [client('x', 'a'), client('y', 'b'), client('z')] },
+    imports: {
+      ...Schema.encodeSync(CrmStateSchema)(initialCrmState).imports,
+      orders: orders.map((entry) => Schema.encodeSync(ImportedOrderSchema)(entry)),
+    },
+    salespeople: [
+      { active: true, id: 'a', name: 'Jan Novák', principalId: 'p-a' },
+      { active: true, id: 'b', name: 'Petra Svobodová', principalId: 'p-b' },
     ],
-    plan: [],
-  },
-});
+    visits: {
+      items: [
+        {
+          authorPrincipalId: 'p-a',
+          clientId: 'x',
+          corrections: [],
+          createdAt: at,
+          id: 'v1',
+          kind: 'visit',
+          occurredAt: '2026-09-15T09:00:00.000Z',
+          result: 'Domluvena objednávka',
+          salespersonId: 'a',
+          updatedAt: at,
+        },
+      ],
+      plan: [],
+    },
+  });
 
-const repA: CrmViewer = {
+const repA = Schema.decodeUnknownSync(CrmViewerSchema)({
   assign: false,
   principalId: 'p-a',
   readAll: false,
@@ -76,7 +90,7 @@ const repA: CrmViewer = {
   salespersonId: 'a',
   writeAll: false,
   writeAssigned: true,
-};
+});
 
 describe('CRM sales report (C05)', () => {
   it('C05-01: three paired orders of X count, the unpaired one is reported aside', () => {
@@ -176,7 +190,11 @@ describe('CRM sales report (C05)', () => {
       }),
       order({ amount: '4.00', clientId: 'z', currency: 'CZK', orderedAt: '2026-10-06', pairing: 'paired' }),
     ]);
-    expect(buildSalesReport(state, { period: { from: '2026-10-01', to: '2026-10-31' } }).count).toBe(2);
+    expect(
+      buildSalesReport(state, {
+        period: Schema.decodeSync(ReportPeriodSchema)({ from: '2026-10-01', to: '2026-10-31' }),
+      }).count,
+    ).toBe(2);
     expect(buildSalesReport(state, { salespersonId: 'b' }).rows.map((row) => row.clientId)).toEqual(['y']);
     expect(buildSalesReport(state, { salespersonId: 'none' }).rows.map((row) => row.clientId)).toEqual(['z']);
     expect(buildSalesReport(state, { status: { kind: 'raw', raw: 'stornovana' } }).count).toBe(1);
@@ -187,8 +205,8 @@ describe('CRM sales report (C05)', () => {
     expect(unapproved.byStatus.map((group) => group.label)).toEqual(['Ze zdroje: nova', 'Ze zdroje: Stornována']);
     expect(unapproved.rows.every((row) => row.meaning === 'unmapped')).toBe(true);
     // Approved for exactly this mapping version: meaning filters and groups apply.
-    const approved: CrmState = {
-      ...state,
+    const approved = Schema.decodeUnknownSync(CrmStateSchema)({
+      ...Schema.encodeSync(CrmStateSchema)(state),
       customerInputs: [
         {
           evidence: 'Zápis z jednání 3. 11. 2026',
@@ -201,14 +219,17 @@ describe('CRM sales report (C05)', () => {
           status: 'approved',
         },
       ],
-    };
+    });
     expect(buildSalesReport(approved).mappingApproved).toBe(true);
     expect(buildSalesReport(approved, { status: { kind: 'meaning', meaning: 'cancelled' } }).count).toBe(1);
     expect(buildSalesReport(approved, { status: { kind: 'meaning', meaning: 'open' } }).count).toBe(2);
-    const otherVersion: CrmState = {
-      ...approved,
-      customerInputs: approved.customerInputs?.map((entry) => ({ ...entry, sampleVersion: 'stavy-v0' })),
-    };
+    const otherVersion = Schema.decodeUnknownSync(CrmStateSchema)({
+      ...Schema.encodeSync(CrmStateSchema)(approved),
+      customerInputs: Schema.encodeSync(CrmStateSchema)(approved).customerInputs?.map((entry) => ({
+        ...entry,
+        sampleVersion: 'stavy-v0',
+      })),
+    });
     expect(buildSalesReport(otherVersion).mappingApproved).toBe(false);
   });
 
@@ -240,7 +261,13 @@ describe('CRM sales report (C05)', () => {
       order({ amount: '10.00', clientId: 'x', currency: 'CZK', orderedAt: '2026-09-01', pairing: 'paired' }),
       order({ amount: '5.00', clientId: 'x', currency: 'EUR', orderedAt: '2026-10-01', pairing: 'paired' }),
     ]);
-    expect(clientSalesFacts(state, 'x')).toEqual({
+    const facts = clientSalesFacts(state, 'x');
+    expect({
+      ...facts,
+      lastContactAt: orderDateText(facts.lastContactAt),
+      lastOrderAt: orderDateText(facts.lastOrderAt),
+      lastVisitAt: orderDateText(facts.lastVisitAt),
+    }).toEqual({
       lastContactAt: '2026-09-15T09:00:00.000Z',
       lastOrderAt: '2026-10-01',
       lastVisitAt: '2026-09-15T09:00:00.000Z',
@@ -255,15 +282,20 @@ describe('CRM sales report (C05)', () => {
 
   it('last visit counts personal visits only; calls and e-mails are only the last contact', () => {
     const state = base([]);
-    const withCall: CrmState = {
-      ...state,
+    const withCall = Schema.decodeUnknownSync(CrmStateSchema)({
+      ...Schema.encodeSync(CrmStateSchema)(state),
       visits: {
-        ...state.visits,
+        ...Schema.encodeSync(CrmStateSchema)(state).visits,
         items: [
-          ...state.visits.items,
-          { ...state.visits.items[0]!, id: 'v-call', kind: 'call', occurredAt: '2026-10-17T08:00:00.000Z' },
+          ...Schema.encodeSync(CrmStateSchema)(state).visits.items,
           {
-            ...state.visits.items[0]!,
+            ...Schema.encodeSync(CrmStateSchema)(state).visits.items[0],
+            id: 'v-call',
+            kind: 'call',
+            occurredAt: '2026-10-17T08:00:00.000Z',
+          },
+          {
+            ...Schema.encodeSync(CrmStateSchema)(state).visits.items[0],
             clientId: 'y',
             id: 'v-mail',
             kind: 'email',
@@ -271,11 +303,11 @@ describe('CRM sales report (C05)', () => {
           },
         ],
       },
-    };
-    expect(clientSalesFacts(withCall, 'x').lastVisitAt).toBe('2026-09-15T09:00:00.000Z');
-    expect(clientSalesFacts(withCall, 'x').lastContactAt).toBe('2026-10-17T08:00:00.000Z');
+    });
+    expect(orderDateText(clientSalesFacts(withCall, 'x').lastVisitAt)).toBe('2026-09-15T09:00:00.000Z');
+    expect(orderDateText(clientSalesFacts(withCall, 'x').lastContactAt)).toBe('2026-10-17T08:00:00.000Z');
     expect(clientSalesFacts(withCall, 'y').lastVisitAt).toBeUndefined();
-    expect(clientSalesFacts(withCall, 'y').lastContactAt).toBe('2026-10-18T08:00:00.000Z');
+    expect(orderDateText(clientSalesFacts(withCall, 'y').lastContactAt)).toBe('2026-10-18T08:00:00.000Z');
   });
 
   it('CSV escapes separators and keeps currencies in separate columns', () => {
@@ -294,8 +326,9 @@ describe('CRM sales report (C05)', () => {
 
 describe('CRM sales report — duplicate decisions', () => {
   it('a confirmed duplicate stays out, an order decided "distinct" counts', () => {
-    const decided = (decision: string) =>
-      ({ decisions: [{ at, by: 'p-lead', decision, reason: 'ověřeno' }] }) as unknown as Partial<ImportedOrder>;
+    const decided = (decision: OrderDecision['decision']): Partial<ImportedOrderInput> => ({
+      decisions: [{ at, by: 'p-lead', decision, reason: 'ověřeno' }],
+    });
     const state = base([
       order({ amount: '100.00', clientId: 'x', currency: 'CZK', pairing: 'paired' }),
       order({
@@ -340,10 +373,10 @@ describe('CRM shell Home summary', () => {
       salespersonId,
       status,
     });
-    const state = {
-      ...source,
+    const state = Schema.decodeUnknownSync(CrmStateSchema)({
+      ...Schema.encodeSync(CrmStateSchema)(source),
       visits: {
-        ...source.visits,
+        ...Schema.encodeSync(CrmStateSchema)(source).visits,
         plan: [
           plan('today', '2026-10-20'),
           plan('late', '2026-10-19'),
@@ -352,11 +385,11 @@ describe('CRM shell Home summary', () => {
           plan('other-rep', '2026-10-20', 'open', 'b'),
         ],
       },
-    };
+    });
     const result = buildCrmHomeSummary({
       assignmentCandidates: [],
       departedPrincipalIds: [],
-      now: '2026-10-20T09:00:00.000Z',
+      now: DateTime.makeUnsafe('2026-10-20T09:00:00.000Z'),
       revision: 1,
       state: projectCrmState(state, repA),
       viewer: repA,

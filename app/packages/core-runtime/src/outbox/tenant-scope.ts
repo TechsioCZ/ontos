@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
-import { SqlError } from 'effect/unstable/sql/SqlError';
+import { SqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
 import { tenants } from '../db/schema.ts';

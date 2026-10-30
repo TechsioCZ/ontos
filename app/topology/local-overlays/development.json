@@ -25,7 +25,8 @@
     "finance-billing": "http://localhost:4118/.well-known/ontos-module-manifest.json",
     "crm-activities": "http://localhost:4119/.well-known/ontos-module-manifest.json",
     "facility-operations": "http://localhost:4126/.well-known/ontos-module-manifest.json",
-    "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json"
+    "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json",
+    "projects": "http://localhost:4127/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -57,7 +58,8 @@
     "finance-billing": 4118,
     "crm-activities": 4119,
     "facility-operations": 4126,
-    "crm": 4125
+    "crm": 4125,
+    "projects": 4127
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -78,7 +80,8 @@
     "finance-billing": "http://localhost:4118/mf-manifest.json",
     "crm-activities": "http://localhost:4119/mf-manifest.json",
     "facility-operations": "http://localhost:4126/mf-manifest.json",
-    "crm": "http://localhost:4125/mf-manifest.json"
+    "crm": "http://localhost:4125/mf-manifest.json",
+    "projects": "http://localhost:4127/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -86,7 +89,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/party-registry",
-        "buildMarker": "3f023644c8a07e9a"
+        "buildMarker": "aaebe4ee5a28e557"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -128,7 +131,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/party-registry",
-          "buildMarker": "3f023644c8a07e9a"
+          "buildMarker": "aaebe4ee5a28e557"
         }
       }
     },
@@ -137,7 +140,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/commerce-customer-context",
-        "buildMarker": "2b4d72d8d032dd53"
+        "buildMarker": "19fda008a3f0e23b"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -184,7 +187,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/commerce-customer-context",
-          "buildMarker": "2b4d72d8d032dd53"
+          "buildMarker": "19fda008a3f0e23b"
         }
       }
     },
@@ -193,7 +196,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/payment-term-catalog",
-        "buildMarker": "3812f892cf5544cf"
+        "buildMarker": "1c20de722548cc76"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -240,7 +243,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/payment-term-catalog",
-          "buildMarker": "3812f892cf5544cf"
+          "buildMarker": "1c20de722548cc76"
         }
       }
     },
@@ -249,7 +252,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/commerce-market-catalog",
-        "buildMarker": "a3f3551680596bed"
+        "buildMarker": "7d8efde38f752475"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -291,7 +294,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/commerce-market-catalog",
-          "buildMarker": "a3f3551680596bed"
+          "buildMarker": "7d8efde38f752475"
         }
       }
     },
@@ -300,7 +303,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/catalog",
-        "buildMarker": "d68f889ade45a491"
+        "buildMarker": "b5cf336487d950bb"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -342,7 +345,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/catalog",
-          "buildMarker": "d68f889ade45a491"
+          "buildMarker": "b5cf336487d950bb"
         }
       }
     },
@@ -351,7 +354,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/pricing",
-        "buildMarker": "472426e9fbfd8da9"
+        "buildMarker": "b5403c43a092fccb"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -390,7 +393,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/pricing",
-          "buildMarker": "472426e9fbfd8da9"
+          "buildMarker": "b5403c43a092fccb"
         }
       }
     },
@@ -399,7 +402,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/storefront-registry",
-        "buildMarker": "6e1423f340df12ea"
+        "buildMarker": "07dd35dd87823ff5"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -438,7 +441,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/storefront-registry",
-          "buildMarker": "6e1423f340df12ea"
+          "buildMarker": "07dd35dd87823ff5"
         }
       }
     },
@@ -447,7 +450,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/price-group-catalog",
-        "buildMarker": "af022b7822b7562c"
+        "buildMarker": "1844d569e65d1318"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -486,7 +489,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/price-group-catalog",
-          "buildMarker": "af022b7822b7562c"
+          "buildMarker": "1844d569e65d1318"
         }
       }
     },
@@ -495,7 +498,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/inventory",
-        "buildMarker": "d87a59b2fccc989f"
+        "buildMarker": "5f588cb1d6d14d10"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -537,7 +540,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/inventory",
-          "buildMarker": "d87a59b2fccc989f"
+          "buildMarker": "5f588cb1d6d14d10"
         }
       }
     },
@@ -546,7 +549,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/assortment",
-        "buildMarker": "26e7bfcc7c19d1d4"
+        "buildMarker": "02ac649d0cba4cca"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -588,7 +591,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/assortment",
-          "buildMarker": "26e7bfcc7c19d1d4"
+          "buildMarker": "02ac649d0cba4cca"
         }
       }
     },
@@ -597,7 +600,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/availability",
-        "buildMarker": "7b0e5ab486adc9c0"
+        "buildMarker": "6f223a96beb11996"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -636,7 +639,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/availability",
-          "buildMarker": "7b0e5ab486adc9c0"
+          "buildMarker": "6f223a96beb11996"
         }
       }
     },
@@ -645,7 +648,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/tax",
-        "buildMarker": "5c4b3253f7d46679"
+        "buildMarker": "793654988b71d648"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -684,7 +687,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/tax",
-          "buildMarker": "5c4b3253f7d46679"
+          "buildMarker": "793654988b71d648"
         }
       }
     },
@@ -693,7 +696,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/privacy",
-        "buildMarker": "00f31ee28a035d1a"
+        "buildMarker": "c339e4f5077d2392"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -735,7 +738,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/privacy",
-          "buildMarker": "00f31ee28a035d1a"
+          "buildMarker": "c339e4f5077d2392"
         }
       }
     },
@@ -744,7 +747,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/property-portfolio",
-        "buildMarker": "8d48a9e1624695e8"
+        "buildMarker": "4850bf231549c0b4"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -786,7 +789,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/property-portfolio",
-          "buildMarker": "8d48a9e1624695e8"
+          "buildMarker": "4850bf231549c0b4"
         }
       }
     },
@@ -795,7 +798,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/property-leasing",
-        "buildMarker": "9bdafd234cf26e8e"
+        "buildMarker": "a7760ad5a0d662bf"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -837,7 +840,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/property-leasing",
-          "buildMarker": "9bdafd234cf26e8e"
+          "buildMarker": "a7760ad5a0d662bf"
         }
       }
     },
@@ -846,7 +849,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/legal-agreements",
-        "buildMarker": "a9140e920b13357f"
+        "buildMarker": "8dab60078a072fcd"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -888,7 +891,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/legal-agreements",
-          "buildMarker": "a9140e920b13357f"
+          "buildMarker": "8dab60078a072fcd"
         }
       }
     },
@@ -897,7 +900,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/work-tasks",
-        "buildMarker": "175a72e2a12e76df"
+        "buildMarker": "18e6c8082ab6c9d5"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -939,7 +942,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/work-tasks",
-          "buildMarker": "175a72e2a12e76df"
+          "buildMarker": "18e6c8082ab6c9d5"
         }
       }
     },
@@ -948,7 +951,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/workforce",
-        "buildMarker": "4e37453a3d835d3e"
+        "buildMarker": "ac4282e92b3181bf"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -990,7 +993,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/workforce",
-          "buildMarker": "4e37453a3d835d3e"
+          "buildMarker": "ac4282e92b3181bf"
         }
       }
     },
@@ -999,7 +1002,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/tagging",
-        "buildMarker": "d8de0d2e6c127622"
+        "buildMarker": "2f525aea37dc4c51"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1041,7 +1044,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/tagging",
-          "buildMarker": "d8de0d2e6c127622"
+          "buildMarker": "2f525aea37dc4c51"
         }
       }
     },
@@ -1050,7 +1053,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/sales-pipeline",
-        "buildMarker": "2918cfdfeee5d72f"
+        "buildMarker": "7f1d79b710af8c3d"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1092,7 +1095,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/sales-pipeline",
-          "buildMarker": "2918cfdfeee5d72f"
+          "buildMarker": "7f1d79b710af8c3d"
         }
       }
     },
@@ -1101,7 +1104,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/merchandise",
-        "buildMarker": "5af5cbe964140fbe"
+        "buildMarker": "9eca5900c6445b2e"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1143,7 +1146,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/merchandise",
-          "buildMarker": "5af5cbe964140fbe"
+          "buildMarker": "9eca5900c6445b2e"
         }
       }
     },
@@ -1152,7 +1155,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/sales-insights",
-        "buildMarker": "89cf413717273314"
+        "buildMarker": "958540fdc3c50f9a"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1194,7 +1197,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/sales-insights",
-          "buildMarker": "89cf413717273314"
+          "buildMarker": "958540fdc3c50f9a"
         }
       }
     },
@@ -1203,7 +1206,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/finance-billing",
-        "buildMarker": "0601eb5c20ee2712"
+        "buildMarker": "3eeec3681e1f1c57"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1245,7 +1248,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/finance-billing",
-          "buildMarker": "0601eb5c20ee2712"
+          "buildMarker": "3eeec3681e1f1c57"
         }
       }
     },
@@ -1254,7 +1257,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/crm-activities",
-        "buildMarker": "34118b88515b135e"
+        "buildMarker": "3899f69bb586ea59"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1296,7 +1299,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/crm-activities",
-          "buildMarker": "34118b88515b135e"
+          "buildMarker": "3899f69bb586ea59"
         }
       }
     },
@@ -1305,7 +1308,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/facility-operations",
-        "buildMarker": "5af5cbe964140fbe"
+        "buildMarker": "488a469d03c68db4"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1347,7 +1350,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/facility-operations",
-          "buildMarker": "5af5cbe964140fbe"
+          "buildMarker": "488a469d03c68db4"
         }
       }
     },
@@ -1356,7 +1359,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/crm",
-        "buildMarker": "d8de0d2e6c127622"
+        "buildMarker": "de55c2dd5dfb1d62"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -1398,7 +1401,58 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/crm",
-          "buildMarker": "d8de0d2e6c127622"
+          "buildMarker": "de55c2dd5dfb1d62"
+        }
+      }
+    },
+    "projects": {
+      "apiBaseUrl": "http://localhost:4127/projects-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/projects",
+        "buildMarker": "73f9b5b664d77c6a"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-projects",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_PROJECTS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PROJECTS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PROJECTS_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_PROJECTS_WORKER",
+          "serviceBindingEnv": "VERTICAL_PROJECTS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PROJECTS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PROJECTS_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalProjectsBackend",
+        "manifestEnv": "VERTICAL_PROJECTS_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4127/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4127/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/projects",
+          "buildMarker": "73f9b5b664d77c6a"
         }
       }
     }
@@ -1429,6 +1483,7 @@
     "finance-billing": "http://localhost:4118/finance-billing-api",
     "crm-activities": "http://localhost:4119/crm-activities-api",
     "facility-operations": "http://localhost:4126/facility-operations-api",
-    "crm": "http://localhost:4125/crm-api"
+    "crm": "http://localhost:4125/crm-api",
+    "projects": "http://localhost:4127/projects-api"
   }
 }

@@ -224,7 +224,16 @@ export const spicedbTlsState = (target: SpicedbTlsTarget) =>
 // Creating the pairs
 
 const OPENSSL = 'openssl';
-const EC_KEY_ARGS = ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes'];
+// LibreSSL otherwise emits explicit EC parameters that SpiceDB's Go X.509 parser rejects.
+const EC_KEY_ARGS = [
+  '-newkey',
+  'ec',
+  '-pkeyopt',
+  'ec_paramgen_curve:prime256v1',
+  '-pkeyopt',
+  'ec_param_enc:named_curve',
+  '-nodes',
+];
 const CERTIFICATE_BLOCK = 'CERTIFICATE';
 
 const sanEntry = (name: string) => (isIP(name) === 0 ? `DNS:${name}` : `IP:${name}`);

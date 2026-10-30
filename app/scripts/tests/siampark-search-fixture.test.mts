@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   demoAccounts,
@@ -27,7 +27,7 @@ const fixture = {
   searchDocuments: demoSearchDocuments,
   tenant: { defaultLocale: 'cs', displayName: 'Synthetic demo', slug: 'siampark-demo', tenantId: demoTenantId },
 };
-const runValidation = Effect.fn('SiamparkSearchFixture.runValidation')(function* validateFixture(
+const runValidation = Effect.fn('NajemparkSearchFixture.runValidation')(function* validateFixture(
   input: typeof Schema.Unknown.Type,
   validateOnly: boolean,
 ) {

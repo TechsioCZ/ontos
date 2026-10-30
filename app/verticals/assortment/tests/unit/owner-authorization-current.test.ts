@@ -325,6 +325,7 @@ const configurationTarget = {
   kind: 'assortment_configuration',
   permission: 'assortment.configuration.read',
   resource: stableRuleTarget,
+  resourceScope: 'tenant',
 } as const;
 const allRevision = {
   effect: 'ALLOW',

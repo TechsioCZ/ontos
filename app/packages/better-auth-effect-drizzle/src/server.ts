@@ -34,7 +34,7 @@ import type { AnyRelations, SQL, SQLWrapper } from 'drizzle-orm';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { Effect, flow, Option, Predicate, Schema } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { ConsumedRowSchema, EffectDrizzleAuthTransactionHooks } from './transaction-hooks.ts';
 import type { EffectDrizzleAuthTransaction } from './transaction-hooks.ts';
@@ -498,8 +498,7 @@ export const makeEffectDrizzleAuthAdapter = Effect.fn('EffectDrizzleAuthAdapter.
   const runTransaction: <A>(effect: Effect.Effect<A, SqlError>) => ReturnType<typeof run<A, SqlError>> = run;
   return (options) => {
     const transaction = Effect.fnUntraced(function* betterAuthTransaction<Result>(
-      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Better Auth's transaction body is a Promise port by contract; this is its only conversion.
-      body: (adapter: DBTransactionAdapter) => Promise<Result>,
+      body: Parameters<typeof transactionBody<Result>>[2],
     ) {
       // The first step runs synchronously inside Better Auth's call. Its async context carries the
       // endpoint context that database hooks read, and it is lost once the connection wait resumes

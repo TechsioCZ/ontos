@@ -1,6 +1,6 @@
 import { commercialDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { Effect, FileSystem, Path, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import type { BootstrapRelationship } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
@@ -58,7 +58,7 @@ export const writeBootstrapRelationships = Effect.fn('Demo.writeBootstrapRelatio
       },
       modules: [],
       relationships,
-      tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+      tenant: { defaultLocale: 'cs', displayName: 'Nájempark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
     });
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'demo-relationships-' });
     const file = path.join(directory, 'context.json');

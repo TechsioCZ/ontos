@@ -3,8 +3,7 @@ import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtim
 import { Effect, Redacted, Schema } from 'effect';
 import { RecordsApi, RecordsRequestSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequestEncoded } from '../../shared/apis/records.ts';
-import type { CrmCommand } from '../../shared/actions/apply-command.ts';
-import { executeApplyCommand } from './apply-command-action-client.ts';
+
 import { operationGateway } from './action-gateway.ts';
 
 export interface RecordsClientOptions {

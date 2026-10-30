@@ -2,7 +2,10 @@ import { tenantLegalEntityRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { check, index, integer, jsonb, pgSchema, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
-import type { OccupancyState } from '../../shared/apis/records.ts';
+import type { Schema } from 'effect';
+import type { OccupancyStateSchema } from '../../shared/apis/records.ts';
+
+type StoredOccupancyState = Schema.Codec.Encoded<typeof OccupancyStateSchema>;
 
 export const occupancySchema = pgSchema('property_leasing');
 
@@ -11,7 +14,7 @@ export const occupancyState = occupancySchema.table.withRLS(
   {
     legalEntityId: uuid('legal_entity_id').notNull(),
     revision: integer('revision').notNull().default(0),
-    snapshot: jsonb('snapshot').$type<OccupancyState>().notNull(),
+    snapshot: jsonb('snapshot').$type<StoredOccupancyState>().notNull(),
     tenantId: uuid('tenant_id').notNull(),
   },
   (table) => [

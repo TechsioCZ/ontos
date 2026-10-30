@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Console, Effect, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 

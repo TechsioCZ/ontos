@@ -4,7 +4,7 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, ConfigProvider, Console, Effect, Exit, Match, Redacted, Schema } from 'effect';
 import type { FileSystem } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { APP_ENV_PATH } from '../../packages/core-runtime/src/environment/workspace-environment.ts';
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../packages/core-runtime/src/install/spicedb-database-config.ts';

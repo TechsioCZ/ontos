@@ -9,9 +9,10 @@ import type {
   ExternalIdentityClientPort,
   ResolveExternalSubjectRequest,
 } from '@app/shared-contracts/server/external-identity-client';
-import { Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { Crypto, Effect, Layer, PlatformError, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import {
   CommerceCustomerAuthority,
@@ -48,7 +49,9 @@ interface CustomerAuthorityOwnerState {
   retained: boolean;
 }
 
-const harness = Effect.fnUntraced(function* authorityHarness() {
+const harness = Effect.fnUntraced(function* authorityHarness(
+  cryptoLayer: Layer.Layer<Crypto.Crypto> = commercePortalAuthPlatformCryptoLive,
+) {
   const snapshot = yield* makeApplicationCompositionSnapshotFixture();
   const state: CustomerAuthorityOwnerState = {
     coreDenied: false,
@@ -66,6 +69,7 @@ const harness = Effect.fnUntraced(function* authorityHarness() {
     retained: true,
   };
   const requests: ResolveExternalSubjectRequest[] = [];
+  const correlations: string[] = [];
   const observedReads: unknown[][] = [];
   const permissionPrincipals: string[] = [];
   const permissionTargets: string[] = [];
@@ -75,9 +79,12 @@ const harness = Effect.fnUntraced(function* authorityHarness() {
     issueExternalGatewayContext: unused,
     readPrincipalBinding: unused,
     reservePrincipalBinding: unused,
-    resolveExternalSubject: (request) =>
+    resolveExternalSubject: (request, options) =>
       Effect.suspend(() => {
         requests.push(request);
+        if (options?.requestCorrelation !== undefined) {
+          correlations.push(options.requestCorrelation);
+        }
         return state.coreDenied
           ? Effect.fail(
               Schema.decodeUnknownSync(ExternalIdentityForbiddenProblemSchema)({
@@ -102,6 +109,7 @@ const harness = Effect.fnUntraced(function* authorityHarness() {
       );
     });
   const dependencies = Layer.mergeAll(
+    cryptoLayer,
     Layer.succeed(ExternalIdentityClient, client),
     Layer.succeed(CommerceCoreIdentityClientConfig, {
       apiKey: Redacted.make('test-only-workload-credential'),
@@ -143,6 +151,7 @@ const harness = Effect.fnUntraced(function* authorityHarness() {
     }),
   );
   return {
+    correlations,
     layer: commerceCustomerAuthorityLive.pipe(Layer.provide(dependencies)),
     observedReads,
     permissionPrincipals,
@@ -171,8 +180,40 @@ it.effect('re-admits the exact live provider session and checks the customer, ne
       expect(h.observedReads).toEqual([[input.providerSubjectId, principalId, authBindingId]]);
       expect(h.permissionPrincipals).toEqual([principalId]);
       expect(h.permissionTargets[0]).toContain(profileId);
+      expect(h.correlations).toHaveLength(1);
+      expect(h.correlations[0]).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u);
+      yield* authority.admit(input);
+      expect(h.correlations).toHaveLength(2);
+      expect(h.correlations[1]).not.toBe(h.correlations[0]);
     }).pipe(Effect.provide(h.layer));
   }),
+);
+
+it.effect('fails closed before identity transport or retained reads when UUID generation is unavailable', () =>
+  Effect.gen(function* unavailableCorrelation() {
+    const crypto = yield* Crypto.Crypto;
+    const failedCrypto: Crypto.Crypto = {
+      ...crypto,
+      randomUUIDv4: () =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: 'Unknown',
+            method: 'randomUUIDv4',
+            module: 'Crypto',
+          }),
+        ),
+    };
+    const h = yield* harness(Layer.succeed(Crypto.Crypto, failedCrypto));
+    const refused = yield* CommerceCustomerAuthority.pipe(
+      Effect.flatMap((authority) => authority.admit(input)),
+      Effect.result,
+      Effect.provide(h.layer),
+    );
+    expect(Result.isFailure(refused) && Schema.is(CustomerAuthorityUnavailable)(refused.failure)).toBe(true);
+    expect(h.requests).toEqual([]);
+    expect(h.observedReads).toEqual([]);
+    expect(h.permissionPrincipals).toEqual([]);
+  }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 for (const reason of ['binding-revoked', 'principal-disabled'] as const) {

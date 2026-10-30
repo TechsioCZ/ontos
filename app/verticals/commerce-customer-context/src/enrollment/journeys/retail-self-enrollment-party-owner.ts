@@ -8,7 +8,8 @@ import {
 import type { acceptRetailEnrollmentEvidence, createParty, recoverPartyCreate } from '@app/party-registry/api/client';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, Effect, Encoding, Match, Redacted, Schema } from 'effect';
+import { Config, Effect, Match, Redacted, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
@@ -120,7 +121,7 @@ export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwn
     if (tokenPayload === undefined) {
       return yield* unavailable('The Party Registry issuer returned an unusable credential');
     }
-    const claims = yield* Effect.fromResult(Encoding.decodeBase64UrlString(tokenPayload)).pipe(
+    const claims = yield* Effect.fromResult(Base64Url.decodeString(tokenPayload)).pipe(
       Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))),
       Effect.mapError((cause) => unavailable('The Party Registry issuer returned an unusable credential scope', cause)),
     );

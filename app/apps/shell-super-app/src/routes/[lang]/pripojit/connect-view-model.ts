@@ -1,18 +1,35 @@
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
+import { Schema } from 'effect';
 import type { AgentModuleGrant, AgentWritePolicy } from '@app/shared-contracts/agent-access';
+import type { ConnectOutcome } from './connect-client.ts';
 import type { ConnectDraftSummary } from '@app/shared-contracts/oauth-connections';
 
 /** Why a connect call failed; the screens map it to Czech copy. */
-export type ConnectFailure = 'signedOut' | 'expired' | 'forbidden' | 'agentGone' | 'connected' | 'error';
+export const ConnectFailureSchema = Schema.Literals([
+  'signedOut',
+  'expired',
+  'forbidden',
+  'agentGone',
+  'connected',
+  'error',
+]);
+export type ConnectFailure = typeof ConnectFailureSchema.Type;
 
-export type PolicyReasonKey = 'shell.connect.policy.agentApprovalOnly' | 'shell.connect.policy.agentReadOnly';
+export const PolicyReasonKeySchema = Schema.Literals([
+  'shell.connect.policy.agentApprovalOnly',
+  'shell.connect.policy.agentReadOnly',
+]);
+export type PolicyReasonKey = typeof PolicyReasonKeySchema.Type;
 
-export const POLICY_RANK: Record<AgentWritePolicy, number> = { read_only: 0, approval: 1, direct: 2 };
+export const POLICY_RANK = { approval: 1, direct: 2, read_only: 0 } satisfies Record<AgentWritePolicy, number>;
+
+interface PolicyOptionState {
+  readonly disabled: boolean;
+  readonly reasonKey: PolicyReasonKey | null;
+}
 
 /** A policy above the ceiling (agent profile or grant) is shown but cannot be chosen. */
-export const policyOptionState = (
-  policy: AgentWritePolicy,
-  cap: AgentWritePolicy,
-): { disabled: boolean; reasonKey: PolicyReasonKey | null } => {
+export const policyOptionState = (policy: AgentWritePolicy, cap: AgentWritePolicy): PolicyOptionState => {
   if (POLICY_RANK[policy] <= POLICY_RANK[cap]) {
     return { disabled: false, reasonKey: null };
   }
@@ -33,35 +50,45 @@ export const buildModulesRequest = (
   if (mode === 'all') {
     return 'all';
   }
-  return [...picks]
-    .filter(([, pick]) => pick.read)
-    .map(([moduleId, pick]): AgentModuleGrant => ({ access: pick.write ? 'write' : 'read', moduleId }));
+  return [...picks].flatMap(([moduleId, pick]): AgentModuleGrant[] =>
+    pick.read ? [{ access: pick.write ? 'write' : 'read', moduleId: AgentModuleKeySchema.make(moduleId) }] : [],
+  );
 };
 
-export const summaryModuleLabels = (
-  modules: ConnectDraftSummary['modules'],
-): 'all' | { read: string[]; write: string[] } => {
+interface SummaryModuleLabels {
+  readonly read: string[];
+  readonly write: string[];
+}
+
+export const summaryModuleLabels = (modules: ConnectDraftSummary['modules']): 'all' | SummaryModuleLabels => {
   if (modules === 'all') {
     return 'all';
   }
-  return {
-    read: modules.filter((module) => module.read).map((module) => module.label),
-    write: modules.filter((module) => module.write).map((module) => module.label),
-  };
+  const read: string[] = [];
+  const write: string[] = [];
+  for (const module of modules) {
+    if (module.read) {
+      read.push(module.label);
+    }
+    if (module.write) {
+      write.push(module.label);
+    }
+  }
+  return { read, write };
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
-
-/** Only absolute http(s) URLs and same-origin paths may be navigated to. */
-const isNavigable = (value: unknown): value is string =>
-  typeof value === 'string' &&
-  (value.startsWith('http://') || value.startsWith('https://') || (value.startsWith('/') && !value.startsWith('//')));
+const isRecord = Schema.is(Schema.JsonObject);
+const NavigableUrl = Schema.String.check(Schema.isPattern(/^(?:https?:\/\/|\/(?!\/))/u));
 
 /** Where Better Auth wants the browser next: `url`, `redirect_uri`, or the followed redirect of the response. */
-export const navigationTarget = (body: unknown, redirected: boolean, url: string): string | undefined => {
+export const navigationTarget = (
+  body: Schema.Json | undefined,
+  redirected: boolean,
+  url: string,
+): string | undefined => {
   const fields = isRecord(body) ? body : {};
-  const candidates: unknown[] = [fields['url'], fields['redirect_uri'], redirected ? url : undefined];
-  return candidates.find(isNavigable);
+  const candidates = [fields['url'], fields['redirect_uri'], redirected ? url : undefined];
+  return candidates.find(Schema.is(NavigableUrl));
 };
 
 export const readOAuthQuery = (search: string): string => (search.startsWith('?') ? search.slice(1) : search);
@@ -83,4 +110,14 @@ export const failureKey = (reason: ConnectFailure) => {
     return 'shell.connect.error.connected';
   }
   return 'shell.connect.error.failed';
+};
+
+export const loadFailure = <Value>(
+  query: string | undefined,
+  outcome: ConnectOutcome<Value> | undefined,
+): ConnectFailure | undefined => {
+  if (query === '') {
+    return 'expired';
+  }
+  return outcome?.status === 'failed' ? outcome.reason : undefined;
 };

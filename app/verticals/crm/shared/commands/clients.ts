@@ -1,9 +1,12 @@
+import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+import type { EntityId } from '../domain/common.ts';
 // AREA: clients (C00/C01) — owned by the crm-clients lane. Command schemas + reducer.
 // To add a command: add a TaggedStruct to clientsCommandSchemas and a Match.tag branch in applyClientsCommand.
 //
 // Every change appends a readable ClientEvent (card "Historie" tab); archiving never deletes anything (C01-03),
 // removing a contact person only archives it, and reassignment keeps the full history (C00-03).
 import { Effect, Match, Schema } from 'effect';
+import { ClientKindSchema, PartyLinkInputSchema } from '../domain/clients.ts';
 import type {
   Client,
   ClientEvent,
@@ -13,11 +16,9 @@ import type {
   PartyLinkInput,
   PartyRef,
 } from '../domain/clients.ts';
-import { ClientKindSchema, PartyLinkInputSchema } from '../domain/clients.ts';
-import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+
 import { canReadClient } from '../domain/access.ts';
 import type { CrmState } from '../domain/state.ts';
-import type { CommandContext, Reducer } from './context.ts';
 import {
   conflict,
   definedOnly,
@@ -30,6 +31,7 @@ import {
   requireWritableClient,
   requireWriteAll,
 } from './context.ts';
+import type { CommandContext, Reducer } from './context.ts';
 
 const OptionalText = Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(200)));
 const ClientFieldsSchema = {
@@ -114,7 +116,7 @@ const replaceClient = (items: readonly Client[], next: Client) =>
 const replaceContact = (items: readonly ContactPerson[], next: ContactPerson) =>
   items.map((entry) => (entry.id === next.id ? next : entry));
 
-const requireSalesperson = (salespeople: readonly { id: string; active: boolean }[], id: string) =>
+const requireSalesperson = (salespeople: readonly { active: boolean; id: string }[], id: string) =>
   salespeople.some((person) => person.id === id && person.active)
     ? Effect.void
     : invalid('Obchodník neexistuje nebo není aktivní');
@@ -126,40 +128,39 @@ const icoOf = (regNo: string | undefined) => (regNo ?? '').replaceAll(/\s+/gu, '
  * the same IČO: then they are one organization entered twice and share its registry identity (no new parallel
  * identity). Any other second client for the same Party is refused instead of silently merged (CRM.md §3, l.210).
  */
-const verifiedPartyRef = (
+const verifiedPartyRef = Effect.fn('Crm.verifiedParty')(function* verifiedParty(
   state: CrmState,
   context: CommandContext,
   input: PartyLinkInput,
   subject: { readonly id?: string; readonly regNo?: string | undefined },
-) =>
-  Effect.gen(function* verifiedParty() {
-    const verified = context.verifiedParties?.get(input.counterpartyId);
-    if (verified === undefined || verified.partyId !== input.partyId) {
-      return yield* invalid('Vazbu na Party Registry se nepodařilo ověřit; vyberte zákazníka z registru znovu');
-    }
-    const ico = icoOf(subject.regNo);
-    const holder = state.clients.items.find(
-      (entry) =>
-        entry.id !== subject.id &&
-        (entry.partyRef?.counterpartyId === input.counterpartyId || entry.partyRef?.partyId === input.partyId) &&
-        (ico === '' || icoOf(entry.regNo) !== ico),
+) {
+  const verified = context.verifiedParties?.get(input.counterpartyId);
+  if (verified === undefined || verified.partyId !== input.partyId) {
+    return yield* invalid('Vazbu na Party Registry se nepodařilo ověřit; vyberte zákazníka z registru znovu');
+  }
+  const ico = icoOf(subject.regNo);
+  const holder = state.clients.items.find(
+    (entry) =>
+      entry.id !== subject.id &&
+      (entry.partyRef?.counterpartyId === input.counterpartyId || entry.partyRef?.partyId === input.partyId) &&
+      (ico === '' || icoOf(entry.regNo) !== ico),
+  );
+  if (holder !== undefined) {
+    return yield* conflict(
+      canReadClient(context.viewer, holder)
+        ? `Tato firma je v CRM již vedena jako klient „${holder.name}“`
+        : 'Tato firma je v CRM již vedena u jiného obchodníka; požádejte vedoucího obchodu o převod',
     );
-    if (holder !== undefined) {
-      return yield* conflict(
-        canReadClient(context.viewer, holder)
-          ? `Tato firma je v CRM již vedena jako klient „${holder.name}“`
-          : 'Tato firma je v CRM již vedena u jiného obchodníka; požádejte vedoucího obchodu o převod',
-      );
-    }
-    const ref: PartyRef = {
-      ...definedOnly({ registryName: verified.displayName }),
-      counterpartyId: verified.counterpartyId,
-      linkedAt: context.now,
-      linkedBy: context.viewer.principalId,
-      partyId: verified.partyId,
-    };
-    return ref;
-  });
+  }
+  const ref: PartyRef = {
+    ...definedOnly({ registryName: verified.displayName }),
+    counterpartyId: verified.counterpartyId,
+    linkedAt: context.now,
+    linkedBy: context.viewer.principalId,
+    partyId: verified.partyId,
+  };
+  return ref;
+});
 
 /**
  * C04: every approved external customer id (customer link) of a registry-linked client carries that client's
@@ -174,7 +175,10 @@ export const correlateCustomerLinks = (state: CrmState): CrmState => {
   let changed = false;
   const customerLinks = state.imports.customerLinks.map((link) => {
     const ref = refs.get(link.clientId);
-    if (ref?.counterpartyId === undefined || (link.counterpartyId === ref.counterpartyId && link.partyId === ref.partyId)) {
+    if (
+      ref?.counterpartyId === undefined ||
+      (link.counterpartyId === ref.counterpartyId && link.partyId === ref.partyId)
+    ) {
       return link;
     }
     changed = true;
@@ -193,18 +197,24 @@ export const uncorrelatedCustomerLinks = (state: CrmState) =>
 const event = (
   context: CommandContext,
   suffix: string,
-  clientId: string,
+  clientId: EntityId,
   kind: ClientEventKind,
   extra: { readonly fields?: readonly string[]; readonly subject?: string } = {},
-): ClientEvent => ({
-  ...definedOnly({ subject: extra.subject }),
-  ...(extra.fields === undefined || extra.fields.length === 0 ? {} : { fields: extra.fields }),
-  at: context.now,
-  by: context.viewer.principalId,
-  clientId,
-  id: newId(context, `event-${suffix}`),
-  kind,
-});
+): ClientEvent => {
+  const result: ClientEvent = {
+    ...definedOnly({ subject: extra.subject }),
+
+    at: context.now,
+    by: context.viewer.principalId,
+    clientId,
+    id: newId(context, `event-${suffix}`),
+    kind,
+  };
+  if (extra.fields !== undefined && extra.fields.length > 0) {
+    Object.assign(result, { fields: extra.fields });
+  }
+  return result;
+};
 
 const withClients = (state: CrmState, clients: Partial<ClientsSlice>, events: readonly ClientEvent[]): CrmState => ({
   ...state,
@@ -215,38 +225,41 @@ const withClients = (state: CrmState, clients: Partial<ClientsSlice>, events: re
  * Applies a patch where `''` clears an optional field and `undefined` leaves it alone. Returns the next record
  * and the keys that really changed.
  */
-const applyPatch = <T extends Record<string, unknown>>(current: T, patch: Record<string, unknown>) => {
+type ClientPatch = Extract<ClientsCommand, { readonly _tag: 'UpdateClient' }>['patch'];
+type ContactPatch = Extract<ClientsCommand, { readonly _tag: 'UpdateContactPerson' }>['patch'];
+const applyPatch = <T extends Client | ContactPerson>(current: T, patch: ClientPatch | ContactPatch) => {
   const changed: string[] = [];
-  const next: Record<string, unknown> = { ...current };
+  const next = { ...current };
+  const previousValues = new Map(Object.entries(current));
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) {
-      continue;
-    }
-    if (value === '') {
-      if (key in next) {
-        delete next[key];
+    if (value !== undefined) {
+      if (value === '') {
+        if (key in next) {
+          Reflect.deleteProperty(next, key);
+          changed.push(key);
+        }
+      } else if (previousValues.get(key) !== value) {
+        Reflect.set(next, key, value);
         changed.push(key);
       }
-      continue;
-    }
-    if (next[key] !== value) {
-      next[key] = value;
-      changed.push(key);
     }
   }
-  return { changed, next: next as T };
+  return { changed, next };
 };
 
 /** A contact person of a client the viewer may write. Foreign contacts answer "not found" (C00). */
-const requireWritableContact = (state: CrmState, context: CommandContext, contactId: string) =>
-  Effect.gen(function* writableContact() {
-    const contact = state.clients.contacts.find((entry) => entry.id === contactId);
-    if (contact === undefined) {
-      return yield* notFound('Kontaktní osoba neexistuje nebo k ní nemáte přístup');
-    }
-    yield* requireWritableClient(state, context, contact.clientId);
-    return contact;
-  });
+const requireWritableContact = Effect.fn('Crm.writableContact')(function* writableContact(
+  state: CrmState,
+  context: CommandContext,
+  contactId: string,
+) {
+  const contact = state.clients.contacts.find((entry) => entry.id === contactId);
+  if (contact === undefined) {
+    return yield* notFound('Kontaktní osoba neexistuje nebo k ní nemáte přístup');
+  }
+  yield* requireWritableClient(state, context, contact.clientId);
+  return contact;
+});
 
 /** Only one primary contact per client: setting a new one clears the flag on the others. */
 const withPrimary = (contacts: readonly ContactPerson[], clientId: string, primaryId: string) =>
@@ -275,8 +288,11 @@ const withPartyRef = (
 
 export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, context) =>
   Match.value(command).pipe(
-    Match.tag('CreateClient', (value) =>
-      Effect.gen(function* createClient() {
+    Match.tag(
+      'CreateClient',
+      Effect.fn('Crm.createClient')(function* createClient(
+        value: Extract<ClientsCommand, { readonly _tag: 'CreateClient' }>,
+      ) {
         yield* requireAnyWrite(context);
         const owner = value.ownerSalespersonId ?? context.viewer.salespersonId;
         if (owner !== undefined && owner !== context.viewer.salespersonId) {
@@ -294,7 +310,6 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
                 regNo: value.kind === 'organization' ? value.regNo : undefined,
               });
         const client: Client = {
-          ...(partyRef === undefined ? {} : { partyRef }),
           ...definedOnly({
             address: value.address,
             email: value.email,
@@ -314,19 +329,27 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           status: 'active',
           updatedAt: context.now,
         };
+        if (partyRef !== undefined) {
+          Object.assign(client, { partyRef });
+        }
         const newContacts = value.contacts ?? [];
         const firstPrimary = newContacts.findIndex((entry) => entry.primary === true);
-        const contacts: ContactPerson[] = newContacts.map((entry, index) => ({
-          ...definedOnly({ email: entry.email, note: entry.note, phone: entry.phone, role: entry.role }),
-          ...(index === firstPrimary ? { primary: true } : {}),
-          clientId: id,
-          createdAt: context.now,
-          createdBy: context.viewer.principalId,
-          id: newId(context, `contact-${index}`),
-          name: entry.name,
-          status: 'active',
-          updatedAt: context.now,
-        }));
+        const contacts: ContactPerson[] = newContacts.map((entry, index) => {
+          const contact: ContactPerson = {
+            ...definedOnly({ email: entry.email, note: entry.note, phone: entry.phone, role: entry.role }),
+            clientId: id,
+            createdAt: context.now,
+            createdBy: context.viewer.principalId,
+            id: newId(context, `contact-${index}`),
+            name: entry.name,
+            status: 'active',
+            updatedAt: context.now,
+          };
+          if (index === firstPrimary) {
+            Object.assign(contact, { primary: true });
+          }
+          return contact;
+        });
         const history =
           owner === undefined
             ? state.clients.assignmentHistory
@@ -362,8 +385,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('UpdateClient', (value) =>
-      Effect.gen(function* updateClient() {
+    Match.tag(
+      'UpdateClient',
+      Effect.fn('Crm.updateClient')(function* updateClient(
+        value: Extract<ClientsCommand, { readonly _tag: 'UpdateClient' }>,
+      ) {
         const client = yield* requireWritableClient(state, context, value.id);
         if (client.status === 'archived') {
           return yield* conflict('Archivovaného klienta nelze upravit; nejprve jej obnovte');
@@ -390,8 +416,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('ArchiveClient', (value) =>
-      Effect.gen(function* archiveClient() {
+    Match.tag(
+      'ArchiveClient',
+      Effect.fn('Crm.archiveClient')(function* archiveClient(
+        value: Extract<ClientsCommand, { readonly _tag: 'ArchiveClient' }>,
+      ) {
         const client = yield* requireWritableClient(state, context, value.id);
         if (client.status === 'archived') {
           return yield* conflict('Klient je již archivován');
@@ -405,8 +434,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('RestoreClient', (value) =>
-      Effect.gen(function* restoreClient() {
+    Match.tag(
+      'RestoreClient',
+      Effect.fn('Crm.restoreClient')(function* restoreClient(
+        value: Extract<ClientsCommand, { readonly _tag: 'RestoreClient' }>,
+      ) {
         const client = yield* requireWritableClient(state, context, value.id);
         if (client.status === 'active') {
           return yield* conflict('Klient je aktivní');
@@ -421,13 +453,16 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('AddContactPerson', (value) =>
-      Effect.gen(function* addContact() {
+    Match.tag(
+      'AddContactPerson',
+      Effect.fn('Crm.addContact')(function* addContact(
+        value: Extract<ClientsCommand, { readonly _tag: 'AddContactPerson' }>,
+      ) {
         const client = yield* requireWritableClient(state, context, value.clientId);
         const id = newId(context, 'contact');
         const contact: ContactPerson = {
           ...definedOnly({ email: value.email, note: value.note, phone: value.phone, role: value.role }),
-          ...(value.primary === true ? { primary: true } : {}),
+
           clientId: client.id,
           createdAt: context.now,
           createdBy: context.viewer.principalId,
@@ -436,6 +471,9 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           status: 'active',
           updatedAt: context.now,
         };
+        if (value.primary === true) {
+          Object.assign(contact, { primary: true });
+        }
         const others =
           value.primary === true ? withPrimary(state.clients.contacts, client.id, id) : state.clients.contacts;
         return {
@@ -446,8 +484,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('UpdateContactPerson', (value) =>
-      Effect.gen(function* updateContact() {
+    Match.tag(
+      'UpdateContactPerson',
+      Effect.fn('Crm.updateContact')(function* updateContact(
+        value: Extract<ClientsCommand, { readonly _tag: 'UpdateContactPerson' }>,
+      ) {
         const contact = yield* requireWritableContact(state, context, value.contactId);
         if (contact.status === 'archived') {
           return yield* conflict('Odebranou kontaktní osobu nelze upravit');
@@ -477,8 +518,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('RemoveContactPerson', (value) =>
-      Effect.gen(function* removeContact() {
+    Match.tag(
+      'RemoveContactPerson',
+      Effect.fn('Crm.removeContact')(function* removeContact(
+        value: Extract<ClientsCommand, { readonly _tag: 'RemoveContactPerson' }>,
+      ) {
         const contact = yield* requireWritableContact(state, context, value.contactId);
         if (contact.status === 'archived') {
           return yield* conflict('Kontaktní osoba je již odebrána');
@@ -493,8 +537,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('LinkClientParty', (value) =>
-      Effect.gen(function* linkClientParty() {
+    Match.tag(
+      'LinkClientParty',
+      Effect.fn('Crm.linkClientParty')(function* linkClientParty(
+        value: Extract<ClientsCommand, { readonly _tag: 'LinkClientParty' }>,
+      ) {
         const client = yield* requireWritableClient(state, context, value.clientId);
         if (
           client.partyRef?.counterpartyId === value.partyRef.counterpartyId &&
@@ -509,24 +556,32 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         return { entityIds: [client.id], state: withPartyRef(state, client, partyRef, context, 'party') };
       }),
     ),
-    Match.tag('SyncClientParties', (value) =>
-      Effect.gen(function* syncClientParties() {
+    Match.tag(
+      'SyncClientParties',
+      Effect.fn('Crm.syncClientParties')(function* syncClientParties(
+        value: Extract<ClientsCommand, { readonly _tag: 'SyncClientParties' }>,
+      ) {
         yield* requireWriteAll(context);
         const wanted = value.clientIds === undefined ? undefined : new Set(value.clientIds);
         if (wanted !== undefined && [...wanted].some((id) => !state.clients.items.some((entry) => entry.id === id))) {
           return yield* notFound('Klient neexistuje');
         }
         const targets = state.clients.items
-          .filter((client) =>
-            client.partyRef === undefined && (wanted === undefined ? client.status === 'active' : wanted.has(client.id)),
+          .filter(
+            (client) =>
+              client.partyRef === undefined &&
+              (wanted === undefined ? client.status === 'active' : wanted.has(client.id)),
           )
           .slice(0, 50);
         // The server-side intake links the targets after this reducer; the C04 correlation happens here.
         return { entityIds: targets.map((client) => client.id), state: correlateCustomerLinks(state) };
       }),
     ),
-    Match.tag('AssignClient', (value) =>
-      Effect.gen(function* assignClient() {
+    Match.tag(
+      'AssignClient',
+      Effect.fn('Crm.assignClient')(function* assignClient(
+        value: Extract<ClientsCommand, { readonly _tag: 'AssignClient' }>,
+      ) {
         yield* requireAssign(context);
         const client = state.clients.items.find((entry) => entry.id === value.clientId);
         if (client === undefined) {

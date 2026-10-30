@@ -38,7 +38,6 @@ export type DocumentGatewayAssertion = typeof DocumentGatewayAssertionSchema.Typ
 export const DocumentGatewayContextsResponseSchema = Schema.Struct({
   assertions: Schema.Array(DocumentGatewayAssertionSchema),
 });
-export type DocumentGatewayContextsResponse = typeof DocumentGatewayContextsResponseSchema.Type;
 
 export const DocumentGatewayApiGroup = HttpApiGroup.make('documentGateway').add(
   HttpApiEndpoint.post('issueDocumentGatewayContexts', '/auth/gateway-contexts', {

@@ -81,7 +81,6 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => workforceRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
     load: (input: RecordsRequest, context) =>
       context.services.loadRecords(input, context.prepared.writeAll).pipe(Effect.mapError(readFailure)),
@@ -90,7 +89,6 @@ export const recordsRead = defineRead(
         Effect.mapError(readFailure),
         Effect.map((result: RecordsResponse) => ({ evidence: { resultCount: result.items.length }, result })),
       ),
-    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),

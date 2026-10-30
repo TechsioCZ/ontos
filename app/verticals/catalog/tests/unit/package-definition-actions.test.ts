@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -97,7 +98,7 @@ describe('Package Definition governed Action contracts', () => {
       });
       const result = yield* handleCreatePackageDefinition(payload, run);
       expect(result.contentRevision.revision).toBe(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
   it.effect('keeps stale and invalid persistence outcomes distinct', () =>
     Effect.gen(function* typedOutcomes() {
@@ -204,7 +205,7 @@ describe('Package Definition governed Action contracts', () => {
         context<PackageDefinitionRevisedDomainEvents>(compositionSnapshot.composition.revision, { revise: unexpected }),
       ).pipe(Effect.flip);
       expect(falseError.code).toBe('package_definition_invalid');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('never claims success without authoritative persistence and Current verification', () =>
@@ -241,7 +242,7 @@ describe('Package Definition governed Action contracts', () => {
         'package_definition_unavailable',
         'package_definition_unavailable',
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects references from another Tenant before reporting infrastructure unavailability', () =>
@@ -261,6 +262,6 @@ describe('Package Definition governed Action contracts', () => {
         context(compositionSnapshot.composition.revision, { create: unexpected }),
       ).pipe(Effect.flip);
       expect(error.code).toBe('package_definition_invalid');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

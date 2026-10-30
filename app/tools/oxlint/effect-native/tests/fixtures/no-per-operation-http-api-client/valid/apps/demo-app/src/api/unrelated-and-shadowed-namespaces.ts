@@ -1,4 +1,4 @@
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import * as bff from '@modern-js/bff-effect/effect-client';
 import { makeEffectHttpApiClient } from './unrelated.ts';
 export const unrelated = () => makeEffectHttpApiClient();

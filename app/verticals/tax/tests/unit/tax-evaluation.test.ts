@@ -1072,9 +1072,9 @@ describe('Structural binding of the evaluation request (#937 F11-F30)', () => {
     expect(taxEvaluationRequestRejections(evaluationRequest())).toEqual([]);
   });
 
-  it('Catalog evidence must cover every occurrence', () => {
+  it('missing rate evidence is an evaluated payer prerequisite, not invalid purchase identity', () => {
     expect(taxEvaluationRequestRejections(evaluationRequest({ catalog: [catalogEntry('o1', STANDARD_CODE)] }))).toEqual(
-      ['STRUCTURAL_BINDING_INVALID'],
+      [],
     );
   });
 

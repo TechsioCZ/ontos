@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-brand
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateBrandPayloadSchema, CreateBrandResultSchema } from '../actions/create-brand.ts';
 
 export { CreateBrandPayloadSchema } from '../actions/create-brand.ts';

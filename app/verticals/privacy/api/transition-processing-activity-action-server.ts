@@ -3,7 +3,7 @@
 // @ontos-action-http-slug transition-processing-activity
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { privacyApi } from '../shared/api.ts';
 import { transitionProcessingActivityAction } from '../src/actions/transition-processing-activity.action.ts';

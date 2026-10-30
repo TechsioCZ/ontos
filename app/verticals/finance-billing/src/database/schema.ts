@@ -49,4 +49,8 @@ export const gatewayAssertionRedemptions = financeSchema.table(
     index('finance_billing_redemption_expiry').on(table.expiresAt),
   ],
 );
-export const financeRelations = defineRelations({ financeDocumentContents, financeStates, gatewayAssertionRedemptions });
+export const financeRelations = defineRelations({
+  financeDocumentContents,
+  financeStates,
+  gatewayAssertionRedemptions,
+});

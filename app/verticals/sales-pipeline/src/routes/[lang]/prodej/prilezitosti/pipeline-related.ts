@@ -17,7 +17,7 @@ export type RelatedSection<Item> =
 
 export interface RelatedTask {
   readonly assignedToCase: boolean;
-  readonly dueDate: string | undefined;
+  readonly dueDate: Effect.Success<ReturnType<typeof listTasks>>['items'][number]['dueDate'];
   readonly id: string;
   readonly state: 'CANCELLED' | 'DONE' | 'IN_PROGRESS' | 'NEW' | 'WAITING';
   readonly title: string;
@@ -27,7 +27,7 @@ export interface RelatedContract {
   readonly id: string;
   readonly kind: 'LEASE' | 'OTHER';
   readonly lifecycleState: 'ACTIVE' | 'DRAFT' | 'EXPIRED' | 'TERMINATED';
-  readonly startDate: string;
+  readonly startDate: Effect.Success<ReturnType<typeof executeAgreementsRecords>>['contracts'][number]['startDate'];
   readonly subject: string | undefined;
 }
 
@@ -69,7 +69,10 @@ const taskRank = (task: RelatedTask) =>
  * Tasks linked to the case come first, then open tasks of the same customer. Contracts are the customer's
  * (counterparty's) contracts; orders are the ones created from this case.
  */
-export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId: string | undefined) =>
+export const loadOpportunityRelated = (
+  opportunity: Pick<Opportunity, 'id' | 'partyId'>,
+  counterpartyId: string | undefined,
+) =>
   publishedModules.pipe(
     Effect.flatMap((published) =>
       Effect.all(
@@ -82,15 +85,20 @@ export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId:
               : correlation('contracts').pipe(
                   Effect.flatMap((id) => executeAgreementsRecords({}, id)),
                   Effect.map((records) =>
-                    records.contracts
-                      .filter((contract) => contract.counterpartyRef.resourceId === counterpartyId)
-                      .map((contract): RelatedContract => ({
-                        id: contract.contractRef.resourceId,
-                        kind: contract.kind,
-                        lifecycleState: contract.lifecycleState,
-                        startDate: contract.startDate,
-                        subject: contract.subject,
-                      })),
+                    records.contracts.flatMap((contract): RelatedContract[] => {
+                      if (contract.counterpartyRef.resourceId !== counterpartyId) {
+                        return [];
+                      }
+                      return [
+                        {
+                          id: contract.contractRef.resourceId,
+                          kind: contract.kind,
+                          lifecycleState: contract.lifecycleState,
+                          startDate: contract.startDate,
+                          subject: contract.subject,
+                        },
+                      ];
+                    }),
                   ),
                 ),
           ),
@@ -120,17 +128,18 @@ export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId:
               Effect.map(([linked, customer]) => {
                 const byId = new Map<string, RelatedTask>();
                 for (const task of [...linked.items, ...customer.items]) {
-                  if (!byId.has(task.ref.resourceId)) {
-                    byId.set(task.ref.resourceId, {
+                  const { resourceId } = task.ref;
+                  if (!byId.has(resourceId)) {
+                    byId.set(resourceId, {
                       assignedToCase: task.opportunityId === opportunity.id,
                       dueDate: task.dueDate,
-                      id: task.ref.resourceId,
+                      id: resourceId,
                       state: task.state,
                       title: task.title,
                     });
                   }
                 }
-                return [...byId.values()].sort((a, b) => taskRank(a) - taskRank(b));
+                return [...byId.values()].toSorted((a, b) => taskRank(a) - taskRank(b));
               }),
             ),
           ),
@@ -151,15 +160,17 @@ export const useOpportunityRelated = (
   opportunity: Opportunity | undefined,
   counterpartyId: string | undefined,
 ): OpportunityRelated => {
-  const key = opportunity === undefined ? '' : `${opportunity.id}:${opportunity.partyId}:${counterpartyId ?? ''}`;
+  const opportunityId = opportunity?.id;
+  const partyId = opportunity?.partyId;
+  const key = opportunityId === undefined ? '' : `${opportunityId}:${partyId ?? ''}:${counterpartyId ?? ''}`;
   const [result, setResult] = useState<{ readonly key: string; readonly related: OpportunityRelated }>();
-  useEffect(() => {
-    if (opportunity === undefined) {
-      return;
+  useEffect((): (() => void) | undefined => {
+    if (opportunityId === undefined || partyId === undefined) {
+      return undefined;
     }
     let active = true;
     void browserRuntime.runPromise(
-      loadOpportunityRelated(opportunity, counterpartyId).pipe(
+      loadOpportunityRelated({ id: opportunityId, partyId }, counterpartyId).pipe(
         Effect.tap((related) =>
           Effect.sync(() => {
             if (active) {
@@ -172,8 +183,6 @@ export const useOpportunityRelated = (
     return () => {
       active = false;
     };
-    // The key captures every input the read depends on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [counterpartyId, key, opportunityId, partyId]);
   return result?.key === key ? result.related : loading;
 };

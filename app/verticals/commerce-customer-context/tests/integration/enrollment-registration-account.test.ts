@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { v1 } from '@authzed/authzed-node';
@@ -14,7 +13,7 @@ import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/se
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
-import { Config, Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Crypto, Config, Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -99,6 +98,9 @@ import {
   ENROLLMENT_TEST_COMPOSITION_REVISION,
   installEnrollmentTestAuthority,
 } from '../support/enrollment-composition-authority.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+
+const randomId = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
 /** All DDL and fixture data are rolled back, including when an assertion fails. */
 it.live('persists immutable credential-free registration and admits only exact live scoped account bindings', () =>
@@ -108,15 +110,15 @@ it.live('persists immutable credential-free registration and admits only exact l
       const connections = yield* loadDatabaseConnectionPair();
       const client = yield* makeTestPgClient(connections.admin.connectionString);
       const admin = yield* makeTestDatabaseFromClient(client, commerceCustomerContextRelations);
-      const tenantId = randomUUID();
-      const legalEntityId = randomUUID();
-      const attemptId = randomUUID();
-      const partyId = randomUUID();
-      const bindingId = randomUUID();
-      const authBindingId = randomUUID();
-      const profileId = randomUUID();
-      const principalId = randomUUID();
-      const subject = `provider-registration-${randomUUID()}`;
+      const tenantId = yield* randomId;
+      const legalEntityId = yield* randomId;
+      const attemptId = yield* randomId;
+      const partyId = yield* randomId;
+      const bindingId = yield* randomId;
+      const authBindingId = yield* randomId;
+      const profileId = yield* randomId;
+      const principalId = yield* randomId;
+      const subject = `provider-registration-${yield* randomId}`;
       const registration = JSON.stringify({
         displayName: 'Real Customer',
         email: 'real@example.test',
@@ -167,7 +169,7 @@ it.live('persists immutable credential-free registration and admits only exact l
             );
             yield* execute(sql`insert into commerce_customer_context.retail_portal_profile_bindings
         (retail_portal_profile_binding_id, tenant_id, legal_entity_id, auth_binding_id, principal_id, retail_customer_profile_id, enrollment_evidence_ref, action_invocation_id, actor_principal_id)
-        values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${authBindingId}::uuid, ${principalId}::uuid, ${profileId}::uuid, 'registration-acceptance', ${randomUUID()}::uuid, ${principalId}::uuid)`);
+        values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${authBindingId}::uuid, ${principalId}::uuid, ${profileId}::uuid, 'registration-acceptance', ${yield* randomId}::uuid, ${principalId}::uuid)`);
             for (const operation of [
               { owner: 'party.registry', result: partyId, transition: 'party.candidate.submit' },
               { owner: 'commerce.portal-auth', result: subject, transition: 'provider.account.create' },
@@ -179,7 +181,7 @@ it.live('persists immutable credential-free registration and admits only exact l
             ]) {
               yield* execute(sql`insert into commerce_customer_context.portal_enrollment_owner_operations
         (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id, request_digest, actor_principal_id, status, completed_at, result_reference)
-        values (${tenantId}::uuid, ${attemptId}::uuid, ${operation.owner}, ${operation.transition}, ${randomUUID()}::uuid, ${'b'.repeat(64)}, ${principalId}::uuid, 'SUCCEEDED', now(), ${operation.result})`);
+        values (${tenantId}::uuid, ${attemptId}::uuid, ${operation.owner}, ${operation.transition}, ${yield* randomId}::uuid, ${'b'.repeat(64)}, ${principalId}::uuid, 'SUCCEEDED', now(), ${operation.result})`);
             }
             yield* execute(sql`set local role ontos_runtime`);
             const write = (body: string) =>
@@ -200,7 +202,7 @@ it.live('persists immutable credential-free registration and admits only exact l
             expect(Result.isFailure(changedRegistration)).toBe(true);
             yield* execute(sql`savepoint credential_registration`);
             const credentialRegistration = yield* write(
-              JSON.stringify({ displayName: 'Real Customer', email: 'real@example.test', password: randomUUID() }),
+              JSON.stringify({ displayName: 'Real Customer', email: 'real@example.test', password: yield* randomId }),
             ).pipe(Effect.result);
             yield* execute(sql`rollback to savepoint credential_registration`);
             expect(Result.isFailure(credentialRegistration)).toBe(true);
@@ -216,18 +218,18 @@ it.live('persists immutable credential-free registration and admits only exact l
               );
             expect(yield* account()).toEqual([{ party_id: partyId, profile_id: profileId }]);
             expect(yield* account(tenantId, legalEntityId, 'unknown-provider-subject')).toEqual([]);
-            expect(yield* account(tenantId, legalEntityId, subject, randomUUID())).toEqual([]);
-            expect(yield* account(tenantId, legalEntityId, subject, principalId, randomUUID())).toEqual([]);
+            expect(yield* account(tenantId, legalEntityId, subject, yield* randomId)).toEqual([]);
+            expect(yield* account(tenantId, legalEntityId, subject, principalId, yield* randomId)).toEqual([]);
             for (const wrong of [
-              { entity: legalEntityId, tenant: randomUUID() },
-              { entity: randomUUID(), tenant: tenantId },
+              { entity: legalEntityId, tenant: yield* randomId },
+              { entity: yield* randomId, tenant: tenantId },
             ]) {
               yield* execute(sql`savepoint account_scope`);
               const result = yield* account(wrong.tenant, wrong.entity).pipe(Effect.result);
               yield* execute(sql`rollback to savepoint account_scope`);
               expect(Result.isFailure(result)).toBe(true);
             }
-            yield* execute(sql`select set_config('ontos.legal_entity_id', ${randomUUID()}, true)`);
+            yield* execute(sql`select set_config('ontos.legal_entity_id', ${yield* randomId}, true)`);
             expect(
               yield* execute(
                 sql`select * from commerce_customer_context.read_retail_enrollment_registration(${tenantId}::uuid, ${attemptId}::uuid)`,
@@ -274,7 +276,7 @@ it.live('persists immutable credential-free registration and admits only exact l
           ),
         );
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 const unusedAccountMutation = () => Effect.die('Account admission may only resolve the presented provider session');
@@ -284,16 +286,16 @@ it.live('admits the new provider account immediately after verification and one 
   Effect.scoped(
     Effect.gen(function* immediatelyAdmitsVerifiedEnrollment() {
       const origin = 'http://localhost:3020';
-      const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
-      const legalEntityId = randomUUID();
-      const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-      const principalId = randomUUID();
-      const authBindingId = randomUUID();
-      const partyId = randomUUID();
-      const profileId = randomUUID();
-      const bindingId = randomUUID();
-      const email = `enrollment-account-${randomUUID()}@example.test`;
-      const password = Redacted.make(randomUUID());
+      const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(yield* randomId);
+      const legalEntityId = yield* randomId;
+      const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(yield* randomId);
+      const principalId = yield* randomId;
+      const authBindingId = yield* randomId;
+      const partyId = yield* randomId;
+      const profileId = yield* randomId;
+      const bindingId = yield* randomId;
+      const email = `enrollment-account-${yield* randomId}@example.test`;
+      const password = Redacted.make(yield* randomId);
       const fixture = yield* makeEnrollmentAcceptanceFixture(
         { legalEntityId, tenantId },
         yield* enrollmentApplicationCompositionRevision,
@@ -361,7 +363,7 @@ it.live('admits the new provider account immediately after verification and one 
       }
       const started = yield* startEnrollmentAcceptanceAttempt(fixture, {
         ...(yield* commercePortalAuthEnrollmentIntent(startInput)),
-        actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
+        actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(yield* randomId),
         actorPrincipalId,
         compositionRevision: fixture.compositionRevision,
         tenantId,
@@ -610,6 +612,7 @@ it.live('admits the new provider account immediately after verification and one 
         Layer.provide(
           Layer.mergeAll(
             core,
+            commercePortalAuthPlatformCryptoLive,
             runner,
             ContextAccessLive,
             enrollmentApplicationCompositionLayer,
@@ -621,7 +624,7 @@ it.live('admits the new provider account immediately after verification and one 
         ),
       );
       const lifecycle = makeCommercePortalAuthSessionLifecycle(
-        makeCommercePortalAuthSessionStore(provider.executor),
+        makeCommercePortalAuthSessionStore(provider.executor, yield* Crypto.Crypto),
         makeCommercePortalAuthSessionProvider(auth),
         unauditedCommercePortalAuthRecorder,
       );
@@ -650,7 +653,7 @@ it.live('admits the new provider account immediately after verification and one 
         (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
       );
       const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, 'commerce-customer-context', {
-        authBindingId: randomUUID(),
+        authBindingId: yield* randomId,
         authContextRef: 'storefront-workload-session',
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
         authMethod: 'session',
@@ -673,5 +676,5 @@ it.live('admits the new provider account immediately after verification and one 
       expect(resolvedSubjects).toEqual([providerSubjectId]);
       return yield* Effect.void;
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

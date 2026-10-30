@@ -1,10 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
+import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
-import { Config, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Config, Context, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -89,7 +90,7 @@ import {
   makeOutboxWorkerComposition,
 } from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { dispatchEmailBatchWith } from '../../../../packages/email-delivery/src/dispatcher/dispatch.ts';
-import { makeSmtpEmailDelivery } from '../../../../packages/email-delivery/src/smtp.ts';
+import { SmtpEmailDeliveryLive } from '../../../../packages/email-delivery/src/smtp.ts';
 import type { EmailTransportRuntime } from '../../../../packages/email-delivery/src/transport-runtime.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
@@ -168,6 +169,7 @@ it.live(
   'accepts native invitations atomically with company admission, without granting roles or business authority',
   () =>
     Effect.gen(function* invitationRuntime() {
+      const crypto = yield* Crypto.Crypto;
       const mailpitUrl = yield* Config.String('ONTOS_INVITATION_TEST_MAILPIT_URL');
       const smtpPort = yield* Config.Int('ONTOS_INVITATION_TEST_SMTP_PORT');
       expect(new URL(mailpitUrl).hostname).toBe('127.0.0.1');
@@ -307,14 +309,15 @@ it.live(
       const permission = createSpiceDbPermissionClient(graphConfiguration, 5000);
       const contextAccess = makeContextAccess(permission);
       const stateGate = makeModuleStateGate(makeTenantModuleStateService(database));
+      const operationalScopeResolver = yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        contextAccess,
+      );
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         makeActionPermissionService(permission),
-        makeOperationalScopeResolver(
-          makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-          contextAccess,
-        ),
+        operationalScopeResolver,
         {
           contextAccess,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
@@ -337,7 +340,10 @@ it.live(
             Effect.provide(BetterAuthPersonInvitationIdentityProviderLive),
           );
       const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
-      const authDatabase = yield* makeAuthDatabase(configuration);
+      const authDatabase = yield* makeAuthDatabase({
+        connectionString: configuration.connectionString,
+        expectedRole: pair.runtime.expectedRole,
+      });
       const resolver = makePrincipalResolver(database, {
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       });
@@ -361,8 +367,8 @@ it.live(
       );
       const emailSql = yield* PgClient.makeClient({ url: Redacted.make(configuration.connectionString) });
       const transport: EmailTransportRuntime = {
+        deliveryLayer: (from) => SmtpEmailDeliveryLive({ from, host: '127.0.0.1', port: smtpPort }),
         kind: 'smtp',
-        makeDelivery: (from) => makeSmtpEmailDelivery({ from, host: '127.0.0.1', port: smtpPort }),
         provider: { configured: true, label: 'Owned Mailpit test capture' },
       };
       const dispatch = dispatchEmailBatchWith(transport, { ONTOS_PUBLIC_URL: 'http://localhost:3020' }).pipe(
@@ -513,7 +519,7 @@ it.live(
         ),
       );
       const lifecycle = Context.get(lifecycleContext, ActionAuthorizationLifecycle);
-      const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor));
+      const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor, crypto));
       yield* outbox.matchMessages({ compositionRevision: composition.revision });
       const drained = yield* outbox
         .runCycle({
@@ -636,5 +642,5 @@ it.live(
       expect(
         yield* admin.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
       ).toHaveLength(3);
-    }).pipe(Effect.provide(Reactivity.layer)),
+    }).pipe(Effect.provide(Layer.merge(Reactivity.layer, NodeCrypto.layer))),
 );

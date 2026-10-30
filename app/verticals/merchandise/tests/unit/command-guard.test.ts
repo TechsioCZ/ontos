@@ -24,6 +24,8 @@ it('forces e-shop API keys into the public view even if the flag is omitted or f
   expect(storefrontReadRequest('api_key', 'other-company', request)).toBe(request);
 });
 
+const isRejection = Schema.is(MerchandisePermissionDenied);
+
 it.effect('only allows guest order placement for the storefront company key', () =>
   Effect.gen(function* storefrontCommands() {
     yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
@@ -35,7 +37,6 @@ it.effect('only allows guest order placement for the storefront company key', ()
     yield* assertStorefrontScope('api_key', 'other-company', 'CreateOrder');
   }),
 );
-const isRejection = Schema.is(MerchandisePermissionDenied);
 
 it('treats sessions as human and API keys or system jobs as non-human', () => {
   expect(principalKindOf('session')).toBe('human');

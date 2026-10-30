@@ -1,8 +1,8 @@
 import { ConfigProvider, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import type { HttpClientRequest } from 'effect/unstable/http';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
+import type { HttpClientRequest } from 'effect/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from '../zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';
@@ -280,6 +280,42 @@ it.effect('creates a sensitive service secret and waits for its process to finis
   }),
 );
 
+it.effect('deletes only the named service secret and waits for each deletion', () =>
+  Effect.gen(function* deletesServiceSecret() {
+    const requests: string[] = [];
+    const client = HttpClient.make((request, url) => {
+      requests.push(`${request.method} ${url.pathname}${url.search}`);
+      const answer = Match.value(`${request.method} ${url.pathname}`).pipe(
+        Match.when('GET /api/rest/public/service-stack/recovery-host/user-data', () =>
+          Response.json({
+            list: [
+              { content: 'kept', id: 'kept-entry', key: 'KEEP' },
+              { content: 'retired', id: 'retired-entry', key: 'RETIRED' },
+            ],
+            total: 2,
+          }),
+        ),
+        Match.orElse(() => Response.json({ id: 'delete-process', status: 'FINISHED' })),
+      );
+      return Effect.succeed(HttpClientResponse.fromWeb(request, answer));
+    });
+    const layer = Layer.merge(
+      ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+      ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+    );
+    yield* Effect.gen(function* removeSecret() {
+      const api = yield* ZeropsPublicApi;
+      yield* api.deleteServiceSecret('recovery-host', 'RETIRED');
+    }).pipe(Effect.provide(layer));
+
+    expect(requests).toEqual([
+      'GET /api/rest/public/service-stack/recovery-host/user-data?limit=100&offset=0',
+      'DELETE /api/rest/public/user-data/retired-entry',
+      'GET /api/rest/public/process/delete-process',
+    ]);
+  }),
+);
+
 it.effect('reads a deleted service as absent and any other failed read as an error', () =>
   Effect.gen(function* findsServices() {
     const client = HttpClient.make((request, url) => {
@@ -333,6 +369,80 @@ it.effect('does not accept a service-not-found payload on authentication or serv
         return yield* api.findServiceStack('deleted');
       }).pipe(Effect.provide(layer), Effect.flip);
       expect(error.message).toBe(`Zerops service read failed with HTTP ${String(status)}`);
+    }
+  }),
+);
+
+const SIGNED_UPLOAD = 'https://storage.example.test/upload?signature=signed-never-rendered';
+const HOST_SERVICE = 'host-service';
+
+/** Answers the application version calls; the storage endpoint answers `uploadStatus`. */
+const appVersionGateway = (uploadStatus: number, createdOn = HOST_SERVICE) => {
+  const requests: string[] = [];
+  const storageAuthorization: (string | undefined)[] = [];
+  const client = HttpClient.make((request, url) => {
+    requests.push(`${request.method} ${url.host}${url.pathname}`);
+    let response = Response.json({});
+    if (url.host === 'storage.example.test') {
+      storageAuthorization.push(request.headers.authorization);
+      response = new Response(null, { status: uploadStatus });
+    } else if (url.pathname.endsWith('/app-version')) {
+      response = Response.json({ id: 'version-1', serviceStackId: createdOn, uploadUrl: SIGNED_UPLOAD });
+    } else if (url.pathname.endsWith('/deploy')) {
+      response = Response.json({ id: 'deploy-process', status: 'PENDING' });
+    } else if (url.pathname.endsWith('/process/deploy-process')) {
+      response = Response.json({ id: 'deploy-process', status: 'FINISHED' });
+    }
+    return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+  });
+  const layer = Layer.merge(
+    ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+    ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+  );
+  return { layer, requests, storageAuthorization };
+};
+
+it.effect('stages, deploys and deletes an application version without sending the token to its signed URL', () =>
+  Effect.gen(function* stagesApplicationVersion() {
+    const { layer, requests, storageAuthorization } = appVersionGateway(200);
+    yield* Effect.gen(function* stageAndDeploy() {
+      const api = yield* ZeropsPublicApi;
+      const created = yield* api.createAppVersion(HOST_SERVICE, 'revision');
+      expect(created.id).toBe('version-1');
+      expect(JSON.stringify(created)).not.toContain('signed-never-rendered');
+      yield* api.uploadAppVersionPackage(created.uploadUrl, new Uint8Array([1, 2, 3]));
+      yield* api.deployAppVersion(created.id, 'zerops: []\n', 'outbox-worker-host');
+      yield* api.deleteAppVersion(created.id);
+    }).pipe(Effect.provide(layer));
+    expect(storageAuthorization).toEqual([undefined]);
+    expect(requests).toEqual([
+      'POST api.app-prg1.zerops.io/api/rest/public/service-stack/host-service/app-version',
+      'PUT storage.example.test/upload',
+      'PUT api.app-prg1.zerops.io/api/rest/public/app-version/version-1/deploy',
+      'GET api.app-prg1.zerops.io/api/rest/public/process/deploy-process',
+      'DELETE api.app-prg1.zerops.io/api/rest/public/app-version/version-1',
+    ]);
+  }),
+);
+
+it.effect('fails a refused upload or a version created on another service without rendering the signed URL', () =>
+  Effect.gen(function* refusesStaging() {
+    const refused = appVersionGateway(403);
+    const upload = yield* Effect.gen(function* uploadRefused() {
+      const api = yield* ZeropsPublicApi;
+      const created = yield* api.createAppVersion(HOST_SERVICE, 'revision');
+      return yield* api.uploadAppVersionPackage(created.uploadUrl, new Uint8Array([1]));
+    }).pipe(Effect.provide(refused.layer), Effect.flip);
+    expect(upload.message).toBe('Zerops application version upload failed with HTTP 403');
+    const elsewhere = appVersionGateway(200, 'other-service');
+    const created = yield* Effect.gen(function* createdElsewhere() {
+      const api = yield* ZeropsPublicApi;
+      return yield* api.createAppVersion(HOST_SERVICE, 'revision');
+    }).pipe(Effect.provide(elsewhere.layer), Effect.flip);
+    expect(created.message).toBe('Zerops created the application version on another service');
+    for (const failure of [upload, created]) {
+      expect(JSON.stringify(failure)).not.toContain('signed-never-rendered');
+      expect(failure.cause).toBeUndefined();
     }
   }),
 );

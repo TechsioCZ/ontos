@@ -1,7 +1,9 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, asc, desc, eq, isNull, or } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import type { ProductRef } from '../../shared/resources/product.ts';
 import type { VariantRef } from '../../shared/resources/variant.ts';
@@ -219,12 +221,11 @@ const itemValueKey = (item: typeof attributeValueItems.$inferSelect): string => 
 };
 
 /** Canonical hash of an explicit allowed value; the same encoding as stored effective items. */
-export const allowedValueKeyHash = (value: AttributeValue): string =>
-  createHash('sha256').update(valueKey(value)).digest('hex');
+export const allowedValueKeyHash = (value: AttributeValue): string => Hex.encode(sha256(utf8ToBytes(valueKey(value))));
 
 /** Canonical hash of a stored effective value item, matched against governed allowed values. */
 export const effectiveValueItemKeyHash = (item: typeof attributeValueItems.$inferSelect): string =>
-  createHash('sha256').update(itemValueKey(item)).digest('hex');
+  Hex.encode(sha256(utf8ToBytes(itemValueKey(item))));
 
 /** Decodes a retained effective value item into its public, label-independent form. */
 export const effectiveItemToAttributeValue = (
@@ -276,19 +277,21 @@ export const recordedVariantCombinationKey = (
   selections: readonly CurrentVariantAxisValue[],
   tenantId: string,
 ): string =>
-  createHash('sha256')
-    .update(
-      stableCombinationKeyContent(
-        selections
-          .map((selection) => [
-            tenantId,
-            selection.attributeDefinitionId,
-            ...selection.items.map((item) => itemValueKey(item)).toSorted(),
-          ])
-          .toSorted((left, right) => (stableParts(left) < stableParts(right) ? -1 : 1)),
+  Hex.encode(
+    sha256(
+      utf8ToBytes(
+        stableCombinationKeyContent(
+          selections
+            .map((selection) => [
+              tenantId,
+              selection.attributeDefinitionId,
+              ...selection.items.map((item) => itemValueKey(item)).toSorted(),
+            ])
+            .toSorted((left, right) => (stableParts(left) < stableParts(right) ? -1 : 1)),
+        ),
       ),
-    )
-    .digest('hex');
+    ),
+  );
 
 const unavailable = (cause: unknown): CatalogPersistenceUnavailable => {
   const error = new CatalogPersistenceUnavailable({

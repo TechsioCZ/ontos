@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
@@ -96,7 +97,9 @@ it.live('re-assesses a changed deciding source for the same Selection identity w
             // @ts-expect-error The integration transaction lacks only Core's private scope brand.
             transaction,
             scope,
-          ).read({ purpose: 'PURCHASE_ACCEPTANCE', selection }),
+          )
+            .read({ purpose: 'PURCHASE_ACCEPTANCE', selection })
+            .pipe(Effect.provide(NodeCrypto.layer)),
         );
       const assessEvidence = () =>
         withTenant((transaction) =>
@@ -104,7 +107,9 @@ it.live('re-assesses a changed deciding source for the same Selection identity w
             // @ts-expect-error The integration transaction lacks only Core's private scope brand.
             transaction,
             scope,
-          ).assess({ purpose: 'PURCHASE_ACCEPTANCE', selection }),
+          )
+            .assess({ purpose: 'PURCHASE_ACCEPTANCE', selection })
+            .pipe(Effect.provide(NodeCrypto.layer)),
         );
 
       yield* admin.transaction((transaction) =>

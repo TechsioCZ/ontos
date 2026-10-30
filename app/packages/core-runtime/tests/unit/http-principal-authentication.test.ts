@@ -2,14 +2,8 @@
 import { NodeHttpServer } from '@effect/platform-node';
 import { Effect, Match, Redacted, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpServerRequest,
-  HttpServerResponse,
-} from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 
 import {
   OperationPrincipalVerificationErrorSchema,

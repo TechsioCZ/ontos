@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -174,7 +175,7 @@ describe('Inventory Stock Position owner service', () => {
         expect(view.reserved.quantity.amount).toBe('2.75');
       }
       expect(view).not.toHaveProperty('available');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('ends P1 before establishing distinct P2 for the same exact scope', () =>
@@ -217,7 +218,7 @@ describe('Inventory Stock Position owner service', () => {
         reason: 'POSITION_NOT_CURRENT',
       });
       expect(second.scope).toEqual(first.scope);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when ON_HAND names a backend configuration other than the selected owner', () =>
@@ -241,7 +242,7 @@ describe('Inventory Stock Position owner service', () => {
         .pipe(Effect.flip);
 
       expect(failure).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the Customer Configuration has no selected Inventory Backend', () =>
@@ -257,7 +258,7 @@ describe('Inventory Stock Position owner service', () => {
       const failure = yield* service.establish(input).pipe(Effect.flip);
 
       expect(failure).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not replace ON_HAND with evidence from an unselected backend configuration', () =>
@@ -280,6 +281,6 @@ describe('Inventory Stock Position owner service', () => {
 
       expect(failure).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
       expect(Option.getOrThrow(retained)).toEqual(established);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

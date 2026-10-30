@@ -1,3 +1,7 @@
 declare module 'cloudflare:workers' {
-  export const env: Readonly<Record<string, unknown>>;
+  import type { CloudflareEmailBinding, EmailEnvironmentInput } from '@app/email-delivery/transport';
+
+  export const env: EmailEnvironmentInput & {
+    readonly EMAIL?: CloudflareEmailBinding;
+  };
 }

@@ -6,7 +6,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import type {
   SavedAddressDefaultsRequest,
@@ -54,16 +54,15 @@ import type {
 } from '../profile-reconciliation-owner-verifier.ts';
 import { ProfileReconciliationOwnerVerificationFailure } from '../profile-reconciliation-owner-verifier-error.ts';
 
-/* oxlint-disable effect-native/no-nullable-schema-field -- PostgreSQL object rows intentionally encode SQL NULL as null and are decoded before they enter public address contracts; expires: 2027-03-31. */
 const AddressRowSchema = Schema.Struct({
-  address_line_1: Schema.NullOr(Schema.String),
-  address_line_2: Schema.NullOr(Schema.String),
-  administrative_area: Schema.NullOr(Schema.String),
-  city: Schema.NullOr(Schema.String),
+  address_line_1: Schema.OptionFromNullOr(Schema.String),
+  address_line_2: Schema.OptionFromNullOr(Schema.String),
+  administrative_area: Schema.OptionFromNullOr(Schema.String),
+  city: Schema.OptionFromNullOr(Schema.String),
   cleared_purposes: Schema.Array(SavedAddressPurposeSchema),
-  country_code: Schema.NullOr(Schema.String),
-  label: Schema.NullOr(Schema.String),
-  lifecycle: Schema.NullOr(Schema.Literals(['ACTIVE', 'REMOVED'])),
+  country_code: Schema.OptionFromNullOr(Schema.String),
+  label: Schema.OptionFromNullOr(Schema.String),
+  lifecycle: Schema.OptionFromNullOr(Schema.Literals(['ACTIVE', 'REMOVED'])),
   outcome: Schema.Literals([
     'ADDED',
     'ALREADY_REMOVED',
@@ -80,21 +79,21 @@ const AddressRowSchema = Schema.Struct({
     'UNCHANGED',
     'UPDATED',
   ]),
-  party_contact_point_resource_id: Schema.NullOr(Schema.String),
-  party_contact_point_revision: Schema.NullOr(Schema.Int),
-  party_resource_id: Schema.NullOr(Schema.String),
-  postal_code: Schema.NullOr(Schema.String),
+  party_contact_point_resource_id: Schema.OptionFromNullOr(Schema.String),
+  party_contact_point_revision: Schema.OptionFromNullOr(Schema.Int),
+  party_resource_id: Schema.OptionFromNullOr(Schema.String),
+  postal_code: Schema.OptionFromNullOr(Schema.String),
   purposes: Schema.Array(SavedAddressPurposeSchema),
   revision: Schema.Int,
-  saved_address_id: Schema.NullOr(Schema.String),
-  source_kind: Schema.NullOr(Schema.Literals(['COMMERCE_ONLY', 'PARTY_BACKED'])),
+  saved_address_id: Schema.OptionFromNullOr(Schema.String),
+  source_kind: Schema.OptionFromNullOr(Schema.Literals(['COMMERCE_ONLY', 'PARTY_BACKED'])),
 });
 type AddressRow = typeof AddressRowSchema.Type;
 
 const AddressDefaultsRowSchema = Schema.Struct({
-  billing_saved_address_id: Schema.NullOr(Schema.String),
-  cleared_saved_address_id: Schema.NullOr(Schema.String),
-  delivery_saved_address_id: Schema.NullOr(Schema.String),
+  billing_saved_address_id: Schema.OptionFromNullOr(Schema.String),
+  cleared_saved_address_id: Schema.OptionFromNullOr(Schema.String),
+  delivery_saved_address_id: Schema.OptionFromNullOr(Schema.String),
   outcome: Schema.Literals([
     'ALREADY_CLEAR',
     'CLEARED',
@@ -110,23 +109,20 @@ const AddressDefaultsRowSchema = Schema.Struct({
   revision: Schema.Int,
 });
 type AddressDefaultsRow = typeof AddressDefaultsRowSchema.Type;
-/* oxlint-enable effect-native/no-nullable-schema-field */
 type AddressDomainError = typeof AddressBookDomainErrorSchema.Type;
 type AddSavedAddressResult = typeof AddSavedAddressResultSchema.Type;
 type ClearAddressDefaultResult = typeof ClearAddressDefaultResultSchema.Type;
 
-/* oxlint-disable effect-native/no-nullable-schema-field -- SQL routine outcomes use NULL for absent evidence. */
 const AddressReconciliationRowSchema = Schema.Struct({
-  after_facts_sha256: Schema.optional(Schema.NullOr(Schema.String)),
-  before_facts_sha256: Schema.optional(Schema.NullOr(Schema.String)),
-  correlation_ref: Schema.NullOr(Schema.String),
-  evidence_ref: Schema.NullOr(Schema.String),
+  after_facts_sha256: Schema.optional(Schema.OptionFromNullOr(Schema.String)),
+  before_facts_sha256: Schema.optional(Schema.OptionFromNullOr(Schema.String)),
+  correlation_ref: Schema.OptionFromNullOr(Schema.String),
+  evidence_ref: Schema.OptionFromNullOr(Schema.String),
   outcome: Schema.Literals(['CONFLICT', 'NOT_FOUND', 'OWNER_UNAVAILABLE', 'VERIFIED']),
-  postcondition_sha256: Schema.optional(Schema.NullOr(Schema.String)),
-  receipt_id: Schema.optional(Schema.NullOr(Schema.String)),
-  status: Schema.NullOr(Schema.Literals(['NOT_APPLICABLE', 'RESOLVED'])),
+  postcondition_sha256: Schema.optional(Schema.OptionFromNullOr(Schema.String)),
+  receipt_id: Schema.optional(Schema.OptionFromNullOr(Schema.String)),
+  status: Schema.OptionFromNullOr(Schema.Literals(['NOT_APPLICABLE', 'RESOLVED'])),
 });
-/* oxlint-enable effect-native/no-nullable-schema-field */
 
 /** Minimum owner-local capability accepted from Core's scoped transaction. */
 export interface CustomerContextAddressRoutineInvoker {
@@ -373,71 +369,71 @@ const resourceRef = (tenantId: string, resourceId: string) => ({
 });
 
 const partyBackedOriginFromRow = (tenantId: string, row: AddressRow): SavedAddressOrigin | undefined => {
-  if (
-    row.party_resource_id === null ||
-    row.party_contact_point_resource_id === null ||
-    row.party_contact_point_revision === null
-  ) {
+  const source = Option.all({
+    contactPointResourceId: row.party_contact_point_resource_id,
+    partyResourceId: row.party_resource_id,
+    sourceRevision: row.party_contact_point_revision,
+  });
+  if (Option.isNone(source)) {
     return undefined;
   }
   return {
     contactPointRef: {
       moduleId: 'party.registry',
-      resourceId: row.party_contact_point_resource_id,
+      resourceId: source.value.contactPointResourceId,
       resourceType: 'party.registry.party-contact-point',
       tenantId,
     },
     kind: 'PARTY_BACKED',
     partyRef: {
       moduleId: 'party.registry',
-      resourceId: row.party_resource_id,
+      resourceId: source.value.partyResourceId,
       resourceType: 'party.registry.party',
       tenantId,
     },
-    sourceRevision: row.party_contact_point_revision,
+    sourceRevision: source.value.sourceRevision,
   };
 };
 
 const commerceOnlyOriginFromRow = (row: AddressRow): SavedAddressOrigin | undefined => {
-  if (row.address_line_1 === null || row.city === null || row.country_code === null || row.postal_code === null) {
-    return undefined;
-  }
-  const postalAddress = {
+  const postalAddress = Option.all({
     addressLine1: row.address_line_1,
     city: row.city,
     countryCode: row.country_code,
     postalCode: row.postal_code,
-  };
-  if (row.address_line_2 !== null) {
+  });
+  if (Option.isNone(postalAddress)) {
+    return undefined;
+  }
+  if (Option.isSome(row.address_line_2)) {
     return {
       kind: 'COMMERCE_ONLY',
-      postalAddress:
-        row.administrative_area === null
-          ? { ...postalAddress, addressLine2: row.address_line_2 }
-          : {
-              ...postalAddress,
-              addressLine2: row.address_line_2,
-              region: row.administrative_area,
-            },
+      postalAddress: Option.isNone(row.administrative_area)
+        ? { ...postalAddress.value, addressLine2: row.address_line_2.value }
+        : {
+            ...postalAddress.value,
+            addressLine2: row.address_line_2.value,
+            region: row.administrative_area.value,
+          },
     };
   }
-  if (row.administrative_area !== null) {
+  if (Option.isSome(row.administrative_area)) {
     return {
       kind: 'COMMERCE_ONLY',
-      postalAddress: { ...postalAddress, region: row.administrative_area },
+      postalAddress: { ...postalAddress.value, region: row.administrative_area.value },
     };
   }
   return {
     kind: 'COMMERCE_ONLY',
-    postalAddress,
+    postalAddress: postalAddress.value,
   };
 };
 
 const originFromRow = (tenantId: string, row: AddressRow): SavedAddressOrigin | undefined => {
-  if (row.source_kind === 'PARTY_BACKED') {
+  if (Option.contains(row.source_kind, 'PARTY_BACKED')) {
     return partyBackedOriginFromRow(tenantId, row);
   }
-  if (row.source_kind === 'COMMERCE_ONLY') {
+  if (Option.contains(row.source_kind, 'COMMERCE_ONLY')) {
     return commerceOnlyOriginFromRow(row);
   }
   return undefined;
@@ -450,23 +446,23 @@ const addressFromRow = (
   const origin = originFromRow(profile.profileRef.tenantId, row);
   if (
     origin === undefined ||
-    row.saved_address_id === null ||
-    row.lifecycle === null ||
+    Option.isNone(row.saved_address_id) ||
+    Option.isNone(row.lifecycle) ||
     row.revision < 1 ||
     row.purposes.length === 0
   ) {
     return Effect.fail(unavailable('commerce.customer-context.persistence:invalid-address-row'));
   }
   const address = {
-    lifecycle: row.lifecycle,
+    lifecycle: row.lifecycle.value,
     origin,
     profile,
     purposes: row.purposes,
     revision: row.revision,
-    savedAddressRef: resourceRef(profile.profileRef.tenantId, row.saved_address_id),
+    savedAddressRef: resourceRef(profile.profileRef.tenantId, row.saved_address_id.value),
   };
-  if (row.label !== null) {
-    return Effect.succeed({ ...address, label: row.label });
+  if (Option.isSome(row.label)) {
+    return Effect.succeed({ ...address, label: row.label.value });
   }
   return Effect.succeed(address);
 };
@@ -640,14 +636,14 @@ export const removeSavedAddress = (
 
 const defaultsFromRow = (profile: AddressBookProfile, row: AddressDefaultsRow): SavedAddressDefaults => {
   const revisionAndProfile = { profile, revision: row.revision };
-  const billing =
-    row.billing_saved_address_id === null
-      ? undefined
-      : resourceRef(profile.profileRef.tenantId, row.billing_saved_address_id);
-  const delivery =
-    row.delivery_saved_address_id === null
-      ? undefined
-      : resourceRef(profile.profileRef.tenantId, row.delivery_saved_address_id);
+  const billing = row.billing_saved_address_id.pipe(
+    Option.map((id) => resourceRef(profile.profileRef.tenantId, id)),
+    Option.getOrUndefined,
+  );
+  const delivery = row.delivery_saved_address_id.pipe(
+    Option.map((id) => resourceRef(profile.profileRef.tenantId, id)),
+    Option.getOrUndefined,
+  );
   if (billing === undefined) {
     return delivery === undefined ? revisionAndProfile : { ...revisionAndProfile, delivery };
   }
@@ -723,9 +719,9 @@ export const clearAddressDefault = (
         outcome: 'ALREADY_CLEAR',
       });
     }
-    if (row?.outcome === 'CLEARED' && row.cleared_saved_address_id !== null) {
+    if (row?.outcome === 'CLEARED' && Option.isSome(row.cleared_saved_address_id)) {
       return Effect.succeed({
-        clearedSavedAddressRef: resourceRef(payload.profile.profileRef.tenantId, row.cleared_saved_address_id),
+        clearedSavedAddressRef: resourceRef(payload.profile.profileRef.tenantId, row.cleared_saved_address_id.value),
         defaults: defaultsFromRow(payload.profile, row),
         outcome: 'CLEARED',
       });
@@ -772,20 +768,23 @@ const ownerVerificationFailure = (
 
 const verifiedAddressReconciliationFromRow = (
   row: typeof AddressReconciliationRowSchema.Type,
-): ProfileReconciliationOwnerVerification | undefined => {
-  if (row.status === null || row.evidence_ref === null || row.correlation_ref === null) {
-    return undefined;
-  }
-  return {
-    _tag: 'VERIFIED',
+): ProfileReconciliationOwnerVerification | undefined =>
+  Option.all({
     correlationRef: row.correlation_ref,
-    durableOutcome: {
-      evidenceRef: row.evidence_ref,
-      owner: 'ADDRESS_BOOK',
-      status: row.status,
-    },
-  };
-};
+    evidenceRef: row.evidence_ref,
+    status: row.status,
+  }).pipe(
+    Option.map(({ correlationRef, evidenceRef, status }): ProfileReconciliationOwnerVerification => ({
+      _tag: 'VERIFIED',
+      correlationRef,
+      durableOutcome: {
+        evidenceRef,
+        owner: 'ADDRESS_BOOK',
+        status,
+      },
+    })),
+    Option.getOrUndefined,
+  );
 
 const addressReconciliationConflictFromRow = (
   outcome: 'CONFLICT' | 'NOT_FOUND',
@@ -960,7 +959,7 @@ const detailResponseFromRows = (
   rows: readonly AddressRow[],
 ): Effect.Effect<SavedAddressDetailResponse, ReadHandlerNotFound | ReadHandlerUnavailable> => {
   const [row] = rows;
-  if (row === undefined || row.outcome !== 'FOUND' || row.lifecycle !== 'ACTIVE') {
+  if (row === undefined || row.outcome !== 'FOUND' || !Option.contains(row.lifecycle, 'ACTIVE')) {
     return Effect.fail(
       new ReadHandlerNotFound({
         code: 'read_handler_not_found',
@@ -1024,7 +1023,7 @@ export const addressReadServicesForTransaction = (
         }
         const decoders: ReturnType<typeof addressFromRow>[] = [];
         for (const row of rows) {
-          if (row.outcome === 'FOUND' && row.lifecycle === 'ACTIVE') {
+          if (row.outcome === 'FOUND' && Option.contains(row.lifecycle, 'ACTIVE')) {
             decoders.push(addressFromRow(input.profile, row));
           }
         }
@@ -1095,15 +1094,15 @@ const loadDefaultAddress = (
   transaction: CustomerContextAddressRoutineInvoker,
   scope: OperationalScope,
   profile: AddressBookProfile,
-  savedAddressResourceId: string | null,
+  savedAddressResourceId: Option.Option<string>,
   invalidReason: string,
 ): Effect.Effect<AddressDefaultLookup<SavedAddress>, AddressBookUnavailable> => {
-  if (savedAddressResourceId === null) {
+  if (Option.isNone(savedAddressResourceId)) {
     return Effect.succeed({ kind: 'NONE' });
   }
-  return invokeDetail(transaction, scope, profile, savedAddressResourceId).pipe(
+  return invokeDetail(transaction, scope, profile, savedAddressResourceId.value).pipe(
     Effect.flatMap(([row]): Effect.Effect<AddressDefaultLookup<SavedAddress>, AddressBookUnavailable> =>
-      row?.outcome === 'FOUND' && row.lifecycle === 'ACTIVE'
+      row?.outcome === 'FOUND' && Option.contains(row.lifecycle, 'ACTIVE')
         ? addressFromRow(profile, row).pipe(
             Effect.map((address) => ({
               kind: 'FOUND' as const,
@@ -1140,7 +1139,7 @@ export const invoiceRecipientPortsForTransaction = (
   loadSavedAddress: ({ profile, resourceId }) =>
     invokeDetail(transaction, scope, profile, resourceId).pipe(
       Effect.flatMap(([row]) =>
-        row?.outcome === 'FOUND' && row.lifecycle === 'ACTIVE'
+        row?.outcome === 'FOUND' && Option.contains(row.lifecycle, 'ACTIVE')
           ? addressFromRow(profile, row).pipe(Effect.map(found))
           : Effect.succeed(notFound<SavedAddress>()),
       ),
@@ -1174,7 +1173,7 @@ export const deliveryDestinationPortsForTransaction = (
   loadSavedAddress: ({ profile, resourceId }) =>
     invokeDetail(transaction, scope, profile, resourceId).pipe(
       Effect.flatMap(([row]) =>
-        row?.outcome === 'FOUND' && row.lifecycle === 'ACTIVE'
+        row?.outcome === 'FOUND' && Option.contains(row.lifecycle, 'ACTIVE')
           ? addressFromRow(profile, row).pipe(Effect.map(found))
           : Effect.succeed(notFound<SavedAddress>()),
       ),

@@ -1,3 +1,4 @@
+import type { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { changeEntries, diffRecords, findRecord, touchedSince } from '../../shared/domain/change-log.ts';
 
@@ -12,13 +13,15 @@ const state = (validTo: string, updatedAt: string) => ({
       versions: [{ version: 1 }],
     },
     { id: 'doc-2', title: 'Jiná', updatedAt: '2026-10-21T05:00:00.000Z' },
-  ],
+  ] satisfies readonly [Schema.Json, Schema.Json],
 });
 
 it('diffs nested contract fields with before and after values', () => {
   const before = findRecord(state('2026-10-25', '2026-10-20T08:00:00.000Z'), 'doc-1');
   const after = findRecord(state('2026-10-29', '2026-10-21T06:00:00.000Z'), 'doc-1');
-  expect(diffRecords(before, after)).toEqual([{ after: '2026-10-29', before: '2026-10-25', field: 'contract.validTo' }]);
+  expect(diffRecords(before, after)).toEqual([
+    { after: '2026-10-29', before: '2026-10-25', field: 'contract.validTo' },
+  ]);
 });
 
 it('records created and changed entries but skips no-op changes', () => {
@@ -58,7 +61,8 @@ it('finds the record itself, not a nested link that carries the same id', () => 
     documents: [
       { id: 'doc-2', links: [{ id: 'doc-1', kind: 'document', label: 'Smlouva' }], updatedAt: 'x' },
       { id: 'doc-1', title: 'Smlouva', updatedAt: '2026-10-21T05:00:00.000Z' },
-    ],
+    ] satisfies readonly [Schema.Json, Schema.Json],
   };
-  expect(findRecord(tree, 'doc-1')?.['title']).toBe('Smlouva');
+  const { title } = findRecord(tree, 'doc-1') ?? {};
+  expect(title).toBe('Smlouva');
 });

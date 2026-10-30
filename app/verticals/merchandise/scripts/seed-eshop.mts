@@ -11,9 +11,9 @@
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { demoId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { MerchandiseStateSchema } from '../shared/apis/records.ts';
 import type { MerchandiseState } from '../shared/apis/records.ts';
@@ -28,6 +28,16 @@ type Encoded = typeof MerchandiseStateSchema.Encoded;
 type EncodedProduct = Encoded['products'][number];
 type EncodedMovement = Encoded['movements'][number];
 type EncodedOrder = Encoded['orders'][number];
+type SeedProductState = { -readonly [K in keyof EncodedProduct]: EncodedProduct[K] };
+type SeedOrderLine = { -readonly [K in keyof EncodedOrder['lines'][number]]: EncodedOrder['lines'][number][K] };
+type SeedOrderHistory = {
+  -readonly [K in keyof NonNullable<EncodedOrder['history']>[number]]: NonNullable<EncodedOrder['history']>[number][K];
+};
+type SeedOrderState = { -readonly [K in keyof EncodedOrder]: EncodedOrder[K] };
+
+class SeedProductMissing extends Schema.TaggedError<SeedProductMissing>()('SeedProductMissing', {
+  slug: Schema.String,
+}) {}
 
 const SEED_INSTANT = DateTime.makeUnsafe('2026-10-19T08:00:00Z');
 const daysAgo = (days: number, hours = 0): string =>
@@ -86,6 +96,12 @@ const MLETA = 'Mletá káva';
 const CAJ = 'Čaj';
 const PRIPRAVA = 'Příprava kávy';
 const DARKY = 'Dárkové balíčky';
+const ESPRESSO_GRIND = 'Hmotnost: 250 g; Mletí: jemné';
+const FILTER_GRIND = 'Hmotnost: 250 g; Mletí: střední';
+const FILTER_VARIANT_NAME = '250 g / mletá na filtr';
+const ESPRESSO_VARIANT_NAME = '250 g / mletá na espresso';
+const FIFTY_GRAM_ATTRIBUTES = 'Hmotnost: 50 g';
+const HUNDRED_GRAM_ATTRIBUTES = 'Hmotnost: 100 g';
 
 const beans = (prices: readonly [number, number, number?], stock: readonly [number, number, number?]) => {
   const variants: SeedVariant[] = [
@@ -214,17 +230,17 @@ export const eshopCatalog: readonly SeedProduct[] = [
     slug: 'espresso-mleta',
     variants: [
       {
-        attributes: 'Hmotnost: 250 g; Mletí: jemné',
+        attributes: ESPRESSO_GRIND,
         gross: 25_900,
         key: 'espresso',
-        name: '250 g / mletá na espresso',
+        name: ESPRESSO_VARIANT_NAME,
         stock: 34,
       },
       {
-        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        attributes: FILTER_GRIND,
         gross: 25_900,
         key: 'filtr',
-        name: '250 g / mletá na filtr',
+        name: FILTER_VARIANT_NAME,
         stock: 21,
       },
     ],
@@ -241,17 +257,17 @@ export const eshopCatalog: readonly SeedProduct[] = [
     slug: 'kolumbie-decaf-mleta',
     variants: [
       {
-        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        attributes: FILTER_GRIND,
         gross: 27_900,
         key: 'filtr',
-        name: '250 g / mletá na filtr',
+        name: FILTER_VARIANT_NAME,
         stock: 16,
       },
       {
-        attributes: 'Hmotnost: 250 g; Mletí: jemné',
+        attributes: ESPRESSO_GRIND,
         gross: 27_900,
         key: 'espresso',
-        name: '250 g / mletá na espresso',
+        name: ESPRESSO_VARIANT_NAME,
         stock: 4,
       },
     ],
@@ -282,10 +298,10 @@ export const eshopCatalog: readonly SeedProduct[] = [
     slug: 'snidanova-smes',
     variants: [
       {
-        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        attributes: FILTER_GRIND,
         gross: 22_900,
         key: '250g',
-        name: '250 g / mletá na filtr',
+        name: FILTER_VARIANT_NAME,
         stock: 38,
       },
       {
@@ -308,8 +324,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-SEN',
     slug: 'sencha-kagoshima',
     variants: [
-      { attributes: 'Hmotnost: 50 g', gross: 18_900, key: '50g', name: '50 g', stock: 30 },
-      { attributes: 'Hmotnost: 100 g', gross: 34_900, key: '100g', name: '100 g', stock: 12 },
+      { attributes: FIFTY_GRAM_ATTRIBUTES, gross: 18_900, key: '50g', name: '50 g', stock: 30 },
+      { attributes: HUNDRED_GRAM_ATTRIBUTES, gross: 34_900, key: '100g', name: '100 g', stock: 12 },
     ],
     vatRate: 12,
   },
@@ -323,8 +339,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-EGR',
     slug: 'earl-grey',
     variants: [
-      { attributes: 'Hmotnost: 50 g', gross: 12_900, key: '50g', name: '50 g', stock: 45 },
-      { attributes: 'Hmotnost: 100 g', gross: 22_900, key: '100g', name: '100 g', stock: 22 },
+      { attributes: FIFTY_GRAM_ATTRIBUTES, gross: 12_900, key: '50g', name: '50 g', stock: 45 },
+      { attributes: HUNDRED_GRAM_ATTRIBUTES, gross: 22_900, key: '100g', name: '100 g', stock: 22 },
     ],
     vatRate: 12,
   },
@@ -338,8 +354,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-DAR',
     slug: 'darjeeling-first-flush',
     variants: [
-      { attributes: 'Hmotnost: 50 g', gross: 21_900, key: '50g', name: '50 g', stock: 0 },
-      { attributes: 'Hmotnost: 100 g', gross: 39_900, key: '100g', name: '100 g', stock: 0 },
+      { attributes: FIFTY_GRAM_ATTRIBUTES, gross: 21_900, key: '50g', name: '50 g', stock: 0 },
+      { attributes: HUNDRED_GRAM_ATTRIBUTES, gross: 39_900, key: '100g', name: '100 g', stock: 0 },
     ],
     vatRate: 12,
   },
@@ -519,7 +535,7 @@ const productState = (product: SeedProduct): EncodedProduct => {
   });
   const firstGross = product.gross ?? product.variants?.[0]?.gross ?? 0;
   const priceMinor = netForGross(firstGross, product.vatRate);
-  return {
+  const result: SeedProductState = {
     active: true,
     category: product.category,
     createdAt,
@@ -539,13 +555,20 @@ const productState = (product: SeedProduct): EncodedProduct => {
     shortDescription: product.shortDescription,
     sku: product.sku,
     slug: product.slug,
-    ...(product.stockTracked === false ? { stockTracked: false } : {}),
     unit: 'ks',
     updatedAt: createdAt,
-    ...(variants.length === 0 ? {} : { variants }),
     vatRate: product.vatRate,
-    ...(product.weightGrams === undefined ? {} : { weightGrams: product.weightGrams }),
   };
+  if (product.stockTracked === false) {
+    result.stockTracked = false;
+  }
+  if (variants.length > 0) {
+    result.variants = variants;
+  }
+  if (product.weightGrams !== undefined) {
+    result.weightGrams = product.weightGrams;
+  }
+  return result;
 };
 
 const openingMovements = (product: SeedProduct): EncodedMovement[] => {
@@ -579,14 +602,14 @@ const openingMovements = (product: SeedProduct): EncodedMovement[] => {
   ];
 };
 
-const statusLabels: Readonly<Record<OrderStatus, string>> = {
+const statusLabels = {
   CANCELLED: 'Stornovaná',
   CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
   PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci (simulace)',
-};
+} satisfies Readonly<Record<OrderStatus, string>>;
 
 interface SeedOrder {
   readonly address: { readonly city: string; readonly postalCode: string; readonly street: string };
@@ -674,24 +697,37 @@ const sampleOrders: readonly SeedOrder[] = [
   },
 ];
 
-const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedProduct[]): EncodedOrder => {
-  const lines = order.lines.map((line) => {
-    const product = products.find((entry) => entry.slug === line.slug);
-    if (product === undefined) {
-      throw new Error(`Unknown seed product ${line.slug}`);
-    }
-    const variant = product.variants?.find((entry) => entry.id === variantIdOf(line.slug, line.variant ?? ''));
-    const net = variant?.priceMinor ?? product.currentPriceMinor;
-    return {
-      productId: product.id,
-      productName: product.name,
-      quantity: line.quantity,
-      sku: variant?.sku ?? product.sku,
-      unitPriceMinor: grossUnitPriceMinor(net, product.vatRate),
-      ...(variant === undefined ? {} : { variantId: variant.id ?? '', variantName: variant.name }),
-      vatRate: product.vatRate,
-    };
-  });
+const buildOrder = Effect.fn('Merchandise.buildEshopOrder')(function* buildOrder(
+  order: SeedOrder,
+  index: number,
+  products: readonly EncodedProduct[],
+) {
+  const lines = yield* Effect.forEach(
+    order.lines,
+    (line) =>
+      Effect.gen(function* buildLine() {
+        const product = products.find((entry) => entry.slug === line.slug);
+        if (product === undefined) {
+          return yield* new SeedProductMissing({ slug: line.slug });
+        }
+        const variant = product.variants?.find((entry) => entry.id === variantIdOf(line.slug, line.variant ?? ''));
+        const net = variant?.priceMinor ?? product.currentPriceMinor;
+        const snapshot: SeedOrderLine = {
+          productId: product.id,
+          productName: product.name,
+          quantity: line.quantity,
+          sku: variant?.sku ?? product.sku,
+          unitPriceMinor: grossUnitPriceMinor(net, product.vatRate),
+          vatRate: product.vatRate,
+        };
+        if (variant !== undefined) {
+          snapshot.variantId = variant.id ?? '';
+          snapshot.variantName = variant.name;
+        }
+        return snapshot;
+      }),
+    { concurrency: 1 },
+  );
   const method = shippingMethods[order.shipping];
   const shipping = {
     label: method.label,
@@ -701,13 +737,13 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
   };
   const totals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const createdAt = daysAgo(order.createdDaysAgo, 3);
-  const history: EncodedOrder['history'] = [
+  const history: NonNullable<EncodedOrder['history']>[number][] = [
     { actorLabel: 'Zákazník – e-shop (DEMO)', after: statusLabels.NEW, at: createdAt, kind: 'CREATED' },
   ];
   let previous: OrderStatus = 'NEW';
   for (const [step, status] of order.path.slice(1).entries()) {
     const actor = status === 'PACKING' || status === 'SHIPPED' ? eshopDispatch : eshopAdmin;
-    history.push({
+    const entry: SeedOrderHistory = {
       actor,
       after: statusLabels[status],
       at: DateTime.formatIso(
@@ -717,13 +753,16 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
       ),
       before: statusLabels[previous],
       kind: 'STATUS',
-      ...(status === 'CANCELLED' ? { reason: 'Storno na žádost zákazníka' } : {}),
-    });
+    };
+    if (status === 'CANCELLED') {
+      entry.reason = 'Storno na žádost zákazníka';
+    }
+    history.push(entry);
     previous = status;
   }
   const status = order.path.at(-1) ?? 'NEW';
   const last = history.at(-1)?.at ?? createdAt;
-  return {
+  const result: SeedOrderState = {
     channel: 'STOREFRONT',
     clientRequestId: `seed-${order.key}-0000-0000`,
     contact: order.contact,
@@ -733,7 +772,6 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
     history,
     id: demoId('eshop.order', order.key),
     lines,
-    ...(order.note === undefined ? {} : { note: order.note }),
     number: `${ORDER_NUMBER_PREFIX}${String(index + 1).padStart(4, '0')}`,
     partyId: 'storefront-guest',
     pricesIncludeVat: true,
@@ -743,13 +781,19 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
     totalVatMinor: totals.totalVatMinor,
     updatedAt: last,
   };
-};
+  if (order.note !== undefined) {
+    result.note = order.note;
+  }
+  return result;
+});
 
 export const buildEshopState = Effect.fn('Merchandise.buildEshopState')(function* buildEshopState() {
   const products = eshopCatalog.map(productState);
   const encoded: Encoded = {
     movements: eshopCatalog.flatMap(openingMovements),
-    orders: sampleOrders.map((order, index) => buildOrder(order, index, products)),
+    orders: yield* Effect.forEach(sampleOrders, (order, index) => buildOrder(order, index, products), {
+      concurrency: 1,
+    }),
     products,
   };
   return yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
@@ -845,7 +889,9 @@ const command = Command.make(
             ),
           ),
         )
-      : Layer.build(Layer.effectDiscard(writeState(reset, restore)).pipe(Layer.provide(AdminDatabaseLive))).pipe(Effect.scoped),
+      : Layer.build(Layer.effectDiscard(writeState(reset, restore)).pipe(Layer.provide(AdminDatabaseLive))).pipe(
+          Effect.scoped,
+        ),
 );
 
 const appRoot = new URL('../../..', import.meta.url).pathname;

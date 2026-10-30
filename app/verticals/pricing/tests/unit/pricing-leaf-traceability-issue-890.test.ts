@@ -1,7 +1,9 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, FileSystem } from 'effect';
+import { Hex } from 'effect/encoding';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -106,7 +108,7 @@ describe('issue #738 accepted remediation scope disposition', () => {
   it('covers every reviewed non-Pricing path and records the complete accepted disposition', () => {
     const ledgerPathRecords = ISSUE_738_NON_PRICING_SCOPE_LEDGER.map(({ path }) => ({
       path,
-      pathHash: createHash('sha256').update(path).digest('hex'),
+      pathHash: Hex.encode(sha256(utf8ToBytes(path))),
     }));
     const ledgerPaths = ledgerPathRecords.map(({ path }) => path);
     const reviewedPathHashes = new Set<string>(ISSUE_738_REVIEWED_NON_PRICING_PATH_HASHES);
@@ -134,7 +136,7 @@ describe('issue #738 accepted remediation scope disposition', () => {
     expect(ledgerPaths.toSorted()).toEqual(expectedLedgerPaths.toSorted());
     expect(retainedLedgerPaths.toSorted()).toEqual(acceptedNonPricingPaths.toSorted());
     expect(removedLedgerPaths).toHaveLength(8);
-    expect(new Set(removedLedgerPaths.map((path) => createHash('sha256').update(path).digest('hex')))).toEqual(
+    expect(new Set(removedLedgerPaths.map((path) => Hex.encode(sha256(utf8ToBytes(path)))))).toEqual(
       new Set([...reviewedPathHashes].filter((pathHash) => !acceptedPathHashes.has(pathHash))),
     );
     expect(

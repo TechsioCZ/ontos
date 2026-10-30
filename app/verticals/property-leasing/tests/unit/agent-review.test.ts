@@ -1,3 +1,4 @@
+import type { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -18,11 +19,12 @@ const occupancyRef = {
 };
 const rentTerms = { currency: 'CZK', monthlyRentMinor: 1_500_000, paymentDay: 15, serviceChargesMinor: 300_000 };
 
+const writableRead = { canWrite: true };
 const review = (
-  request: Partial<Parameters<typeof reviewOccupancyProposal>[0]['request']> & { command: Record<string, unknown> },
-  occupancy?: Record<string, unknown>,
+  request: Partial<Parameters<typeof reviewOccupancyProposal>[0]['request']> & { command: Schema.JsonObject },
+  occupancy?: Schema.JsonObject,
   /** `null`: the lease read failed. */
-  read: { readonly canWrite: boolean | undefined } | null = { canWrite: true },
+  read: { readonly canWrite: boolean | undefined } | null = writableRead,
 ) =>
   reviewOccupancyProposal({
     occupancy,
@@ -36,6 +38,7 @@ it('rent term changes and draft edits read the lease they change', () => {
   expect(targetOccupancyId({ _tag: 'UpdateDraft', occupancyRef })).toBe('o1');
   expect(targetOccupancyId({ _tag: 'Confirm', occupancyRef })).toBeUndefined();
   expect(targetOccupancyId({ _tag: 'CreateDraft' })).toBeUndefined();
+  expect(targetOccupancyId({ _tag: ['UpdateDraft'], occupancyRef })).toBeUndefined();
 });
 
 it('SetRentTerms restores the previous rent terms', () => {
@@ -105,11 +108,15 @@ it('detects rent terms or a start date a person changed after the approval', () 
   const setTerms = { _tag: 'SetRentTerms', occupancyRef, rentTerms };
   expect(occupancyStillInPlace(setTerms, { rentTerms })).toBe(true);
   expect(occupancyStillInPlace(setTerms, { rentTerms: { ...rentTerms, paymentDay: 1 } })).toBe(false);
-  expect(occupancyStillInPlace(setTerms, undefined)).toBe(false);
+  for (const current of [{}, undefined]) {
+    expect(occupancyStillInPlace(setTerms, current)).toBe(false);
+  }
   const draft = { _tag: 'UpdateDraft', occupancyRef, startDate: '2026-02-01' };
   expect(occupancyStillInPlace(draft, { startDate: '2026-02-01' })).toBe(true);
   expect(occupancyStillInPlace(draft, { startDate: '2026-03-01' })).toBe(false);
-  expect(occupancyStillInPlace({ _tag: 'CreateDraft' }, undefined)).toBeUndefined();
+  for (const current of [{}, undefined]) {
+    expect(occupancyStillInPlace({ _tag: 'CreateDraft' }, current)).toBeUndefined();
+  }
 });
 
 it('a pending rent change carries its undo plan and no lines of its own', () => {

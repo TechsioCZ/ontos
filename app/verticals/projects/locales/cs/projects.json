@@ -1,0 +1,45 @@
+{
+  "projects": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "projects",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Projects Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "createProject": {
+        "title": "Vytvořit Project",
+        "description": "Vytvořte Project v tenantu se způsobilým vlastníkem.",
+        "name": "Název",
+        "prefixHelp": "2–5 písmen anglické abecedy. Prefix nelze později změnit.",
+        "shortText": "Krátký text",
+        "ownerQuery": "Vyhledat vlastníka",
+        "findOwners": "Vyhledat způsobilé uživatele",
+        "owner": "Vlastník",
+        "submit": "Vytvořit Project",
+        "loading": "Ověřování způsobilých uživatelů…",
+        "saving": "Vytváření…",
+        "empty": "Pro tento Project nejsou dostupní žádní způsobilí uživatelé.",
+        "unavailable": "Operace není dostupná. Zkuste to prosím znovu.",
+        "forbidden": "K této operaci nemáte oprávnění.",
+        "invalid": "Zkontrolujte údaje a vyberte způsobilého vlastníka.",
+        "conflict": "Project nelze vytvořit kvůli konfliktu stavu nebo Prefixu.",
+        "success": "Project byl vytvořen.",
+        "idle": "Vyberte jednoho způsobilého uživatele z výsledků.",
+        "uncertain": "Výsledek vytvoření není jistý. Před dalším pokusem ověřte Projekt.",
+        "prefixLabel": "Prefix"
+      }
+    }
+  }
+}

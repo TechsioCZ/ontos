@@ -74,6 +74,9 @@
     },
     {
       "appId": "facility-operations"
+    },
+    {
+      "appId": "projects"
     }
   ]
 }

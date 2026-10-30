@@ -10,7 +10,7 @@
 //   - every CSV export is logged (who, which list, row count, filter).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import {
   auditCreated,
   auditUpdated,
@@ -24,7 +24,7 @@ import {
   PropertyRefSchema,
   TextSchema,
 } from '../domain/common.ts';
-import type { EntityId, OpsCommandInput } from '../domain/common.ts';
+import type { OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import {
   AgendaStateSchema,
   CalendarEventIdSchema,
@@ -40,39 +40,45 @@ import {
   OptionalEmailCategorySchema,
   emptyAgendaState,
 } from '../domain/agenda.ts';
-import type { AgendaState, CalendarEvent, ExportRecord, Notification, NotificationPreference } from '../domain/agenda.ts';
+import type {
+  AgendaState,
+  CalendarEvent,
+  ExportRecord,
+  Notification,
+  NotificationPreference,
+} from '../domain/agenda.ts';
 
 /** One source event offered for delivery to the acting person's inbox. */
 export const NotificationDeliveryItemSchema = Schema.Struct({
-  eventKey: EventKeySchema,
   category: NotificationCategorySchema,
-  title: TextSchema(300),
   detail: Schema.optionalKey(TextSchema(500)),
-  source: TextSchema(80),
-  href: Schema.optionalKey(TextSchema(500)),
   dueDate: Schema.optionalKey(IsoDateSchema),
+  eventKey: EventKeySchema,
+  href: Schema.optionalKey(TextSchema(500)),
+  source: TextSchema(80),
+  title: TextSchema(300),
 });
 export type NotificationDeliveryItem = typeof NotificationDeliveryItemSchema.Type;
 
 export const agendaCommandSchemas = [
   Schema.TaggedStruct('AgendaEventCreate', {
-    title: TextSchema(300),
-    date: IsoDateSchema,
-    kind: CalendarEventKindSchema,
-    related: Schema.optionalKey(PropertyRefSchema),
     assignee: Schema.optionalKey(PrincipalRefSchema),
     assigneeLabel: Schema.optionalKey(TextSchema(200)),
+    date: IsoDateSchema,
+    kind: CalendarEventKindSchema,
     note: Schema.optionalKey(NoteSchema),
+    related: Schema.optionalKey(PropertyRefSchema),
+    title: TextSchema(300),
   }),
   Schema.TaggedStruct('AgendaEventUpdate', {
-    eventId: CalendarEventIdSchema,
-    title: Schema.optionalKey(TextSchema(300)),
     date: Schema.optionalKey(IsoDateSchema),
+    eventId: CalendarEventIdSchema,
     kind: Schema.optionalKey(CalendarEventKindSchema),
+    title: Schema.optionalKey(TextSchema(300)),
     /** `null` removes the link. */
-    related: Schema.optionalKey(Schema.NullOr(PropertyRefSchema)),
+    related: Schema.optionalKey(Schema.OptionFromNullOr(PropertyRefSchema)),
     /** `null` removes the assignee. */
-    assignee: Schema.optionalKey(Schema.NullOr(PrincipalRefSchema)),
+    assignee: Schema.optionalKey(Schema.OptionFromNullOr(PrincipalRefSchema)),
     assigneeLabel: Schema.optionalKey(TextSchema(200)),
     note: Schema.optionalKey(NoteSchema),
     status: Schema.optionalKey(CalendarEventStatusSchema),
@@ -85,13 +91,13 @@ export const agendaCommandSchemas = [
   }),
   Schema.TaggedStruct('AgendaNotificationsMarkAllRead', {}),
   Schema.TaggedStruct('AgendaExportRecord', {
+    filter: Schema.optionalKey(TextSchema(500)),
     list: ExportRecordSchema.fields.list,
     rowCount: ExportRecordSchema.fields.rowCount,
-    filter: Schema.optionalKey(TextSchema(500)),
   }),
   Schema.TaggedStruct('AgendaPreferencesSet', {
-    leadDays: LeadDaysSchema,
     emailOptIn: Schema.Boolean,
+    leadDays: LeadDaysSchema,
     /** Optional categories also e-mailed; missing keeps the stored choice. */
     emailCategories: Schema.optionalKey(Schema.Array(OptionalEmailCategorySchema).check(Schema.isMaxLength(2))),
   }),
@@ -129,8 +135,8 @@ export const hasNotification = (notifications: readonly Notification[], recipien
   notifications.some((entry) => entry.eventKey === eventKey && samePrincipal(entry.recipient, recipient));
 
 interface PendingNotification {
-  readonly recipient: PrincipalRef;
   readonly item: NotificationDeliveryItem;
+  readonly recipient: PrincipalRef;
 }
 
 /**
@@ -142,18 +148,23 @@ const appendNotifications = Effect.fn('FacilityOperations.Agenda.appendNotificat
   pending: readonly PendingNotification[],
   input: OpsCommandInput,
 ) {
-  const accepted: Notification[] = [];
-  for (const [index, entry] of pending.entries()) {
-    if (hasNotification([...notificationsOf(state), ...accepted], entry.recipient, entry.item.eventKey)) {
-      continue;
-    }
-    const id = yield* mintId(NotificationIdSchema, `${input.resourceId}:n${index}`);
-    accepted.push({ ...entry.item, createdAt: input.now, createdBy: input.actor, id, recipient: entry.recipient });
-  }
-  const entityIds: EntityId[] = [];
-  for (const record of accepted) {
-    entityIds.push(yield* entityIdOf(record.id));
-  }
+  const initial: readonly Notification[] = [];
+  const accepted = yield* Effect.reduce(
+    pending.entries(),
+    () => initial,
+    (records, [index, entry]) => {
+      if (hasNotification([...notificationsOf(state), ...records], entry.recipient, entry.item.eventKey)) {
+        return Effect.succeed(records);
+      }
+      return mintId(NotificationIdSchema, `${input.resourceId}:n${index}`).pipe(
+        Effect.map((id) => [
+          ...records,
+          { ...entry.item, createdAt: input.now, createdBy: input.actor, id, recipient: entry.recipient },
+        ]),
+      );
+    },
+  );
+  const entityIds = yield* Effect.forEach(accepted, (record) => entityIdOf(record.id), { concurrency: 1 });
   return {
     duplicates: pending.length - accepted.length,
     entityIds,
@@ -197,8 +208,7 @@ const rescheduleNotice = (record: CalendarEvent, input: OpsCommandInput): Pendin
 
 const createCalendarEvent = Effect.fn('FacilityOperations.Agenda.create')(function* createCalendarEvent(
   state: AgendaState,
-  value: CommandOf<'AgendaEventCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'AgendaEventCreate'>>,
 ) {
   const id = yield* mintId(CalendarEventIdSchema, input.resourceId);
   const { _tag, ...fields } = value;
@@ -222,27 +232,30 @@ const updateCalendarEvent = Effect.fn('FacilityOperations.Agenda.update')(functi
   if ((current.status ?? 'PLANNED') === 'CANCELLED' && value.status !== 'PLANNED') {
     return yield* opsConflict('cancelled calendar events can only be reopened');
   }
-  const { _tag, eventId, related, assignee, assigneeLabel, ...changes } = value;
+  const { _tag, assignee, assigneeLabel, eventId, related, ...changes } = value;
   void _tag;
   void eventId;
-  const { related: _oldRelated, assignee: _oldAssignee, assigneeLabel: _oldLabel, ...rest } = current;
+  const { assignee: _oldAssignee, assigneeLabel: _oldLabel, related: _oldRelated, ...rest } = current;
   void _oldRelated;
   void _oldAssignee;
   void _oldLabel;
-  const nextRelated = related === undefined ? current.related : (related ?? undefined);
-  const nextAssignee = assignee === undefined ? current.assignee : (assignee ?? undefined);
+  const nextRelated = related === undefined ? current.related : Option.getOrUndefined(related);
+  const nextAssignee = assignee === undefined ? current.assignee : Option.getOrUndefined(assignee);
   const nextLabel =
-    assignee === null ? undefined : (assigneeLabel ?? (assignee === undefined ? current.assigneeLabel : undefined));
-  const updated: CalendarEvent = auditUpdated(
-    {
-      ...rest,
-      ...changes,
-      ...(nextRelated === undefined ? {} : { related: nextRelated }),
-      ...(nextAssignee === undefined ? {} : { assignee: nextAssignee }),
-      ...(nextLabel === undefined ? {} : { assigneeLabel: nextLabel }),
-    },
-    input,
-  );
+    assignee !== undefined && Option.isNone(assignee)
+      ? undefined
+      : (assigneeLabel ?? (assignee === undefined ? current.assigneeLabel : undefined));
+  let updatedFields: CalendarEvent = { ...rest, ...changes };
+  if (nextRelated !== undefined) {
+    updatedFields = { ...updatedFields, related: nextRelated };
+  }
+  if (nextAssignee !== undefined) {
+    updatedFields = { ...updatedFields, assignee: nextAssignee };
+  }
+  if (nextLabel !== undefined) {
+    updatedFields = { ...updatedFields, assigneeLabel: nextLabel };
+  }
+  const updated = auditUpdated(updatedFields, input);
   const reassigned = nextAssignee !== undefined && !samePrincipal(nextAssignee, current.assignee);
   const rescheduled = !reassigned && updated.date !== current.date;
   const withEvent: AgendaState = {
@@ -254,8 +267,8 @@ const updateCalendarEvent = Effect.fn('FacilityOperations.Agenda.update')(functi
     ...(rescheduled ? rescheduleNotice(updated, input) : []),
   ];
   const notified = yield* appendNotifications(withEvent, pending, input);
-  const entity = yield* entityIdOf(current.id);
-  return { entityIds: [entity, ...notified.entityIds], state: notified.state };
+  const entityIds = yield* Effect.map(entityIdOf(current.id), (entity) => [entity, ...notified.entityIds]);
+  return { entityIds, state: notified.state };
 });
 
 const deliverNotifications = Effect.fn('FacilityOperations.Agenda.deliver')(function* deliverNotifications(
@@ -288,19 +301,17 @@ const markRead = Effect.fn('FacilityOperations.Agenda.markRead')(function* markR
     return { ...entry, readAt: input.now };
   });
   if (ids !== 'all') {
-    const own = new Set<string>(
-      notificationsOf(state)
-        .filter((entry) => samePrincipal(entry.recipient, input.actor))
-        .map((entry) => entry.id),
-    );
+    const own = new Set<string>();
+    for (const entry of notificationsOf(state)) {
+      if (samePrincipal(entry.recipient, input.actor)) {
+        own.add(entry.id);
+      }
+    }
     if ([...ids].some((id) => !own.has(id))) {
       return yield* opsNotFound('notification not found');
     }
   }
-  const entityIds: EntityId[] = [];
-  for (const id of touched) {
-    entityIds.push(yield* entityIdOf(id));
-  }
+  const entityIds = yield* Effect.forEach(touched, entityIdOf, { concurrency: 1 });
   return { entityIds, state: { ...state, notifications } };
 });
 
@@ -310,14 +321,16 @@ const recordExport = Effect.fn('FacilityOperations.Agenda.export')(function* rec
   input: OpsCommandInput,
 ) {
   const id = yield* mintId(ExportRecordSchema.fields.id, input.resourceId);
-  const record: ExportRecord = {
+  let record: ExportRecord = {
     exportedAt: input.now,
     exportedBy: input.actor,
     id,
     list: value.list,
     rowCount: value.rowCount,
-    ...(value.filter === undefined ? {} : { filter: value.filter }),
   };
+  if (value.filter !== undefined) {
+    record = { ...record, filter: value.filter };
+  }
   const exports = [...(state.exports ?? []), record].slice(-MAX_EXPORTS);
   return { entityIds: [yield* entityIdOf(id)], state: { ...state, exports } };
 });
@@ -330,19 +343,22 @@ const setPreferences = Effect.fn('FacilityOperations.Agenda.preferences')(functi
   const previous = (state.preferences ?? []).find((entry) => samePrincipal(entry.principal, input.actor));
   const emailCategories = value.emailCategories ?? previous?.emailCategories;
   // Keep the original switch-on instant while e-mail stays on, so changing the lead time never re-sends anything.
-  const emailSince = value.emailOptIn
-    ? previous?.emailOptIn === true
-      ? (previous.emailSince ?? previous.updatedAt)
-      : input.now
-    : undefined;
-  const preference: NotificationPreference = {
+  let emailSince: NotificationPreference['emailSince'];
+  if (value.emailOptIn) {
+    emailSince = previous?.emailOptIn === true ? (previous.emailSince ?? previous.updatedAt) : input.now;
+  }
+  let preference: NotificationPreference = {
     emailOptIn: value.emailOptIn,
     leadDays: value.leadDays,
     principal: input.actor,
     updatedAt: input.now,
-    ...(emailCategories === undefined ? {} : { emailCategories: [...new Set(emailCategories)] }),
-    ...(emailSince === undefined ? {} : { emailSince }),
   };
+  if (emailCategories !== undefined) {
+    preference = { ...preference, emailCategories: [...new Set(emailCategories)] };
+  }
+  if (emailSince !== undefined) {
+    preference = { ...preference, emailSince };
+  }
   const others = (state.preferences ?? []).filter((entry) => !samePrincipal(entry.principal, input.actor));
   return {
     entityIds: [yield* entityIdOf(`preference:${input.actor.principalId}`)],
@@ -353,7 +369,7 @@ const setPreferences = Effect.fn('FacilityOperations.Agenda.preferences')(functi
 /** Pure reducer: applies one command to the `agenda` state. Persistence decides when it is saved. */
 export const evolveAgenda = (state: AgendaState, command: AgendaCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('AgendaEventCreate', (value) => createCalendarEvent(state, value, input)),
+    Match.tag('AgendaEventCreate', (value) => createCalendarEvent(state, { input, value })),
     Match.tag('AgendaEventUpdate', (value) => updateCalendarEvent(state, value, input)),
     Match.tag('AgendaNotificationsDeliver', (value) => deliverNotifications(state, value, input)),
     Match.tag('AgendaNotificationsMarkRead', (value) => markRead(state, new Set(value.notificationIds), input)),

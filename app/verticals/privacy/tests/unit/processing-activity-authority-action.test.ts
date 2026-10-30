@@ -87,6 +87,7 @@ const activity = buildProcessingActivity({
   createdAt: '2026-09-14T10:00:00Z',
   legalEntityId,
   request: input,
+  resourceId: '00000000-0000-4000-8000-000000000010',
   tenantId,
 });
 const payload = Schema.decodeUnknownSync(TransitionProcessingActivityPayloadSchema)({

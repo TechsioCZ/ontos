@@ -1,7 +1,9 @@
 import { normalizePhone, PartyContactPointsResponseSchema, PartyDetailResponseSchema } from '@app/party-registry/api';
-import { Array as EffectArray, Effect, Option, Result, Schema } from 'effect';
+import { Array as EffectArray, Effect, Option, Redacted, Result, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import {
   projectCustomerOwnProfile,
   selectProfileContact,
@@ -16,6 +18,11 @@ import {
   customerProfileReadOwnPermission,
   customerProfileUpdateOwnPermission,
 } from '../../shared/permissions/customer-profile-self-service.ts';
+import {
+  makeCustomerOwnProfileClientLayer,
+  readCustomerOwnProfileWithAuthorization,
+  updateCustomerOwnProfileWithAuthorization,
+} from '../../src/api/customer-profile-self-service-client.ts';
 import { commercePortalAuthAuditRecord } from '../../src/portal-auth/audit/audit-mapping.ts';
 
 const tenantId = '7eb07e30-95be-498a-aefd-feb06fb54f24';
@@ -74,6 +81,48 @@ const request = {
   phone: '+420777123456',
   version: 'a'.repeat(64),
 };
+
+it.effect('preserves the exact owner destination, authorization, cookie and request headers in the native client', () =>
+  Effect.gen(function* nativeProfileClientTransport() {
+    const context = {
+      baseUrl: 'https://commerce.example.test/commerce-customer-context-api',
+      compositionRevision: 'b'.repeat(64),
+      cookie: Redacted.make('commerce-session=opaque-session'),
+      credential: Redacted.make('Bearer opaque-assertion'),
+      origin: 'https://storefront.example.test',
+      requestCorrelation: 'profile-client-correlation',
+    };
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json(request));
+    };
+    yield* Effect.gen(function* useNativeProfileClients() {
+      expect(yield* readCustomerOwnProfileWithAuthorization()).toEqual(request);
+      expect(yield* updateCustomerOwnProfileWithAuthorization(request)).toEqual(request);
+    }).pipe(
+      Effect.provide(makeCustomerOwnProfileClientLayer(context)),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+    );
+    expect(requests.map((sent) => sent.method)).toEqual(['GET', 'POST']);
+    for (const sent of requests) {
+      expect(sent.url).toBe(
+        'https://commerce.example.test/commerce-customer-context-api/api/portal-auth/customer-profile',
+      );
+      expect(sent.headers.get('authorization')).toBe('Bearer opaque-assertion');
+      expect(sent.headers.get('cookie')).toBe('commerce-session=opaque-session');
+      expect(sent.headers.get('origin')).toBe(context.origin);
+      expect(sent.headers.get('x-correlation-id')).toBe(context.requestCorrelation);
+      expect(sent.headers.get('x-ontos-composition-revision')).toBe(context.compositionRevision);
+    }
+    const [, update] = requests;
+    if (update === undefined) {
+      return yield* Effect.die('The native client did not send the profile update');
+    }
+    expect(yield* Effect.promise(update.json.bind(update))).toEqual(request);
+    return yield* Effect.void;
+  }),
+);
 
 it('accepts editable profile data but rejects every browser identity and credential field', () => {
   const decode = Schema.decodeUnknownResult(UpdateCustomerOwnProfileSchema, { onExcessProperty: 'error' });
@@ -139,6 +188,7 @@ it.effect(
       expect(profile.phone).toBe('');
       expect(profile.contactEmail).toBe('11111111@example.test');
       expect(profile.version).toMatch(/^[a-f0-9]{64}$/u);
+      expect(profile.version).toBe('c7d43d14cf9b662ab6c8030b0be5ee593378001dbead5f085408fdb470deda5d');
       expect(projectCustomerOwnProfile(party, { items: EffectArray.reverse(contacts.items) }).version).toBe(
         profile.version,
       );
@@ -179,7 +229,7 @@ it.effect('rejects a changed name plus an invalid phone before acquiring any nat
       expect(problem.code).toBe('invalid_request');
       expect(Option.getOrUndefined(party.party.displayName)).toBe('Customer Name');
     }
-  }).pipe(Effect.provide(TestClock.layer())),
+  }).pipe(Effect.provide(TestClock.layer()), Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it('declares distinct read/write context permissions, never storefront Party access', () => {

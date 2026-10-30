@@ -2,7 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { AgendaIdSchema, FileIdSchema } from '../domain/common.ts';
 import { AgendaStateSchema } from '../domain/agenda.ts';
 import { ChangeEntrySchema } from '../domain/change-log.ts';
@@ -72,8 +72,8 @@ export const RecordsResponseSchema = Schema.Struct({
     meters: Schema.optionalKey(
       Schema.Struct({
         ...envelope(MetersStateSchema).fields,
-        canReadFinancial: Schema.Boolean,
         canManage: Schema.Boolean,
+        canReadFinancial: Schema.Boolean,
       }),
     ),
     purchasing: Schema.optionalKey(envelope(PurchasingStateSchema)),

@@ -13,7 +13,6 @@ export const statisticsCsv = (
   unit: MetricUnit,
   headers: readonly [string, string],
 ): string =>
-  '﻿' +
-  [headers, ...series.map((point) => [point.label, formatMetricValue(point.value, unit)])]
+  `﻿${[headers, ...series.map((point) => [point.label, formatMetricValue(point.value, unit)])]
     .map((row) => row.map(csvCell).join(';'))
-    .join('\r\n');
+    .join('\r\n')}`;

@@ -4,8 +4,7 @@ import type { PrivacyOperationRepositoryService } from './privacy-operation-repo
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Option, Result, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
 
 import {
   AntiResurrectionProtectionSchema,
@@ -501,10 +500,15 @@ const dsrFinalResponseIsCurrent = (input: {
     tasks: input.tasks,
   });
 
-const makeRepository = (
+const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   trustedScope: Readonly<{ legalEntityId: string; tenantId: string }>,
-): PrivacyOperationRepositoryService => {
+): Effect.fn.Return<PrivacyOperationRepositoryService, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  const nextIdentifier = (reason: string) =>
+    crypto
+      .randomUUIDv4()
+      .pipe(Effect.mapError((cause) => failure('privacy_operation_persistence_unavailable', reason, cause)));
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void
@@ -1665,7 +1669,7 @@ const makeRepository = (
     return Option.none();
   });
 
-  return {
+  const repository: PrivacyOperationRepositoryService = {
     assignDsrResolver: Effect.fn('PrivacyOperationPostgresRepository.assignDsrResolver')(
       function* assignDsrResolverEffect(tenantId, legalEntityId, actionInvocationId, assignment) {
         yield* assertScope(tenantId, legalEntityId);
@@ -1864,6 +1868,7 @@ const makeRepository = (
         if (previous !== undefined && effectiveFrom <= iso(previous.effectiveFrom)) {
           return yield* conflict('Notice Version effective time must follow the latest retained version');
         }
+        const versionId = yield* nextIdentifier('Notice Version identifier could not be generated');
         const version: PrivacyNoticeVersion = {
           applicableScope: input.applicableScope,
           contentIdentity: input.contentIdentity,
@@ -1878,7 +1883,7 @@ const makeRepository = (
             tenantId,
           },
           recordedAt,
-          versionId: randomUUID(),
+          versionId,
           versionNumber: (previous?.versionNumber ?? 0) + 1,
           wording: input.wording,
         };
@@ -2114,13 +2119,19 @@ const makeRepository = (
         authority,
         enforcementReceipt,
       ) {
-        const handoff = yield* resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority);
+        const [handoff, protectionId] = yield* Effect.all(
+          [
+            resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority),
+            nextIdentifier('Anti-resurrection protection identifier could not be generated'),
+          ],
+          { concurrency: 1 },
+        );
         const protection = yield* createAntiResurrectionProtection({
           authority,
           enforcementReceipt,
           handoff,
           protectedAt: DateTime.formatIso(yield* DateTime.now),
-          protectionId: randomUUID(),
+          protectionId,
         }).pipe(Effect.mapError(({ reason }) => conflict(reason)));
         yield* transaction
           .insert(antiResurrectionProtections)
@@ -3046,11 +3057,7 @@ const makeRepository = (
                 Effect.mapError((cause) => persistenceFailure('Applicability Decision could not be resolved', cause)),
               ),
             listLegalBasisAssignments(tenantId, legalEntityId),
-            PrivacyOperationRepository.of(makeRepository(transaction, trustedScope)).readCurrentConsent(
-              tenantId,
-              legalEntityId,
-              intendedScope.processingScopeRef.scopeId,
-            ),
+            repository.readCurrentConsent(tenantId, legalEntityId, intendedScope.processingScopeRef.scopeId),
             transaction
               .select({ record: processingInterventions.interventionRecord })
               .from(processingInterventions)
@@ -3369,6 +3376,7 @@ const makeRepository = (
         if (rule.ruleVersion !== latest + 1) {
           return yield* conflict('Retention Rule version must advance exactly once');
         }
+        const retentionRuleId = yield* nextIdentifier('Retention Rule identifier could not be generated');
         yield* transaction
           .insert(retentionRules)
           .values({
@@ -3377,7 +3385,7 @@ const makeRepository = (
             effectiveFrom: date(rule.effectiveFrom),
             effectiveTo: optionalDate(rule.effectiveTo),
             legalEntityId,
-            retentionRuleId: randomUUID(),
+            retentionRuleId,
             ruleRecord: encode(PrivacyRetentionRuleVersionSchema, rule),
             ruleRef: rule.ruleRef,
             ruleVersion: rule.ruleVersion,
@@ -3462,19 +3470,17 @@ const makeRepository = (
       },
     ),
   };
-};
+  return repository;
+});
 
 export const privacyOperationRepositoryForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-): Effect.Effect<PrivacyOperationRepositoryService, OperationContextUnavailable> =>
-  scope.legalEntityId === undefined
+): Effect.Effect<PrivacyOperationRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+  const { legalEntityId, tenantId } = scope;
+  return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : Effect.succeed(
-        PrivacyOperationRepository.of(
-          makeRepository(transaction, {
-            legalEntityId: scope.legalEntityId,
-            tenantId: scope.tenantId,
-          }),
-        ),
+    : makeRepository(transaction, { legalEntityId, tenantId }).pipe(
+        Effect.map((repository) => PrivacyOperationRepository.of(repository)),
       );
+};

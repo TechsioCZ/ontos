@@ -137,7 +137,6 @@ export const retailAccessDecisionRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (input, context) => prepareRetailPermissions(context.scope, input.profileRef.resourceId),
     load: (input, context: ReadLoadContext<RetailAccessDecisionServicesFor, RetailPermissionReader>) =>
       decideRetailAccessFromServices(
@@ -146,7 +145,6 @@ export const retailAccessDecisionRead = defineRead(
         context.scope.tenantId,
         context.services(context.prepared),
       ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
-    // oxlint-enable perfectionist/sort-objects
   },
   (transaction, scope) =>
     profileServicesWithRetailPermissionsForVerifiedScope(transaction, scope).pipe(

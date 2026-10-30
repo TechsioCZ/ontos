@@ -1,4 +1,8 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { DateTime, Effect } from 'effect';
 import { assignableSalespeople } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 // AREA: visits — owned by the crm-visits lane. Side panels: record a visit, correct it (with history), detail.
 import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -12,11 +16,11 @@ import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
 import { visitKinds } from '../../../../../shared/domain/visits.ts';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+import type { Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
+
 import { VisitKindBadge } from './visit-timeline.tsx';
 import {
   clientLabel,
@@ -33,19 +37,19 @@ import {
 
 const RESIZE_LABEL = 'Změnit šířku panelu (šipky vlevo a vpravo)';
 
-export type Submit = (command: CrmCommand) => Promise<CrmCommandOutcome>;
+export type Submit = CrmCommandSubmit;
 
 export interface VisitDraft {
-  readonly clientId: string;
-  readonly kind: VisitKind;
-  readonly date: string;
-  readonly time: string;
-  readonly result: string;
-  readonly note: string;
-  readonly nextStep: string;
-  readonly nextStepDate: string;
   readonly addToPlan: boolean;
+  readonly clientId: string;
+  readonly date: string;
+  readonly kind: VisitKind;
+  readonly nextStep: string;
+  readonly nextStepDate: NonNullable<Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }>['nextStepDate']>;
+  readonly note: string;
+  readonly result: string;
   readonly salespersonId: string;
+  readonly time: string;
 }
 
 export const emptyVisitDraft = (records: RecordsResponse, clientId = '', kind: VisitKind = 'visit'): VisitDraft => {
@@ -86,6 +90,7 @@ export const VisitFields = ({
   readonly showSalesperson: boolean;
   readonly submitted: boolean;
 }) => {
+  const { t } = useModernI18n();
   const clients = writableClients(records);
   const today = localInputs(records.now).date;
   const resultError = submitted && draft.result.trim() === '' ? 'Vyplňte krátký výsledek jednání.' : undefined;
@@ -95,15 +100,15 @@ export const VisitFields = ({
     <>
       {showClient && (
         <Combobox
-          size="sm"
           clearable={false}
           helpText={submitted && draft.clientId === '' ? 'Vyberte klienta.' : 'Jen klienti, ke kterým smíte zapisovat.'}
           items={clients.map((client) => ({ label: client.name, value: client.id }))}
-          label="Klient"
+          label={t('crm.ciClientsVisits.fields.client')}
           noResultsMessage="Žádný klient neodpovídá"
           onChange={(values) => onChange({ clientId: firstValue(values) ?? '' })}
-          placeholder="Vyhledejte klienta"
+          placeholder={t('crm.ciClientsVisits.visits.clientPlaceholder')}
           required
+          size="sm"
           translations={comboboxTranslations}
           validateStatus={submitted && draft.clientId === '' ? 'error' : 'default'}
           value={draft.clientId === '' ? [] : [draft.clientId]}
@@ -132,25 +137,25 @@ export const VisitFields = ({
       </RadioGroup>
       <div className="grid grid-cols-2 gap-150">
         <FormInput
-          size="sm"
           helpText={dateError}
           id={`${idPrefix}-date`}
-          label="Datum"
+          label={t('crm.ciClientsVisits.fields.date')}
           max={today}
           name="date"
           onChange={(event) => onChange({ date: event.target.value })}
           required
+          size="sm"
           type="date"
           validateStatus={dateError === undefined ? 'default' : 'error'}
           value={draft.date}
         />
         <FormInput
-          size="sm"
           id={`${idPrefix}-time`}
-          label="Čas"
+          label={t('crm.ciClientsVisits.fields.time')}
           name="time"
           onChange={(event) => onChange({ time: event.target.value })}
           required
+          size="sm"
           type="time"
           value={draft.time}
         />
@@ -161,7 +166,7 @@ export const VisitFields = ({
             { label: 'Podle přidělení klienta', value: '' },
             ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
           ]}
-          label="Obchodník"
+          label={t('crm.ciClientsVisits.fields.salesperson')}
           name="salesperson"
           onValueChange={(details) => onChange({ salespersonId: details.value[0] ?? '' })}
           size="sm"
@@ -169,46 +174,46 @@ export const VisitFields = ({
         />
       )}
       <FormInput
-        size="sm"
         autoComplete="off"
         helpText={resultError ?? 'Jedna věta: s čím jednání skončilo.'}
         id={`${idPrefix}-result`}
-        label="Výsledek"
+        label={t('crm.ciClientsVisits.visits.result')}
         maxLength={200}
         name="result"
         onChange={(event) => onChange({ result: event.target.value })}
         required
+        size="sm"
         validateStatus={resultError === undefined ? 'default' : 'error'}
         value={draft.result}
       />
       <FormTextarea
-        size="sm"
         id={`${idPrefix}-note`}
-        label="Poznámka"
+        label={t('crm.ciClientsVisits.fields.note')}
         maxLength={4000}
         name="note"
         onChange={(event) => onChange({ note: event.target.value })}
         rows={3}
+        size="sm"
         value={draft.note}
       />
       {showNextStep && (
         <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
           <span className="font-medium text-sm">Další krok (volitelně)</span>
           <FormInput
-            size="sm"
             autoComplete="off"
             id={`${idPrefix}-next-step`}
-            label="Co udělat"
+            label={t('crm.ciClientsVisits.visits.nextStep')}
             name="nextStep"
             onChange={(event) => onChange({ nextStep: event.target.value })}
+            size="sm"
             value={draft.nextStep}
           />
           <FormInput
-            size="sm"
             id={`${idPrefix}-next-date`}
-            label="Termín"
+            label={t('crm.ciClientsVisits.fields.dueDate')}
             name="nextStepDate"
             onChange={(event) => onChange({ nextStepDate: event.target.value })}
+            size="sm"
             type="date"
             value={draft.nextStepDate}
           />
@@ -234,6 +239,7 @@ export const RecordVisitPanel = ({
   readonly records: RecordsResponse;
   readonly submit: Submit;
 }) => {
+  const { t } = useModernI18n();
   const toaster = useToast();
   const [draft, setDraft] = useState<VisitDraft>(() => emptyVisitDraft(records, clientId));
   const [submitted, setSubmitted] = useState(false);
@@ -254,28 +260,43 @@ export const RecordVisitPanel = ({
       return;
     }
     const nextStep = draft.nextStep.trim();
-    void submit({
+    const command: Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }> = {
       _tag: 'RecordVisit',
       clientId: effectiveClient,
       kind: draft.kind,
       occurredAt,
       result: draft.result.trim(),
-      ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
-      ...(nextStep === '' ? {} : { nextStep }),
-      ...(hasNextDate ? { nextStepDate: draft.nextStepDate, addToPlan: draft.addToPlan } : {}),
-      ...(records.viewer.writeAll && draft.salespersonId !== '' ? { salespersonId: draft.salespersonId } : {}),
-    }).then((outcome) => {
-      if (outcome.ok) {
-        toaster.create({
-          description: hasNextDate && draft.addToPlan ? 'Další krok je v plánu K oslovení.' : undefined,
-          title: `${visitKindMeta[draft.kind].label} zapsán(a)`,
-          type: 'success',
-        });
-        close();
-      } else {
-        setServerError(czechError(outcome.message, 'Záznam se nepodařilo uložit.'));
-      }
-    });
+    };
+    if (draft.note.trim() !== '') {
+      Object.assign(command, { note: draft.note.trim() });
+    }
+    if (nextStep !== '') {
+      Object.assign(command, { nextStep });
+    }
+    if (hasNextDate) {
+      Object.assign(command, { addToPlan: draft.addToPlan, nextStepDate: draft.nextStepDate });
+    }
+    if (records.viewer.writeAll && draft.salespersonId !== '') {
+      Object.assign(command, { salespersonId: draft.salespersonId });
+    }
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.ok) {
+              toaster.create({
+                description: hasNextDate && draft.addToPlan ? 'Další krok je v plánu K oslovení.' : undefined,
+                title: `${visitKindMeta[draft.kind].label} zapsán(a)`,
+                type: 'success',
+              });
+              close();
+            } else {
+              setServerError(czechError(outcome.message, 'Záznam se nepodařilo uložit.'));
+            }
+          }),
+        ),
+      ),
+    );
   };
   return (
     <SidePanel
@@ -299,7 +320,7 @@ export const RecordVisitPanel = ({
       open={open}
       resizeLabel={RESIZE_LABEL}
       size="lg"
-      title="Zapsat návštěvu"
+      title={t('crm.ciClientsVisits.visits.recordVisit')}
     >
       <form
         className="flex flex-col gap-200 py-200"
@@ -326,7 +347,7 @@ export const RecordVisitPanel = ({
           <FormCheckbox
             checked={draft.addToPlan}
             id="crm-visit-new-plan"
-            label="Zařadit další krok do mého plánu K oslovení"
+            label={t('crm.ciClientsVisits.visits.addNextStepToMyPlan')}
             onCheckedChange={(checked) => patch({ addToPlan: checked })}
             size="sm"
           />
@@ -334,6 +355,22 @@ export const RecordVisitPanel = ({
       </form>
     </SidePanel>
   );
+};
+
+const initialVisitDraft = (target: Visit): VisitDraft => {
+  const local = localInputs(target.occurredAt);
+  return {
+    addToPlan: false,
+    clientId: target.clientId,
+    date: local.date,
+    kind: target.kind,
+    nextStep: target.nextStep ?? '',
+    nextStepDate: target.nextStepDate ?? '',
+    note: target.note ?? '',
+    result: target.result,
+    salespersonId: target.salespersonId ?? '',
+    time: local.time,
+  };
 };
 
 /** Correct a visit. Every changed field is kept in the correction history (C02-03). */
@@ -350,29 +387,18 @@ export const CorrectVisitPanel = ({
   readonly submit: Submit;
   readonly visit: Visit | undefined;
 }) => {
+  const { t } = useModernI18n();
   const toaster = useToast();
-  const initial = (target: Visit): VisitDraft => {
-    const local = localInputs(target.occurredAt);
-    return {
-      addToPlan: false,
-      clientId: target.clientId,
-      date: local.date,
-      kind: target.kind,
-      nextStep: target.nextStep ?? '',
-      nextStepDate: target.nextStepDate ?? '',
-      note: target.note ?? '',
-      result: target.result,
-      salespersonId: target.salespersonId ?? '',
-      time: local.time,
-    };
-  };
-  const [draft, setDraft] = useState<VisitDraft | undefined>(() => (visit === undefined ? undefined : initial(visit)));
+
+  const [draft, setDraft] = useState<VisitDraft | undefined>(() =>
+    visit === undefined ? undefined : initialVisitDraft(visit),
+  );
   const [reason, setReason] = useState('');
   const [serverError, setServerError] = useState<string | undefined>();
   const [loadedId, setLoadedId] = useState(visit?.id);
   if (visit?.id !== loadedId) {
     setLoadedId(visit?.id);
-    setDraft(visit === undefined ? undefined : initial(visit));
+    setDraft(visit === undefined ? undefined : initialVisitDraft(visit));
     setReason('');
     setServerError(undefined);
   }
@@ -380,7 +406,7 @@ export const CorrectVisitPanel = ({
     return null;
   }
   const occurredAt = isoFromLocal(draft.date, draft.time);
-  const original = initial(visit);
+  const original = initialVisitDraft(visit);
   const save = () => {
     if (draft.result.trim() === '' || occurredAt === undefined) {
       setServerError('Vyplňte výsledek, datum a čas.');
@@ -392,29 +418,49 @@ export const CorrectVisitPanel = ({
       setServerError('Nic jste nezměnili.');
       return;
     }
-    const command: CrmCommand = {
+    const command: CrmCommandInput = {
       _tag: 'CorrectVisit',
       visitId: visit.id,
-      ...(changed('kind') ? { kind: draft.kind } : {}),
-      ...(changed('date') || changed('time') ? { occurredAt } : {}),
-      ...(changed('result') ? { result: draft.result.trim() } : {}),
-      ...(changed('note') ? { note: draft.note.trim() } : {}),
-      ...(changed('nextStep') ? { nextStep: draft.nextStep.trim() } : {}),
-      ...(changed('nextStepDate') ? { nextStepDate: draft.nextStepDate } : {}),
-      ...(reason.trim() === '' ? {} : { reason: reason.trim() }),
     };
-    void submit(command).then((outcome) => {
-      if (outcome.ok) {
-        toaster.create({
-          description: 'Původní hodnoty zůstávají v historii oprav.',
-          title: 'Záznam opraven',
-          type: 'success',
-        });
-        onClose();
-      } else {
-        setServerError(czechError(outcome.message, 'Opravu se nepodařilo uložit.'));
-      }
-    });
+    if (changed('kind')) {
+      Object.assign(command, { kind: draft.kind });
+    }
+    if (changed('date') || changed('time')) {
+      Object.assign(command, { occurredAt });
+    }
+    if (changed('result')) {
+      Object.assign(command, { result: draft.result.trim() });
+    }
+    if (changed('note')) {
+      Object.assign(command, { note: draft.note.trim() });
+    }
+    if (changed('nextStep')) {
+      Object.assign(command, { nextStep: draft.nextStep.trim() });
+    }
+    if (changed('nextStepDate')) {
+      Object.assign(command, { nextStepDate: draft.nextStepDate });
+    }
+    if (reason.trim() !== '') {
+      Object.assign(command, { reason: reason.trim() });
+    }
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.ok) {
+              toaster.create({
+                description: 'Původní hodnoty zůstávají v historii oprav.',
+                title: 'Záznam opraven',
+                type: 'success',
+              });
+              onClose();
+            } else {
+              setServerError(czechError(outcome.message, 'Opravu se nepodařilo uložit.'));
+            }
+          }),
+        ),
+      ),
+    );
   };
   return (
     <SidePanel
@@ -438,7 +484,7 @@ export const CorrectVisitPanel = ({
       open
       resizeLabel={RESIZE_LABEL}
       size="lg"
-      title="Opravit záznam"
+      title={t('crm.ciClientsVisits.visits.correctRecord')}
     >
       <form
         className="flex flex-col gap-200 py-200"
@@ -465,13 +511,13 @@ export const CorrectVisitPanel = ({
           submitted
         />
         <FormInput
-          size="sm"
           autoComplete="off"
           id="crm-visit-fix-reason"
-          label="Důvod opravy"
+          label={t('crm.ciClientsVisits.visits.correctionReason')}
           name="reason"
           onChange={(event) => setReason(event.target.value)}
-          placeholder="např. překlep, upřesnění po telefonu"
+          placeholder={t('crm.ciClientsVisits.visits.correctionExample')}
+          size="sm"
           value={reason}
         />
       </form>
@@ -498,7 +544,7 @@ export const VisitDetailPanel = ({
   if (visit === undefined) {
     return null;
   }
-  const plan = records.state.visits.plan;
+  const { plan } = records.state.visits;
   const createdPlan = plan.find((item) => item.sourceVisitId === visit.id);
   return (
     <SidePanel
@@ -556,7 +602,7 @@ export const VisitDetailPanel = ({
                 visit.nextStep === undefined && visit.nextStepDate === undefined ? (
                   <span className="text-fg-secondary">neuveden</span>
                 ) : (
-                  `${visit.nextStep ?? 'bez popisu'}${visit.nextStepDate === undefined ? '' : ` · ${formatDay(visit.nextStepDate)}`}`
+                  `${visit.nextStep ?? 'bez popisu'}${visit.nextStepDate === undefined ? '' : [' · ', formatDay(visit.nextStepDate)].join('')}`
                 ),
             },
             {
@@ -589,7 +635,7 @@ export const VisitDetailPanel = ({
               {visit.corrections.toReversed().map((correction, index) => (
                 <li
                   className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}
-                  key={`${correction.at}-${correction.field}-${String(index)}`}
+                  key={`${DateTime.formatIso(correction.at)}-${correction.field}-${String(index)}`}
                 >
                   <span className="text-fg-secondary text-xs">
                     {`${formatVisitTime(correction.at)} · ${principalLabel(records, correction.by)} · ${correction.field}`}

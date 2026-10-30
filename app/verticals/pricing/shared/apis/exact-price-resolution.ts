@@ -10,7 +10,7 @@ import {
 } from '@app/pricing-contracts/domain/broken-explicit-input';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 /**
  * The public transport accepts only caller-safe identity context. Trusted owner observations are

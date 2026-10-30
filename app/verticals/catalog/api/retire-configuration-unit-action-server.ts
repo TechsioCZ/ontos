@@ -3,7 +3,7 @@
 // @ontos-action-http-slug retire-configuration-unit
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { catalogApi } from '../shared/api.ts';
 import { retireConfigurationUnitAction } from '../src/actions/retire-configuration-unit.action.ts';

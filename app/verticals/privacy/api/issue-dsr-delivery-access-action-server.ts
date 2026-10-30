@@ -3,7 +3,7 @@
 // @ontos-action-http-slug issue-dsr-delivery-access
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { privacyApi } from '../shared/api.ts';
 import { issueDsrDeliveryAccessAction } from '../src/actions/issue-dsr-delivery-access.action.ts';

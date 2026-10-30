@@ -1,6 +1,6 @@
 import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';

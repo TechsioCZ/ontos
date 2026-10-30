@@ -15,7 +15,7 @@
  * The `cookieStringContract` detector still reports the interface property, claiming the contract
  * "forces hand-built cookie strings at the producer" — here the producer is the auth framework.
  */
-import { Cookies, HttpServerResponse } from 'effect/unstable/http';
+import { Cookies, HttpServerResponse } from 'effect/http';
 
 declare const authApi: {
   readonly signIn: (headers: Headers) => Promise<{ readonly headers: Headers }>;

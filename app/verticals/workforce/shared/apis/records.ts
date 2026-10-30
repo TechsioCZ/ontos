@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import { EmployeeIdSchema } from '../resources/employee.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export { EmployeeIdSchema } from '../resources/employee.ts';
 export type { EmployeeId } from '../resources/employee.ts';
@@ -51,18 +51,23 @@ export const WorkforceStateSchema = Schema.Struct({
 });
 export type WorkforceState = typeof WorkforceStateSchema.Type;
 
+export const AiActivityActionKeySchema = Schema.String.pipe(Schema.brand('WorkforceAiActivityActionKey'));
+export const AiActivityPrincipalIdSchema = Schema.String.pipe(Schema.brand('WorkforceAiActivityPrincipalId'));
+export const AiActivityAuditEventIdSchema = Schema.String.pipe(Schema.brand('WorkforceAiActivityAuditEventId'));
+export const AiActivityModuleKeySchema = Schema.String.pipe(Schema.brand('WorkforceAiActivityModuleKey'));
+
 /** One Core audit event of a non-human principal (AI agent, integration) in the selected company. */
 export const AiActivityEntrySchema = Schema.Struct({
-  actionKey: Schema.NullOr(Schema.String),
+  actionKey: Schema.OptionFromNullOr(AiActivityActionKeySchema),
   actorDisplayName: Schema.String,
   actorKind: Schema.String,
-  actorPrincipalId: Schema.String,
-  auditEventId: Schema.String,
-  occurredAt: Schema.String,
+  actorPrincipalId: AiActivityPrincipalIdSchema,
+  auditEventId: AiActivityAuditEventIdSchema,
+  occurredAt: Schema.DateTimeUtcFromString,
   outcome: Schema.String,
   outcomeCode: Schema.String,
   outcomeStage: Schema.String,
-  targetModuleKey: Schema.NullOr(Schema.String),
+  targetModuleKey: Schema.OptionFromNullOr(AiActivityModuleKeySchema),
 });
 export type AiActivityEntry = typeof AiActivityEntrySchema.Type;
 

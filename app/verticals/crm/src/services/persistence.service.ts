@@ -6,10 +6,11 @@ import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 // and command; projections and reducers in shared/ enforce it (C00).
 import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { and, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   CrmPermissionDenied,
@@ -20,14 +21,21 @@ import {
   CrmScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
+
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
-import type { VerifiedParty } from '../../shared/commands/context.ts';
+import { VerifiedPartySchema } from '../../shared/commands/context.ts';
+import type { CommandContext, VerifiedParty } from '../../shared/commands/context.ts';
+import { PrincipalIdSchema } from '../../shared/domain/common.ts';
+import type { PrincipalId } from '../../shared/domain/common.ts';
+
 import { dispatchCrmCommand, partyLinksOf } from '../../shared/commands/index.ts';
 import type { PartyLinkInput } from '../../shared/domain/clients.ts';
-import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
 import { canWriteAnything, crmPermissionKeys } from '../../shared/domain/access.ts';
-import type { CrmState } from '../../shared/domain/state.ts';
+import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
+
 import { CrmStateSchema, initialCrmState, projectCrmState, withDefaultSlices } from '../../shared/domain/state.ts';
+import type { CrmState } from '../../shared/domain/state.ts';
+
 import { salespersonOfPrincipal } from '../../shared/domain/team.ts';
 import { crmStates } from '../database/schema.ts';
 
@@ -113,11 +121,14 @@ export const verifiedPartyOf = (
   if (!customer) {
     return 'Firma nemá v evidenci zákazníků platnou roli zákazníka';
   }
-  return {
-    counterpartyId: link.counterpartyId,
-    ...(counterparty.party.displayName === null ? {} : { displayName: counterparty.party.displayName }),
-    partyId: counterparty.party.canonicalPartyRef.resourceId,
-  };
+  const candidate = { counterpartyId: link.counterpartyId, partyId: counterparty.party.canonicalPartyRef.resourceId };
+  if (counterparty.party.displayName !== null) {
+    Object.assign(candidate, { displayName: counterparty.party.displayName });
+  }
+  return Option.getOrElse(
+    Schema.decodeOption(VerifiedPartySchema)(candidate),
+    () => 'Údaje o firmě a zákazníkovi k sobě nepatří',
+  );
 };
 
 /** One batched context-permission check for all five CRM permissions. */
@@ -138,7 +149,7 @@ const grantedPermissions = Effect.fn('Crm.grantedPermissions')(function* granted
     return yield* referenceUnavailable();
   }
   const allowed = new Set(
-    decisions.filter((entry) => entry.decision === 'allowed').map((entry) => entry.key.replace(`${moduleId}:`, '')),
+    decisions.flatMap((entry) => (entry.decision === 'allowed' ? [entry.key.replace(`${moduleId}:`, '')] : [])),
   );
   return (permission: CrmPermissionKey) => allowed.has(permission);
 });
@@ -146,7 +157,7 @@ const grantedPermissions = Effect.fn('Crm.grantedPermissions')(function* granted
 /** The ACL subject of every read and command: permissions + the principal's salesperson record. */
 export const viewerFor = (
   state: CrmState,
-  principalId: string,
+  principalId: PrincipalId,
   has: (permission: CrmPermissionKey) => boolean,
 ): CrmViewer => {
   const salesperson = salespersonOfPrincipal(state.salespeople, principalId);
@@ -200,36 +211,41 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
     // registry answers with that principal's own rights, so nobody links a Party they could not read.
     const references = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
     const verifyParties = Effect.fn('Crm.verifyParties')(function* verifyParties(links: readonly PartyLinkInput[]) {
-      const verified = new Map<string, VerifiedParty>();
       const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
-      for (const link of links) {
-        const credential = yield* references.issue('party-registry').pipe(Effect.mapError(registryUnavailable));
-        const counterparty = yield* executeCounterpartyReadWithAuthorization(
-          {
-            counterpartyRef: {
-              moduleId: 'party.registry',
-              resourceId: link.counterpartyId,
-              resourceType: 'party.registry.counterparty',
-              tenantId: scope.tenantId,
+      return yield* Effect.reduce(
+        links,
+        () => new Map<string, VerifiedParty>(),
+        Effect.fn('Crm.verifyParty')(function* verifyParty(
+          previous: ReadonlyMap<string, VerifiedParty>,
+          link: PartyLinkInput,
+        ) {
+          const credential = yield* references.issue('party-registry').pipe(Effect.mapError(registryUnavailable));
+          const counterparty = yield* executeCounterpartyReadWithAuthorization(
+            {
+              counterpartyRef: {
+                moduleId: 'party.registry',
+                resourceId: link.counterpartyId,
+                resourceType: 'party.registry.counterparty',
+                tenantId: scope.tenantId,
+              },
             },
-          },
-          credential.authorization,
-          scope.correlationId,
-          { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
-        ).pipe(
-          Effect.mapError((failure) =>
-            isNotVisible(failure)
-              ? partyIneligible('Zákazník v evidenci zákazníků neexistuje nebo k němu nemáte přístup')
-              : registryUnavailable(failure),
-          ),
-        );
-        const outcome = verifiedPartyOf(link, counterparty, legalEntityId, today);
-        if (typeof outcome === 'string') {
-          return yield* partyIneligible(outcome);
-        }
-        verified.set(link.counterpartyId, outcome);
-      }
-      return verified;
+            credential.authorization,
+            scope.correlationId,
+            { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
+          ).pipe(
+            Effect.mapError((failure) =>
+              isNotVisible(failure)
+                ? partyIneligible('Zákazník v evidenci zákazníků neexistuje nebo k němu nemáte přístup')
+                : registryUnavailable(failure),
+            ),
+          );
+          const outcome = verifiedPartyOf(link, counterparty, legalEntityId, today);
+          if (Schema.is(Schema.String)(outcome)) {
+            return yield* partyIneligible(outcome);
+          }
+          return new Map([...previous, [link.counterpartyId, outcome]]);
+        }),
+      );
     });
     const whereScope = and(eq(crmStates.tenantId, scope.tenantId), eq(crmStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Crm.load')(function* load() {
@@ -282,9 +298,14 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       expectedRevision: number,
       invocationId: string,
     ) {
-      const has = yield* grantedPermissions(access, scope);
-      const snapshot = yield* load();
-      const viewer = viewerFor(snapshot.state, scope.principalId, has);
+      // Permission failures must win before the transaction reads CRM state.
+      const [has, snapshot] = yield* Effect.all([grantedPermissions(access, scope), Effect.suspend(load)], {
+        concurrency: 1,
+      });
+      const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(scope.principalId).pipe(
+        Effect.mapError(referenceUnavailable),
+      );
+      const viewer = viewerFor(snapshot.state, actorPrincipalId, has);
       if (!canWriteAnything(viewer)) {
         return yield* new CrmPermissionDenied({
           code: 'crm_permission_denied',
@@ -315,20 +336,19 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       }
       const links = partyLinksOf(command);
       const verifiedParties = links.length === 0 ? undefined : yield* verifyParties(links);
-      const now = DateTime.formatIso(yield* DateTime.now);
-      const context = {
-        invocationId,
-        now,
-        viewer,
-        ...(verifiedParties === undefined ? {} : { verifiedParties }),
-      };
+      const now = yield* DateTime.now;
+      const context: CommandContext = { invocationId, now, viewer };
+      if (verifiedParties !== undefined) {
+        Object.assign(context, { verifiedParties });
+      }
       const change = yield* dispatchCrmCommand(snapshot.state, command, context);
       const revision = yield* save(expectedRevision, change.state);
       return { entityIds: [...change.entityIds], revision };
     });
     /** Ordinary records, bounded history, or only the clients needed by the owner review. */
-    const loadRecords = (request: RecordsRequest = {}, reviewClientIds?: readonly string[]) =>
-      Effect.gen(function* loadCrmRecords() {
+    type LoadRecordsArgs = [request?: RecordsRequest, reviewClientIds?: readonly string[]];
+    const loadRecords = Effect.fn('Crm.loadRecords')(
+      function* loadCrmRecords(...[request = {}, reviewClientIds]: LoadRecordsArgs) {
         const empty = yield* Schema.encodeEffect(Schema.fromJsonString(CrmStateSchema))(initialCrmState);
         const historySource = sql`${crmStates.state}->'aiChanges'`;
         const history =
@@ -357,8 +377,10 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
           .from(crmStates)
           .where(whereScope)
           .limit(1)
-          .pipe(Effect.map(([row]): LoadedCrmRecords => row));
-      }).pipe(Effect.mapError(unavailable));
+          .pipe(Effect.map(([row]): LoadedCrmRecords => Option.fromNullishOr(row)));
+      },
+      (program, ..._args: LoadRecordsArgs) => program.pipe(Effect.mapError(unavailable)),
+    );
     const loadAssignmentDirectory = () =>
       loadAssignablePrincipalDirectory(transaction, scope).pipe(Effect.mapError(unavailable));
     return { apply, loadAssignmentDirectory, loadRecords };
@@ -380,7 +402,7 @@ export const crmRecordsGrants = Effect.fn('Crm.recordsGrants')(function* crmReco
 });
 
 /** The stored CRM row as the owner transaction read it (still encoded). */
-export type LoadedCrmRecords = { readonly revision: number; readonly state: unknown } | undefined;
+export type LoadedCrmRecords = Option.Option<{ readonly revision: number; readonly state: unknown }>;
 
 /** After commit: decodes the stored CRM state and projects it for the viewer. No database access. */
 export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishCrmRecords(
@@ -389,16 +411,18 @@ export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishC
   has: (permission: CrmPermissionKey) => boolean,
   scope: OperationalScope,
 ) {
-  const snapshot =
-    loaded === undefined
-      ? { revision: 0, state: initialCrmState }
-      : {
-          revision: loaded.revision,
-          state: yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(loaded.state)).pipe(
-            Effect.mapError(unavailable),
-          ),
-        };
-  const viewer = viewerFor(snapshot.state, scope.principalId, has);
+  const snapshot = Option.isNone(loaded)
+    ? { revision: 0, state: initialCrmState }
+    : {
+        revision: loaded.value.revision,
+        state: yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(loaded.value.state)).pipe(
+          Effect.mapError(unavailable),
+        ),
+      };
+  const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(scope.principalId).pipe(
+    Effect.mapError(referenceUnavailable),
+  );
+  const viewer = viewerFor(snapshot.state, actorPrincipalId, has);
   const projected = projectCrmState(snapshot.state, viewer);
   const narrowed =
     request.clientId === undefined
@@ -414,7 +438,7 @@ export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishC
           viewer,
         );
   return {
-    now: DateTime.formatIso(yield* DateTime.now),
+    now: yield* DateTime.now,
     revision: snapshot.revision,
     state: narrowed,
     viewer: reportedViewer(viewer, scope),

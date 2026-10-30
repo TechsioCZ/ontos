@@ -1,4 +1,5 @@
 // Explicit operator setup input only. Runtime authority never imports or falls back to this dataset.
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 import type { AgentModuleGrant, AgentWritePolicy } from '@app/shared-contracts/agent-access';
 
 interface DemoAgentProfileInput {
@@ -30,7 +31,10 @@ const hanakReads = ['demo.crm', TAGGING, WORKFORCE, PARTIES, TASKS];
 
 const withWrites = (reads: readonly string[], writes: readonly string[]): readonly AgentModuleGrant[] => {
   const written = new Set(writes);
-  return reads.map((moduleId) => ({ access: written.has(moduleId) ? 'write' : 'read', moduleId }));
+  return reads.map((moduleId) => ({
+    access: written.has(moduleId) ? 'write' : 'read',
+    moduleId: AgentModuleKeySchema.make(moduleId),
+  }));
 };
 
 const profiles = {

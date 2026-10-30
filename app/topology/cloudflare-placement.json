@@ -35,7 +35,8 @@
     "ULTRAMODERN_PUBLIC_URL_TAGGING": "https://ontos-stage-tagging.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_TAX": "https://ontos-stage-tax.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_WORKFORCE": "https://ontos-stage-workforce.bleeding.dev",
-    "ULTRAMODERN_PUBLIC_URL_WORK_TASKS": "https://ontos-stage-work-tasks.bleeding.dev"
+    "ULTRAMODERN_PUBLIC_URL_WORK_TASKS": "https://ontos-stage-work-tasks.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PROJECTS": "https://ontos-stage-projects.bleeding.dev"
   },
   "retiredWorkers": [],
   "schemaVersion": 1,
@@ -66,6 +67,7 @@
     "finance-billing",
     "crm-activities",
     "facility-operations",
+    "projects",
     "shell-super-app"
   ]
 }

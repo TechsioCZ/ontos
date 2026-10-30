@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
@@ -130,7 +131,9 @@ it.live('issues Current Catalog Selection evidence for distinct Variants, change
             // @ts-expect-error The integration transaction lacks only Core's private scope brand.
             transaction,
             scope,
-          ).read({ purpose: 'PURCHASE_ACCEPTANCE', selection }),
+          )
+            .read({ purpose: 'PURCHASE_ACCEPTANCE', selection })
+            .pipe(Effect.provide(NodeCrypto.layer)),
         );
 
       yield* admin.transaction((transaction) =>
@@ -615,5 +618,5 @@ it.live('issues VALID selection evidence from an exact confirmed-untyped decisio
       expect(drifted.status).toBe('INDETERMINATE');
       expect(drifted.basis.some(({ role }) => role === 'PRODUCT_TYPE_UNTYPED_DECISION')).toBe(false);
     }),
-  ),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
 );

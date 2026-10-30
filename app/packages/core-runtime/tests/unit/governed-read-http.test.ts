@@ -1,8 +1,8 @@
-import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
+import { Cause, Effect, Exit, Logger, Option, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
@@ -13,6 +13,7 @@ import { OperationAuthenticationRequired } from '../../src/operations/operation-
 import { OperationContextDenied } from '../../src/operations/operation-context-denied.ts';
 import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
 import { OperationContextUnavailable } from '../../src/operations/operation-context-unavailable.ts';
+import { RequestPermissionDecisions, withRequestPermissionDecisions } from '../../src/permissions/context-access.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadCoreError } from '../../src/reads/errors.ts';
 import { ReadEvidencePersistenceError } from '../../src/reads/read-evidence-persistence-error.ts';
@@ -184,17 +185,64 @@ const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
 
-const observed: Parameters<ReadRuntimeService['runRead']>[0][] = [];
-// SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
-// other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Test-only generic service double; expires: 2026-12-31.
-const readRuntime = {
-  runRead: (input: Parameters<ReadRuntimeService['runRead']>[0]) => {
+interface ObservedReadInput {
+  readonly audience?: string;
+  readonly decodedInput?: unknown;
+  readonly input?: unknown;
+}
+const observed: ObservedReadInput[] = [];
+const readRuntime: ReadRuntimeService = {
+  runRead: (input) => {
     observed.push(input);
-    return Effect.succeed({ ok: true as const });
+    return Schema.decodeEffect(input.registration.descriptor.resultSchema)({ ok: true }).pipe(
+      Effect.mapError(
+        () => new ReadResultValidationError({ code: 'read_result_invalid', reason: 'Invalid test result' }),
+      ),
+    );
   },
-} as ReadRuntimeService;
+};
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
+
+it.effect('owns a fresh permission batch per HTTP read and preserves an enclosing request scope', () =>
+  Effect.gen(function* requestScopedPermissionBatches() {
+    const authenticatedScopes = new WeakSet<object>();
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () =>
+        RequestPermissionDecisions.pipe(
+          Effect.map((scope) => {
+            expect(Option.isSome(scope)).toBe(true);
+            if (Option.isSome(scope)) {
+              expect(authenticatedScopes.has(scope.value)).toBe(false);
+              authenticatedScopes.add(scope.value);
+            }
+            return principal;
+          }),
+        ),
+      problems,
+      registration,
+    });
+    const execute = handler({
+      payload: { query: 'fixture' },
+      request: { headers: Headers.fromInput({ 'x-correlation-id': 'permission-batch-test' }) },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    yield* execute;
+    yield* execute;
+    expect(yield* RequestPermissionDecisions).toEqual(Option.none());
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* enclosingRequestScope() {
+        const enclosing = yield* RequestPermissionDecisions;
+        yield* execute;
+        expect(yield* RequestPermissionDecisions).toBe(enclosing);
+        if (Option.isSome(enclosing)) {
+          expect(authenticatedScopes.has(enclosing.value)).toBe(true);
+        }
+      }),
+    );
+  }),
+);
 
 it.effect('reports authentication and response encoding separately without exposing request values', () =>
   Effect.gen(function* encodedResponseTiming() {

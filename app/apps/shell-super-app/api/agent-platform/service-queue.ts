@@ -6,20 +6,25 @@ import {
   AGENT_APPROVALS_PATH,
   AGENT_PAGE_SIZE,
   AgentCommandSchema,
+  AgentBatchIdSchema,
+  AgentLegalEntityIdSchema,
+  AgentModuleKeySchema,
+  AgentProposalIdSchema,
+  AgentPageCursorSchema,
+  AgentProposalSubmitResponseSchema,
+  AgentQueueResponseSchema,
   compareAgentPage,
 } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityRequest,
   AgentCommand,
   AgentProposalSubmitRequest,
-  AgentProposalSubmitResponse,
   AgentPageCursor,
   AgentQueueBatch,
-  AgentQueueResponse,
   AgentQueueRequest,
 } from '@app/shared-contracts/agent-proposals';
 import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
-import { Effect, Match, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 
 import type { AgentProposalCommandPayload } from '@app/core-runtime';
 
@@ -197,12 +202,12 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     agent.principal,
     request.runId === undefined ? insertion : { ...insertion, runId: request.runId },
   );
-  return {
-    batchId: stored.batchId,
-    proposalIds: stored.proposalIds,
+  return AgentProposalSubmitResponseSchema.make({
+    batchId: AgentBatchIdSchema.make(stored.batchId),
+    proposalIds: stored.proposalIds.map((id) => AgentProposalIdSchema.make(id)),
     replayed: stored.outcome === 'replayed',
     reviewPath: REVIEW_PATH,
-  } satisfies AgentProposalSubmitResponse;
+  });
 });
 
 /** The agent's own core batches in its company (newest first); the agent decides nothing. */
@@ -221,12 +226,12 @@ export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches'
     modules: moduleTextsOf(composed),
     names,
   });
-  return {
+  return AgentQueueResponseSchema.make({
     batches,
-    company: { legalEntityId, legalName: agent.legalName },
+    company: { legalEntityId: AgentLegalEntityIdSchema.make(legalEntityId), legalName: agent.legalName },
     pendingCount: countPending(batches, false),
     unavailableModules: [],
-  } satisfies AgentQueueResponse;
+  });
 });
 
 /** Page by complete candidate identity, not the rows left after private-record visibility filtering. */
@@ -237,14 +242,28 @@ export const paginateAgentQueue = (
 ) => {
   const candidates = [
     ...coreCandidates,
-    ...legacyBatches.map((batch) => ({ at: batch.createdAt, id: batch.key })),
+    ...legacyBatches.map((batch) =>
+      AgentPageCursorSchema.make({
+        at: AgentPageCursorSchema.fields.at.make(DateTime.formatIso(batch.createdAt)),
+        id: AgentPageCursorSchema.fields.id.make(batch.key),
+      }),
+    ),
   ].toSorted(compareAgentPage);
   const selected = candidates.slice(0, AGENT_PAGE_SIZE);
-  const selectedKeys = new Set(selected.map((entry) => entry.id));
+  const selectedKeys = new Set<string>(selected.map((entry) => entry.id));
   const batches = [...coreBatches, ...legacyBatches]
     .filter((batch) => selectedKeys.has(batch.key))
     .toSorted((left, right) =>
-      compareAgentPage({ at: left.createdAt, id: left.key }, { at: right.createdAt, id: right.key }),
+      compareAgentPage(
+        AgentPageCursorSchema.make({
+          at: AgentPageCursorSchema.fields.at.make(DateTime.formatIso(left.createdAt)),
+          id: AgentPageCursorSchema.fields.id.make(left.key),
+        }),
+        AgentPageCursorSchema.make({
+          at: AgentPageCursorSchema.fields.at.make(DateTime.formatIso(right.createdAt)),
+          id: AgentPageCursorSchema.fields.id.make(right.key),
+        }),
+      ),
     );
   const last = selected.at(-1);
   return candidates.length > AGENT_PAGE_SIZE && last !== undefined ? { batches, nextCursor: last } : { batches };
@@ -288,7 +307,7 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   );
   const coreBatches = rowsToQueueBatches(moduleRows, {
     canDecide: (row) => {
-      const check = checks.get(row.proposalId);
+      const check = checks.get(AgentProposalIdSchema.make(row.proposalId));
       return check === undefined || check.ok ? { allowed: true } : { allowed: false, reason: check.reason };
     },
     modules: moduleTextsOf(composed),
@@ -322,15 +341,17 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   );
   const pageResult = paginateAgentQueue(page.candidates, coreBatches, legacyBatches);
   const { batches } = pageResult;
-  const response = {
+  const response = AgentQueueResponseSchema.make({
     batches,
-    company: { legalEntityId, legalName: caller.legalName },
+    company: { legalEntityId: AgentLegalEntityIdSchema.make(legalEntityId), legalName: caller.legalName },
     modules: composed.all.flatMap((module) =>
-      modules.access.has(module.moduleId) ? [{ label: module.label.cs, moduleKey: module.moduleId }] : [],
+      modules.access.has(module.moduleId)
+        ? [{ label: module.label.cs, moduleKey: AgentModuleKeySchema.make(module.moduleId) }]
+        : [],
     ),
     pendingCount: countPending(batches, true),
     unavailableModules,
-  } satisfies AgentQueueResponse;
+  });
   return pageResult.nextCursor === undefined ? response : { ...response, nextCursor: pageResult.nextCursor };
 });
 
@@ -431,7 +452,7 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
     ...combined,
     agents: [...new Map([...activity.agents, ...combined.agents].map((agent) => [agent.principalId, agent])).values()],
     entries: combined.entries.map((entry) => {
-      const module = entry.moduleKey === null ? undefined : composed.byModuleId(entry.moduleKey);
+      const module = Option.isNone(entry.moduleKey) ? undefined : composed.byModuleId(entry.moduleKey.value);
       return resolveActivityLinks(entry, {
         agentExists: visiblePrincipals.agents.has(entry.agentPrincipalId),
         canManageAgents: canManage,
@@ -441,7 +462,7 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
         identityPage,
         module,
         personExists: visiblePrincipals.people.has(entry.agentPrincipalId),
-        records: entry.moduleKey === null ? undefined : records.get(entry.moduleKey),
+        records: Option.isNone(entry.moduleKey) ? undefined : records.get(entry.moduleKey.value),
       });
     }),
     modules: [

@@ -1,7 +1,9 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { Effect as EffectType, Option as OptionType } from 'effect';
 import { Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import type {
   InventorySourceImportLedgerEntry,
@@ -122,17 +124,18 @@ const stableConflictRef = (
   discriminator: 'ASSERTION_INTEGRITY' | 'CORRELATION_ITEM' | 'CORRELATION_LOCATION' | 'FACT_VALUE',
   evidenceIdentity: string,
 ): InventorySourceConflictRef => {
-  const digest = createHash('sha256')
-    .update(
-      stableParts([
-        'commerce.inventory.inventory-source-conflict',
-        proposal.positionRef.tenantId,
-        discriminator,
-        evidenceIdentity,
-      ]),
-    )
-    .digest('hex')
-    .slice(0, 32);
+  const digest = Hex.encode(
+    sha256(
+      utf8ToBytes(
+        stableParts([
+          'commerce.inventory.inventory-source-conflict',
+          proposal.positionRef.tenantId,
+          discriminator,
+          evidenceIdentity,
+        ]),
+      ),
+    ),
+  ).slice(0, 32);
   const variant = ['8', '9', 'a', 'b'][Number.parseInt(digest[16] ?? '0', 16) % 4] ?? '8';
   const resourceId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-${variant}${digest.slice(17, 20)}-${digest.slice(20)}`;
   // oxlint-disable-next-line effect-native/no-sync-schema-codec -- Hash formatting is deterministic internal construction and the branded ref cannot fail after the fixed UUID layout; expires: 2027-03-31.

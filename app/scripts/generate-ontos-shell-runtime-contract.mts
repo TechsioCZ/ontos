@@ -2,7 +2,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { Effect, FileSystem, Layer, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import {
   ONTOS_SHELL_CONTRIBUTION_ABI,

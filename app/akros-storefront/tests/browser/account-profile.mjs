@@ -35,7 +35,7 @@ try {
   const login = await loginResponse;
   assert.equal(login.status(), 200, "Real customer sign-in must succeed");
   assert.equal((await login.json()).outcome, "SESSION_CREATED");
-  await page.locator("#account-phone").waitFor();
+  await page.getByRole("textbox", { name: "Telefonní kontakt", exact: true }).waitFor();
   assert.equal(await page.locator("#account-email").inputValue(), email);
   assert.equal(await page.locator("#account-email").getAttribute("readonly"), "");
   assert.equal(await page.locator('input[type="password"]').count(), 0);
@@ -43,7 +43,7 @@ try {
   assert.equal(beforeResponse.status(), 200);
   const { profile: before } = await beforeResponse.json();
   const phone = before.phone === "+420777234567" ? "+420777234568" : "+420777234567";
-  await page.locator("#account-phone").fill(phone);
+  await page.getByRole("textbox", { name: "Telefonní kontakt", exact: true }).fill(phone);
   const savedResponse = page.waitForResponse(
     (response) => response.url() === profileUrl && response.request().method() === "POST",
   );
@@ -59,7 +59,7 @@ try {
   assert.equal(result.profile.phone, phone);
   await page.getByRole("status").filter({ hasText: "Údaje byly uloženy" }).waitFor();
   await page.reload({ waitUntil: "domcontentloaded" });
-  assert.equal(await page.locator("#account-phone").inputValue(), phone);
+  assert.equal(await page.locator('input[name="phone"]').inputValue(), phone);
   const fresh = await context.request.get(profileUrl);
   assert.equal(fresh.status(), 200);
   const { profile } = await fresh.json();

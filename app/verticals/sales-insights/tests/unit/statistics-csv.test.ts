@@ -3,7 +3,10 @@ import { statisticsCsv } from '../../src/statistics/statistics-csv.ts';
 
 it('exports displayed Czech stage labels and values without leaking internal stage codes', () => {
   const csv = statisticsCsv(
-    [{ key: 'LEAD', label: 'Nová', value: 10000 }, { key: 'QUALIFIED', label: 'Kvalifikovaná', value: 20000 }],
+    [
+      { key: 'LEAD', label: 'Nová', value: 10_000 },
+      { key: 'QUALIFIED', label: 'Kvalifikovaná', value: 20_000 },
+    ],
     'CZK',
     ['Skupina', 'Hodnota'],
   );
@@ -14,10 +17,9 @@ it('exports displayed Czech stage labels and values without leaking internal sta
 });
 
 it('quotes multiline delimiters and neutralizes spreadsheet formulas in group labels', () => {
-  const csv = statisticsCsv(
-    [{ key: 'x', label: '=HYPERLINK("url");\nřádek', value: 3 }],
-    'count',
-    ['Skupina', 'Hodnota'],
-  );
+  const csv = statisticsCsv([{ key: 'x', label: '=HYPERLINK("url");\nřádek', value: 3 }], 'count', [
+    'Skupina',
+    'Hodnota',
+  ]);
   expect(csv).toContain('"\'=HYPERLINK(""url"");\nřádek";"3"');
 });

@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, FileSystem, Layer, Match, Schema, Sink, Stream } from 'effect';
-import { ChildProcessSpawner } from 'effect/unstable/process';
-import type { ChildProcess } from 'effect/unstable/process';
+import { ChildProcessSpawner } from 'effect/process';
+import type { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -24,7 +24,9 @@ const RUN_PATH = 'repos/TechsioCZ/ontos/actions/runs/40252598522';
 const PROVENANCE_STEP = 'Verify the completed migration incident and reviewed continuation source';
 const CONTINUATION_STEP = 'Continue publication of the completed owner migration';
 const MIGRATION_STEP = 'Migrate every owner schema';
+// The pinned historical incident must keep its original successful milestone.
 const POST_BOOTSTRAP_STEP = 'Bootstrap every database identity after migrations';
+const POST_VERIFICATION_STEP = 'Verify every migrated owner schema';
 const mode = {
   continueMigratedPublication: true,
   deploy: true,
@@ -349,15 +351,30 @@ it.effect(
       );
       expect(index(PROVENANCE_STEP)).toBeLessThan(index('Connect the runner to the private Zerops database network'));
       expect(step(PROVENANCE_STEP)?.env?.GH_TOKEN).toBe(expression('github.token'));
-      for (const name of [
-        'Bootstrap every database identity before migrations',
-        'Write the initial cutover receipt',
-        MIGRATION_STEP,
-      ]) {
-        expect(step(name)?.if).toBe(expression('!inputs.outbox_only && !inputs.continue_migrated_publication'));
-      }
       expect(index(CONTINUATION_STEP)).toBeGreaterThan(index('Load the dedicated database identity credentials'));
-      expect(index(CONTINUATION_STEP)).toBeLessThan(index(POST_BOOTSTRAP_STEP));
+      expect(index(CONTINUATION_STEP)).toBeLessThan(index(POST_VERIFICATION_STEP));
+      const postVerification = Schema.decodeUnknownSync(
+        Schema.Struct({
+          env: Schema.Struct({
+            COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: Schema.String,
+            COMMERCE_PORTAL_AUTH_DATABASE_URL: Schema.String,
+          }),
+          run: Schema.String,
+        }),
+      )(step(POST_VERIFICATION_STEP));
+      expect(postVerification).toEqual({
+        env: {
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: expression('secrets.DATABASE_ADMIN_URL'),
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: expression('secrets.DATABASE_URL'),
+        },
+        run: [
+          'BETTER_AUTH_SECRET="$(jq -er \'."shell-super-app".BETTER_AUTH_SECRET\' "$ALL_RELEASE_SECRETS_FILE")"',
+          'echo "::add-mask::$BETTER_AUTH_SECRET"',
+          'export BETTER_AUTH_SECRET',
+          'mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --apply --verify-database',
+          '',
+        ].join('\n'),
+      });
       expect(step(CONTINUATION_STEP)?.if).toBe('inputs.continue_migrated_publication && !inputs.outbox_only');
       expect(step(CONTINUATION_STEP)?.run).toBe(
         'mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --continue-publication',
@@ -365,8 +382,8 @@ it.effect(
       expect(step(CONTINUATION_STEP)?.env?.ONTOS_RETIRED_COMPOSITION_REVISION).toBe(
         expression('inputs.retired_composition_revision'),
       );
+      expect(index(POST_VERIFICATION_STEP)).toBeGreaterThan(index(CONTINUATION_STEP));
       for (const name of [
-        POST_BOOTSTRAP_STEP,
         'Upload every immutable release Worker',
         'Assemble the composition candidate',
         'Publish the Application Composition',
@@ -377,14 +394,16 @@ it.effect(
         expect(step(name)?.if).toBe(expression('!inputs.outbox_only'));
         expect(index(name)).toBeGreaterThan(index(CONTINUATION_STEP));
       }
+      // A continuation reconciles the grants inside the verification step, so the standalone step skips it.
       const reconcile = step('Reconcile storefront, Commerce and Privacy service grants');
-      expect(reconcile?.if).toBeUndefined();
-      expect(reconcile?.run?.match(/--zerops --(?:check|apply|verify)/gu)).toEqual([
-        '--zerops --check',
-        '--zerops --apply',
-        '--zerops --verify',
-      ]);
-      for (const name of [PROVENANCE_STEP, CONTINUATION_STEP, POST_BOOTSTRAP_STEP]) {
+      expect(reconcile?.if).toBe(
+        expression(
+          "inputs.outbox_only || (!inputs.continue_migrated_publication && steps.database-path.outputs.mode == 'full')",
+        ),
+      );
+      // One --apply reads every grant, writes only what is missing and reads the result back.
+      expect(reconcile?.run?.match(/--zerops --(?:check|apply|verify)/gu)).toEqual(['--zerops --apply']);
+      for (const name of [PROVENANCE_STEP, CONTINUATION_STEP, POST_VERIFICATION_STEP]) {
         expect(step(name)?.['continue-on-error']).toBeUndefined();
       }
       expect(
@@ -392,4 +411,34 @@ it.effect(
           ?.run,
       ).toContain('scripts/tests/verify-stage-migration-continuation.test.mts');
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps the identity bootstrap on both database paths and the sealed chain on the full path only', () =>
+  Effect.gen(function* verifiesDatabasePathConditions() {
+    const fs = yield* FileSystem.FileSystem;
+    const workflow = Schema.decodeUnknownSync(WorkflowSchema)(
+      parse(
+        yield* fs.readFileString(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url).pathname),
+      ),
+    );
+    const step = (name: string) => workflow.jobs.release.steps.find((candidate) => candidate.name === name);
+    // A fresh release always bootstraps the identities; only the full database path (not the live light path)
+    // writes the cutover receipt and runs the sealed migration.
+    expect(step('Bootstrap every database identity before migrations')?.if).toBe(
+      expression('!inputs.outbox_only && !inputs.continue_migrated_publication'),
+    );
+    for (const name of ['Write the initial cutover receipt', MIGRATION_STEP]) {
+      expect(step(name)?.if).toBe(
+        expression(
+          "!inputs.outbox_only && !inputs.continue_migrated_publication && steps.database-path.outputs.mode == 'full'",
+        ),
+      );
+    }
+    // The sealed migration ends with db:verify, so only a continuation or the light path verifies here.
+    expect(step(POST_VERIFICATION_STEP)?.if).toBe(
+      expression(
+        "!inputs.outbox_only && (inputs.continue_migrated_publication || steps.database-path.outputs.mode == 'light')",
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

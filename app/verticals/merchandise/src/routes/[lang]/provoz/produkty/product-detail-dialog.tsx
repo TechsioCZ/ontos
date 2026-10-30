@@ -46,9 +46,8 @@ import { CatalogContentPanel } from './product-catalog-content.tsx';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
-  readonly storefrontOrigin?: string;
-  readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
+  readonly canWrite: boolean;
   /** The product's tree category with its path label; null when it has none. */
   readonly category?: CategoryTrail | null;
   readonly hasCategoryTree?: boolean;
@@ -58,6 +57,7 @@ export interface ProductDetailViewProps {
   readonly onReload: () => void;
   readonly product: ProductRecord;
   readonly revision: number;
+  readonly storefrontOrigin?: string;
 }
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
@@ -71,7 +71,9 @@ const REQUIRED_MESSAGE_KEY = 'validation.required';
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
-  if ((product.variantRecords ?? []).length > 0) return <VariantPriceHistory product={product} />;
+  if ((product.variantRecords ?? []).length > 0) {
+    return <VariantPriceHistory product={product} />;
+  }
   const rows = product.priceHistory.toSorted(
     (left, right) => DateTime.toEpochMillis(right.effectiveFrom) - DateTime.toEpochMillis(left.effectiveFrom),
   );
@@ -129,6 +131,16 @@ interface DetailDraft {
 const measurementText = (value: Option.Option<number> | undefined): string =>
   Option.match(value ?? Option.none(), { onNone: () => '', onSome: String });
 
+const legacyVariantDraftsOf = (product: ProductRecord): DetailDraft['variants'] => {
+  const variants: DetailDraft['variants'][number][] = [];
+  for (const variant of product.variants ?? []) {
+    if (!isRealVariant(variant)) {
+      variants.push({ attributes: variant.attributes, key: variants.length, name: variant.name });
+    }
+  }
+  return variants;
+};
+
 const draftOf = (product: ProductRecord): DetailDraft => ({
   active: product.active,
   category: product.category,
@@ -144,9 +156,7 @@ const draftOf = (product: ProductRecord): DetailDraft => ({
   realVariants: (product.variants ?? []).filter(isRealVariant),
   shortDescription: product.shortDescription ?? '',
   unit: product.unit,
-  variants: (product.variants ?? [])
-    .filter((variant) => !isRealVariant(variant))
-    .map((variant, key) => ({ attributes: variant.attributes, key, name: variant.name })),
+  variants: legacyVariantDraftsOf(product),
   vatRate: product.vatRate,
   weightGrams: measurementText(product.weightGrams),
   widthMm: measurementText(product.widthMm),
@@ -623,7 +633,6 @@ const DetailForm = (props: DetailFormProps) => {
  * Full-page product editor, keyed by product id. Refreshes retain the active tab and unsaved fields.
  */
 export const ProductDetailView = ({
-  storefrontOrigin,
   canWrite,
   canMoveStock = canWrite,
   category = null,
@@ -634,22 +643,15 @@ export const ProductDetailView = ({
   onReload,
   product,
   revision,
+  storefrontOrigin,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState(() => draftOf(product));
-  // Variants are saved from their own tab; after the reload the detail draft must carry the saved ones, otherwise
-  // the unchanged detail form would count as dirty and ask to discard on navigation.
-  const savedRealVariantsKey = JSON.stringify((product.variants ?? []).filter(isRealVariant));
-  const latestProduct = useRef(product);
-  latestProduct.current = product;
-  useEffect(() => {
-    setDraft((current) => ({
-      ...current,
-      realVariants: (latestProduct.current.variants ?? []).filter(isRealVariant),
-    }));
-  }, [savedRealVariantsKey]);
+  const [editableDraft, setEditableDraft] = useState(() => draftOf(product));
+  // Real variants are read-only on this tab and always come from the latest product.
+  // Deriving them preserves unsaved detail fields when the variants tab commits a change.
+  const draft = { ...editableDraft, realVariants: (product.variants ?? []).filter(isRealVariant) };
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   // A detail save finishes seconds after the click; it reads the movement draft as it is then, not at the click.
   const movementDraftRef = useRef(movementDraft);
@@ -665,7 +667,7 @@ export const ProductDetailView = ({
     withResolver: true,
   });
   const updateDraft = (patch: Partial<DetailDraft>) => {
-    setDraft((current) => ({ ...current, ...patch }));
+    setEditableDraft((current) => ({ ...current, ...patch }));
   };
   const updateMovementDraft = (patch: Partial<MovementDraft>) => {
     setMovementDraft((current) => ({ ...current, ...patch }));
@@ -767,8 +769,8 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="variants">
             <VariantsPanel
-              canWrite={canWrite}
               canMoveStock={canMoveStock}
+              canWrite={canWrite}
               key={`variants-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
@@ -779,9 +781,9 @@ export const ProductDetailView = ({
           <Tabs.Content className="py-200" value="eshop">
             <EshopPanel
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
-              onArchived={onBack}
               canWrite={canWrite}
               key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
+              onArchived={onBack}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}

@@ -16,9 +16,10 @@ import {
   defineOutboxWorkerEntry,
   OutboxRepositoryLive,
 } from '@app/core-runtime/outbox/worker';
+import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
@@ -51,6 +52,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(CorePersistenceLive),
     Layer.provide(DatabaseConfigLive),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provide(NodeCrypto.layer),
   ),
   registrations: coreSystemOutboxWorkers,
   subscriptions: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,

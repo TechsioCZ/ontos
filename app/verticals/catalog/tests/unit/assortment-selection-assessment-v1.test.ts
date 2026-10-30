@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -95,7 +96,7 @@ it.effect('returns Catalog-owned ASSORTMENT assessment and source token without 
     });
     expect(calls).toEqual([{ purpose: 'ASSORTMENT', selection }]);
     expect('ownerEvidence' in response).toBe(false);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('mints source proofs for authoritative invalid decisions but not unavailable assessments', () =>
@@ -126,7 +127,7 @@ it.effect('mints source proofs for authoritative invalid decisions but not unava
     );
     expect(unavailableResponse).toMatchObject({ assessment: { kind: 'UNAVAILABLE' }, operation: 'ASSESS' });
     expect('sourceProof' in unavailableResponse).toBe(false);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('verifies authoritative INVALID decisions as CURRENT and rejects changed negative evidence', () =>
@@ -167,7 +168,7 @@ it.effect('verifies authoritative INVALID decisions as CURRENT and rejects chang
       operation: 'VERIFY_CURRENT',
       status: 'STALE',
     });
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('re-reads and returns CURRENT only for a matching material source token', () =>
@@ -198,7 +199,7 @@ it.effect('re-reads and returns CURRENT only for a matching material source toke
       operation: 'VERIFY_CURRENT',
       status: 'STALE',
     });
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('rejects source proofs whose assessment status or exact selection differs from the owner re-read', () =>
@@ -234,7 +235,7 @@ it.effect('rejects source proofs whose assessment status or exact selection diff
       sourceWith(original),
     );
     expect(mismatchedSelection).toMatchObject({ operation: 'VERIFY_CURRENT', status: 'STALE' });
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('distinguishes an unestablishable re-read from a changed source', () =>
@@ -254,5 +255,5 @@ it.effect('distinguishes an unestablishable re-read from a changed source', () =
       sourceWith({ kind: 'UNAVAILABLE', reason: 'Catalog Current basis is temporarily unavailable' }),
     );
     expect(unavailable).toMatchObject({ operation: 'VERIFY_CURRENT', status: 'UNAVAILABLE' });
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

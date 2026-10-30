@@ -26,10 +26,18 @@ export const SERVER_INSTRUCTIONS = [
 ].join('\n');
 
 /**
- * The SDK boundary accepts unknown, not a falsely asserted generic T. Tools validate their own arguments so a wrong
- * call gets a Czech tool error instead of the SDK's English "Input validation error"; output shapes are unit-tested.
+ * The SDK parses network JSON before invoking this validator. Keep every parsed JSON kind and
+ * arbitrary object fields here, including numeric overflow such as `1e400`: recursive Schema.Json
+ * validation here would move that failure ahead of the existing handler. Tools still own DTO errors.
  */
-export const PASS_THROUGH_VALIDATOR = Schema.toStandardSchemaV1(Schema.Unknown);
+const SdkParsedJsonKindSchema = Schema.Union([
+  Schema.Null,
+  Schema.Boolean,
+  Schema.Number,
+  Schema.String,
+  Schema.ObjectKeyword,
+]);
+export const PASS_THROUGH_VALIDATOR = Schema.toStandardSchemaV1(SdkParsedJsonKindSchema);
 
 /** Catalog schemas are draft 2020-12 documents; drop $schema and fall back to a permissive object. */
 const toolInputSchema = (schema: ToolSpec['inputSchema']): StandardSchemaWithJSON => {

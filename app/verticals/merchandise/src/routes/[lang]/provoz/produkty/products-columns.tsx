@@ -43,13 +43,13 @@ export const productColumns = (
               alt=""
               className="shrink-0 rounded-sm border border-border-primary object-cover"
               height={32}
-              style={{ height: 32, objectFit: 'cover', width: 32 }}
-              width={32}
               loading="lazy"
               onError={(event) => {
                 event.currentTarget.style.visibility = 'hidden';
               }}
               src={imageUrl(image)}
+              style={{ height: 32, objectFit: 'cover', width: 32 }}
+              width={32}
             />
           )}
           <span className="flex min-w-0 flex-col">

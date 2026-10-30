@@ -2,10 +2,10 @@ import { memoize } from 'effect/Function';
 
 const locale = Object.freeze({ language: 'cs-CZ' });
 // Importing contracts must not initialize ICU formatters in owners that never render day counts.
-// oxlint-disable-next-line react-doctor/js-hoist-intl -- PERF-OWNER: built once lazily through Function.memoize; czech-plural.test.ts proves construction and reuse. Remove when the rule recognizes memoize; expires: 2026-12-31.
-const plurals = memoize(({ language }: typeof locale) => new Intl.PluralRules(language));
-// oxlint-disable-next-line react-doctor/js-hoist-intl -- PERF-OWNER: built once lazily through Function.memoize; czech-plural.test.ts proves construction and reuse. Remove when the rule recognizes memoize; expires: 2026-12-31.
-const numbers = memoize(({ language }: typeof locale) => new Intl.NumberFormat(language));
+const createPluralRules = ({ language }: typeof locale) => new Intl.PluralRules(language);
+const createNumberFormat = ({ language }: typeof locale) => new Intl.NumberFormat(language);
+const plurals = memoize(createPluralRules);
+const numbers = memoize(createNumberFormat);
 
 /** Czech cardinal forms: 1 den, 2–4 dny, 0/5/21 dní; fractions use dne. */
 export const czechPlural = (

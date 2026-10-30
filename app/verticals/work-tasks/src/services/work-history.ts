@@ -102,14 +102,12 @@ export const withHistory = (
     if (previous !== undefined && changes.length === 0 && !archivedChanged) {
       return task;
     }
-    const action =
-      previous === undefined
-        ? ('created' as const)
-        : archivedChanged
-          ? task.archivedAt === undefined
-            ? ('restored' as const)
-            : ('archived' as const)
-          : ('updated' as const);
+    let action: HistoryEntry['action'] = 'updated';
+    if (previous === undefined) {
+      action = 'created';
+    } else if (archivedChanged) {
+      action = task.archivedAt === undefined ? 'restored' : 'archived';
+    }
     return { ...task, history: append(previous?.history, { action, ...who, at: now, changes }) };
   });
   const previousProjects = new Map((before.projects ?? []).map((project) => [project.id, project] as const));

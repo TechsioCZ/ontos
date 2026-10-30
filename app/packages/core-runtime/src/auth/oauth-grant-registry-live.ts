@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
 import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Crypto, Effect, Layer, Option, Schema } from 'effect';
 
 import { CoreDatabase } from '../db/client.ts';
 import { oauthConnectionGrants as grants, principalAuthBindings as bindings, principals } from '../db/schema.ts';
@@ -84,7 +82,10 @@ const sameKey = (key: OAuthGrantKey): SQL[] => [
   eq(grants.userId, key.userId),
 ];
 
-const makeRegistry = (executor: CoreDatabaseExecutor): (typeof OAuthGrantRegistry)['Service'] => {
+const makeRegistry = (
+  executor: CoreDatabaseExecutor,
+  crypto: Crypto.Crypto,
+): (typeof OAuthGrantRegistry)['Service'] => {
   /** Drops expired drafts, then inserts the new draft. */
   const insertDraftGrant = Effect.fn('OAuthGrantRegistry.insertDraftGrant')(function* insertDraftGrant(
     input: OAuthGrantDraft,
@@ -230,7 +231,7 @@ const makeRegistry = (executor: CoreDatabaseExecutor): (typeof OAuthGrantRegistr
           ) {
             return Option.none<OAuthGrantActivation>();
           }
-          const authBindingId = randomUUID();
+          const authBindingId = yield* crypto.randomUUIDv4();
           const active = yield* firstGrant(
             yield* transaction
               .update(grants)
@@ -618,6 +619,7 @@ export const OAuthGrantRegistryLive = Layer.effect(
   OAuthGrantRegistry,
   Effect.gen(function* oauthGrantRegistryService() {
     const { executor } = yield* CoreDatabase;
-    return makeRegistry(executor);
+    const crypto = yield* Crypto.Crypto;
+    return makeRegistry(executor, crypto);
   }),
 );

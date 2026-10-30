@@ -6,6 +6,7 @@ import {
   OAuthGrantModulesSchema,
 } from '@app/core-runtime';
 import type { OAuthGrantRecord } from '@app/core-runtime';
+import { ConnectionModuleIdSchema } from '@app/shared-contracts/oauth-connections';
 import type {
   ConnectionModulesRequest,
   ConnectionRevokeReason,
@@ -19,7 +20,13 @@ import type { GrantListFilter, GrantRow, NewDraftGrant, OAuthRefreshGuardRow } f
 
 const unavailable = (cause: unknown) => new ConnectionUnavailable({ cause });
 /** Structural mapping is checked against both native owner and Shell wire types. */
-const toGrantRow = (record: OAuthGrantRecord): GrantRow => ({ ...record, modules: record.modules });
+export const toGrantRow = (record: OAuthGrantRecord): GrantRow => ({
+  ...record,
+  modules:
+    record.modules === 'all'
+      ? 'all'
+      : record.modules.map((module) => ({ ...module, moduleId: ConnectionModuleIdSchema.make(module.moduleId) })),
+});
 const optionalGrant = (record: Option.Option<OAuthGrantRecord>): GrantRow | undefined =>
   Option.getOrUndefined(Option.map(toGrantRow)(record));
 const nativeModules = (modules: ConnectionModulesRequest) =>

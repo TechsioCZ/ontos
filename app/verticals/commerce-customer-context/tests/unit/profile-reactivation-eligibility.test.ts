@@ -1,4 +1,4 @@
-import { ScopedRoutineInvocationError } from '@app/core-runtime';
+import { ScopedRoutineInvocationError, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import type { ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -61,7 +61,7 @@ const decodeRoutineRows = <
   routine: ScopedRoutineDefinition<RowSchema, Parameters>,
   rows: readonly object[],
 ): Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError> =>
-  Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))(rows).pipe(
+  Schema.decodeUnknownEffect(Schema.Array(routine.resultSchema))(rows).pipe(
     Effect.mapError(() => routineFailure(routine.routineKey)),
   );
 
@@ -74,6 +74,9 @@ const transactionReturning = (
     return decodeRoutineRows(routine, rows);
   },
 });
+
+const nativeTransactionReturning = (rows: readonly object[]): ProfileScopedRoutineInvoker =>
+  scopedRoutineInvokerFromTransaction(() => Effect.succeed(rows), scope);
 
 const retailProfileRow = (outcome = 'PROFILE_AVAILABLE') => ({
   outcome,
@@ -386,3 +389,143 @@ it.effect('fails closed when its factory has no reviewed reconfirmation policy',
     Effect.provideService(ProfileReconfirmationPolicy, profileReconfirmationPolicyUnavailable),
   ),
 );
+
+for (const reconfirmationSatisfied of [true, false]) {
+  it.effect(`preserves raw Retail policy facts and the ${reconfirmationSatisfied} reconfirmation decision`, () =>
+    Effect.gen(function* preserveRetailPolicyFacts() {
+      let observedFacts: unknown;
+      let roleCalls = 0;
+      const row = {
+        ...retailProfileRow(),
+        payload: {
+          ...retailProfileRow().payload,
+          subject: { ...retailProfileRow().payload.subject, partyResourceRevision: null },
+        },
+      };
+      const evaluate = makeProfileReactivationEligibilityEvaluator({
+        evaluateReconfirmation: (facts) => {
+          observedFacts = facts;
+          return Effect.succeed(reconfirmationSatisfied);
+        },
+        resolveCounterpartyRole: () => {
+          roleCalls += 1;
+          return Effect.succeed({ outcome: 'INDETERMINATE' });
+        },
+        scope,
+        transaction: nativeTransactionReturning([row]),
+      });
+
+      const result = yield* evaluate({ ...lifecyclePayload, profileRef: retailProfileRef });
+
+      expect(observedFacts).toStrictEqual(row.payload);
+      expect(result).toStrictEqual({ dependenciesSatisfied: true, reconfirmationSatisfied });
+      expect(roleCalls).toBe(0);
+    }),
+  );
+}
+
+it.effect('preserves nullable Counterparty policy facts while checking the Current role', () =>
+  Effect.gen(function* preserveCounterpartyPolicyFacts() {
+    let observedFacts: unknown;
+    let observedRoleInput: unknown;
+    const row = {
+      ...counterpartyProfileRow(),
+      payload: {
+        ...counterpartyProfileRow().payload,
+        subject: {
+          ...counterpartyProfileRow().payload.subject,
+          counterpartyResourceRevision: null,
+          customerRoleResourceId: null,
+          customerRoleResourceRevision: null,
+        },
+      },
+    };
+    const evaluate = makeProfileReactivationEligibilityEvaluator({
+      evaluateReconfirmation: (facts) => {
+        observedFacts = facts;
+        return Effect.succeed(false);
+      },
+      resolveCounterpartyRole: (input) => {
+        observedRoleInput = input;
+        return Effect.succeed({
+          managedLegalEntityId: legalEntityId,
+          outcome: 'ELIGIBLE',
+          roleResourceId: 'current-customer-role',
+          roleResourceRevision: '2026-09-09T09:59:00.000Z',
+        });
+      },
+      scope,
+      transaction: nativeTransactionReturning([row]),
+    });
+
+    const result = yield* evaluate({ ...lifecyclePayload, profileRef: counterpartyProfileRef });
+
+    expect(observedFacts).toStrictEqual(row.payload);
+    expect(observedRoleInput).toStrictEqual({ counterpartyResourceId: 'counterparty-1', tenantId });
+    expect(result).toStrictEqual({ dependenciesSatisfied: true, reconfirmationSatisfied: false });
+  }),
+);
+
+const undefinedPayload = Option.getOrUndefined(Option.none<ReturnType<typeof retailProfileRow>['payload']>());
+const unresolvedFactsReason = 'The current Customer Profile subject could not be resolved exactly';
+const unavailableFactsReason = 'The current Customer Profile subject is unavailable';
+const invalidNativeRows = [
+  {
+    name: 'SQL null payload',
+    reason: unresolvedFactsReason,
+    rows: [{ outcome: 'PROFILE_AVAILABLE', payload: null }],
+  },
+  {
+    name: 'reconciliation-required null payload',
+    reason: unresolvedFactsReason,
+    rows: [{ outcome: 'PROFILE_RECONCILIATION_REQUIRED', payload: null }],
+  },
+  {
+    name: 'unavailable null payload',
+    reason: unresolvedFactsReason,
+    rows: [{ outcome: 'PROFILE_NOT_FOUND', payload: null }],
+  },
+  {
+    name: 'omitted payload',
+    reason: unavailableFactsReason,
+    rows: [{ outcome: 'PROFILE_AVAILABLE' }],
+  },
+  {
+    name: 'undefined payload',
+    reason: unavailableFactsReason,
+    rows: [{ outcome: 'PROFILE_AVAILABLE', payload: undefinedPayload }],
+  },
+  {
+    name: 'empty result',
+    reason: unresolvedFactsReason,
+    rows: [],
+  },
+];
+
+for (const { name, reason, rows } of invalidNativeRows) {
+  it.effect(`rejects native ${name} before invoking either decision dependency`, () =>
+    Effect.gen(function* rejectNativeAbsentFacts() {
+      let roleCalls = 0;
+      let policyCalls = 0;
+      const evaluate = makeProfileReactivationEligibilityEvaluator({
+        evaluateReconfirmation: () => {
+          policyCalls += 1;
+          return Effect.succeed(true);
+        },
+        resolveCounterpartyRole: () => {
+          roleCalls += 1;
+          return Effect.succeed({ outcome: 'INELIGIBLE' });
+        },
+        scope,
+        transaction: nativeTransactionReturning(rows),
+      });
+
+      const failure = yield* Effect.flip(evaluate({ ...lifecyclePayload, profileRef: retailProfileRef }));
+
+      expect(Schema.is(ProfilePersistenceDependencyFailure)(failure)).toBe(true);
+      expect(failure.reason).toBe(reason);
+      expect(roleCalls).toBe(0);
+      expect(policyCalls).toBe(0);
+    }),
+  );
+}

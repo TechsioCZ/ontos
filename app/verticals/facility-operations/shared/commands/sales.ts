@@ -3,6 +3,7 @@
 // itself is created in Finance (CreateInvoiceDraft) from a snapshot of the order; SalesOrderLinkInvoice records it.
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
+  optionalField,
   IsoDateSchema,
   MinorAmountSchema,
   NoteSchema,
@@ -15,7 +16,7 @@ import {
   opsConflict,
   opsNotFound,
 } from '../domain/common.ts';
-import type { OpsCommandInput } from '../domain/common.ts';
+import type { OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import {
   PurchaseLineIdSchema,
   QuantitySchema,
@@ -25,17 +26,11 @@ import {
   SalesVatRateSchema,
   StockItemIdSchema,
 } from '../domain/purchasing.ts';
-import type {
-  PurchasingState,
-  SalesLine,
-  SalesOrder,
-  SalesOrderHistory,
-  SalesQuote,
-} from '../domain/purchasing.ts';
+import type { PurchasingState, SalesLine, SalesOrder, SalesOrderHistory, SalesQuote } from '../domain/purchasing.ts';
 
 const SalesLineInputSchema = Schema.Struct({
-  itemId: Schema.optionalKey(StockItemIdSchema),
   description: TextSchema(300),
+  itemId: Schema.optionalKey(StockItemIdSchema),
   quantity: QuantitySchema,
   unitPriceMinor: MinorAmountSchema,
   vatRate: SalesVatRateSchema,
@@ -45,10 +40,10 @@ const SalesLinesInputSchema = Schema.Array(SalesLineInputSchema).check(Schema.is
 const quoteFields = {
   customer: SalesCustomerSchema,
   date: IsoDateSchema,
-  validUntil: Schema.optionalKey(IsoDateSchema),
   lines: SalesLinesInputSchema,
-  related: Schema.optionalKey(PropertyRefSchema),
   note: Schema.optionalKey(NoteSchema),
+  related: Schema.optionalKey(PropertyRefSchema),
+  validUntil: Schema.optionalKey(IsoDateSchema),
 };
 
 export const salesCommandSchemas = [
@@ -56,33 +51,33 @@ export const salesCommandSchemas = [
   Schema.TaggedStruct('SalesQuoteCreate', { ...quoteFields, status: Schema.Literals(['draft', 'sent']) }),
   /** Úprava nabídky. Hotová objednávka i faktura mají vlastní kopii řádků, úprava je nemění (S06). */
   Schema.TaggedStruct('SalesQuoteUpdate', { ...quoteFields, quoteId: SalesQuoteIdSchema }),
-  Schema.TaggedStruct('SalesQuoteReject', { quoteId: SalesQuoteIdSchema, note: Schema.optionalKey(NoteSchema) }),
+  Schema.TaggedStruct('SalesQuoteReject', { note: Schema.optionalKey(NoteSchema), quoteId: SalesQuoteIdSchema }),
   /** Z nabídky vznikne prodejní objednávka: řádky, ceny a vazba na nabídku se zkopírují. */
   Schema.TaggedStruct('SalesOrderCreateFromQuote', {
-    quoteId: SalesQuoteIdSchema,
     expectedDate: Schema.optionalKey(IsoDateSchema),
     note: Schema.optionalKey(NoteSchema),
+    quoteId: SalesQuoteIdSchema,
   }),
   Schema.TaggedStruct('SalesOrderTransition', {
+    note: Schema.optionalKey(NoteSchema),
     orderId: SalesOrderIdSchema,
     to: Schema.Literals(['approved', 'ordered', 'cancelled', 'completed']),
-    note: Schema.optionalKey(NoteSchema),
   }),
   /** Dodání zákazníkovi (předání služby / zboží): množství po řádcích; zbytek zůstává v nevyřízených. */
   Schema.TaggedStruct('SalesOrderDeliver', {
-    orderId: SalesOrderIdSchema,
     date: IsoDateSchema,
     lines: Schema.Array(Schema.Struct({ lineId: PurchaseLineIdSchema, quantity: QuantitySchema })).check(
       Schema.isMinLength(1),
       Schema.isMaxLength(100),
     ),
     note: Schema.optionalKey(NoteSchema),
+    orderId: SalesOrderIdSchema,
   }),
   /** Records the issued invoice draft Finance created from this order (number + Finance resource id). */
   Schema.TaggedStruct('SalesOrderLinkInvoice', {
-    orderId: SalesOrderIdSchema,
     invoiceId: TextSchema(300),
     number: TextSchema(64),
+    orderId: SalesOrderIdSchema,
     totalMinor: Schema.optionalKey(MinorAmountSchema),
   }),
 ] as const;
@@ -91,43 +86,53 @@ export const SalesCommandSchema = Schema.Union(salesCommandSchemas);
 export type SalesCommand = typeof SalesCommandSchema.Type;
 type CommandOf<Tag extends SalesCommand['_tag']> = Extract<SalesCommand, { readonly _tag: Tag }>;
 
-const optional = <Key extends string>(key: Key, value: string | undefined) =>
-  (value === undefined || value === '' ? {} : { [key]: value }) as Partial<Record<Key, string>>;
+type OptionalText<Key extends string> = Partial<Record<Key, string>>;
+const optional = <Key extends string>(key: Key, value: string | undefined) => {
+  const fields: OptionalText<Key> = {};
+  if (value !== undefined && value !== '') {
+    fields[key] = value;
+  }
+  return fields;
+};
 
 const quotesOf = (state: PurchasingState) => state.salesQuotes ?? [];
 const ordersOf = (state: PurchasingState) => state.salesOrders ?? [];
 
 const findQuote = (state: PurchasingState, quoteId: string) =>
   Effect.fromNullishOr(quotesOf(state).find((entry) => entry.id === quoteId)).pipe(
-    Effect.mapError(() => opsNotFound('Sales quote not found')),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound('Sales quote not found'))),
   );
 const findOrder = (state: PurchasingState, orderId: string) =>
   Effect.fromNullishOr(ordersOf(state).find((entry) => entry.id === orderId)).pipe(
-    Effect.mapError(() => opsNotFound('Sales order not found')),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound('Sales order not found'))),
   );
 
 /** Next number in a yearly series, e.g. `NAB-SP-2026-0003` / `PRO-2026-0012`. */
 const nextNumber = (prefix: string, year: string, existing: readonly { readonly number: string }[]) => {
   const head = `${prefix}-${year}-`;
-  const highest = existing
-    .map((entry) => (entry.number.startsWith(head) ? Number(entry.number.slice(head.length)) : 0))
-    .reduce((max, value) => (Number.isSafeInteger(value) && value > max ? value : max), 0);
+  let highest = 0;
+  for (const entry of existing) {
+    const value = entry.number.startsWith(head) ? Number(entry.number.slice(head.length)) : 0;
+    if (Number.isSafeInteger(value) && value > highest) {
+      highest = value;
+    }
+  }
   return `${head}${String(highest + 1).padStart(4, '0')}`;
 };
 
 const linesWithIds = (input: OpsCommandInput, lines: CommandOf<'SalesQuoteCreate'>['lines']) =>
-  Effect.forEach(lines, (line, index) =>
-    Effect.map(
-      mintId(PurchaseLineIdSchema, `${input.resourceId}:line-${index + 1}`),
-      (id): SalesLine => ({
+  Effect.forEach(
+    lines,
+    (line, index) =>
+      Effect.map(mintId(PurchaseLineIdSchema, `${input.resourceId}:line-${index + 1}`), (id): SalesLine => ({
         description: line.description,
         id,
         quantity: line.quantity,
         unitPriceMinor: line.unitPriceMinor,
         vatRate: line.vatRate,
-        ...(line.itemId === undefined ? {} : { itemId: line.itemId }),
-      }),
-    ),
+        ...optionalField('itemId', line.itemId),
+      })),
+    { concurrency: 1 },
   );
 
 const historyOf = (
@@ -140,10 +145,13 @@ const historyOf = (
 const result = (id: string, state: PurchasingState) =>
   Effect.map(entityIdOf(id), (entity) => ({ entityIds: [entity], state }));
 
+const pragueYearFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague', year: 'numeric' });
+/** Business year of the command, including the Prague year boundary. */
+const commandYear = (input: OpsCommandInput) => pragueYearFormatter.format(DateTime.toEpochMillis(input.now));
+
 const createQuote = Effect.fn('FacilityOperations.Sales.createQuote')(function* createQuote(
   state: PurchasingState,
-  value: CommandOf<'SalesQuoteCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'SalesQuoteCreate'>>,
 ) {
   if (value.validUntil !== undefined && value.validUntil < value.date) {
     return yield* opsConflict('A quote cannot expire before its date');
@@ -160,7 +168,7 @@ const createQuote = Effect.fn('FacilityOperations.Sales.createQuote')(function* 
     status: value.status,
     ...optional('validUntil', value.validUntil),
     ...optional('note', value.note),
-    ...(value.related === undefined ? {} : { related: value.related }),
+    ...optionalField('related', value.related),
   };
   return yield* result(id, { ...state, salesQuotes: [...quotesOf(state), quote] });
 });
@@ -174,7 +182,7 @@ const updateQuote = Effect.fn('FacilityOperations.Sales.updateQuote')(function* 
   if (quote.status === 'rejected') {
     return yield* opsConflict('A rejected quote is read-only');
   }
-  const { validUntil: _validUntil, note: _note, related: _related, ...base } = quote;
+  const { note: _note, related: _related, validUntil: _validUntil, ...base } = quote;
   const cleared: SalesQuote = auditUpdated(
     {
       ...base,
@@ -183,7 +191,7 @@ const updateQuote = Effect.fn('FacilityOperations.Sales.updateQuote')(function* 
       lines: yield* linesWithIds(input, value.lines),
       ...optional('validUntil', value.validUntil),
       ...optional('note', value.note),
-      ...(value.related === undefined ? {} : { related: value.related }),
+      ...optionalField('related', value.related),
     },
     input,
   );
@@ -202,7 +210,10 @@ const rejectQuote = Effect.fn('FacilityOperations.Sales.rejectQuote')(function* 
   if (quote.status === 'accepted' || quote.status === 'rejected') {
     return yield* opsConflict(`A quote in status ${quote.status} cannot be rejected`);
   }
-  const next: SalesQuote = auditUpdated({ ...quote, status: 'rejected', ...optional('note', value.note ?? quote.note) }, input);
+  const next: SalesQuote = auditUpdated(
+    { ...quote, status: 'rejected', ...optional('note', value.note ?? quote.note) },
+    input,
+  );
   return yield* result(quote.id, {
     ...state,
     salesQuotes: quotesOf(state).map((entry) => (entry.id === quote.id ? next : entry)),
@@ -211,8 +222,7 @@ const rejectQuote = Effect.fn('FacilityOperations.Sales.rejectQuote')(function* 
 
 const createOrderFromQuote = Effect.fn('FacilityOperations.Sales.createOrderFromQuote')(function* createOrderFromQuote(
   state: PurchasingState,
-  value: CommandOf<'SalesOrderCreateFromQuote'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'SalesOrderCreateFromQuote'>>,
 ) {
   const quote = yield* findQuote(state, value.quoteId);
   if (quote.status === 'rejected' || quote.salesOrderId !== undefined) {
@@ -227,21 +237,24 @@ const createOrderFromQuote = Effect.fn('FacilityOperations.Sales.createOrderFrom
     history: [historyOf(input, 'created', 'draft', `Z nabídky ${quote.number}`)],
     id,
     invoices: [],
-    lines: yield* Effect.forEach(quote.lines, (line, index) =>
-      Effect.map(mintId(PurchaseLineIdSchema, `${input.resourceId}:line-${index + 1}`), (lineId) => ({
-        ...line,
-        deliveredQuantity: 0,
-        id: lineId,
-        quoteLineId: line.id,
-      })),
+    lines: yield* Effect.forEach(
+      quote.lines,
+      (line, index) =>
+        Effect.map(mintId(PurchaseLineIdSchema, `${input.resourceId}:line-${index + 1}`), (lineId) => ({
+          ...line,
+          deliveredQuantity: 0,
+          id: lineId,
+          quoteLineId: line.id,
+        })),
+      { concurrency: 1 },
     ),
-    number: nextNumber('PRO', DateTimeYear(input), ordersOf(state)),
+    number: nextNumber('PRO', commandYear(input), ordersOf(state)),
     quoteId: quote.id,
     quoteNumber: quote.number,
     status: 'draft',
     ...optional('expectedDate', value.expectedDate),
     ...optional('note', value.note),
-    ...(quote.related === undefined ? {} : { related: quote.related }),
+    ...optionalField('related', quote.related),
   };
   const accepted: SalesQuote = auditUpdated({ ...quote, salesOrderId: id, status: 'accepted' }, input);
   return {
@@ -254,19 +267,12 @@ const createOrderFromQuote = Effect.fn('FacilityOperations.Sales.createOrderFrom
   };
 });
 
-/** Business year (Europe/Prague) of the command. */
-const DateTimeYear = (input: OpsCommandInput) =>
-  new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague', year: 'numeric' }).format(
-    DateTime.toEpochMillis(input.now),
-  );
-
-const allowedTransitions: Readonly<Record<CommandOf<'SalesOrderTransition'>['to'], ReadonlyArray<SalesOrder['status']>>> =
-  {
-    approved: ['draft'],
-    cancelled: ['draft', 'approved', 'ordered'],
-    completed: ['partially_delivered'],
-    ordered: ['approved'],
-  };
+const allowedTransitions = {
+  approved: ['draft'],
+  cancelled: ['draft', 'approved', 'ordered'],
+  completed: ['partially_delivered'],
+  ordered: ['approved'],
+} satisfies Readonly<Record<CommandOf<'SalesOrderTransition'>['to'], readonly SalesOrder['status'][]>>;
 
 const replaceOrder = (state: PurchasingState, order: SalesOrder): PurchasingState => ({
   ...state,
@@ -279,7 +285,7 @@ const transitionOrder = Effect.fn('FacilityOperations.Sales.transitionOrder')(fu
   input: OpsCommandInput,
 ) {
   const order = yield* findOrder(state, value.orderId);
-  if (!allowedTransitions[value.to].includes(order.status)) {
+  if (!allowedTransitions[value.to].some((previous) => previous === order.status)) {
     return yield* opsConflict(`Sales order in status ${order.status} cannot move to ${value.to}`);
   }
   if (value.to === 'cancelled' && order.deliveries.length > 0) {
@@ -364,7 +370,7 @@ const linkInvoice = Effect.fn('FacilityOperations.Sales.linkInvoice')(function* 
           linkedAt: input.now,
           linkedBy: input.actor,
           number: value.number,
-          ...(value.totalMinor === undefined ? {} : { totalMinor: value.totalMinor }),
+          ...optionalField('totalMinor', value.totalMinor),
         },
       ],
     },
@@ -375,10 +381,10 @@ const linkInvoice = Effect.fn('FacilityOperations.Sales.linkInvoice')(function* 
 
 export const evolveSales = (state: PurchasingState, command: SalesCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('SalesQuoteCreate', (value) => createQuote(state, value, input)),
+    Match.tag('SalesQuoteCreate', (value) => createQuote(state, { input, value })),
     Match.tag('SalesQuoteUpdate', (value) => updateQuote(state, value, input)),
     Match.tag('SalesQuoteReject', (value) => rejectQuote(state, value, input)),
-    Match.tag('SalesOrderCreateFromQuote', (value) => createOrderFromQuote(state, value, input)),
+    Match.tag('SalesOrderCreateFromQuote', (value) => createOrderFromQuote(state, { input, value })),
     Match.tag('SalesOrderTransition', (value) => transitionOrder(state, value, input)),
     Match.tag('SalesOrderDeliver', (value) => deliver(state, value, input)),
     Match.tag('SalesOrderLinkInvoice', (value) => linkInvoice(state, value, input)),
@@ -387,6 +393,7 @@ export const evolveSales = (state: PurchasingState, command: SalesCommand, input
 
 /** Open remainder of a sales order (ordered − delivered), per line. */
 export const salesRemainder = (order: SalesOrder) =>
-  order.lines
-    .map((line) => ({ line, remaining: line.quantity - line.deliveredQuantity }))
-    .filter((entry) => entry.remaining > 0);
+  order.lines.flatMap((line) => {
+    const remaining = line.quantity - line.deliveredQuantity;
+    return remaining > 0 ? [{ line, remaining }] : [];
+  });

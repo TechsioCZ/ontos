@@ -12,7 +12,16 @@ import {
   openDemoAccountGrants,
   openPrincipalOperators,
 } from '@app/core-runtime';
-import { ConnectionModulesRequestSchema } from '@app/shared-contracts/oauth-connections';
+import {
+  ConnectionClientIdSchema,
+  ConnectionGrantIdSchema,
+  ConnectionLegalEntityIdSchema,
+  ConnectionModuleIdSchema,
+  ConnectionModulesRequestSchema,
+  ConnectionPrincipalIdSchema,
+  ConnectionProfileIdSchema,
+  ConnectionTenantIdSchema,
+} from '@app/shared-contracts/oauth-connections';
 import type {
   ConnectionActingKind,
   ConnectionDescription,
@@ -103,8 +112,6 @@ export const revokedStatusFor = (reason: ConnectionRevokeReason): 'revoked' | 's
 
 const toUnavailable = (cause: unknown): ConnectionUnavailable =>
   Schema.is(Schema.instanceOf(ConnectionUnavailable))(cause) ? cause : new ConnectionUnavailable({ cause });
-
-const iso = (value: Date): string => DateTime.formatIso(DateTime.fromDateUnsafe(value));
 
 const ModulesJson = Schema.fromJsonString(ConnectionModulesRequestSchema);
 const modulesJson = Schema.encodeEffect(ModulesJson);
@@ -301,26 +308,29 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
     acting: {
       displayName: names.get(grant.actingPrincipalId)?.displayName ?? '',
       kind: grant.actingKind,
-      principalId: grant.actingPrincipalId,
+      principalId: ConnectionPrincipalIdSchema.make(grant.actingPrincipalId),
     },
     client: {
-      clientId: grant.clientId,
+      clientId: ConnectionClientIdSchema.make(grant.clientId),
       host: grant.clientHost,
       kind: grant.clientKind,
-      logoUri: grant.clientLogoUri,
+      logoUri: Option.fromNullOr(grant.clientLogoUri),
       name: grant.clientName,
     },
     compositionRevision: catalog.composition.revision,
     delegatedBy: agent
-      ? { displayName: names.get(grant.userPrincipalId)?.displayName ?? '', principalId: grant.userPrincipalId }
-      : null,
-    grantId: grant.grantId,
-    legalEntityId: grant.legalEntityId,
+      ? Option.some({
+          displayName: names.get(grant.userPrincipalId)?.displayName ?? '',
+          principalId: ConnectionPrincipalIdSchema.make(grant.userPrincipalId),
+        })
+      : Option.none(),
+    grantId: ConnectionGrantIdSchema.make(grant.grantId),
+    legalEntityId: ConnectionLegalEntityIdSchema.make(grant.legalEntityId),
     legalName: legalName ?? grant.legalEntityId,
     modules: effective.modules,
-    profileId: grant.profileId,
+    profileId: ConnectionProfileIdSchema.make(grant.profileId),
     status: 'active',
-    tenantId: grant.tenantId,
+    tenantId: ConnectionTenantIdSchema.make(grant.tenantId),
     writePolicy: effective.writePolicy,
   };
   const live: LiveConnection = { description, grant };
@@ -340,7 +350,7 @@ const summaryOf = (
       ? []
       : row.modules.map((grant) => ({
           label: labelOf(grant.moduleId),
-          moduleId: grant.moduleId,
+          moduleId: ConnectionModuleIdSchema.make(grant.moduleId),
           read: true,
           write: grant.access === 'write',
         }));
@@ -348,28 +358,31 @@ const summaryOf = (
     acting: {
       displayName: names.get(row.actingPrincipalId)?.displayName ?? '',
       kind: row.actingKind,
-      principalId: row.actingPrincipalId,
+      principalId: ConnectionPrincipalIdSchema.make(row.actingPrincipalId),
     },
     client: {
-      clientId: row.clientId,
+      clientId: ConnectionClientIdSchema.make(row.clientId),
       host: row.clientHost,
       kind: row.clientKind,
-      logoUri: row.clientLogoUri,
+      logoUri: Option.fromNullOr(row.clientLogoUri),
       name: row.clientName,
     },
-    createdAt: iso(row.createdAt),
+    createdAt: DateTime.fromDateUnsafe(row.createdAt),
     delegatedBy: agent
-      ? { displayName: names.get(row.userPrincipalId)?.displayName ?? '', principalId: row.userPrincipalId }
-      : null,
-    grantId: row.grantId,
-    lastUsedAt: row.lastUsedAt === null ? null : iso(row.lastUsedAt),
-    legalEntityId: row.legalEntityId,
+      ? Option.some({
+          displayName: names.get(row.userPrincipalId)?.displayName ?? '',
+          principalId: ConnectionPrincipalIdSchema.make(row.userPrincipalId),
+        })
+      : Option.none(),
+    grantId: ConnectionGrantIdSchema.make(row.grantId),
+    lastUsedAt: Option.map(Option.fromNullOr(row.lastUsedAt), DateTime.fromDateUnsafe),
+    legalEntityId: ConnectionLegalEntityIdSchema.make(row.legalEntityId),
     legalName: legalNames.get(row.legalEntityId) ?? row.legalEntityId,
     modules: live?.description.modules ?? fallbackModules,
-    profileId: row.profileId,
+    profileId: ConnectionProfileIdSchema.make(row.profileId),
     requestedModules: row.modules,
     status: row.status,
-    tenantId: row.tenantId,
+    tenantId: ConnectionTenantIdSchema.make(row.tenantId),
     userDisplayName: names.get(row.userPrincipalId)?.displayName ?? '',
     writePolicy: live?.description.writePolicy ?? row.writePolicy,
   };

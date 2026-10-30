@@ -5,6 +5,7 @@
  */
 import { Duration, Schema } from 'effect';
 import type { Cause, Effect, Redacted } from 'effect';
+import { HttpServerResponse } from 'effect/http';
 
 export const OAUTH_BFF_PREFIX = '/shell-super-app-api';
 export const OAUTH_BASE_PATH = '/shell-super-app-api/oauth';
@@ -97,28 +98,29 @@ const METADATA_CORS_HEADERS = {
  * 15 second metadata lifetime is replaced: the Worker answers discovery from the edge cache for this lifetime.
  */
 export const withOAuthResponseHeaders = (kind: 'endpoint' | 'metadata', response: Response): Response => {
-  const headers = new Headers(response.headers);
+  const adapted = HttpServerResponse.raw(response, {
+    headers: { 'cache-control': kind === 'endpoint' ? 'no-store' : 'public, max-age=300' },
+  }).pipe(HttpServerResponse.toWeb);
+  const { headers } = adapted;
   headers.delete('access-control-allow-credentials');
   if (kind === 'endpoint') {
-    headers.set('cache-control', 'no-store');
     headers.set('pragma', 'no-cache');
   } else {
     for (const [name, value] of Object.entries(METADATA_CORS_HEADERS)) {
       headers.set(name, value);
     }
-    headers.set('cache-control', 'public, max-age=300');
   }
-  return new Response(response.body, { headers, status: response.status, statusText: response.statusText });
+  return adapted;
 };
 
 export const oauthPreflightResponse = (): Response =>
-  new Response(null, { headers: METADATA_CORS_HEADERS, status: 204 });
+  HttpServerResponse.empty({ headers: METADATA_CORS_HEADERS, status: 204 }).pipe(HttpServerResponse.toWeb);
 
 export const oauthNotFoundResponse = (): Response =>
-  new Response('{"error":"not_found"}', {
+  HttpServerResponse.raw('{"error":"not_found"}', {
     headers: { 'cache-control': 'no-store', 'content-type': 'application/json' },
     status: 404,
-  });
+  }).pipe(HttpServerResponse.toWeb);
 
 const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -240,17 +242,20 @@ export const oauthErrorPageLocation = (error: string | null | undefined): string
   `${OAUTH_LOGIN_PAGE}?oauth_error=${oauthErrorPageCode(error)}`;
 
 export const oauthErrorPageRedirect = (error: string | null | undefined): Response =>
-  new Response(null, {
+  HttpServerResponse.empty({
     headers: { 'cache-control': 'no-store', location: oauthErrorPageLocation(error), pragma: 'no-cache' },
     status: 302,
-  });
+  }).pipe(HttpServerResponse.toWeb);
 
 /** RFC 6749 JSON error with no-store (token and consent guards). */
-export const oauthJsonError = (status: number, error: string, description: string): Response =>
-  Response.json(
+export const oauthJsonError = (status: number, error: string, description: string): Response => {
+  const response = HttpServerResponse.jsonUnsafe(
     { error, error_description: description },
     {
       headers: { 'cache-control': 'no-store', 'content-type': 'application/json', pragma: 'no-cache' },
       status,
     },
-  );
+  ).pipe(HttpServerResponse.toWeb);
+  response.headers.delete('content-length');
+  return response;
+};

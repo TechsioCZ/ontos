@@ -576,7 +576,8 @@ interface AuthenticationAdmissionInput {
 const mapAdmissionNonceError = (cause: unknown): ExternalIdentityFailure =>
   externalIdentityFailure('identity_unavailable', 'Admission nonce generation is unavailable', cause);
 
-const nextAdmissionUuid = (crypto: Crypto.Crypto) => crypto.randomUUIDv4.pipe(Effect.mapError(mapAdmissionNonceError));
+const nextAdmissionUuid = (crypto: Crypto.Crypto) =>
+  crypto.randomUUIDv4().pipe(Effect.mapError(mapAdmissionNonceError));
 
 const makeSubjectAdmission = Effect.fn('ExternalIdentityHttp.makeSubjectAdmission')(function* makeSubjectAdmission(
   input: SubjectAdmissionInput,

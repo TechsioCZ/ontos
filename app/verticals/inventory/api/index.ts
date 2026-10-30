@@ -19,12 +19,13 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Logger, References, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -130,6 +131,7 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
@@ -137,6 +139,7 @@ const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -207,6 +210,7 @@ export const makeInventoryApiRuntime = (
     Layer.provideMerge(compositionSourceLive),
     Layer.provideMerge(runtimeObservabilityLive),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   type InventoryHandlerRequirements =

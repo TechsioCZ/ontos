@@ -43,7 +43,7 @@ export const recordsReadOf = Effect.fn('AgentPlatform.recordsReadOf')(
   function* recordsReadOf(appId: string) {
     const modules = yield* loadComposedModules;
     const module = modules.byAppId(appId);
-    const query = yield* Schema.decodeUnknownEffect(Schema.JsonObject)(revisionQueryOf(module));
+    const query = yield* Schema.decodeEffect(Schema.JsonObject)(revisionQueryOf(module));
     return { module, path: module?.revision?.path ?? '/reads/records', query };
   },
   Effect.mapError(

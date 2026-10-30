@@ -4,15 +4,17 @@ import { createInstance } from 'i18next';
 import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
 import { Result, Schema } from 'effect';
 
-import { csResource, enResource } from './i18n/resources.ts';
+import csBase from '../locales/cs/facility-operations.json';
+import enBase from '../locales/en/facility-operations.json';
+import { withCsAgendaResources, withEnAgendaResources } from './i18n/resources.ts';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
 
 const i18nInstance = Result.getOrThrow(
   Schema.decodeUnknownResult(Schema.declare<I18nInstance>(isI18nInstance))(createInstance()),
 );
 const resources = {
-  cs: { [ultramodernRouteNamespace]: csResource },
-  en: { [ultramodernRouteNamespace]: enResource },
+  cs: { [ultramodernRouteNamespace]: withCsAgendaResources(csBase) },
+  en: { [ultramodernRouteNamespace]: withEnAgendaResources(enBase) },
 } as const;
 
 export default defineRuntimeConfig({

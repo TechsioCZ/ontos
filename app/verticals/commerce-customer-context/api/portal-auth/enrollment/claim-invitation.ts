@@ -1,5 +1,5 @@
 import { Cause, Crypto, Effect, Option, Redacted, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import { ActionTransportMetadataSchema } from '@app/core-runtime';
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';

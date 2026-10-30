@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import type {
   CreatePurposeVersionInput,
@@ -12,6 +11,7 @@ import {
   PurposeVersionConflict,
 } from '../../shared/domain/processing-purpose.ts';
 import type { ProcessingPurposeRef } from '../../shared/resources/processing-purpose.ts';
+import { ProcessingPurposePersistenceUnavailable } from '../persistence/processing-purpose-persistence-unavailable.ts';
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
 import { deriveMaterialVersionEvidence } from './processing-purpose-materiality.ts';
 
@@ -53,7 +53,18 @@ const validateVersionAppend = (
     : { materiality, valid: true };
 };
 
-export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepositoryService => {
+const makeRepository = (crypto: Crypto.Crypto): ProcessingPurposeRepositoryService => {
+  const nextIdentifier = (reason: string) =>
+    crypto.randomUUIDv4().pipe(
+      Effect.catchTag('PlatformError', () =>
+        Effect.fail(
+          new ProcessingPurposePersistenceUnavailable({
+            code: 'privacy_processing_purpose_persistence_unavailable',
+            reason,
+          }),
+        ),
+      ),
+    );
   const purposes = new Map<string, ProcessingPurpose>();
   const versionInvocations = new Map<string, Readonly<{ input: CreatePurposeVersionInput; purposeId: string }>>();
   return {
@@ -78,7 +89,7 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
           }
           return current;
         }
-        const versionId = randomUUID();
+        const versionId = yield* nextIdentifier('Purpose Version identifier could not be generated');
         const materiality = deriveMaterialVersionEvidence(current, input, versionId);
         const previous = current.versions.at(-1);
         const validation = validateVersionAppend(materiality, input, previous);
@@ -115,7 +126,13 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
     ),
     create: Effect.fn('makeInMemoryProcessingPurposeRepository.create')(
       function* create(tenantId, legalEntityId, _actionInvocationId, input) {
-        const purposeId = randomUUID();
+        const [purposeId, versionId] = yield* Effect.all(
+          [
+            nextIdentifier('Processing Purpose identifier could not be generated'),
+            nextIdentifier('Purpose Version identifier could not be generated'),
+          ],
+          { concurrency: 2 },
+        );
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         const purpose: ProcessingPurpose = {
           businessCode: input.businessCode,
@@ -134,7 +151,7 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
               meaning: input.meaning,
               recordedAt: createdAt,
               requiredConsentDimensions: [...(input.requiredConsentDimensions ?? [])],
-              versionId: randomUUID(),
+              versionId,
               versionNumber: 1,
             },
           ],
@@ -155,3 +172,9 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
       ),
   };
 };
+
+export const makeInMemoryProcessingPurposeRepository = (): Effect.Effect<
+  ProcessingPurposeRepositoryService,
+  never,
+  Crypto.Crypto
+> => Effect.service(Crypto.Crypto).pipe(Effect.map(makeRepository));

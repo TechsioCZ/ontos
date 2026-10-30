@@ -1,7 +1,7 @@
 // Blessed shapes: Layer.unwrap, Effect.cachedWithTTL, and top-level construction.
 import { Context, Effect, Layer } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpClient } from 'effect/http';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 interface ContactsClientService {

@@ -1,6 +1,6 @@
 // The blessed ARES adapter shape the audit names under "Existing patterns to preserve".
 import { Cause, Effect, Schedule } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 const ARES_REQUEST_TIMEOUT = '3 seconds';
 const retrySchedule = Schedule.exponential('100 millis');

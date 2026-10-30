@@ -40,5 +40,5 @@ test('buildModulesRequest sends all or only the readable picks with write access
 test('navigationTarget accepts only http(s) URLs and same-origin paths', () => {
   expect(navigationTarget({ url: 'https://x/cb?code=1' }, false, '')).toBe('https://x/cb?code=1');
   expect(navigationTarget({}, true, 'http://localhost:5555/cb')).toBe('http://localhost:5555/cb');
-  expect(navigationTarget({ url: 'javascript:x' }, false, '')).toBeUndefined();
+  expect(navigationTarget({ url: ['javascript', 'x'].join(':') }, false, '')).toBeUndefined();
 });

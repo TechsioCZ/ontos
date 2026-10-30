@@ -123,7 +123,10 @@ const withShippingBasis = (amount: string, amountBasis: 'GROSS' | 'NET') =>
     }),
   );
 
-const catalogWith = (catalogFactRef: string, completeness: string): TaxEvaluationRequestInput['catalog'][number] => {
+const catalogWith = (
+  catalogFactRef: string,
+  completeness: string,
+): NonNullable<TaxEvaluationRequestInput['catalog']>[number] => {
   const base = catalogEntry('o1', STANDARD_CODE);
   return {
     ...base,
@@ -145,7 +148,7 @@ const catalogWith = (catalogFactRef: string, completeness: string): TaxEvaluatio
 };
 
 /** Catalog evidence with the category fact plus a non-category fact of the given value under fixed references. */
-const withAncestry = (factValue: string): TaxEvaluationRequestInput['catalog'][number] => {
+const withAncestry = (factValue: string): NonNullable<TaxEvaluationRequestInput['catalog']>[number] => {
   const entry = catalogWith('o1:tax-category', 'x');
   const [category] = entry.classificationInput.materialCatalogEvidence;
   return {

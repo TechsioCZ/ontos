@@ -14,7 +14,7 @@ import type { ContextAccessService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { ActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import type { ActionRepositoryService } from '../../../../packages/core-runtime/src/actions/repository.ts';

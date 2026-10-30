@@ -56,6 +56,10 @@ export const cs = {
     emptyCategory: "V této kategorii momentálně nejsou žádné produkty.",
     recommendations: "Mohlo by vás zajímat…",
     firstSteps: "První kroky v e-shopu",
+    filters: {
+      priceInformation:
+        "Ceny jsou za prodejní jednotku s DPH. Cenu konkrétní varianty najdete v detailu produktu.",
+    },
   },
   home: {
     partnerTitle: "Partnerský program",
@@ -160,6 +164,11 @@ export const cs = {
     deliveryInformation: "Způsob dopravy a jeho cenu vyberete v dalším kroku.",
     noOnlinePayment: "Objednávku odešlete bez online platby.",
     orderTrackingInformation: "Stav objednávky můžete sledovat ve svém účtu.",
+    quote: {
+      label: "Kontrola cen a dostupnosti",
+      checking: "Ověřujeme aktuální ceny a dostupnost zboží…",
+      verified: "Ceny a dostupnost jsou aktuální.",
+    },
     demoNotice:
       "Toto je klikací ukázka. Údaje se nikam neposílají a nevznikne skutečná objednávka.",
     contactTitle: "Kontaktní a dodací údaje",
@@ -170,6 +179,13 @@ export const cs = {
     city: "Město",
     postcode: "PSČ",
     summaryTitle: "Souhrn objednávky",
+  },
+  account: {
+    phone: "Telefonní kontakt",
+    phonePlaceholder: "Telefonní číslo",
+    phonePrefix: "Telefonní předvolba",
+    czechia: "Česká republika",
+    newsletterHeading: "Přejete si dostávat občasné e-maily s aktuálními nabídkami",
   },
   confirmation: {
     title: "Ukázková objednávka je hotová",

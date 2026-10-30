@@ -7,17 +7,14 @@ import type {
 } from '@app/consent-authority-contracts';
 import { Schema } from 'effect';
 
-import {
-  CustomerConsentRequestIdSchema,
-  CustomerNoticeVersionIdSchema,
-} from '../../../shared/portal-auth/consent-api.ts';
+import { CustomerConsentRequestIdSchema } from '../../../shared/portal-auth/consent-api.ts';
 import { EnrollmentResourceIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { CommercePortalAuthProviderSubjectIdSchema } from '../session/contracts.ts';
 
 export const CustomerConsentReceiptSchema = Schema.Struct({
   acknowledgedAt: Schema.DateTimeUtcFromString,
   decision: Schema.Literals(['GRANTED', 'WITHDRAWN']),
-  noticeVersionId: CustomerNoticeVersionIdSchema,
+  noticeVersionId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CustomerNoticeVersionId')),
   partyId: EnrollmentResourceIdSchema,
   providedLanguage: Schema.String,
   providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,

@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { DateTime, Effect, Option } from 'effect';
+import { Crypto, DateTime, Effect, Option } from 'effect';
 
 import {
   InvalidPrivacyNoticeContent,
@@ -10,16 +9,20 @@ import type {
   PrivacyNoticeVersion,
 } from '../../shared/domain/privacy-notice-version.ts';
 import type { PrivacyNoticeVersionRef } from '../../shared/resources/privacy-notice-version.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-persistence-error.ts';
 
 export interface PrivacyNoticeVersionCatalog {
   addVersion: (
     noticeId: string,
     input: CreatePrivacyNoticeVersionInput,
-  ) => Effect.Effect<PrivacyNoticeVersion, InvalidPrivacyNoticeContent | PrivacyNoticeVersionNotFound>;
+  ) => Effect.Effect<
+    PrivacyNoticeVersion,
+    InvalidPrivacyNoticeContent | PrivacyNoticeVersionNotFound | PrivacyOperationPersistenceError
+  >;
   create: (
     tenantId: string,
     input: CreatePrivacyNoticeVersionInput,
-  ) => Effect.Effect<PrivacyNoticeVersion, InvalidPrivacyNoticeContent>;
+  ) => Effect.Effect<PrivacyNoticeVersion, InvalidPrivacyNoticeContent | PrivacyOperationPersistenceError>;
   get: (noticeId: string, versionNumber?: number) => Effect.Effect<Option.Option<PrivacyNoticeVersion>>;
 }
 
@@ -44,13 +47,24 @@ const validateContent = (
   return Effect.succeed(input);
 };
 
-export const makeInMemoryPrivacyNoticeVersionCatalog = (): PrivacyNoticeVersionCatalog => {
+const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
   const notices = new Map<string, PrivacyNoticeVersion[]>();
+  const nextIdentifier = (reason: string) =>
+    crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.catchTag('PlatformError', () =>
+          Effect.fail(
+            new PrivacyOperationPersistenceError({ code: 'privacy_operation_persistence_unavailable', reason }),
+          ),
+        ),
+      );
   const createVersion = (options: {
     readonly input: CreatePrivacyNoticeVersionInput;
     readonly noticeId: string;
     readonly recordedAt: string;
     readonly tenantId: string;
+    readonly versionId: string;
     readonly versionNumber: number;
   }): PrivacyNoticeVersion => ({
     applicableScope: options.input.applicableScope,
@@ -61,7 +75,7 @@ export const makeInMemoryPrivacyNoticeVersionCatalog = (): PrivacyNoticeVersionC
     language: options.input.language,
     noticeRef: ref(options.tenantId, options.noticeId),
     recordedAt: options.recordedAt,
-    versionId: randomUUID(),
+    versionId: options.versionId,
     versionNumber: options.versionNumber,
     wording: options.input.wording,
   });
@@ -83,11 +97,13 @@ export const makeInMemoryPrivacyNoticeVersionCatalog = (): PrivacyNoticeVersionC
       }
       const valid = yield* validateContent(input);
       const recordedAt = DateTime.formatIso(yield* DateTime.now);
+      const versionId = yield* nextIdentifier('Notice Version identifier could not be generated');
       const version = createVersion({
         input: valid,
         noticeId,
         recordedAt,
         tenantId: first.noticeRef.tenantId,
+        versionId,
         versionNumber: current.length + 1,
       });
       notices.set(noticeId, [...current, version]);
@@ -95,9 +111,15 @@ export const makeInMemoryPrivacyNoticeVersionCatalog = (): PrivacyNoticeVersionC
     }),
     create: Effect.fn('makeInMemoryPrivacyNoticeVersionCatalog.create')(function* create(tenantId, input) {
       const valid = yield* validateContent(input);
-      const noticeId = randomUUID();
+      const [noticeId, versionId] = yield* Effect.all(
+        [
+          nextIdentifier('Privacy Notice identifier could not be generated'),
+          nextIdentifier('Notice Version identifier could not be generated'),
+        ],
+        { concurrency: 2 },
+      );
       const recordedAt = DateTime.formatIso(yield* DateTime.now);
-      const version = createVersion({ input: valid, noticeId, recordedAt, tenantId, versionNumber: 1 });
+      const version = createVersion({ input: valid, noticeId, recordedAt, tenantId, versionId, versionNumber: 1 });
       notices.set(noticeId, [version]);
       return version;
     }),
@@ -112,3 +134,9 @@ export const makeInMemoryPrivacyNoticeVersionCatalog = (): PrivacyNoticeVersionC
       }),
   };
 };
+
+export const makeInMemoryPrivacyNoticeVersionCatalog = (): Effect.Effect<
+  PrivacyNoticeVersionCatalog,
+  never,
+  Crypto.Crypto
+> => Effect.service(Crypto.Crypto).pipe(Effect.map(makeCatalog));

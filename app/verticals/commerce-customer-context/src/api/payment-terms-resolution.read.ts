@@ -114,16 +114,17 @@ export const paymentTermsResolutionRead = defineRead(
       );
     }
     return Effect.gen(function* makePaymentTermResolutionServices() {
-      const catalog = yield* paymentTermCatalogPortFromEnvironment({
-        compositionRevision,
-        legalEntityId,
-        requestCorrelation: scope.correlationId,
-      });
-      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
-      const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
-        transaction,
-        scope,
-        compositionRevision,
+      // Preserve catalog-first acquisition and failure order without starting governed reads.
+      const [catalog, policyService] = yield* Effect.all(
+        [
+          paymentTermCatalogPortFromEnvironment({
+            compositionRevision,
+            legalEntityId,
+            requestCorrelation: scope.correlationId,
+          }),
+          customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
+        ],
+        { concurrency: 1 },
       );
       const policy = customerCommercePaymentTermsPolicyResolver(
         'PROFILE',

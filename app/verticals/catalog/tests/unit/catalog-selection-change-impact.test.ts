@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -300,7 +301,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
       const impact = catalogSelectionOpenPopulationImpactForScope(transaction, scope);
       const impacted = yield* impact.assess({ purpose: 'PURCHASE_ACCEPTANCE' });
       expect(impacted).toMatchObject({ kind: 'POPULATION_UNAVAILABLE' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('propagates a failing Cart owner read as a typed owner error', () =>
@@ -317,7 +318,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
       const impact = catalogSelectionOpenPopulationImpactForScope(transaction, scope, failing);
       const failure = yield* Effect.flip(impact.assess({ purpose: 'PURCHASE_ACCEPTANCE' }));
       expect(failure).toBeInstanceOf(CartOpenSelectionPopulationUnavailable);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('proves an empty but owner-confirmed population', () =>
@@ -334,7 +335,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
         },
       });
       expect(snapshot).toEqual({ evidence: [], kind: 'PROVEN' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('blocks when an affected open selection has no Current-VALID Catalog evidence', () =>
@@ -351,7 +352,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
         },
       });
       expect(snapshot).toMatchObject({ kind: 'NOT_PROVEN' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('proves a complete population whose affected selections are Current-VALID', () =>
@@ -368,7 +369,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
         },
       });
       expect(snapshot.kind).toBe('PROVEN');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps every Catalog path fail-closed without an injected owner population', () =>
@@ -382,7 +383,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
       const setImpact = setCompositionSelectionImpactForScope(transaction, scope);
       const setFailure = yield* Effect.flip(setImpact.verify(setImpactInput));
       expect(setFailure).toBeInstanceOf(SetCompositionPersistenceUnavailable);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('succeeds when the caller supplies a complete owner population and Catalog evidence is VALID', () =>
@@ -399,7 +400,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
         assessValid,
       );
       expect(yield* provenPackage.verify(packageImpactInput)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('blocks an affected Package or Set transition when Catalog evidence is not VALID', () =>
@@ -418,7 +419,7 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
         assessInvalid,
       );
       expect(yield* setImpact.verify(setImpactInput)).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('exposes the exact Cart owner port and Catalog evidence seam', () => {
@@ -516,7 +517,7 @@ describe('Catalog configuration change impact (#479 wiring)', () => {
         assessInvalid,
       );
       expect(yield* impact.verify(displayOnlyConfigurationChange)).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('re-reads the complete Cart population and rejects a changed revision token', () =>
@@ -527,7 +528,7 @@ describe('Catalog configuration change impact (#479 wiring)', () => {
       const impact = productConfigurationSelectionImpactForScope(transaction, scope, owner.port, assessInvalid);
       expect(yield* impact.verify(definitionImpactInput)).toBe(false);
       expect(owner.readCount()).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('accepts only the same twice-decoded complete Cart population scope', () =>
@@ -548,6 +549,6 @@ describe('Catalog configuration change impact (#479 wiring)', () => {
       const failure = yield* Effect.flip(invalidImpact.verify(definitionImpactInput));
       expect(failure).toBeInstanceOf(ProductConfigurationPersistenceUnavailable);
       expect(incomplete.readCount()).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

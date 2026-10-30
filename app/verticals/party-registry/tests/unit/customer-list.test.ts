@@ -136,7 +136,9 @@ it.effect('reads scoped customers, resolves aliases, and loads Party facts in on
       { legalEntityId, tenantId },
       { includeArchived: false, limit: 50 },
       (partyIds) =>
-        Effect.succeed(new Map(partyIds.map((partyId) => [partyId, partyId === aliasPartyId ? canonicalPartyId : partyId]))),
+        Effect.succeed(
+          new Map(partyIds.map((partyId) => [partyId, partyId === aliasPartyId ? canonicalPartyId : partyId])),
+        ),
     );
 
     expect(selectedTables).toEqual([

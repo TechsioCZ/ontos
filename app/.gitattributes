@@ -1,0 +1,2 @@
+patches/*.patch text eol=lf
+apps/shell-super-app/generated/ui-candidates/*.txt text eol=lf

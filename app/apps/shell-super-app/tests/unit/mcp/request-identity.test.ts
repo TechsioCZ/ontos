@@ -2,7 +2,7 @@
 import { ActionTransportMetadataSchema } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { Deferred, Effect, Layer, Option, Ref, Schema } from 'effect';
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { AgentActionRequestIdentity } from '../../../api/auth/agent-action-request-identity.ts';

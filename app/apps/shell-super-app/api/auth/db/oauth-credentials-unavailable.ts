@@ -1,6 +1,6 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class OAuthCredentialsUnavailable extends Schema.TaggedError<OAuthCredentialsUnavailable>()(
-  'OAuthCredentialsUnavailable',
-  { cause: Schema.Unknown },
-) {}
+/** Internal persistence failure; public transports map it to their own sanitized error contract. */
+export class OAuthCredentialsUnavailable extends Data.TaggedError('OAuthCredentialsUnavailable')<{
+  readonly cause: unknown;
+}> {}

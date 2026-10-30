@@ -4,24 +4,22 @@ import { DateTime, Option } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { PlanItem, Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
 
-export const pragueZone = DateTime.zoneMakeNamedUnsafe('Europe/Prague');
+const pragueTimeZone = 'Europe/Prague';
+export const pragueZone = DateTime.zoneMakeNamedUnsafe(pragueTimeZone);
 
-export const visitKindMeta: Record<
-  VisitKind,
-  { readonly label: string; readonly icon: string; readonly tone: string }
-> = {
+export const visitKindMeta = {
   call: { icon: 'icon-[mdi--phone-outline]', label: 'Telefonát', tone: 'bg-info-light text-info' },
   email: { icon: 'icon-[mdi--email-outline]', label: 'E-mail', tone: 'bg-secondary-light text-fg-secondary' },
   video: { icon: 'icon-[mdi--video-outline]', label: 'Videohovor', tone: 'bg-warning-light text-warning' },
   visit: { icon: 'icon-[mdi--handshake-outline]', label: 'Osobní návštěva', tone: 'bg-success-light text-success' },
-};
+} satisfies Record<VisitKind, { readonly icon: string; readonly label: string; readonly tone: string }>;
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
-const zoned = (iso: string) => Option.map(DateTime.make(iso), (value) => DateTime.setZone(value, pragueZone));
+const zoned = (iso: DateTime.Utc) => Option.map(DateTime.make(iso), (value) => DateTime.setZone(value, pragueZone));
 
 /** ISO instant → { date: 'YYYY-MM-DD', time: 'HH:MM' } in Prague time (for form inputs). */
-export const localInputs = (iso: string) =>
+export const localInputs = (iso: DateTime.Utc) =>
   Option.match(zoned(iso), {
     onNone: () => ({ date: '', time: '' }),
     onSome: (value) => {
@@ -35,8 +33,8 @@ export const localInputs = (iso: string) =>
 
 /** Prague-local date + time inputs → ISO instant, or undefined when incomplete. */
 export const isoFromLocal = (date: string, time: string): string | undefined => {
-  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date);
-  const timeMatch = /^(\d{2}):(\d{2})$/u.exec(time === '' ? '00:00' : time);
+  const dateMatch = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u.exec(date);
+  const timeMatch = /^(?<hour>\d{2}):(?<minute>\d{2})$/u.exec(time === '' ? '00:00' : time);
   if (dateMatch === null || timeMatch === null) {
     return undefined;
   }
@@ -58,7 +56,7 @@ export const isoFromLocal = (date: string, time: string): string | undefined => 
 };
 
 /** Prague calendar day of an ISO instant (YYYY-MM-DD). */
-export const localDay = (iso: string) => localInputs(iso).date;
+export const localDay = (iso: DateTime.Utc) => localInputs(iso).date;
 
 /** Calendar day shifted by whole days (YYYY-MM-DD in, YYYY-MM-DD out). */
 export const shiftDay = (day: string, days: number) =>
@@ -76,36 +74,37 @@ export const daysBetween = (fromDay: string, toDay: string) => {
     : 0;
 };
 
-const weekdayFormat = new Intl.DateTimeFormat('cs-CZ', { timeZone: 'Europe/Prague', weekday: 'long' });
+const weekdayFormat = new Intl.DateTimeFormat('cs-CZ', { timeZone: pragueTimeZone, weekday: 'long' });
 const dayFormat = new Intl.DateTimeFormat('cs-CZ', {
   day: 'numeric',
   month: 'numeric',
-  timeZone: 'Europe/Prague',
+  timeZone: pragueTimeZone,
   year: 'numeric',
 });
 const shortDayFormat = new Intl.DateTimeFormat('cs-CZ', {
   day: 'numeric',
   month: 'numeric',
-  timeZone: 'Europe/Prague',
+  timeZone: pragueTimeZone,
 });
-const timeFormat = new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Prague' });
-const monthFormat = new Intl.DateTimeFormat('cs-CZ', { month: 'long', timeZone: 'Europe/Prague', year: 'numeric' });
+const timeFormat = new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', timeZone: pragueTimeZone });
+const monthFormat = new Intl.DateTimeFormat('cs-CZ', { month: 'long', timeZone: pragueTimeZone, year: 'numeric' });
 
-const epoch = (iso: string) => Option.getOrUndefined(Option.map(DateTime.make(iso), DateTime.toEpochMillis));
-const dayEpoch = (day: string) => epoch(`${day}T12:00:00.000Z`);
+const epoch = (iso: DateTime.Utc) => Option.getOrUndefined(Option.map(DateTime.make(iso), DateTime.toEpochMillis));
+const dayEpoch = (day: string) =>
+  Option.getOrUndefined(Option.map(DateTime.make(`${day}T12:00:00.000Z`), DateTime.toEpochMillis));
 
 const fmt = (format: Intl.DateTimeFormat, ms: number | undefined) => (ms === undefined ? '—' : format.format(ms));
 
 /** `20. 10. 2026 9:30` */
-export const formatVisitTime = (iso: string) => `${fmt(dayFormat, epoch(iso))} ${fmt(timeFormat, epoch(iso))}`;
-export const formatVisitDay = (iso: string) => fmt(dayFormat, epoch(iso));
-export const formatClock = (iso: string) => fmt(timeFormat, epoch(iso));
+export const formatVisitTime = (iso: DateTime.Utc) => `${fmt(dayFormat, epoch(iso))} ${fmt(timeFormat, epoch(iso))}`;
+export const formatVisitDay = (iso: DateTime.Utc) => fmt(dayFormat, epoch(iso));
+export const formatClock = (iso: DateTime.Utc) => fmt(timeFormat, epoch(iso));
 /** `20. 10. 2026` for a calendar day. */
 export const formatDay = (day: string) => fmt(dayFormat, dayEpoch(day));
 export const formatShortDay = (day: string) => fmt(shortDayFormat, dayEpoch(day));
 export const formatWeekday = (day: string) => fmt(weekdayFormat, dayEpoch(day));
 /** `říjen 2026` — month heading of the timeline. */
-export const formatMonth = (iso: string) => fmt(monthFormat, epoch(iso));
+export const formatMonth = (iso: DateTime.Utc) => fmt(monthFormat, epoch(iso));
 
 /** "dnes", "včera", "před 5 dny", "za 3 dny" relative to the server's today. */
 export const relativeDay = (day: string, today: string) => {
@@ -156,11 +155,11 @@ export const writableClients = (records: RecordsResponse) =>
 export const canWriteVisits = (records: RecordsResponse) => records.viewer.writeAll || records.viewer.writeAssigned;
 
 export const sortVisitsDesc = (visits: readonly Visit[]) =>
-  visits.toSorted((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+  visits.toSorted((left, right) => DateTime.Order(right.occurredAt, left.occurredAt));
 
 export const sortPlanAsc = (plan: readonly PlanItem[]) =>
   plan.toSorted(
-    (left, right) => left.dueDate.localeCompare(right.dueDate) || left.createdAt.localeCompare(right.createdAt),
+    (left, right) => left.dueDate.localeCompare(right.dueDate) || DateTime.Order(left.createdAt, right.createdAt),
   );
 
 /** Visits grouped by Prague month, newest month first. */

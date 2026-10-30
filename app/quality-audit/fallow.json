@@ -18,7 +18,14 @@
     "docs/**",
     "specs/**",
     ".agents/**",
-    ".codex/**"
+    ".codex/**",
+    "**/.next/**",
+    "**/.open-next/**",
+    "**/.wrangler/**",
+    "**/.vercel/**",
+    "**/coverage/**",
+    "**/playwright-report/**",
+    "**/test-results/**"
   ],
   "duplicates": {
     "ignoreDefaults": false,

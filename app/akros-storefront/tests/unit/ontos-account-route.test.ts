@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "@/app/api/ontos/account/route";
+import { GET as verifyEmail } from "@/app/commerce-customer-context-api/api/portal-auth/verify-email/route";
 import { portalCookie, registrationInput } from "@/ontos/account";
-import { ownerRequest } from "@/ontos/gateway";
+import { OntosError, ownerRequest } from "@/ontos/gateway";
 
-vi.mock("@/ontos/gateway", () => ({ ownerRequest: vi.fn<typeof ownerRequest>() }));
+vi.mock("@/ontos/gateway", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/ontos/gateway")>()),
+  ownerRequest: vi.fn<typeof ownerRequest>(),
+}));
 vi.mock("@/ontos/config", () => ({
   getConfig: () => ({ legalEntityId: "server-selling-entity" }),
 }));
@@ -34,10 +38,64 @@ function submit(body: object, requestOrigin: string | null = origin) {
   );
 }
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("owner-backed customer account transport", () => {
+  it("loads the admitted account after a transient owner outage", async () => {
+    const account = {
+      id: "provider-subject",
+      partyId: "party",
+      tenantId: "tenant",
+      name: "Real Customer",
+      email: "real@example.test",
+    };
+    vi.mocked(ownerRequest)
+      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ state: "authenticated", account }));
+    const response = await GET(
+      new Request(`${origin}/api/ontos/account`, {
+        headers: { cookie: "commerce-portal.session_token=real" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ account });
+    expect(ownerRequest).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    registration,
+    { operation: "login", email: registration.email, password: registration.password },
+    { operation: "resend-verification", email: registration.email },
+    { operation: "logout" },
+  ])("never replays an unavailable credential or account write", async (input) => {
+    vi.mocked(ownerRequest).mockImplementation(async () => Response.json({}, { status: 503 }));
+    const response = await submit(input);
+    expect(response.status).toBe(503);
+    expect(ownerRequest).toHaveBeenCalledOnce();
+  });
+  it("never replays credentials after an ambiguous transport failure", async () => {
+    vi.mocked(ownerRequest).mockRejectedValue(
+      new OntosError("Owner unavailable", 503, "backend_unreachable"),
+    );
+    const response = await submit({
+      operation: "login",
+      email: registration.email,
+      password: registration.password,
+    });
+    expect(response.status).toBe(503);
+    expect(ownerRequest).toHaveBeenCalledOnce();
+  });
+  it("never replays a GET that consumes an email-verification token", async () => {
+    vi.mocked(ownerRequest).mockImplementation(async () => Response.json({}, { status: 503 }));
+    const response = await verifyEmail(
+      new Request(
+        `${origin}/commerce-customer-context-api/api/portal-auth/verify-email?token=one-time-test-token`,
+      ),
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`${origin}/overeni-emailu?stav=nedostupne`);
+    expect(ownerRequest).toHaveBeenCalledOnce();
+  });
   it("forwards only the isolated portal realm cookie", () => {
     expect(
       portalCookie(

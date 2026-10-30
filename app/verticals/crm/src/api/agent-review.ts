@@ -6,8 +6,9 @@
  */
 import type { ReadEvidenceMetadata } from '@app/core-runtime';
 import { agentFieldLines, agentRecordHolds } from '@app/shared-contracts/agent-diff';
+import { AgentCommandSourceSchema, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
 import type { AgentCommand, AgentDiffLine, AgentRevertPlan } from '@app/shared-contracts/agent-proposals';
-import { AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
+
 import type { AgentReviewItem, AgentReviewItemRequest } from '@app/shared-contracts/agent-review';
 import {
   AGENT_REVERT_MISSING_BEFORE,
@@ -15,11 +16,11 @@ import {
   agentRevertCommands,
   agentRevertNone,
 } from '@app/shared-contracts/agent-revert';
-import { Predicate } from 'effect';
+import { Predicate, Schema } from 'effect';
 
-type Rec = Readonly<Record<string, unknown>>;
-
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+const RecSchema = AgentCommandSourceSchema;
+type Rec = typeof RecSchema.Type;
+const isRecord = Schema.is(RecSchema);
 
 /** The reader's CRM rights as their records read reports them. */
 export interface CrmReviewViewer {
@@ -31,23 +32,25 @@ export interface CrmReviewViewer {
 }
 
 /** Commands that change one client, keyed by the field holding the client id. */
-const CLIENT_ID_FIELD: Readonly<Record<string, string>> = {
-  AddContactPerson: 'clientId',
-  ArchiveClient: 'id',
-  AssignClient: 'clientId',
-  LinkClientParty: 'clientId',
-  PlanContact: 'clientId',
-  RecordVisit: 'clientId',
-  RestoreClient: 'id',
-  UpdateClient: 'id',
-};
+const CLIENT_ID_FIELD = new Map(
+  Object.entries({
+    AddContactPerson: 'clientId',
+    ArchiveClient: 'id',
+    AssignClient: 'clientId',
+    LinkClientParty: 'clientId',
+    PlanContact: 'clientId',
+    RecordVisit: 'clientId',
+    RestoreClient: 'id',
+    UpdateClient: 'id',
+  }),
+);
 
 /** The client a command changes, or undefined for commands that do not target one client. */
 export const clientIdOf = (command: AgentCommand): string | undefined => {
   const tag = command['_tag'];
-  const field = typeof tag === 'string' ? CLIENT_ID_FIELD[tag] : undefined;
+  const field = Schema.is(Schema.String)(tag) ? CLIENT_ID_FIELD.get(tag) : undefined;
   const id = field === undefined ? undefined : command[field];
-  return typeof id === 'string' && id !== '' ? id : undefined;
+  return Schema.is(Schema.String)(id) && id !== '' ? id : undefined;
 };
 
 /** Records only the exact visible client of a single-record read, never a list or review batch. */
@@ -58,7 +61,7 @@ export const clientReadEvidence = (resultCount: number, client?: { readonly id: 
   return { resultCount, targetResource: { resourceId: client.id, resourceType: 'demo.crm.client' } };
 };
 
-const CLIENT_LABELS: Readonly<Record<string, string>> = {
+const CLIENT_LABELS = {
   address: 'Adresa',
   email: 'E-mail',
   kind: 'Druh klienta',
@@ -69,7 +72,7 @@ const CLIENT_LABELS: Readonly<Record<string, string>> = {
   segment: 'Segment',
   vatNo: 'DIČ',
   website: 'Web',
-};
+} satisfies Readonly<Record<string, string>>;
 const VALUE_OPTIONS = {
   valueLabels: {
     kind: { organization: 'Firma', person: 'Osoba' },
@@ -86,7 +89,7 @@ const VALUE_OPTIONS = {
   },
 };
 
-export const clientDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
+export const clientDiff = (command: AgentCommand, before?: Rec): AgentDiffLine[] | undefined => {
   const { patch } = command;
   return Predicate.isTagged(command, 'UpdateClient') && isRecord(patch)
     ? agentFieldLines(patch, CLIENT_LABELS, before, new Set(), VALUE_OPTIONS)
@@ -135,26 +138,39 @@ export const reviewCrmProposal = (
   const client = clientId === undefined ? undefined : clients.find((entry) => entry['id'] === clientId);
   const visible = clientId === undefined || client !== undefined;
   if (stage === 'history') {
-    const lines = clientDiff(command, undefined);
-    return { key, visible, ...(lines === undefined ? {} : { diff: lines }) };
+    const lines = clientDiff(command);
+    const historyItem: AgentReviewItem = { key, visible };
+    if (lines !== undefined) {
+      Object.assign(historyItem, { diff: lines });
+    }
+    return historyItem;
   }
   if (stage === 'undo') {
     const { patch } = command;
     const inPlace = Predicate.isTagged(command, 'UpdateClient')
       ? client !== undefined && agentRecordHolds(patch, client)
       : undefined;
-    return { key, visible, ...(inPlace === undefined ? {} : { stillInPlace: inPlace }) };
+    const undoItem: AgentReviewItem = { key, visible };
+    if (inPlace !== undefined) {
+      Object.assign(undoItem, { stillInPlace: inPlace });
+    }
+    return undoItem;
   }
   const lines = clientDiff(command, client);
   const blocked = clientBlockedReason(command, viewer, client);
   const name = client?.['name'];
-  return {
-    key,
-    revert: clientRevert(command, client),
-    visible,
-    ...(blocked === undefined ? {} : { blockedReason: blocked }),
-    ...(lines === undefined ? {} : { diff: lines }),
-    ...(Predicate.isTagged(command, 'UpdateClient') ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
-    ...(typeof name === 'string' && name !== '' ? { targetName: name.slice(0, 300) } : {}),
-  };
+  const item: AgentReviewItem = { key, revert: clientRevert(command, client), visible };
+  if (blocked !== undefined) {
+    Object.assign(item, { blockedReason: blocked });
+  }
+  if (lines !== undefined) {
+    Object.assign(item, { diff: lines });
+  }
+  if (!Predicate.isTagged(command, 'UpdateClient')) {
+    Object.assign(item, { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE });
+  }
+  if (Schema.is(Schema.String)(name) && name !== '') {
+    Object.assign(item, { targetName: name.slice(0, 300) });
+  }
+  return item;
 };

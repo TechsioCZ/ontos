@@ -2,8 +2,9 @@
 // OWNED BY THE `security` LANE. Tags are globally unique (`SecurityDevice…`, `SecurityIncident…`).
 // The central dispatcher (shared/agendas.ts) picks the agenda by tag; nothing else needs editing.
 // Evidence only („pouze evidence“): no command ever talks to a physical device.
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Struct } from 'effect';
 import {
+  optionalField,
   auditCreated,
   auditUpdated,
   defineAgenda,
@@ -16,7 +17,7 @@ import {
   PropertyRefSchema,
   TextSchema,
 } from '../domain/common.ts';
-import type { OpsCommandInput } from '../domain/common.ts';
+import type { OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import { StoredFileRefSchema } from '../domain/documents.ts';
 import {
   SecurityAttachmentKindSchema,
@@ -122,12 +123,12 @@ const withHistory = (device: SecurityDevice, entry: SecurityHistoryEntry): Secur
 
 const findDevice = (state: SecurityState, deviceId: string) =>
   Effect.fromNullishOr(state.devices.find((device) => device.id === deviceId)).pipe(
-    Effect.mapError(() => opsNotFound('Bezpečnostní zařízení neexistuje.')),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound('Bezpečnostní zařízení neexistuje.'))),
   );
 
 const findIncident = (state: SecurityState, incidentId: string) =>
   Effect.fromNullishOr((state.incidents ?? []).find((incident) => incident.id === incidentId)).pipe(
-    Effect.mapError(() => opsNotFound('Porucha neexistuje.')),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound('Porucha neexistuje.'))),
   );
 
 const replaceDevice = (state: SecurityState, device: SecurityDevice): SecurityState => ({
@@ -140,13 +141,9 @@ const replaceIncident = (state: SecurityState, incident: SecurityIncident): Secu
   incidents: (state.incidents ?? []).map((entry) => (entry.id === incident.id ? incident : entry)),
 });
 
-const definedOnly = <Value extends object>(value: Value): Partial<Value> =>
-  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Partial<Value>;
-
 const createDevice = Effect.fn('FacilityOperations.Security.createDevice')(function* createDevice(
   state: SecurityState,
-  value: CommandOf<'SecurityDeviceCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'SecurityDeviceCreate'>>,
 ) {
   const id = yield* mintId(SecurityDeviceIdSchema, input.resourceId);
   if (state.devices.some((device) => device.id === id)) {
@@ -175,11 +172,22 @@ const updateDevice = Effect.fn('FacilityOperations.Security.updateDevice')(funct
   const { _tag, clear, deviceId, ...changes } = value;
   void _tag;
   void deviceId;
-  const cleared: Record<string, unknown> = { ...device, ...definedOnly(changes) };
-  for (const key of clear ?? []) {
-    delete cleared[key];
-  }
-  const next = auditUpdated(cleared as SecurityDevice, input);
+  const fields = {
+    ...device,
+    ...optionalField('administrator', changes.administrator),
+    ...optionalField('deviceType', changes.deviceType),
+    ...optionalField('lastInspectionDate', changes.lastInspectionDate),
+    ...optionalField('location', changes.location),
+    ...optionalField('locationDetail', changes.locationDetail),
+    ...optionalField('name', changes.name),
+    ...optionalField('nextInspectionDate', changes.nextInspectionDate),
+    ...optionalField('note', changes.note),
+    ...optionalField('serialNumber', changes.serialNumber),
+    ...optionalField('state', changes.state),
+    ...optionalField('supplier', changes.supplier),
+  };
+  const cleared = Struct.omit(fields, clear ?? []);
+  const next = auditUpdated(cleared, input);
   const changedState = value.state !== undefined && value.state !== device.state;
   const summary = changedState ? `Změna stavu: ${device.state} → ${value.state}` : 'Údaje karty upraveny';
   const updated = withHistory(next, historyEntry(input, changedState ? 'state_changed' : 'updated', summary));
@@ -198,9 +206,10 @@ const recordInspection = Effect.fn('FacilityOperations.Security.recordInspection
   const next: SecurityDevice = {
     ...auditUpdated(device, input),
     lastInspectionDate: value.inspectionDate,
-    ...(value.nextInspectionDate === undefined ? {} : { nextInspectionDate: value.nextInspectionDate }),
+    ...optionalField('nextInspectionDate', value.nextInspectionDate),
   };
-  const summary = `Kontrola provedena ${value.inspectionDate}${value.note === undefined || value.note === '' ? '' : `: ${value.note}`}`;
+  const inspectionNote = value.note === undefined || value.note === '' ? '' : `: ${value.note}`;
+  const summary = `Kontrola provedena ${value.inspectionDate}${inspectionNote}`;
   return {
     entityIds: [yield* entityIdOf(device.id)],
     state: replaceDevice(state, withHistory(next, historyEntry(input, 'inspection', summary))),
@@ -280,11 +289,11 @@ const linkTask = Effect.fn('FacilityOperations.Security.linkTask')(function* lin
   };
 });
 
-const allowedIncidentTransitions: Readonly<Record<SecurityIncidentState, readonly SecurityIncidentState[]>> = {
+const allowedIncidentTransitions = {
   in_progress: ['resolved', 'reported'],
   reported: ['in_progress', 'resolved'],
   resolved: ['in_progress'],
-};
+} satisfies Readonly<Record<SecurityIncidentState, readonly SecurityIncidentState[]>>;
 
 const changeIncidentState = Effect.fn('FacilityOperations.Security.changeIncidentState')(function* changeIncidentState(
   state: SecurityState,
@@ -292,7 +301,7 @@ const changeIncidentState = Effect.fn('FacilityOperations.Security.changeInciden
   input: OpsCommandInput,
 ) {
   const incident = yield* findIncident(state, value.incidentId);
-  if (!allowedIncidentTransitions[incident.state].includes(value.state)) {
+  if (!allowedIncidentTransitions[incident.state].some((next) => next === value.state)) {
     return yield* opsConflict('Tuto změnu stavu poruchy nelze provést.');
   }
   const base = auditUpdated(incident, input);
@@ -300,7 +309,7 @@ const changeIncidentState = Effect.fn('FacilityOperations.Security.changeInciden
     value.state === 'resolved'
       ? {
           ...base,
-          ...(value.resolution === undefined || value.resolution === '' ? {} : { resolution: value.resolution }),
+          ...optionalField('resolution', value.resolution === '' ? undefined : value.resolution),
           resolvedAt: input.now,
           state: 'resolved',
         }
@@ -314,12 +323,12 @@ const changeIncidentState = Effect.fn('FacilityOperations.Security.changeInciden
   const otherOpen = (withIncident.incidents ?? []).some(
     (entry) => entry.deviceId === device.id && entry.id !== incident.id && isOpenIncident(entry),
   );
-  const deviceState =
-    value.state === 'resolved' && device.state === 'fault' && !otherOpen
-      ? 'in_operation'
-      : value.state !== 'resolved' && device.state === 'in_operation'
-        ? 'fault'
-        : device.state;
+  let deviceState = device.state;
+  if (value.state === 'resolved' && device.state === 'fault' && !otherOpen) {
+    deviceState = 'in_operation';
+  } else if (value.state !== 'resolved' && device.state === 'in_operation') {
+    deviceState = 'fault';
+  }
   const label = { in_progress: 'v řešení', reported: 'nahlášeno', resolved: 'vyřešeno' }[value.state];
   const nextDevice = withHistory(
     deviceState === device.state ? device : auditUpdated({ ...device, state: deviceState }, input),
@@ -331,7 +340,7 @@ const changeIncidentState = Effect.fn('FacilityOperations.Security.changeInciden
 /** Pure reducer: applies one command to the `security` state. Persistence decides when it is saved. */
 export const evolveSecurity = (state: SecurityState, command: SecurityCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('SecurityDeviceCreate', (value) => createDevice(state, value, input)),
+    Match.tag('SecurityDeviceCreate', (value) => createDevice(state, { input, value })),
     Match.tag('SecurityDeviceUpdate', (value) => updateDevice(state, value, input)),
     Match.tag('SecurityDeviceRecordInspection', (value) => recordInspection(state, value, input)),
     Match.tag('SecurityDeviceAttach', (value) => attachFile(state, value, input)),

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -123,7 +124,7 @@ describe('Product reactivation committed event and outbox', () => {
         topic: 'commerce.catalog.product-lifecycle-changed.v1',
       });
       expect(Object.keys(state.outbox[0]?.message.payloadJson ?? {})).not.toContain('currentAtCommit');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('emits neither event nor outbox for a rejected reactivation', () =>
@@ -145,7 +146,7 @@ describe('Product reactivation committed event and outbox', () => {
       );
       expect(conflict.events).toHaveLength(0);
       expect(conflict.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects a lifecycle payload whose tenant or state contradicts its Product', () => {

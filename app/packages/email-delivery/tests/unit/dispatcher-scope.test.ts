@@ -86,7 +86,7 @@ describe('undeliverable recipients', () => {
   test('seeded fake addresses are skipped in every runtime', () => {
     for (const transport of ['smtp', 'cloudflare'] as const) {
       const domains = undeliverableDomainsFor(transport, {});
-      for (const address of ['ucetni@demo.ontos', 'management@siampark.demo', 'demo@test.com', 'x@akros.demo']) {
+      for (const address of ['ucetni@demo.ontos', 'management@najempark.demo', 'demo@test.com', 'x@akros.demo']) {
         expect(isUndeliverableRecipient(address, domains)).toBe(true);
       }
       expect(isUndeliverableRecipient('jana.novakova@firma.cz', domains)).toBe(false);

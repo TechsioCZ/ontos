@@ -2,7 +2,7 @@
  * MCP outputSchema of the tools (design §5.3). Kept loose (extra fields allowed) because clients validate
  * structuredContent against it; only the fields the model relies on are listed.
  */
-import type { JsonObject as JsonSchema } from "./catalog.ts";
+import type { JsonObject as JsonSchema } from './catalog.ts';
 
 const STRING = { type: 'string' } as const;
 const ANY = {} as const;

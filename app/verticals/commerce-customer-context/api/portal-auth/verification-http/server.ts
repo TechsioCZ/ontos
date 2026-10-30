@@ -3,7 +3,7 @@ import { Effect, Redacted, Schema } from 'effect';
 import { CommercePortalAuthVerificationCaller } from '../provider/verification-caller-service.ts';
 import { CommercePortalAuthVerificationCallerRejected } from '../provider/verification-caller-rejected.ts';
 import { VerifyExternalAuthenticationRequestSchema } from '../../../shared/portal-auth-contracts.ts';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { CommercePortalAuthVerificationService } from '../provider/verification.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import {

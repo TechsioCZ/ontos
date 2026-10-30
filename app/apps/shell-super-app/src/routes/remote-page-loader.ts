@@ -1,5 +1,5 @@
 import type { ModulePagePreload, ModulePageProps } from '@app/shared-contracts/page-data';
-import { Cache, Effect, Exit, MutableHashMap, Predicate, Schema } from 'effect';
+import { Cache, Context, Effect, Exit, MutableHashMap, Predicate, Schema } from 'effect';
 import type { Duration, Option } from 'effect';
 import type { ComponentType } from 'react';
 
@@ -7,7 +7,11 @@ import { ResolvedModuleTargetSchema } from '../../shared/api.ts';
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
 import type { HomePageModel } from './[lang]/home-page-model.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { prefetchRecordedReads } from './browser-request-cache.ts';
+import {
+  prefetchRecordedReads,
+  withoutRecordedPageReads,
+  withPrimaryModulePreparation,
+} from './browser-request-cache.ts';
 import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from './module-entrypoint-loader.ts';
 
 /** Every exposed page or component: the props its `preloadPage` received, plus the resolved target. */
@@ -32,9 +36,10 @@ export type RemoteState =
 
 export type ReadyRemotePage = Extract<RemoteState, { readonly state: 'ready' }>;
 
-const browserFederationRuntime = __ONTOS_BROWSER_BUILD__
-  ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
-  : Effect.interrupt;
+const browserFederationRuntime =
+  import.meta.env.MODERN_TARGET === 'browser'
+    ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
+    : Effect.interrupt;
 
 /** What identifies one remote page module: the release, its remote container and the exposed page. */
 const RemotePageSchema = ResolvedModuleTargetSchema.mapFields(({ compositionRevision, federation }) => ({
@@ -58,53 +63,55 @@ export const remotePageIdentity = ({ compositionRevision, federation }: RemotePa
 const readyPages = MutableHashMap.empty<string, ReadyRemotePage>();
 
 const loadRemotePageOnce = (target: RemotePage) =>
-  Effect.flatMap(pinBrowserModuleTarget(target, document), () => browserFederationRuntime).pipe(
-    Effect.flatMap(({ getInstance }) => {
-      const host = getInstance((instance) => instance.name === 'shellSuperApp');
-      if (host === undefined || host === null) {
-        return Effect.succeed<RemoteState>({ reason: 'unavailable', state: 'unavailable' });
-      }
-      const { federation } = target;
-      if (federation.remoteName === host.name) {
-        return Effect.succeed<RemoteState>({ reason: 'incompatible', state: 'unavailable' });
-      }
-      return settleModuleEntrypointLoads([
-        {
-          identity: target,
-          isCompatible: (loaded) =>
-            Predicate.isObjectKeyword(loaded) &&
-            loaded !== null &&
-            'default' in loaded &&
-            Predicate.isFunction(loaded.default) &&
-            (!('preloadPage' in loaded) ||
-              loaded.preloadPage === undefined ||
-              Predicate.isFunction(loaded.preloadPage)),
-          load: () => {
-            host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
-            return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
-          },
-        },
-      ]).pipe(
-        Effect.map(([result]): RemoteState => {
-          if (result === undefined) {
-            return { reason: 'unavailable', state: 'unavailable' };
+  import.meta.env.MODERN_TARGET === 'browser'
+    ? Effect.flatMap(pinBrowserModuleTarget(target, document), () => browserFederationRuntime).pipe(
+        Effect.flatMap(({ getInstance }) => {
+          const host = getInstance((instance) => instance.name === 'shellSuperApp');
+          if (host === undefined || host === null) {
+            return Effect.succeed<RemoteState>({ reason: 'unavailable', state: 'unavailable' });
           }
-          if (result.state === 'unavailable') {
-            return result;
+          const { federation } = target;
+          if (federation.remoteName === host.name) {
+            return Effect.succeed<RemoteState>({ reason: 'incompatible', state: 'unavailable' });
           }
-          if (result.value === null) {
-            return { reason: 'incompatible', state: 'unavailable' };
-          }
-          const { default: Component, preloadPage } = result.value;
-          const ready: ReadyRemotePage =
-            preloadPage === undefined ? { Component, state: 'ready' } : { Component, preloadPage, state: 'ready' };
-          MutableHashMap.set(readyPages, remotePageIdentity(target), ready);
-          return ready;
+          return settleModuleEntrypointLoads([
+            {
+              identity: target,
+              isCompatible: (loaded) =>
+                Predicate.isObjectKeyword(loaded) &&
+                loaded !== null &&
+                'default' in loaded &&
+                Predicate.isFunction(loaded.default) &&
+                (!('preloadPage' in loaded) ||
+                  loaded.preloadPage === undefined ||
+                  Predicate.isFunction(loaded.preloadPage)),
+              load: () => {
+                host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
+                return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
+              },
+            },
+          ]).pipe(
+            Effect.map(([result]): RemoteState => {
+              if (result === undefined) {
+                return { reason: 'unavailable', state: 'unavailable' };
+              }
+              if (result.state === 'unavailable') {
+                return result;
+              }
+              if (result.value === null) {
+                return { reason: 'incompatible', state: 'unavailable' };
+              }
+              const { default: Component, preloadPage } = result.value;
+              const ready: ReadyRemotePage =
+                preloadPage === undefined ? { Component, state: 'ready' } : { Component, preloadPage, state: 'ready' };
+              MutableHashMap.set(readyPages, remotePageIdentity(target), ready);
+              return ready;
+            }),
+          );
         }),
-      );
-    }),
-    Effect.withSpan('RemotePageLoader.load'),
-  );
+        Effect.withSpan('RemotePageLoader.load'),
+      )
+    : Effect.interrupt;
 
 /**
  * Remote page modules by release and exposed page. A route preload and the page share one load, and a revisit
@@ -143,6 +150,14 @@ export const loadRemotePage = (target: RemotePage): Effect.Effect<RemoteState> =
     Effect.orElseSucceed((): RemoteState => ({ reason: 'incompatible', state: 'unavailable' })),
   );
 
+/** Native boundary for module code loading and the legacy recorded-read fallback. */
+export const RemotePagePreparation = Context.Reference<{
+  readonly load: typeof loadRemotePage;
+  readonly prefetch: typeof prefetchRecordedReads;
+}>('RemotePagePreparation', {
+  defaultValue: () => ({ load: loadRemotePage, prefetch: prefetchRecordedReads }),
+});
+
 /** The props a page and its `preloadPage` both receive: the person's context, the route parameters and the query. */
 export const modulePageProps = (
   shell: HomePageModel,
@@ -166,22 +181,19 @@ export const modulePageProps = (
 export const peekRemotePage = (target: RemotePage): Option.Option<ReadyRemotePage> =>
   MutableHashMap.get(readyPages, remotePageIdentity(target));
 
-/** A module's `preloadPage` settles on its own; this only bounds one that never does. */
-const PRELOAD_PAGE_LIMIT = '30 seconds';
-
 const preloadPageData = (remote: RemoteState, props: ModulePageProps) => {
   if (remote.state !== 'ready' || remote.preloadPage === undefined) {
     return Effect.void;
   }
   const { preloadPage } = remote;
-  return Effect.tryPromise(() => preloadPage(props)).pipe(Effect.timeout(PRELOAD_PAGE_LIMIT), Effect.ignore);
+  return withoutRecordedPageReads(() => preloadPage(props)).pipe(Effect.ignore);
 };
 
 /**
- * Prepares a page before it is revealed: loads its remote page module and then runs the module's `preloadPage` with
- * the props the page will receive, beside the warm-up of the reads the path made on its last visit. Waits at most
- * `budget`; answers the module's state, or none when the budget ran out first. A no-op on the server, where a remote
- * never loads.
+ * Loads the remote module, then uses its declared preload or the legacy recorded reads, never both. Waiting for
+ * the module delays the legacy fallback, but avoids replaying an old request beside a fresh declared read.
+ * Module loading and data preparation share the caller's budget. A declared failure or timeout never selects
+ * the fallback. A no-op on the server, where a remote never loads.
  */
 export const prepareModulePage = (
   target: RemotePage,
@@ -191,15 +203,13 @@ export const prepareModulePage = (
 ): Effect.Effect<Option.Option<RemoteState>> =>
   Effect.suspend(() =>
     'document' in globalThis
-      ? Effect.all(
-          [
-            loadRemotePage(target).pipe(Effect.tap((remote) => preloadPageData(remote, props))),
-            prefetchRecordedReads(pathname),
-          ],
-          { concurrency: 2 },
-        ).pipe(
-          Effect.map(([remote]) => remote),
-          Effect.timeoutOption(budget),
-        )
+      ? Effect.gen(function* prepareRemotePage() {
+          const { load, prefetch } = yield* RemotePagePreparation;
+          const remote = yield* load(target);
+          yield* remote.state === 'ready' && remote.preloadPage !== undefined
+            ? preloadPageData(remote, props)
+            : prefetch(pathname);
+          return remote;
+        }).pipe(Effect.timeoutOption(budget), (work) => withPrimaryModulePreparation(pathname, work))
       : Effect.succeedNone,
   );

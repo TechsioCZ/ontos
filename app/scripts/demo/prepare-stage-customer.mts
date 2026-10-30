@@ -5,7 +5,7 @@ import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Config, Console, Effect, Layer, Redacted, Schedule, Schema } from 'effect';
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import {
   CommercePortalAuthDatabase,

@@ -6,7 +6,10 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import type { Effect } from 'effect';
+import type { TOptions } from 'i18next';
 import { useState } from 'react';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
   Asset,
@@ -19,17 +22,13 @@ import { dueBadgeVariant, dueState, instantLabel, isoDateLabel, principalLabel, 
 
 const useK = () => {
   const { t } = useModernI18n();
-  return (key: string, options?: Record<string, unknown>) => t(`facility-operations.assets.${key}`, options);
+  return (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
 };
 
-export const resultVariant = (result: InventoryResult) =>
-  result === 'found'
-    ? ('success' as const)
-    : result === 'missing'
-      ? ('danger' as const)
-      : result === 'difference'
-        ? ('warning' as const)
-        : ('outline' as const);
+const resultVariants = { difference: 'warning', found: 'success', missing: 'danger', pending: 'outline' } as const;
+export const resultVariant = (result: InventoryResult) => resultVariants[result];
+
+const markVariants = { difference: 'warning', found: 'secondary', missing: 'danger' } as const;
 
 const counts = (inventory: Inventory) => ({
   differences: inventory.items.filter((item) => item.result === 'missing' || item.result === 'difference').length,
@@ -49,13 +48,15 @@ const ItemActions = ({
   readonly inventory: Inventory;
   readonly item: InventoryItem;
   readonly onFollowUp: (item: InventoryItem) => void;
-  readonly onSubmit: (command: OpsCommand, successKey: string) => Promise<boolean>;
+  readonly onSubmit: (command: OpsCommand, successKey: string) => Effect.Effect<boolean>;
 }) => {
   const k = useK();
   const mark = (result: InventoryResult) => {
-    void onSubmit(
-      { _tag: 'AssetInventoryMark', assetId: item.assetId, inventoryId: inventory.id, result },
-      'messages.marked',
+    void browserRuntime.runPromise(
+      onSubmit(
+        { _tag: 'AssetInventoryMark', assetId: item.assetId, inventoryId: inventory.id, result },
+        'messages.marked',
+      ),
     );
   };
   if (inventory.status === 'closed') {
@@ -74,7 +75,7 @@ const ItemActions = ({
               onClick={() => mark(result)}
               size="sm"
               theme="outlined"
-              variant={result === 'found' ? 'secondary' : result === 'missing' ? 'danger' : 'warning'}
+              variant={markVariants[result]}
             >
               {k(`inventory.mark.${result}`)}
             </Button>
@@ -88,9 +89,11 @@ const ItemActions = ({
         <Button
           disabled={busy}
           onClick={() => {
-            void onSubmit(
-              { _tag: 'AssetInventoryFollowUpResolve', assetId: item.assetId, inventoryId: inventory.id },
-              'messages.followUpResolved',
+            void browserRuntime.runPromise(
+              onSubmit(
+                { _tag: 'AssetInventoryFollowUpResolve', assetId: item.assetId, inventoryId: inventory.id },
+                'messages.followUpResolved',
+              ),
             );
           }}
           size="sm"
@@ -120,12 +123,12 @@ export const InventoryTab = ({
   readonly onFollowUp: (inventory: Inventory, item: InventoryItem) => void;
   readonly onNew: () => void;
   readonly onOpenAsset: (asset: Asset) => void;
-  readonly onSubmit: (command: OpsCommand, successKey: string) => Promise<boolean>;
+  readonly onSubmit: (command: OpsCommand, successKey: string) => Effect.Effect<boolean>;
   readonly state: AssetsState;
 }) => {
   const k = useK();
   const inventories = (state.inventories ?? []).toSorted((left, right) => right.date.localeCompare(left.date));
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [selectedId, setSelectedId] = useState<string | undefined>();
   const [differencesOnly, setDifferencesOnly] = useState(false);
   const selected =
     inventories.find((entry) => entry.id === selectedId) ??
@@ -203,9 +206,8 @@ export const InventoryTab = ({
                 <Button
                   disabled={busy || stats.pending > 0}
                   onClick={() => {
-                    void onSubmit(
-                      { _tag: 'AssetInventoryClose', inventoryId: selected.id },
-                      'messages.inventoryClosed',
+                    void browserRuntime.runPromise(
+                      onSubmit({ _tag: 'AssetInventoryClose', inventoryId: selected.id }, 'messages.inventoryClosed'),
                     );
                   }}
                   size="sm"

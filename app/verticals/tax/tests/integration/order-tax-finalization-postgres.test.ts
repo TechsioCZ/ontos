@@ -1,7 +1,20 @@
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Data, DateTime, Deferred, Effect, Exit, Fiber, Match, Option, Schema } from 'effect';
+import {
+  Array as Arr,
+  Context,
+  Crypto,
+  Data,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Match,
+  Option,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -19,7 +32,8 @@ import {
   OrderSubmissionRefSchema,
 } from '../../shared/actions/order-tax-finalization.ts';
 import { FinalOrderTaxRequestSchema, FinalOrderTaxResponseSchema } from '../../shared/apis/final-order-tax.ts';
-import { TaxGovernanceAuditEvidenceSchema } from '../../shared/domain/tax-governance-errors.ts';
+import { TaxGovernanceAuditEvidenceSchema, TaxGovernanceConflict } from '../../shared/domain/tax-governance-errors.ts';
+import { SellerNotVatPayerTreatmentSchema } from '../../shared/domain/tax-kernel/tax-treatment.ts';
 import { handleFinalizeOrderTax } from '../../src/actions/finalize-order-tax.action.ts';
 import { readFinalOrderTax } from '../../src/api/final-order-tax.read.ts';
 import type { FinalizeOrderTaxResult } from '../../shared/actions/order-tax-finalization.ts';
@@ -33,6 +47,8 @@ import {
 } from '../../shared/actions/tax-governance.ts';
 import {
   TaxRuleMissingSchema,
+  TaxCaseUnsupportedSchema,
+  TaxNonSuccessOutcomeSchema,
   TaxStateIndeterminateSchema,
 } from '../../shared/domain/tax-kernel/tax-non-success-outcome.ts';
 import {
@@ -46,12 +62,15 @@ import {
 } from '../../src/database/schema.ts';
 import { taxGovernedReadsForScope } from '../../src/services/tax-governed-read.service.ts';
 import { orderTaxFinalizationsForScope } from '../../src/services/order-tax-finalization.service.ts';
+import { orderTaxIntentFingerprint } from '../../src/domain/order-tax-finalization.ts';
+import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import {
   PRICING_RESULT_REF,
   evaluationRequestInput,
+  eligibilityHandoff,
   grossLine,
   pricingLine,
   shippingCharge,
@@ -60,17 +79,31 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
-const tenantId = randomUUID();
-const principalId = randomUUID();
 const T = '2026-06-01T10:00:00.000Z';
 
-const scopeFor = (legalEntityId: string, tenant = tenantId): OperationalScope => ({
-  authContextRef: `better-auth-session:${randomUUID()}`,
-  authMethod: 'session',
-  correlationId: randomUUID(),
-  legalEntityId,
-  principalId,
-  tenantId: tenant,
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const invocationIdOr = (actionInvocationId: string | undefined) =>
+  actionInvocationId === undefined ? nextUuid : Effect.succeed(actionInvocationId);
+
+interface FixtureIdentity {
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+const scopeFor = Effect.fnUntraced(function* fixtureScopeFor(
+  identity: FixtureIdentity,
+  legalEntityId: string,
+  tenant: string = identity.tenantId,
+) {
+  const scope: OperationalScope = {
+    authContextRef: `better-auth-session:${yield* nextUuid}`,
+    authMethod: 'session',
+    correlationId: yield* nextUuid,
+    legalEntityId,
+    principalId: identity.principalId,
+    tenantId: tenant,
+  };
+  return scope;
 });
 
 type CoreTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
@@ -92,15 +125,38 @@ const runScoped = <Value, Failure>(
   );
 
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z'));
-const invocation = (scope: OperationalScope, actionInvocationId: string = randomUUID(), at: Date = operationTime) => ({
+const invocation = (scope: OperationalScope, actionInvocationId: string, at: Date = operationTime) => ({
   actionInvocationId,
-  actorPrincipalId: principalId,
+  actorPrincipalId: scope.principalId,
   legalEntityId: scope.legalEntityId ?? '',
   operationTime: at,
   tenantId: scope.tenantId,
 });
 
-const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
+const actionContext = <Services>(
+  scope: OperationalScope,
+  services: Services,
+  audit: unknown[],
+  actionInvocationId: string,
+) => {
+  // The production collector owns this opaque reference; TAX adds no domain event, so it is never dereferenced.
+  const eventReference: DomainEventReference = Schema.decodeSync(Schema.Any)({});
+  return {
+    actionInvocationId,
+    addDomainEvent: () => Effect.succeed(eventReference),
+    addOutboxMessage: () => Effect.void,
+    compositionRevision: 'c'.repeat(64),
+    recordAuditEvidence: (evidence: Readonly<Record<string, Schema.Json>>) => {
+      audit.push(evidence);
+      return Effect.void;
+    },
+    recordDataAccess: () => Effect.void,
+    scope,
+    services,
+  };
+};
+
+const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>, tenantId: string) =>
   admin.transaction((transaction) =>
     Effect.gen(function* cleanupOrderTaxRows() {
       // Append-only triggers reject deletes; replica mode is the test-only escape for owned fixture rows.
@@ -121,9 +177,10 @@ const acquireDatabases = Effect.gen(function* acquireOrderTaxTestDatabases() {
   const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
   // Owner services run as the least-privilege runtime role so forced RLS is part of every assertion.
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
-  yield* cleanup(admin);
-  yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { adminClient, runtime };
+  const identity: FixtureIdentity = { principalId: yield* nextUuid, tenantId: yield* nextUuid };
+  yield* cleanup(admin, identity.tenantId);
+  yield* Effect.addFinalizer(() => cleanup(admin, identity.tenantId).pipe(Effect.orDie));
+  return { adminClient, identity, runtime };
 });
 
 type EffectivePeriodInput = Readonly<{ effectiveFrom: string; effectiveTo?: string }>;
@@ -135,9 +192,9 @@ const DecisionIdSchema = Schema.String.pipe(Schema.brand('TaxTestDecisionId'));
 const CreatedRuleSchema = Schema.Struct({ initialRevisionId: RevisionIdSchema, taxRuleId: RuleIdSchema });
 
 /** One seller with governed TAX state, set up through the same owner services the Actions use. */
-const seller = (runtime: CoreTestDatabase) => {
-  const legalEntityId = randomUUID();
-  const scope = scopeFor(legalEntityId);
+const seller = Effect.fnUntraced(function* sellerFixture(runtime: CoreTestDatabase, identity: FixtureIdentity) {
+  const legalEntityId = yield* nextUuid;
+  const scope = yield* scopeFor(identity, legalEntityId);
   const setUp = Effect.gen(function* setUpSeller() {
     const declaration = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
       effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -145,10 +202,11 @@ const seller = (runtime: CoreTestDatabase) => {
       reason: 'Merchant-declared Czech VAT payer',
       regime: 'VAT_PAYER',
     });
+    const setUpInvocationId = yield* nextUuid;
     yield* runScoped(runtime, scope, (transaction) =>
       sellerVatRegimeDeclarationsForScope(transaction, scope).declare({
         ...declaration,
-        ...invocation(scope),
+        ...invocation(scope, setUpInvocationId),
       }),
     );
   });
@@ -158,23 +216,29 @@ const seller = (runtime: CoreTestDatabase) => {
     ratePercent: string,
     period: EffectivePeriodInput = LAUNCH_PERIOD,
   ) =>
-    Schema.decodeEffect(CreateTaxRulePayloadSchema)({
-      initialRevision: {
-        compositionKind: 'EXCLUSIVE',
-        ...period,
-        jurisdiction: 'CZ_DOMESTIC',
-        ratePercent,
-        taxClassificationCode,
-        treatmentCategory: 'TAXABLE',
-      },
-      meaningKind: 'VAT_RATE',
-      provenanceRef: `acceptance:${stableCode}`,
-      reason: 'Czech VAT rate',
-      stableCode,
+    Effect.all({
+      invocationId: nextUuid,
+      payload: Schema.decodeEffect(CreateTaxRulePayloadSchema)({
+        initialRevision: {
+          compositionKind: 'EXCLUSIVE',
+          ...period,
+          jurisdiction: 'CZ_DOMESTIC',
+          ratePercent,
+          taxClassificationCode,
+          treatmentCategory: 'TAXABLE',
+        },
+        meaningKind: 'VAT_RATE',
+        provenanceRef: `acceptance:${stableCode}`,
+        reason: 'Czech VAT rate',
+        stableCode,
+      }),
     }).pipe(
-      Effect.flatMap((payload) =>
+      Effect.flatMap(({ invocationId, payload }) =>
         runScoped(runtime, scope, (transaction) =>
-          taxRuleGovernancePersistenceForScope(transaction, scope).createTaxRule({ ...payload, ...invocation(scope) }),
+          taxRuleGovernancePersistenceForScope(transaction, scope).createTaxRule({
+            ...payload,
+            ...invocation(scope, invocationId),
+          }),
         ),
       ),
       Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
@@ -188,8 +252,15 @@ const seller = (runtime: CoreTestDatabase) => {
     overrides: Parameters<typeof evaluationRequestInput>[0] = {},
     orderCommitmentTime = T,
   ) => {
+    const purchase =
+      overrides.purchase ??
+      purchaseBindingInput(['o1', 'o2'], {
+        sellingLegalEntityRef: legalEntityId,
+        tenantId: identity.tenantId,
+      });
     const { taxRelevantTime: _taxRelevantTime, ...candidate } = evaluationRequestInput({
-      purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: legalEntityId, tenantId }),
+      eligibility: eligibilityHandoff(purchase, orderCommitmentTime),
+      purchase,
       ...overrides,
     });
     return Schema.decodeSync(FinalizeOrderTaxPayloadSchema)({
@@ -200,12 +271,16 @@ const seller = (runtime: CoreTestDatabase) => {
       submissionRef,
     });
   };
-  const finalize = (input: ReturnType<typeof payload>, actionInvocationId: string = randomUUID()) =>
-    runScoped(runtime, scope, (transaction) =>
-      orderTaxFinalizationsForScope(transaction, scope).finalize({
-        ...input,
-        ...invocation(scope, actionInvocationId),
-      }),
+  const finalize = (input: ReturnType<typeof payload>, actionInvocationId?: string) =>
+    invocationIdOr(actionInvocationId).pipe(
+      Effect.flatMap((invocationId) =>
+        runScoped(runtime, scope, (transaction) =>
+          orderTaxFinalizationsForScope(transaction, scope).finalize({
+            ...input,
+            ...invocation(scope, invocationId),
+          }),
+        ),
+      ),
     );
   const finalOrderTax = (submissionRef: string, readScope: OperationalScope = scope) =>
     runScoped(runtime, readScope, (transaction) =>
@@ -215,30 +290,36 @@ const seller = (runtime: CoreTestDatabase) => {
     );
   const declare = (
     overrides: Partial<typeof DeclareSellerVatRegimePayloadSchema.Encoded> = {},
-    actionInvocationId: string = randomUUID(),
+    actionInvocationId?: string,
   ) =>
-    Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
-      effectiveFrom: '2026-01-01T00:00:00.000Z',
-      expectedCurrentRevision: 0,
-      regime: 'VAT_PAYER',
-      ...overrides,
+    Effect.all({
+      decoded: Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+        effectiveFrom: '2026-01-01T00:00:00.000Z',
+        expectedCurrentRevision: 0,
+        regime: 'VAT_PAYER',
+        ...overrides,
+      }),
+      invocationId: invocationIdOr(actionInvocationId),
     }).pipe(
-      Effect.flatMap((decoded) =>
+      Effect.flatMap(({ decoded, invocationId }) =>
         runScoped(runtime, scope, (transaction) =>
           sellerVatRegimeDeclarationsForScope(transaction, scope).declare({
             ...decoded,
-            ...invocation(scope, actionInvocationId),
+            ...invocation(scope, invocationId),
           }),
         ),
       ),
     );
   const importDeclarations = (input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded) =>
-    Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input).pipe(
-      Effect.flatMap((decoded) =>
+    Effect.all({
+      decoded: Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input),
+      invocationId: nextUuid,
+    }).pipe(
+      Effect.flatMap(({ decoded, invocationId }) =>
         runScoped(runtime, scope, (transaction) =>
           sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
             ...decoded,
-            ...invocation(scope),
+            ...invocation(scope, invocationId),
           }),
         ),
       ),
@@ -255,9 +336,30 @@ const seller = (runtime: CoreTestDatabase) => {
     scope,
     setUp,
   };
-};
+});
 
-type FinalizeOutcome = Effect.Success<ReturnType<ReturnType<typeof seller>['finalize']>>;
+type Seller = Effect.Success<ReturnType<typeof seller>>;
+
+const finalizeAction = (
+  runtime: CoreTestDatabase,
+  subject: Seller,
+  payload: ReturnType<Seller['payload']>,
+  actionInvocationId?: string,
+) =>
+  invocationIdOr(actionInvocationId).pipe(
+    Effect.flatMap((invocationId) =>
+      runScoped(runtime, subject.scope, (transaction) =>
+        handleFinalizeOrderTax(
+          payload,
+          actionContext(subject.scope, orderTaxFinalizationsForScope(transaction, subject.scope), [], invocationId),
+        ),
+      ),
+    ),
+    Effect.flatMap(Schema.encodeEffect(FinalizeOrderTaxResultSchema)),
+    Effect.flatMap(Schema.decodeUnknownEffect(FinalizeOrderTaxResultSchema)),
+  );
+
+type FinalizeOutcome = Effect.Success<ReturnType<Seller['finalize']>>;
 
 /** The typed result of an accepted request; a governance conflict or not-found fails the test. */
 const resultOf = (outcome: FinalizeOutcome): FinalizeOrderTaxResult => {
@@ -281,25 +383,30 @@ const FinalizedSchema = Schema.TaggedStruct('FINALIZED', {
 });
 const finalizedOf = (outcome: FinalizeOutcome) => Schema.decodeUnknownSync(FinalizedSchema)(resultOf(outcome));
 const RejectedSchema = Schema.TaggedStruct('FINALIZATION_REJECTED', { reasons: Schema.Array(Schema.String) });
-const NotFinalizedSchema = Schema.TaggedStruct('NOT_FINALIZED', { outcome: Schema.Struct({ _tag: Schema.String }) });
+const NotFinalizedSchema = Schema.TaggedStruct('NOT_FINALIZED', { outcome: TaxNonSuccessOutcomeSchema });
 const DeclaredSchema = Schema.TaggedStruct('DECLARED', { created: Schema.Boolean, revision: Schema.Finite });
-const declaredOf = (outcome: Effect.Success<ReturnType<ReturnType<typeof seller>['declare']>>) => {
+const declaredOf = (outcome: Effect.Success<ReturnType<Seller['declare']>>) => {
   if ('kind' in outcome) {
     throw new Error(`Expected a declaration result, got ${outcome.kind}`);
   }
   return Schema.decodeUnknownSync(DeclaredSchema)(outcome.result);
 };
 
+// These tests wait on the live clock, so each stays a live registration and builds Node Crypto in its scope.
+// Tests that poll with `Effect.sleep` provide the built services directly so the sleep stays visibly live-owned.
+const nodeCryptoServices = Layer.build(NodeCrypto.layer);
+const nodeCrypto = nodeCryptoServices.pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+
 it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and recovered unchanged', () =>
   Effect.scoped(
     Effect.gen(function* finalizationAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
-      const invocationId = randomUUID();
+      const submission = `submission-${yield* nextUuid}`;
+      const invocationId = yield* nextUuid;
       const first = finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId));
       expect(first.created).toBe(true);
       // The stored final's Decision carries its own sellerVatRegime and declarationRevisionRef (#943/#950).
@@ -309,7 +416,7 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       // Core-invocation replay of the same request echoes the original (#955 G).
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId)).created).toBe(false);
       // The same Core invocation carrying another submission is a reused key, never a second final (#955 G).
-      expect(yield* subject.finalize(subject.payload(`submission-${randomUUID()}`), invocationId)).toEqual({
+      expect(yield* subject.finalize(subject.payload(`submission-${yield* nextUuid}`), invocationId)).toEqual({
         conflict: 'IDEMPOTENCY_REUSED',
         kind: 'conflict',
       });
@@ -330,7 +437,7 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
               occurrenceInput('o2'),
             ],
             sellingLegalEntityRef: subject.legalEntityId,
-            tenantId,
+            tenantId: identity.tenantId,
           }),
         }),
       );
@@ -345,18 +452,18 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       expect(resultOf(yield* subject.finalize(subject.payload(submission)))).toMatchObject({ created: false });
       expect(created).toMatchObject({ created: false });
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocation round-trips through recovery', () =>
   Effect.scoped(
     Effect.gen(function* shippingFinalizationAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
       const shippingPayload = subject.payload(submission, {
         pricing: {
           pricingResultRef: PRICING_RESULT_REF,
@@ -365,7 +472,7 @@ it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocat
         purchase: purchaseBindingInput(['o1', 'o2'], {
           sellingLegalEntityRef: subject.legalEntityId,
           shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
-          tenantId,
+          tenantId: identity.tenantId,
         }),
         shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00') },
       });
@@ -410,18 +517,18 @@ it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocat
         result.handoff.outcome.decision.shippingAllocation,
       );
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keeps its NET basis through recovery', () =>
   Effect.scoped(
     Effect.gen(function* netShippingFinalizationAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
       const result = Match.value(
         resultOf(
           yield* subject.finalize(
@@ -433,7 +540,7 @@ it.live('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keep
               purchase: purchaseBindingInput(['o1', 'o2'], {
                 sellingLegalEntityRef: subject.legalEntityId,
                 shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
-                tenantId,
+                tenantId: identity.tenantId,
               }),
               shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00', 'NET') },
             }),
@@ -468,16 +575,16 @@ it.live('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keep
       );
       expect(recovered.handoff.outcome.result.purchaseTaxTotal.amount).toBe('49.51');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#944 F12 a non-success stores nothing; the same submission finalizes once rules exist', () =>
   Effect.scoped(
     Effect.gen(function* nonSuccessAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
 
       const missing = yield* Schema.decodeUnknownEffect(NotFinalizedSchema)(
         resultOf(yield* subject.finalize(subject.payload(submission))),
@@ -488,7 +595,7 @@ it.live('#944 F12 a non-success stores nothing; the same submission finalizes on
       yield* subject.launchRules;
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission))).created).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 /** A controlled crash after the final is inserted and before its owner transaction commits (#963 §3.3). */
@@ -499,19 +606,19 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* crashBeforeDurableFinal() {
-        const { adminClient, runtime } = yield* acquireDatabases;
-        const subject = seller(runtime);
+        const { adminClient, identity, runtime } = yield* acquireDatabases;
+        const subject = yield* seller(runtime, identity);
         yield* subject.setUp;
         yield* subject.launchRules;
-        const submission = `submission-${randomUUID()}`;
-        const invocationId = randomUUID();
+        const submission = `submission-${yield* nextUuid}`;
+        const invocationId = yield* nextUuid;
         const payload = subject.payload(submission);
         // A raw read past RLS and the owner service: every stored final of the submission, and whether it is at T.
         const storedFinals = adminClient.unsafe<{ at_t: boolean }>(
           `select order_commitment_time = $3::timestamptz as at_t
          from tax.tax_order_tax_finalizations
          where tenant_id = $1 and submission_ref = $2`,
-          [tenantId, submission, T],
+          [identity.tenantId, submission, T],
         );
 
         // The real finalization service succeeds inside the owner transaction, which then crashes before commit.
@@ -542,17 +649,17 @@ it.live(
         expect(DateTime.formatIso(recovered.handoff.orderCommitmentTime)).toBe(T);
         expect(DateTime.formatIso(recovered.handoff.outcome.decision.taxRelevantTime)).toBe(T);
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#930 F11 F13 the final read names a later correction of a governing revision without refreshing it', () =>
   Effect.scoped(
     Effect.gen(function* correctionAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       const [standard] = yield* subject.launchRules;
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
       const first = finalizedOf(yield* subject.finalize(subject.payload(submission)));
 
       const history = yield* runScoped(runtime, subject.scope, (transaction) =>
@@ -561,7 +668,7 @@ it.live('#930 F11 F13 the final read names a later correction of a governing rev
             moduleId: 'commerce.tax',
             resourceId: standard.taxRuleId,
             resourceType: 'commerce.tax.tax-rule',
-            tenantId,
+            tenantId: identity.tenantId,
           },
         }),
       ).pipe(Effect.map(Option.getOrThrow));
@@ -582,13 +689,14 @@ it.live('#930 F11 F13 the final read names a later correction of a governing rev
           moduleId: 'commerce.tax',
           resourceId: standard.initialRevisionId,
           resourceType: 'commerce.tax.tax-rule-revision',
-          tenantId,
+          tenantId: identity.tenantId,
         },
       });
+      const correctionInvocationId = yield* nextUuid;
       yield* runScoped(runtime, subject.scope, (transaction) =>
         taxRuleGovernancePersistenceForScope(transaction, subject.scope).correctTaxRuleRevision({
           ...correction,
-          ...invocation(subject.scope),
+          ...invocation(subject.scope, correctionInvocationId),
         }),
       );
 
@@ -598,17 +706,17 @@ it.live('#930 F11 F13 the final read names a later correction of a governing rev
         standard.initialRevisionId,
       ]);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concurrent requests', () =>
   Effect.scoped(
     Effect.gen(function* isolationAcceptance() {
-      const { adminClient, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { adminClient, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       yield* subject.launchRules;
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
 
       const [left, right] = yield* Effect.all(
         [subject.finalize(subject.payload(submission)), subject.finalize(subject.payload(submission))],
@@ -619,18 +727,25 @@ it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concu
       expect([finalizedOf(left).created, finalizedOf(right).created].filter(Boolean)).toEqual([true]);
 
       // Another seller of the same tenant, or the same seller id under another tenant, cannot see the final.
-      expect(Option.isNone(yield* subject.finalOrderTax(submission, scopeFor(randomUUID())))).toBe(true);
+      expect(Option.isNone(yield* subject.finalOrderTax(submission, yield* scopeFor(identity, yield* nextUuid)))).toBe(
+        true,
+      );
       expect(
-        Option.isNone(yield* subject.finalOrderTax(submission, scopeFor(subject.legalEntityId, randomUUID()))),
+        Option.isNone(
+          yield* subject.finalOrderTax(submission, yield* scopeFor(identity, subject.legalEntityId, yield* nextUuid)),
+        ),
       ).toBe(true);
       // A candidate naming another seller is invisible, even under a submission that already has a final.
       const foreignCandidate = subject.payload(submission, {
-        purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: randomUUID(), tenantId }),
+        purchase: purchaseBindingInput(['o1', 'o2'], {
+          sellingLegalEntityRef: yield* nextUuid,
+          tenantId: identity.tenantId,
+        }),
       });
       expect(yield* subject.finalize(foreignCandidate)).toEqual({ kind: 'not_found' });
 
       // A future T is rejected, never evaluated, and stores nothing (#941 F3, step-5 FUTURE_TAX_RELEVANT_TIME).
-      const futureSubmission = `submission-${randomUUID()}`;
+      const futureSubmission = `submission-${yield* nextUuid}`;
       const future = resultOf(
         yield* subject.finalize(subject.payload(futureSubmission, {}, '2099-01-01T00:00:00.000Z')),
       );
@@ -639,7 +754,7 @@ it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concu
 
       // The stored final is append-only: neither rewritten nor deleted.
       const rewrite = (statement: string) =>
-        Effect.exit(adminClient.unsafe(statement, [tenantId, submission])).pipe(Effect.map(Exit.isFailure));
+        Effect.exit(adminClient.unsafe(statement, [identity.tenantId, submission])).pipe(Effect.map(Exit.isFailure));
       expect(
         yield* rewrite(
           `update tax.tax_order_tax_finalizations set reason = 'rewritten' where tenant_id = $1 and submission_ref = $2`,
@@ -650,14 +765,14 @@ it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concu
       ).toBe(true);
       expect(Option.isSome(yield* subject.finalOrderTax(submission))).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluation Time', () =>
   Effect.scoped(
     Effect.gen(function* boundaryAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       // A rate boundary after T and before E: [Jan, Aug) at 21 %, [Aug, ...) at 23 %.
       const BOUNDARY = '2026-08-01T00:00:00.000Z';
@@ -673,7 +788,7 @@ it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluati
         { concurrency: 1 },
       );
       const governingRulesAt = Effect.fn('governingRulesAt')(function* governingRulesAtEffect(at: string) {
-        const submission = `submission-${randomUUID()}`;
+        const submission = `submission-${yield* nextUuid}`;
         finalizedOf(yield* subject.finalize(subject.payload(submission, {}, at)));
         const { handoff } = Option.getOrThrow(yield* subject.finalOrderTax(submission));
         expect(DateTime.formatIso(handoff.outcome.decision.taxRelevantTime)).toBe(at);
@@ -691,18 +806,18 @@ it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluati
       expect(yield* governingRulesAt(BOUNDARY)).toContain(fromBoundary.taxRuleId);
       expect(yield* governingRulesAt(BOUNDARY)).not.toContain(beforeBoundary.taxRuleId);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('Unit 10 C a backdated regime revision recorded after a final leaves the recovered final unchanged', () =>
   Effect.scoped(
     Effect.gen(function* backdatedRecoveryAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
       const first = finalizedOf(yield* subject.finalize(subject.payload(submission)));
       expect(first.created).toBe(true);
 
@@ -717,7 +832,7 @@ it.live('Unit 10 C a backdated regime revision recorded after a final leaves the
             reason: 'Backdated non-payer declaration after finalization',
             regime: 'NON_PAYER',
           },
-          randomUUID(),
+          yield* nextUuid,
         ),
       );
       expect(declared.created).toBe(true);
@@ -728,19 +843,25 @@ it.live('Unit 10 C a backdated regime revision recorded after a final leaves the
       expect(recovered.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
       expect(recovered.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
-it.live('Unit 10 C a NON_PAYER final stores zero tax with no governing rule revisions', () =>
+it.live('TAX907 F2 a public NON_PAYER final needs no classification and durably recovers zero tax at T', () =>
   Effect.scoped(
     Effect.gen(function* nonPayerFinalizationAcceptance() {
-      const { adminClient, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { adminClient, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       // Non-payer from the start: no setUp() VAT_PAYER declaration, so no rules need to exist.
       yield* subject.declare({ reason: 'Non-payer seller from launch', regime: 'NON_PAYER' });
 
-      const submission = `submission-${randomUUID()}`;
-      const final = finalizedOf(yield* subject.finalize(subject.payload(submission)));
+      const submission = `submission-${yield* nextUuid}`;
+      const payload = subject.payload(submission, { catalog: [] });
+      const invocationId = yield* nextUuid;
+      const finalize = (actionInvocationId: string) =>
+        finalizeAction(runtime, subject, payload, actionInvocationId).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(FinalizedSchema)),
+        );
+      const final = yield* finalize(invocationId);
       expect(final.created).toBe(true);
       expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
       expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
@@ -750,18 +871,33 @@ it.live('Unit 10 C a NON_PAYER final stores zero tax with no governing rule revi
                 governing_rule_revisions
          from tax.tax_order_tax_finalizations
          where tenant_id = $1 and submission_ref = $2`,
-        [tenantId, submission],
+        [identity.tenantId, submission],
       );
       expect(rows).toEqual([{ governing_rule_revisions: [], purchase_tax_total_amount: '0.00' }]);
+      const replay = yield* finalize(invocationId);
+      const retry = yield* finalize(yield* nextUuid);
+      expect(replay.created).toBe(false);
+      expect(retry.created).toBe(false);
+      expect(retry.handoff.outcome.decision.decisionId).toBe(final.handoff.outcome.decision.decisionId);
+      const recovered = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+      expect(recovered.handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
+      expect(
+        recovered.handoff.outcome.decision.units.every(({ treatment }) =>
+          Schema.is(SellerNotVatPayerTreatmentSchema)(treatment),
+        ),
+      ).toBe(true);
+      expect(DateTime.formatIso(recovered.handoff.orderCommitmentTime)).toBe(T);
+      expect(DateTime.formatIso(recovered.handoff.outcome.decision.taxRelevantTime)).toBe(T);
+      expect(recovered.evidence.ruleSets).toEqual([]);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('907-Q09 #960 a final at T over imported MIGRATED source history succeeds and carries its revision ref', () =>
   Effect.scoped(
     Effect.gen(function* migratedFinalizationAcceptance() {
-      const { adminClient, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { adminClient, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       // Imported, never declared again by the merchant: non-payer first, payer covering T, a scheduled change after.
       yield* subject.importDeclarations({
         declarations: [
@@ -774,7 +910,7 @@ it.live('907-Q09 #960 a final at T over imported MIGRATED source history succeed
       });
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
       const final = finalizedOf(yield* subject.finalize(subject.payload(submission)));
       expect(final.created).toBe(true);
       expect(final.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
@@ -786,20 +922,20 @@ it.live('907-Q09 #960 a final at T over imported MIGRATED source history succeed
                 evidence -> 'sellerVatRegime' -> 'selection' ->> 'effectiveFromOrigin' as origin
          from tax.tax_order_tax_finalizations
          where tenant_id = $1 and submission_ref = $2`,
-        [tenantId, submission],
+        [identity.tenantId, submission],
       );
       expect(rows).toEqual([{ origin: 'SOURCE', provenance: 'MIGRATED' }]);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
   Effect.scoped(
     Effect.gen(function* notDeclaredFinalizationAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       // Deliberately skip setUp(): no VAT regime has ever been declared for this seller.
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
 
       const notFinalized = yield* Schema.decodeUnknownEffect(NotFinalizedSchema)(
         resultOf(yield* subject.finalize(subject.payload(submission))),
@@ -807,119 +943,298 @@ it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
       expect(notFinalized.outcome).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(Option.isNone(yield* subject.finalOrderTax(submission))).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('Unit 10 C a declare concurrent with finalize serializes on the seller lock', () =>
   Effect.scoped(
-    Effect.gen(function* concurrentDeclareAcceptance() {
-      const { adminClient, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
-      yield* subject.setUp;
-      yield* subject.launchRules;
+    Effect.gen(function* concurrentDeclareAcceptanceLive() {
+      const services = yield* nodeCryptoServices;
+      yield* Effect.gen(function* concurrentDeclareAcceptance() {
+        const { adminClient, identity, runtime } = yield* acquireDatabases;
+        const subject = yield* seller(runtime, identity);
+        yield* subject.setUp;
+        yield* subject.launchRules;
 
-      // Forced interleaving: the declare takes the seller lock exclusively and holds its transaction open on
-      // `release` so the finalize is provably still blocked behind it (not merely racing and happening to win).
-      const lockHeld = yield* Deferred.make<null>();
-      const release = yield* Deferred.make<null>();
-      const declareFiber = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
-        confirmReplacesScheduled: true,
-        effectiveFrom: '2026-01-01T00:00:00.000Z',
-        expectedCurrentRevision: 1,
-        reason: 'Declaration holding the seller lock during a finalize',
-        regime: 'NON_PAYER',
-      }).pipe(
-        Effect.flatMap((decoded) =>
-          runScoped(runtime, subject.scope, (transaction) =>
-            sellerVatRegimeDeclarationsForScope(transaction, subject.scope)
-              .declare({ ...decoded, ...invocation(subject.scope) })
-              .pipe(
-                Effect.tap(() => Deferred.succeed(lockHeld, null)),
-                Effect.tap(() => Deferred.await(release)),
-              ),
-          ),
-        ),
-        Effect.forkChild,
-      );
+        // Forced interleaving: the declare takes the seller lock exclusively and holds its transaction open on
+        // `release` so the finalize is provably still blocked behind it (not merely racing and happening to win).
+        const lockHeld = yield* Deferred.make<null>();
+        const release = yield* Deferred.make<null>();
+        const lockInvocationId = yield* nextUuid;
+        const decoded = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+          confirmReplacesScheduled: true,
+          effectiveFrom: '2026-01-01T00:00:00.000Z',
+          expectedCurrentRevision: 1,
+          reason: 'Declaration holding the seller lock during a finalize',
+          regime: 'NON_PAYER',
+        });
+        const holdSellerLock = Deferred.succeed(lockHeld, null).pipe(Effect.andThen(Deferred.await(release)));
+        const declareFiber = yield* runScoped(runtime, subject.scope, (transaction) =>
+          sellerVatRegimeDeclarationsForScope(transaction, subject.scope)
+            .declare({ ...decoded, ...invocation(subject.scope, lockInvocationId) })
+            .pipe(Effect.tap(() => holdSellerLock)),
+        ).pipe(Effect.forkChild);
 
-      yield* Deferred.await(lockHeld);
-      const submission = `submission-${randomUUID()}`;
-      const finalizeFiber = yield* subject.finalize(subject.payload(submission)).pipe(Effect.forkChild);
+        yield* Deferred.await(lockHeld);
+        const submission = `submission-${yield* nextUuid}`;
+        const finalizeFiber = yield* subject.finalize(subject.payload(submission)).pipe(Effect.forkChild);
 
-      // The exclusive advisory xact lock `tax-scope:<tenantId>:<legalEntityId>:SELLER_VAT_REGIME_DECLARATION`
-      // (tax-governance-persistence.ts `lockTaxScopeKey`) is held until the declare's transaction commits; finalize
-      // takes it `'shared'` only on the evaluating path (order-tax-finalization.service.ts L281), so it must wait.
-      const lockKey = `tax-scope:${tenantId}:${subject.legalEntityId}:SELLER_VAT_REGIME_DECLARATION`;
-      let waiterSeen = false;
-      for (let observation = 0; observation < 50 && !waiterSeen; observation += 1) {
-        const [row] = yield* adminClient.unsafe<{ waiting: number }>(
-          `select count(*)::int as waiting from pg_locks
-           where locktype = 'advisory' and not granted
-             and ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
-          [lockKey],
-        );
-        waiterSeen = (row?.waiting ?? 0) >= 1;
-        if (!waiterSeen) {
-          yield* Effect.sleep('100 millis');
+        // The exclusive advisory xact lock `tax-scope:<tenantId>:<legalEntityId>:SELLER_VAT_REGIME_DECLARATION`
+        // (tax-governance-persistence.ts `lockTaxScopeKey`) is held until the declare's transaction commits; finalize
+        // takes it `'shared'` only on the evaluating path (order-tax-finalization.service.ts L281), so it must wait.
+        const lockKey = `tax-scope:${identity.tenantId}:${subject.legalEntityId}:SELLER_VAT_REGIME_DECLARATION`;
+        let waiterSeen = false;
+        for (let observation = 0; observation < 50 && !waiterSeen; observation += 1) {
+          const [row] = yield* adminClient.unsafe<{ waiting: number }>(
+            `select count(*)::int as waiting from pg_locks
+             where locktype = 'advisory' and not granted
+               and ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+            [lockKey],
+          );
+          waiterSeen = (row?.waiting ?? 0) >= 1;
+          if (!waiterSeen) {
+            yield* Effect.sleep('100 millis');
+          }
         }
-      }
-      // A non-granted waiter on that key means the finalize has not completed before the declare's commit: it is
-      // genuinely blocked on the seller lock, not merely slower.
-      expect(waiterSeen).toBe(true);
+        // A non-granted waiter on that key means the finalize has not completed before the declare's commit: it is
+        // genuinely blocked on the seller lock, not merely slower.
+        expect(waiterSeen).toBe(true);
 
-      yield* Deferred.succeed(release, null);
-      const declareOutcome = yield* Fiber.join(declareFiber);
-      const finalizeOutcome = yield* Fiber.join(finalizeFiber);
+        yield* Deferred.succeed(release, null);
+        const declareOutcome = yield* Fiber.join(declareFiber);
+        const finalizeOutcome = yield* Fiber.join(finalizeFiber);
 
-      // Forced order (Fable MINOR 1): the finalize waits for the declare's commit and then reads its revision,
-      // never a mix and never the pre-declare state (#950 F24, Unit 10 C).
-      const declared = declaredOf(declareOutcome);
-      expect(declared.created).toBe(true);
-      expect(declared.revision).toBe(2);
-      const final = finalizedOf(finalizeOutcome);
-      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
-      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
+        // Forced order (Fable MINOR 1): the finalize waits for the declare's commit and then reads its revision,
+        // never a mix and never the pre-declare state (#950 F24, Unit 10 C).
+        const declared = declaredOf(declareOutcome);
+        expect(declared.created).toBe(true);
+        expect(declared.revision).toBe(2);
+        const final = finalizedOf(finalizeOutcome);
+        expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+        expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
+      }).pipe(Effect.provide(services));
     }),
   ),
 );
 
 /** A Core-shaped Action handler context over real Postgres services; audit evidence is captured, no event is added. */
-const actionContext = <Services>(
-  scope: OperationalScope,
-  services: Services,
-  audit: unknown[],
-  actionInvocationId: string,
-) => {
-  // The production collector owns this opaque reference; TAX adds no domain event, so it is never dereferenced.
-  const eventReference: DomainEventReference = Schema.decodeSync(Schema.Any)({});
-  return {
-    actionInvocationId,
-    addDomainEvent: () => Effect.succeed(eventReference),
-    addOutboxMessage: () => Effect.void,
-    compositionRevision: 'c'.repeat(64),
-    recordAuditEvidence: (evidence: Readonly<Record<string, Schema.Json>>) => {
-      audit.push(evidence);
-      return Effect.void;
-    },
-    recordDataAccess: () => Effect.void,
-    scope,
-    services,
-  };
-};
+
+it.live('TAX907 F1 × F2 unsupported or missing material eligibility never stores an ordinary or zero-tax final', () =>
+  Effect.scoped(
+    Effect.gen(function* unsupportedFinalization() {
+      const { adminClient, identity, runtime } = yield* acquireDatabases;
+      for (const regime of ['VAT_PAYER', 'NON_PAYER'] as const) {
+        const subject = yield* seller(runtime, identity);
+        yield* subject.declare({ regime });
+        if (regime === 'VAT_PAYER') {
+          yield* subject.launchRules;
+        }
+        const purchase = purchaseBindingInput(['o1', 'o2'], {
+          sellingLegalEntityRef: subject.legalEntityId,
+          tenantId: identity.tenantId,
+        });
+        const submissions: string[] = [];
+        for (const requiredRegime of ['REVERSE_CHARGE', 'OSS', 'EXPORT'] as const) {
+          const submission = `submission-${yield* nextUuid}`;
+          submissions.push(submission);
+          const result = yield* finalizeAction(
+            runtime,
+            subject,
+            subject.payload(submission, {
+              catalog: regime === 'NON_PAYER' ? [] : (evaluationRequestInput().catalog ?? []),
+              eligibility: { ...eligibilityHandoff(purchase, T), requiredTaxRegimes: [requiredRegime] },
+            }),
+          );
+          const notFinalized = yield* Schema.decodeUnknownEffect(NotFinalizedSchema)(result);
+          expect(notFinalized.outcome).toEqual(
+            TaxCaseUnsupportedSchema.make({ unsupportedRequirement: requiredRegime }),
+          );
+        }
+        const submission = `submission-${yield* nextUuid}`;
+        submissions.push(submission);
+        const currentPayload = subject.payload(submission, regime === 'NON_PAYER' ? { catalog: [] } : {});
+        const { eligibility: _eligibility, ...legacyCandidate } = currentPayload.candidate;
+        const missingPayload = yield* Schema.decodeEffect(FinalizeOrderTaxPayloadSchema)({
+          ...currentPayload,
+          candidate: legacyCandidate,
+        });
+        const missing = yield* Schema.decodeUnknownEffect(NotFinalizedSchema)(
+          yield* finalizeAction(runtime, subject, missingPayload),
+        );
+        expect(missing.outcome).toEqual(TaxStateIndeterminateSchema.make({}));
+        for (const rejectedSubmission of submissions) {
+          expect(Option.isNone(yield* subject.finalOrderTax(rejectedSubmission))).toBe(true);
+        }
+        const rows = yield* adminClient.unsafe(
+          `select submission_ref from tax.tax_order_tax_finalizations where tenant_id = $1 and legal_entity_id = $2`,
+          [identity.tenantId, subject.legalEntityId],
+        );
+        expect(rows).toEqual([]);
+      }
+    }),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+);
+
+it.live('TAX907 F1 final eligibility is frozen, retry order is immaterial and changed material intent conflicts', () =>
+  Effect.scoped(
+    Effect.gen(function* frozenEligibilityFinalization() {
+      const { adminClient, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+      const submission = `submission-${yield* nextUuid}`;
+      const payload = subject.payload(submission);
+      const [left, right] = yield* Effect.all(
+        [finalizeAction(runtime, subject, payload), finalizeAction(runtime, subject, payload)],
+        { concurrency: 2 },
+      );
+      const first = yield* Schema.decodeUnknownEffect(FinalizedSchema)(left);
+      const second = yield* Schema.decodeUnknownEffect(FinalizedSchema)(right);
+      expect(first.handoff.outcome.decision.decisionId).toBe(second.handoff.outcome.decision.decisionId);
+      expect([first.created, second.created].filter(Boolean)).toEqual([true]);
+      const rows = yield* adminClient.unsafe(
+        `select order_commitment_time = $3::timestamptz as at_t, evidence -> 'eligibility' as eligibility
+         from tax.tax_order_tax_finalizations where tenant_id = $1 and submission_ref = $2`,
+        [identity.tenantId, submission, T],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        at_t: true,
+        eligibility: {
+          foreignEvidenceOrigin: 'CALLER_SUPPLIED_UNVERIFIED',
+          observation: {
+            _tag: 'CURRENT',
+            requiredTaxRegimes: ['ORDINARY_DOMESTIC'],
+            taxRelevantTime: T,
+          },
+        },
+      });
+      const purchase = purchaseBindingInput(['o1', 'o2'], {
+        sellingLegalEntityRef: subject.legalEntityId,
+        tenantId: identity.tenantId,
+      });
+      const changed = subject.payload(submission, {
+        eligibility: { ...eligibilityHandoff(purchase, T), requiredTaxRegimes: ['REVERSE_CHARGE'] },
+      });
+      const conflict = yield* finalizeAction(runtime, subject, changed).pipe(Effect.flip);
+      expect(Schema.is(TaxGovernanceConflict)(conflict)).toBe(true);
+      expect(conflict).toMatchObject({ conflict: 'SUBMISSION_INTENT_CHANGED' });
+      yield* subject.createRule('cz.standard-overlap', 'cz-standard-goods', '21');
+      const retry = yield* Schema.decodeUnknownEffect(FinalizedSchema)(
+        yield* finalizeAction(runtime, subject, payload),
+      );
+      expect(retry.created).toBe(false);
+      const reordered = subject.payload(submission, {
+        eligibility: eligibilityHandoff(
+          {
+            ...purchase,
+            purchaseDemandOccurrences: Arr.reverse(purchase.purchaseDemandOccurrences),
+          },
+          T,
+        ),
+      });
+      const reorderedRetry = yield* Schema.decodeUnknownEffect(FinalizedSchema)(
+        yield* finalizeAction(runtime, subject, reordered),
+      );
+      expect(reorderedRetry.created).toBe(false);
+      const recovered = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+      expect(recovered.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+      expect(DateTime.formatIso(recovered.handoff.orderCommitmentTime)).toBe(T);
+      expect(recovered.evidence.eligibility).toBeDefined();
+    }),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+);
+
+it.live('TAX907 F1 legacy persisted finals recover without invented eligibility or live recomputation', () =>
+  Effect.scoped(
+    Effect.gen(function* historicalFinalizationRecovery() {
+      const { adminClient, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+      const submission = `submission-${yield* nextUuid}`;
+      const currentPayload = subject.payload(submission);
+      const { eligibility: _eligibility, ...legacyCandidate } = currentPayload.candidate;
+      const legacyPayload = { ...currentPayload, candidate: legacyCandidate };
+      const first = yield* Schema.decodeUnknownEffect(FinalizedSchema)(
+        yield* finalizeAction(runtime, subject, currentPayload),
+      );
+      const oldFingerprint = orderTaxIntentFingerprint(
+        legacyCandidate,
+        currentPayload.orderCommitmentTime,
+        taxMeaningFingerprint,
+      );
+      const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
+      // Build the exact pre-F1 row shape in a test-owned fixture; normal writes remain append-only.
+      yield* admin.transaction((transaction) =>
+        Effect.gen(function* installHistoricalFinalFixture() {
+          yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
+          yield* transaction.execute(
+            sql`
+            update tax.tax_order_tax_finalizations
+            set evidence = evidence - 'eligibility', intent_fingerprint = ${oldFingerprint}
+            where tenant_id = ${identity.tenantId} and submission_ref = ${submission}
+          `,
+            'objects',
+          );
+        }),
+      );
+
+      // Both current rule and seller state would now produce another answer if recovery reevaluated.
+      yield* subject.createRule('cz.standard-overlap', 'cz-standard-goods', '21');
+      yield* subject.declare({
+        confirmReplacesScheduled: true,
+        expectedCurrentRevision: 1,
+        regime: 'NON_PAYER',
+      });
+      const recovered = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+      const wire = yield* Schema.encodeEffect(FinalOrderTaxResponseSchema)(recovered);
+      expect(wire.evidence).not.toHaveProperty('eligibility');
+      expect(wire.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+      expect(wire.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(wire.handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
+      expect(wire.handoff.orderCommitmentTime).toBe(T);
+      expect(wire.handoff.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+      const retry = yield* finalizeAction(runtime, subject, legacyPayload);
+      expect((yield* Schema.decodeUnknownEffect(FinalizedSchema)(retry)).created).toBe(false);
+      expect(yield* Schema.encodeEffect(FinalizeOrderTaxResultSchema)(retry)).not.toHaveProperty(
+        'evidence.eligibility',
+      );
+      const changed = yield* finalizeAction(runtime, subject, currentPayload).pipe(Effect.flip);
+      expect(Schema.is(TaxGovernanceConflict)(changed)).toBe(true);
+      expect(changed).toMatchObject({ conflict: 'SUBMISSION_INTENT_CHANGED' });
+      // Historical recovery still obeys current tenant and seller scope enforced by real PostgreSQL RLS.
+      expect(Option.isNone(yield* subject.finalOrderTax(submission, yield* scopeFor(identity, yield* nextUuid)))).toBe(
+        true,
+      );
+      expect(
+        Option.isNone(
+          yield* subject.finalOrderTax(submission, yield* scopeFor(identity, subject.legalEntityId, yield* nextUuid)),
+        ),
+      ).toBe(true);
+      const rows = yield* adminClient.unsafe(
+        `select intent_fingerprint, evidence ? 'eligibility' as has_eligibility
+         from tax.tax_order_tax_finalizations where tenant_id = $1 and submission_ref = $2`,
+        [identity.tenantId, submission],
+      );
+      expect(rows).toEqual([{ has_eligibility: false, intent_fingerprint: oldFingerprint }]);
+    }),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+);
 
 it.live('#961 scenario 9: the finalize Action and final read handlers persist, recover and hand off the final', () =>
   Effect.scoped(
     Effect.gen(function* publicFinalizeScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.setUp;
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
+      const submission = `submission-${yield* nextUuid}`;
       // The wire payload decodes through the public `FinalizeOrderTaxPayloadSchema` (inside `subject.payload`).
       const payload = subject.payload(submission);
       const audit: unknown[] = [];
-      const invocationId = randomUUID();
+      const invocationId = yield* nextUuid;
       const finalizeThroughHandler = (actionInvocationId: string) =>
         runScoped(runtime, subject.scope, (transaction) =>
           handleFinalizeOrderTax(
@@ -942,7 +1257,7 @@ it.live('#961 scenario 9: the finalize Action and final read handlers persist, r
       expect(yield* Schema.decodeUnknownEffect(Schema.Array(TaxGovernanceAuditEvidenceSchema))(audit)).toHaveLength(1);
 
       // A retry of the same submission under a new Core invocation recovers the stored final (#944 F10).
-      const retry = yield* finalizeThroughHandler(randomUUID());
+      const retry = yield* finalizeThroughHandler(yield* nextUuid);
       expect(retry.created).toBe(false);
       expect(retry.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
 
@@ -969,5 +1284,5 @@ it.live('#961 scenario 9: the finalize Action and final read handlers persist, r
       expect(handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
       expect(handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );

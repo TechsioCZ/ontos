@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { Effect, Redacted, Schema } from 'effect';
-import type { Headers } from 'effect/unstable/http';
-import { Cookies, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import type { Headers } from 'effect/http';
+import { Cookies, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 export class DemoSeedError extends Schema.TaggedError<DemoSeedError>()('DemoSeedError', {
   reason: Schema.String,

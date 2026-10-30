@@ -1,7 +1,7 @@
 // expect-count: 2
 // `.mts` under packages/** is production source too.
 import * as Effect from 'effect/Effect';
-import * as Cause from 'effect/unstable/tracing/Cause';
+import * as Cause from 'effect/tracing/Cause';
 
 declare const program: never;
 declare const cause: never;

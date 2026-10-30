@@ -58,7 +58,7 @@ import { isInsideCoreReadTestHarnessCallback } from '../shared/native-service-fa
 
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_ROOT_MODULE = 'effect';
-/** `effect/Layer`, and re-exported nestings such as `effect/unstable/Layer`. */
+/** `effect/Layer`, and re-exported nestings such as `effect/Layer`. */
 const EFFECT_LAYER_MODULE = /^effect\/(?:.*\/)?Layer$/u;
 
 const DEFAULT_SCOPE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];

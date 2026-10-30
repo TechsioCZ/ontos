@@ -1,3 +1,9 @@
+import {
+  AgentDecideResponseSchema,
+  AgentDecideResultSchema,
+  AgentItemKeySchema,
+  AgentProposalIdSchema,
+} from '@app/shared-contracts/agent-proposals';
 /**
  * Human decisions on agent proposals. Approve runs the stored module command as the approving person (their
  * permissions, their audit); the module's review, read as them just before, says whether they can, gives the undo
@@ -62,7 +68,11 @@ export const requireModuleCommandResult = (outcome: ModuleCommandOutcome) =>
       );
 
 const result = (itemKey: string, outcome: DecideResult['outcome'], message?: string): DecideResult =>
-  message === undefined ? { itemKey, outcome } : { itemKey, message, outcome };
+  AgentDecideResultSchema.make(
+    message === undefined
+      ? { itemKey: AgentItemKeySchema.make(itemKey), outcome }
+      : { itemKey: AgentItemKeySchema.make(itemKey), message, outcome },
+  );
 
 const BATCH_NOT_FOUND = 'Dávka návrhů nebyla nalezena.';
 const ALREADY_DECIDED = 'Změnu už vyřídil někdo jiný nebo se právě schvaluje. Obnovte seznam.';
@@ -97,7 +107,11 @@ const reviewRow = Effect.fn('AgentPlatform.reviewRow')(function* reviewRow(
             ? [
                 {
                   ...subject,
-                  proposal: { agentLabel: row.agentLabel, proposalId: row.proposalId, summary: row.summary },
+                  proposal: {
+                    agentLabel: row.agentLabel,
+                    proposalId: AgentProposalIdSchema.make(row.proposalId),
+                    summary: row.summary,
+                  },
                 },
               ]
             : [subject],
@@ -313,7 +327,7 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
     }),
     { concurrency: 1 },
   );
-  return { results } satisfies AgentDecideResponse;
+  return AgentDecideResponseSchema.make({ results });
 });
 
 const decideLegacyBatch = Effect.fn('AgentPlatform.decideLegacyBatch')(function* decideLegacyBatch(
@@ -339,20 +353,20 @@ const decideLegacyBatch = Effect.fn('AgentPlatform.decideLegacyBatch')(function*
   }
   const modules = yield* callerModuleAccess(caller);
   if (!modules.write.has(module.moduleKey)) {
-    return {
+    return AgentDecideResponseSchema.make({
       results: request.itemKeys.map((itemKey) => result(itemKey, 'forbidden', notAllowed(module.label))),
-    } satisfies AgentDecideResponse;
+    });
   }
   const outcome = yield* decideLegacy(caller.principal, module.appId, changeIds, request.decision, request.note);
   const decisionResult = (itemKey: string) =>
     outcome.ok
       ? result(itemKey, request.decision === 'approve' ? 'applied' : 'rejected')
       : result(itemKey, outcome.status === 403 ? 'forbidden' : 'failed', outcome.message);
-  return {
+  return AgentDecideResponseSchema.make({
     results: request.itemKeys.map((itemKey) =>
       changeIdOf(itemKey) === undefined ? result(itemKey, 'skipped', ITEM_NOT_IN_BATCH) : decisionResult(itemKey),
     ),
-  } satisfies AgentDecideResponse;
+  });
 });
 
 /** Approve or reject items of one batch (`core:` or `legacy:` keys from the queue). */

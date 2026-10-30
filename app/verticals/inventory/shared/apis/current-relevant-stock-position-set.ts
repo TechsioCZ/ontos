@@ -8,7 +8,7 @@ import {
   RelevantStockPositionSetRequestSchema,
   RelevantStockPositionSetResponseSchema,
 } from '../domain/current-relevant-stock-position-set.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const CurrentRelevantStockPositionSetRequestSchema = RelevantStockPositionSetRequestSchema;
 export type CurrentRelevantStockPositionSetRequest = typeof CurrentRelevantStockPositionSetRequestSchema.Type;

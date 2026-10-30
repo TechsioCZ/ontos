@@ -1,5 +1,5 @@
 import { DateTime, Schema } from 'effect';
-import type { Effect } from 'effect';
+import type { Crypto, Effect } from 'effect';
 
 import {
   AssortmentCandidateSchema,
@@ -170,5 +170,5 @@ export interface AssortmentCommitmentConfirmationIssuer {
   readonly issue: (
     payload: AssortmentCommitmentConfirmationPayload,
     metadata: Readonly<{ readonly actionInvocationId: string; readonly actorPrincipalId: string }>,
-  ) => Effect.Effect<AssortmentCommitmentConfirmationResult, CommitmentConfirmationError>;
+  ) => Effect.Effect<AssortmentCommitmentConfirmationResult, CommitmentConfirmationError, Crypto.Crypto>;
 }

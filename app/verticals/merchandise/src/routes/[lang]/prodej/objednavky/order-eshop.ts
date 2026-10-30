@@ -4,9 +4,9 @@ import type {
   OrderHistoryEntry,
   OrderHistoryKind,
   OrderStatus,
-  ShippingMethod,
 } from '../../../../../shared/domain/merchandise-model.ts';
-import { shippingMethods } from '../../../../../shared/domain/merchandise-model.ts';
+import { ShippingMethodSchema, shippingMethods } from '../../../../../shared/domain/merchandise-model.ts';
+import { Schema } from 'effect';
 import type { CustomerDirectory } from './customers-directory.ts';
 
 /** Guest (storefront) orders carry their own contact; staff orders name a party from the registry. */
@@ -30,7 +30,7 @@ export const workflowSteps: readonly { readonly label: string; readonly status: 
 
 export const workflowIndex = (status: OrderStatus): number => workflowSteps.findIndex((step) => step.status === status);
 
-export const historyKindLabels: Readonly<Record<OrderHistoryKind, string>> = {
+export const historyKindLabels = {
   ADDRESS: 'Doručovací adresa',
   CONTACT: 'Kontakt',
   CREATED: 'Objednávka vytvořena',
@@ -38,21 +38,23 @@ export const historyKindLabels: Readonly<Record<OrderHistoryKind, string>> = {
   NOTE: 'Poznámka',
   SHIPPING: 'Doprava',
   STATUS: 'Změna stavu',
-};
+} as const satisfies Readonly<Record<OrderHistoryKind, string>>;
 
 /** Known demo principals, so the history names people instead of opaque ids. */
-const knownPrincipals: Readonly<Record<string, string>> = {
-  '1aaf0c53-beaf-50b6-819e-fa0c055f5b26': 'Správce e-shopu AKROS',
-  'a36f17f1-aafb-529b-b05e-835b255f6a27': 'Expedice AKROS',
-  '2bdc200d-ad86-5101-b48f-a52339718354': 'Obchodník',
-  '3952547a-564f-5468-9038-8dce11185c44': 'Skladník',
-  '3f488baf-7be5-5d9d-994d-186eb91d2f3f': 'AI asistent',
-  '493dafec-c9b1-5a84-89cb-bee630de3c34': 'Vedoucí obchodu',
-  '4f94471b-1d15-5aa9-a836-c87e0f8a449d': 'Účetní',
-  '63bb4d05-3edf-59dd-89c8-4a1ffc761154': 'Expedice (expedice@kavarna.demo)',
-  '98068f06-a5d7-59eb-860e-0f8fcf5a3888': 'E-shop (storefront)',
-  'cdfa4353-77ab-5b46-9dc9-b1119ae0d5a9': 'Správce e-shopu (eshop@kavarna.demo)',
-};
+const knownPrincipals = new Map<string, string>(
+  Object.entries({
+    '1aaf0c53-beaf-50b6-819e-fa0c055f5b26': 'Správce e-shopu AKROS',
+    '2bdc200d-ad86-5101-b48f-a52339718354': 'Obchodník',
+    '3952547a-564f-5468-9038-8dce11185c44': 'Skladník',
+    '3f488baf-7be5-5d9d-994d-186eb91d2f3f': 'AI asistent',
+    '493dafec-c9b1-5a84-89cb-bee630de3c34': 'Vedoucí obchodu',
+    '4f94471b-1d15-5aa9-a836-c87e0f8a449d': 'Účetní',
+    '63bb4d05-3edf-59dd-89c8-4a1ffc761154': 'Expedice (expedice@kavarna.demo)',
+    '98068f06-a5d7-59eb-860e-0f8fcf5a3888': 'E-shop (storefront)',
+    'a36f17f1-aafb-529b-b05e-835b255f6a27': 'Expedice AKROS',
+    'cdfa4353-77ab-5b46-9dc9-b1119ae0d5a9': 'Správce e-shopu (eshop@kavarna.demo)',
+  }),
+);
 
 export const historyActorLabel = (entry: OrderHistoryEntry, currentPrincipalId: string | undefined): string => {
   if (entry.actorLabel !== undefined) {
@@ -61,15 +63,16 @@ export const historyActorLabel = (entry: OrderHistoryEntry, currentPrincipalId: 
   if (entry.actor === undefined) {
     return 'Systém';
   }
-  const known = knownPrincipals[entry.actor.principalId];
+  const known = knownPrincipals.get(entry.actor.principalId);
   if (entry.actor.principalId === currentPrincipalId) {
     return known === undefined ? 'Vy' : `${known} (vy)`;
   }
   return known ?? `Pracovník …${entry.actor.principalId.slice(-6)}`;
 };
 
-export const shippingOptions = (Object.keys(shippingMethods) as ShippingMethod[]).map((method) => ({
-  label: shippingMethods[method].label,
-  method,
-  priceMinor: shippingMethods[method].grossPriceMinor,
-}));
+export const shippingOptions = Object.keys(shippingMethods).flatMap((method) => {
+  if (!Schema.is(ShippingMethodSchema)(method)) {
+    return [];
+  }
+  return [{ label: shippingMethods[method].label, method, priceMinor: shippingMethods[method].grossPriceMinor }];
+});

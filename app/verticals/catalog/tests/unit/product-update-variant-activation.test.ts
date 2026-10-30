@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -83,7 +84,7 @@ describe('Product update Variant activation', () => {
       localizedName = 'Police Alfa';
       const withTranslation = yield* persistence.getCurrent(productId);
       expect(Option.getOrThrow(withTranslation).catalogReady).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed before any write when draft Current basis is unverified', () =>
@@ -104,6 +105,6 @@ describe('Product update Variant activation', () => {
         })
         .pipe(Effect.flip);
       expect(Schema.is(CatalogPersistenceUnavailable)(error)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

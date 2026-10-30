@@ -1,8 +1,10 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { PricingAcceptedOrderHandoffWireSchema } from '@app/pricing-contracts/domain/accepted-order-handoff';
 import type { PricingAcceptedOrderHandoff } from '@app/pricing-contracts/domain/accepted-order-handoff';
 import { Effect, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 /** The wire version is independent from the Pricing calculation and evidence contract versions. */
 export const PRICING_ACCEPTED_ORDER_HANDOFF_ENVELOPE_VERSION = 'pricing.accepted-order-handoff.v1' as const;
@@ -96,11 +98,14 @@ export const canonicalizePricingAcceptedOrderHandoffJson = (value: Schema.Json):
 };
 
 const payloadDigest = (payload: string): string =>
-  createHash('sha256')
-    .update(PRICING_ACCEPTED_ORDER_HANDOFF_ENVELOPE_VERSION)
-    .update('\u0000')
-    .update(payload)
-    .digest('hex');
+  Hex.encode(
+    sha256
+      .create()
+      .update(utf8ToBytes(PRICING_ACCEPTED_ORDER_HANDOFF_ENVELOPE_VERSION))
+      .update(utf8ToBytes('\u0000'))
+      .update(utf8ToBytes(payload))
+      .digest(),
+  );
 
 /**
  * Encodes the complete internal owner handoff. No customer projection or evidence sanitization is

@@ -10,6 +10,7 @@ import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-cat
 import { seedAkrosStock } from '../demo/seed-akros-stock.mts';
 import { applyImportsCommand, ImportsCommandSchema } from '../../verticals/crm/shared/commands/imports.ts';
 import { CrmStateSchema, initialCrmState } from '../../verticals/crm/shared/domain/state.ts';
+import { orderDateText } from '../../verticals/crm/shared/domain/imports.ts';
 import { CrmViewerSchema } from '../../verticals/crm/shared/domain/access.ts';
 import { WorkforceCommandSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
 import { WorkforceStateSchema } from '../../verticals/workforce/shared/apis/records.ts';
@@ -28,7 +29,7 @@ import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/
 import { PartyIdSchema } from '../../verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { EmployeeIdSchema } from '../../verticals/workforce/shared/resources/employee.ts';
 import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { demoId } from '../demo/fixture-ids.mts';
@@ -95,7 +96,7 @@ it.effect('refuses duplicate fixture keys and mismatching records without overwr
           resourceType: counterpartyResource,
           tenantId: target.tenantId,
         },
-        displayName: 'Ukázkový nájemce Siampark',
+        displayName: 'Ukázkový nájemce Nájempark',
         partyRef: {
           moduleId: partyModule,
           resourceId: target.legalEntityId,
@@ -105,6 +106,31 @@ it.effect('refuses duplicate fixture keys and mismatching records without overwr
         status: 'ARCHIVED',
       },
     ]).pipe(Effect.flip);
+    expect(Schema.is(DemoSeedError)(failure)).toBe(true);
+  }),
+);
+
+it.effect('retains a legacy rental customer identity and refuses old/new-name duplicates after the rebrand', () =>
+  Effect.gen(function* preservesRebrandedCustomerIdentity() {
+    const existing: Parameters<typeof existingSeedCustomer>[0][number] = {
+      counterpartyRef: {
+        moduleId: partyModule,
+        resourceId: target.legalEntityId,
+        resourceType: counterpartyResource,
+        tenantId: target.tenantId,
+      },
+      displayName: 'Ukázkový nájemce Siampark',
+      partyRef: {
+        moduleId: partyModule,
+        resourceId: target.legalEntityId,
+        resourceType: partyResource,
+        tenantId: target.tenantId,
+      },
+      status: 'ACTIVE',
+    };
+    expect(yield* existingSeedCustomer([existing])).toEqual(existing);
+    const duplicate = { ...existing, displayName: 'Ukázkový nájemce Nájempark' };
+    const failure = yield* existingSeedCustomer([existing, duplicate]).pipe(Effect.flip);
     expect(Schema.is(DemoSeedError)(failure)).toBe(true);
   }),
 );
@@ -487,7 +513,7 @@ it.effect('missing CRM fixture data fails the case seed rather than silently rep
       const failure = yield* seedSiamparkCaseRecords(client, target, caseOwners, directory).pipe(Effect.flip);
       expect(Schema.is(DemoSeedError)(failure)).toBe(true);
       expect((yield* Schema.decodeUnknownEffect(DemoSeedError)(failure)).reason).toContain(
-        'Expected one Siampark CRM fixture',
+        'Expected one Nájempark CRM fixture',
       );
     }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
     expect(fixture.parties).toHaveLength(0);
@@ -725,7 +751,7 @@ it.effect('imports current-month orders through the native CRM reducer and creat
           expect(payload.expectedRevision).toBe(revision);
           const result = yield* applyImportsCommand(state, payload.command, {
             invocationId: `crm-seed-${revision}`,
-            now,
+            now: DateTime.makeUnsafe(now),
             viewer,
           });
           ({ state } = result);
@@ -744,7 +770,9 @@ it.effect('imports current-month orders through the native CRM reducer and creat
     expect(state.imports.customerLinks).toHaveLength(3);
     expect(state.imports.batches).toHaveLength(1);
     expect(state.imports.orders.every((order) => order.pairing === 'paired')).toBe(true);
-    expect(state.imports.orders.filter((order) => order.orderedAt?.startsWith('2026-10') === true)).toHaveLength(3);
+    expect(
+      state.imports.orders.filter((order) => orderDateText(order.orderedAt)?.startsWith('2026-10') === true),
+    ).toHaveLength(3);
     expect(state.imports.batches[0]?.rejected).toBe(0);
   }),
 );
@@ -807,7 +835,7 @@ it.effect('links four Hanák organizational employees through native workforce c
 
 it.effect('repairs every stock page through native updates and reruns without moving stock or writing again', () =>
   Effect.gen(function* paginatedStockRepair() {
-    const baseline = buildAkrosEncoded();
+    const baseline = yield* buildAkrosEncoded();
     const products = baseline.products.slice(0, 260).map((product) => ({ ...product, lowStockThreshold: 5 }));
     const ids = new Set(products.map((product) => product.id));
     let state = Schema.decodeUnknownSync(MerchandiseStateSchema)({

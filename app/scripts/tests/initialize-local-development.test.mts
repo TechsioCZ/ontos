@@ -5,7 +5,7 @@ import path from 'node:path';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';

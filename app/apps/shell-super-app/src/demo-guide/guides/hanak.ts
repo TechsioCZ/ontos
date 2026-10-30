@@ -1,5 +1,9 @@
 import type { DemoGuide, DemoGuidePersona } from '../demo-guide-types.ts';
 
+const approvalsPath = '/sprava/ke-schvaleni';
+const importsPath = '/crm/importy';
+const clientsPath = '/crm/klienti';
+
 const spravce: DemoGuidePersona = { email: 'spravce@hanak.demo', role: 'Správce' };
 const vedouci: DemoGuidePersona = { email: 'vedouci@hanak.demo', role: 'Vedení obchodu' };
 const jan: DemoGuidePersona = { email: 'obchodnik.a@hanak.demo', role: 'Obchodník Jan' };
@@ -15,7 +19,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-moji-klienti',
           persona: jan,
           say: 'Obchodník má svoje klienty, jejich vztahovou historii a další krok na jednom místě.',
-          target: { kind: 'app', path: '/crm/klienti' },
+          target: { kind: 'app', path: clientsPath },
           title: 'Mí klienti',
         },
         {
@@ -23,7 +27,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-karta-klienta',
           persona: jan,
           say: 'Na kartě klienta jsou kontakty, návštěvy i objednávky, takže obchodník přijde na schůzku připravený.',
-          target: { kind: 'app', path: '/crm/klienti' },
+          target: { kind: 'app', path: clientsPath },
           title: 'Karta klienta Pekárna Malá',
         },
         {
@@ -47,7 +51,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-kolegyne',
           persona: petra,
           say: 'Petra vidí jen svoje klienty. Klienty kolegy nedostane ani tehdy, když zná odkaz.',
-          target: { kind: 'app', path: '/crm/klienti' },
+          target: { kind: 'app', path: clientsPath },
           title: 'Klienti kolegyně jsou oddělení',
         },
       ],
@@ -63,7 +67,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-import-nahled',
           persona: vedouci,
           say: 'Před uložením je vidět kontrola každého řádku. Opakované načtení nezaloží druhé objednávky ani duplicitní události.',
-          target: { kind: 'app', path: '/crm/importy' },
+          target: { kind: 'app', path: importsPath },
           title: 'Import objednávek z CSV',
         },
         {
@@ -71,7 +75,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-import-historie',
           persona: vedouci,
           say: 'Platné řádky se uložily a chybné zůstaly čitelně dohledatelné v historii dávky.',
-          target: { kind: 'app', path: '/crm/importy' },
+          target: { kind: 'app', path: importsPath },
           title: 'Historie importů',
         },
         {
@@ -102,7 +106,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-obchodnik-importy',
           persona: jan,
           say: 'Obchodník vidí jen své objednávky. Import a celofiremní vzory chrání i server, nejen skryté tlačítko.',
-          target: { kind: 'app', path: '/crm/importy' },
+          target: { kind: 'app', path: importsPath },
           title: 'Obchodník bez celofiremních importů',
         },
         {
@@ -126,7 +130,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-urovne',
           persona: vedouci,
           say: 'Úroveň A jen čte, B smí navíc založit úkol a C navrhuje změny dat klientů. Každá úroveň je samostatná identita s vlastními oprávněními.',
-          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
+          target: { kind: 'app', path: approvalsPath },
           title: 'Tři úrovně AI agenta',
         },
         {
@@ -135,7 +139,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-navrh',
           persona: vedouci,
           say: 'AI agent úrovně C poslal přes MCP konkrétní návrh. Dokud ho člověk neschválí, data klienta se nemění.',
-          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
+          target: { kind: 'app', path: approvalsPath },
           title: 'Návrh AI čeká na člověka',
         },
         {
@@ -144,7 +148,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-rozhodnuti',
           persona: vedouci,
           say: 'Člověk rozhoduje po jednotlivých změnách a deník rozhodnutí zůstane i po obnovení stránky.',
-          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
+          target: { kind: 'app', path: approvalsPath },
           title: 'Schválit jednu změnu, zamítnout druhou',
         },
         {
@@ -153,7 +157,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-vraceni',
           persona: vedouci,
           say: 'Změny AI jde hromadně vrátit a vrácení se trvale zapíše. AI tedy není cesta kolem oprávnění ani kolem historie.',
-          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
+          target: { kind: 'app', path: approvalsPath },
           title: 'Vrátit celou dávku',
         },
         {

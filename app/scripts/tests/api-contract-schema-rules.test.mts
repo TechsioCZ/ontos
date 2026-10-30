@@ -27,7 +27,7 @@ const write = Effect.fn(function* writeFixture(root: string, file: string, conte
  * declares one of these names locally (shadow/namespace/enum fixtures) must not wrap with this.
  */
 const withImports = (source: string): string =>
-  `import { HttpApiEndpoint } from 'effect/unstable/httpapi';
+  `import { HttpApiEndpoint } from 'effect/http-api';
 import { Schema } from 'effect';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts';
 ${source}`;
@@ -213,7 +213,7 @@ it.live(
         ReexportedEndpoint.options('execute', '/reads/example', { success: Schema.Any });
       `),
       ],
-      [contractBarrelFixturePath, `export { HttpApiEndpoint as ReexportedEndpoint } from 'effect/unstable/httpapi';`],
+      [contractBarrelFixturePath, `export { HttpApiEndpoint as ReexportedEndpoint } from 'effect/http-api';`],
     ]);
     expect((yield* violation(files)) ?? '').toMatch(/must use concrete/u);
   }),
@@ -249,7 +249,7 @@ it.live(
       [contractBarrelFixturePath, `export { makeEndpoint } from './unsafe';`],
       [
         unsafeContractFixturePath,
-        `import { HttpApiEndpoint } from 'effect/unstable/httpapi';
+        `import { HttpApiEndpoint } from 'effect/http-api';
         export function makeEndpoint() {
           return HttpApiEndpoint.make('GET');
         }
@@ -263,7 +263,7 @@ it.live(
 it.live(
   'follows the direct HttpApiEndpoint provider through verbs, make, and re-exports',
   Effect.fn(function* scenario5() {
-    const provider = 'effect/unstable/httpapi/HttpApiEndpoint';
+    const provider = 'effect/http-api/HttpApiEndpoint';
     for (const method of ['delete', 'get', 'head', 'options', 'patch', 'post', 'put']) {
       const entry = withImports(`
       import * as Endpoint from '${provider}';
@@ -633,7 +633,7 @@ it.live(
       withImports(`HttpApiEndpoint['get']('read', '/reads/example', { success: Schema.Unknown });`),
       `
       import * as Effect from 'effect';
-      import { HttpApiEndpoint } from 'effect/unstable/httpapi';
+      import { HttpApiEndpoint } from 'effect/http-api';
       const { Schema: S } = Effect;
       HttpApiEndpoint.get('read', '/reads/example', { success: S.Json });
     `,
@@ -684,7 +684,7 @@ it.live(
         'verticals/catalog/src/contracts/factories.ts',
         `export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';`,
       ],
-      ['verticals/catalog/src/contracts/http.ts', `export { HttpApiEndpoint } from 'effect/unstable/httpapi';`],
+      ['verticals/catalog/src/contracts/http.ts', `export { HttpApiEndpoint } from 'effect/http-api';`],
       [unsafeContractFixturePath, `import { Schema } from 'effect'; export const UnsafeSchema = Schema.Unknown;`],
     ]);
     for (const entry of [
@@ -705,7 +705,7 @@ it.live(
     `,
       `
       import * as Barrel from './barrel';
-      import { HttpApiEndpoint } from 'effect/unstable/httpapi';
+      import { HttpApiEndpoint } from 'effect/http-api';
       HttpApiEndpoint.get('read', '/reads/example', { success: Barrel.Schemas.UnsafeSchema });
     `,
       `
@@ -987,7 +987,7 @@ it.live(
     for (const content of [
       `
       import { Schema } from 'effect';
-      import { HttpApiEndpoint } from 'effect/unstable/httpapi';
+      import { HttpApiEndpoint } from 'effect/http-api';
       function fixture() {
         { var Schema = { Any: 'safe' }; }
         HttpApiEndpoint.get('read', '/reads/example', { success: Schema.Any });
@@ -1025,7 +1025,7 @@ it.live(
       [`export * as S from 'effect/Schema';`, `import { S } from './barrel'; const UnsafeSchema = S.Any;`],
     ];
     for (const [barrel, imported] of fixtures) {
-      const entry = `import { HttpApiEndpoint } from 'effect/unstable/httpapi';
+      const entry = `import { HttpApiEndpoint } from 'effect/http-api';
       ${imported}
       HttpApiEndpoint.get('read', '/reads/example', { success: UnsafeSchema });`;
       const files = new Map([
@@ -1036,8 +1036,8 @@ it.live(
     }
 
     for (const barrel of [
-      `export { HttpApiEndpoint } from 'effect/unstable/httpapi';`,
-      `export * as Http from 'effect/unstable/httpapi';`,
+      `export { HttpApiEndpoint } from 'effect/http-api';`,
+      `export * as Http from 'effect/http-api';`,
     ]) {
       const imported = barrel.includes('* as')
         ? `import { Http } from './barrel'; Http.HttpApiEndpoint`

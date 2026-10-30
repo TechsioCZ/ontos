@@ -1,6 +1,8 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { DateTime, Effect } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import type {
   PricingCurrentMarketEvidenceRequest,
@@ -17,7 +19,7 @@ export interface PricingCurrentMarketEvidenceTrustedScope {
   readonly tenantId: string;
 }
 
-const fingerprint = (value: string): string => createHash('sha256').update(value).digest('hex');
+const fingerprint = (value: string): string => Hex.encode(sha256(utf8ToBytes(value)));
 const instant = (value: DateTime.Utc): string => DateTime.formatIso(value);
 const sameInstant = (left: DateTime.Utc | undefined, right: DateTime.Utc | undefined): boolean =>
   left === undefined || right === undefined

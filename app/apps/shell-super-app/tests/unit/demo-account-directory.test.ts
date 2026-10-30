@@ -2,10 +2,11 @@ import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/se
 import { ReadRuntime } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { DateTime, Effect, Layer, Predicate, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
@@ -32,11 +33,11 @@ const caller = { legalName: 'Company', principal: { ...principal, legalEntityId:
 const transport = { correlationId: 'original-role-template-read' };
 const emails = [
   'obchod@demo.ontos',
-  'management@siampark.demo',
-  'operations@siampark.demo',
+  'management@najempark.demo',
+  'operations@najempark.demo',
   'obchodnik@demo.ontos',
-  'finance@siampark.demo',
-  'external@siampark.demo',
+  'finance@najempark.demo',
+  'external@najempark.demo',
 ];
 const retainedAccounts = emails.map((email, index) => ({ email, providerSubjectId: `retained-user-${index}` }));
 const retainedBindings = retainedAccounts.map(({ providerSubjectId }, index) => ({
@@ -103,7 +104,7 @@ const fixture = (
       Effect.provide(provider),
     );
     return { authQueries, directory, harness, read };
-  });
+  }).pipe(Effect.provide(NodeCrypto.layer));
 
 it.effect('resolves six unchanged presets through retained Auth users then exact scoped active Core bindings', () =>
   Effect.gen(function* sixNativeRoleTemplates() {

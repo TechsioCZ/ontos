@@ -1,14 +1,29 @@
+import { AiAdapterFailure, AiFailure } from '@app/shared-contracts/ai-approvals';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
-import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
+import {
+  merchandiseAiCommandSchemas,
+  MerchandiseCommandSchema,
+  MerchandiseNotFound,
+  MerchandisePermissionDenied,
+} from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { applyMerchandiseAiCommand } from '../../src/services/ai-changes.ts';
-import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import {
+  describeAddress,
+  describeContact,
+  describeLines,
+  describeShipping,
+  evolveMerchandiseState,
+  orderStatusLabels,
+} from '../../src/services/persistence.service.ts';
 import { stockOnHandOf } from '../../src/services/stock-levels.ts';
+
+/** A real asynchronous boundary with no timing assertion or external I/O. */
+const nextMicrotask = Effect.promise(Promise.resolve.bind(Promise));
 
 const agent = { principalId: '20000000-0000-4000-8000-0000000000c1', tenantId: '20000000-0000-4000-8000-000000000001' };
 const approver = {
@@ -16,25 +31,44 @@ const approver = {
   tenantId: '20000000-0000-4000-8000-000000000001',
 };
 const now = DateTime.makeUnsafe('2026-10-21T08:00:00Z');
-type AiCommand = Extract<
-  MerchandiseCommand,
-  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
->;
-const decode = Schema.decodeUnknownSync(MerchandiseCommandSchema);
+const AiCommandSchema = Schema.Union(merchandiseAiCommandSchemas);
+type CommandInput = typeof MerchandiseCommandSchema.Encoded;
+type AiCommandInput = typeof AiCommandSchema.Encoded;
+const decode = Schema.decodeUnknownEffect(MerchandiseCommandSchema);
+const decodeAi = Schema.decodeUnknownEffect(AiCommandSchema);
+const decodeProposalIds = Schema.decodeUnknownEffect(Schema.Tuple([Schema.String, Schema.String]));
+const StateJsonSchema = Schema.fromJsonString(MerchandiseStateSchema);
 const roundTrip = (state: MerchandiseState) =>
-  Schema.decodeUnknownSync(MerchandiseStateSchema)(
-    JSON.parse(JSON.stringify(Schema.encodeSync(MerchandiseStateSchema)(state))),
-  );
-const stock = (state: MerchandiseState) =>
-  stockOnHandOf(state.movements, Schema.decodeUnknownSync(ProductIdSchema)('product-1'));
+  Schema.encodeEffect(StateJsonSchema)(state).pipe(Effect.flatMap(Schema.decodeEffect(StateJsonSchema)), Effect.orDie);
+const stock = (state: MerchandiseState) => stockOnHandOf(state.movements, ProductIdSchema.make('product-1'));
 
-const run = (state: MerchandiseState, input: unknown, resourceId: string) =>
-  evolveMerchandiseState(state, decode(input), { actor: approver, now, resourceId }).pipe(
-    Effect.map((change) => roundTrip(change.state)),
+const run = (state: MerchandiseState, input: CommandInput, resourceId: string) =>
+  decode(input).pipe(
+    Effect.orDie,
+    Effect.flatMap((command) => evolveMerchandiseState(state, command, { actor: approver, now, resourceId })),
+    Effect.flatMap((change) => roundTrip(change.state)),
   );
-const ai = (state: MerchandiseState, input: unknown, invocationId: string, actor = approver) =>
-  applyMerchandiseAiCommand(state, decode(input) as AiCommand, { actor, invocationId, now }).pipe(
-    Effect.map((outcome) => ({ ...outcome, state: roundTrip(outcome.state) })),
+const ai = (state: MerchandiseState, input: AiCommandInput, invocationId: string, actor = approver) =>
+  decodeAi(input).pipe(
+    Effect.orDie,
+    Effect.flatMap((command) =>
+      applyMerchandiseAiCommand(
+        state,
+        command,
+        { actor, invocationId, now },
+        {
+          describeAddress,
+          describeContact,
+          describeLines,
+          describeShipping,
+          evolveMerchandiseState,
+          orderStatusLabels,
+        },
+      ),
+    ),
+    Effect.flatMap((outcome) =>
+      roundTrip(outcome.state).pipe(Effect.map((restored) => ({ ...outcome, state: restored }))),
+    ),
   );
 
 const seeded = Effect.gen(function* seed() {
@@ -93,16 +127,17 @@ it.effect('an approved order cancellation returns stock; Vrátit vše restores t
       field: 'status',
       label: 'Stav',
     });
+    const [batchId, changeId] = yield* decodeProposalIds(proposed.entityIds);
     const approved = yield* ai(
       proposed.state,
-      { _tag: 'AiDecideChanges', changeIds: [proposed.entityIds[1]], decision: 'approve' },
+      { _tag: 'AiDecideChanges', changeIds: [changeId], decision: 'approve' },
       '80000000-0000-4000-8000-000000000002',
     );
     expect(approved.state.orders[0]?.status).toBe('CANCELLED');
     expect(stock(approved.state)).toBe(10);
     const reverted = yield* ai(
       approved.state,
-      { _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] },
+      { _tag: 'AiRevertBatch', batchId },
       '80000000-0000-4000-8000-000000000003',
     );
     expect(reverted.state.orders[0]?.status).toBe('NEW');
@@ -128,22 +163,21 @@ it.effect('an approved note edit is reverted; a change made by a person since bl
       '80000000-0000-4000-8000-000000000011',
       agent,
     );
+    const [batchId, changeId] = yield* decodeProposalIds(proposed.entityIds);
     const approved = yield* ai(
       proposed.state,
-      { _tag: 'AiDecideChanges', changeIds: [proposed.entityIds[1]], decision: 'approve' },
+      { _tag: 'AiDecideChanges', changeIds: [changeId], decision: 'approve' },
       '80000000-0000-4000-8000-000000000012',
     );
     expect(approved.state.orders[0]?.note).toBe('Doručit po 14:00');
     const edited = yield* run(approved.state, { _tag: 'EditOrder', id: 'order-1', note: 'Volat předem' }, 'edit-1');
-    const blocked = yield* ai(
-      edited,
-      { _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] },
-      '80000000-0000-4000-8000-000000000013',
-    ).pipe(Effect.flip);
+    const blocked = yield* ai(edited, { _tag: 'AiRevertBatch', batchId }, '80000000-0000-4000-8000-000000000013').pipe(
+      Effect.flip,
+    );
     expect(blocked.kind).toBe('conflict');
     const reverted = yield* ai(
       approved.state,
-      { _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] },
+      { _tag: 'AiRevertBatch', batchId },
       '80000000-0000-4000-8000-000000000014',
     );
     expect(reverted.state.orders[0]?.note).toBeUndefined();
@@ -153,9 +187,83 @@ it.effect('an approved note edit is reverted; a change made by a person since bl
 it.effect('API keys may propose but never decide or revert', () =>
   Effect.gen(function* guard() {
     yield* assertCommandAllowed('non_human', 'AiProposeChanges');
-    for (const tag of ['AiDecideChanges', 'AiRevertBatch']) {
-      const denied = yield* assertCommandAllowed('non_human', tag).pipe(Effect.flip);
-      expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
-    }
+    yield* Effect.forEach(
+      ['AiDecideChanges', 'AiRevertBatch'],
+      (tag) =>
+        assertCommandAllowed('non_human', tag).pipe(
+          Effect.flip,
+          Effect.map((denied) => expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true)),
+        ),
+      { concurrency: 1 },
+    );
+  }),
+);
+
+it.live('order description awaits the owner reducer without starting a nested runtime', () =>
+  Effect.gen(function* asynchronousDescription() {
+    const start = yield* seeded;
+    const proposed = yield* applyMerchandiseAiCommand(
+      start,
+      yield* decodeAi({
+        _tag: 'AiProposeChanges',
+        changes: [
+          {
+            operation: { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CANCELLED' },
+            reason: 'Zákazník objednávku zrušil.',
+          },
+        ],
+        instruction: 'Stornuj objednávku zákazníka.',
+      }),
+      { actor: agent, invocationId: 'async-order-description', now },
+      {
+        describeAddress,
+        describeContact,
+        describeLines,
+        describeShipping,
+        evolveMerchandiseState: (state, command, input) =>
+          evolveMerchandiseState(state, command, input).pipe(Effect.tap(() => nextMicrotask)),
+        orderStatusLabels,
+      },
+    );
+    expect(proposed.state.orders).toBe(start.orders);
+    expect(stock(proposed.state)).toBe(7);
+    expect(proposed.state.aiChanges?.changes[0]?.diff[0]).toEqual({
+      after: 'Stornovaná',
+      before: 'Nová',
+      field: 'status',
+      label: 'Stav',
+    });
+    expect(proposed.state.aiChanges?.changes[0]?.proposedSnapshots?.map((snapshot) => snapshot.kind)).toEqual([
+      'order',
+      'movement',
+    ]);
+  }),
+);
+
+it.effect('order proposal rejection preserves its Czech message and original typed reducer failure', () =>
+  Effect.gen(function* failedOrderProposal() {
+    const start = yield* seeded;
+    const failure = yield* ai(
+      start,
+      {
+        _tag: 'AiProposeChanges',
+        changes: [
+          {
+            operation: { _tag: 'EditOrder', id: 'missing-order', note: 'Doručit po 14:00' },
+            reason: 'Zákazník volal.',
+          },
+        ],
+        instruction: 'Doplň poznámku k objednávce.',
+      },
+      'missing-order-proposal',
+      agent,
+    ).pipe(Effect.flip);
+    expect(Schema.is(AiFailure)(failure)).toBe(true);
+    expect(failure.kind).toBe('invalid');
+    expect(failure.message).toBe('Návrh č. 1 (Úprava objednávky) nelze přijmout: Objednávka neexistuje.');
+    expect(Schema.is(AiAdapterFailure)(failure.cause)).toBe(true);
+    expect(Schema.is(MerchandiseNotFound)(failure.cause?.cause)).toBe(true);
+    expect(start.aiChanges).toBeUndefined();
+    expect(stock(start)).toBe(7);
   }),
 );

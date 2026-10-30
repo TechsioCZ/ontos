@@ -53,7 +53,6 @@ export const IdentityAdministrationAuditEntrySchema = Schema.Struct({
 export const IdentityAdministrationAuditResultSchema = Schema.Struct({
   entries: Schema.Array(IdentityAdministrationAuditEntrySchema).check(Schema.isMaxLength(80)),
 });
-export type IdentityAdministrationAuditResult = typeof IdentityAdministrationAuditResultSchema.Type;
 
 const nullableText = Schema.optionalKey(Schema.Union([Schema.String, Schema.Null]));
 export const IdentityAdministrationAuditEvidenceSchema = Schema.Struct({

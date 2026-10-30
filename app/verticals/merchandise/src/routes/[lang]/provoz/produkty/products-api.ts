@@ -6,6 +6,7 @@ import { executeApplyCommand } from '../../../../api/apply-command-action-client
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductId, ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import type {
@@ -14,6 +15,8 @@ import type {
   RecordsResponse,
   RecordsView,
 } from '../../../../../shared/apis/records.ts';
+
+const RELOAD_REQUIRED = 'reload-required';
 
 /**
  * `conflict` is a stale revision (someone else changed the data); `rejected` is a business rule the
@@ -24,7 +27,7 @@ const FailureReasonSchema = Schema.Literals([
   'forbidden',
   'invalid',
   'rejected',
-  'reload-required',
+  RELOAD_REQUIRED,
   'unavailable',
 ]);
 export type FailureReason = typeof FailureReasonSchema.Type;
@@ -54,15 +57,11 @@ export const recordsReason = (error: RecordsFailure): FailureReason =>
     Match.tag('RecordsInvalidProblem', 'RecordsPolicyProblem', (): FailureReason => 'invalid'),
     Match.tag('GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem', (): FailureReason => 'forbidden'),
     Match.tag('GatewayAudienceInvalidProblem', (): FailureReason => 'invalid'),
-    Match.tag(
-      'GatewayReloadRequiredProblem',
-      'DocumentCompositionRevisionError',
-      (): FailureReason => 'reload-required',
-    ),
+    Match.tag('GatewayReloadRequiredProblem', 'DocumentCompositionRevisionError', (): FailureReason => RELOAD_REQUIRED),
     // The shell module-admission seam returns a plain-text 409, not the owner problem JSON.
     Match.tag('HttpClientError', (problem): FailureReason =>
       problem.response?.status === 409 && problem.request.url.includes('/module-api/')
-        ? 'reload-required'
+        ? RELOAD_REQUIRED
         : 'unavailable',
     ),
     Match.tag(
@@ -114,18 +113,29 @@ export interface ProductListQuery {
 type ViewPayload = NonNullable<RecordsRequestEncoded['view']>;
 
 /** List rows only (no variants or histories) and no orders: one bounded page of the catalog. */
-export const productListView = (query: ProductListQuery): ViewPayload => ({
-  limit: query.limit,
-  offset: query.offset,
-  ordersLimit: 0,
-  summary: true,
-  ...(query.search.trim() === '' ? {} : { search: query.search.trim() }),
-  ...(query.categoryId === null ? {} : { categoryId: query.categoryId }),
-  ...(query.category === null ? {} : { category: query.category }),
-  ...(query.taggedIds === null ? {} : { taggedProductIds: [...query.taggedIds] }),
-  ...(query.lowStockOnly ? { lowStockOnly: true } : {}),
-  ...(query.sort === null ? {} : { productSort: query.sort }),
-});
+type ViewDraft = { -readonly [Key in keyof ViewPayload]: ViewPayload[Key] };
+export const productListView = (query: ProductListQuery): ViewPayload => {
+  const view: ViewDraft = { limit: query.limit, offset: query.offset, ordersLimit: 0, summary: true };
+  if (query.search.trim() !== '') {
+    view.search = query.search.trim();
+  }
+  if (query.categoryId !== null) {
+    view.categoryId = query.categoryId;
+  }
+  if (query.category !== null) {
+    view.category = query.category;
+  }
+  if (query.taggedIds !== null) {
+    view.taggedProductIds = [...query.taggedIds];
+  }
+  if (query.lowStockOnly) {
+    view.lowStockOnly = true;
+  }
+  if (query.sort !== null) {
+    view.productSort = query.sort;
+  }
+  return view;
+};
 
 /** One records read; its failure already says what the page shows for it. */
 const readView = (view: ViewPayload): Effect.Effect<RecordsResponse, FailureReason> =>
@@ -251,7 +261,9 @@ export const runCommand = (
   void browserRuntime.runPromise(
     newId.pipe(
       Effect.flatMap((idempotencyKey) =>
-        executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey }),
+        Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision }).pipe(
+          Effect.flatMap((payload) => executeApplyCommand(payload, idempotencyKey, { idempotencyKey })),
+        ),
       ),
       Effect.match({
         onFailure: (error): CommandOutcome => ({ ok: false, reason: commandReason(error) }),

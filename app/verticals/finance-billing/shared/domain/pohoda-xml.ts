@@ -4,11 +4,13 @@ import type { ExportIssuer, ExportMeta, ExportPartnerIdentity, ExportRow } from 
 import { computeInvoiceTotals, lineBaseMinor, lineGrossMinor, lineVatMinor } from './invoice-totals.ts';
 
 /** Official STORMWARE namespaces of POHODA XML version 2 (https://www.stormware.cz/xml/schema/version_2/). */
+/* oxlint-disable sonarjs/no-clear-text-protocols -- Pending scoped exception approval: official XML namespace URIs require exact byte identity. */
 export const POHODA_NAMESPACES = {
   dat: 'http://www.stormware.cz/schema/version_2/data.xsd',
   inv: 'http://www.stormware.cz/schema/version_2/invoice.xsd',
   typ: 'http://www.stormware.cz/schema/version_2/type.xsd',
 } as const;
+/* oxlint-enable sonarjs/no-clear-text-protocols */
 
 /** Written to the POHODA internal note of a received invoice that has no VAT breakdown in OntOS. */
 export const POHODA_NO_VAT_BREAKDOWN_NOTE =
@@ -22,17 +24,26 @@ const xmlEscape = (value: string) =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
 
-/** Trims, cuts to the XSD maximum length in characters and escapes. */
-const text = (value: string, maxLength: number) => xmlEscape([...value.trim()].slice(0, maxLength).join(''));
+/** XSD character limits count Unicode code points; the string iterator retains surrogate pairs. */
+const text = (value: string, maxLength: number) => {
+  const codePoints = value.trim()[Symbol.iterator]();
+  return xmlEscape([...codePoints].slice(0, maxLength).join(''));
+};
 
 /** Haléře → "1234.50" (POHODA amounts use a dot and two decimals). */
 const money = (minor: number) => (minor / 100).toFixed(2);
 
 /** Czech VAT rate → POHODA `typ:vatRateType`: 21 % high, 12 % low, 10 % third, 0 % none. */
 export const pohodaVatRate = (rate: VatRate): 'high' | 'low' | 'none' | 'third' => {
-  if (rate === 21) return 'high';
-  if (rate === 12) return 'low';
-  if (rate === 10) return 'third';
+  if (rate === 21) {
+    return 'high';
+  }
+  if (rate === 12) {
+    return 'low';
+  }
+  if (rate === 10) {
+    return 'third';
+  }
   return 'none';
 };
 
@@ -79,7 +90,7 @@ const addressXml = (parts: AddressParts, indent: string) => {
   return lines.length === 0 ? undefined : `${indent}<typ:address>\n${lines.join('\n')}\n${indent}</typ:address>`;
 };
 
-const itemElement = (input: {
+interface ItemElementInput {
   readonly base: number;
   readonly discountPercentage?: number;
   readonly label: string;
@@ -87,7 +98,11 @@ const itemElement = (input: {
   readonly rate: VatRate;
   readonly unitPrice: number;
   readonly vat: number;
-}) => `          <inv:invoiceItem>
+}
+
+type MutableItemElementInput = { -readonly [Key in keyof ItemElementInput]: ItemElementInput[Key] };
+
+const itemElement = (input: ItemElementInput) => `          <inv:invoiceItem>
             <inv:text>${text(input.label, 90)}</inv:text>
             <inv:quantity>${input.quantity}</inv:quantity>
             <inv:payVAT>false</inv:payVAT>
@@ -107,20 +122,27 @@ ${input.discountPercentage === undefined ? '' : `            <inv:discountPercen
 const itemXml = (line: InvoiceLine) => {
   const base = lineBaseMinor(line);
   const vat = lineVatMinor(line);
-  const discount = line.discount;
+  const { discount } = line;
   if (discount === undefined || discount.kind === 'PERCENT') {
-    return itemElement({
+    const item: MutableItemElementInput = {
       base,
-      ...(discount === undefined ? {} : { discountPercentage: discount.value }),
       label: line.description,
       quantity: line.quantity,
       rate: line.vatRate,
       unitPrice: line.unitPriceMinor,
       vat,
-    });
+    };
+    if (discount !== undefined) {
+      item.discountPercentage = discount.value;
+    }
+    return itemElement(item);
   }
   const gross = lineGrossMinor(line);
-  const grossVat = lineVatMinor({ quantity: line.quantity, unitPriceMinor: line.unitPriceMinor, vatRate: line.vatRate });
+  const grossVat = lineVatMinor({
+    quantity: line.quantity,
+    unitPriceMinor: line.unitPriceMinor,
+    vatRate: line.vatRate,
+  });
   return [
     itemElement({
       base: gross,
@@ -204,6 +226,7 @@ const invoiceXml = (row: ExportRow, issuer: ExportIssuer | undefined, meta: Expo
     `OntOS doklad ${invoice.ref.resourceId}; předávací balíček ${meta.batchNumber}, verze ${meta.version}.`,
     ...(recap === undefined ? [POHODA_NO_VAT_BREAKDOWN_NOTE] : []),
   ].join(' ');
+  const documentNote = `Doklad v OntOS: ${row.documentLink}`;
   const header = [
     `          <inv:invoiceType>${pohodaInvoiceType(invoice)}</inv:invoiceType>`,
     ...(outgoing
@@ -233,12 +256,14 @@ const invoiceXml = (row: ExportRow, issuer: ExportIssuer | undefined, meta: Expo
     '          <inv:paymentType>',
     '            <typ:paymentType>draft</typ:paymentType>',
     '          </inv:paymentType>',
-    `          <inv:note>${text(`Doklad v OntOS: ${row.documentLink}`, 4000)}</inv:note>`,
+    `          <inv:note>${text(documentNote, 4000)}</inv:note>`,
     `          <inv:intNote>${text(intNote, 4000)}</inv:intNote>`,
   ].join('\n');
   const lines = invoice.lines ?? [];
   const detail =
-    lines.length === 0 ? '' : `        <inv:invoiceDetail>\n${lines.map(itemXml).join('\n')}\n        </inv:invoiceDetail>\n`;
+    lines.length === 0
+      ? ''
+      : `        <inv:invoiceDetail>\n${lines.map(itemXml).join('\n')}\n        </inv:invoiceDetail>\n`;
   return `      <inv:invoice version="${POHODA_DATAPACK_VERSION}">
         <inv:invoiceHeader>
 ${header}
@@ -254,15 +279,16 @@ ${detail}${summaryXml(invoice, recap)}
  */
 export const buildPohodaDataPack = (rows: readonly ExportRow[], meta: ExportMeta): string => {
   const packId = `${meta.batchNumber}-v${meta.version}`;
-  const issuer = meta.issuer;
+  const { issuer } = meta;
   const icoAttribute = issuer?.ico === undefined ? '' : ` ico="${xmlEscape(issuer.ico)}"`;
   const note = `Předávací balíček ${meta.batchNumber}, verze ${meta.version}, vytvořil ${meta.createdBy}, ${meta.createdAt}`;
   const items = rows
-    .map(
-      (row, index) => `  <dat:dataPackItem version="${POHODA_DATAPACK_VERSION}" id="${text(`${packId}-${String(index + 1).padStart(3, '0')}`, 64)}">
+    .map((row, index) => {
+      const itemId = `${packId}-${String(index + 1).padStart(3, '0')}`;
+      return `  <dat:dataPackItem version="${POHODA_DATAPACK_VERSION}" id="${text(itemId, 64)}">
 ${invoiceXml(row, issuer, meta)}
-  </dat:dataPackItem>`,
-    )
+  </dat:dataPackItem>`;
+    })
     .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <dat:dataPack xmlns:dat="${POHODA_NAMESPACES.dat}" xmlns:inv="${POHODA_NAMESPACES.inv}" xmlns:typ="${POHODA_NAMESPACES.typ}" version="${POHODA_DATAPACK_VERSION}" id="${text(packId, 64)}"${icoAttribute} application="OntOS" note="${text(note, 4000)}">

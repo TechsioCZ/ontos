@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { readFileSync } from 'node:fs';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -170,7 +171,7 @@ describe('Package persistence', () => {
           }),
         ],
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed without an authoritative Unit and Current basis before any write', () =>
@@ -188,7 +189,7 @@ describe('Package persistence', () => {
       const service = packagePersistenceForScope(transaction, scope);
       const error = yield* service.create({ ...evidence, payload }).pipe(Effect.flip);
       expect(Schema.is(PackagePersistenceUnavailable)(error)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a cross-Tenant Package reference before reading or writing', () =>
@@ -213,7 +214,7 @@ describe('Package persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a noncanonical Unit resource type before reading or writing', () =>
@@ -236,7 +237,7 @@ describe('Package persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('returns a stale revision without invoking Current-basis verification or writing', () =>
@@ -263,7 +264,7 @@ describe('Package persistence', () => {
           Match.orElse(() => 0),
         ),
       ).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects an unexplained correction before reading or writing content history', () =>
@@ -289,7 +290,7 @@ describe('Package persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps effective Current unchanged when a successor is scheduled for the future', () =>
@@ -334,7 +335,7 @@ describe('Package persistence', () => {
           expect.objectContaining({ changeKind: 'physical_change', priorErrorExplanation: null, revision: 2 }),
         ],
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('persists a correction explanation in a new row without changing the historical revision', () =>
@@ -394,7 +395,7 @@ describe('Package persistence', () => {
           revision: 2,
         }),
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a conflicting pending schedule without overwriting Current or history', () =>
@@ -428,7 +429,7 @@ describe('Package persistence', () => {
           Match.orElse(() => ''),
         ),
       ).toBe('A successor content revision is already scheduled');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect(

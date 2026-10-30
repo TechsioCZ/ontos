@@ -3,8 +3,8 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
@@ -32,7 +32,7 @@ const serveConfiguration = Config.all({
 type ServeConfiguration = Effect.Success<ReturnType<typeof serveConfiguration.parse>>;
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 
-export const parseDemoServeConfiguration = Effect.fn('SiamparkDemo.parseServeConfiguration')(
+export const parseDemoServeConfiguration = Effect.fn('NajemparkDemo.parseServeConfiguration')(
   function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
     const configuration = yield* serveConfiguration
       .parse(provider)

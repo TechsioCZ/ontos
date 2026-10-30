@@ -7,6 +7,56 @@
  * policy, so an owner cannot overwrite the staff realm, send the browser off-origin or cache principal data.
  */
 
+const MAX_OWNER_PHASES = 64;
+const MAX_OWNER_HEADER_LENGTH = 4096;
+// Mirror Core's fixed ReadPhase names without importing another deployment's private implementation.
+const ownerPhase =
+  /^(?<phase>read-authentication|read-admission|read-scope|read-module|read-permission|read-prepare|read-transaction|read-authority|read-rls|read-owner|read-validation|read-audit|read-encode)\s*;\s*dur=(?<duration>\d+(?:\.\d+)?)$/u;
+
+// Commas inside quoted descriptions are data, never metric separators (including escaped quotes).
+const timingMetrics = (header: string): readonly string[] => {
+  const metrics: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < header.length; index += 1) {
+    const character = header[index];
+    if (escaped) {
+      escaped = false;
+    } else if (quoted && character === '\\') {
+      escaped = true;
+    } else if (character === '"') {
+      quoted = !quoted;
+    } else if (!quoted && character === ',') {
+      metrics.push(header.slice(start, index));
+      if (metrics.length === MAX_OWNER_PHASES) {
+        return metrics;
+      }
+      start = index + 1;
+    }
+  }
+  if (quoted) {
+    return [];
+  }
+  metrics.push(header.slice(start));
+  return metrics;
+};
+
+/** Shared with the gateway collector: only fixed-name, finite numeric owner metrics may cross either boundary. */
+export const ownerServerTimings = (header: string): readonly string[] => {
+  if (header.length > MAX_OWNER_HEADER_LENGTH) {
+    return [];
+  }
+  const timings: string[] = [];
+  for (const metric of timingMetrics(header)) {
+    const groups = ownerPhase.exec(metric.trim())?.groups;
+    if (groups !== undefined && Number.isFinite(Number(groups['duration']))) {
+      timings.push(`${groups['phase']};dur=${groups['duration']}`);
+    }
+  }
+  return timings;
+};
+
 const RELAYED_RESPONSE_HEADERS = [
   'accept-ranges',
   'content-disposition',
@@ -67,6 +117,10 @@ export const relayedResponseHeaders = (headers: Headers, selfOrigin?: string) =>
     }
     return [[name, value]];
   });
+  const ownerTiming = ownerServerTimings(headers.get('server-timing') ?? '').join(', ');
+  if (ownerTiming.length > 0) {
+    relayed.push(['server-timing', ownerTiming]);
+  }
   for (const [name, value] of FORCED_RESPONSE_HEADERS) {
     relayed.push([name, value]);
   }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import nodePath from 'node:path';
 import nodeProcess from 'node:process';
 
@@ -9,6 +10,7 @@ import {
 import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import {
   Array as EffectArray,
+  Config,
   ConfigProvider,
   DateTime,
   Deferred,
@@ -20,27 +22,38 @@ import {
   Option,
   Order,
   Redacted,
+  Result,
   Schedule,
   Schema,
 } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
-import type { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 
+import { computeSecretFingerprints } from '../ci/deploy-plan.mts';
 import {
   ImmutableApplicationReleaseError,
   ImmutableApplicationReleaseReceiptSchema,
+  IMMUTABLE_PROVIDER_WRITE_ATTEMPTS,
+  ImmutableProviderWriteRetrySchedule,
   ImmutableUploadRetrySchedule,
+  PUBLISHED_HALF_RELEASE,
+  STALE_RELEASE_SECRETS,
+  deleteImmutableWorker,
   deployImmutableApplicationRelease,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
   makeImmutableApplicationReleasePublicationCandidate,
   readReleaseFiles,
+  releaseSecretFingerprintAnnotation,
+  requirePlannedUnitInputs,
   resolveCleanImmutableApplicationSourceRevision,
   validateImmutableApplicationReleaseArtifacts,
+  verifyRetainedImmutableApplicationRelease,
+  workersDevIsTheOnlyTrigger,
 } from '../immutable-application-release.mts';
-import type { ReleaseFile } from '../immutable-application-release.mts';
+import type { ImmutableApplicationReleasePlan, ReleaseFile } from '../immutable-application-release.mts';
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -53,7 +66,11 @@ import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
+import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
+const UNIT_DIGEST_PHASE = 'unit-digest';
+const ACCOUNT_SUBDOMAIN_PATH = '/workers/subdomain';
+const RETAINED_TEST_TOKEN = 'retained-test-token';
 const APP_ID = 'party-registry';
 const GIT_COMMAND = 'git';
 const TRUSTED_GIT_DIRECTORY = '/trusted/repository';
@@ -74,7 +91,7 @@ const ASSETS_VERSION_ID = '018c4a3c-a8de-4b15-948c-b45e83adb551';
 const BACKEND_VERSION_ID = '023e105f-2a42-4f8b-a1c1-73f6a2a30c0f';
 const COMPATIBILITY_DATE = '2026-09-24';
 const PUBLIC_RELEASE_DIRECTORY = './public-release';
-const BUILD_MARKER = '0123456789abcdef';
+const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
 const WRANGLER_VERSION = '4.137.0';
 const WRANGLER_CONFIG_PATH = 'wrangler.json';
@@ -86,6 +103,20 @@ const OWNER_SECRET_VALUE = 'owned-release-test-binding';
 const ASSET_READBACK_FAILURE = 'immutable release asset readback failed or exceeded its timeout';
 const ASSETS_ROUTING_FAILURE = 'immutable assets routing completion failed or exceeded its timeout';
 const READBACK_DEADLINE = '30 seconds';
+const FINGERPRINT_KEY = 'release-fingerprint-test-key';
+const NODE_MODULE_INPUT = '--input-type=module';
+const INPUTS_FILE_NAME = 'inputs.json';
+const PLAN_DIGEST_VERSION = 'ontos-deploy-plan-v1';
+const NO_BUNDLE_FLAG = '--no-bundle';
+const PLANNED_INPUTS_FAILURE = 'planned input verification failed';
+const RETAINED_SECRET_FINGERPRINT = 'f'.repeat(64);
+/** The deploy plan's fingerprint of `ownerSecrets` stored as the unit's raw release secrets. */
+const secretFingerprintOf = (ownerSecrets: Readonly<Record<string, string>>) =>
+  computeSecretFingerprints({
+    key: FINGERPRINT_KEY,
+    rawSecrets: JSON.stringify({ [APP_ID]: ownerSecrets }),
+    unitIds: [APP_ID],
+  })[APP_ID] ?? '';
 const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained release bytes')) => ({ bytes, path });
@@ -245,6 +276,7 @@ const receiptFor = (appId = APP_ID) =>
       assetsVersionId: ASSETS_VERSION_ID,
       backend: backendFor(plan),
       plan,
+      secretFingerprint: RETAINED_SECRET_FINGERPRINT,
     };
   });
 
@@ -307,6 +339,7 @@ const writeNativeEnvelope = Effect.fn('test.writeNativeReleaseEnvelope')(functio
           uiClient: EffectArray.sort(browserPaths, Order.String),
         },
         target: 'cloudflare',
+        ui: releaseUiFor(plan.appId, plan.buildMarker),
       }),
   });
   const destination = nodePath.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH);
@@ -369,7 +402,7 @@ it.effect('rejects dirty, untracked, invalid, and unavailable Git source evidenc
 it.effect('executes source checks without inherited process environment selectors', () =>
   runCommand({
     args: [
-      '--input-type=module',
+      NODE_MODULE_INPUT,
       '-e',
       'process.stdout.write(JSON.stringify({ inheritedPath: Boolean(process.env.PATH), explicit: process.env.ONTOS_TEST_RELEASE_SENTINEL }));',
     ],
@@ -405,7 +438,7 @@ for (const [label, stderr, transient] of [
 ] as const) {
   it.effect(`classifies a provider ${label} as ${transient ? 'transient' : 'final'}`, () =>
     runCommand({
-      args: ['--input-type=module', '-e', `process.stderr.write(${JSON.stringify(stderr)}); process.exit(1);`],
+      args: [NODE_MODULE_INPUT, '-e', `process.stderr.write(${JSON.stringify(stderr)}); process.exit(1);`],
       classifyTransientProviderFailure: true,
       command: nodeProcess.execPath,
     }).pipe(
@@ -636,6 +669,7 @@ it.effect('supports a complete API-only release without inventing a federation m
           assetsVersionId: ASSETS_VERSION_ID,
           backend: backendFor(plan),
           plan,
+          secretFingerprint: RETAINED_SECRET_FINGERPRINT,
         },
       ],
       { modules: [{ appId: plan.appId }] },
@@ -940,7 +974,7 @@ const releaseLockDatabase = (timeline: string[]) =>
 
 const refusesExistingProviderRelease = (
   statuses: { readonly assets: number; readonly backend: number },
-  expectedMessage: string,
+  expectedMessage: (plan: ImmutableApplicationReleasePlan) => string,
 ) =>
   Effect.scoped(
     Effect.gen(function* existingProviderRelease() {
@@ -979,7 +1013,7 @@ const refusesExistingProviderRelease = (
       const requests: { readonly method: string; readonly url: string }[] = [];
       const commands: OpsCommand[] = [];
       const client = HttpClient.make((request, destination) => {
-        if (destination.pathname.endsWith('/workers/subdomain')) {
+        if (destination.pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH)) {
           requests.push({ method: request.method, url: destination.href });
           return Effect.succeed(
             HttpClientResponse.fromWeb(
@@ -1023,7 +1057,7 @@ const refusesExistingProviderRelease = (
       }).pipe(Effect.provide(refusalLayer), Effect.flip);
 
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-      expect(failure.message).toBe(expectedMessage);
+      expect(failure.message).toBe(expectedMessage(plan));
       expect(commands).toEqual([]);
       // Both identities' presence checks run side by side and only read; a half release or an unknown answer refuses.
       expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET']);
@@ -1050,18 +1084,22 @@ const refusesExistingProviderRelease = (
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
-const EXISTING_IDENTITY = 'an immutable release identity already exists; publication must never overwrite it';
+const unprovenSurvivor = (survivor: string) =>
+  `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`;
 
-it.effect('refuses an existing backend identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease({ assets: 404, backend: 200 }, EXISTING_IDENTITY),
+it.effect('refuses a half present backend identity it cannot prove unreferenced before any command or write', () =>
+  refusesExistingProviderRelease({ assets: 404, backend: 200 }, (plan) => unprovenSurvivor(plan.backendScriptName)),
 );
 
-it.effect('refuses an existing assets identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease({ assets: 204, backend: 404 }, EXISTING_IDENTITY),
+it.effect('refuses a half present assets identity it cannot prove unreferenced before any command or write', () =>
+  refusesExistingProviderRelease({ assets: 204, backend: 404 }, (plan) => unprovenSurvivor(plan.assetsScriptName)),
 );
 
 it.effect('refuses an unknown provider answer even when the other identity is present', () =>
-  refusesExistingProviderRelease({ assets: 403, backend: 200 }, 'provider release absence could not be established'),
+  refusesExistingProviderRelease(
+    { assets: 403, backend: 200 },
+    () => 'provider release absence could not be established',
+  ),
 );
 
 const SECRETS_FILE_ARGUMENT = '--secrets-file';
@@ -1117,9 +1155,32 @@ const assetTransportFailure = (request: HttpClientRequest.HttpClientRequest, kin
     ),
   );
 
+/** A backend upload outcome: the Worker is uploaded, then its workers.dev route request fails transiently. */
+const WORKERS_DEV_ROUTE_OUTCOME = 'workers-dev-route';
+
+/** A workers.dev route answer; a gateway error answers an HTML page, as the provider's edge does. */
+const routeAnswer = (status: number, body: Schema.Json) =>
+  status >= 500
+    ? new Response('<!DOCTYPE html><title>504 Gateway Timeout</title>', { status })
+    : Response.json(body, { status });
+
+/** Wrangler uploaded the Worker, then its workers.dev route POST met a gateway 504 (as ops-shell reports it). */
+const workersDevRouteFailure = (command: OpsCommand, scriptName: string) =>
+  new OpsCommandError({
+    cause: { providerPath: `/accounts/${'a'.repeat(32)}/workers/scripts/${scriptName}/subdomain`, providerStatus: 504 },
+    command: [command.command, ...command.args].join(' '),
+    message: 'native test upload failed at its workers.dev route',
+    transient: true,
+  });
+
+/** The native KV value of the active Application Composition. */
+const ACTIVE_COMPOSITION_PATH = `/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'d'.repeat(32)}/values/active`;
+
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
     readonly accountSubdomain?: string;
+    /** What the active Application Composition storage answers: by default a composition naming another release. */
+    readonly activeComposition?: 'names-release' | 'unreadable';
     readonly additionalPublicFiles?: readonly ReleaseFile[];
     readonly assetDeploymentPercentage?: number;
     readonly assetHeaderReadiness?: {
@@ -1132,6 +1193,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly assetHeaders?: Readonly<Record<string, string>>;
     readonly assetsDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly assetsPresenceStatus?: 200 | 204;
+    /** The assets upload command fails transiently at its workers.dev route request, after the upload. */
+    readonly assetsRouteFailure?: boolean;
+    /** Answers to successive assets workers.dev route POSTs; a POST past the list succeeds. */
+    readonly assetsRouteStatuses?: readonly number[];
     readonly assetsSubdomainAcknowledgement?: {
       readonly enabled: boolean;
       readonly previews_enabled: boolean;
@@ -1143,16 +1208,25 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     /** Network failures of the contract asset's first GETs, before any answer: a reset, a body reset or a 5xx. */
     readonly assetTransportFailures?: { readonly kind: AssetTransportFailure; readonly times: number };
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
+    /** Answers to successive backend workers.dev route POSTs; a POST past the list succeeds. */
+    readonly backendRouteStatuses?: readonly number[];
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
     readonly backendSubdomainSuccess?: boolean;
-    /** Outcomes of successive native backend uploads; an upload past the list succeeds. */
-    readonly backendUploadFailures?: readonly ('permanent' | 'transient')[];
+    /**
+     * Outcomes of successive native backend uploads; an upload past the list succeeds. `workers-dev-route` uploads the
+     * backend and then fails transiently at its workers.dev route request.
+     */
+    readonly backendUploadFailures?: readonly ('permanent' | 'transient' | typeof WORKERS_DEV_ROUTE_OUTCOME)[];
     readonly changedSource?: boolean;
     readonly deleteStatus?: number;
     readonly deployedEntrypoint?: string | false;
     readonly envelopeUnitId?: string;
     readonly existingRelease?: boolean;
+    /** The version message an existing backend was uploaded with; defaults to this release's fingerprint. */
+    readonly existingVersionMessage?: string;
+    /** The release fingerprint key; `null` leaves it unset. */
+    readonly fingerprintKey?: string | null;
     readonly initialAssetNotFound?: boolean;
     readonly initialSource?: string;
     readonly noBundle?: boolean;
@@ -1163,10 +1237,13 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly ownerSecrets?: Readonly<Record<string, string>>;
     readonly packagingFailure?: boolean;
     readonly pageJsPath?: string;
+    readonly plannedDigest?: string;
     readonly recoveryWorkerName?: string;
     readonly recoveryWorkerStatuses?: readonly number[];
     readonly resolvedWranglerVersion?: string;
     readonly stallAssetBody?: boolean;
+    /** The one Worker of the release identity a prune or removal left present; the other is absent. */
+    readonly survivingHalf?: 'assets' | 'backend';
     readonly tamperWorkerAfterEnvelope?: boolean;
     readonly tamperWorkerDuringPackaging?: boolean;
     readonly unboundFile?: boolean;
@@ -1180,6 +1257,19 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const output = nodePath.join(appDirectory, '.output');
   const publicDirectory = nodePath.join(output, 'public');
   const plan = yield* planFor();
+  const inputsFile = nodePath.join(appDirectory, INPUTS_FILE_NAME);
+  if (options.plannedDigest !== undefined) {
+    yield* fileSystem.writeFileString(
+      inputsFile,
+      JSON.stringify({
+        digest: options.plannedDigest,
+        lines: [],
+        sourceRevision: plan.sourceRevision,
+        unitId: plan.appId,
+        version: PLAN_DIGEST_VERSION,
+      }),
+    );
+  }
   const inventory = artifactInventory(plan, options.pageJsPath);
   const nativeAssets = [...inventory.assets, ...(options.additionalPublicFiles ?? [])];
   const capturedMain = options.noBundle === true ? 'index.mjs' : 'index.js';
@@ -1246,14 +1336,50 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const publishedInventories: (readonly ReleaseFile[])[] = [];
   const requests: string[] = [];
   const providerWrites: { readonly method: string; readonly url: string }[] = [];
+  const rawSecrets = JSON.stringify({ [APP_ID]: options.ownerSecrets ?? {} });
+  const fingerprintKey = options.fingerprintKey === undefined ? FINGERPRINT_KEY : options.fingerprintKey;
+  const secretFingerprint =
+    fingerprintKey === null
+      ? 'unavailable'
+      : (computeSecretFingerprints({ key: fingerprintKey, rawSecrets, unitIds: [APP_ID] })[APP_ID] ?? '');
+  // The provider keeps the version message of the backend upload, or of the existing release's earlier upload.
+  let backendVersionMessage =
+    options.existingRelease === true
+      ? (options.existingVersionMessage ?? releaseSecretFingerprintAnnotation(secretFingerprint))
+      : undefined;
   let canceledAssetBodies = 0;
   let checkedSource = 0;
   let absentChecks = 0;
   let backendUploads = 0;
   // Removing the assets Worker (the last removal) makes the next attempt observe both identities absent again.
+  // A removed Worker reads back absent once, for the removal's own check.
+  const removedScripts = new Set<string>();
+  const survivorPath = Match.value(options.survivingHalf).pipe(
+    Match.when('backend', () => `/workers/scripts/${plan.backendScriptName}`),
+    Match.when('assets', () => `/workers/scripts/${plan.assetsScriptName}`),
+    Match.orElse(() => null),
+  );
+  let survivorRemoved = false;
+  const isSurvivor = (destination: URL) => survivorPath !== null && destination.pathname.endsWith(survivorPath);
+  // The active composition names this release, or another one.
+  const activeCompositionAnswer = () =>
+    Match.value(options.activeComposition).pipe(
+      Match.when('unreadable', () => new Response(null, { status: 403 })),
+      Match.when('names-release', () =>
+        Response.json({ composition: { modules: [{ backend: { workerName: plan.backendScriptName } }] } }),
+      ),
+      Match.orElse(() =>
+        Response.json({ composition: { modules: [{ backend: { workerName: `ontos-${'9'.repeat(56)}` } }] } }),
+      ),
+    );
   const removeProviderScript = (destination: URL) => {
     const status = options.deleteStatus ?? 200;
-    if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
+    if (status === 200) {
+      removedScripts.add(destination.pathname);
+    }
+    if (status === 200 && isSurvivor(destination)) {
+      survivorRemoved = true;
+    } else if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
       absentChecks = 0;
     }
     return Response.json({ success: status === 200 }, { status });
@@ -1264,13 +1390,50 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     backendUploads += 1;
     return outcome;
   };
+  // A completed backend upload is the version the provider then serves, with the message it was uploaded with.
+  const recordBackendVersionMessage = (
+    command: OpsCommand,
+    capturedConfig: Readonly<Record<string, Schema.Json>>,
+    outcome: string,
+  ) => {
+    if (
+      (outcome === 'success' || outcome === WORKERS_DEV_ROUTE_OUTCOME) &&
+      capturedConfig.name === plan.backendScriptName &&
+      !command.args.includes('--dry-run')
+    ) {
+      const message = command.args.indexOf('--message');
+      backendVersionMessage = message === -1 ? undefined : command.args[message + 1];
+    }
+  };
+  /** The failure an upload command meets as the options inject it, or undefined when it succeeds. */
+  const injectedUploadFailure = (
+    command: OpsCommand,
+    capturedConfig: Readonly<Record<string, Schema.Json>>,
+    outcome: string,
+  ): OpsCommandError | undefined => {
+    if (outcome === WORKERS_DEV_ROUTE_OUTCOME) {
+      return workersDevRouteFailure(command, plan.backendScriptName);
+    }
+    if (outcome !== 'success') {
+      return new OpsCommandError({
+        command: [command.command, ...command.args].join(' '),
+        message: 'native test upload failed',
+        transient: outcome === 'transient',
+      });
+    }
+    return capturedConfig.name === plan.assetsScriptName && options.assetsRouteFailure === true
+      ? workersDevRouteFailure(command, plan.assetsScriptName)
+      : undefined;
+  };
   const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) => {
     if (command.args.includes('--dry-run')) {
       return options.packagingFailure === true ? 'transient' : 'success';
     }
     return capturedConfig.name === plan.backendScriptName ? nextBackendUploadOutcome() : 'success';
   };
-  const providerResponse = (destination: URL) =>
+  let backendRoutePosts = 0;
+  let assetsRoutePosts = 0;
+  const providerResponse = (destination: URL, method: string) =>
     Match.value(destination.pathname).pipe(
       Match.when(`/client/v4${recoveryWorkerPath}`, () =>
         Effect.gen(function* uploadedAssetsWorkerObservation() {
@@ -1295,14 +1458,21 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
               previews_enabled: false,
               success: true,
             };
-            return Response.json({
+            const routeWrite = method === 'POST';
+            const status = routeWrite ? (options.assetsRouteStatuses?.[assetsRoutePosts] ?? 200) : 200;
+            assetsRoutePosts += routeWrite ? 1 : 0;
+            return routeAnswer(status, {
               result: { enabled: acknowledgement.enabled, previews_enabled: acknowledgement.previews_enabled },
               success: acknowledgement.success,
             });
           }),
       ),
       Match.when(
-        (path) => path.endsWith('/workers/subdomain'),
+        (path) => path === ACTIVE_COMPOSITION_PATH,
+        () => Effect.sync(activeCompositionAnswer),
+      ),
+      Match.when(
+        (path) => path.endsWith(ACCOUNT_SUBDOMAIN_PATH),
         () =>
           Effect.sync(() =>
             Response.json({
@@ -1314,18 +1484,23 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       Match.when(
         (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/subdomain`),
         () =>
-          Effect.sync(() =>
-            Response.json(
+          Effect.sync(() => {
+            if (method !== 'GET') {
+              const status = options.backendRouteStatuses?.[backendRoutePosts] ?? 200;
+              backendRoutePosts += 1;
+              return routeAnswer(status, { result: { enabled: true, previews_enabled: false }, success: true });
+            }
+            return Response.json(
               {
                 result:
                   options.omitBackendSubdomainEnabled === true
                     ? {}
-                    : { enabled: options.backendSubdomainEnabled ?? true },
+                    : { enabled: options.backendSubdomainEnabled ?? true, previews_enabled: false },
                 success: options.backendSubdomainSuccess ?? true,
               },
               { status: options.backendSubdomainStatus ?? 200 },
-            ),
-          ),
+            );
+          }),
       ),
       Match.when(
         (path) => path.endsWith('/content/v2'),
@@ -1343,6 +1518,18 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
                   : { 'cf-entrypoint': options.deployedEntrypoint ?? capturedMain },
             });
           }),
+      ),
+      Match.when(
+        (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/versions/${BACKEND_VERSION_ID}`),
+        () =>
+          Effect.sync(() =>
+            Response.json({
+              result: {
+                annotations: backendVersionMessage === undefined ? {} : { 'workers/message': backendVersionMessage },
+              },
+              success: true,
+            }),
+          ),
       ),
       Match.when(
         (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/deployments`),
@@ -1382,10 +1569,17 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       ),
       Match.orElse(() =>
         Effect.sync(() => {
-          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
+          if (removedScripts.delete(destination.pathname)) {
+            return new Response(null, { status: 404 });
+          }
           const presentStatus = destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)
             ? (options.assetsPresenceStatus ?? 204)
             : 200;
+          if (isSurvivor(destination) && !survivorRemoved) {
+            absentChecks += 1;
+            return new Response(null, { status: presentStatus });
+          }
+          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
           const status = options.existingRelease !== true && absentChecks < 2 ? 404 : presentStatus;
           absentChecks += 1;
           return new Response(null, { status });
@@ -1403,7 +1597,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       }
       let response: Response;
       if (destination.hostname === 'api.cloudflare.com') {
-        response = yield* providerResponse(destination);
+        response = yield* providerResponse(destination, request.method);
       } else {
         assetBodyEvents.push(`get:${destination.href}`);
         yield* Deferred.succeed(assetReadStarted, true);
@@ -1531,103 +1725,111 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   );
   const shellLayer = Layer.succeed(OpsShell, {
     run: (command: OpsCommand) =>
-      Effect.gen(function* nativeDeploymentCommand() {
-        if (command.command === GIT_COMMAND) {
-          if (command.args[0] === 'status') {
-            checkedSource += 1;
-          }
-          const revision =
-            options.initialSource ??
-            (options.changedSource === true && checkedSource > 0 ? 'b'.repeat(40) : SOURCE_REVISION);
-          return gitResult(command, appDirectory, revision);
-        }
-        if (command.args.join(' ') === 'exec wrangler --version') {
-          return options.resolvedWranglerVersion ?? WRANGLER_VERSION;
-        }
-        commands.push(command);
-        timeline.push(command.args.join(' '));
-        const config = command.args[command.args.indexOf('--config') + 1];
-        if (config === undefined) {
-          return yield* Effect.die('a native release command must identify its Wrangler config');
-        }
-        const capturedConfig = yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
-        )(yield* fileSystem.readFileString(config));
-        capturedConfigs.push(capturedConfig);
-        if (command.args.includes(SECRETS_FILE_ARGUMENT)) {
-          const secretsPath = command.args[command.args.indexOf(SECRETS_FILE_ARGUMENT) + 1] ?? '';
-          capturedSecrets.push({
-            file: secretsPath,
-            secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
-              yield* fileSystem.readFileString(secretsPath),
+      command.command === 'node'
+        ? Effect.sync(() => {
+            timeline.push(UNIT_DIGEST_PHASE);
+            return `${options.plannedDigest ?? ''}\n`;
+          })
+        : Effect.gen(function* nativeDeploymentCommand() {
+            if (command.command === GIT_COMMAND) {
+              if (command.args[0] === 'status') {
+                checkedSource += 1;
+              }
+              const revision =
+                options.initialSource ??
+                (options.changedSource === true && checkedSource > 0 ? 'b'.repeat(40) : SOURCE_REVISION);
+              return gitResult(command, appDirectory, revision);
+            }
+            if (command.args.join(' ') === 'exec wrangler --version') {
+              return options.resolvedWranglerVersion ?? WRANGLER_VERSION;
+            }
+            commands.push(command);
+            timeline.push(command.args.join(' '));
+            const config = command.args[command.args.indexOf('--config') + 1];
+            if (config === undefined) {
+              return yield* Effect.die('a native release command must identify its Wrangler config');
+            }
+            const capturedConfig = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+            )(yield* fileSystem.readFileString(config));
+            capturedConfigs.push(capturedConfig);
+            if (command.args.includes(SECRETS_FILE_ARGUMENT)) {
+              const secretsPath = command.args[command.args.indexOf(SECRETS_FILE_ARGUMENT) + 1] ?? '';
+              capturedSecrets.push({
+                file: secretsPath,
+                secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+                  yield* fileSystem.readFileString(secretsPath),
+                ),
+              });
+            }
+            const assetsConfig = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) }),
+            )(capturedConfig);
+            publishedInventories.push(yield* readReleaseFiles(assetsConfig.assets.directory));
+            if (command.args.includes('--dry-run')) {
+              const directory = command.args[command.args.indexOf('--outdir') + 1];
+              if (directory === undefined) {
+                return yield* Effect.die('native packaging must identify its captured output directory');
+              }
+              for (const module of capturedModules) {
+                yield* fileSystem.writeFile(nodePath.join(directory, module.path), module.bytes);
+              }
+              if (options.tamperWorkerDuringPackaging === true) {
+                yield* fileSystem.writeFileString(
+                  nodePath.join(output, BACKEND_ENTRY_PATH),
+                  'export default { changed: true };',
+                );
+              }
+              if (options.unboundFileDuringPackaging === true) {
+                yield* fileSystem.writeFileString(
+                  nodePath.join(output, 'unbound-during-packaging.mjs'),
+                  'export const extra = true;',
+                );
+              }
+            }
+            const uploadOutcome = backendUploadOutcome(command, capturedConfig);
+            recordBackendVersionMessage(command, capturedConfig, uploadOutcome);
+            const injected = injectedUploadFailure(command, capturedConfig, uploadOutcome);
+            if (injected !== undefined) {
+              return yield* injected;
+            }
+            if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
+              return yield* Effect.fail({
+                providerCode: options.assetsUploadError.providerCode,
+                providerPath: options.assetsUploadError.providerPath ?? recoveryWorkerPath,
+              });
+            }
+            return '';
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.mapError((cause) =>
+              Schema.is(OpsCommandError)(cause)
+                ? cause
+                : new OpsCommandError({
+                    cause,
+                    command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
+                    message: 'native test packaging failed',
+                  }),
             ),
-          });
-        }
-        const assetsConfig = yield* Schema.decodeUnknownEffect(
-          Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) }),
-        )(capturedConfig);
-        publishedInventories.push(yield* readReleaseFiles(assetsConfig.assets.directory));
-        if (command.args.includes('--dry-run')) {
-          const directory = command.args[command.args.indexOf('--outdir') + 1];
-          if (directory === undefined) {
-            return yield* Effect.die('native packaging must identify its captured output directory');
-          }
-          for (const module of capturedModules) {
-            yield* fileSystem.writeFile(nodePath.join(directory, module.path), module.bytes);
-          }
-          if (options.tamperWorkerDuringPackaging === true) {
-            yield* fileSystem.writeFileString(
-              nodePath.join(output, BACKEND_ENTRY_PATH),
-              'export default { changed: true };',
-            );
-          }
-          if (options.unboundFileDuringPackaging === true) {
-            yield* fileSystem.writeFileString(
-              nodePath.join(output, 'unbound-during-packaging.mjs'),
-              'export const extra = true;',
-            );
-          }
-        }
-        const uploadOutcome = backendUploadOutcome(command, capturedConfig);
-        if (uploadOutcome !== 'success') {
-          return yield* new OpsCommandError({
-            command: [command.command, ...command.args].join(' '),
-            message: 'native test upload failed',
-            transient: uploadOutcome === 'transient',
-          });
-        }
-        if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
-          return yield* Effect.fail({
-            providerCode: options.assetsUploadError.providerCode,
-            providerPath: options.assetsUploadError.providerPath ?? recoveryWorkerPath,
-          });
-        }
-        return '';
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.mapError((cause) =>
-          Schema.is(OpsCommandError)(cause)
-            ? cause
-            : new OpsCommandError({
-                cause,
-                command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
-                message: 'native test packaging failed',
-              }),
-        ),
-      ),
+          ),
   });
+  const configuration = new Map([
+    ['ALL_RELEASE_SECRETS', rawSecrets],
+    ['CLOUDFLARE_ACCOUNT_ID', 'a'.repeat(32)],
+    ['CLOUDFLARE_API_TOKEN', 'immutable-release-test-token'],
+    ['ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL', `https://api.cloudflare.com${ACTIVE_COMPOSITION_PATH}`],
+    ['ONTOS_IMMUTABLE_RELEASE_SECRETS', JSON.stringify(options.ownerSecrets ?? {})],
+  ]);
+  if (fingerprintKey !== null) {
+    configuration.set('RELEASE_FINGERPRINT_KEY', fingerprintKey);
+  }
   const layer = Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
     Layer.succeed(ImmutableUploadRetrySchedule, Schedule.forever),
+    Layer.succeed(ImmutableProviderWriteRetrySchedule, Schedule.forever),
     shellLayer,
     releaseLockDatabase(timeline),
-    ConfigProvider.layer(
-      ConfigProvider.fromUnknown({
-        CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
-        CLOUDFLARE_API_TOKEN: 'immutable-release-test-token',
-        ONTOS_IMMUTABLE_RELEASE_SECRETS: JSON.stringify(options.ownerSecrets ?? {}),
-      }),
-    ),
+    ConfigProvider.layer(ConfigProvider.fromUnknown(Object.fromEntries(configuration))),
   );
   return {
     assetBodyEvents,
@@ -1638,7 +1840,13 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     capturedConfigs,
     capturedSecrets,
     commands,
-    deploy: deployImmutableApplicationRelease({ appDirectory, plan }).pipe(Effect.provide(layer)),
+    deploy: deployImmutableApplicationRelease({
+      appDirectory,
+      artifactName:
+        options.plannedDigest === undefined ? undefined : `edge-unit-${plan.appId}-${options.plannedDigest}`,
+      inputsFile,
+      plan,
+    }).pipe(Effect.provide(layer)),
     headerReadinessBodies,
     notFoundBodies,
     originalHeaders,
@@ -1650,6 +1858,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     recoveryWorkerPath,
     recoveryWorkerReadStarted,
     requests,
+    secretFingerprint,
     timeline,
   };
 });
@@ -1715,8 +1924,9 @@ it.effect('rejects retained content, entrypoint, and deployment mismatches witho
         const deployment = yield* prepareDeployment({ existingRelease: true, ...mismatch });
         const failure = yield* deployment.deploy.pipe(Effect.flip);
         expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-        expect(deployment.commands).toHaveLength(1);
-        expect(deployment.commands[0]?.args).toContain('--dry-run');
+        // A partial backend deployment already fails the secret check, before even the packaging dry run.
+        expect(deployment.commands.length).toBeLessThanOrEqual(1);
+        expect(deployment.commands.every(({ args }) => args.includes('--dry-run'))).toBe(true);
         expect(deployment.capturedSecrets).toEqual([]);
         expect(deployment.providerWrites).toEqual([]);
       }
@@ -1738,7 +1948,7 @@ it.effect('never deletes a previous release when rerun packaging fails transient
 );
 
 const backendUploads = (deployment: { readonly timeline: readonly string[] }) =>
-  deployment.timeline.filter((entry) => entry.startsWith('exec wrangler deploy') && entry.includes('--no-bundle'));
+  deployment.timeline.filter((entry) => entry.startsWith('exec wrangler deploy') && entry.includes(NO_BUNDLE_FLAG));
 
 it.effect('retries a transient provider upload failure under the same identity after removing its half release', () =>
   Effect.scoped(
@@ -1808,6 +2018,232 @@ it.effect('stops retrying when a half release cannot be removed', () =>
       expect(deployment.providerWrites).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const survivingHalf of ['backend', 'assets'] as const) {
+  it.effect(
+    `recreates a pruned-half release at its own revision after removing its unreferenced ${survivingHalf}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* recreatesHalfRelease() {
+          // The same source revision derives the same identity, so a rerun after a partial prune meets the survivor.
+          const deployment = yield* prepareDeployment({ survivingHalf });
+          const receipt = yield* deployment.deploy;
+          const survivor =
+            survivingHalf === 'backend' ? deployment.plan.backendScriptName : deployment.plan.assetsScriptName;
+          const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+
+          expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+          expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+          // Only the survivor is removed, once, and only after the active composition proved it unreferenced.
+          expect(deployment.providerWrites.filter(({ method }) => method === 'DELETE')).toEqual([
+            { method: 'DELETE', url: `${scripts}/${survivor}` },
+          ]);
+          const compositionRead = deployment.requests.indexOf(`https://api.cloudflare.com${ACTIVE_COMPOSITION_PATH}`);
+          expect(compositionRead).toBeGreaterThan(-1);
+          expect(compositionRead).toBeLessThan(deployment.requests.indexOf(`${scripts}/${survivor}`, compositionRead));
+          // The pair is uploaded whole again, the backend once, under the one identity lock.
+          expect(backendUploads(deployment)).toHaveLength(1);
+          expect(deployment.capturedConfigs.some(({ name }) => name === deployment.plan.assetsScriptName)).toBe(true);
+          expect(deployment.timeline.filter((entry) => entry.startsWith('pg_advisory_lock'))).toHaveLength(1);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const [activeComposition, message] of [
+  ['names-release', () => PUBLISHED_HALF_RELEASE],
+  [
+    'unreadable',
+    (survivor: string) =>
+      `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`,
+  ],
+] as const) {
+  it.effect(`never replaces a half present release when the active composition is ${activeComposition}`, () =>
+    Effect.scoped(
+      Effect.gen(function* refusesPublishedHalfRelease() {
+        const deployment = yield* prepareDeployment({ activeComposition, survivingHalf: 'backend' });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(failure.message).toBe(message(deployment.plan.backendScriptName));
+        expect(deployment.providerWrites).toEqual([]);
+        expect(deployment.commands).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+const routeUrl = (scriptName: string) =>
+  `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${scriptName}/subdomain`;
+
+it.effect('repeats only the workers.dev route request after a backend upload whose route met a gateway 504', () =>
+  Effect.scoped(
+    Effect.gen(function* backendRouteOnlyFailure() {
+      const deployment = yield* prepareDeployment({
+        backendRouteStatuses: [504, 502],
+        backendUploadFailures: [WORKERS_DEV_ROUTE_OUTCOME],
+      });
+      const receipt = yield* deployment.deploy;
+
+      expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+      // The backend is uploaded once; nothing is deleted and uploaded again.
+      expect(backendUploads(deployment)).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual(
+        [1, 2, 3].map(() => ({ method: 'POST', url: routeUrl(deployment.plan.backendScriptName) })),
+      );
+      // The uploaded version, its secrets and its exact module content are proven before the route is requested.
+      const firstRoutePost = deployment.requests.indexOf(routeUrl(deployment.plan.backendScriptName));
+      const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+      for (const proof of ['deployments', `versions/${BACKEND_VERSION_ID}`, 'content/v2']) {
+        const read = deployment.requests.indexOf(`${scripts}/${deployment.plan.backendScriptName}/${proof}`);
+        expect(read).toBeGreaterThan(-1);
+        expect(read).toBeLessThan(firstRoutePost);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('removes the half release without uploading again when the backend route never comes up', () =>
+  Effect.scoped(
+    Effect.gen(function* backendRouteUnavailable() {
+      const deployment = yield* prepareDeployment({
+        backendRouteStatuses: Array.from({ length: IMMUTABLE_PROVIDER_WRITE_ATTEMPTS }, () => 504),
+        backendUploadFailures: [WORKERS_DEV_ROUTE_OUTCOME],
+      });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+      const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(
+        `the uploaded immutable Worker ${deployment.plan.backendScriptName} could not complete its workers.dev route; its half release is removed`,
+      );
+      expect(backendUploads(deployment)).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual([
+        ...Array.from({ length: IMMUTABLE_PROVIDER_WRITE_ATTEMPTS }, () => ({
+          method: 'POST',
+          url: routeUrl(deployment.plan.backendScriptName),
+        })),
+        { method: 'DELETE', url: `${scripts}/${deployment.plan.backendScriptName}` },
+        { method: 'DELETE', url: `${scripts}/${deployment.plan.assetsScriptName}` },
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('removes an uploaded backend that does not hold this release secrets instead of routing it', () =>
+  Effect.scoped(
+    Effect.gen(function* backendRouteWrongVersion() {
+      const deployment = yield* prepareDeployment({
+        backendDeploymentVersions: [
+          { percentage: 50, version_id: BACKEND_VERSION_ID },
+          { percentage: 50, version_id: ASSETS_VERSION_ID },
+        ],
+        backendUploadFailures: [WORKERS_DEV_ROUTE_OUTCOME],
+      });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+      expect(failure.message).toBe(
+        `the uploaded immutable Worker ${deployment.plan.backendScriptName} could not complete its workers.dev route; its half release is removed`,
+      );
+      expect(deployment.providerWrites.map(({ method }) => method)).toEqual(['DELETE', 'DELETE']);
+      expect(backendUploads(deployment)).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('repeats only the assets workers.dev route request after an assets upload whose route met a 504', () =>
+  Effect.scoped(
+    Effect.gen(function* assetsRouteOnlyFailure() {
+      const deployment = yield* prepareDeployment({ assetsRouteFailure: true, assetsRouteStatuses: [504] });
+      const receipt = yield* deployment.deploy;
+
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(deployment.capturedConfigs.filter(({ name }) => name === deployment.plan.assetsScriptName)).toHaveLength(
+        1,
+      );
+      expect(deployment.providerWrites).toEqual(
+        [1, 2].map(() => ({ method: 'POST', url: routeUrl(deployment.plan.assetsScriptName) })),
+      );
+      expect(deployment.requests.filter((url) => url === routeUrl(deployment.plan.assetsScriptName))).toHaveLength(3);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it('completes a route alone only for a Worker whose workers.dev route is its only Wrangler trigger', () => {
+  expect(workersDevIsTheOnlyTrigger({ name: 'ontos-x', routes: [], workers_dev: true })).toBe(true);
+  expect(workersDevIsTheOnlyTrigger({ queues: { producers: [{ binding: 'Q', queue: 'q' }] }, triggers: {} })).toBe(
+    true,
+  );
+  for (const triggered of [
+    { routes: ['example.com/*'] },
+    { route: 'example.com/*' },
+    { triggers: { crons: ['0 * * * *'] } },
+    { queues: { consumers: [{ queue: 'q' }] } },
+    { workflows: [{ binding: 'W', class_name: 'W', name: 'w' }] },
+  ]) {
+    expect(workersDevIsTheOnlyTrigger(triggered)).toBe(false);
+  }
+});
+
+/** One provider for Worker deletions: each DELETE and GET answers its next listed status. */
+const deletionProvider = (answers: { readonly DELETE: readonly number[]; readonly GET: readonly number[] }) => {
+  const calls: string[] = [];
+  const next = { DELETE: 0, GET: 0 };
+  const client = HttpClient.make((request) =>
+    Effect.sync(() => {
+      const method = request.method === 'DELETE' ? 'DELETE' : 'GET';
+      calls.push(method);
+      const status = answers[method][next[method]] ?? answers[method].at(-1) ?? 404;
+      next[method] += 1;
+      return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+    }),
+  );
+  const remove = deleteImmutableWorker(
+    'a'.repeat(32),
+    Redacted.make('delete-test-token'),
+    `ontos-${'b'.repeat(56)}`,
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(HttpClient.HttpClient, client),
+        Layer.succeed(ImmutableProviderWriteRetrySchedule, Schedule.forever),
+      ),
+    ),
+  );
+  return { calls, remove };
+};
+
+it.effect('proves a deletion a gateway 504 left unanswered by reading the Worker back absent', () =>
+  Effect.gen(function* unansweredDeletion() {
+    const provider = deletionProvider({ DELETE: [504], GET: [404] });
+    yield* provider.remove;
+    expect(provider.calls).toEqual(['DELETE', 'GET']);
+  }),
+);
+
+it.effect('repeats a deletion while the Worker reads back present, until the provider proves it absent', () =>
+  Effect.gen(function* repeatedDeletion() {
+    const provider = deletionProvider({ DELETE: [504, 200, 404], GET: [200, 200] });
+    yield* provider.remove;
+    expect(provider.calls).toEqual(['DELETE', 'GET', 'DELETE', 'GET', 'DELETE']);
+  }),
+);
+
+it.effect('fails a deletion the provider refuses at once, and one it never proves, after every attempt', () =>
+  Effect.gen(function* unprovenDeletion() {
+    const refused = deletionProvider({ DELETE: [409], GET: [200] });
+    const refusal = yield* refused.remove.pipe(Effect.flip);
+    expect(refusal.message).toMatch(/refused to delete the immutable Worker ontos-b{56} \(HTTP 409\)$/u);
+    expect(refused.calls).toEqual(['DELETE']);
+
+    const unproven = deletionProvider({ DELETE: [504], GET: [200] });
+    const failure = yield* unproven.remove.pipe(Effect.flip);
+    expect(failure.message).toBe(
+      `the immutable Worker ontos-${'b'.repeat(56)} was still present after ${String(IMMUTABLE_PROVIDER_WRITE_ATTEMPTS)} deletions (last answer 504)`,
+    );
+    expect(unproven.calls).toHaveLength(2 * IMMUTABLE_PROVIDER_WRITE_ATTEMPTS);
+  }),
 );
 
 it.effect('publishes native route chunks without exposing compiler source maps or changing the compiled output', () =>
@@ -1892,7 +2328,7 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(receipt.artifacts.workerSha256).toMatch(/^[a-f\d]{64}$/u);
       expect(fixture.commands).toHaveLength(3);
       expect(fixture.commands[0]?.args).toContain('--dry-run');
-      expect(fixture.commands[1]?.args).toContain('--no-bundle');
+      expect(fixture.commands[1]?.args).toContain(NO_BUNDLE_FLAG);
       expect(fixture.commands.every(({ args }) => !args.includes('--dispatch-namespace'))).toBe(true);
       expect(fixture.capturedConfigs[0]?.workers_dev).toBe(true);
       expect(fixture.capturedConfigs[1]?.workers_dev).toBe(true);
@@ -2625,6 +3061,437 @@ it.effect('requires one backend provider version serving every request before is
           ),
         ).toBe(true);
       }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/** A provider whose backend version was uploaded with `versionMessage`, for the retained receipt checks. */
+const retainedProvider = (
+  receipt: { readonly plan: { readonly backendScriptName: string } },
+  requests: { readonly method: string; readonly url: string }[],
+  versionMessage: string,
+) =>
+  HttpClient.make((request, destination) => {
+    requests.push({ method: request.method, url: destination.href });
+    const versionPath = `/workers/scripts/${receipt.plan.backendScriptName}/versions/${BACKEND_VERSION_ID}`;
+    const result = Match.value(destination.pathname).pipe(
+      Match.when(
+        (pathname) => pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH),
+        () => ({ subdomain: WORKERS_SUBDOMAIN }),
+      ),
+      Match.when(
+        (pathname) => pathname.endsWith(versionPath),
+        () => ({ annotations: { 'workers/message': versionMessage } }),
+      ),
+      Match.orElse(() => ({
+        deployments: [
+          {
+            versions: [
+              {
+                percentage: 100,
+                version_id: destination.href.includes(receipt.plan.backendScriptName)
+                  ? BACKEND_VERSION_ID
+                  : ASSETS_VERSION_ID,
+              },
+            ],
+          },
+        ],
+      })),
+    );
+    return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ result, success: true })));
+  });
+
+const retainedConfig = ConfigProvider.layer(
+  ConfigProvider.fromUnknown({ CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN }),
+);
+
+it.effect('verifies retained receipts against both active versions and their secrets without writing', () =>
+  Effect.gen(function* retainedReceiptVerification() {
+    const receipt = yield* receiptFor();
+    const requests: { readonly method: string; readonly url: string }[] = [];
+    yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        retainedProvider(receipt, requests, releaseSecretFingerprintAnnotation(RETAINED_SECRET_FINGERPRINT)),
+      ),
+      Effect.provide(retainedConfig),
+    );
+    expect(requests).toHaveLength(4);
+    expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+    expect(requests.filter(({ url }) => url.endsWith('/deployments'))).toHaveLength(2);
+    expect(requests.at(-1)?.url).toContain(`/versions/${BACKEND_VERSION_ID}`);
+  }),
+);
+
+it.effect('rejects a retained receipt whose backend version holds other or unrecorded release secrets', () =>
+  Effect.gen(function* retainedReceiptSecrets() {
+    const receipt = yield* receiptFor();
+    for (const [secretFingerprint, versionMessage] of [
+      [RETAINED_SECRET_FINGERPRINT, releaseSecretFingerprintAnnotation('e'.repeat(64))],
+      [RETAINED_SECRET_FINGERPRINT, 'deployed by hand'],
+      ['unavailable', releaseSecretFingerprintAnnotation('unavailable')],
+    ] as const) {
+      const failure = yield* verifyRetainedImmutableApplicationRelease({ ...receipt, secretFingerprint }).pipe(
+        Effect.provideService(HttpClient.HttpClient, retainedProvider(receipt, [], versionMessage)),
+        Effect.provide(retainedConfig),
+        Effect.flip,
+      );
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(
+        secretFingerprint === 'unavailable'
+          ? 'a retained receipt must record the fingerprint of the release secrets its Worker holds'
+          : STALE_RELEASE_SECRETS,
+      );
+    }
+  }),
+);
+
+for (const missing of ['backend', 'assets', 'both', 'none'] as const) {
+  it.effect(`rejects a retained half release, deleted Worker, or changed active version (${missing})`, () =>
+    Effect.gen(function* unavailableRetainedReceipt() {
+      const receipt = yield* receiptFor();
+      const client = HttpClient.make((request, destination) => {
+        const backend = destination.href.includes(receipt.plan.backendScriptName);
+        const expectedVersion = backend ? BACKEND_VERSION_ID : ASSETS_VERSION_ID;
+        const absent = missing === 'both' || (backend ? missing === 'backend' : missing === 'assets');
+        const account = destination.pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              {
+                result: account
+                  ? { subdomain: WORKERS_SUBDOMAIN }
+                  : {
+                      deployments: absent
+                        ? []
+                        : [
+                            {
+                              versions: [
+                                {
+                                  percentage: 100,
+                                  version_id: missing === 'none' ? 'another-version' : expectedVersion,
+                                },
+                              ],
+                            },
+                          ],
+                    },
+                success: account || !absent,
+              },
+              { status: !account && absent ? 404 : 200 },
+            ),
+          ),
+        );
+      });
+      const failure = yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+              CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN,
+            }),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+    }),
+  );
+}
+
+it.effect('rejects a retained receipt from a foreign account before reading Worker versions', () =>
+  Effect.gen(function* foreignRetainedReceipt() {
+    const receipt = yield* receiptFor();
+    const requests: string[] = [];
+    const client = HttpClient.make((request, destination) => {
+      requests.push(destination.href);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            result: { subdomain: 'another-account' },
+            success: true,
+          }),
+        ),
+      );
+    });
+    const failure = yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+            CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN,
+          }),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(failure.message).toContain('locked Cloudflare account');
+    expect(requests).toHaveLength(1);
+  }),
+);
+
+for (const scenario of [
+  'matching',
+  'digest-mismatch',
+  'source-mismatch',
+  'artifact-name-mismatch',
+  'unit-mismatch',
+  'version-mismatch',
+  'missing-inputs',
+  'malformed-inputs',
+  'dirty-head',
+  'moving-head',
+  'planner-failure',
+] as const) {
+  it.effect(`requires recomputed planned unit inputs for an older artifact (${scenario})`, () =>
+    Effect.scoped(
+      Effect.gen(function* oldArtifactInputs() {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-planned-unit-inputs-' });
+        const inputsFile = nodePath.join(directory, INPUTS_FILE_NAME);
+        const digest = 'd'.repeat(64);
+        const plan = yield* planFor();
+        const artifactName = `edge-unit-${APP_ID}-${scenario === 'artifact-name-mismatch' ? 'e'.repeat(64) : digest}`;
+        if (scenario !== 'missing-inputs') {
+          yield* fileSystem.writeFileString(
+            inputsFile,
+            scenario === 'malformed-inputs'
+              ? '{broken'
+              : JSON.stringify({
+                  digest,
+                  lines: ['blob app/verticals/party-registry/src/index.ts recorded-object'],
+                  sourceRevision: scenario === 'source-mismatch' ? 'b'.repeat(40) : SOURCE_REVISION,
+                  unitId: scenario === 'unit-mismatch' ? 'tax' : APP_ID,
+                  version: scenario === 'version-mismatch' ? 'unknown-v2' : PLAN_DIGEST_VERSION,
+                }),
+          );
+        }
+        const commands: OpsCommand[] = [];
+        let computed = false;
+        const verification = requirePlannedUnitInputs(directory, plan, PLANNED_INPUTS_FAILURE, {
+          artifactName,
+          inputsFile,
+        }).pipe(
+          Effect.provideService(OpsShell, {
+            run: (command) => {
+              commands.push(command);
+              if (command.command === 'git') {
+                return Effect.succeed(
+                  gitResult(
+                    command,
+                    directory,
+                    scenario === 'moving-head' && computed ? 'c'.repeat(40) : 'b'.repeat(40),
+                    scenario === 'dirty-head' ? ' M changed-source.ts\n' : '',
+                  ),
+                );
+              }
+              computed = true;
+              expect(command.command).toBe('node');
+              expect(command.args.slice(1)).toEqual([
+                UNIT_DIGEST_PHASE,
+                '--unit',
+                APP_ID,
+                '--secret-fingerprint',
+                'unavailable',
+              ]);
+              expect(command.args[0]?.endsWith('/ci/deploy-plan.mts')).toBe(true);
+              expect(command.extendEnv).toBe(false);
+              return scenario === 'planner-failure'
+                ? Effect.fail(new OpsCommandError({ command: 'node', message: 'digest computation unavailable' }))
+                : Effect.succeed(`${scenario === 'digest-mismatch' ? 'e'.repeat(64) : digest}\n`);
+            },
+          }),
+        );
+        if (scenario === 'matching') {
+          yield* verification;
+          expect(commands.filter(({ command }) => command === 'node')).toHaveLength(1);
+          expect(commands.filter(({ args }) => args[0] === 'status')).toHaveLength(2);
+        } else {
+          const failure = yield* verification.pipe(Effect.flip);
+          expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('uploads an old-revision artifact without rewriting its identity when recomputed inputs match', () =>
+  Effect.scoped(
+    Effect.gen(function* matchingOldArtifactUpload() {
+      const fixture = yield* prepareDeployment({ initialSource: 'b'.repeat(40), plannedDigest: 'd'.repeat(64) });
+      const receipt = yield* fixture.deploy;
+      expect(receipt.plan).toEqual(fixture.plan);
+      expect(receipt.plan.sourceRevision).toBe(SOURCE_REVISION);
+      expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
+      expect(fixture.timeline.filter((phase) => phase === UNIT_DIGEST_PHASE)).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('fails closed when a same-revision secret rotation finds the Workers uploaded with the old secrets', () =>
+  Effect.scoped(
+    Effect.gen(function* sameRevisionSecretRotation() {
+      const original = { PRIVATE_KEY: 'release-secret-before-rotation' };
+      const rotated = { PRIVATE_KEY: 'release-secret-after-rotation' };
+      // The first release uploads both Workers with the original secrets and annotates the backend version.
+      const first = yield* prepareDeployment({ ownerSecrets: original });
+      const uploaded = yield* first.deploy;
+      expect(uploaded.secretFingerprint).toBe(secretFingerprintOf(original));
+      expect(uploaded.secretFingerprint).not.toBe(secretFingerprintOf(rotated));
+      const upload = first.commands.find(({ args }) => args.includes(NO_BUNDLE_FLAG));
+      const annotation = releaseSecretFingerprintAnnotation(secretFingerprintOf(original));
+      expect(upload?.args[upload.args.indexOf('--message') + 1]).toBe(annotation);
+
+      // A failed-job rerun with the same secrets reuses them: same identity, same secrets.
+      const rerun = yield* prepareDeployment({
+        existingRelease: true,
+        existingVersionMessage: annotation,
+        ownerSecrets: original,
+      });
+      expect((yield* rerun.deploy).secretFingerprint).toBe(uploaded.secretFingerprint);
+      expect(rerun.capturedSecrets).toEqual([]);
+
+      // The same revision after a rotation finds the same Worker names, which still hold the original secrets.
+      const rotation = yield* prepareDeployment({
+        existingRelease: true,
+        existingVersionMessage: annotation,
+        ownerSecrets: rotated,
+      });
+      const failure = yield* rotation.deploy.pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(STALE_RELEASE_SECRETS);
+      // No receipt, no packaging, no upload, no secret write and no provider mutation.
+      expect(rotation.commands).toEqual([]);
+      expect(rotation.capturedSecrets).toEqual([]);
+      expect(rotation.providerWrites).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('reuses an existing release only when the fingerprint key proves the secrets it holds', () =>
+  Effect.scoped(
+    Effect.gen(function* unprovenReuse() {
+      for (const options of [
+        { fingerprintKey: null },
+        { existingVersionMessage: 'deployed without a recorded secret fingerprint' },
+      ] as const) {
+        const deployment = yield* prepareDeployment({
+          existingRelease: true,
+          ownerSecrets: { PRIVATE_KEY: 'test-only' },
+          ...options,
+        });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(deployment.commands).toEqual([]);
+        expect(deployment.providerWrites).toEqual([]);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('annotates a new backend upload with an unavailable fingerprint and records it in the receipt', () =>
+  Effect.scoped(
+    Effect.gen(function* unavailableNewUpload() {
+      const deployment = yield* prepareDeployment({ fingerprintKey: null, ownerSecrets: { PRIVATE_KEY: 'test-only' } });
+      const receipt = yield* deployment.deploy;
+      expect(receipt.secretFingerprint).toBe('unavailable');
+      const upload = deployment.commands.find(({ args }) => args.includes(NO_BUNDLE_FLAG));
+      expect(upload?.args).toContain(releaseSecretFingerprintAnnotation('unavailable'));
+      expect(deployment.capturedSecrets).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const revisionDigest = (revision: string | undefined) =>
+  createHash('sha256')
+    .update(revision ?? '')
+    .digest('hex');
+
+it.effect('recomputes the digest of the clean checkout even when inherited Git selectors name another one', () =>
+  Effect.scoped(
+    Effect.gen(function* inheritedGitSelectors() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const scratch = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-digest-git-selectors-' });
+      const live = OpsShellLive.pipe(Layer.provide(NodeServices.layer));
+      const searchPath = yield* Config.String('PATH');
+      const git = (cwd: string, args: readonly string[]) =>
+        runCommand({
+          args: ['-c', 'user.name=release-test', '-c', 'user.email=release-test@example.com', ...args],
+          command: GIT_COMMAND,
+          cwd,
+          env: { PATH: Redacted.make(searchPath) },
+          extendEnv: false,
+        }).pipe(Effect.provide(live));
+      // The clean checkout being released, and an older one whose inputs match the downloaded artifact.
+      const [checkout, older] = [nodePath.join(scratch, 'checkout'), nodePath.join(scratch, 'older')];
+      const revisions: string[] = [];
+      for (const [directory, message] of [
+        [checkout, 'released'],
+        [older, 'older'],
+      ] as const) {
+        yield* fileSystem.makeDirectory(directory);
+        yield* git(directory, ['init', '-q']);
+        yield* git(directory, ['commit', '-q', '--allow-empty', '-m', message]);
+        revisions.push((yield* git(directory, ['rev-parse', 'HEAD'])).trim());
+      }
+      // Stands in for the planner: hashes the HEAD its own Git commands resolve, as unit-closure's git reads do.
+      const probe =
+        "import { execFileSync } from 'node:child_process'; import { createHash } from 'node:crypto';" +
+        "process.stdout.write(createHash('sha256').update(execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).digest('hex'));";
+      // A hook-style environment of the release process: every command that inherits it gets these selectors,
+      // which point every Git command at the older checkout.
+      const selectors = {
+        GIT_DIR: Redacted.make(nodePath.join(older, '.git')),
+        GIT_WORK_TREE: Redacted.make(older),
+      };
+      const shell = Layer.effect(
+        OpsShell,
+        Effect.gen(function* liveShellWithProbe() {
+          const real = yield* OpsShell;
+          const inheriting = (command: OpsCommand): OpsCommand =>
+            command.extendEnv === false ? command : { ...command, env: { ...selectors, ...command.env } };
+          return {
+            run: (command: OpsCommand) =>
+              real.run(
+                inheriting(
+                  command.command === 'node'
+                    ? { ...command, args: [NODE_MODULE_INPUT, '-e', probe], command: nodeProcess.execPath }
+                    : command,
+                ),
+              ),
+          };
+        }),
+      ).pipe(Layer.provide(live));
+      const plan = yield* planFor();
+      const inputsFile = nodePath.join(scratch, INPUTS_FILE_NAME);
+      const verify = (digest: string) =>
+        Effect.gen(function* verifyArtifactInputs() {
+          yield* fileSystem.writeFileString(
+            inputsFile,
+            JSON.stringify({
+              digest,
+              lines: [],
+              sourceRevision: plan.sourceRevision,
+              unitId: APP_ID,
+              version: PLAN_DIGEST_VERSION,
+            }),
+          );
+          return yield* requirePlannedUnitInputs(checkout, plan, PLANNED_INPUTS_FAILURE, {
+            artifactName: `edge-unit-${APP_ID}-${digest}`,
+            inputsFile,
+          }).pipe(
+            Effect.provide(shell),
+            Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: searchPath }))),
+          );
+        });
+      const olderDigest = yield* verify(revisionDigest(revisions[1])).pipe(Effect.result);
+      expect(Result.isFailure(olderDigest) ? olderDigest.failure.message : 'the older checkout passed').toBe(
+        PLANNED_INPUTS_FAILURE,
+      );
+      yield* verify(revisionDigest(revisions[0]));
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

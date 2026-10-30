@@ -1,4 +1,4 @@
-import { EmptyState, SectionCard, dialogCloseLabel, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
+import { EmptyState, SectionCard, dialogCloseLabel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type {
@@ -10,6 +10,7 @@ import type {
   ManageAgentEntityRequest,
   PrincipalRef,
 } from '@app/shared-contracts/agent-access';
+import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
@@ -17,7 +18,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import { revokeAgentConnection, runAgentCommand, saveAgentOperators } from './agent-entities-client.ts';
 import type { AgentFailure } from './agent-entities-client.ts';
@@ -32,6 +33,14 @@ const connectionsKey = 'shell.agents.connections';
 const PEOPLE_KEY = 'shell.agents';
 const PEOPLE_ERROR_KEY = `${PEOPLE_KEY}.errors`;
 const AUDIT_LIMIT = 8;
+const agentTimeFormat = new Intl.DateTimeFormat('cs-CZ', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Europe/Prague',
+});
+const formatAgentTime = (time: DateTime.Utc): string => DateTime.formatIntl(time, agentTimeFormat);
+const auditDetail = (entry: AgentAuditEntry, field: string): string | undefined =>
+  Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(entry.details[field])));
 const STATUS_OPERATION = 'change-status';
 const AgentDetailSearchSchema = Schema.Struct({ agent: Schema.optionalKey(Schema.String) });
 
@@ -115,13 +124,16 @@ const ConnectionRow = ({ connection, onRevoked }: ConnectionRowProps) => {
         </div>
         <p className="text-fg-secondary text-xs">
           {t(`${connectionsKey}.list.connectedBy`, {
-            name: connection.delegatedBy?.displayName ?? connection.user.displayName,
+            name: Option.match(connection.delegatedBy, {
+              onNone: () => connection.user.displayName,
+              onSome: (person) => person.displayName,
+            }),
           })}
         </p>
         <p className="text-fg-secondary text-xs tabular-nums">
-          {connection.lastUsedAt === null
+          {Option.isNone(connection.lastUsedAt)
             ? t(`${connectionsKey}.list.neverUsed`)
-            : t(`${connectionsKey}.list.lastUsed`, { date: formatDateTime(connection.lastUsedAt) })}
+            : t(`${connectionsKey}.list.lastUsed`, { date: formatAgentTime(connection.lastUsedAt.value) })}
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-100">
@@ -246,11 +258,17 @@ const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: Operat
   // Connections that saving would cut: the agent connected by people who are being removed.
   const cut = agent.connections.filter(
     (connection) =>
-      connection.delegatedBy !== null &&
-      initialSet.has(connection.delegatedBy.principalId) &&
-      !selectedSet.has(connection.delegatedBy.principalId),
+      Option.isSome(connection.delegatedBy) &&
+      initialSet.has(connection.delegatedBy.value.principalId) &&
+      !selectedSet.has(connection.delegatedBy.value.principalId),
   );
-  const cutNames = [...new Set(cut.map((connection) => connection.delegatedBy?.displayName ?? ''))].join(', ');
+  const cutNames = [
+    ...new Set(
+      cut.map((connection) =>
+        Option.match(connection.delegatedBy, { onNone: () => '', onSome: (person) => person.displayName }),
+      ),
+    ),
+  ].join(', ');
 
   const toggle = (principalId: string, checked: boolean) =>
     setSelected((current) =>
@@ -264,7 +282,10 @@ const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: Operat
     setBusy(true);
     setFailure(null);
     browserRuntime.runFork(
-      saveAgentOperators({ agentPrincipalId: agent.principalId, operatorPrincipalIds: [...selected] }).pipe(
+      saveAgentOperators({
+        agentPrincipalId: agent.principalId,
+        operatorPrincipalIds: selected.map((id) => AgentPrincipalIdSchema.make(id)),
+      }).pipe(
         Effect.andThen((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -420,10 +441,10 @@ const AgentCard = ({
         </div>
       </header>
 
-      {agent.description !== null && <p className="text-sm">{agent.description}</p>}
+      {Option.isSome(agent.description) && <p className="text-sm">{agent.description.value}</p>}
 
       <p className="text-fg-secondary text-xs">
-        {agent.owner === null ? t(`${key}.noOwner`) : t(`${key}.owner`, { name: agent.owner.displayName })}
+        {Option.isNone(agent.owner) ? t(`${key}.noOwner`) : t(`${key}.owner`, { name: agent.owner.value.displayName })}
       </p>
 
       {agent.hasProfile ? (
@@ -643,9 +664,9 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
   const { t } = useModernI18n();
 
   const describe = (entry: AgentAuditEntry): string => {
-    const target = entry.targetName ?? t(`${key}.audit.unknownAgent`);
+    const target = Option.getOrElse(entry.targetName, () => t(`${key}.audit.unknownAgent`));
     if (entry.outcome === 'denied' || entry.eventType === 'action.rejected') {
-      const operation = (entry.details['operation'] ?? '').replace(/-agent$/u, '');
+      const operation = (auditDetail(entry, 'operation') ?? '').replace(/-agent$/u, '');
       const action = t(`${key}.audit.deniedAction.${DENIED_OPERATIONS.has(operation) ? operation : 'other'}`, {
         target,
       });
@@ -653,22 +674,22 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
     }
     if (
       entry.eventType === 'identity.agent_operators_changed' ||
-      entry.details['operation'] === 'replace-agent-operators'
+      auditDetail(entry, 'operation') === 'replace-agent-operators'
     ) {
-      const revoked = Number(entry.details['revokedConnections'] ?? '0');
-      if (entry.details['context'] === 'agent-created') {
+      const revoked = Number(auditDetail(entry, 'revokedConnections') ?? '0');
+      if (auditDetail(entry, 'context') === 'agent-created') {
         return t(`${key}.audit.operatorsCreated`, { target });
       }
       return revoked > 0
         ? t(`${key}.audit.operatorsRevoked`, { count: revoked, target })
         : t(`${key}.audit.operators`, { target });
     }
-    return Match.value(entry.details['operation']).pipe(
+    return Match.value(auditDetail(entry, 'operation')).pipe(
       Match.when('create-agent', () => t(`${key}.audit.created`, { target })),
       Match.when('configure-agent', () => t(`${key}.audit.configured`, { target })),
       Match.when('archive-agent', () => t(`${key}.audit.deleted`, { target })),
       Match.when(STATUS_OPERATION, () =>
-        entry.details['newStatus'] === 'disabled'
+        auditDetail(entry, 'newStatus') === 'disabled'
           ? t(`${key}.audit.deactivated`, { target })
           : t(`${key}.audit.activated`, { target }),
       ),
@@ -685,7 +706,7 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
         <ul className="flex min-w-0 flex-col">
           {audit.slice(0, AUDIT_LIMIT).map((entry) => {
             const denied = entry.outcome === 'denied' || entry.eventType === 'action.rejected';
-            const reason = denied ? undefined : entry.details['reason'];
+            const reason = denied ? undefined : auditDetail(entry, 'reason');
             return (
               <li
                 className="flex flex-wrap gap-150 border-border-primary/60 border-b py-100 last:border-b-0 sm:flex-nowrap"
@@ -697,10 +718,13 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
                 />
                 <div className="order-2 flex min-w-0 basis-full flex-col gap-50 sm:order-none sm:flex-1 sm:basis-auto">
                   <p className="text-sm [overflow-wrap:anywhere]">
-                    <span className="font-medium">{entry.actorName ?? t(`${key}.audit.system`)}</span> {describe(entry)}
+                    <span className="font-medium">
+                      {Option.getOrElse(entry.actorName, () => t(`${key}.audit.system`))}
+                    </span>{' '}
+                    {describe(entry)}
                   </p>
                   <p className="text-fg-secondary text-xs tabular-nums">
-                    {formatDateTime(entry.occurredAt)}
+                    {formatAgentTime(entry.occurredAt)}
                     {reason !== undefined && reason !== null && <> · {t(`${key}.audit.reason`, { reason })}</>}
                   </p>
                 </div>

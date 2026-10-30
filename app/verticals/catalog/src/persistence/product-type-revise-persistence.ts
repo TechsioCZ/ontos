@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { ReviseProductTypeResultSchema } from '../../shared/actions/revise-product-type.ts';
@@ -55,7 +56,8 @@ export interface ProductTypeRevisePersistence {
     input: ReviseProductTypePersistenceInput,
   ) => Effect.Effect<
     ReviseProductTypePersistenceOutcome,
-    ProductTypeImpactBasisUnavailable | CatalogPersistenceUnavailable
+    ProductTypeImpactBasisUnavailable | CatalogPersistenceUnavailable,
+    Crypto.Crypto
   >;
 }
 

@@ -14,7 +14,7 @@ const authorityMigrationProgram = Effect.gen(function* authorityMigrationEffect(
   const { admin, runtime } = yield* testDatabaseClients;
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
-  const schemaName = `composition_authority_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
+  const schemaName = `composition_authority_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
   const quotedSchema = `"${schemaName}"`;
   const table = `${quotedSchema}."application_composition_authority"`;
   yield* admin.unsafe(`create schema ${quotedSchema}`);

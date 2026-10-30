@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, Layer } from 'effect';
-import { Cookies, FetchHttpClient } from 'effect/unstable/http';
+import { Cookies, FetchHttpClient } from 'effect/http';
 
 import {
   ContextAccessLive,
@@ -34,11 +34,8 @@ import {
   ScopedRoleMembershipLifecycleLive,
   SpiceDbConfigLive,
 } from '@app/core-runtime/outbox/core-system-worker';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This operator composition root binds the approved deployment identity to the native Action runtime.
 import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/runtime.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This composition root opens the privileged SELECT-only audit/membership reader; native Actions use the separate runtime-role pool.
-import { makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
@@ -50,6 +47,7 @@ import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/
 import { AuthDatabaseLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
+import { BetterAuthNativeAdapterLive } from '../../apps/shell-super-app/api/auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
@@ -60,6 +58,7 @@ const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabase
 const access = ContextAccessLive;
 const authConfig = AuthConfigLive;
 const authDatabase = AuthDatabaseLive.pipe(Layer.provide(authConfig));
+const betterAuthNativeAdapter = BetterAuthNativeAdapterLive.pipe(Layer.provide(authDatabase));
 const resolver = PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
   Layer.provide(persistence),
 );
@@ -70,6 +69,7 @@ const oauthAudit = OAuthAuthenticationAuditLive.pipe(Layer.provide(persistence))
 const authenticationDependencies = Layer.mergeAll(
   authConfig,
   authDatabase,
+  betterAuthNativeAdapter,
   resolver,
   StaffAuthenticationNamespaceRegistryLive,
   BetterAuthRuntimeLive,
@@ -103,12 +103,11 @@ const actionRuntime = Layer.unwrap(
 const reads = Layer.effect(
   AgentProfileReadDatabase,
   Effect.gen(function* readOnlyOperatorDatabase() {
-    const configuration = yield* loadDatabaseConnectionPair();
     // Privileged connection is deliberately exposed as SELECT-only. All identity writes use runtime scoped transactions.
-    const database = yield* makeCoreDatabase(configuration.admin);
+    const database = yield* CoreDatabase;
     return { executor: database.executor };
   }),
-);
+).pipe(Layer.provide(CoreAdminDatabaseLive));
 const legalEntityContext = LegalEntityContextLive.pipe(Layer.provide(persistence));
 const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
 const authorizationLifecycle = ActionAuthorizationLifecycleLive.pipe(

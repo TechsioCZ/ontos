@@ -1,3 +1,4 @@
+import { Base64Url } from 'effect/encoding';
 import {
   ConsentSelfServiceRequestSchema,
   TrustedOperationConsentAuthorityFactSchema,
@@ -22,7 +23,7 @@ import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/a
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import type { Scope } from 'effect';
-import { Config, Context, DateTime, Effect, Encoding, Redacted, Schema } from 'effect';
+import { Config, Context, DateTime, Effect, Redacted, Schema } from 'effect';
 import {
   ConsentSelfServiceAuthorizationError,
   resolveAndAuthorizeConsentSelfService,
@@ -128,7 +129,7 @@ export const commerceConsentAuthorityLookup = Effect.gen(function* commerceConse
     if (tokenPayload === undefined || gateway.compositionRevision !== compositionRevision) {
       return yield* unavailable('gateway_scope_mismatch');
     }
-    const claims = yield* Effect.fromResult(Encoding.decodeBase64UrlString(tokenPayload)).pipe(
+    const claims = yield* Effect.fromResult(Base64Url.decodeString(tokenPayload)).pipe(
       Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))),
       Effect.mapError(unavailable),
     );

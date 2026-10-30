@@ -23,7 +23,7 @@ import {
   Schema,
 } from 'effect';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
@@ -48,16 +48,25 @@ import {
 import {
   deployImmutableShellIngress,
   deployImmutableShellRelease,
+  retargetShellNativeServiceBindings,
   shellReleaseServiceBindings,
   validateImmutableShellReleaseArtifacts,
+  verifyRetainedImmutableShellRelease,
 } from '../immutable-shell-release.mts';
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsShell } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
+import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
-const BUILD_MARKER = '0123456789abcdef';
+const UNIT_DIGEST_PHASE = 'unit-digest';
+const FOREIGN_ACCOUNT = 'foreign-account';
+const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
 const APP_ID = 'shell-super-app';
+const PARTY_APP_ID = 'party-registry';
+const CONFIGURED_PARTY_WORKER = 'configured-party-worker';
+const AUDIT_ENTRYPOINT = 'AuditEntrypoint';
+const AUDIT_WORKER = 'audit-worker';
 const CONTRACT_PATH = '.well-known/ontos-shell-runtime.json';
 const MANIFEST_PATH = 'mf-manifest.json';
 const ROUTES_MANIFEST_PATH = 'routes-manifest.json';
@@ -91,14 +100,14 @@ const file = (path: string, bytes = text('retained Shell bytes')) => ({
   path,
 });
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-const gitResult = (command: OpsCommand, appDirectory: string) => {
+const gitResult = (command: OpsCommand, appDirectory: string, revision = SOURCE_REVISION) => {
   if (command.args[0] === 'status') {
     return '';
   }
   if (command.args.includes('--show-toplevel')) {
     return `${nodePath.resolve(appDirectory, '../..')}\n`;
   }
-  return `${SOURCE_REVISION}\n`;
+  return `${revision}\n`;
 };
 
 const planFor = () =>
@@ -278,7 +287,7 @@ it.effect('rejects malformed UTF-8 or JSON and a runtime contract from another S
       {
         ...createShellRuntimeContract(plan.buildMarker),
         deployment: {
-          appId: 'party-registry',
+          appId: PARTY_APP_ID,
           buildMarker: plan.buildMarker,
         },
       },
@@ -371,6 +380,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         main: BACKEND_PATH,
         name: 'app-shell-super-app',
         placement: { host: 'backend.example.com:443' },
+        services: [{ binding: 'NATIVE_AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER }],
       }),
     ),
     file(
@@ -439,6 +449,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
             Order.String,
           ),
         },
+        ui: releaseUiFor(APP_ID, plan.buildMarker),
       };
       return moduleEnvelope
         ? createMicroVerticalReleaseEnvelope({
@@ -471,6 +482,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         deliveryUnit: { buildMarker: plan.buildMarker, unitId: `app/${APP_ID}` },
         id: APP_ID,
       },
+      verticals: [],
     }),
   );
   return { output, publicDirectory: nodePath.join(output, 'public') };
@@ -574,6 +586,7 @@ const deploymentLayer = (
   authority?: { readonly phase: string; readonly revision: string; readonly unexpired: boolean },
   publishedInventories: (readonly ReleaseFile[])[] = [],
   assetUploadFailure?: OpsCommandError,
+  plannedDigest?: string,
 ) =>
   Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
@@ -584,7 +597,13 @@ const deploymentLayer = (
         return {
           run: (command: OpsCommand) => {
             if (command.command === 'git') {
-              return Effect.succeed(gitResult(command, appDirectory));
+              return Effect.succeed(
+                gitResult(command, appDirectory, plannedDigest === undefined ? SOURCE_REVISION : 'b'.repeat(40)),
+              );
+            }
+            if (command.command === 'node' && plannedDigest !== undefined) {
+              events.push(UNIT_DIGEST_PHASE);
+              return Effect.succeed(`${plannedDigest}\n`);
             }
             if (command.args.join(' ') === 'exec wrangler --version') {
               return Effect.succeed(WRANGLER_VERSION);
@@ -606,7 +625,13 @@ const deploymentLayer = (
                     placement: Schema.optionalKey(Schema.Struct({ host: Schema.String })),
                     preview_urls: Schema.optional(Schema.Boolean),
                     services: Schema.optional(
-                      Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String })),
+                      Schema.Array(
+                        Schema.Struct({
+                          binding: Schema.String,
+                          entrypoint: Schema.optionalKey(Schema.String),
+                          service: Schema.String,
+                        }),
+                      ),
                     ),
                     workers_dev: Schema.optional(Schema.Boolean),
                   }),
@@ -625,8 +650,11 @@ const deploymentLayer = (
                 expect(config.main).toBe(expectedEntrypoint);
                 expect(config.placement).toEqual({ host: 'backend.example.com:443' });
                 expect(resolvedEntrypoint).toBe(expectedEntrypoint);
-                // The fixture's published composition approves no module release: only the Shell's self binding.
-                expect(config.services).toEqual([{ binding: 'ONTOS_SHELL_SELF', service: config.name }]);
+                // Non-module native bindings survive alongside the Shell's self binding.
+                expect(config.services).toEqual([
+                  { binding: 'NATIVE_AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER },
+                  { binding: 'ONTOS_SHELL_SELF', service: config.name },
+                ]);
                 expect(yield* fileSystem.readFileString(resolvedEntrypoint)).toBe(
                   'export default { fetch() { return new Response("Shell"); } };',
                 );
@@ -1020,6 +1048,7 @@ for (const secretResponse of [
 /** A provider that already retains this Shell asset release, answering its assets-only lookup with `presenceStatus`. */
 const retainedShellProvider = Effect.fn('test.retainedShellProvider')(function* retainedShellProviderEffect(input: {
   readonly corruptAssetPath?: string;
+  readonly plannedDigest?: string;
   readonly presenceStatus: number;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1027,6 +1056,19 @@ const retainedShellProvider = Effect.fn('test.retainedShellProvider')(function* 
   const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
   const plan = yield* planFor();
   yield* writeNativeShellOutput(appDirectory, plan, [], false);
+  const inputsFile = nodePath.join(workspaceRoot, 'inputs.json');
+  if (input.plannedDigest !== undefined) {
+    yield* fileSystem.writeFileString(
+      inputsFile,
+      JSON.stringify({
+        digest: input.plannedDigest,
+        lines: [],
+        sourceRevision: plan.sourceRevision,
+        unitId: plan.appId,
+        version: 'ontos-deploy-plan-v1',
+      }),
+    );
+  }
   const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
   const commands: OpsCommand[] = [];
   const requests: { readonly method: string; readonly url: string }[] = [];
@@ -1066,9 +1108,17 @@ const retainedShellProvider = Effect.fn('test.retainedShellProvider')(function* 
   });
   return {
     commands,
-    deploy: deployImmutableShellRelease({ appDirectory, plan }).pipe(
-      Effect.provide(deploymentLayer(appDirectory, client, commands, events)),
+    deploy: deployImmutableShellRelease({
+      appDirectory,
+      artifactName: input.plannedDigest === undefined ? undefined : `edge-unit-${plan.appId}-${input.plannedDigest}`,
+      inputsFile,
+      plan,
+    }).pipe(
+      Effect.provide(
+        deploymentLayer(appDirectory, client, commands, events, {}, undefined, [], undefined, input.plannedDigest),
+      ),
     ),
+    events,
     plan,
     requests,
   };
@@ -1238,7 +1288,7 @@ it.effect(
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              Response.json({ result: { subdomain: 'foreign-account' }, success: true }),
+              Response.json({ result: { subdomain: FOREIGN_ACCOUNT }, success: true }),
             ),
           );
         });
@@ -1293,6 +1343,64 @@ it.effect('binds the ingress to exactly the Worker releases of the published com
   }),
 );
 
+it.effect('retargets generated native API and SSR aliases to their published immutable owners', () =>
+  Effect.gen(function* nativeAliasesUsePublishedReleases() {
+    const workerName = yield* moduleReleaseWorkerName(PARTY_APP_ID, BUILD_MARKER);
+    const services = yield* retargetShellNativeServiceBindings({
+      modules: [
+        {
+          backend: fixtureWorkerBackend(workerName),
+          deployment: { appId: PARTY_APP_ID, buildMarker: BUILD_MARKER },
+        },
+      ],
+      services: [
+        { binding: 'VERTICAL_PARTY_REGISTRY_WORKER', service: CONFIGURED_PARTY_WORKER },
+        { binding: 'PARTY_SSR', entrypoint: 'PartyFragment', service: CONFIGURED_PARTY_WORKER },
+        { binding: 'AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER },
+      ],
+      verticals: [{ cloudflare: { workerName: CONFIGURED_PARTY_WORKER }, id: PARTY_APP_ID }],
+    });
+    expect(services).toEqual([
+      { binding: 'VERTICAL_PARTY_REGISTRY_WORKER', service: workerName },
+      { binding: 'PARTY_SSR', entrypoint: 'PartyFragment', service: workerName },
+      { binding: 'AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER },
+    ]);
+    expect(services.some(({ service }) => service === CONFIGURED_PARTY_WORKER)).toBe(false);
+  }),
+);
+
+it.effect('refuses native owner aliases without a unique published Worker target', () =>
+  Effect.gen(function* refusesUnapprovedNativeAliases() {
+    const workerName = yield* moduleReleaseWorkerName(PARTY_APP_ID, BUILD_MARKER);
+    const owner = { cloudflare: { workerName: 'app-party-registry' }, id: PARTY_APP_ID };
+    const module = {
+      backend: fixtureWorkerBackend(workerName),
+      deployment: { appId: PARTY_APP_ID, buildMarker: BUILD_MARKER },
+    };
+    for (const input of [
+      { modules: [], verticals: [owner] },
+      { modules: [module, module], verticals: [owner] },
+      { modules: [module], verticals: [owner, owner] },
+      {
+        modules: [
+          {
+            backend: { baseUrl: 'http://127.0.0.1:3041/', transport: 'node-http' as const },
+            deployment: module.deployment,
+          },
+        ],
+        verticals: [owner],
+      },
+    ]) {
+      const failure = yield* retargetShellNativeServiceBindings({
+        ...input,
+        services: [{ binding: 'VERTICAL_PARTY_REGISTRY_WORKER', service: 'app-party-registry' }],
+      }).pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe('each native module service binding must identify one approved Worker release');
+    }
+  }),
+);
+
 it.effect('publishes the exact Shell receipt identity and artifact pins and refuses an absent approved snapshot', () =>
   Effect.gen(function* retainedShellPublicationUrls() {
     const plan = yield* planFor();
@@ -1330,7 +1438,7 @@ it.effect('rejects Shell publication receipts that identify a business module or
     const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, inventoryFor(plan));
     const receipt = { artifacts, assetsVersionId: PROVIDER_VERSION, plan };
     const businessPlan = yield* deriveImmutableApplicationReleasePlan({
-      appId: 'party-registry',
+      appId: PARTY_APP_ID,
       buildMarker: BUILD_MARKER,
       sourceRevision: SOURCE_REVISION,
       workersDevSubdomain: WORKERS_DEV_SUBDOMAIN,
@@ -1354,4 +1462,86 @@ it.effect('rejects Shell publication receipts that identify a business module or
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
     }
   }),
+);
+
+for (const state of ['retained', 'changed', 'deleted', FOREIGN_ACCOUNT] as const) {
+  it.effect(`checks the immutable Shell assets receipt without treating mutable ingress as retained (${state})`, () =>
+    Effect.gen(function* retainedShellReceipt() {
+      const plan = yield* planFor();
+      const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, inventoryFor(plan));
+      const receipt = { artifacts, assetsVersionId: PROVIDER_VERSION, plan };
+      const requests: { readonly method: string; readonly url: string }[] = [];
+      const client = HttpClient.make((request, destination) => {
+        requests.push({ method: request.method, url: destination.href });
+        const account = destination.href === ACCOUNT_SUBDOMAIN_URL;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              {
+                result: account
+                  ? { subdomain: state === FOREIGN_ACCOUNT ? 'another-account' : WORKERS_DEV_SUBDOMAIN }
+                  : {
+                      deployments:
+                        state === 'deleted'
+                          ? []
+                          : [
+                              {
+                                versions: [
+                                  {
+                                    percentage: 100,
+                                    version_id: state === 'changed' ? 'another-version' : PROVIDER_VERSION,
+                                  },
+                                ],
+                              },
+                            ],
+                    },
+                success: account || state !== 'deleted',
+              },
+              { status: !account && state === 'deleted' ? 404 : 200 },
+            ),
+          ),
+        );
+      });
+      const verification = verifyRetainedImmutableShellRelease(receipt).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+              CLOUDFLARE_API_TOKEN: 'retained-test-token',
+            }),
+          ),
+        ),
+      );
+      if (state === 'retained') {
+        yield* verification;
+      } else {
+        expect(Schema.is(ImmutableApplicationReleaseError)(yield* verification.pipe(Effect.flip))).toBe(true);
+      }
+      expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+      expect(requests.map(({ url }) => url)).toEqual(
+        state === FOREIGN_ACCOUNT
+          ? [ACCOUNT_SUBDOMAIN_URL]
+          : [
+              ACCOUNT_SUBDOMAIN_URL,
+              `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}/deployments`,
+            ],
+      );
+    }),
+  );
+}
+
+it.effect('accepts an old-revision Shell artifact only after recomputing its unchanged planned inputs', () =>
+  Effect.scoped(
+    Effect.gen(function* matchingOldShellArtifact() {
+      const provider = yield* retainedShellProvider({ plannedDigest: 'd'.repeat(64), presenceStatus: 204 });
+      const receipt = yield* provider.deploy;
+      expect(receipt.plan).toEqual(provider.plan);
+      expect(receipt.plan.sourceRevision).toBe(SOURCE_REVISION);
+      expect(provider.events.filter((event) => event === UNIT_DIGEST_PHASE)).toHaveLength(2);
+      expect(provider.commands).toEqual([]);
+      expect(provider.requests.every(({ method }) => method === 'GET')).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

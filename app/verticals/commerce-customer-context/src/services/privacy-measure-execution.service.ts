@@ -1,12 +1,10 @@
 // fallow-ignore-file code-duplication -- Owner-local protocol code intentionally mirrors its peer owner while preserving separate deployment and persistence authority.
 /* jscpd:ignore-start -- Owner-local protocol code intentionally mirrors its peer owner while preserving separate deployment and persistence authority. */
-import { randomUUID } from 'node:crypto';
-
 import { OperationContextUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type { OperationalScope, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
 import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
@@ -93,11 +91,11 @@ const unavailable = (cause: ScopedRoutineInvocationError) =>
 interface MakeOutcomeInput {
   readonly handoff: PrivacyMeasureHandoff;
   readonly now: Date;
+  readonly outcomeId: string;
   readonly reason: string;
 }
 
-const makeOutcome = ({ handoff, now, reason }: MakeOutcomeInput): OwnerExecutionOutcome => {
-  const outcomeId = randomUUID();
+const makeOutcome = ({ handoff, now, outcomeId, reason }: MakeOutcomeInput): OwnerExecutionOutcome => {
   const instant = DateTime.formatIso(DateTime.makeUnsafe(now));
   return {
     attempt: 1,
@@ -118,96 +116,110 @@ const makeOutcome = ({ handoff, now, reason }: MakeOutcomeInput): OwnerExecution
   };
 };
 
-export const privacyMeasureExecutionService = (
-  transaction: ProfileScopedRoutineInvoker,
-  scope: OperationalScope,
-): Effect.Effect<PrivacyMeasureExecutionService, OperationContextUnavailable> => {
-  if (scope.legalEntityId === undefined) {
-    return Effect.fail(
-      new OperationContextUnavailable({
+export const privacyMeasureExecutionService = Effect.fn('CommercePrivacyMeasureExecution.make')(
+  function* makePrivacyMeasureExecution(
+    transaction: ProfileScopedRoutineInvoker,
+    scope: OperationalScope,
+  ): Effect.fn.Return<PrivacyMeasureExecutionService, OperationContextUnavailable, Crypto.Crypto> {
+    if (scope.legalEntityId === undefined) {
+      return yield* new OperationContextUnavailable({
         code: 'operation_context_unavailable',
         reason: 'Privacy Measure execution requires a trusted Legal Entity scope',
-      }),
-    );
-  }
-  const { legalEntityId } = scope;
-  const load: PrivacyMeasureExecutionService['load'] = (idempotencyKey) =>
-    transaction.invoke(loadReceiptRoutine, [idempotencyKey]).pipe(
-      Effect.mapError(unavailable),
-      Effect.map(([row]) =>
-        Option.fromUndefinedOr(
-          row === undefined
-            ? undefined
-            : {
-                actionInvocationId: row.action_invocation_id,
-                handoffFingerprint: row.handoff_fingerprint,
-                outcome: row.outcome,
-              },
+      });
+    }
+    const { legalEntityId } = scope;
+    const crypto = yield* Crypto.Crypto;
+    const load: PrivacyMeasureExecutionService['load'] = (idempotencyKey) =>
+      transaction.invoke(loadReceiptRoutine, [idempotencyKey]).pipe(
+        Effect.mapError(unavailable),
+        Effect.map(([row]) =>
+          Option.fromUndefinedOr(
+            row === undefined
+              ? undefined
+              : {
+                  actionInvocationId: row.action_invocation_id,
+                  handoffFingerprint: row.handoff_fingerprint,
+                  outcome: row.outcome,
+                },
+          ),
         ),
-      ),
-    );
+      );
 
-  const execute: PrivacyMeasureExecutionService['execute'] = Effect.fn('CommercePrivacyMeasureExecution.execute')(
-    // fallow-ignore-next-line complexity -- Owner execution must reconcile durable replay, exact scope, fail-closed outcome, and receipt persistence atomically.
-    function* executePrivacyMeasure(handoff, actionInvocationId) {
-      const fingerprint = fingerprintPrivacyMeasureHandoff(handoff);
-      const prior = yield* load(handoff.idempotencyKey);
-      if (Option.isSome(prior)) {
-        if (prior.value.handoffFingerprint !== fingerprint) {
+    const execute: PrivacyMeasureExecutionService['execute'] = Effect.fn('CommercePrivacyMeasureExecution.execute')(
+      // fallow-ignore-next-line complexity -- Owner execution must reconcile durable replay, exact scope, fail-closed outcome, and receipt persistence atomically.
+      function* executePrivacyMeasure(handoff, actionInvocationId) {
+        const fingerprint = fingerprintPrivacyMeasureHandoff(handoff);
+        const prior = yield* load(handoff.idempotencyKey);
+        if (Option.isSome(prior)) {
+          if (prior.value.handoffFingerprint !== fingerprint) {
+            return yield* rejected(
+              'PRIVACY_MEASURE_IDEMPOTENCY_CONFLICT',
+              'The idempotency identity is already bound to a different Privacy Measure handoff',
+              false,
+            );
+          }
+          return prior.value.outcome;
+        }
+        const refs = handoff.resourceRefs.map(parseOwnerResourceRef);
+        if (
+          handoff.tenantId !== scope.tenantId ||
+          handoff.owningCapability !== OWNER ||
+          refs.some((ref) => ref === undefined || ref.legalEntityId !== legalEntityId || ref.moduleId !== OWNER)
+        ) {
           return yield* rejected(
-            'PRIVACY_MEASURE_IDEMPOTENCY_CONFLICT',
-            'The idempotency identity is already bound to a different Privacy Measure handoff',
+            'PRIVACY_MEASURE_SCOPE_MISMATCH',
+            'The handoff does not belong to the trusted Commerce Customer Context scope',
             false,
           );
         }
-        return prior.value.outcome;
-      }
-      const refs = handoff.resourceRefs.map(parseOwnerResourceRef);
-      if (
-        handoff.tenantId !== scope.tenantId ||
-        handoff.owningCapability !== OWNER ||
-        refs.some((ref) => ref === undefined || ref.legalEntityId !== legalEntityId || ref.moduleId !== OWNER)
-      ) {
-        return yield* rejected(
-          'PRIVACY_MEASURE_SCOPE_MISMATCH',
-          'The handoff does not belong to the trusted Commerce Customer Context scope',
-          false,
-        );
-      }
-      const now = yield* DateTime.nowAsDate;
-      const outcome = makeOutcome({
-        handoff,
-        now,
-        reason:
-          'Commerce Customer Context has no approved owner semantic contract for this Privacy Measure; canonical owner data was not changed',
-      });
-      const [receipt] = yield* transaction
-        .invoke(recordReceiptRoutine, [
-          outcome.outcomeId,
-          handoff.measureId,
-          handoff.taskId,
-          OWNER,
-          handoff.idempotencyKey,
-          handoff.sourceDecisionRef,
-          handoff.sourceDecisionRevision,
-          fingerprint,
+        const now = yield* DateTime.nowAsDate;
+        const outcomeId = yield* crypto
+          .randomUUIDv4()
+          .pipe(
+            Effect.mapError((cause) =>
+              rejected(
+                'PRIVACY_MEASURE_PERSISTENCE_UNAVAILABLE',
+                'Commerce Customer Context could not allocate a Privacy Measure outcome identity',
+                true,
+                cause,
+              ),
+            ),
+          );
+        const outcome = makeOutcome({
           handoff,
-          outcome,
-          actionInvocationId,
-          scope.principalId,
           now,
-        ])
-        .pipe(Effect.mapError(unavailable));
-      if (receipt === undefined || receipt.handoff_fingerprint !== fingerprint) {
-        return yield* rejected(
-          'PRIVACY_MEASURE_PERSISTENCE_UNAVAILABLE',
-          'Commerce Customer Context did not return the authoritative immutable execution receipt',
-          true,
-        );
-      }
-      return receipt.outcome;
-    },
-  );
-  return Effect.succeed(PrivacyMeasureExecution.of({ execute, load }));
-};
+          outcomeId,
+          reason:
+            'Commerce Customer Context has no approved owner semantic contract for this Privacy Measure; canonical owner data was not changed',
+        });
+        const [receipt] = yield* transaction
+          .invoke(recordReceiptRoutine, [
+            outcome.outcomeId,
+            handoff.measureId,
+            handoff.taskId,
+            OWNER,
+            handoff.idempotencyKey,
+            handoff.sourceDecisionRef,
+            handoff.sourceDecisionRevision,
+            fingerprint,
+            handoff,
+            outcome,
+            actionInvocationId,
+            scope.principalId,
+            now,
+          ])
+          .pipe(Effect.mapError(unavailable));
+        if (receipt === undefined || receipt.handoff_fingerprint !== fingerprint) {
+          return yield* rejected(
+            'PRIVACY_MEASURE_PERSISTENCE_UNAVAILABLE',
+            'Commerce Customer Context did not return the authoritative immutable execution receipt',
+            true,
+          );
+        }
+        return receipt.outcome;
+      },
+    );
+    return PrivacyMeasureExecution.of({ execute, load });
+  },
+);
 /* jscpd:ignore-end */

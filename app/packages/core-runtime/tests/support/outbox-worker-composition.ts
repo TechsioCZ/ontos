@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
-
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Layer, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   ActiveApplicationCompositionService,
@@ -27,7 +28,7 @@ interface OutboxWorkerCompositionModuleFixture {
   readonly subscriptions?: readonly OutboxWorkerSubscription[];
 }
 
-const digest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+const digest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
 const decodeContract = Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' });
 const encodeContract = Schema.encodeSync(Schema.fromJsonString(OntosModuleDeploymentContractSchema));
 
@@ -54,17 +55,17 @@ export const makeOutboxWorkerComposition = (
         }),
       );
       const contractDocument = encodeContract(contract);
-      const sha256 = digest(contractDocument);
+      const contractSha256 = digest(contractDocument);
       return {
         allowedContributions: [],
         backend: { baseUrl: `https://${appId}.example/`, transport: 'node-http' },
-        contract: { sha256, url: `https://${appId}.example/.well-known/ontos-module-manifest.json` },
+        contract: { sha256: contractSha256, url: `https://${appId}.example/.well-known/ontos-module-manifest.json` },
         contractDocument,
         dependencies,
         deployment: contract.deployment,
         federation: { execution: 'server' },
         moduleId,
-        publicContract: { id: moduleId, sha256, version: contract.schemaVersion },
+        publicContract: { id: moduleId, sha256: contractSha256, version: contract.schemaVersion },
         requiredCoreCapabilities: [],
         requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
         sharedSingletons: [],

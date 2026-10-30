@@ -8,71 +8,71 @@ const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '
 const at = '2026-10-19T08:00:00.000Z';
 const now = DateTime.makeUnsafe('2026-10-20T10:00:00.000Z');
 const baseState = {
-  orders: [],
-  movements: [],
   categories: [
     {
-      id: 'r',
-      parentId: null,
-      name: 'Šrouby',
-      slug: 'srouby',
-      heading: 'Šrouby',
       description: '',
-      longDescription: '',
-      position: 1,
-      imageSrc: '',
-      imageAlt: '',
       hasChildren: true,
+      heading: 'Šrouby',
+      id: 'r',
+      imageAlt: '',
+      imageSrc: '',
+      longDescription: '',
+      name: 'Šrouby',
+      parentId: null,
+      position: 1,
+      slug: 'srouby',
     },
     {
-      id: 'c',
-      parentId: 'r',
-      name: 'Metrické',
-      slug: 'metricke',
-      heading: 'Metrické',
       description: '',
-      longDescription: '',
-      position: 1,
-      imageSrc: '',
-      imageAlt: '',
       hasChildren: false,
+      heading: 'Metrické',
+      id: 'c',
+      imageAlt: '',
+      imageSrc: '',
+      longDescription: '',
+      name: 'Metrické',
+      parentId: 'r',
+      position: 1,
+      slug: 'metricke',
     },
   ],
+  movements: [],
+  orders: [],
   products: [
     {
-      id: 'p1',
-      name: 'Šroub',
-      sku: 'S1',
+      active: true,
+      category: 'Šrouby',
       categoryId: 'r',
       categoryPathIds: ['r'],
-      category: 'Šrouby',
-      active: true,
-      unit: 'ks',
-      vatRate: 21,
-      currentPriceMinor: 100,
-      lowStockThreshold: 0,
       createdAt: at,
-      updatedAt: at,
+      currentPriceMinor: 100,
+      id: 'p1',
+      lowStockThreshold: 0,
+      name: 'Šroub',
       priceHistory: [],
+      sku: 'S1',
+      unit: 'ks',
+      updatedAt: at,
+      vatRate: 21,
     },
   ],
 };
 const state = Schema.decodeUnknownSync(MerchandiseStateSchema)(baseState);
-const command = (value: unknown) => Schema.decodeUnknownSync(MerchandiseCommandSchema)(value);
+const command = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 const input = { actor, now, resourceId: 'resource-1' };
 
 it.effect('moves a product to a subcategory and records the content change', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario1() {
     const change = yield* evolveMerchandiseState(
       state,
       command({
         _tag: 'UpdateProduct',
         id: 'p1',
-        patch: { categoryId: 'c', name: 'Šroub M8', isAction: true },
+        patch: { categoryId: 'c', isAction: true, name: 'Šroub M8' },
       }),
       input,
     );
-    const product = change.state.products[0]!;
+    const [product] = change.state.products;
     expect(product.categoryId).toBe('c');
     expect(product.categoryPathIds).toEqual(['c', 'r']);
     expect(product.category).toBe('Metrické');
@@ -85,7 +85,7 @@ it.effect('moves a product to a subcategory and records the content change', () 
 );
 
 it.effect('rejects a product move into an unknown category', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario2() {
     const failure = yield* evolveMerchandiseState(
       state,
       command({ _tag: 'UpdateProduct', id: 'p1', patch: { categoryId: 'missing' } }),
@@ -96,7 +96,7 @@ it.effect('rejects a product move into an unknown category', () =>
 );
 
 it.effect('renames a category and carries the new name to its products', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario3() {
     const moved = yield* evolveMerchandiseState(
       state,
       command({ _tag: 'UpdateProduct', id: 'p1', patch: { categoryId: 'c' } }),

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import {
   ActionAlreadyCommitted,
   ActionRuntime,
@@ -115,5 +116,5 @@ it.effect('runs the real invite Action with trusted selected company and returns
     expect(double.payloads).toEqual([payload]);
     expect(double.principals).toEqual([principal]);
     expect(double.invocationCount()).toBe(1);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

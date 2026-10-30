@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -178,7 +179,7 @@ describe('Catalog attribute value Actions', () => {
         makeContext(compositionSnapshot.composition.revision, services),
       );
       expect(result.state).toBe('SET');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not write either Product attribute mutation when open-selection impact is unavailable', () =>
@@ -205,7 +206,7 @@ describe('Catalog attribute value Actions', () => {
         handleRemoveProductAttributeValues(remove, context).pipe(Effect.flip),
       ]);
       expect(outcomes.every(Schema.is(CatalogOpenSelectionImpactUnavailable))).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('removes a Variant override only with the caller-observed inherited source revision', () =>
@@ -243,7 +244,7 @@ describe('Catalog attribute value Actions', () => {
         makeContext(compositionSnapshot.composition.revision, services),
       );
       expect(result.state).toBe('REMOVED');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a new Variant realization and fails closed on correction without Current revalidation', () =>
@@ -292,7 +293,7 @@ describe('Catalog attribute value Actions', () => {
           makeContext(compositionSnapshot.composition.revision, services, unavailableImpact),
         ).pipe(Effect.flip),
       ).toBeInstanceOf(CatalogOpenSelectionImpactUnavailable);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('requires original-error evidence for a claimed Variant correction', () => {
@@ -349,7 +350,7 @@ describe('Catalog attribute value Actions', () => {
       expect(
         outcomes.map((outcome) => (Schema.is(AttributeValuesConflict)(outcome) ? outcome.conflict : 'OTHER')),
       ).toEqual(['CONTROLLED_RETIRED', 'REQUIRED', 'IDENTITY_IMPACT', 'BASIS_CHANGED']);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('requires explicit tenant permission, idempotency and typed conflict on each mutation', () => {

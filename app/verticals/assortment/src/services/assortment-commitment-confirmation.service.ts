@@ -1,6 +1,5 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { DateTime, Duration, Effect, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { Crypto, DateTime, Duration, Effect, Schema } from 'effect';
 
 import {
   AssortmentCommitmentConfirmationExpired,
@@ -127,6 +126,16 @@ const invalid = (reason: string, cause?: unknown) => {
   const failure = new AssortmentCommitmentConfirmationInvalid({ code: 'assortment_confirmation_invalid', reason });
   return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
 };
+
+const identityUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new AssortmentCommitmentConfirmationUnavailable({
+      code: 'assortment_confirmation_unavailable',
+      reason: 'Assortment Commitment Confirmation identity generation is unavailable',
+    }),
+    'cause',
+    { configurable: true, value: cause },
+  );
 
 const INCOMPLETE_EVIDENCE_REASON = 'Current positive purchase evidence is not complete and authoritative';
 
@@ -274,10 +283,12 @@ const issue = Effect.fn('AssortmentCommitmentConfirmationService.issue')(functio
   }
   const issuedAt = now;
   const expiresAt = DateTime.addDuration(issuedAt, Duration.millis(MAX_VALIDITY_MILLIS));
+  const crypto = yield* Crypto.Crypto;
+  const confirmationId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(identityUnavailable));
   const result = yield* Schema.decodeEffect(AssortmentCommitmentConfirmationResultSchema)({
     attemptRef: payload.attemptRef,
     candidate: payload.candidate,
-    confirmationRef: commitmentConfirmationRef(scope.tenantId, randomUUID()),
+    confirmationRef: commitmentConfirmationRef(scope.tenantId, confirmationId),
     constituent: payload.constituent,
     decisionEvidenceRef: payload.decisionEvidenceRef,
     expiresAt: DateTime.formatIso(expiresAt),

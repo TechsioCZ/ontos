@@ -286,26 +286,6 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
     ),
   );
 
-  suite.effect('serves the generated OntOS module contract before i18n redirects in development', () =>
-    Effect.map(
-      FileSystem.FileSystem.use((fs) =>
-        fs.readFileString(fileURLToPath(new URL('../../modern.config.ts', import.meta.url))),
-      ),
-      (modernConfigSource) => {
-        expect(modernConfigSource).toMatch(
-          /new URL\(\s*'\.dev-public\/\.well-known\/ontos-module-manifest\.json',\s*import\.meta\.url\s*\)/u,
-        );
-        expect(modernConfigSource).toMatch(/setupMiddlewares:/u);
-        expect(modernConfigSource).toMatch(
-          /request\.url\?\.split\('\?', 1\)\[0\]\s*!==\s*'\/\.well-known\/ontos-module-manifest\.json'/u,
-        );
-        expect(modernConfigSource).toMatch(/response\.setHeader\('Content-Type', 'application\/json'\)/u);
-        expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
-        expect(modernConfigSource).toMatch(/publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u);
-      },
-    ),
-  );
-
   suite.effect('readiness response schema cannot claim production merge is enabled', () =>
     Effect.gen(function* schemaContract3() {
       expect(

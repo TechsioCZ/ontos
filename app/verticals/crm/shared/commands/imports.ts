@@ -1,15 +1,17 @@
+import { EntityIdSchema, ShortTextSchema } from '../domain/common.ts';
+import type { EntityId } from '../domain/common.ts';
 // AREA: imports (C03, C04) — owned by the crm-imports lane. Command schemas + reducer.
 // The CSV text travels in the command; the server parses and validates it with the same pure parser the browser
 // preview uses (shared/imports/csv.ts) and applies it with shared/imports/engine.ts. Orders are a read-only
 // projection of the source system: no command creates or edits an order's business data.
 import { Effect, Match, Schema } from 'effect';
-import { EntityIdSchema, ShortTextSchema } from '../domain/common.ts';
+
 import type { CustomerLink, ImportedOrder, ImportsSlice, PairingChange } from '../domain/imports.ts';
 import type { CrmState } from '../domain/state.ts';
 import { parseOrdersCsv } from '../imports/csv.ts';
 import { importOrders } from '../imports/engine.ts';
-import type { CommandContext, Reducer } from './context.ts';
 import { conflict, invalid, newId, notFound, requireWriteAll } from './context.ts';
+import type { CommandContext, Reducer } from './context.ts';
 
 /** CSV text of one import (≈ a few thousand rows at most in the demo). */
 const CsvTextSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400_000));
@@ -66,7 +68,7 @@ const findOrder = (state: CrmState, orderId: string) => {
 const replaceOrder = (orders: readonly ImportedOrder[], next: ImportedOrder) =>
   orders.map((order) => (order.id === next.id ? next : order));
 
-const pairedOrder = (order: ImportedOrder, clientId: string): ImportedOrder => {
+const pairedOrder = (order: ImportedOrder, clientId: EntityId): ImportedOrder => {
   const { candidates: _candidates, ...rest } = order;
   return { ...rest, clientId, pairing: 'paired' };
 };
@@ -102,28 +104,32 @@ const requireClient = (state: CrmState, clientId: string) =>
 
 const newLink = (
   context: CommandContext,
-  clientId: string,
+  clientId: EntityId,
   source: string,
   externalCustomerId: string,
   state?: CrmState,
 ): CustomerLink => {
   const partyRef = state?.clients.items.find((client) => client.id === clientId)?.partyRef;
-  return {
-    ...(partyRef?.counterpartyId === undefined
-      ? {}
-      : { counterpartyId: partyRef.counterpartyId, partyId: partyRef.partyId }),
+  const link: CustomerLink = {
     clientId,
     createdAt: context.now,
     createdBy: context.viewer.principalId,
     externalCustomerId,
     source,
   };
+  if (partyRef?.counterpartyId !== undefined) {
+    Object.assign(link, { counterpartyId: partyRef.counterpartyId, partyId: partyRef.partyId });
+  }
+  return link;
 };
 
 export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, context) =>
   Match.value(command).pipe(
-    Match.tag('LinkExternalCustomer', (value) =>
-      Effect.gen(function* linkExternalCustomer() {
+    Match.tag(
+      'LinkExternalCustomer',
+      Effect.fn('Crm.linkExternalCustomer')(function* linkExternalCustomer(
+        value: Extract<ImportsCommand, { readonly _tag: 'LinkExternalCustomer' }>,
+      ) {
         yield* requireWriteAll(context);
         yield* requireClient(state, value.clientId);
         if (
@@ -145,8 +151,11 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('ImportOrdersCsv', (value) =>
-      Effect.gen(function* importOrdersCsv() {
+    Match.tag(
+      'ImportOrdersCsv',
+      Effect.fn('Crm.importOrdersCsv')(function* importOrdersCsv(
+        value: Extract<ImportsCommand, { readonly _tag: 'ImportOrdersCsv' }>,
+      ) {
         yield* requireWriteAll(context);
         const parsed = parseOrdersCsv(value.csv);
         if (parsed.fileError !== undefined) {
@@ -166,8 +175,9 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         return { entityIds: [batchId, ...result.touchedOrderIds], state: withImports(state, result.slice) };
       }),
     ),
-    Match.tag('PairOrder', (value) =>
-      Effect.gen(function* pairOrder() {
+    Match.tag(
+      'PairOrder',
+      Effect.fn('Crm.pairOrder')(function* pairOrder(value: Extract<ImportsCommand, { readonly _tag: 'PairOrder' }>) {
         yield* requireWriteAll(context);
         const order = yield* findOrder(state, value.orderId);
         yield* requireClient(state, value.clientId);
@@ -182,8 +192,10 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
           reason: value.reason,
           toClientId: value.clientId,
           via: 'manual',
-          ...(order.clientId === undefined ? {} : { fromClientId: order.clientId }),
         };
+        if (order.clientId !== undefined) {
+          Object.assign(change, { fromClientId: order.clientId });
+        }
         let imports: ImportsSlice = {
           ...state.imports,
           orders: replaceOrder(state.imports.orders, pairedOrder(order, value.clientId)),
@@ -208,15 +220,18 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
               context,
               order.id,
             );
-            imports = linked.imports;
+            ({ imports } = linked);
             entityIds.push(...linked.paired.map((entry) => entry.orderId));
           }
         }
         return { entityIds, state: withImports(state, imports) };
       }),
     ),
-    Match.tag('UnpairOrder', (value) =>
-      Effect.gen(function* unpairOrder() {
+    Match.tag(
+      'UnpairOrder',
+      Effect.fn('Crm.unpairOrder')(function* unpairOrder(
+        value: Extract<ImportsCommand, { readonly _tag: 'UnpairOrder' }>,
+      ) {
         yield* requireWriteAll(context);
         const order = yield* findOrder(state, value.orderId);
         if (order.clientId === undefined) {
@@ -242,8 +257,11 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('ResolveOrderStatusEvent', (value) =>
-      Effect.gen(function* resolveOrderStatusEvent() {
+    Match.tag(
+      'ResolveOrderStatusEvent',
+      Effect.fn('Crm.resolveOrderStatusEvent')(function* resolveOrderStatusEvent(
+        value: Extract<ImportsCommand, { readonly _tag: 'ResolveOrderStatusEvent' }>,
+      ) {
         yield* requireWriteAll(context);
         const order = yield* findOrder(state, value.orderId);
         const event = order.statusHistory[value.eventIndex];
@@ -272,8 +290,11 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         };
       }),
     ),
-    Match.tag('ResolveOrderDuplicate', (value) =>
-      Effect.gen(function* resolveOrderDuplicate() {
+    Match.tag(
+      'ResolveOrderDuplicate',
+      Effect.fn('Crm.resolveOrderDuplicate')(function* resolveOrderDuplicate(
+        value: Extract<ImportsCommand, { readonly _tag: 'ResolveOrderDuplicate' }>,
+      ) {
         yield* requireWriteAll(context);
         const order = yield* findOrder(state, value.orderId);
         if (order.duplicateOf === undefined || (order.decisions ?? []).length > 0) {

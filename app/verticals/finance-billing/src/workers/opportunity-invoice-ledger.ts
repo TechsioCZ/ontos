@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { defineScopedRoutine } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import { FinanceConflict, FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
@@ -62,7 +61,7 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
   function* draftOpportunityInvoiceInScope(
     scope: OutboxWorkerLegalEntityScope,
     command: CreateInvoiceFromOpportunityCommand,
-  ): Effect.fn.Return<Option.Option<Invoice>, FinanceError> {
+  ): Effect.fn.Return<Option.Option<Invoice>, FinanceError, Crypto.Crypto> {
     const [row] = yield* scope.routineInvoker
       .invoke(readFinanceStateForWorkerRoutine, [])
       .pipe(Effect.mapError(unavailable));
@@ -71,8 +70,9 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
     }
     const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state).pipe(Effect.mapError(unavailable));
     const now = yield* DateTime.now;
-    const resourceId = yield* Effect.sync(randomUUID);
-    const attemptId = yield* Effect.sync(randomUUID);
+    const crypto = yield* Crypto.Crypto;
+    const resourceId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const attemptId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const result = yield* transitionFinance(
       state,
       command,
@@ -98,7 +98,7 @@ export interface OpportunityInvoiceLedgerService {
   readonly draft: (
     scope: OutboxWorkerLegalEntityScope,
     command: CreateInvoiceFromOpportunityCommand,
-  ) => Effect.Effect<Option.Option<Invoice>, FinanceError>;
+  ) => Effect.Effect<Option.Option<Invoice>, FinanceError, Crypto.Crypto>;
 }
 
 /** Owner-local seam over the finance ledger; the worker host binds the scoped-routine adapter. */

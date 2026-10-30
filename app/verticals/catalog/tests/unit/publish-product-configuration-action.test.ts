@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -118,7 +119,7 @@ describe('Product Configuration publication Action', () => {
         .pipe(Effect.flip);
       expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       expect(harness.snapshot().committed).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('captures the decoded publication result with its exact Action identity in the scoped transaction', () =>
@@ -162,7 +163,7 @@ describe('Product Configuration publication Action', () => {
           tenantId,
         }),
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails the decoded-success hook when transactional snapshot storage fails', () =>
@@ -187,7 +188,7 @@ describe('Product Configuration publication Action', () => {
         }).pipe(Effect.flip);
         expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('is an explicit governed write with no caller principal', () => {
@@ -222,7 +223,7 @@ describe('Product Configuration publication Action', () => {
         definitionId: 'definition-1',
         revision: 1,
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('maps stale, invalid, and unavailable distinctly', () => {

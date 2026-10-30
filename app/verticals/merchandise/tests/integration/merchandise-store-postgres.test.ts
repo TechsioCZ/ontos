@@ -2,13 +2,20 @@
 // round-trip, and command writes that must touch only the rows the command changed.
 import { randomUUID } from 'node:crypto';
 
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { asc } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { OrderSchema } from '../../shared/domain/merchandise-model.ts';
+import {
+  CatalogChangeSchema,
+  OrderSchema,
+  ProductIdSchema,
+  ProductSchema,
+  ProductVariantSchema,
+} from '../../shared/domain/merchandise-model.ts';
 import {
   catalogHeads,
   categories,
@@ -39,15 +46,20 @@ import {
   withMerchandise,
 } from './support/merchandise-database.ts';
 
-const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 const encodeOrder = Schema.encodeSync(OrderSchema);
 const now = DateTime.makeUnsafe('2026-10-22T10:00:00.000Z');
 const nowIso = '2026-10-22T10:00:00.000Z';
-const actor = { principalId: randomUUID(), tenantId: randomUUID() } as never;
+const actor = Schema.decodeUnknownSync(PrincipalRefSchema)({ principalId: randomUUID(), tenantId: randomUUID() });
+const archivedActor = Schema.decodeUnknownSync(PrincipalRefSchema)(catalogInput.orders[1]?.demoCleanup?.actor);
+const decodeProductDocument = Schema.decodeUnknownSync(Schema.toEncoded(ProductSchema));
+const decodeVariantDocument = Schema.decodeUnknownSync(Schema.toEncoded(ProductVariantSchema));
+const decodeCategoryHistory = Schema.decodeUnknownSync(Schema.Array(CatalogChangeSchema));
+const requiredFixtureValue = <Value>(value: Value | undefined) =>
+  value === undefined ? Effect.die('Required merchandise fixture value is missing') : Effect.succeed(value);
 
 /** Every stored row of the scope, in key order (ordinal columns included, so a re-insert shows up). */
 const rowsOf = ({ db, scope }: MerchandiseFixture) =>
-  Effect.gen(function* rowsOf() {
+  Effect.gen(function* readScopedRows() {
     return {
       categories: yield* db.select().from(categories).where(whereScope(categories, scope)).orderBy(asc(categories.id)),
       head: (yield* db.select().from(catalogHeads).where(whereScope(catalogHeads, scope)))[0],
@@ -73,26 +85,50 @@ const rowsOf = ({ db, scope }: MerchandiseFixture) =>
 
 type Rows = Effect.Success<ReturnType<typeof rowsOf>>;
 const productRow = (rows: Rows, id: string) => rows.products.find((row) => row.id === id);
+const untouched = (rows: Rows) => rows.products.filter((row) => !['p1', 'p5'].includes(row.id));
 const othersOf = <Row extends { readonly productId: string }>(rows: readonly Row[], ids: readonly string[]) =>
   rows.filter((row) => !ids.includes(row.productId));
 
 /** One command the way persistence runs it: locked head, working set, pure evolve, delta write. */
-const runCommand = (fixture: MerchandiseFixture, input: unknown, resourceId = randomUUID()) => {
-  const command = decodeCommand(input) as Parameters<typeof workingSetRequestOf>[0];
-  return fixture.db.transaction((transaction) =>
-    Effect.gen(function* runCommand() {
-      const head = yield* loadHead(transaction, fixture.scope, { lock: true });
-      if (head === undefined) return yield* Effect.die('missing head');
-      const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, resourceId));
-      const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId });
-      const revision =
-        change.state === working.state
-          ? working.revision
-          : yield* persistChange(transaction, fixture.scope, working, change.state, now);
-      return { change, revision, working };
-    }),
+const decodeWorkingCommand = (input: typeof MerchandiseCommandSchema.Encoded) =>
+  Schema.decodeEffect(MerchandiseCommandSchema)(input).pipe(
+    Effect.flatMap((command) =>
+      Match.value(command).pipe(
+        Match.tag('AiDecideChanges', 'AiProposeChanges', 'AiRevertBatch', 'ResetDemoData', () =>
+          Effect.die('This fixture only runs working-set commands'),
+        ),
+        Match.orElse((supported) => Effect.succeed(supported)),
+      ),
+    ),
   );
-};
+const runCommand = (
+  fixture: MerchandiseFixture,
+  input: typeof MerchandiseCommandSchema.Encoded,
+  resourceId: string = randomUUID(),
+) =>
+  Effect.gen(function* applyFixtureCommand() {
+    const command = yield* decodeWorkingCommand(input);
+    return yield* fixture.db.transaction((transaction) =>
+      Effect.gen(function* persistFixtureCommand() {
+        const head = yield* loadHead(transaction, fixture.scope, { lock: true });
+        if (head === undefined) {
+          return yield* Effect.die('missing head');
+        }
+        const working = yield* loadWorkingSet(
+          transaction,
+          fixture.scope,
+          head,
+          workingSetRequestOf(command, resourceId),
+        );
+        const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId });
+        const revision =
+          change.state === working.state
+            ? working.revision
+            : yield* persistChange(transaction, fixture.scope, working, change.state, now);
+        return { change, revision, working };
+      }),
+    );
+  });
 
 const headRevision = ({ db, scope }: MerchandiseFixture) =>
   db
@@ -114,56 +150,48 @@ const richInput = {
     { at, delta: 4, id: 'receipt-p3', note: 'Naskladnění', productId: 'p3', reason: 'RECEIPT', reference: 'DL-1' },
     { at, delta: -1, id: 'issue-p3', productId: 'p3', reason: 'ISSUE' },
   ],
-  products: catalogInput.products.map((product) => {
-    switch (product.id) {
-      case 'p1': {
-        return {
-          ...product,
-          priceTiers: [
-            { minimumQuantity: 1, priceExcludingVatMinor: 100, priceMinor: 121 },
-            { minimumQuantity: 50, priceExcludingVatMinor: 90, priceMinor: 109 },
-          ],
-          variants: [
-            {
-              attributes: 'zinek',
-              id: 'v1',
-              name: 'M8 × 20',
-              parameters: [{ label: 'Délka', unit: 'mm', value: '20' }],
-              priceMinor: 100,
-              priceTiers: [{ minimumQuantity: 10, priceExcludingVatMinor: 95, priceMinor: 115 }],
-              sku: 'P1-M8',
-              unit: 'bal',
-            },
-            { attributes: 'pouze informace', name: 'Informační' },
-            { active: false, attributes: '', id: 'v2', name: 'M10', priceMinor: 150, sku: 'P1-M10' },
-          ],
-        };
-      }
-      case 'p3': {
-        return { ...product, featuredPosition: 2, isNew: true, slug: 'matice', stockTracked: false };
-      }
-      case 'p4': {
-        return {
-          ...product,
-          active: false,
-          demoArchive: { actor: catalogInput.orders[1]!.demoCleanup!.actor, at, reason: 'Konec ukázky' },
-        };
-      }
-      default: {
-        return product;
-      }
-    }
-  }),
+  products: catalogInput.products.map((product) =>
+    Match.value(product.id).pipe(
+      Match.when('p1', () => ({
+        ...product,
+        priceTiers: [
+          { minimumQuantity: 1, priceExcludingVatMinor: 100, priceMinor: 121 },
+          { minimumQuantity: 50, priceExcludingVatMinor: 90, priceMinor: 109 },
+        ],
+        variants: [
+          {
+            attributes: 'zinek',
+            id: 'v1',
+            name: 'M8 × 20',
+            parameters: [{ label: 'Délka', unit: 'mm', value: '20' }],
+            priceMinor: 100,
+            priceTiers: [{ minimumQuantity: 10, priceExcludingVatMinor: 95, priceMinor: 115 }],
+            sku: 'P1-M8',
+            unit: 'bal',
+          },
+          { attributes: 'pouze informace', name: 'Informační' },
+          { active: false, attributes: '', id: 'v2', name: 'M10', priceMinor: 150, sku: 'P1-M10' },
+        ],
+      })),
+      Match.when('p3', () => ({ ...product, featuredPosition: 2, isNew: true, slug: 'matice', stockTracked: false })),
+      Match.when('p4', () => ({
+        ...product,
+        active: false,
+        demoArchive: { actor: archivedActor, at, reason: 'Konec ukázky' },
+      })),
+      Match.orElse(() => product),
+    ),
+  ),
 };
 
 it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
   const state = decodeState(richInput);
   return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* snapshotRoundTrip() {
       expect(fixture.revision).toBe(0);
-      const snapshot = yield* readSnapshot(fixture.db, fixture.scope);
+      const snapshot = yield* requiredFixtureValue(yield* readSnapshot(fixture.db, fixture.scope));
       expect(snapshot?.revision).toBe(0);
-      expect(encodeState(snapshot!.state)).toEqual(encodeState(state));
+      expect(encodeState(snapshot.state)).toEqual(encodeState(state));
       const rows = yield* rowsOf(fixture);
       expect(
         rows.variants.map((row) => [row.productId, row.position, row.variantId, row.stockOnHand, row.unit]),
@@ -178,9 +206,11 @@ it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
         ['p1', 0, 0, 115],
       ]);
       // Documents never repeat what lives in their own rows.
-      expect('variants' in (productRow(rows, 'p1')?.document as object)).toBe(false);
-      expect('priceTiers' in (productRow(rows, 'p1')?.document as object)).toBe(false);
-      expect('priceTiers' in (rows.variants[0]?.document as object)).toBe(false);
+      const storedProduct = yield* requiredFixtureValue(productRow(rows, 'p1'));
+      const storedVariant = yield* requiredFixtureValue(rows.variants[0]);
+      expect('variants' in decodeProductDocument(storedProduct.document)).toBe(false);
+      expect('priceTiers' in decodeProductDocument(storedProduct.document)).toBe(false);
+      expect('priceTiers' in decodeVariantDocument(storedVariant.document)).toBe(false);
       expect(productRow(rows, 'p3')?.stockOnHand).toBe(3);
       expect(productRow(rows, 'p4')?.archived).toBe(true);
     }),
@@ -189,7 +219,7 @@ it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
 
 it.live('replaceSnapshot replaces the whole company and advances the revision', () =>
   withMerchandise(decodeState(richInput), (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* replaceCompanySnapshot() {
       const smaller: MerchandiseState = {
         ...catalogState,
         movements: [],
@@ -200,9 +230,9 @@ it.live('replaceSnapshot replaces the whole company and advances the revision', 
         replaceSnapshot(transaction, fixture.scope, smaller),
       );
       expect(revision).toBe(1);
-      const snapshot = yield* readSnapshot(fixture.db, fixture.scope);
+      const snapshot = yield* requiredFixtureValue(yield* readSnapshot(fixture.db, fixture.scope));
       expect(snapshot?.revision).toBe(1);
-      expect(encodeState(snapshot!.state)).toEqual(encodeState(smaller));
+      expect(encodeState(snapshot.state)).toEqual(encodeState(smaller));
       const rows = yield* rowsOf(fixture);
       expect(rows.variants).toEqual([]);
       expect(rows.tiers).toEqual([]);
@@ -215,20 +245,20 @@ it.live('replaceSnapshot replaces the whole company and advances the revision', 
 
 it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock columns, nothing else', () =>
   withMerchandise(catalogState, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* storefrontOrderPersistence() {
       const before = yield* rowsOf(fixture);
       const orderId = `order-${randomUUID()}`;
       const command = {
         _tag: 'PlaceStorefrontOrder',
         billingAddress: { city: 'Praha', country: 'CZ', postalCode: '11000', street: 'Fakturační 2' },
-        partyId: 'test-customer-party',
         clientRequestId: `client-${randomUUID()}`,
         contact: { email: 'jana@example.cz', name: 'Jana Nováková', phone: '+420777123456' },
         deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Hlavní 1' },
         deliveryRecipient: { firstName: 'Petr', lastName: 'Novák', phone: '+420777987654' },
         lines: [{ expectedUnitPriceMinor: 121, productId: 'p1', quantity: 2, variantId: 'v1' }],
+        partyId: 'test-customer-party',
         shippingMethod: 'ZASILKOVNA',
-      };
+      } satisfies typeof MerchandiseCommandSchema.Encoded;
       const { change, revision } = yield* runCommand(fixture, command, orderId);
       expect(change.storefrontOrder?.outcome).toBe('PLACED');
       expect(revision).toBe(fixture.revision + 1);
@@ -238,7 +268,7 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       // Orders: the existing ones untouched, exactly one new row.
       expect(after.orders.slice(0, 2)).toEqual(before.orders);
       expect(after.orders.length).toBe(3);
-      const placed = after.orders[2]!;
+      const placed = yield* requiredFixtureValue(after.orders[2]);
       expect(placed.id).toBe(orderId);
       expect(placed.number).toBe('OBJ-2026-0003');
       expect(placed.channel).toBe('STOREFRONT');
@@ -249,18 +279,18 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
         billingAddress: command.billingAddress,
         deliveryRecipient: command.deliveryRecipient,
       });
-      const stored = decodeOrderDocument(placed.document);
+      const stored = yield* decodeOrderDocument(placed.document);
       expect(stored.billingAddress).toEqual(command.billingAddress);
       expect(stored.deliveryRecipient).toEqual(command.deliveryRecipient);
       expect(stored.contact).toEqual(command.contact);
-      const snapshot = yield* readSnapshot(fixture.db, fixture.scope);
+      const snapshot = yield* requiredFixtureValue(yield* readSnapshot(fixture.db, fixture.scope));
       expect(snapshot?.state.orders.find((order) => order.id === orderId)?.billingAddress).toEqual(
         command.billingAddress,
       );
       expect(snapshot?.state.orders.find((order) => order.id === orderId)?.deliveryRecipient).toEqual(
         command.deliveryRecipient,
       );
-      const created = change.state.orders.find((order) => order.id === orderId)!;
+      const created = yield* requiredFixtureValue(change.state.orders.find((order) => order.id === orderId));
       expect(encodeOrder(stored)).toEqual(encodeOrder(created));
       expect(placed.totalMinor).toBe(created.totalMinor);
 
@@ -273,8 +303,8 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       ).toEqual([[`${orderId}:0`, 'p1', 'v1', -2, 'ORDER', 'OBJ-2026-0003']]);
 
       // Stock columns of the ordered product and variant follow the ledger; its document stays as it was.
-      const p1Before = productRow(before, 'p1')!;
-      const p1After = productRow(after, 'p1')!;
+      const p1Before = yield* requiredFixtureValue(productRow(before, 'p1'));
+      const p1After = yield* requiredFixtureValue(productRow(after, 'p1'));
       expect(p1After.stockOnHand).toBe(3);
       expect(after.variants.find((row) => row.variantId === 'v1')?.stockOnHand).toBe(3);
       expect({ ...p1After, stockOnHand: p1Before.stockOnHand, stockValueMinor: p1Before.stockValueMinor }).toEqual(
@@ -290,7 +320,7 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
 
       // Reads see the new stock without loading the ledger.
       const card = yield* storefrontProducts(fixture.db, fixture.scope, {
-        query: { fields: 'card', productIds: ['p1'] },
+        query: { fields: 'card', productIds: [Schema.decodeUnknownSync(ProductIdSchema)('p1')] },
       });
       expect(card.products[0]?.stockOnHand).toBe(3);
       expect(card.products[0]?.variantSummary?.stockOnHand).toBe(3);
@@ -364,20 +394,20 @@ const tieredInput = {
 
 it.live('ChangePrice rewrites only the repriced product with its tiers, keeping its stock and catalog position', () =>
   withMerchandise(decodeState(tieredInput), (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* changePricePersistence() {
       const before = yield* rowsOf(fixture);
       const { revision } = yield* runCommand(fixture, { _tag: 'ChangePrice', id: 'p2', priceMinor: 100 });
       expect(revision).toBe(fixture.revision + 1);
       const after = yield* rowsOf(fixture);
 
-      const p2Before = productRow(before, 'p2')!;
-      const p2After = productRow(after, 'p2')!;
+      const p2Before = yield* requiredFixtureValue(productRow(before, 'p2'));
+      const p2After = yield* requiredFixtureValue(productRow(after, 'p2'));
       expect(p2After.currentPriceMinor).toBe(100);
       expect(p2After.grossPriceMinor).toBe(121);
       expect(p2After.ordinal).toBe(p2Before.ordinal);
       expect(p2After.createdAt).toEqual(p2Before.createdAt);
       expect(p2After.updatedAt.toISOString()).toBe(nowIso);
-      const document = p2After.document as { currentPriceMinor: number; priceHistory: unknown[]; updatedAt: string };
+      const document = decodeProductDocument(p2After.document);
       expect(document.currentPriceMinor).toBe(100);
       expect(document.priceHistory.length).toBe(1);
       expect(document.updatedAt).toBe(nowIso);
@@ -406,16 +436,16 @@ it.live('ChangePrice rewrites only the repriced product with its tiers, keeping 
       // A variant price change rewrites that product's variants but keeps their stock.
       yield* runCommand(fixture, { _tag: 'ChangePrice', id: 'p1', priceMinor: 200, variantId: 'v1' });
       const variantAfter = yield* rowsOf(fixture);
-      const v1 = variantAfter.variants.find((row) => row.variantId === 'v1')!;
+      const v1 = yield* requiredFixtureValue(variantAfter.variants.find((row) => row.variantId === 'v1'));
       expect(v1.priceMinor).toBe(200);
       expect(v1.grossPriceMinor).toBe(242);
       expect(v1.stockOnHand).toBe(5);
-      expect((v1.document as { priceHistory?: unknown[] }).priceHistory?.length).toBe(1);
-      const p1 = productRow(variantAfter, 'p1')!;
+      expect(decodeVariantDocument(v1.document).priceHistory?.length).toBe(1);
+      const p1 = yield* requiredFixtureValue(productRow(variantAfter, 'p1'));
       expect(p1.grossPriceMinor).toBe(242);
       expect(p1.stockOnHand).toBe(5);
       expect(p1.stockValueMinor).toBe(1000);
-      expect(p1.ordinal).toBe(productRow(before, 'p1')!.ordinal);
+      expect(p1.ordinal).toBe((yield* requiredFixtureValue(productRow(before, 'p1'))).ordinal);
       expect(variantAfter.products.filter((row) => row.id !== 'p1')).toEqual(
         after.products.filter((row) => row.id !== 'p1'),
       );
@@ -426,21 +456,19 @@ it.live('ChangePrice rewrites only the repriced product with its tiers, keeping 
 
 it.live('persistChange against a stale revision reports a conflict instead of a revision', () =>
   withMerchandise(catalogState, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* staleRevisionConflict() {
       const before = yield* rowsOf(fixture);
-      const command = decodeCommand({ _tag: 'ChangePrice', id: 'p3', priceMinor: 70 }) as Parameters<
-        typeof workingSetRequestOf
-      >[0];
+      const command = yield* decodeWorkingCommand({ _tag: 'ChangePrice', id: 'p3', priceMinor: 70 });
       const outcome = yield* fixture.db
         .transaction((transaction) =>
-          Effect.gen(function* () {
-            const head = (yield* loadHead(transaction, fixture.scope, { lock: true }))!;
+          Effect.gen(function* staleRevisionTransaction() {
+            const head = yield* requiredFixtureValue(yield* loadHead(transaction, fixture.scope, { lock: true }));
             const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, 'x'));
             const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId: 'x' });
             const stale = { ...working, revision: working.revision + 7 };
             const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now);
             // Persistence turns `undefined` into a revision conflict, which rolls the transaction back.
-            return revision === undefined ? yield* Effect.fail('conflict' as const) : revision;
+            return revision ?? (yield* Effect.fail('conflict'));
           }),
         )
         .pipe(Effect.flip);
@@ -456,7 +484,7 @@ it.live('UpdateCategory rename renames every product of the category in column a
     products: [
       ...catalogInput.products,
       {
-        ...catalogInput.products[1]!,
+        ...decodeProductDocument(catalogInput.products[1]),
         category: 'Šrouby',
         categoryId: 'c',
         categoryPathIds: ['c', 'r'],
@@ -468,7 +496,7 @@ it.live('UpdateCategory rename renames every product of the category in column a
     ],
   };
   return withMerchandise(decodeState(input), (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* renameCategoryPersistence() {
       const before = yield* rowsOf(fixture);
       const { revision } = yield* runCommand(fixture, {
         _tag: 'UpdateCategory',
@@ -478,25 +506,26 @@ it.live('UpdateCategory rename renames every product of the category in column a
       expect(revision).toBe(fixture.revision + 1);
       const after = yield* rowsOf(fixture);
 
-      const category = after.categories.find((row) => row.id === 'c')!;
+      const category = yield* requiredFixtureValue(after.categories.find((row) => row.id === 'c'));
       expect(category.name).toBe('Metrické šrouby');
-      expect((category.history as unknown[]).length).toBe(1);
-      expect(category.ordinal).toBe(before.categories.find((row) => row.id === 'c')!.ordinal);
+      expect(decodeCategoryHistory(category.history).length).toBe(1);
+      expect(category.ordinal).toBe(
+        (yield* requiredFixtureValue(before.categories.find((row) => row.id === 'c'))).ordinal,
+      );
       expect(after.categories.find((row) => row.id === 'r')).toEqual(before.categories.find((row) => row.id === 'r'));
 
       for (const id of ['p1', 'p5']) {
-        const old = productRow(before, id)!;
-        const renamed = productRow(after, id)!;
+        const old = yield* requiredFixtureValue(productRow(before, id));
+        const renamed = yield* requiredFixtureValue(productRow(after, id));
         expect(renamed.category).toBe('Metrické šrouby');
         expect(renamed.updatedAt.toISOString()).toBe(nowIso);
         expect(renamed.document).toEqual({
-          ...(old.document as object),
+          ...decodeProductDocument(old.document),
           category: 'Metrické šrouby',
           updatedAt: nowIso,
         });
         expect({ ...renamed, category: old.category, document: old.document, updatedAt: old.updatedAt }).toEqual(old);
       }
-      const untouched = (rows: Rows) => rows.products.filter((row) => !['p1', 'p5'].includes(row.id));
       expect(untouched(after)).toEqual(untouched(before));
       expect(after.variants).toEqual(before.variants);
       expect(after.tiers).toEqual(before.tiers);
@@ -504,7 +533,7 @@ it.live('UpdateCategory rename renames every product of the category in column a
       expect(after.orders).toEqual(before.orders);
 
       // The renamed documents still decode.
-      const snapshot = yield* readSnapshot(fixture.db, fixture.scope);
+      const snapshot = yield* requiredFixtureValue(yield* readSnapshot(fixture.db, fixture.scope));
       expect(
         snapshot?.state.products.filter((product) => product.categoryId === 'c').map((product) => product.category),
       ).toEqual(['Metrické šrouby', 'Metrické šrouby']);
@@ -514,7 +543,7 @@ it.live('UpdateCategory rename renames every product of the category in column a
 
 it.live('UpdateCategory without a rename leaves every product row alone', () =>
   withMerchandise(catalogState, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* updateCategoryWithoutRename() {
       const before = yield* rowsOf(fixture);
       yield* runCommand(fixture, { _tag: 'UpdateCategory', id: 'c', patch: { heading: 'Metrické šrouby DIN' } });
       const after = yield* rowsOf(fixture);

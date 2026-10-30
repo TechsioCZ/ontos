@@ -1,47 +1,44 @@
 import { AuthenticationNamespaceRegistry } from '@app/core-runtime/auth/external-identity-admission';
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import {
   ExternalIdentityProviderDeploymentConfigError,
   makeExternalIdentityProviderDeployment,
   parseExternalIdentityProviderDeploymentInput,
 } from '../../api/auth/external-identity-provider-deployment.ts';
 import { ExternalIdentityHttpConfigurationService } from '../../api/auth/external-identity/configuration.ts';
-import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
-import type { ShellInstalledCatalog } from '../../api/modules/installed-module-catalog.ts';
+import {
+  makeInstalledModuleCatalogLoader,
+  ShellInstalledModuleCatalog,
+} from '../../api/modules/installed-module-catalog.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const PROVIDER_NAMESPACE = 'ontos.example.portal.v1';
+const contract = makeModuleContractFixture({ appId: 'example-portal', moduleId: 'example.portal' });
 const catalog = {
-  load: Effect.succeed(
-    // SAFETY: test double; the provider resolution reads only `composition.modules[].{deployment.appId,contractDocument}`.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- Test double of the installed catalog.
-    {
-      composition: {
-        modules: [
-          {
-            backend: { baseUrl: 'https://ontos-provider-release.example.workers.dev/' },
-            contractDocument: JSON.stringify({
-              manifest: {
-                publicSurface: {
-                  externalIdentityProviders: [
-                    {
-                      admissionDeadlineMs: 5000,
-                      authenticationNamespaceId: PROVIDER_NAMESPACE,
-                      provider: 'example-provider',
-                      verification: { operation: 'example-portal.verify.v1', path: '/portal/internal/verify' },
-                    },
-                  ],
-                },
+  load: makeInstalledModuleCatalogLoader(
+    makeCompositionSnapshot([
+      {
+        ...contract,
+        manifest: {
+          ...contract.manifest,
+          publicSurface: {
+            ...contract.manifest.publicSurface,
+            externalIdentityProviders: [
+              {
+                admissionDeadlineMs: 5000,
+                authenticationNamespaceId: PROVIDER_NAMESPACE,
+                provider: 'example-provider',
+                verification: { operation: 'example-portal.verify.v1', path: '/portal/internal/verify' },
               },
-            }),
-            deployment: { appId: 'example-portal' },
-            moduleId: 'example.portal',
+            ],
           },
-        ],
+        },
       },
-    } as unknown as ShellInstalledCatalog,
+    ]),
   ),
 };
 
@@ -62,6 +59,7 @@ const rawConfiguration = {
   ],
   providerEndpointAudience: 'example-portal',
 };
+const configurationJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json))(rawConfiguration);
 
 it.effect('resolves no deployment input when the environment variable is unset', () =>
   Effect.gen(function* verifyUnset() {
@@ -73,7 +71,7 @@ it.effect('resolves no deployment input when the environment variable is unset',
 it.effect('parses the deployment input from the JSON environment variable when set', () =>
   Effect.gen(function* verifySet() {
     const input = yield* parseExternalIdentityProviderDeploymentInput({
-      ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: JSON.stringify(rawConfiguration),
+      ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: configurationJson,
     });
     expect(input).toEqual(rawConfiguration);
   }),
@@ -81,11 +79,12 @@ it.effect('parses the deployment input from the JSON environment variable when s
 
 it.effect('fails with a typed error when the environment variable is not valid JSON', () =>
   Effect.gen(function* verifyMalformed() {
-    const error = yield* Effect.flip(
+    const result = yield* Effect.result(
       parseExternalIdentityProviderDeploymentInput({
         ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: 'not-json',
       }),
     );
+    const error = Option.getOrThrow(Result.getFailure(result));
     expect(Predicate.isTagged(error, 'ExternalIdentityProviderDeploymentConfigError')).toBe(true);
     expect(error).toBeInstanceOf(ExternalIdentityProviderDeploymentConfigError);
   }),
@@ -94,17 +93,15 @@ it.effect('fails with a typed error when the environment variable is not valid J
 it.effect('keeps the staff-only default when no deployment data is supplied', () =>
   Effect.gen(function* verifyDefault() {
     const deployment = makeExternalIdentityProviderDeployment();
-    const registryResult = yield* AuthenticationNamespaceRegistry.pipe(
-      Effect.flatMap((registry) => registry.lookup(namespaceId)),
-      Effect.provide(deployment.contextAccessLayer),
-      Effect.provideService(ShellInstalledModuleCatalog, catalog),
+    const context = yield* Layer.build(
+      Layer.merge(deployment.contextAccessLayer, deployment.externalIdentityDeploymentLayer).pipe(
+        Layer.provide(Layer.succeed(ShellInstalledModuleCatalog, catalog)),
+      ),
     );
+    const registryResult = yield* Context.get(context, AuthenticationNamespaceRegistry).lookup(namespaceId);
     expect(Option.isNone(registryResult)).toBe(true);
 
-    const configuration = yield* ExternalIdentityHttpConfigurationService.pipe(
-      Effect.provide(deployment.externalIdentityDeploymentLayer),
-      Effect.provideService(ShellInstalledModuleCatalog, catalog),
-    );
+    const configuration = Context.get(context, ExternalIdentityHttpConfigurationService);
     expect(configuration.grants).toEqual([]);
   }),
 );
@@ -112,21 +109,19 @@ it.effect('keeps the staff-only default when no deployment data is supplied', ()
 it.effect('makes the provider namespace reachable once deployment data is supplied', () =>
   Effect.gen(function* verifyConfigured() {
     const input = yield* parseExternalIdentityProviderDeploymentInput({
-      ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: JSON.stringify(rawConfiguration),
+      ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: configurationJson,
     });
     const deployment = makeExternalIdentityProviderDeployment(input);
 
-    const registryResult = yield* AuthenticationNamespaceRegistry.pipe(
-      Effect.flatMap((registry) => registry.lookup(namespaceId)),
-      Effect.provide(deployment.contextAccessLayer),
-      Effect.provideService(ShellInstalledModuleCatalog, catalog),
+    const context = yield* Layer.build(
+      Layer.merge(deployment.contextAccessLayer, deployment.externalIdentityDeploymentLayer).pipe(
+        Layer.provide(Layer.succeed(ShellInstalledModuleCatalog, catalog)),
+      ),
     );
+    const registryResult = yield* Context.get(context, AuthenticationNamespaceRegistry).lookup(namespaceId);
     expect(Option.isSome(registryResult)).toBe(true);
 
-    const configuration = yield* ExternalIdentityHttpConfigurationService.pipe(
-      Effect.provide(deployment.externalIdentityDeploymentLayer),
-      Effect.provideService(ShellInstalledModuleCatalog, catalog),
-    );
+    const configuration = Context.get(context, ExternalIdentityHttpConfigurationService);
     expect(configuration.providerEndpointAudience).toBe(rawConfiguration.providerEndpointAudience);
     expect(configuration.grants).toHaveLength(1);
   }),

@@ -10,10 +10,14 @@ const command = { id: 'work.tasks/command/CreateTask', idempotencyKey: 'same-ope
 it.live('retries an identified transient write once with the same operation and accepts only its real result', () =>
   Effect.gen(function* retryStableWrite() {
     let attempts = 0;
-    const result = yield* proofToolCall('ontos_execute', command, () => {
-      attempts += 1;
-      return attempts === 1 ? Promise.reject(transportFailure()) : Promise.resolve({ status: 'executed' });
-    });
+    const result = yield* proofToolCall(
+      'ontos_execute',
+      command,
+      Effect.tryPromise(async () => {
+        attempts += 1;
+        return await (attempts === 1 ? Promise.reject(transportFailure()) : Promise.resolve({ status: 'executed' }));
+      }),
+    );
     expect(result.status).toBe('executed');
     expect(attempts).toBe(2);
   }),
@@ -22,10 +26,14 @@ it.live('retries an identified transient write once with the same operation and 
 it.live('fails after two transport attempts and never exposes request or cause contents', () =>
   Effect.gen(function* exhaustRetry() {
     let attempts = 0;
-    const result = yield* proofToolCall('ontos_execute', command, () => {
-      attempts += 1;
-      return Promise.reject(transportFailure());
-    }).pipe(Effect.flip);
+    const result = yield* proofToolCall(
+      'ontos_execute',
+      command,
+      Effect.tryPromise(async () => {
+        attempts += 1;
+        return await Promise.reject(transportFailure());
+      }),
+    ).pipe(Effect.flip);
     expect(attempts).toBe(2);
     expect(result.message).toContain('CreateTask');
     expect(result.message).toContain('ECONNRESET');
@@ -44,18 +52,26 @@ it.live('never retries missing keys, other methods, unknown failures or returned
       ['ontos_execute', command, new Error('application failure')],
     ] as const) {
       let attempts = 0;
-      const exit = yield* proofToolCall(name, args, () => {
-        attempts += 1;
-        return Promise.reject(error);
-      }).pipe(Effect.exit);
+      const exit = yield* proofToolCall(
+        name,
+        args,
+        Effect.tryPromise(async () => {
+          attempts += 1;
+          return await Promise.reject(error);
+        }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(attempts).toBe(1);
     }
     let attempts = 0;
-    const moduleError = yield* proofToolCall('ontos_execute', command, () => {
-      attempts += 1;
-      return Promise.resolve({ isError: true });
-    });
+    const moduleError = yield* proofToolCall(
+      'ontos_execute',
+      command,
+      Effect.tryPromise(async () => {
+        attempts += 1;
+        return await Promise.resolve({ isError: true });
+      }),
+    );
     expect(moduleError.isError).toBe(true);
     expect(attempts).toBe(1);
   }),

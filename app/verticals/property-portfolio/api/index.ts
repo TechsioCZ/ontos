@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -17,8 +18,8 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Logger, References, Tracer, Layer as GovernedReadLayer } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { Reactivity } from 'effect/reactivity';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
@@ -151,6 +152,7 @@ const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
   GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
   GovernedReadLayer.provideMerge(databaseIdentitiesLive),
+  GovernedReadLayer.provideMerge(NodeCrypto.layer),
   GovernedReadLayer.provideMerge(telemetryLive),
   GovernedReadLayer.orDie,
 );

@@ -7,9 +7,10 @@ import {
   PrincipalResolverUnavailableError,
 } from '@app/core-runtime';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { NodeCrypto } from '@effect/platform-node';
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Result } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -115,7 +116,7 @@ const context = Layer.mergeAll(
     revokeFamily: () => Effect.die('Document resolution must not revoke an OAuth token family'),
   }),
   BetterAuthNativeAdapterLive.pipe(Layer.provideMerge(persistence)),
-);
+).pipe(Layer.provide(NodeCrypto.layer));
 
 const frameworkLive = BetterAuthFrameworkLive();
 const requestServices = Layer.merge(frameworkLive, OAuthEndpointGuardsLive.pipe(Layer.provide(frameworkLive)));

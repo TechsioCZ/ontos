@@ -1,14 +1,33 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
+import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
+import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
+import { cleanup, fireEvent, render as renderView, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeAll, expect, it, rstest } from 'effect-rstest';
+import { Effect } from 'effect';
+import type { PropsWithChildren, ReactElement } from 'react';
 
+import csResource from '../../../locales/cs/shell.json';
 import { DemoGuidePanel, DemoGuideToggleButton } from '../../../src/demo-guide/demo-guide-panel.tsx';
 import { DEMO_GUIDE_OPEN_KEY, readDemoGuideProgress } from '../../../src/demo-guide/demo-guide-store.ts';
 import type { DemoGuide } from '../../../src/demo-guide/demo-guide-types.ts';
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+let i18nInstance: I18nInstance;
+beforeAll(async () => {
+  i18nInstance = await createModernI18n();
+  await i18nInstance.init({
+    defaultNS: 'shell',
+    lng: 'cs',
+    ns: ['shell'],
+    resources: { cs: { shell: csResource } },
+    supportedLngs: ['cs', 'en'],
+  });
+});
+const I18nProvider = ({ children }: PropsWithChildren) => (
+  <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>{children}</ModernI18nProvider>
+);
+const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
+
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useNavigate: () => () => Promise.resolve(),
 }));
@@ -81,35 +100,40 @@ it.each([undefined, 'vedouci@hanak.demo', 'obchodnik@hanak.demo'])(
   },
 );
 
-it('checks a step, persists it and starts again', async () => {
-  const user = userEvent.setup();
-  render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
-  await user.click(screen.getByRole('checkbox', { name: 'Mí klienti' }));
-  expect(readDemoGuideProgress('hanak')).toEqual(['hanak-test-a']);
-  expect(screen.getByText('Hotovo 1 z 2 kroků')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Začít znovu' }));
-  expect(readDemoGuideProgress('hanak')).toEqual([]);
-});
+it.effect('checks a step, persists it and starts again', () =>
+  Effect.gen(function* persistStepProgress() {
+    const user = userEvent.setup();
+    render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
+    yield* Effect.promise(user.click.bind(user, screen.getByRole('checkbox', { name: 'Mí klienti' })));
+    expect(readDemoGuideProgress('hanak')).toEqual(['hanak-test-a']);
+    expect(screen.getByText('Hotovo 1 z 2 kroků')).toBeTruthy();
+    yield* Effect.promise(user.click.bind(user, screen.getByRole('button', { name: 'Začít znovu' })));
+    expect(readDemoGuideProgress('hanak')).toEqual([]);
+  }),
+);
 
-it('opens and closes through the header button and the close button', async () => {
-  const user = userEvent.setup();
-  render(<DemoGuideToggleButton open={false} />);
-  await user.click(screen.getByRole('button', { name: 'Průvodce ukázkou' }));
-  expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBe('open');
-  cleanup();
-  render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
-  await user.click(screen.getByRole('button', { name: 'Zavřít průvodce' }));
-  expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBeNull();
-});
+it.effect('opens and closes through the header button and the close button', () =>
+  Effect.gen(function* guideOpenAndClose() {
+    const user = userEvent.setup();
+    render(<DemoGuideToggleButton open={false} />);
+    yield* Effect.promise(user.click.bind(user, screen.getByRole('button', { name: 'Průvodce ukázkou' })));
+    expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBe('open');
+    cleanup();
+    render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
+    yield* Effect.promise(user.click.bind(user, screen.getByRole('button', { name: 'Zavřít průvodce' })));
+    expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBeNull();
+  }),
+);
+
+const stepList = () => {
+  const list = screen.getByRole('region', { name: 'Postup ukázky' }).parentElement;
+  if (list === null) {
+    throw new Error('step list not rendered');
+  }
+  return list;
+};
 
 it('keeps the step list scroll position when the panel mounts again', () => {
-  const stepList = () => {
-    const list = screen.getByRole('region', { name: 'Postup ukázky' }).parentElement;
-    if (list === null) {
-      throw new Error('step list not rendered');
-    }
-    return list;
-  };
   render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
   stepList().scrollTop = 240;
   fireEvent.scroll(stepList());

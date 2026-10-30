@@ -1,3 +1,4 @@
+import type { FinanceCommandDraft } from './finance-ui.tsx';
 import {
   DetailList,
   formatDate,
@@ -70,10 +71,10 @@ export const DOCUMENT_KINDS: readonly (readonly [InvoiceDocumentKind, string])[]
 interface Draft {
   readonly customerId: string;
   readonly documentKind: InvoiceDocumentKind;
-  readonly object: ObjectSelection;
   /** Today's date (real clock) when the form opens. */
   readonly issueDate: CalendarDate;
   readonly lines: readonly DraftLine[];
+  readonly object: ObjectSelection;
   readonly paymentDays: PaymentTermDays;
   /** Set when Escape or the close button hid this draft after it was edited; the reopened panel says so. */
   readonly resumed: boolean;
@@ -84,9 +85,9 @@ const CUSTOMER_COMBOBOX_ID = 'invoice-customer';
 const emptyDraft = (lineKind: DraftLineKind): Draft => ({
   customerId: '',
   documentKind: 'STANDARD',
-  object: emptyObjectSelection,
   issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
   lines: [newDraftLine('line-1', lineKind)],
+  object: emptyObjectSelection,
   paymentDays: 14,
   resumed: false,
 });
@@ -241,7 +242,7 @@ const DraftTotalsSummary = ({ totals, zeroPriceWarning }: DraftTotalsSummaryProp
   );
 };
 
-export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
+const useCreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
   const { createDraft, references, t } = vm;
   const priceList = (vm.snapshot?.state.priceList ?? []).filter((item) => item.active);
   const defaultLineKind = references.productsReadable === false ? 'free' : 'product';
@@ -345,13 +346,15 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           <Button
             onClick={() => {
               toaster.dismiss(toastId);
-              void vm.execute(
-                {
-                  _tag: 'MarkInvoicesPrepared',
-                  ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-                  invoiceRefs: [invoice.ref],
-                },
-                'Doklad připraven ke schválení',
+              const markInvoicesPreparedCommand: FinanceCommandDraft<'MarkInvoicesPrepared'> = {
+                _tag: 'MarkInvoicesPrepared',
+                invoiceRefs: [invoice.ref],
+              };
+              if (vm.actorLabel !== undefined) {
+                markInvoicesPreparedCommand.actorLabel = vm.actorLabel;
+              }
+              void financeBrowserRuntime.runPromise(
+                vm.execute(markInvoicesPreparedCommand, 'Doklad připraven ke schválení'),
               );
             }}
             size="sm"
@@ -413,12 +416,89 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
         dueDate,
         issueDate,
         lines: draft.lines.map(toInvoiceLine),
-      }).pipe(
-        Effect.tap((outcome) => Effect.sync(() => handleOutcome(outcome))),
-      ),
+      }).pipe(Effect.tap((outcome) => Effect.sync(() => handleOutcome(outcome)))),
     );
   };
 
+  return {
+    addLine,
+    busy,
+    createDraft,
+    customer,
+    customerError,
+    customerItems,
+    customerLabel,
+    customerQuery,
+    customers,
+    defaultLineKind,
+    discardAndClose,
+    draft,
+    dueDate,
+    firstInvalidFieldId,
+    handleOpenChange,
+    handleOutcome,
+    hasZeroPriceLine,
+    issueDate,
+    issueDateError,
+    issueProblem,
+    lineSequence,
+    onOpenChange,
+    open,
+    priceList,
+    products,
+    references,
+    removeLine,
+    resetDraft,
+    serverError,
+    setBusy,
+    setCustomerQuery,
+    setDraft,
+    setLines,
+    setServerError,
+    setSubmitted,
+    setZeroPriceAcknowledged,
+    submit,
+    submitted,
+    t,
+    toaster,
+    totals,
+    updateLine,
+    vm,
+    zeroPriceAcknowledged,
+    zeroPriceWarning,
+  };
+};
+
+export const CreateInvoiceDialog = (props: CreateInvoiceDialogProps) => {
+  const {
+    addLine,
+    busy,
+    customerError,
+    customerItems,
+    discardAndClose,
+    draft,
+    dueDate,
+    handleOpenChange,
+    issueDate,
+    issueDateError,
+    issueProblem,
+    open,
+    priceList,
+    products,
+    references,
+    removeLine,
+    resetDraft,
+    serverError,
+    setCustomerQuery,
+    setDraft,
+    submit,
+    submitted,
+    t,
+    totals,
+    updateLine,
+    vm,
+    zeroPriceWarning,
+  } = useCreateInvoiceDialog(props);
   return (
     <SidePanel
       actions={
@@ -480,7 +560,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
         </div>
         <SelectTemplate
           items={DOCUMENT_KINDS.map(([value, label]) => ({ displayValue: label, label, value }))}
-          label="Druh dokladu"
+          label={t('finance-billing.financeUi.common.documentKind')}
           labelProps={formLabelProps}
           name="documentKind"
           onValueChange={({ value }) => {

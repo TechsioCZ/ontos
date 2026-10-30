@@ -5,8 +5,8 @@ import { WriteSchemaRequest } from '@authzed/authzed-node/v1/schema';
 import { Cause, Effect, Fiber, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
-import type { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 
 import { SPICEDB_CHECK_TIMEOUT_MS } from '../../src/permissions/client.ts';
 import { spiceDbHttpRpc } from '../../src/permissions/spicedb-http-rpc.ts';

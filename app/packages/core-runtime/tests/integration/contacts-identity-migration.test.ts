@@ -70,7 +70,7 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const session = yield* makeTestPgSession(configuration.admin.connectionString);
-  const schema = `core_contacts_identity_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
+  const schema = `core_contacts_identity_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
   yield* Effect.gen(function* exerciseContactsIdentityMigration() {
     yield* session.unsafe(`create schema ${quotedSchema}`);

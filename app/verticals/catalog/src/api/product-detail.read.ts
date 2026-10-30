@@ -7,6 +7,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
+import type { Crypto } from 'effect';
 
 import { ProductDetailRequestSchema, ProductDetailResponseSchema } from '../../shared/apis/product-detail.ts';
 import type { ProductDetailRequest, ProductDetailResponse } from '../../shared/apis/product-detail.ts';
@@ -44,7 +45,7 @@ export const readProductDetail = Effect.fn('ProductDetailRead.read')(function* r
   input: ProductDetailRequest,
   trustedTenantId: string,
   services: CatalogPersistence & Pick<LocalizedFactsReads, 'currentProduct'>,
-): Effect.fn.Return<ProductDetailResponse, ReadHandlerNotFound | ReadHandlerUnavailable> {
+): Effect.fn.Return<ProductDetailResponse, ReadHandlerNotFound | ReadHandlerUnavailable, Crypto.Crypto> {
   if (input.productRef.tenantId !== trustedTenantId) {
     return yield* notFound();
   }

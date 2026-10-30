@@ -617,8 +617,16 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
   const plan = getReadConditionalPermissionPlan(purchaseCurrencyResolutionPermission);
   expect(purchaseCurrencyResolutionPermission.branchTags).toEqual(['GUEST', 'PROFILE']);
   expect(purchaseCurrencyGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
-  expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.PROFILE.requiredKinds).toEqual(['business_permission', 'resource_read']);
+  expect(plan.resolve({ ...baseResolution().request, subject: guestSubject }, scope)).toEqual({
+    kind: 'GUEST',
+    requiredKinds: ['module'],
+    requirements: purchaseCurrencyGuestPermissionTargets(),
+  });
+  expect(plan.resolve(baseResolution().request, scope)).toEqual({
+    kind: 'PROFILE',
+    requiredKinds: ['business_permission', 'resource_read'],
+    requirements: purchaseCurrencyProfilePermissionTargets(baseResolution().request, retailSubject, scope),
+  });
   expect(
     purchaseCurrencyProfilePermissionTargets(
       baseResolution().request,
@@ -635,24 +643,25 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
     },
     { kind: 'resource_read', permission: 'read', resource: { resourceId: profileRef.resourceId } },
   ]);
-  expect(
-    purchaseCurrencyProfilePermissionTargets(
-      {
-        ...baseResolution().request,
-        subject: {
-          authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
-          kind: 'PROFILE',
-          profileRef: counterpartyProfileRef,
-        },
-      },
-      {
-        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
-        kind: 'PROFILE',
-        profileRef: counterpartyProfileRef,
-      },
-      scope,
-    ),
-  ).toMatchObject([
+  const counterpartyRequest = {
+    ...baseResolution().request,
+    subject: {
+      authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
+      kind: 'PROFILE' as const,
+      profileRef: counterpartyProfileRef,
+    },
+  };
+  const counterpartyTargets = purchaseCurrencyProfilePermissionTargets(
+    counterpartyRequest,
+    counterpartyRequest.subject,
+    scope,
+  );
+  expect(plan.resolve(counterpartyRequest, scope)).toEqual({
+    kind: 'PROFILE',
+    requiredKinds: ['business_permission', 'resource_read'],
+    requirements: counterpartyTargets,
+  });
+  expect(counterpartyTargets).toMatchObject([
     {
       businessPermission: {
         permission: 'counterparty.profile.read',

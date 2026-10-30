@@ -1,7 +1,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 /* eslint-disable import/no-duplicates, no-duplicate-imports -- Canonical public command contracts re-export schema-only Action payloads and results. expires: 2026-12-31. */
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 
 import {
   AcceptRetailEnrollmentEvidencePayloadSchema,

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -118,7 +119,7 @@ describe('Product lifecycle committed event and outbox', () => {
         producerModuleKey: 'commerce.catalog',
         topic: 'commerce.catalog.product-lifecycle-changed.v1',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('publishes neither lifecycle event nor outbox on an unchanged update or rejection', () =>
@@ -142,7 +143,7 @@ describe('Product lifecycle committed event and outbox', () => {
       ).pipe(Effect.flip);
       expect(rejected.events).toHaveLength(0);
       expect(rejected.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('links retirement only after the successful owner transition', () =>
@@ -161,7 +162,7 @@ describe('Product lifecycle committed event and outbox', () => {
         revision: 3,
         tenantId,
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects a lifecycle payload whose tenant or state contradicts its Product', () => {

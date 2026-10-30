@@ -6,35 +6,37 @@
 import { DateTime } from 'effect';
 import { demoId } from '../../../../scripts/demo/fixture-ids.mts';
 
+const clientEventNamespace = 'crm.client-event';
+
 interface ContactSeed {
-  readonly name: string;
-  readonly role?: string;
   readonly email?: string;
-  readonly phone?: string;
+  readonly name: string;
   readonly note?: string;
+  readonly phone?: string;
   readonly primary?: boolean;
+  readonly role?: string;
 }
 
 interface ClientSeed {
+  readonly address?: string;
+  readonly archivedDaysAgo?: number;
+  readonly contacts: readonly ContactSeed[];
+  readonly email?: string;
   readonly key: string;
   readonly kind?: 'organization' | 'person';
   readonly name: string;
-  readonly segment: string;
-  readonly regNo?: string;
-  readonly vatNo?: string;
-  readonly email?: string;
-  readonly phone?: string;
-  readonly address?: string;
-  readonly website?: string;
   readonly note?: string;
   /** 'a' | 'b' = Jan Novák / Petra Svobodová; absent = unassigned. */
   readonly owner?: 'a' | 'b';
+  readonly phone?: string;
   /** Reassigned from this rep `reassignedDaysAgo` days ago (the seed history shows both steps). */
   readonly previousOwner?: 'a' | 'b';
   readonly reassignedDaysAgo?: number;
   readonly reassignReason?: string;
-  readonly archivedDaysAgo?: number;
-  readonly contacts: readonly ContactSeed[];
+  readonly regNo?: string;
+  readonly segment: string;
+  readonly vatNo?: string;
+  readonly website?: string;
 }
 
 export const CLIENT_SEEDS: readonly ClientSeed[] = [
@@ -52,9 +54,9 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
       {
         email: 'nakup@pekarna-mala.demo',
         name: 'Tomáš Veselý',
+        note: 'Objednává v pondělí do 10:00, mouku vždy po paletách.',
         phone: '+420 731 100 202',
         role: 'Nákupčí',
-        note: 'Objednává v pondělí do 10:00, mouku vždy po paletách.',
       },
       { name: 'Hana Šimková', phone: '+420 731 100 203', role: 'Vedoucí výroby' },
     ],
@@ -135,8 +137,8 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
       {
         email: 'sklad@hotel-podhradi.demo',
         name: 'Pavel Urban',
-        role: 'Skladník',
         note: 'Přebírá zboží po–pá 7:00–11:00.',
+        role: 'Skladník',
       },
     ],
     email: 'recepce@hotel-podhradi.demo',
@@ -163,9 +165,9 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
       {
         email: 'ekonom@zs-blansko.demo',
         name: 'Ing. Ladislav Mareš',
+        note: 'Schvaluje rámcové smlouvy a faktury.',
         phone: '+420 516 500 602',
         role: 'Ekonom školy',
-        note: 'Schvaluje rámcové smlouvy a faktury.',
       },
     ],
     email: 'jidelna@zs-blansko.demo',
@@ -214,8 +216,8 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
     owner: 'a',
     phone: '+420 519 700 800',
     previousOwner: 'b',
-    reassignReason: 'Rozdělení regionů: Břeclavsko přebírá Jan Novák, Petra Svobodová se soustředí na Zlínský kraj.',
     reassignedDaysAgo: 45,
+    reassignReason: 'Rozdělení regionů: Břeclavsko přebírá Jan Novák, Petra Svobodová se soustředí na Zlínský kraj.',
     regNo: '90000113',
     segment: 'hotel',
     vatNo: 'CZ90000113',
@@ -342,8 +344,8 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
       {
         email: 'reditel@lazne-hotel.demo',
         name: 'MUDr. Aleš Kubíček',
-        role: 'Generální ředitel',
         note: 'Podepisuje roční kontrakty.',
+        role: 'Generální ředitel',
       },
     ],
     email: 'recepce@lazne-hotel.demo',
@@ -472,25 +474,33 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   },
 ];
 
-const defined = <T extends Record<string, unknown>>(value: T) =>
-  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+const defined = <T extends object>(value: T) => {
+  const present: { [K in keyof T]?: Exclude<T[K], undefined> } = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) {
+      Object.defineProperty(present, key, { configurable: true, enumerable: true, value: entry, writable: true });
+    }
+  }
+  return present;
+};
 
 export interface ClientsSeedInput {
-  readonly now: DateTime.Utc;
-  readonly repA: { readonly id: string };
-  readonly repB: { readonly id: string };
   /** Principal shown as the author of seeded records (Správce). */
   readonly adminPrincipalId: string;
   /** Principal of the sales lead (Vedoucí obchodu), author of the reassignment. */
   readonly leadPrincipalId: string;
+  readonly now: DateTime.Utc;
+  readonly repA: { readonly id: string };
+  readonly repB: { readonly id: string };
 }
+
+const clientId = (key: string) => demoId('crm.client', key);
+const createdDays = (index: number) => 220 - index * 7;
 
 /** Encoded clients slice: items, contacts, assignmentHistory, events. */
 export const seedClients = ({ adminPrincipalId, leadPrincipalId, now, repA, repB }: ClientsSeedInput) => {
   const at = (days: number, hours = 0) => DateTime.formatIso(DateTime.subtract(now, { days, hours }));
-  const clientId = (key: string) => demoId('crm.client', key);
   const rep = (who: 'a' | 'b') => (who === 'a' ? repA.id : repB.id);
-  const createdDays = (index: number) => 220 - index * 7;
 
   const items = CLIENT_SEEDS.map((seed, index) => {
     const kind = seed.kind ?? 'organization';
@@ -521,7 +531,7 @@ export const seedClients = ({ adminPrincipalId, leadPrincipalId, now, repA, repB
   const contacts = CLIENT_SEEDS.flatMap((seed, index) =>
     seed.contacts.map((contact, position) => ({
       ...defined({ email: contact.email, note: contact.note, phone: contact.phone, role: contact.role }),
-      ...(contact.primary === true ? { primary: true } : {}),
+      ...defined({ primary: contact.primary === true ? true : undefined }),
       clientId: clientId(seed.key),
       createdAt: at(createdDays(index) - 1 - position),
       createdBy: adminPrincipalId,
@@ -568,7 +578,7 @@ export const seedClients = ({ adminPrincipalId, leadPrincipalId, now, repA, repB
         at: at(createdDays(index)),
         by: adminPrincipalId,
         clientId: id,
-        id: demoId('crm.client-event', `${seed.key}-created`),
+        id: demoId(clientEventNamespace, `${seed.key}-created`),
         kind: 'client_created',
         subject: seed.name,
       },
@@ -576,7 +586,7 @@ export const seedClients = ({ adminPrincipalId, leadPrincipalId, now, repA, repB
         at: at(createdDays(index) - 1 - position),
         by: adminPrincipalId,
         clientId: id,
-        id: demoId('crm.client-event', `${seed.key}-contact-${position}`),
+        id: demoId(clientEventNamespace, `${seed.key}-contact-${position}`),
         kind: 'contact_added',
         subject: contact.name,
       })),
@@ -586,7 +596,7 @@ export const seedClients = ({ adminPrincipalId, leadPrincipalId, now, repA, repB
         at: at(seed.archivedDaysAgo),
         by: leadPrincipalId,
         clientId: id,
-        id: demoId('crm.client-event', `${seed.key}-archived`),
+        id: demoId(clientEventNamespace, `${seed.key}-archived`),
         kind: 'client_archived',
         subject: seed.name,
       });
@@ -602,7 +612,7 @@ export const seedClients = ({ adminPrincipalId, leadPrincipalId, now, repA, repB
     by: edit.who,
     clientId: clientId(edit.key),
     fields: edit.fields,
-    id: demoId('crm.client-event', `${edit.key}-edit-${edit.days}`),
+    id: demoId(clientEventNamespace, `${edit.key}-edit-${edit.days}`),
     kind: 'client_updated',
     subject: CLIENT_SEEDS.find((seed) => seed.key === edit.key)?.name ?? edit.key,
   }));

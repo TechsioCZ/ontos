@@ -1,3 +1,4 @@
+import { Result } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
 
 import {
@@ -78,11 +79,15 @@ it('re-fits a saved width to the current screen beside the sidebar', () => {
 it('summarizes done steps and the next step in guide order', () => {
   expect(summarizeGuideProgress(guide, [])).toEqual({ done: 0, nextStepId: 'a', total: 3 });
   expect(summarizeGuideProgress(guide, ['a', 'x'])).toEqual({ done: 1, nextStepId: 'b', total: 3 });
-  expect(summarizeGuideProgress(guide, ['a', 'b', 'c'])).toEqual({ done: 3, nextStepId: undefined, total: 3 });
+  const complete = summarizeGuideProgress(guide, ['a', 'b', 'c']);
+  const { nextStepId, ...counts } = complete;
+  expect(counts).toEqual({ done: 3, total: 3 });
+  expect(complete).toHaveProperty('nextStepId');
+  expect(nextStepId).toBeUndefined();
 });
 
 it('stores progress per guide and the open flag in localStorage', () => {
-  setDemoGuideProgress('hanak', ['a']);
+  expect(Result.isSuccess(setDemoGuideProgress('hanak', ['a']))).toBe(true);
   expect(readDemoGuideProgress('hanak')).toEqual(['a']);
   expect(readDemoGuideProgress('siampark')).toEqual([]);
   resetDemoGuideProgress('hanak');

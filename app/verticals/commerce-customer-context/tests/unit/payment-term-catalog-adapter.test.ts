@@ -1,7 +1,7 @@
 import type { CurrentPaymentTermsRequest } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { executeCurrentPaymentTerms } from '@app/payment-term-catalog-contracts/current-payment-terms/client';
 import { Effect, Layer, Redacted, Schema } from 'effect';
-import { HttpClientError, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClientError, HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';

@@ -7,7 +7,10 @@ import { Data, Effect } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
+import { AgentPlatformInvalid } from './agent-platform-invalid.ts';
 import { AgentStoreUnavailable } from './proposal-store.ts';
+
+export { AgentPlatformInvalid } from './agent-platform-invalid.ts';
 
 export interface AgentPlatformCaller {
   readonly legalName: string;
@@ -16,9 +19,6 @@ export interface AgentPlatformCaller {
 
 /** Czech `reason` is returned to the client as the problem detail (HTTP 403). */
 export class AgentPlatformForbidden extends Data.TaggedError('AgentPlatformForbidden')<{ readonly reason: string }> {}
-
-/** Czech `reason` is returned to the client as the problem detail (HTTP 422). */
-export class AgentPlatformInvalid extends Data.TaggedError('AgentPlatformInvalid')<{ readonly reason: string }> {}
 
 /** Resolve a named HTTP Action from its owning published contract, never from an Action-key ownership prefix. */
 export const proposalActionKey = (

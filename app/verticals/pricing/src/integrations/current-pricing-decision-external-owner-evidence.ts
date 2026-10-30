@@ -222,6 +222,26 @@ const validateMarket = (
   return undefined;
 };
 
+const priceGroupProofIsInvalid = (
+  read: CurrentPricingDecisionCustomerContextEvidenceRead,
+  context: CurrentPricingDecisionExternalOwnerEvidenceReadContext,
+  validatedAt: string,
+  subjectIsProfile: boolean,
+  groupSources: readonly PricingSetBackedMaterialEvidenceFenceSource[],
+): boolean =>
+  (subjectIsProfile && read.priceGroupPublication === undefined) ||
+  (!subjectIsProfile && read.priceGroupPublication !== undefined) ||
+  (read.priceGroupPublication !== undefined &&
+    (read.priceGroupPublication.expectedEffectiveAt !== context.effectiveAt ||
+      read.priceGroupPublication.requestedAt !== context.requestedAt)) ||
+  groupSources.some(
+    (source) =>
+      !sourceIs(source, context, validatedAt, CUSTOMER_CONTEXT_OWNER, 'CUSTOMER_CONTEXT_GROUP_AUTHORITY') ||
+      read.priceGroupPublication === undefined ||
+      !('sourceEvidence' in source) ||
+      !sameSourceEvidence(read.priceGroupPublication.sourceEvidence, source.sourceEvidence),
+  );
+
 const validateCustomerContext = (
   read: CurrentPricingDecisionCustomerContextEvidenceRead,
   context: CurrentPricingDecisionExternalOwnerEvidenceReadContext,
@@ -253,18 +273,7 @@ const validateCustomerContext = (
     !samePurchaseContextEvidence(purchaseEvidence.value, read.subjectEvidence) ||
     groupSources.length !== (subjectIsProfile ? 1 : 0) ||
     read.fenceSources.length !== purchaseSources.length + groupSources.length ||
-    (subjectIsProfile && read.priceGroupPublication === undefined) ||
-    (!subjectIsProfile && read.priceGroupPublication !== undefined) ||
-    (read.priceGroupPublication !== undefined &&
-      (read.priceGroupPublication.expectedEffectiveAt !== context.effectiveAt ||
-        read.priceGroupPublication.requestedAt !== context.requestedAt)) ||
-    groupSources.some(
-      (source) =>
-        !sourceIs(source, context, validatedAt, CUSTOMER_CONTEXT_OWNER, 'CUSTOMER_CONTEXT_GROUP_AUTHORITY') ||
-        read.priceGroupPublication === undefined ||
-        !('sourceEvidence' in source) ||
-        !sameSourceEvidence(read.priceGroupPublication.sourceEvidence, source.sourceEvidence),
-    )
+    priceGroupProofIsInvalid(read, context, validatedAt, subjectIsProfile, groupSources)
   ) {
     return failed(
       [CUSTOMER_CONTEXT_OWNER],

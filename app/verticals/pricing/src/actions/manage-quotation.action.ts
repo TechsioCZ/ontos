@@ -17,8 +17,10 @@ import {
   PricingQuotationIssuedSchema,
 } from '@app/pricing-contracts/domain/quotation';
 import type { PricingQuotationBinding, PricingQuotationIssuanceRequest } from '@app/pricing-contracts/domain/quotation';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, DateTime, Duration, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   ManageQuotationPayloadSchema,
@@ -433,7 +435,7 @@ const issueCanonicalQuotation = (request: PricingQuotationIssuanceRequest, trust
 
 const commandFingerprint = (payload: ManageQuotationPayload) =>
   Schema.encodeEffect(Schema.fromJsonString(ManageQuotationPayloadSchema))(payload).pipe(
-    Effect.map((encoded) => createHash('sha256').update(encoded).digest('hex')),
+    Effect.map((encoded) => Hex.encode(sha256(utf8ToBytes(encoded)))),
     Effect.mapError((cause) => {
       const failure = new ManageQuotationRejected({
         code: 'manage_quotation_issuer_mismatch',
@@ -443,6 +445,19 @@ const commandFingerprint = (payload: ManageQuotationPayload) =>
       return failure;
     }),
   );
+
+const quotationRequestBindsTrustedCandidate = (
+  issuanceRequest: PricingQuotationIssuanceRequest,
+  payload: ManageQuotationPayload,
+  trusted: ManageQuotationTrustedContext,
+  currentDecision: CurrentPricingDecisionRequest,
+): boolean =>
+  Schema.is(PricingQuotationIssuanceRequestSchema)(issuanceRequest) &&
+  issuanceRequest.binding.candidateRef === payload.candidateRef &&
+  issuanceRequest.binding.tenantId === trusted.tenantId &&
+  issuanceRequest.binding.commercialScope.sellingLegalEntityId === trusted.legalEntityId &&
+  sameDecision(issuanceRequest.currentResult.commercialTotal.decision, currentDecision.decision) &&
+  quotationSubjectMatchesRequest(currentDecision, issuanceRequest.binding);
 
 export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')(function* applyQuotationManagement(
   payload: ManageQuotationPayload,
@@ -479,14 +494,7 @@ export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')
     currentDecision,
     trusted,
   });
-  if (
-    !Schema.is(PricingQuotationIssuanceRequestSchema)(issuanceRequest) ||
-    issuanceRequest.binding.candidateRef !== payload.candidateRef ||
-    issuanceRequest.binding.tenantId !== trusted.tenantId ||
-    issuanceRequest.binding.commercialScope.sellingLegalEntityId !== trusted.legalEntityId ||
-    !sameDecision(issuanceRequest.currentResult.commercialTotal.decision, currentDecision.decision) ||
-    !quotationSubjectMatchesRequest(currentDecision, issuanceRequest.binding)
-  ) {
+  if (!quotationRequestBindsTrustedCandidate(issuanceRequest, payload, trusted, currentDecision)) {
     return yield* issuerMismatch('Fresh Current authority did not preserve the exact trusted issuance request');
   }
   const onIssuanceRejected = (failure: PricingQuotationIssuanceRejected) =>

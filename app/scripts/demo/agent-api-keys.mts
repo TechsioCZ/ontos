@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect, Redacted } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { IdentityLifecycle } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
@@ -40,11 +40,8 @@ const issue = Command.make('issue', { ...targetFlags, name: Flag.String('name') 
       yield* Console.log(Redacted.value(result.secret));
       return yield* Effect.void;
     }),
-  ).pipe(
-    // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Executable subcommand composition root; --help acquires no database services.
-    Effect.provide(AgentProfileOperatorLive),
   ),
-);
+).pipe(Command.provide(AgentProfileOperatorLive));
 const revoke = Command.make(
   'revoke',
   {
@@ -75,11 +72,8 @@ const revoke = Command.make(
           `Binding ${result.authBindingId} revoked; provider cleanup pending: ${result.cleanupPending}.`,
         );
       }),
-    ).pipe(
-      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Executable subcommand composition root; --help acquires no database services.
-      Effect.provide(AgentProfileOperatorLive),
     ),
-);
+).pipe(Command.provide(AgentProfileOperatorLive));
 const command = Command.make('agent-api-keys').pipe(Command.withSubcommands([issue, revoke]));
 if (import.meta.main) {
   await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));

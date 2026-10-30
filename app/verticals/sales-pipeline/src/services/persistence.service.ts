@@ -64,8 +64,11 @@ interface OpportunityTarget {
   readonly resourceType: string;
 }
 
+const salesPipelineModuleId = 'demo.sales-pipeline';
+const revisionConflictReason = 'SalesPipeline changed; refresh before another operation';
+
 const opportunityTarget = (id: string): OpportunityTarget => ({
-  moduleId: 'demo.sales-pipeline',
+  moduleId: salesPipelineModuleId,
   resourceId: id,
   resourceType: 'demo.sales-pipeline.opportunity',
 });
@@ -382,10 +385,15 @@ export const evolveOpportunityState = Effect.fn('SalesPipeline.evolveState')(fun
     Match.tag('UpdateOpportunity', (value) => updateOpportunity(state, value, input.now)),
     Match.tag('AssignOpportunity', (value) => assignOpportunity(state, value, input.now)),
     Match.tag('ChangeOpportunityStage', (value) => changeOpportunityStage(state, value, input.now)),
-    Match.tag('ArchiveOpportunity', (value) =>
-      Effect.gen(function* archiveOpportunity() {
+    Match.tag(
+      'ArchiveOpportunity',
+      Effect.fn('SalesPipeline.archiveOpportunity')(function* archiveOpportunity(
+        value: CommandOf<'ArchiveOpportunity'>,
+      ) {
         const existing = yield* findOpportunity(state, value.id);
-        if (isOpenStage(existing.stage)) return yield* transitionNotAllowed();
+        if (isOpenStage(existing.stage)) {
+          return yield* transitionNotAllowed();
+        }
         // Preserve the record, stage history and Core Action audit; archiving never emits a sale/win event.
         return singleResult(state, { ...existing, archivedAt: input.now, updatedAt: input.now }, []);
       }),
@@ -419,7 +427,7 @@ const contextGrants = Effect.fn('SalesPipeline.contextGrants')(function* context
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
     targets: permissions.map((permission) => ({
-      moduleId: 'demo.sales-pipeline',
+      moduleId: salesPipelineModuleId,
       permission: `demo.sales_pipeline.${permission}`,
     })),
     tenantId: scope.tenantId,
@@ -479,7 +487,7 @@ export const visibleOpportunities = Effect.fn('SalesPipeline.visibleOpportunitie
 });
 
 /** The stored pipeline row as the owner transaction read it (still encoded). */
-export type LoadedSalesPipelineRecords = { readonly revision: number; readonly state: unknown } | undefined;
+export type LoadedSalesPipelineRecords = Option.Option<{ readonly revision: number; readonly state: unknown }>;
 
 /** After commit: decodes the stored pipeline, keeps what the person may see (SpiceDB row filter), shapes the response. */
 export const finishSalesPipelineRecords = Effect.fn('SalesPipeline.finishRecords')(function* finishRecords(
@@ -488,10 +496,11 @@ export const finishSalesPipelineRecords = Effect.fn('SalesPipeline.finishRecords
   grants: SalesPipelineRecordsGrants,
   scope: OperationalScope,
 ) {
-  const state: SalesPipelineState =
-    loaded === undefined
-      ? { opportunities: [] }
-      : yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(loaded.state).pipe(Effect.mapError(unavailable));
+  const state: SalesPipelineState = Option.isNone(loaded)
+    ? { opportunities: [] }
+    : yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(loaded.value.state).pipe(
+        Effect.mapError(unavailable),
+      );
   const visible = yield* visibleOpportunities(
     state.opportunities.filter((item) => item.archivedAt === undefined),
     scope,
@@ -507,12 +516,14 @@ export const finishSalesPipelineRecords = Effect.fn('SalesPipeline.finishRecords
   );
   const response: RecordsResponse = {
     actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-    ...(grants.readAll && state.aiChanges !== undefined ? { aiChanges: state.aiChanges } : {}),
-    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.sales-pipeline'),
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, salesPipelineModuleId),
     indicators: opportunityIndicators(items),
     items,
-    revision: loaded?.revision ?? 0,
+    revision: Option.isSome(loaded) ? loaded.value.revision : 0,
   };
+  if (grants.readAll && state.aiChanges !== undefined) {
+    return { ...response, aiChanges: state.aiChanges };
+  }
   return response;
 });
 
@@ -520,10 +531,7 @@ interface PipelineStatePersistence {
   readonly insert: (
     state: typeof SalesPipelineStateSchema.Encoded,
   ) => Effect.Effect<readonly { readonly revision: number }[], SalesPipelinePersistenceUnavailable>;
-  readonly load: Effect.Effect<
-    { readonly revision: number; readonly state: unknown } | undefined,
-    SalesPipelinePersistenceUnavailable
-  >;
+  readonly load: Effect.Effect<LoadedSalesPipelineRecords, SalesPipelinePersistenceUnavailable>;
   readonly update: (
     state: typeof SalesPipelineStateSchema.Encoded,
     revision: number,
@@ -533,13 +541,13 @@ interface PipelineStatePersistence {
 export const salesPipelineStateRepository = (persistence: PipelineStatePersistence) => ({
   load: Effect.fn('SalesPipeline.load')(function* load() {
     const row = yield* persistence.load;
-    if (row === undefined) {
+    if (Option.isNone(row)) {
       return { revision: 0, state: { opportunities: [] } satisfies SalesPipelineState };
     }
-    const state = yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(row.state).pipe(
+    const state = yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(row.value.state).pipe(
       Effect.mapError(unavailable),
     );
-    return { revision: row.revision, state };
+    return { revision: row.value.revision, state };
   }),
   save: Effect.fn('SalesPipeline.save')(function* save(expectedRevision: number, state: SalesPipelineState) {
     const encoded = yield* Schema.encodeEffect(SalesPipelineStateSchema)(state).pipe(Effect.mapError(unavailable));
@@ -552,7 +560,7 @@ export const salesPipelineStateRepository = (persistence: PipelineStatePersisten
     }
     return yield* new SalesPipelineRevisionConflict({
       code: 'sales_pipeline_revision_conflict',
-      reason: 'SalesPipeline changed; refresh before another operation',
+      reason: revisionConflictReason,
     });
   }),
 });
@@ -600,7 +608,7 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
         .limit(1)
         .pipe(
           Effect.mapError(unavailable),
-          Effect.map(([row]) => row),
+          Effect.map(([row]) => Option.fromUndefinedOr(row)),
         ),
       update: (state, revision) =>
         DateTime.now.pipe(
@@ -640,7 +648,7 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       if (snapshot.revision !== expectedRevision) {
         return yield* new SalesPipelineRevisionConflict({
           code: 'sales_pipeline_revision_conflict',
-          reason: 'SalesPipeline changed; refresh before another operation',
+          reason: revisionConflictReason,
         });
       }
       const now = yield* DateTime.now;
@@ -672,7 +680,9 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       // Approved (or reverted) stage moves publish the same stage-changed Outbox Message as a manual move.
       const stageChanges: StageChange[] = affected.flatMap((opportunity): StageChange[] => {
         const before = previous.get(opportunity.id);
-        if (before === undefined) return [{ fromStage: Option.none(), opportunity }];
+        if (before === undefined) {
+          return [{ fromStage: Option.none(), opportunity }];
+        }
         return before.stage === opportunity.stage ? [] : [{ fromStage: Option.some(before.stage), opportunity }];
       });
       const revision = yield* save(expectedRevision, outcome.state);
@@ -725,7 +735,7 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       if (snapshot.revision !== expectedRevision) {
         return yield* new SalesPipelineRevisionConflict({
           code: 'sales_pipeline_revision_conflict',
-          reason: 'SalesPipeline changed; refresh before another operation',
+          reason: revisionConflictReason,
         });
       }
       const now = yield* DateTime.now;
@@ -770,7 +780,7 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
         .limit(1)
         .pipe(
           Effect.mapError(unavailable),
-          Effect.map(([row]) => row),
+          Effect.map(([row]) => Option.fromUndefinedOr(row)),
         );
     };
     return { apply, loadRecords };

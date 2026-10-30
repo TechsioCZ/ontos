@@ -1,5 +1,22 @@
 {
   "sales-pipeline": {
+    "detail": {
+      "title": "Business case",
+      "relatedRecords": "Related records",
+      "tasks": "Tasks",
+      "contracts": "Contracts",
+      "orders": "Orders from this case",
+      "offerLinesTitle": "Offer – case line items",
+      "offerLinesLabel": "Offer line items",
+      "stageHistory": "Stage history"
+    },
+    "aiReview": {
+      "decisionNote": "Decision note (optional)",
+      "decisionNotePlaceholder": "E.g. verified with the customer",
+      "logTitle": "AI and approval log",
+      "unavailableTitle": "AI proposals are unavailable",
+      "batchDisplayLabel": "Batch display"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

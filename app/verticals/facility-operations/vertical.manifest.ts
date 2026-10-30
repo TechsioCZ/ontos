@@ -34,6 +34,7 @@ const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 
 const moduleKey = 'facility.operations';
+const facilityNavigationGroupKey = 'shell.navigation.facility';
 const pageKey = (agenda: string) => `facility.operations.page.${agenda}`;
 const moduleAccess = { kind: 'context_permission', permission: 'module.access' } as const;
 /** Restricted agendas (finance values, documents, security) are listed only for principals with read_all. */
@@ -75,13 +76,13 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
-      'page-overview': OverviewPage,
       'page-agenda': AgendaPage,
       'page-assets': AssetsPage,
+      'page-documents': DocumentsPage,
       'page-meters': MetersPage,
+      'page-overview': OverviewPage,
       'page-purchasing': PurchasingPage,
       'page-security': SecurityPage,
-      'page-documents': DocumentsPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -112,7 +113,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           homeStart: 30,
           icon: 'icon-[mdi--view-dashboard-variant-outline]',
           label: { cs: 'Přehled provozu', en: 'Operations overview' },
@@ -129,7 +130,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           homeStart: 80,
           icon: 'icon-[mdi--calendar-account-outline]',
           label: { cs: 'Moje agenda', en: 'My agenda' },
@@ -146,7 +147,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           icon: 'icon-[mdi--archive-outline]',
           label: { cs: 'Majetek', en: 'Assets' },
           order: 220,
@@ -163,7 +164,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           icon: 'icon-[mdi--gauge]',
           label: { cs: 'Měřidla a energie', en: 'Meters and energy' },
           order: 230,
@@ -179,7 +180,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           icon: 'icon-[mdi--truck-delivery-outline]',
           label: { cs: 'Sklad a nákupy', en: 'Stock and purchasing' },
           order: 240,
@@ -195,7 +196,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           icon: 'icon-[mdi--shield-check-outline]',
           label: { cs: 'Bezpečnost', en: 'Security' },
           order: 250,
@@ -211,7 +212,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.facility',
+          groupKey: facilityNavigationGroupKey,
           icon: 'icon-[mdi--folder-file-outline]',
           label: { cs: 'Dokumenty', en: 'Documents' },
           order: 260,

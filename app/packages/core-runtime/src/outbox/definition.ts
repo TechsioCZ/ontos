@@ -61,12 +61,12 @@ export type OutboxWorkerSubscription = Readonly<
   >
 >;
 
-export type OutboxWorkerHandler<Payload, Error, Requirements = never> = (
+export type OutboxWorkerHandler<Payload, Failure, Requirements = never> = (
   payload: Payload,
   context: OutboxWorkerHandlerContext,
-) => Effect.Effect<void, Error, Requirements>;
+) => Effect.Effect<void, Failure, Requirements>;
 
-type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandler<Payload, Error, Requirements>;
+type BivariantOutboxWorkerHandler<Payload, Failure, Requirements> = OutboxWorkerHandler<Payload, Failure, Requirements>;
 
 export interface OutboxWorkerRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

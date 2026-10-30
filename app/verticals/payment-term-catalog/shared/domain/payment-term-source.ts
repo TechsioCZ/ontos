@@ -15,7 +15,8 @@ export const PaymentTermSourceRevisionSchema = Schema.Finite.check(
   Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
 );
 const revision = PaymentTermSourceRevisionSchema;
-const brandedText = (brand: string) => text.pipe(Schema.brand(brand), Schema.decodeTo(text));
+const brandedText = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
+  text.pipe(Schema.brand<Brand>(brand), Schema.decodeTo(text));
 export const ExternalBusinessSystemIdSchema = brandedText('ExternalBusinessSystemId');
 export const SourceRecordIdSchema = brandedText('SourceRecordId');
 export const SourceStatementIdSchema = brandedText('SourceStatementId');

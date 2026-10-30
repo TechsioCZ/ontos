@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import type {
   AssortmentSelectionAssessmentV1OperationRequest,
@@ -13,7 +14,7 @@ export interface AssortmentSelectionAssessmentV1Source {
   readonly assess: (input: {
     readonly purpose: 'ASSORTMENT';
     readonly selection: AssortmentSelectionSourceProofV1['selection'];
-  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult>;
+  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult, never, Crypto.Crypto>;
 }
 
 type AssortmentSelectionAssessmentV1Response = typeof AssortmentSelectionAssessmentV1ResponseSchema.Type;
@@ -40,86 +41,86 @@ export const assessOrVerifyAssortmentSelectionV1: (
   request: AssortmentSelectionAssessmentV1OperationRequest,
   tenantId: string,
   source: AssortmentSelectionAssessmentV1Source,
-) => Effect.Effect<AssortmentSelectionAssessmentV1Response> = Effect.fn('assessOrVerifyAssortmentSelectionV1')(
-  function* assessOrVerify(
-    request: AssortmentSelectionAssessmentV1OperationRequest,
-    tenantId: string,
-    source: AssortmentSelectionAssessmentV1Source,
-  ) {
-    const selection = request.operation === 'ASSESS' ? request.selection : request.sourceProof.selection;
-    if (selection.productRef.tenantId !== tenantId || selection.variantRef.tenantId !== tenantId) {
-      if (request.operation === 'ASSESS') {
-        return {
-          assessment: {
-            kind: 'UNAVAILABLE',
-            reason: 'Catalog selection could not be verified for the trusted Tenant',
-          },
-          missingRoles: [],
-          operation: 'ASSESS',
-        } as const;
-      }
-      return {
-        operation: 'VERIFY_CURRENT',
-        reason: 'Catalog selection could not be verified for the trusted Tenant',
-        status: 'UNAVAILABLE',
-      } as const;
-    }
-
-    const current = yield* source.assess({ purpose: 'ASSORTMENT', selection });
-    const assessment = current.evidence;
+) => Effect.Effect<AssortmentSelectionAssessmentV1Response, never, Crypto.Crypto> = Effect.fn(
+  'assessOrVerifyAssortmentSelectionV1',
+)(function* assessOrVerify(
+  request: AssortmentSelectionAssessmentV1OperationRequest,
+  tenantId: string,
+  source: AssortmentSelectionAssessmentV1Source,
+) {
+  const selection = request.operation === 'ASSESS' ? request.selection : request.sourceProof.selection;
+  if (selection.productRef.tenantId !== tenantId || selection.variantRef.tenantId !== tenantId) {
     if (request.operation === 'ASSESS') {
-      const response = {
-        assessment,
-        missingRoles: current.missingRoles,
-        operation: 'ASSESS' as const,
-      };
-      const proof = sourceProofFor(assessment);
-      return proof === undefined ? response : { ...response, sourceProof: proof };
-    }
-
-    if (!('status' in assessment)) {
       return {
-        operation: 'VERIFY_CURRENT',
-        reason: selectionEvidenceTemporarilyUnavailable,
-        status: 'UNAVAILABLE',
+        assessment: {
+          kind: 'UNAVAILABLE',
+          reason: 'Catalog selection could not be verified for the trusted Tenant',
+        },
+        missingRoles: [],
+        operation: 'ASSESS',
       } as const;
     }
-    if (
-      assessment.purpose !== request.sourceProof.purpose ||
-      !sameSelection(assessment.selection, request.sourceProof.selection)
-    ) {
-      return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
-    }
-    if (assessment.status === 'INVALID') {
-      if (request.sourceProof.assessmentStatus !== 'INVALID') {
-        return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
-      }
-      if (!sameCatalogSelectionValiditySourceToken(request.sourceProof.sourceToken, assessment.basis)) {
-        return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
-      }
-      const verifiedProof = sourceProofFor(assessment);
-      return verifiedProof === undefined
-        ? {
-            operation: 'VERIFY_CURRENT',
-            reason: selectionEvidenceTemporarilyUnavailable,
-            status: 'UNAVAILABLE',
-          }
-        : { operation: 'VERIFY_CURRENT', sourceProof: verifiedProof, status: 'CURRENT' };
-    }
-    if (request.sourceProof.assessmentStatus !== 'VALID') {
+    return {
+      operation: 'VERIFY_CURRENT',
+      reason: 'Catalog selection could not be verified for the trusted Tenant',
+      status: 'UNAVAILABLE',
+    } as const;
+  }
+
+  const current = yield* source.assess({ purpose: 'ASSORTMENT', selection });
+  const assessment = current.evidence;
+  if (request.operation === 'ASSESS') {
+    const response = {
+      assessment,
+      missingRoles: current.missingRoles,
+      operation: 'ASSESS' as const,
+    };
+    const proof = sourceProofFor(assessment);
+    return proof === undefined ? response : { ...response, sourceProof: proof };
+  }
+
+  if (!('status' in assessment)) {
+    return {
+      operation: 'VERIFY_CURRENT',
+      reason: selectionEvidenceTemporarilyUnavailable,
+      status: 'UNAVAILABLE',
+    } as const;
+  }
+  if (
+    assessment.purpose !== request.sourceProof.purpose ||
+    !sameSelection(assessment.selection, request.sourceProof.selection)
+  ) {
+    return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
+  }
+  if (assessment.status === 'INVALID') {
+    if (request.sourceProof.assessmentStatus !== 'INVALID') {
       return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
     }
     if (!sameCatalogSelectionValiditySourceToken(request.sourceProof.sourceToken, assessment.basis)) {
       return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
     }
     const verifiedProof = sourceProofFor(assessment);
-    if (verifiedProof === undefined) {
-      return {
-        operation: 'VERIFY_CURRENT',
-        reason: selectionEvidenceTemporarilyUnavailable,
-        status: 'UNAVAILABLE',
-      } as const;
-    }
-    return { operation: 'VERIFY_CURRENT', sourceProof: verifiedProof, status: 'CURRENT' } as const;
-  },
-);
+    return verifiedProof === undefined
+      ? {
+          operation: 'VERIFY_CURRENT',
+          reason: selectionEvidenceTemporarilyUnavailable,
+          status: 'UNAVAILABLE',
+        }
+      : { operation: 'VERIFY_CURRENT', sourceProof: verifiedProof, status: 'CURRENT' };
+  }
+  if (request.sourceProof.assessmentStatus !== 'VALID') {
+    return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
+  }
+  if (!sameCatalogSelectionValiditySourceToken(request.sourceProof.sourceToken, assessment.basis)) {
+    return { assessment, operation: 'VERIFY_CURRENT', status: 'STALE' } as const;
+  }
+  const verifiedProof = sourceProofFor(assessment);
+  if (verifiedProof === undefined) {
+    return {
+      operation: 'VERIFY_CURRENT',
+      reason: selectionEvidenceTemporarilyUnavailable,
+      status: 'UNAVAILABLE',
+    } as const;
+  }
+  return { operation: 'VERIFY_CURRENT', sourceProof: verifiedProof, status: 'CURRENT' } as const;
+});

@@ -11,6 +11,11 @@ import type { Redacted } from 'effect';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
+type PrincipalVerifierLayer =
+  | typeof GatewayPrincipalVerifierLive
+  | typeof ActiveApplicationCompositionConfigLive
+  | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
+
 const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
 /**
  * What this runtime needs to accept a Shell-issued assertion for its audience: the gateway
@@ -19,21 +24,9 @@ const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
  * `operation_context_unavailable`).
  */
 export const ActionPrincipalVerifierLive: Layer.Layer<
-  Layer.Success<
-    | typeof GatewayPrincipalVerifierLive
-    | typeof ActiveApplicationCompositionConfigLive
-    | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>
-  >,
-  Layer.Error<
-    | typeof GatewayPrincipalVerifierLive
-    | typeof ActiveApplicationCompositionConfigLive
-    | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>
-  >,
-  Layer.Services<
-    | typeof GatewayPrincipalVerifierLive
-    | typeof ActiveApplicationCompositionConfigLive
-    | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>
-  >
+  Layer.Success<PrincipalVerifierLayer>,
+  Layer.Error<PrincipalVerifierLayer>,
+  Layer.Services<PrincipalVerifierLayer>
 > = Layer.mergeAll(
   GatewayPrincipalVerifierLive,
   ActiveApplicationCompositionConfigLive,

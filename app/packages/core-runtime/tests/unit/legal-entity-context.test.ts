@@ -1,6 +1,6 @@
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { LegalEntityContextRecord } from '../../src/auth/legal-entity-context.ts';
 import {

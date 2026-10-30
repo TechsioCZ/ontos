@@ -3,7 +3,7 @@
 // @ontos-action-http-slug correct-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { CorrectProductPayloadSchema, CorrectProductResultSchema } from '../actions/correct-product.ts';
 
 export { CorrectProductPayloadSchema } from '../actions/correct-product.ts';

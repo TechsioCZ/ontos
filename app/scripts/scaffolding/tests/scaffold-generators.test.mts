@@ -62,6 +62,7 @@ import {
   publishedOutboxContractExports,
 } from '../../published-outbox-contracts.mts';
 import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
+import { customizeOutboxWorkerHostEntry } from '../outbox-worker/scaffold.mts';
 import type { ScaffoldCommand } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 import {
@@ -469,6 +470,7 @@ const preservedFixtureValue = 'preserve-me';
 const topologyFile = 'topology/reference-topology.json';
 const inventoryPackageName = `@app/${inventorySlug}`;
 const workspaceVersion = 'workspace:*';
+const effectReleaseVersion = '4.0.5';
 const fixtureGatewayJti = '60000000-0000-4000-8000-000000000001';
 const actionInvokeUrl = 'https://inventory.example.test/actions/invoke';
 const generatedOutboxContractPath = './shared/outbox/orders-created.ts';
@@ -564,6 +566,7 @@ const inventoryActionFile = 'verticals/inventory-stock/src/actions/create-order.
 const inventoryOutboxContractFile = 'verticals/inventory-stock/shared/outbox/orders-created.ts';
 const billingApiIndexFile = 'verticals/billing/api/index.ts';
 const billingWorkersIndexFile = 'verticals/billing/src/workers/index.ts';
+const billingWorkerHostEntryFile = 'verticals/billing/src/worker-host/entry.ts';
 const inventoryTsconfigFile = 'verticals/inventory-stock/tsconfig.json';
 const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/inventory.json';
 const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
@@ -690,6 +693,7 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
             'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: preservedFixtureValue,
         },
+        type: 'module',
         version: '0.1.0',
       }),
     );
@@ -710,7 +714,7 @@ export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureLaye
       root,
       `verticals/${vertical.slug}/shared/api.ts`,
       `import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const fixtureApi = HttpApi.make('FixtureApi').add(
   HttpApiGroup.make('fixture').add(
@@ -1172,7 +1176,7 @@ it.live(
             '--eval',
             `import { Clock, Effect, Match, Result } from 'effect';
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
 import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
 import { loadStockLevelsClient, loadStockLevelsClientWithAuthorization } from './verticals/inventory-stock/src/api/stock-levels-report-client.ts';
@@ -1690,6 +1694,21 @@ it.live(
         assertGovernedReadServers([moduleApiServer, searchServer, reportServer]);
         expect(operationBoundary).toMatch(/export const authenticateOperationPrincipal/u);
         assertComposedGovernedReads(composedApi, composedHandlers);
+        expect(hasValidGovernedHttpCompositionRoot(composedApi, composedHandlers)).toBe(true);
+        for (const [before, after] of [
+          ["'@modern-js/bff-effect/assembly'", "'./counterfeit-assembler.ts'"],
+          [
+            'GovernedReadLayer.mergeAll(fixtureLayer, governedReadApiHandlersLive)',
+            'GovernedReadLayer.mergeAll(fixtureLayer)',
+          ],
+          [
+            'services: GovernedReadLayer.mergeAll(',
+            'services: unrelatedServicesLive, unusedServices: GovernedReadLayer.mergeAll(',
+          ],
+        ] as const) {
+          expect(composedHandlers).toContain(before);
+          expect(hasValidGovernedHttpCompositionRoot(composedApi, composedHandlers.replace(before, after))).toBe(false);
+        }
         const searchContract = yield* readFixtureFile(fixture.root, inventorySearchContractFile);
         const reportContract = yield* readFixtureFile(
           fixture.root,
@@ -1709,6 +1728,7 @@ it.live(
         yield* linkFixtureDependencies(fixture.root, appRoot, {
           '@app/core-runtime': 'packages/core-runtime',
           '@app/shared-contracts': sharedContractsPackagePath,
+          '@effect/platform-node': 'packages/core-runtime/node_modules/@effect/platform-node',
           '@modern-js/bff-effect': bffEffectNodeModulePath,
           '@modern-js/plugin-bff': pluginBffNodeModulePath,
           effect: effectNodeModulePath,
@@ -1737,6 +1757,7 @@ export const authenticateOperationPrincipal = (authorization, problems) =>
           fixture.root,
           'execute-generated-governed-reads.mts',
           `import { ReadRuntime } from '@app/core-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import {
   defineEffectBff,
   Effect,
@@ -1773,13 +1794,20 @@ const handlers = Layer.mergeAll(
   resourceDetailReadApiLive,
   resourceHistoryReadApiLive,
   stockLevelsReadApiLive,
-).pipe(Layer.provide(readLayer));
-const runtime = defineEffectBff({
+);
+const runtime = assembleEffectBffRuntime({
   api: fixtureApi,
-  layer: HttpApiBuilder.layer(fixtureApi).pipe(Layer.provide(handlers)),
+  handlers,
+  services: readLayer,
 });
 const server = runtime.createHandler();
-const generatedServer = generatedRuntime.createHandler();
+// Keep the generated API and handler assembly intact, but inject test-only services.
+// The production services verify PostgreSQL identity during startup.
+const generatedServer = defineEffectBff({
+  api: generatedRuntime.api,
+  layer: generatedRuntime.layer,
+  services: readLayer,
+}).createHandler();
 const requests = [
   ['/reads/resource-detail', {}],
   ['/inventory.stock/search/inventory-items', { query: 'chair' }],
@@ -1806,6 +1834,17 @@ for (const [route, payload] of requests) {
     successes.push({ body: (yield* Effect.promise(() => response.json())), status: response.status });
   }
 const callsAfterSuccess = calls.length;
+const missingAuthorizationStatuses = [];
+for (const [route, payload] of requests) {
+  const response = (yield* Effect.promise(() => server.handler(
+    new Request('http://fixture.test' + route, {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json', 'x-correlation-id': 'generated-correlation' },
+      method: 'POST',
+    }),
+  )));
+  missingAuthorizationStatuses.push(response.status);
+}
 const missingCorrelationStatuses = [];
 for (const [route, payload] of requests) {
     const response = (yield* Effect.promise(() => server.handler(
@@ -1829,6 +1868,7 @@ console.log(
       calls,
       callsAfterSuccess,
       generatedRootStatus: generatedRootResponse.status,
+      missingAuthorizationStatuses,
       missingCorrelationStatuses,
       successes,
     }),
@@ -1842,13 +1882,10 @@ console.log(
           {
             cwd: fixture.root,
             encoding: 'utf-8',
-            env: {
-              DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
-              DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
-            },
+            env: {},
           },
         );
-        expect(execution.status, execution.stderr).toBe(0);
+        expect(execution.status, `${execution.stdout}\n${execution.stderr}`).toBe(0);
         const expectedGeneratedPrincipal = {
           authContextRef: 'job:generated-fixture:run:governed-read',
           authMethod: 'system',
@@ -1895,6 +1932,7 @@ console.log(
           ],
           callsAfterSuccess: 4,
           generatedRootStatus: 400,
+          missingAuthorizationStatuses: [401, 401, 401, 401],
           missingCorrelationStatuses: [400, 400, 400, 400],
           successes: [
             { body: { ok: true }, status: 200 },
@@ -2650,7 +2688,8 @@ it.live(
           '@app/core-runtime': workspaceVersion,
           '@app/gateway-principal-verifier': workspaceVersion,
           '@app/shared-contracts': workspaceVersion,
-          effect: '4.0.0-rc.117',
+          '@effect/platform-node': effectReleaseVersion,
+          effect: effectReleaseVersion,
           zeta: '1.0.0',
         });
         expect(packageJson.scripts['existing']).toBe(preservedFixtureValue);
@@ -3405,6 +3444,7 @@ export const createOrder2Action = defineAction(
         const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
         expect(packageJson.dependencies).toEqual({
           '@app/core-runtime': workspaceVersion,
+          '@effect/platform-node': effectReleaseVersion,
           zeta: '1.0.0',
         });
         expect(packageJson.scripts['existing']).toBe(preservedFixtureValue);
@@ -3478,7 +3518,7 @@ it.live(
         expect(after['verticals/contacts/src/integrations/ares/ares-subject.service.ts'])
           .toBe(`// @generated by OntOS Codesmith External HTTP Adapter v1
 import { Context, Effect, Layer, Schema } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
+import { HttpClient } from 'effect/http';
 
 export class AresSubjectNotImplemented extends Schema.TaggedError<AresSubjectNotImplemented>()(
   'AresSubjectNotImplemented',
@@ -4398,11 +4438,12 @@ const outboxWorkerHandlerLayer = Layer.empty;
 
 export const outboxWorkerLayer = Layer.merge(OutboxWorkerInfrastructureLive, outboxWorkerHandlerLayer);
 `);
-        expect(yield* readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/entry.ts'))
+        expect(yield* readFixtureFile(fixture.root, billingWorkerHostEntryFile))
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
+import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
@@ -4441,6 +4482,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
     Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
+    Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
   subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
@@ -4451,6 +4493,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
           yield* readFixtureFile(fixture.root, 'verticals/billing/package.json'),
         );
         expect(consumerPackage.dependencies['@app/core-runtime']).toBe(workspaceVersion);
+        expect(consumerPackage.dependencies['@effect/platform-node']).toBe(effectReleaseVersion);
         expect(consumerPackage.dependencies[inventoryPackageName]).toBe(workspaceVersion);
         expect(consumerPackage.exports['./workers']).toBe(undefined);
         expect(consumerPackage.exports['./outbox-worker-host']).toBe('./src/worker-host/entry.ts');
@@ -4486,6 +4529,24 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
         );
         expect(producerAfter).toEqual(producerBefore);
 
+        const ownerEntryPath = billingWorkerHostEntryFile;
+        const customizedEntry = yield* customizeOutboxWorkerHostEntry(
+          yield* readFixtureFile(fixture.root, ownerEntryPath),
+          {
+            composition: 'const recovery = makeOwnerRecovery();',
+            entry: 'withOwnerRecovery(compiledOutboxWorkerEntry, recovery)',
+            imports: [
+              "import { Effect } from 'effect';",
+              "import { makeOwnerRecovery, withOwnerRecovery } from './recovery.ts';",
+            ].join('\n'),
+          },
+        );
+        yield* Effect.promise(() => writeFile(path.join(fixture.root, ownerEntryPath), customizedEntry));
+        expect(customizedEntry).toContain('expectedDeployment: ultramodernApiMarker,');
+        expect(customizedEntry).toContain('const compiledOutboxWorkerEntry = defineOutboxWorkerEntry({');
+        expect(customizedEntry.match(/from 'effect'/gu)).toHaveLength(1);
+        expect(yield* customizeOutboxWorkerHostEntry(customizedEntry)).toBe(customizedEntry);
+
         yield* run(fixture, scaffoldCommand.outboxMessage, [
           scaffoldFlag.vertical,
           inventorySlug,
@@ -4504,6 +4565,7 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
           '--topic',
           fixtureName.ordersShipped,
         ]);
+        expect(yield* readFixtureFile(fixture.root, ownerEntryPath)).toBe(customizedEntry);
         const registry = yield* readFixtureFile(fixture.root, billingWorkersIndexFile);
         expect(
           registry.indexOf('ordersCreatedLoggerWorker') < registry.indexOf('ordersShippedProjectorWorker'),
@@ -4525,6 +4587,29 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
         );
       }),
     );
+  }),
+);
+
+it.effect('owner worker lifecycle customization refuses handwritten entries', () =>
+  Effect.gen(function* refusesForeignWorkerEntry() {
+    const failure = yield* Effect.flip(
+      customizeOutboxWorkerHostEntry('export const outboxWorkerEntry = {};\n', {
+        composition: '',
+        entry: 'compiledOutboxWorkerEntry',
+        imports: '',
+      }),
+    );
+    expect(failure.message).toContain('Only a generated owner worker entry');
+  }),
+);
+
+it.live('owner worker lifecycle regeneration preserves the production Commerce root', () =>
+  Effect.gen(function* preservesCommerceWorkerRoot() {
+    const source = yield* readFixtureFile(appRoot, 'verticals/commerce-customer-context/src/worker-host/entry.ts');
+    expect(source).toContain('withCommerceEnrollmentRecovery(compiledOutboxWorkerEntry');
+    expect(source).toContain('expectedDeployment: ultramodernApiMarker,');
+    expect(source).toContain('Layer.build(commerceEnrollmentRecoveryLive)');
+    expect(yield* customizeOutboxWorkerHostEntry(source)).toBe(source);
   }),
 );
 
@@ -6216,7 +6301,7 @@ it.live(
           billingApiIndexFile,
           'verticals/billing/src/workers/orders-created-logger.worker.ts',
           'verticals/billing/src/worker-host/layer.ts',
-          'verticals/billing/src/worker-host/entry.ts',
+          billingWorkerHostEntryFile,
           'verticals/billing/src/worker-host/main.ts',
           'verticals/inventory-stock/src/policies/stock-available.policy.ts',
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
@@ -6290,6 +6375,11 @@ it.live(
           }),
         );
         yield* Effect.promise(() =>
+          mkdir(path.join(fixture.root, 'node_modules', '@noble'), {
+            recursive: true,
+          }),
+        );
+        yield* Effect.promise(() =>
           mkdir(path.join(fixture.root, 'node_modules', '@types'), {
             recursive: true,
           }),
@@ -6302,6 +6392,7 @@ it.live(
               ['packages/core-runtime/node_modules/effect', effectNodeModulePath, 'dir'],
               ['packages/core-runtime/node_modules/@effect/sql-pg', 'node_modules/@effect/sql-pg', 'dir'],
               ['packages/core-runtime/node_modules/@effect/platform-node', 'node_modules/@effect/platform-node', 'dir'],
+              ['packages/core-runtime/node_modules/@noble/hashes', 'node_modules/@noble/hashes', 'dir'],
               ['apps/shell-super-app/node_modules/jose', 'node_modules/jose', 'dir'],
               ['packages/core-runtime/node_modules/drizzle-orm', 'node_modules/drizzle-orm', 'dir'],
               ['packages/core-runtime/node_modules/dotenv', 'node_modules/dotenv', 'dir'],
@@ -6378,7 +6469,6 @@ it.live(
             json({
               // Use the same strictness as Core and the owning verticals, including
               // exact optional-property semantics for schema-decoded union inputs.
-              extends: path.join(appRoot, 'tsconfig.base.json'),
               compilerOptions: {
                 paths: {
                   ...coreRuntimePaths,
@@ -6400,6 +6490,7 @@ it.live(
                 skipLibCheck: true,
                 types: ['node', 'react'],
               },
+              extends: path.join(appRoot, 'tsconfig.base.json'),
               include: [
                 modernAppEnvironmentTypes,
                 'packages/core-runtime/src/modules/actions/**/*.ts',

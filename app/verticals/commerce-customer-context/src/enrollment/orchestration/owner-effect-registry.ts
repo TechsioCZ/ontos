@@ -73,6 +73,7 @@ import {
   retailPortalBindingOwnerEffect,
 } from '../journeys/retail-self-enrollment-profile-owners.ts';
 import type {
+  RetailCustomerProfileOwnerInput,
   RetailCustomerProfileOwnerExecutors,
   RetailPortalBindingOwnerExecutors,
 } from '../journeys/retail-self-enrollment-profile-owners.ts';
@@ -568,20 +569,20 @@ const ownerReadFor =
  * Attempt's exact Party. `none` is that ensure never having committed, so the transition reopens
  * for a retry instead of staying stuck.
  */
-const ensureProfileCommitResolution = (
+export const retailCustomerProfileCommitResolutionFor = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
-  context: CommerceEnrollmentOwnerEffectContext,
-  partyResourceId: string,
+  input: RetailCustomerProfileOwnerInput,
+  resolveCommand: typeof resolveRetailOwnerCommand = resolveRetailOwnerCommand,
 ): RetailCustomerProfileOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
     ? actionResultNotRepublished
     : Effect.fn('RetailOwnerEffectRegistry.resolveExactCommand')(function* resolveExactCommand(idempotencyKey) {
-        const resolution = yield* resolveRetailOwnerCommand(
+        const resolution = yield* resolveCommand(
           {
-            compositionRevision: context.attempt.compositionRevision,
-            legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
-            requestCorrelation: context.requestCorrelation,
-            tenantId: context.attempt.tenantId,
+            compositionRevision: input.compositionRevision,
+            legalEntityId: input.sellingLegalEntityRef.resourceId,
+            requestCorrelation: input.requestCorrelation,
+            tenantId: input.partyRef.tenantId,
           },
           { actionKey: 'commerce.customer-context.ensure-retail-customer-profile', idempotencyKey },
         ).pipe(
@@ -592,18 +593,24 @@ const ensureProfileCommitResolution = (
         if (resolution.state !== 'COMMITTED') {
           return { state: resolution.state };
         }
-        return yield* ownerReadFor(
-          run.value,
-          context,
-        )((invoker) => readRetailProfileByParty(invoker, partyResourceId)).pipe(
-          Effect.flatMap((found) =>
-            Option.isNone(found)
-              ? Effect.fail(
-                  commitResolutionUnavailable('The committed command has no retained owner result', resolution),
-                )
-              : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
-          ),
-        );
+        return yield* run
+          .value(
+            { legalEntityId: input.sellingLegalEntityRef.resourceId, tenantId: input.partyRef.tenantId },
+            (invoker) =>
+              readRetailProfileByParty(invoker, input.partyRef.resourceId).pipe(
+                Effect.mapError((failure) => attemptUnavailable(failure.reason, undefined, failure)),
+              ),
+          )
+          .pipe(
+            Effect.mapError((failure) => commitResolutionUnavailable(failure.reason, failure)),
+            Effect.flatMap((found) =>
+              Option.isNone(found)
+                ? Effect.fail(
+                    commitResolutionUnavailable('The committed command has no retained owner result', resolution),
+                  )
+                : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
+            ),
+          );
       });
 
 /**
@@ -686,7 +693,7 @@ const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
     };
     return registered(
       retailCustomerProfileOwnerEffect(input, {
-        commitResolution: ensureProfileCommitResolution(run, context, partyRef.value.resourceId),
+        commitResolution: retailCustomerProfileCommitResolutionFor(run, input),
         ensureProfile: retailCustomerProfileActionExecutor(input),
       }),
       requestDigest,

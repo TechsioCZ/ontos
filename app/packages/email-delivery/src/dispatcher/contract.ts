@@ -1,216 +1,256 @@
-// @effect-diagnostics *:off
 // Platform after-commit e-mail receipts. Shell staff reads are scoped to the authenticated company;
 // storefront buyer reads require both the order number and its recipient. No content or address is exposed.
 
+import { CalendarDateSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
+
+export { isTestRecipient } from './recipients.ts';
 
 export const DEMO_TENANT_ID = '70000000-0000-4000-8000-000000000020';
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 
-export type EmailDeliverySource =
-  | 'akros-order'
-  | 'facility-agenda'
-  | 'rent-reminder'
-  | 'storefront-inquiry'
-  | 'person-invitation';
-export type EmailDeliveryEvent =
-  | 'ORDER_CREATED'
-  | 'CONFIRMED'
-  | 'SHIPPED'
-  | 'DELIVERED'
-  | 'CANCELLED'
-  | 'PAYMENT_REMINDER'
-  | 'AGENDA_NOTIFICATION'
-  | 'INQUIRY_RECEIVED'
-  | 'PERSON_INVITED';
-/**
- * SENDING: claimed, SMTP submission in progress. SENT: SMTP server accepted DATA (250).
- * RETRY: SMTP server unreachable BEFORE any data was sent; safe to retry. FAILED: rejected permanently.
- * UNKNOWN: connection broke after DATA or the process died mid-send; never retried (never twice).
- */
-export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN' | 'SKIPPED';
-
-export const emailDeliverySources: readonly EmailDeliverySource[] = [
+export const EmailDeliverySourceSchema = Schema.Literals([
   'akros-order',
   'facility-agenda',
   'rent-reminder',
   'storefront-inquiry',
   'person-invitation',
-];
+]);
+export type EmailDeliverySource = typeof EmailDeliverySourceSchema.Type;
+export const emailDeliverySources = EmailDeliverySourceSchema.literals;
+
+export const EmailDeliveryEventSchema = Schema.Literals([
+  'ORDER_CREATED',
+  'CONFIRMED',
+  'SHIPPED',
+  'DELIVERED',
+  'CANCELLED',
+  'PAYMENT_REMINDER',
+  'AGENDA_NOTIFICATION',
+  'INQUIRY_RECEIVED',
+  'PERSON_INVITED',
+]);
+export type EmailDeliveryEvent = typeof EmailDeliveryEventSchema.Type;
+export const emailDeliveryEvents = EmailDeliveryEventSchema.literals;
+/**
+ * SENDING: claimed, SMTP submission in progress. SENT: SMTP server accepted DATA (250).
+ * RETRY: SMTP server unreachable BEFORE any data was sent; safe to retry. FAILED: rejected permanently.
+ * UNKNOWN: connection broke after DATA or the process died mid-send; never retried (never twice).
+ */
+export const EmailDeliveryStatusSchema = Schema.Literals(['SENDING', 'SENT', 'RETRY', 'FAILED', 'UNKNOWN', 'SKIPPED']);
+export type EmailDeliveryStatus = typeof EmailDeliveryStatusSchema.Type;
+export const emailDeliveryStatuses = EmailDeliveryStatusSchema.literals;
+
+const TenantIdSchema = Schema.String.pipe(Schema.brand('EmailDeliveryTenantId'));
+const LegalEntityIdSchema = Schema.String.pipe(Schema.brand('EmailDeliveryLegalEntityId'));
+const SubjectIdSchema = Schema.String.pipe(Schema.brand('EmailDeliverySubjectId'));
 
 /**
  * E-mail provider state served on GET /shell-super-app-api/email/provider (no credentials, no cookies needed). `configured: false` when the
  * deployment sets EMAIL_PROVIDER=none: the dispatcher then sends nothing and the UI must not offer „Odeslat e-mailem“.
  */
-export interface EmailProviderView {
-  readonly configured: boolean;
-  /** Czech one-line description, e.g. „SMTP server 127.0.0.1:1025 (Mailpit)“; null when not configured. */
-  readonly label: string | null;
-}
+export const EmailProviderViewSchema = Schema.Struct({
+  configured: Schema.Boolean,
+  /** Czech provider description; null on the wire when not configured. */
+  label: Schema.OptionFromNullOr(Schema.String),
+});
+export type EmailProviderView = typeof EmailProviderViewSchema.Encoded;
 
-/** Result of one SMTP attempt as recorded in the ledger (status leaves SENDING exactly once per attempt). */
-export type DeliveryOutcome =
-  | { readonly messageId: string; readonly status: 'SENT' }
-  | { readonly errorTag: string; readonly status: 'RETRY' | 'FAILED' | 'UNKNOWN' | 'SKIPPED' };
+/** Result of one SMTP attempt as recorded in the ledger. */
+export const DeliveryOutcomeSchema = Schema.Union([
+  Schema.Struct({
+    messageId: Schema.String.pipe(Schema.brand('EmailProviderMessageId')),
+    status: Schema.Literal('SENT'),
+  }),
+  Schema.Struct({
+    errorTag: Schema.String,
+    status: EmailDeliveryStatusSchema.pick(['RETRY', 'FAILED', 'UNKNOWN', 'SKIPPED']),
+  }),
+]);
+export type DeliveryOutcome = typeof DeliveryOutcomeSchema.Encoded;
 
-/** One e-mail derived from persisted domain state. `dedupeKey` is the never-twice identity. */
-export interface PlannedEmail {
-  readonly dedupeKey: string;
-  readonly event: EmailDeliveryEvent;
-  /** ISO-8601 UTC instant of the domain event (order created / status changed / reminder recorded). */
-  readonly eventAt: string;
-  /** Czech receipt label, e.g. 'Předáno dopravci' or 'Připraveno k vyzvednutí' for a pickup order. */
-  readonly eventLabel: string;
-  readonly html: string;
-  readonly legalEntityId: string;
-  readonly recipient: string;
-  readonly source: EmailDeliverySource;
-  readonly subject: string;
-  /** Order id or reminder id. */
-  readonly subjectId: string;
-  /** Order number (OBJ-2026-0025) or invoice number (FV-2026-0007); '' when unknown. */
-  readonly subjectNumber: string;
-  readonly tenantId: string;
-  readonly text: string;
-}
+/** Encoded message derived from persisted state. `dedupeKey` is the never-twice identity. */
+export const PlannedEmailSchema = Schema.Struct({
+  dedupeKey: Schema.String.pipe(Schema.brand('EmailDeliveryDedupeKey')),
+  event: EmailDeliveryEventSchema,
+  eventAt: Schema.DateTimeUtcFromString,
+  eventLabel: Schema.String,
+  html: Schema.RedactedFromValue(Schema.String),
+  legalEntityId: LegalEntityIdSchema,
+  recipient: Schema.RedactedFromValue(Schema.String),
+  source: EmailDeliverySourceSchema,
+  subject: Schema.String,
+  subjectId: SubjectIdSchema,
+  /** Order or invoice number; an empty string means unknown. */
+  subjectNumber: Schema.String,
+  tenantId: TenantIdSchema,
+  text: Schema.RedactedFromValue(Schema.String),
+});
+export type PlannedEmail = typeof PlannedEmailSchema.Encoded;
 
-/** Public receipt served by GET /shell-super-app-api/email/deliveries (no recipient, no content). */
-export interface EmailDeliveryView {
-  readonly createdAt: string;
-  readonly event: EmailDeliveryEvent;
-  readonly eventAt: string;
-  /** Czech label of the event as e-mailed (null for rows written before labels were stored). */
-  readonly eventLabel: string | null;
-  /** ISO-8601 UTC instant the SMTP server accepted the message; null unless status is SENT. */
-  readonly sentAt: string | null;
-  readonly source: EmailDeliverySource;
-  readonly status: EmailDeliveryStatus;
-  readonly subjectId: string;
-  readonly subjectNumber: string;
-}
+/** Public acceptance receipt. No recipient, content or provider identifier can be serialized. */
+export const EmailDeliveryViewSchema = Schema.Struct({
+  createdAt: Schema.DateTimeUtcFromString,
+  event: EmailDeliveryEventSchema,
+  eventAt: Schema.DateTimeUtcFromString,
+  /** Older rows encode an absent label as null. */
+  eventLabel: Schema.OptionFromNullOr(Schema.String),
+  /** SMTP acceptance instant; null unless the message is SENT. */
+  sentAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+  source: EmailDeliverySourceSchema,
+  status: EmailDeliveryStatusSchema,
+  subjectId: SubjectIdSchema,
+  subjectNumber: Schema.String,
+});
+/** SQL rows retain the encoded receipt shape. Public clients decode the owning schema. */
+export type EmailDeliveryView = typeof EmailDeliveryViewSchema.Encoded;
 
-export interface EmailDeliveriesResponse {
-  readonly deliveries: readonly EmailDeliveryView[];
-}
+export const EmailDeliveriesResponseSchema = Schema.Struct({
+  deliveries: Schema.Array(EmailDeliveryViewSchema),
+});
+export type EmailDeliveriesResponse = typeof EmailDeliveriesResponseSchema.Encoded;
 
-export const emailEventLabels: Readonly<Record<EmailDeliveryEvent, string>> = {
+export const emailEventLabels = {
+  AGENDA_NOTIFICATION: 'Upozornění z agendy',
   CANCELLED: 'Stornovaná',
   CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
+  INQUIRY_RECEIVED: 'Nový dotaz z e-shopu',
   ORDER_CREATED: 'Přijetí objednávky',
   PAYMENT_REMINDER: 'Upomínka k úhradě',
-  SHIPPED: 'Předáno dopravci',
-  AGENDA_NOTIFICATION: 'Upozornění z agendy',
-  INQUIRY_RECEIVED: 'Nový dotaz z e-shopu',
   PERSON_INVITED: 'Pozvánka do OntOS',
-};
+  SHIPPED: 'Předáno dopravci',
+} as const satisfies Readonly<Record<EmailDeliveryEvent, string>>;
 
-export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = {
+export const emailStatusLabels = {
   FAILED: 'Odeslání selhalo',
-  SKIPPED: 'Přeskočeno – nedoručitelná adresa příjemce',
   RETRY: 'Čeká na opakování – e-mailová služba nedostupná',
   SENDING: 'Odesílá se…',
   SENT: 'Odesláno e-mailem',
+  SKIPPED: 'Přeskočeno – nedoručitelná adresa příjemce',
   UNKNOWN: 'Výsledek odeslání nejistý – neopakuje se',
-};
+} as const satisfies Readonly<Record<EmailDeliveryStatus, string>>;
 
 export const SIAMPARK_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000021';
 export const OBCHODNI_FIRMA_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000020';
 
 /** Minimal read shape of a persisted AKROS order (demo_merchandise.orders document, encoded form). */
-export interface AkrosOrderInput {
-  readonly channel?: string;
-  readonly contact?: { readonly email: string; readonly name: string; readonly phone?: string };
-  /** ISO-8601 UTC. */
-  readonly createdAt: string;
-  readonly deliveryAddress?: {
-    readonly city: string;
-    readonly country?: string;
-    readonly postalCode: string;
-    readonly street: string;
-  };
-  readonly demo?: boolean;
-  readonly demoCleanup?: { readonly at: string };
-  readonly history?: readonly {
-    readonly after?: string;
-    readonly at: string;
-    readonly before?: string;
-    readonly kind: string;
-    readonly reason?: string;
-  }[];
-  readonly id: string;
-  readonly lines: readonly {
-    readonly productName: string;
-    readonly quantity: number;
-    readonly sku: string;
-    readonly unitPriceMinor: number;
-    readonly variantName?: string;
-    readonly vatRate: number;
-  }[];
-  readonly number: string;
-  readonly pricesIncludeVat?: boolean;
-  readonly shipping?: { readonly label: string; readonly method: string; readonly priceMinor: number };
-  readonly status: string;
-  readonly totalMinor: number;
-  readonly totalVatMinor: number;
-  readonly updatedAt: string;
-}
+export const AkrosOrderInputSchema = Schema.Struct({
+  channel: Schema.optionalKey(Schema.String),
+  contact: Schema.optionalKey(
+    Schema.Struct({
+      email: Schema.RedactedFromValue(Schema.String),
+      name: Schema.String,
+      phone: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  createdAt: Schema.DateTimeUtcFromString,
+  deliveryAddress: Schema.optionalKey(
+    Schema.Struct({
+      city: Schema.String,
+      country: Schema.optionalKey(Schema.String),
+      postalCode: Schema.String,
+      street: Schema.String,
+    }),
+  ),
+  demo: Schema.optionalKey(Schema.Boolean),
+  demoCleanup: Schema.optionalKey(Schema.Struct({ at: Schema.DateTimeUtcFromString })),
+  history: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        after: Schema.optionalKey(Schema.String),
+        at: Schema.DateTimeUtcFromString,
+        before: Schema.optionalKey(Schema.String),
+        kind: Schema.String,
+        reason: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  id: Schema.String.pipe(Schema.brand('EmailOrderId')),
+  lines: Schema.Array(
+    Schema.Struct({
+      productName: Schema.String,
+      quantity: Schema.Finite,
+      sku: Schema.String,
+      unitPriceMinor: Schema.Finite,
+      variantName: Schema.optionalKey(Schema.String),
+      vatRate: Schema.Finite,
+    }),
+  ),
+  number: Schema.String,
+  pricesIncludeVat: Schema.optionalKey(Schema.Boolean),
+  shipping: Schema.optionalKey(
+    Schema.Struct({
+      label: Schema.String,
+      method: Schema.String,
+      priceMinor: Schema.Finite,
+    }),
+  ),
+  status: Schema.String,
+  totalMinor: Schema.Finite,
+  totalVatMinor: Schema.Finite,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type AkrosOrderInput = typeof AkrosOrderInputSchema.Encoded;
 
-/**
- * Minimal read shape of a persisted payment reminder (finance module, any company: Siampark, Obchodní firma…) plus
- * its invoice number and the legal name of the company that issued the invoice (core.legal_entities).
- */
-export interface RentReminderInput {
-  readonly invoiceNumber: string | null;
-  readonly legalEntityId: string;
-  readonly legalName: string | null;
-  readonly reminder: {
-    readonly createdAt: string;
-    readonly deliveryMode: string;
-    readonly id: string;
-    readonly invoiceResourceId: string;
-    readonly recipient: string;
-    readonly text: string;
-  };
-  readonly tenantId: string;
-}
+/** Encoded reminder plus its issuer and invoice number, read from persisted finance state. */
+export const RentReminderInputSchema = Schema.Struct({
+  invoiceNumber: Schema.OptionFromNullOr(Schema.String),
+  legalEntityId: LegalEntityIdSchema,
+  legalName: Schema.OptionFromNullOr(Schema.String),
+  reminder: Schema.Struct({
+    createdAt: Schema.DateTimeUtcFromString,
+    deliveryMode: Schema.String,
+    id: Schema.String.pipe(Schema.brand('EmailRentReminderId')),
+    invoiceResourceId: Schema.String.pipe(Schema.brand('EmailInvoiceId')),
+    recipient: Schema.RedactedFromValue(Schema.String),
+    text: Schema.RedactedFromValue(Schema.String),
+  }),
+  tenantId: TenantIdSchema,
+});
+export type RentReminderInput = typeof RentReminderInputSchema.Encoded;
 
-/** Notification categories (facility-operations agenda). ASSIGNED and OVERDUE are mandatory, DEADLINE and CHANGE optional. */
-export type AgendaNotificationCategory = 'ASSIGNED' | 'CHANGE' | 'DEADLINE' | 'OVERDUE';
-export const AGENDA_MANDATORY_EMAIL_CATEGORIES: readonly AgendaNotificationCategory[] = ['ASSIGNED', 'OVERDUE'];
-export const AGENDA_OPTIONAL_EMAIL_CATEGORIES: readonly AgendaNotificationCategory[] = ['DEADLINE', 'CHANGE'];
+/** ASSIGNED and OVERDUE are mandatory; DEADLINE and CHANGE are optional. */
+export const AgendaNotificationCategorySchema = Schema.Literals(['ASSIGNED', 'CHANGE', 'DEADLINE', 'OVERDUE']);
+export type AgendaNotificationCategory = typeof AgendaNotificationCategorySchema.Type;
+export const AGENDA_MANDATORY_EMAIL_CATEGORIES = AgendaNotificationCategorySchema.pick([
+  'ASSIGNED',
+  'OVERDUE',
+]).literals;
+export const AGENDA_OPTIONAL_EMAIL_CATEGORIES = AgendaNotificationCategorySchema.pick(['DEADLINE', 'CHANGE']).literals;
 
-/** One persisted agenda notification (facility_operations.agenda_states, encoded JSON) of a person with a preference. */
-export interface AgendaNotificationInput {
-  readonly category: AgendaNotificationCategory;
-  /** ISO-8601 UTC; all notifications of one delivery command share this instant (one e-mail per batch). */
-  readonly createdAt: string;
-  readonly detail?: string;
-  readonly dueDate?: string;
-  readonly href?: string;
-  readonly id: string;
-  readonly source: string;
-  readonly title: string;
-}
+/** Encoded notifications of one person; equal createdAt values form one e-mail batch. */
+export const AgendaNotificationInputSchema = Schema.Struct({
+  category: AgendaNotificationCategorySchema,
+  createdAt: Schema.DateTimeUtcFromString,
+  detail: Schema.optionalKey(Schema.String),
+  dueDate: Schema.optionalKey(CalendarDateSchema),
+  href: Schema.optionalKey(Schema.String),
+  id: Schema.String.pipe(Schema.brand('EmailAgendaNotificationId')),
+  source: Schema.String,
+  title: Schema.String,
+});
+export type AgendaNotificationInput = typeof AgendaNotificationInputSchema.Encoded;
 
-/** Encoded per-person preference (see facility-operations shared/domain/agenda.ts NotificationPreferenceSchema). */
-export interface AgendaPreferenceInput {
-  readonly emailCategories?: readonly AgendaNotificationCategory[];
-  readonly emailOptIn: boolean;
-  /** ISO-8601 UTC instant e-mail was switched on; older rows only have updatedAt. */
-  readonly emailSince?: string;
-  readonly updatedAt: string;
-}
+/** Optional keys preserve older persisted preference snapshots. */
+export const AgendaPreferenceInputSchema = Schema.Struct({
+  emailCategories: Schema.optionalKey(Schema.Array(AgendaNotificationCategorySchema)),
+  emailOptIn: Schema.Boolean,
+  emailSince: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type AgendaPreferenceInput = typeof AgendaPreferenceInputSchema.Encoded;
 
-export interface AgendaRecipientInput {
-  readonly email: string | null;
-  readonly legalEntityId: string;
-  readonly legalName: string | null;
-  readonly notifications: readonly AgendaNotificationInput[];
-  readonly preference: AgendaPreferenceInput;
-  readonly principalId: string;
-  readonly tenantId: string;
-}
+export const AgendaRecipientInputSchema = Schema.Struct({
+  email: Schema.OptionFromNullOr(Schema.RedactedFromValue(Schema.String)),
+  legalEntityId: LegalEntityIdSchema,
+  legalName: Schema.OptionFromNullOr(Schema.String),
+  notifications: Schema.Array(AgendaNotificationInputSchema),
+  preference: AgendaPreferenceInputSchema,
+  principalId: Schema.String.pipe(Schema.brand('EmailAgendaPrincipalId')),
+  tenantId: TenantIdSchema,
+});
+export type AgendaRecipientInput = typeof AgendaRecipientInputSchema.Encoded;
 
 /** Persisted actionable task intake; no marketing consent or price/stock snapshot. */
 export const StorefrontInquiryTaskSchema = Schema.Struct({

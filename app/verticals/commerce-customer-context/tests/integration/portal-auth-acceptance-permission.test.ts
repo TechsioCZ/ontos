@@ -20,15 +20,15 @@ import {
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
 } from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
-import { ActionRepositoryLive } from '../../../../packages/core-runtime/src/actions/repository.ts';
+import { ActionRepository, makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import {
   ActionPermission,
   makeActionPermissionLive,
@@ -376,7 +376,8 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   const contextAccess = yield* makeContextAccessLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' }));
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
-  const scopeResolver = makeOperationalScopeResolver(
+  const crypto = yield* Crypto.Crypto;
+  const scopeResolver = yield* makeOperationalScopeResolver(
     makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
     contextAccess,
   );
@@ -396,7 +397,7 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
     Layer.provide(
       Layer.mergeAll(
         makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-        ActionRepositoryLive,
+        Layer.succeed(ActionRepository, makeActionRepository(crypto)),
         Layer.effect(
           ActionPermission,
           makeActionPermissionLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' })),

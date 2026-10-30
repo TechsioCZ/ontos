@@ -4,8 +4,8 @@ import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Redacted, Scope } from 'effect';
 import type { Context } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
@@ -87,6 +87,27 @@ export const makeTestPgClient = Effect.fn('TestDatabase.makeTestPgClient')(funct
     ),
   );
 });
+
+/**
+ * Acquires one native pool and its Drizzle database under the caller's service key.
+ * Build this Layer in the fixture scope before registering row cleanup; the pool's
+ * separate resource scope then remains usable until all later cleanup finishes.
+ */
+export const layerTestDatabase = <Relations extends AnyRelations, Self>(
+  key: Context.Key<Self, TestDatabaseFromClient<Relations>>,
+  input: {
+    readonly connectionString: string;
+    readonly poolOptions?: Omit<PgClient.PgPoolConfig, 'url'>;
+    readonly relations: Relations;
+  },
+) =>
+  Layer.effect(
+    key,
+    Effect.gen(function* acquireTestDatabaseLayer() {
+      const client = yield* makeTestPgClient(input.connectionString, input.poolOptions);
+      return yield* makeTestDatabaseFromClient(client, input.relations);
+    }),
+  );
 
 /** Scoped single-session client, for tests that observe one backend or hold an explicit transaction. */
 export const makeTestPgSession = Effect.fn('TestDatabase.makeTestPgSession')(function* makeTestPgSession(

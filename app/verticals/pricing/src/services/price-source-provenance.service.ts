@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
   PriceSourceEvidenceSchema,
@@ -17,6 +18,7 @@ import { PriceIdentityKeySchema, priceDecimalValuesEqual } from '@app/pricing-co
 import type { PriceDefinition, PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { DateTime, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 type InvalidAssessment = typeof PriceSourceAssertionInvalidSchema.Type;
 type HeldAssessment = typeof PriceSourceAssertionHeldSchema.Type;
@@ -47,9 +49,11 @@ const priceRefEquivalence = Schema.toEquivalence(PriceRefSchema);
 export const priceSourceFactFingerprint = (sourceAssertion: PriceSourceAssertionInput) =>
   Result.getOrThrow(
     decodeFingerprint(
-      createHash('sha256')
-        .update(Result.getOrThrow(encodeFingerprintBasis(priceSourceFactFingerprintBasisFrom(sourceAssertion))))
-        .digest('hex'),
+      Hex.encode(
+        sha256(
+          utf8ToBytes(Result.getOrThrow(encodeFingerprintBasis(priceSourceFactFingerprintBasisFrom(sourceAssertion)))),
+        ),
+      ),
     ),
   );
 
@@ -76,6 +80,16 @@ const sourceLineageFor = (
   return lineage.kind === 'INITIAL' ? lineage : { ...lineage, actingPrincipalId };
 };
 
+const sourceUnitBasisMatches = (
+  originalAssertion: PriceSourceAssertionInput['originalAssertion'],
+  identityKey: PriceIdentityKey,
+): boolean =>
+  priceDecimalValuesEqual(originalAssertion.unitBasis.quantity, identityKey.unitBasis.quantity) &&
+  originalAssertion.unitBasis.unitRef.moduleId === identityKey.unitBasis.unitRef.moduleId &&
+  originalAssertion.unitBasis.unitRef.resourceId === identityKey.unitBasis.unitRef.resourceId &&
+  originalAssertion.unitBasis.unitRef.resourceType === identityKey.unitBasis.unitRef.resourceType &&
+  originalAssertion.unitBasis.unitRef.tenantId === identityKey.unitBasis.unitRef.tenantId;
+
 export const preparePriceSourceEvidence = (input: PreparePriceSourceEvidenceInput): PriceSourceWriteReadiness => {
   const { identityKey, monetaryAmount, sourceAssertion } = input;
   const { originalAssertion, preTaxNormalization } = sourceAssertion;
@@ -87,14 +101,7 @@ export const preparePriceSourceEvidence = (input: PreparePriceSourceEvidenceInpu
   if (originalAssertion.monetaryAmount.currencyCode !== canonicalCurrency) {
     return invalid(sourceAssertion, 'CURRENCY_MISMATCH');
   }
-  if (
-    identityKey !== undefined &&
-    (!priceDecimalValuesEqual(originalAssertion.unitBasis.quantity, identityKey.unitBasis.quantity) ||
-      originalAssertion.unitBasis.unitRef.moduleId !== identityKey.unitBasis.unitRef.moduleId ||
-      originalAssertion.unitBasis.unitRef.resourceId !== identityKey.unitBasis.unitRef.resourceId ||
-      originalAssertion.unitBasis.unitRef.resourceType !== identityKey.unitBasis.unitRef.resourceType ||
-      originalAssertion.unitBasis.unitRef.tenantId !== identityKey.unitBasis.unitRef.tenantId)
-  ) {
+  if (identityKey !== undefined && !sourceUnitBasisMatches(originalAssertion, identityKey)) {
     return invalid(sourceAssertion, 'UNIT_AMBIGUOUS');
   }
   if (originalAssertion.monetaryBoundary === 'TAX_INCLUSIVE' && preTaxNormalization === undefined) {

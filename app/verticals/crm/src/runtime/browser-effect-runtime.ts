@@ -1,5 +1,5 @@
 import { Layer, Logger, ManagedRuntime, References, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 const browserTracer = Tracer.make({ span: (options) => new Tracer.NativeSpan(options) });
 export const browserRuntime = ManagedRuntime.make(

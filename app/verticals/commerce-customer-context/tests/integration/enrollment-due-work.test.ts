@@ -30,6 +30,7 @@ import {
 import {
   advanceEnrollmentAcceptanceAttemptRevision,
   backdateEnrollmentAcceptanceAttempt,
+  spendEnrollmentAcceptanceSweepsUnderEarlierRelease,
   makeEnrollmentAcceptanceFixture,
   expireEnrollmentAcceptanceSweepClaim,
   readEnrollmentAcceptanceAttempt,
@@ -374,6 +375,40 @@ it.live('stops listing an Attempt once its sweep budget is spent, and lists it a
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
 
       expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision + 1]);
+    }),
+  ),
+);
+
+it.live('gives an Attempt whose sweep budget a previous release spent a fresh budget under the current one', () =>
+  Effect.scoped(
+    Effect.gen(function* sweepBudgetPerComposition() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-release-budget', fixture.compositionRevision),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
+      const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
+      const sweep = sweepFor(attempt, tenantId, 0);
+      yield* Effect.forEach(
+        Array.from({ length: SWEEP_BUDGET }, (_unused, index) => index),
+        () => store.claimSweep(sweep),
+        { concurrency: 1 },
+      );
+      expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.none());
+      expect(ofScenario(yield* store.listDue(query))).toStrictEqual([]);
+
+      // A release that could not finish the journey spent the whole budget, and the Attempt has not
+      // moved since. The release now running may be the fix, so the same revision is due again.
+      yield* spendEnrollmentAcceptanceSweepsUnderEarlierRelease(fixture, attempt.portalEnrollmentAttemptId);
+
+      expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision]);
+      expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(1));
     }),
   ),
 );

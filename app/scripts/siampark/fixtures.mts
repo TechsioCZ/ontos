@@ -9,7 +9,7 @@ import { WorkStateSchema } from '@app/work-tasks/contracts/records';
 import { RelationshipsStateSchema } from '@app/crm-activities/contracts/records';
 import { FinanceStateSchema } from '@app/finance-billing/contracts/records';
 
-const operationsDisplayName = 'Provoz Siampark';
+const operationsDisplayName = 'Provoz Nájempark';
 
 /** Public operator inputs. Owners validate and persist their own fixture independently. */
 export const demoTenantId = '70000000-0000-4000-8000-000000000020';
@@ -109,29 +109,29 @@ export const demoAccounts = [
   {
     authBindingId: '73000000-0000-4000-8000-000000000021',
     authUserId: 'siampark-management',
-    displayName: 'Vedení Siampark',
-    email: 'management@siampark.demo',
+    displayName: 'Vedení Nájempark',
+    email: 'management@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000021',
   },
   {
     authBindingId: '73000000-0000-4000-8000-000000000022',
     authUserId: 'siampark-operations',
     displayName: operationsDisplayName,
-    email: 'operations@siampark.demo',
+    email: 'operations@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000022',
   },
   {
     authBindingId: '73000000-0000-4000-8000-000000000023',
     authUserId: 'siampark-finance',
-    displayName: 'Účetní Siampark',
-    email: 'finance@siampark.demo',
+    displayName: 'Účetní Nájempark',
+    email: 'finance@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000023',
   },
   {
     authBindingId: '73000000-0000-4000-8000-000000000024',
     authUserId: 'siampark-external',
     displayName: 'Externí obchodník',
-    email: 'external@siampark.demo',
+    email: 'external@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
   },
 ] as const;
@@ -675,7 +675,7 @@ const SeedAccountSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   authUserId: AuthUserIdSchema,
   displayName: SeedTextSchema,
-  email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external)@siampark\.demo$/u)),
+  email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external)@najempark\.demo$/u)),
   principalId: PrincipalIdSchema,
 });
 const SeedAccountsSchema = Schema.Array(SeedAccountSchema).check(
@@ -684,7 +684,7 @@ const SeedAccountsSchema = Schema.Array(SeedAccountSchema).check(
   Schema.makeFilter(
     (accounts) =>
       new Set(accounts.map((account) => account.authUserId)).size === 4 &&
-      accounts.every((account) => account.email === `${account.authUserId.slice('siampark-'.length)}@siampark.demo`),
+      accounts.every((account) => account.email === `${account.authUserId.slice('siampark-'.length)}@najempark.demo`),
   ),
 );
 export const AccountsFixtureSchema = Schema.Struct({ accounts: SeedAccountsSchema });

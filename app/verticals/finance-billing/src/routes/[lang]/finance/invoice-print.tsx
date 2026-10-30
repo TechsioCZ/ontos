@@ -1,16 +1,20 @@
+import { invoiceLineKey, withOccurrenceKeys } from './finance-ui.tsx';
 import { Fragment } from 'react';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@app/admin-ui';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import { lineBaseMinor, lineDiscountMinor, totalDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
 
+const discountLabel = (discount: NonNullable<NonNullable<Invoice['lines']>[number]['discount']>) =>
+  discount.kind === 'PERCENT' ? `${discount.value} %` : formatMoney(discount.value);
+
 /** A clean browser-print sheet, isolated from application navigation and interactive controls. */
 export const InvoicePrint = ({
-  invoice,
   counterpartyName,
+  invoice,
   issuerName,
 }: {
-  readonly invoice: Invoice;
   readonly counterpartyName: string;
+  readonly invoice: Invoice;
   readonly issuerName: string;
 }) => {
   const draft = invoice.businessState === 'DRAFT';
@@ -56,12 +60,12 @@ export const InvoicePrint = ({
             </tr>
           </thead>
           <tbody>
-            {invoice.lines?.map((line, index) => (
-              <tr key={index}>
+            {withOccurrenceKeys(invoice.lines ?? [], (line) => invoiceLineKey(line)).map(({ key, value: line }) => (
+              <tr key={key}>
                 <td>
                   {line.description}
                   {line.discount !== undefined &&
-                    ` (sleva ${line.discount.kind === 'PERCENT' ? `${line.discount.value} %` : formatMoney(line.discount.value)} = −${formatMoney(lineDiscountMinor(line))}, ${line.discount.reason})`}
+                    ` (sleva ${discountLabel(line.discount)} = −${formatMoney(lineDiscountMinor(line))}, ${line.discount.reason})`}
                 </td>
                 <td>{formatNumber(line.quantity)}</td>
                 <td>{formatMoney(line.unitPriceMinor)}</td>

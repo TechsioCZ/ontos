@@ -10,9 +10,10 @@
 //   Effective access  live OntOS rights of the acting principal ∩ grant modules; write policy =
 //                     min(grant policy, agent profile policy), order read_only < approval < direct.
 // CIMD only (no DCR), current MCP spec only (NO-COMPAT rule, v2/lanes/COMMON.md).
-import { Schema } from 'effect';
+import { Duration, Schema } from 'effect';
 
 import { AgentModuleGrantSchema, AgentWritePolicySchema } from './agent-access.ts';
+import { AgentLegalEntityIdSchema, AgentModuleKeySchema, AgentPrincipalIdSchema } from './agent-proposals.ts';
 
 export const OAUTH_CONNECTION_PATHS = {
   // browser, session-authenticated (connect flow, screens 2 and 3)
@@ -27,11 +28,11 @@ export const OAUTH_CONNECTION_PATHS = {
   /** Body `ConnectDenyRequest` -> `ConnectDenyResponse`. */
   connectDeny: '/shell-super-app-api/auth/oauth-connections/deny',
   // browser, session-authenticated (management, lane mcp-connections-ui)
-  mine: '/shell-super-app-api/auth/oauth-connections/mine',
   admin: '/shell-super-app-api/auth/oauth-connections/admin-list',
-  update: '/shell-super-app-api/auth/oauth-connections/update',
-  revoke: '/shell-super-app-api/auth/oauth-connections/revoke',
+  mine: '/shell-super-app-api/auth/oauth-connections/mine',
   operators: '/shell-super-app-api/auth/identity/agent-entities/operators',
+  revoke: '/shell-super-app-api/auth/oauth-connections/revoke',
+  update: '/shell-super-app-api/auth/oauth-connections/update',
 } as const;
 
 /** Access-token claim carrying the grant id. */
@@ -41,9 +42,20 @@ export const OAUTH_MCP_SCOPE = 'ontos' as const;
 /** `TrustedPrincipalContext.authContextRef` prefix of an OAuth connection. */
 export const OAUTH_GRANT_CONTEXT_PREFIX = 'oauth-grant:' as const;
 /** Drafts older than this are deleted and can no longer be approved. */
-export const OAUTH_DRAFT_TTL_SECONDS = 30 * 60;
+export const OAUTH_DRAFT_TTL_SECONDS = Duration.toSeconds(Duration.minutes(30));
 
-const Id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+export const ConnectionClientIdSchema = Schema.String.pipe(Schema.brand('OAuthClientId'));
+export const ConnectionGrantIdSchema = Schema.String.pipe(Schema.brand('OAuthGrantId'));
+export const ConnectionLegalEntityIdSchema = AgentLegalEntityIdSchema;
+export const ConnectionModuleIdSchema = AgentModuleKeySchema;
+export const ConnectionPrincipalIdSchema = AgentPrincipalIdSchema;
+export const ConnectionProfileIdSchema = Schema.String.pipe(Schema.brand('OAuthProfileId'));
+export const ConnectionTenantIdSchema = Schema.String.pipe(Schema.brand('TenantId'));
+
+// Request limits stay identical to the original ingress contract; response identities add no new validation.
+const GrantIdInput = ConnectionGrantIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const LegalEntityIdInput = ConnectionLegalEntityIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const PrincipalIdInput = ConnectionPrincipalIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 /** The signed OAuth query string Better Auth appended to /cs/pripojit (without the leading `?`). */
 const OAuthQuery = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(8000));
 
@@ -81,25 +93,25 @@ export type ConnectionModulesRequest = typeof ConnectionModulesRequestSchema.Typ
 /** One module with its effective (or offered) rights; `label` is Czech. */
 export const ConnectionModuleSchema = Schema.Struct({
   label: Schema.String,
-  moduleId: Schema.String,
+  moduleId: ConnectionModuleIdSchema,
   read: Schema.Boolean,
   write: Schema.Boolean,
 });
 export type ConnectionModule = typeof ConnectionModuleSchema.Type;
 
 export const ConnectionClientSchema = Schema.Struct({
-  clientId: Schema.String,
+  clientId: ConnectionClientIdSchema,
   /** Redirect host shown as a badge, e.g. `chatgpt.com`, `claude.ai`, `localhost`. */
   host: Schema.String,
   kind: ConnectionClientKindSchema,
-  logoUri: Schema.NullOr(Schema.String),
+  logoUri: Schema.OptionFromNullOr(Schema.String),
   name: Schema.String,
 });
 export type ConnectionClient = typeof ConnectionClientSchema.Type;
 
 export const ConnectionPrincipalSchema = Schema.Struct({
   displayName: Schema.String,
-  principalId: Schema.String,
+  principalId: ConnectionPrincipalIdSchema,
 });
 export type ConnectionPrincipal = typeof ConnectionPrincipalSchema.Type;
 
@@ -108,21 +120,21 @@ export const ConnectionDescriptionSchema = Schema.Struct({
   acting: Schema.Struct({
     displayName: Schema.String,
     kind: ConnectionActingKindSchema,
-    principalId: Schema.String,
+    principalId: ConnectionPrincipalIdSchema,
   }),
   client: ConnectionClientSchema,
   compositionRevision: Schema.String,
   /** The human who connected an agent; null when the person acts for themselves. */
-  delegatedBy: Schema.NullOr(ConnectionPrincipalSchema),
-  grantId: Schema.String,
-  legalEntityId: Schema.String,
+  delegatedBy: Schema.OptionFromNullOr(ConnectionPrincipalSchema),
+  grantId: ConnectionGrantIdSchema,
+  legalEntityId: ConnectionLegalEntityIdSchema,
   legalName: Schema.String,
   /** Already ∩ live rights; modules without read are omitted. */
   modules: Schema.Array(ConnectionModuleSchema),
   /** Stable per (user, company, acting principal, client): ChatGPT keeps one account per profile. */
-  profileId: Schema.String,
+  profileId: ConnectionProfileIdSchema,
   status: Schema.Literal('active'),
-  tenantId: Schema.String,
+  tenantId: ConnectionTenantIdSchema,
   /** Already min(grant policy, agent profile policy). */
   writePolicy: ConnectionWritePolicySchema,
 });
@@ -133,20 +145,20 @@ export const ConnectionSummarySchema = Schema.Struct({
   acting: ConnectionDescriptionSchema.fields.acting,
   client: ConnectionClientSchema,
   /** ISO 8601. */
-  createdAt: Schema.String,
-  delegatedBy: Schema.NullOr(ConnectionPrincipalSchema),
-  grantId: Schema.String,
+  createdAt: Schema.DateTimeUtcFromString,
+  delegatedBy: Schema.OptionFromNullOr(ConnectionPrincipalSchema),
+  grantId: ConnectionGrantIdSchema,
   /** ISO 8601, null when never used. */
-  lastUsedAt: Schema.NullOr(Schema.String),
-  legalEntityId: Schema.String,
+  lastUsedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+  legalEntityId: ConnectionLegalEntityIdSchema,
   legalName: Schema.String,
   /** Effective modules for active grants; the requested ceiling for other statuses. */
   modules: Schema.Array(ConnectionModuleSchema),
-  profileId: Schema.String,
+  profileId: ConnectionProfileIdSchema,
   /** The ceiling chosen at consent (`all` or a list). */
   requestedModules: ConnectionModulesRequestSchema,
   status: ConnectionGrantStatusSchema,
-  tenantId: Schema.String,
+  tenantId: ConnectionTenantIdSchema,
   /** Display name of the person who consented. */
   userDisplayName: Schema.String,
   writePolicy: ConnectionWritePolicySchema,
@@ -154,7 +166,7 @@ export const ConnectionSummarySchema = Schema.Struct({
 export type ConnectionSummary = typeof ConnectionSummarySchema.Type;
 
 export const ConnectionListResponseSchema = Schema.Struct({
-  company: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String }),
+  company: Schema.Struct({ legalEntityId: ConnectionLegalEntityIdSchema, legalName: Schema.String }),
   connections: Schema.Array(ConnectionSummarySchema),
 });
 export type ConnectionListResponse = typeof ConnectionListResponseSchema.Type;
@@ -169,7 +181,7 @@ export const ConnectAgentOptionSchema = Schema.Struct({
   displayName: Schema.String,
   /** Modules of the agent profile ∩ its live rights; `write` = may write or propose. */
   modules: Schema.Array(ConnectionModuleSchema),
-  principalId: Schema.String,
+  principalId: ConnectionPrincipalIdSchema,
   /** The agent profile's policy: the strictest choice the connection may use as ceiling. */
   writePolicy: ConnectionWritePolicySchema,
 });
@@ -177,7 +189,7 @@ export type ConnectAgentOption = typeof ConnectAgentOptionSchema.Type;
 
 export const ConnectCompanyOptionSchema = Schema.Struct({
   agents: Schema.Array(ConnectAgentOptionSchema),
-  legalEntityId: Schema.String,
+  legalEntityId: ConnectionLegalEntityIdSchema,
   legalName: Schema.String,
   /** The person's own live rights in the company. */
   modules: Schema.Array(ConnectionModuleSchema),
@@ -190,8 +202,8 @@ export const ConnectOptionsSchema = Schema.Struct({
   companies: Schema.Array(ConnectCompanyOptionSchema),
   /** Pre-selection from `?company=` / `?agent=` or the active shell company; null when none applies. */
   preselect: Schema.Struct({
-    agentPrincipalId: Schema.NullOr(Schema.String),
-    legalEntityId: Schema.NullOr(Schema.String),
+    agentPrincipalId: Schema.OptionFromNullOr(ConnectionPrincipalIdSchema),
+    legalEntityId: Schema.OptionFromNullOr(ConnectionLegalEntityIdSchema),
   }),
   state: Schema.Literals(['ready', 'access_blocked']),
   user: ConnectionPrincipalSchema,
@@ -200,15 +212,15 @@ export type ConnectOptions = typeof ConnectOptionsSchema.Type;
 
 export const ConnectDraftRequestSchema = Schema.Struct({
   /** null = the signed-in person acts for themselves. */
-  actingPrincipalId: Schema.NullOr(Id),
-  legalEntityId: Id,
+  actingPrincipalId: Schema.OptionFromNullOr(PrincipalIdInput),
+  legalEntityId: LegalEntityIdInput,
   modules: ConnectionModulesRequestSchema,
   oauthQuery: OAuthQuery,
   writePolicy: ConnectionWritePolicySchema,
 });
 export type ConnectDraftRequest = typeof ConnectDraftRequestSchema.Type;
 
-export const ConnectDraftResponseSchema = Schema.Struct({ grantId: Schema.String });
+export const ConnectDraftResponseSchema = Schema.Struct({ grantId: ConnectionGrantIdSchema });
 export type ConnectDraftResponse = typeof ConnectDraftResponseSchema.Type;
 
 export const ConnectDraftSummaryRequestSchema = Schema.Struct({ oauthQuery: OAuthQuery });
@@ -218,8 +230,8 @@ export type ConnectDraftSummaryRequest = typeof ConnectDraftSummaryRequestSchema
 export const ConnectDraftSummarySchema = Schema.Struct({
   acting: ConnectionDescriptionSchema.fields.acting,
   client: ConnectionClientSchema,
-  delegatedBy: Schema.NullOr(ConnectionPrincipalSchema),
-  grantId: Schema.String,
+  delegatedBy: Schema.OptionFromNullOr(ConnectionPrincipalSchema),
+  grantId: ConnectionGrantIdSchema,
   legalName: Schema.String,
   /** `all` = "Vše, co smíte" / "Vše, co agent smí"; otherwise the effective list. */
   modules: Schema.Union([Schema.Literal('all'), Schema.Array(ConnectionModuleSchema)]),
@@ -227,18 +239,21 @@ export const ConnectDraftSummarySchema = Schema.Struct({
 });
 export type ConnectDraftSummary = typeof ConnectDraftSummarySchema.Type;
 
-export const ConnectApproveRequestSchema = Schema.Struct({ grantId: Id, oauthQuery: OAuthQuery });
+export const ConnectApproveRequestSchema = Schema.Struct({ grantId: GrantIdInput, oauthQuery: OAuthQuery });
 export type ConnectApproveRequest = typeof ConnectApproveRequestSchema.Type;
 
 export const ConnectApproveResponseSchema = Schema.Struct({
-  grantId: Schema.String,
-  profileId: Schema.String,
+  grantId: ConnectionGrantIdSchema,
+  profileId: ConnectionProfileIdSchema,
   status: Schema.Literal('active'),
 });
 export type ConnectApproveResponse = typeof ConnectApproveResponseSchema.Type;
 
 /** `grantId` null when the person cancels on screen 2 before any draft exists. */
-export const ConnectDenyRequestSchema = Schema.Struct({ grantId: Schema.NullOr(Id), oauthQuery: OAuthQuery });
+export const ConnectDenyRequestSchema = Schema.Struct({
+  grantId: Schema.OptionFromNullOr(GrantIdInput),
+  oauthQuery: OAuthQuery,
+});
 export type ConnectDenyRequest = typeof ConnectDenyRequestSchema.Type;
 
 /** `redirectTo` = the client's redirect_uri with `error=access_denied`, the original `state` and `iss` (RFC 9207). */
@@ -258,23 +273,23 @@ export type ConnectProblemCode = typeof ConnectProblemCodeSchema.Type;
 // ── management (lane mcp-connections-ui) ───────────────────────────────────────────────────────────────────────
 
 export const ConnectionAdminListRequestSchema = Schema.Struct({
-  actingPrincipalId: Schema.optionalKey(Schema.String),
-  clientId: Schema.optionalKey(Schema.String),
+  actingPrincipalId: Schema.optionalKey(ConnectionPrincipalIdSchema),
+  clientId: Schema.optionalKey(ConnectionClientIdSchema),
   status: Schema.optionalKey(ConnectionGrantStatusSchema),
-  userPrincipalId: Schema.optionalKey(Schema.String),
+  userPrincipalId: Schema.optionalKey(ConnectionPrincipalIdSchema),
 });
 export type ConnectionAdminListRequest = typeof ConnectionAdminListRequestSchema.Type;
 
 /** Can only narrow: the server intersects with the acting principal's live rights and the previous policy cap. */
 export const ConnectionUpdateRequestSchema = Schema.Struct({
-  grantId: Id,
+  grantId: GrantIdInput,
   modules: ConnectionModulesRequestSchema,
   writePolicy: ConnectionWritePolicySchema,
 });
 export type ConnectionUpdateRequest = typeof ConnectionUpdateRequestSchema.Type;
 
 export const ConnectionRevokeRequestSchema = Schema.Struct({
-  grantId: Id,
+  grantId: GrantIdInput,
   /** Optional Czech note for the audit log. */
   note: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   reason: Schema.Literals(['user', 'admin']),
@@ -282,7 +297,7 @@ export const ConnectionRevokeRequestSchema = Schema.Struct({
 export type ConnectionRevokeRequest = typeof ConnectionRevokeRequestSchema.Type;
 
 export const AgentOperatorsRequestSchema = Schema.Struct({
-  agentPrincipalId: Id,
-  operatorPrincipalIds: Schema.Array(Id).check(Schema.isMaxLength(200)),
+  agentPrincipalId: PrincipalIdInput,
+  operatorPrincipalIds: Schema.Array(PrincipalIdInput).check(Schema.isMaxLength(200)),
 });
 export type AgentOperatorsRequest = typeof AgentOperatorsRequestSchema.Type;

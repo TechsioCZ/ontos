@@ -2,7 +2,9 @@ import { findPostgresFailure } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
-import { createHash } from 'node:crypto';
+import { Hex } from 'effect/encoding';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   AssortmentBindingAudience,
@@ -89,7 +91,7 @@ const canonicalize = <Value extends object>(value: Value): string => {
 
 export const assortmentMeaningFingerprint = <Value extends object>(value: Value): string => {
   const canonical = canonicalize(value);
-  return createHash('sha256').update(canonical, 'utf-8').digest('hex');
+  return Hex.encode(sha256(utf8ToBytes(canonical)));
 };
 
 export type PolicyConflict = Readonly<{ readonly conflict: AssortmentPolicyConflictKind; readonly kind: 'conflict' }>;

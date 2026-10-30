@@ -3,7 +3,7 @@
 # PostgreSQL (through each Worker's identity Hyperdrive bindings) and SpiceDB (through its SPICEDB binding
 # to the HTTP gateway), then prove the paths the Cloudflare topology depends on:
 #   - repeated database-backed requests (a Worker's Effect runtime never outlives its request);
-#   - Shell authentication, and a Shell read authorized by SpiceDB over HTTP;
+#   - Shell authentication, composition capability filtering, and a page target denied by SpiceDB over HTTP;
 #   - the approved composition from local KV and matching Core database authority;
 #   - Shell SSR, each UI vertical's own SSR route, and a vertical API reached through the Shell
 #     through its full admitted release path with a Shell-issued gateway assertion.
@@ -60,9 +60,10 @@ cleanup() {
   status=$?
   # Run once: the exit below would otherwise fire the EXIT trap again after a signal.
   trap - EXIT INT TERM
-  # The denial check withdraws the demo principal's Shell grant; never leave it withdrawn.
+  # The denial check withdraws one module's company binding; never leave it withdrawn.
   if [ "$shell_grant_withdrawn" = true ]; then
-    shell_grant OPERATION_TOUCH || echo "Could not restore the Shell grant in SpiceDB" >&2
+    shell_grant OPERATION_TOUCH ||
+      { echo "Could not restore the composition proof's module grant in SpiceDB" >&2; status=1; }
   fi
   for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
@@ -273,66 +274,88 @@ for attempt in 1 2 3; do
     --data "{\"email\":\"$demo_email\",\"password\":\"$demo_password\"}" "$shell_origin/shell-super-app-api/auth/sign-in")"
   check "Shell sign-in $attempt reads PostgreSQL through HYPERDRIVE" 200 "$status"
 done
-principal_id="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).identity.principalId)' "$work/sign-in.json")"
 session_status="$(request "$work/session.json" "$shell_origin/shell-super-app-api/auth/session")"
 check "Shell session read" 200 "$session_status"
 read -r tenant_id legal_entity_id < <(node -e '
   const { identity } = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   console.log(identity.tenantId, identity.legalEntityId);' "$work/session.json")
 
-# 2. SpiceDB over HTTP decides the Shell's governed read: denied without the Shell grant, allowed
-#    with it (the grant the e2e fixture writes for its principals).
+# 2. SpiceDB over HTTP decides module capabilities inside the admitted company's composition.
+#    The authenticated frame remains available, but a denied module must disappear from every
+#    capability list and its real page target must return the native HTTP 403 problem.
 spicedb() { # <path> <json body>
   curl --silent --show-error --fail --max-time 10 -H "authorization: Bearer $SPICEDB_PRESHARED_KEY" \
     -H 'content-type: application/json' --cacert "$spicedb_certificate" --data "$2" \
     "https://localhost:${SPICEDB_HTTP_PORT}$1"
 }
 context_id() { printf 'ctx_%s' "$(printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=\n')"; }
-shell_access="$(context_id "[\"$tenant_id\",\"$legal_entity_id\",\"core.shell\"]")"
+party_module_id="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).party.moduleId)' "$work/paths.json")"
+shell_access="$(context_id "[\"$tenant_id\",\"$legal_entity_id\",\"$party_module_id\"]")"
 legal_entity_access="$(context_id "[\"$tenant_id\",\"$legal_entity_id\"]")"
 shell_grant() { # <OPERATION_DELETE|OPERATION_TOUCH>
+  # Every module grant intersects its company binding, including inherited role grants.
+  # Withdraw only that exact binding; do not delete or manufacture principal/role grants.
   spicedb /v1/relationships/write "{\"updates\":[
-    {\"operation\":\"$1\",\"relationship\":{\"resource\":{\"objectType\":\"module_access\",\"objectId\":\"$shell_access\"},\"relation\":\"accessor\",\"subject\":{\"object\":{\"objectType\":\"principal\",\"objectId\":\"$principal_id\"}}}},
     {\"operation\":\"$1\",\"relationship\":{\"resource\":{\"objectType\":\"module_access\",\"objectId\":\"$shell_access\"},\"relation\":\"legal_entity\",\"subject\":{\"object\":{\"objectType\":\"legal_entity\",\"objectId\":\"$legal_entity_access\"}}}}]}" >/dev/null
 }
-shell_grant_withdrawn=true
-shell_grant OPERATION_DELETE
-check "Shell composition is denied by SpiceDB over HTTP without the Shell grant" 403 \
-  "$(request "$work/composition-denied.json" "$shell_origin/shell-super-app-api/shell/composition?compositionRevision=$revision")"
-node -e '
-  const problem = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-  if (problem._tag !== "ShellTargetForbiddenProblem" || problem.status !== 403) {
-    throw new Error("The missing SpiceDB grant must produce the native Shell forbidden problem");
-  }' "$work/composition-denied.json"
-shell_grant OPERATION_TOUCH
-shell_grant_withdrawn=false
-
-# 3. The Shell projects the complete approved inventory under the exact native authority revision.
-check "Shell composition is allowed by SpiceDB over HTTP" 200 \
-  "$(request "$work/composition.json" "$shell_origin/shell-super-app-api/shell/composition?compositionRevision=$revision")"
-node -e '
-  const fs = require("fs");
-  const composition = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  const paths = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-  if (composition.state !== "available" || composition.compositionRevision !== paths.revision || composition.unavailableDeployments.length !== 0) {
-    console.error("FAIL: the approved composition is unavailable or has a different revision", JSON.stringify(composition));
-    process.exit(1);
-  }
-  if (!composition.navigation.some(({ appId }) => appId === "party-registry")) {
-    console.error("FAIL: Party Registry is missing from the Shell navigation", JSON.stringify(composition));
-    process.exit(1);
-  }
-  console.log("ok: the Shell admitted the complete pinned composition");' "$work/composition.json" "$work/paths.json"
-
-# Resolve the canonical Party page declared by the actual approved contract.
+check_composition_access() { # <composition file> <allowed|denied>
+  node -e '
+    const fs = require("fs");
+    const composition = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const paths = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+    const denied = process.argv[3] === "denied";
+    const party = paths.party;
+    if (composition.state !== "available" || composition.compositionRevision !== paths.revision ||
+        composition.unavailableDeployments.length !== 0) {
+      throw new Error("The admitted composition frame must stay available at the pinned revision");
+    }
+    if (denied) {
+      if (!composition.deniedAppIds.includes(party.appId) ||
+          composition.gatewayAudiences.includes(party.appId) ||
+          composition.navigation.some(item => item.appId === party.appId || item.moduleId === party.moduleId) ||
+          composition.homeComponents.some(item => item.moduleId === party.moduleId)) {
+        throw new Error("The denied module leaked a composition capability");
+      }
+    } else if (composition.deniedAppIds.includes(party.appId) ||
+               !composition.gatewayAudiences.includes(party.appId) ||
+               !composition.navigation.some(item => item.appId === party.appId && item.moduleId === party.moduleId)) {
+      throw new Error("The restored module is missing its composition capabilities");
+    }' "$1" "$work/paths.json" "$2"
+}
+# Resolve the canonical Party page from the admitted contract, not a hard-coded route.
 node -e '
   const fs = require("fs");
   const paths = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   fs.writeFileSync(process.argv[2], JSON.stringify({ canonicalPath: paths.party.routePath, compositionRevision: paths.revision }));
   console.log(paths.party.shellPagePath);' "$work/paths.json" "$work/page-selector.json" > "$work/party-page-path"
+check "The admitted composition initially includes Party Registry capabilities" 200 \
+  "$(request "$work/composition-before.json" "$shell_origin/shell-super-app-api/shell/composition?compositionRevision=$revision")"
+check_composition_access "$work/composition-before.json" allowed
+shell_grant_withdrawn=true
+shell_grant OPERATION_DELETE
+check "The admitted composition frame stays available without the Party module grant" 200 \
+  "$(request "$work/composition-denied.json" "$shell_origin/shell-super-app-api/shell/composition?compositionRevision=$revision")"
+check_composition_access "$work/composition-denied.json" denied
+check "SpiceDB denies the contract-declared Party page without its module grant" 403 \
+  "$(request "$work/page-denied.json" -H 'content-type: application/json' --data-binary "@$work/page-selector.json" \
+    "$shell_origin/shell-super-app-api/shell/module-target")"
+node -e '
+  const problem = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  if (problem._tag !== "ShellTargetForbiddenProblem" || problem.status !== 403) {
+    throw new Error("The missing module grant must produce the native Shell forbidden problem");
+  }' "$work/page-denied.json"
+shell_grant OPERATION_TOUCH
+shell_grant_withdrawn=false
+
+# 3. The Shell projects the complete approved inventory under the exact native authority revision.
+check "Shell composition restores the Party module capabilities" 200 \
+  "$(request "$work/composition.json" "$shell_origin/shell-super-app-api/shell/composition?compositionRevision=$revision")"
+check_composition_access "$work/composition.json" allowed
+
 check "Shell admits the contract-declared Party page" 200 \
   "$(request "$work/page-target.json" -H 'content-type: application/json' --data-binary "@$work/page-selector.json" \
     "$shell_origin/shell-super-app-api/shell/module-target")"
+# Validate the restored target against the admitted contract and artifact pins.
 node -e '
   const fs = require("fs");
   const target = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

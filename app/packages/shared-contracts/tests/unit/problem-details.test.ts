@@ -9,7 +9,7 @@ import {
 } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Predicate, Schema, SchemaAST, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '../../src/problem-details.ts';
 import { ImportedUnconstrainedExtensionSchema } from '../fixtures/unconstrained-extension.ts';
@@ -244,7 +244,6 @@ it('uses one descriptor snapshot for extension keys and schema ASTs', () => {
         astReads += 1;
         return astReads === 1 ? Schema.String.ast : Schema.Unknown.ast;
       }
-      // eslint-disable-next-line anti-slop/no-reflect-get -- The adversarial proxy must faithfully forward every non-AST Schema property.
       return Reflect.get(target, key, receiver);
     },
   });

@@ -1,7 +1,7 @@
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { fromSetCookie, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
+import { fromSetCookie, toSetCookieHeaders } from 'effect/http/Cookies';
 import { Context, Duration, Effect, Option, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,

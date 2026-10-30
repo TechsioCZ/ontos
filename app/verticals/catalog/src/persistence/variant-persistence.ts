@@ -2,6 +2,7 @@ import { findPostgresFailure } from '@app/core-runtime';
 import type { ActionRuntime, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import { CreateVariantResultSchema } from '../../shared/actions/create-variant.ts';
 import type { CreateVariantResult } from '../../shared/actions/create-variant.ts';
@@ -151,7 +152,8 @@ export interface VariantPersistence {
     input: VariantLifecyclePersistenceInput,
   ) => Effect.Effect<
     FailureOutcome | typeof SelectionRevalidationRequiredSchema.Type | SuccessOutcome<'changed'>,
-    CatalogPersistenceUnavailable | VariantCurrentBasisUnavailable
+    CatalogPersistenceUnavailable | VariantCurrentBasisUnavailable,
+    Crypto.Crypto
   >;
   readonly recoverCreateVariant: (
     invocationId: string,

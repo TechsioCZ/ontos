@@ -1,3 +1,5 @@
+import { DateTime } from 'effect';
+import type { EntityId, PrincipalId } from '../domain/common.ts';
 // AREA: imports (C03, C04) — owned by the crm-imports lane.
 // Pure import engine: applies parsed CSV rows to the imports slice. Used by the ImportOrdersCsv reducer (server,
 // authoritative) and by the browser preview (same rules, nothing saved).
@@ -11,6 +13,7 @@
 //    candidates for manual pairing (never applied automatically);
 //  - the same order number from another source is a suspected duplicate: kept, flagged, out of confirmed totals.
 import type { ClientsSlice } from '../domain/clients.ts';
+import { linkTargetClientId } from '../domain/imports.ts';
 import type {
   ImportBatch,
   ImportRowResult,
@@ -20,23 +23,23 @@ import type {
   PairingCandidate,
   PairingChange,
 } from '../domain/imports.ts';
-import { linkTargetClientId } from '../domain/imports.ts';
+
 import { ORDERS_CSV_FORMAT } from './csv.ts';
 import type { ParsedCsv, ParsedOrderRow } from './csv.ts';
 
 export interface ImportMeta {
-  readonly batchId: string;
+  readonly batchId: EntityId;
+  readonly by: PrincipalId;
   readonly fileName: string;
-  readonly now: string;
-  readonly by: string;
   /** Deterministic id of the n-th entity created by this import. */
-  readonly newId: (suffix: string) => string;
+  readonly newId: (suffix: string) => EntityId;
+  readonly now: DateTime.Utc;
 }
 
 export interface ImportResult {
-  readonly slice: ImportsSlice;
   readonly batch: ImportBatch;
-  readonly touchedOrderIds: readonly string[];
+  readonly slice: ImportsSlice;
+  readonly touchedOrderIds: readonly EntityId[];
 }
 
 const fold = (value: string) =>
@@ -50,10 +53,10 @@ const fold = (value: string) =>
 /** Possible clients for an order without an approved link. Shown for manual pairing only. */
 export const pairingCandidates = (
   clients: ClientsSlice,
-  order: { readonly customerRegNo?: string; readonly customerEmail?: string; readonly customerName?: string },
+  order: { readonly customerEmail?: string; readonly customerName?: string; readonly customerRegNo?: string },
 ): PairingCandidate[] => {
-  const found = new Map<string, string[]>();
-  const add = (clientId: string, reason: string) => {
+  const found = new Map<EntityId, string[]>();
+  const add = (clientId: EntityId, reason: string) => {
     const reasons = found.get(clientId) ?? [];
     if (!reasons.includes(reason)) {
       found.set(clientId, [...reasons, reason]);
@@ -90,15 +93,26 @@ const sameEvent = (left: OrderStatusEvent, right: OrderStatusEvent) =>
     ? left.eventId === right.eventId &&
       left.source === right.source &&
       left.rawStatus === right.rawStatus &&
-      left.eventAt === right.eventAt
-    : left.rawStatus === right.rawStatus && left.eventAt === right.eventAt;
+      (left.eventAt === undefined
+        ? right.eventAt === undefined
+        : right.eventAt !== undefined && DateTime.Equivalence(left.eventAt, right.eventAt))
+    : left.rawStatus === right.rawStatus &&
+      (left.eventAt === undefined
+        ? right.eventAt === undefined
+        : right.eventAt !== undefined && DateTime.Equivalence(left.eventAt, right.eventAt));
 
 const orderKey = (source: string, externalId: string) => `${source}\u0000${externalId}`;
 
-const definedEntries = <T extends Record<string, unknown>>(value: T) =>
-  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as {
-    [K in keyof T]?: Exclude<T[K], undefined>;
-  };
+const definedEntries = <T extends object>(value: T) => {
+  const defined: { [K in keyof T]?: Exclude<T[K], undefined> } = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) {
+      // Define an own data property, including a literal "__proto__" key, just like Object.fromEntries.
+      Object.defineProperty(defined, key, { configurable: true, enumerable: true, value: entry, writable: true });
+    }
+  }
+  return defined;
+};
 
 const pragueTime = new Intl.DateTimeFormat('cs-CZ', {
   dateStyle: 'medium',
@@ -106,12 +120,35 @@ const pragueTime = new Intl.DateTimeFormat('cs-CZ', {
   timeZone: 'Europe/Prague',
 });
 /** Readable Prague time for review reasons stored with the order. */
-const formatFor = (value: string | undefined) => {
+const formatFor = (value: DateTime.Utc | undefined) => {
   if (value === undefined) {
     return 'bez času';
   }
-  const epoch = Date.parse(value);
-  return Number.isNaN(epoch) ? value : pragueTime.format(epoch);
+  return pragueTime.format(DateTime.toEpochMillis(value));
+};
+
+/** Refuse to overwrite a source state whose new event cannot be ordered reliably. */
+const eventReviewReason = (existing: ImportedOrder, event: OrderStatusEvent): string | undefined => {
+  const last = existing.lastEventAt;
+  const conflictingEventId =
+    event.eventId !== undefined &&
+    existing.statusHistory.some((entry) => entry.eventId === event.eventId && entry.source === event.source);
+  if (conflictingEventId) {
+    return 'Stejné ID události už přišlo s jiným stavem nebo časem, zdrojová data jsou sporná';
+  }
+  if (event.eventAt === undefined) {
+    return 'Chybí čas události, pořadí změn nelze ověřit';
+  }
+  if (last === undefined) {
+    return 'Předchozí stav nemá čas události, pořadí změn nelze bezpečně ověřit';
+  }
+  if (DateTime.isLessThan(event.eventAt, last)) {
+    return `Událost je starší než poslední známý stav „${existing.rawStatus}“ (${formatFor(last)}), nepřepisuje ho`;
+  }
+  if (DateTime.Equivalence(event.eventAt, last) && event.rawStatus !== existing.rawStatus) {
+    return `Ve stejném čase už je stav „${existing.rawStatus}“, nový stav je sporný`;
+  }
+  return undefined;
 };
 
 /** Applies parsed rows to the slice. Pure; the caller persists the returned slice. */
@@ -126,7 +163,7 @@ export const importOrders = (
   );
   const pairingHistory: PairingChange[] = [...slice.pairingHistory];
   const results: ImportRowResult[] = [];
-  const touched = new Set<string>();
+  const touched = new Set<EntityId>();
   const clientName = (id: string) => clients.items.find((client) => client.id === id)?.name ?? id;
   let created = 0;
   let unpaired = 0;
@@ -146,10 +183,14 @@ export const importOrders = (
             (order) => order.source !== row.source && order.number === row.number && order.duplicateOf === undefined,
           );
     const candidates = link === undefined ? pairingCandidates(clients, row) : [];
+    let pairing: ImportedOrder['pairing'] = 'paired';
+    if (link === undefined) {
+      pairing = candidates.length > 0 ? 'review' : 'unpaired';
+    }
     const order: ImportedOrder = {
       externalId: row.externalId,
       id,
-      pairing: link === undefined ? (candidates.length > 0 ? 'review' : 'unpaired') : 'paired',
+      pairing,
       rawStatus: row.rawStatus,
       receivedAt: meta.now,
       source: row.source,
@@ -191,15 +232,19 @@ export const importOrders = (
       });
     }
     if (twin !== undefined) {
-      return { outcome: 'review' as const, message: order.reviewReason ?? '', orderId: id };
+      return { message: order.reviewReason ?? '', orderId: id, outcome: 'review' as const };
+    }
+    let message: string;
+    if (link === undefined) {
+      message =
+        candidates.length > 0
+          ? 'Nová objednávka, klient nejistý: k ruční kontrole v párování'
+          : 'Nová objednávka od neznámého zákazníka: čeká na napárování';
+    } else {
+      message = `Nová objednávka, napárováno na ${clientName(linkTargetClientId(clients.items, link))}`;
     }
     return {
-      message:
-        link === undefined
-          ? candidates.length > 0
-            ? 'Nová objednávka, klient nejistý: k ruční kontrole v párování'
-            : 'Nová objednávka od neznámého zákazníka: čeká na napárování'
-          : `Nová objednávka, napárováno na ${clientName(linkTargetClientId(clients.items, link))}`,
+      message,
       orderId: id,
       outcome: 'created' as const,
     };
@@ -213,21 +258,7 @@ export const importOrders = (
         outcome: 'duplicate' as const,
       };
     }
-    const last = existing.lastEventAt;
-    const conflictingEventId =
-      event.eventId !== undefined &&
-      existing.statusHistory.some((entry) => entry.eventId === event.eventId && entry.source === event.source);
-    const reviewReason = conflictingEventId
-      ? 'Stejné ID události už přišlo s jiným stavem nebo časem, zdrojová data jsou sporná'
-      : event.eventAt === undefined
-        ? 'Chybí čas události, pořadí změn nelze ověřit'
-        : last === undefined
-          ? 'Předchozí stav nemá čas události, pořadí změn nelze bezpečně ověřit'
-          : event.eventAt < last
-            ? `Událost je starší než poslední známý stav „${existing.rawStatus}“ (${formatFor(last)}), nepřepisuje ho`
-            : last !== undefined && event.eventAt === last && event.rawStatus !== existing.rawStatus
-              ? `Ve stejném čase už je stav „${existing.rawStatus}“, nový stav je sporný`
-              : undefined;
+    const reviewReason = eventReviewReason(existing, event);
     const filled = definedEntries({
       amount: existing.amount ?? row.amount,
       currency: existing.currency ?? row.currency,
@@ -266,12 +297,15 @@ export const importOrders = (
 
   for (const parsedRow of parsed.rows) {
     if (parsedRow.kind === 'error') {
-      results.push({
+      const result: ImportRowResult = {
         message: parsedRow.message,
         outcome: 'error',
         row: parsedRow.row,
-        ...(parsedRow.externalId === undefined ? {} : { externalId: parsedRow.externalId }),
-      });
+      };
+      if (parsedRow.externalId !== undefined) {
+        Object.assign(result, { externalId: parsedRow.externalId });
+      }
+      results.push(result);
       continue;
     }
     const row = parsedRow.value;
@@ -293,15 +327,19 @@ export const importOrders = (
   const duplicates = count('duplicate');
   const accepted = count('created') + count('updated') + count('review');
   const sources = [...new Set(parsed.rows.flatMap((row) => (row.kind === 'ok' ? [row.value.source] : [])))];
+  let batchStatus: ImportBatch['status'] = 'completed';
+  if (rejected !== 0) {
+    batchStatus = accepted + duplicates === 0 ? 'failed' : 'completed_with_errors';
+  }
   const batch: ImportBatch = {
     accepted,
     created,
     duplicates,
     errors: [
       ...(parsed.fileError === undefined ? [] : [{ message: parsed.fileError, row: 1 }]),
-      ...results
-        .filter((result) => result.outcome === 'error')
-        .map((result) => ({ message: result.message, row: result.row })),
+      ...results.flatMap((result) =>
+        result.outcome === 'error' ? [{ message: result.message, row: result.row }] : [],
+      ),
     ],
     fileName: meta.fileName,
     format: ORDERS_CSV_FORMAT,
@@ -313,11 +351,13 @@ export const importOrders = (
     review: count('review'),
     rowCount: parsed.rows.length,
     source: sources.length === 0 ? 'neuvedeno' : sources.join(', '),
-    status: rejected === 0 ? 'completed' : accepted + duplicates === 0 ? 'failed' : 'completed_with_errors',
+    status: batchStatus,
     unpaired,
     updated: count('updated'),
-    ...(parsed.unknownColumns.length === 0 ? {} : { unknownColumns: parsed.unknownColumns }),
   };
+  if (parsed.unknownColumns.length > 0) {
+    Object.assign(batch, { unknownColumns: parsed.unknownColumns });
+  }
   return {
     batch,
     slice: {

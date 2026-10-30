@@ -1,3 +1,4 @@
+import { Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { matchingIncomingInvoice } from '../../src/routes/[lang]/provoz/nakupy/purchase-invoice-match.ts';
 
@@ -15,7 +16,7 @@ it('does not guess when a document number is ambiguous', () => {
   ).toBeUndefined();
 });
 it('preserves older Finance records without a supplier snapshot but still requires a unique number', () => {
-  const legacy = { ...invoice, supplier: undefined };
+  const legacy = Struct.omit(invoice, ['supplier']);
   expect(matchingIncomingInvoice([legacy], invoice.number, invoice.supplier)).toEqual(legacy);
   expect(matchingIncomingInvoice([legacy, invoice], invoice.number, invoice.supplier)).toBeUndefined();
 });

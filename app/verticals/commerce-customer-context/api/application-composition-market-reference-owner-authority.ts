@@ -8,8 +8,10 @@ import type {
   MarketAffectedUseAssessmentRequest,
   MarketAffectedUseSourceEvidence,
 } from '@app/customer-market-retirement-contracts';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Layer, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { MarketReferenceOwnerDeploymentStateAuthorityService } from '../src/api/market-affected-use-assessment.read.ts';
 import type { MarketReferenceOwnerDeploymentStateAuthority } from '../src/api/market-affected-use-assessment.read.ts';
@@ -45,7 +47,7 @@ const absentOwnerEvidence = (
       },
     },
     currentness: 'CURRENT',
-    digest: createHash('sha256').update(`${revision}\0${moduleId}\0UNIMPLEMENTED`).digest('hex'),
+    digest: Hex.encode(sha256(utf8ToBytes(`${revision}\0${moduleId}\0UNIMPLEMENTED`))),
     generation: revision,
     ownerRevision: revision,
     sourceId,

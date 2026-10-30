@@ -10,12 +10,12 @@ const lookupModules = {
   properties: 'property.portfolio',
 } as const;
 
-const combine = (decisions: readonly ContextAccessDecision[]): ContextAccessDecision =>
-  decisions.includes('denied')
-    ? 'denied'
-    : decisions.every((decision) => decision === 'allowed')
-      ? 'allowed'
-      : 'unavailable';
+const combine = (decisions: readonly ContextAccessDecision[]): ContextAccessDecision => {
+  if (decisions.includes('denied')) {
+    return 'denied';
+  }
+  return decisions.every((decision) => decision === 'allowed') ? 'allowed' : 'unavailable';
+};
 
 /** Presentation hints only. Owning BFFs still authorize every lookup and mutation independently. */
 export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* taskLookupAccess(scope: OperationalScope) {
@@ -33,15 +33,18 @@ export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* tas
   const modules = Object.values(lookupModules);
   // Core's read runtime resolves the special `module.access` entrypoint permission through modules(),
   // not through a named context_permission relationship. Mirror that alias exactly.
-  const [moduleAccess, customerAccess] = yield* Effect.all([
-    access.modules({ ...input, moduleIds: modules }),
-    access.legalEntities({
-      legalEntityIds: [scope.legalEntityId],
-      permission: 'read_counterparty',
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    }),
-  ]);
+  const [moduleAccess, customerAccess] = yield* Effect.all(
+    [
+      access.modules({ ...input, moduleIds: modules }),
+      access.legalEntities({
+        legalEntityIds: [scope.legalEntityId],
+        permission: 'read_counterparty',
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      }),
+    ],
+    { concurrency: 1 },
+  );
   const decision = (name: keyof LookupAccess): ContextAccessDecision => {
     const moduleId = lookupModules[name];
     return combine([

@@ -1,17 +1,6 @@
 import { tenantLegalEntityRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import {
-  bytea,
-  check,
-  index,
-  integer,
-  jsonb,
-  pgSchema,
-  primaryKey,
-  text,
-  timestamp,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { bytea, check, index, integer, jsonb, pgSchema, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 export const facilityOperationsSchema = pgSchema('facility_operations');
 

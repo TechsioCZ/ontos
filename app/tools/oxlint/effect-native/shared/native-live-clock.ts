@@ -6,7 +6,19 @@ import { lookupVariable } from './bindings.ts';
 import { isNativeEffectHelper, nativeClockExecutionOwner } from './native-live-effect-flow.ts';
 
 type FunctionNode = ESTree.ArrowFunctionExpression | ESTree.Function;
-type Tester = 'namespace' | 'it' | 'live' | 'registration' | 'builder' | 'property' | 'test' | 'testBuilder';
+type Tester =
+  | 'namespace'
+  | 'it'
+  | 'live'
+  | 'registration'
+  | 'builder'
+  | 'property'
+  | 'test'
+  | 'testBuilder'
+  | 'layer'
+  | 'suiteBuilder'
+  | 'liveSuiteBuilder'
+  | 'liveSuite';
 const testRunnerModule = 'effect-rstest';
 const transparent = new Set(['ParenthesizedExpression', 'ChainExpression', 'TSNonNullExpression']);
 const directMethods = new Set(['only', 'skip', 'fails']);
@@ -51,7 +63,7 @@ const testerImport = (context: Context, identifier: ESTree.Node): Tester | null 
     return null;
   }
   const name = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
-  return name === 'it' || name === 'live' ? name : null;
+  return name === 'it' || name === 'live' || name === 'layer' ? name : null;
 };
 
 const regularTesterMember = (owner: Tester | null, member: string | null): Tester | null => {
@@ -74,6 +86,12 @@ const testerMember = (owner: Tester | null, member: string | null): Tester | nul
   if ((owner === 'it' || owner === 'namespace') && member === 'live') {
     return 'live';
   }
+  if ((owner === 'it' || owner === 'namespace') && member === 'layer') {
+    return 'layer';
+  }
+  if (owner === 'liveSuite' && member === 'effect') {
+    return 'live';
+  }
   const regular = regularTesterMember(owner, member);
   if (regular !== null) {
     return regular;
@@ -90,6 +108,69 @@ const testerMember = (owner: Tester | null, member: string | null): Tester | nul
   return member === 'prop' ? 'property' : null;
 };
 
+/** This SDK option omits TestEnv, which otherwise installs TestClock. Values hidden behind
+ * mutable, escaped or shadowed options cannot establish that the suite selects its own Clock.
+ */
+const excludesTestServices = (context: Context, input: ESTree.Node, seen = new Set<Variable>()): boolean => {
+  const node = unwrap(input);
+  if (node?.type === 'Identifier') {
+    const variable = lookupVariable(context, node),
+      declaration = immutableDeclaration(context, node);
+    if (!variable || !declaration || seen.has(variable)) return false;
+    const stable = variable.references.every((reference) => {
+      if (reference.init || typeReference(reference.identifier)) return true;
+      const held = skipWrappers(reference.identifier, transparent),
+        call = held.parent;
+      return (
+        call?.type === 'CallExpression' && call.arguments[1] === held.node && tester(context, call.callee) === 'layer'
+      );
+    });
+    const initial = asNode(declaration.init);
+    return stable && initial !== null && excludesTestServices(context, initial, new Set(seen).add(variable));
+  }
+  if (node?.type !== 'ObjectExpression') return false;
+  let found = false;
+  for (const property of node.properties) {
+    if (property.type !== 'Property' || property.kind !== 'init' || property.method || property.computed) return false;
+    const key =
+      property.key.type === 'Identifier'
+        ? property.key.name
+        : property.key.type === 'Literal'
+          ? property.key.value
+          : null;
+    if (key !== 'excludeTestServices') continue;
+    if (found || property.value.type !== 'Literal' || property.value.value !== true) return false;
+    found = true;
+  }
+  return found;
+};
+
+const liveSuiteParameter = (context: Context, identifier: ESTree.Node): ESTree.Node | null => {
+  const variable = lookupVariable(context, identifier);
+  if (variable?.defs.length !== 1) return null;
+  const definition = variable.defs[0]!,
+    callback = asNode(definition.node);
+  if (
+    definition.type !== 'Parameter' ||
+    (callback?.type !== 'ArrowFunctionExpression' && callback?.type !== 'FunctionExpression') ||
+    callback.params.length !== 1 ||
+    callback.params[0] !== definition.name
+  )
+    return null;
+  const held = skipWrappers(callback, transparent),
+    call = held.parent;
+  if (
+    call?.type !== 'CallExpression' ||
+    call.arguments.length < 1 ||
+    call.arguments.length > 2 ||
+    call.arguments.some((argument: ESTree.Node) => argument.type === 'SpreadElement') ||
+    call.arguments.at(-1) !== held.node ||
+    tester(context, call.callee) !== 'liveSuiteBuilder'
+  )
+    return null;
+  return call.callee;
+};
+
 const tester = (context: Context, expression: ESTree.Node, seen = new Set<ESTree.Node>()): Tester | null => {
   const node = unwrap(expression);
   if (node === null || seen.has(node)) {
@@ -101,11 +182,24 @@ const tester = (context: Context, expression: ESTree.Node, seen = new Set<ESTree
     if (imported !== null) {
       return imported;
     }
+    if (liveSuiteParameter(context, node) !== null) {
+      return 'liveSuite';
+    }
     const initial = asNode(immutableDeclaration(context, node)?.init);
     return initial === null ? null : tester(context, initial, seen);
   }
   if (node.type === 'CallExpression') {
     const kind = tester(context, node.callee, seen);
+    if (kind === 'layer') {
+      if (
+        node.arguments.length < 1 ||
+        node.arguments.length > 2 ||
+        node.arguments.some((argument) => argument.type === 'SpreadElement')
+      )
+        return null;
+      const options = node.arguments[1];
+      return options !== undefined && excludesTestServices(context, options) ? 'liveSuiteBuilder' : 'suiteBuilder';
+    }
     if (node.arguments.length !== 1) {
       return null;
     }
@@ -269,6 +363,10 @@ const nativeTesterStability = (context: Context) => {
       if (testerImport(context, node) !== null) {
         return true;
       }
+      const suite = liveSuiteParameter(context, node);
+      if (suite !== null) {
+        return proof.originIsStable(suite, seen);
+      }
       const initializer = asNode(immutableDeclaration(context, node)?.init);
       return initializer !== null && proof.originIsStable(initializer, seen);
     },
@@ -287,7 +385,7 @@ const nativeTesterStability = (context: Context) => {
         if (kind === null || kind === 'namespace') {
           return false;
         }
-        return (kind !== 'builder' && kind !== 'testBuilder') || proof.valueUseIsStable(parent);
+        return (kind !== 'builder' && kind !== 'testBuilder' && kind !== 'layer') || proof.valueUseIsStable(parent);
       }
       if (parent?.type !== 'VariableDeclarator' || parent.init !== node || parent.id.type !== 'Identifier') {
         return false;

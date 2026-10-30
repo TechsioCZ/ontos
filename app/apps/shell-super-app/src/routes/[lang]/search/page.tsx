@@ -1,5 +1,4 @@
-/* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -38,14 +37,12 @@ const SearchResultItem = ({
       key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
     >
       <LinkButton
-        as={LocalizedLink}
+        as={ShellRouteLink}
         params={{
           moduleId: result.ref.moduleId,
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
-        // Every result would otherwise preload its page as soon as it scrolls into view.
-        prefetch="intent"
         to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >
@@ -124,11 +121,9 @@ const SearchPage = () => {
   const agendaLinks = buildShellNavigation(
     { language: language ?? '', navigation: model.shell.navigation.items, unavailableDeployments: [] },
     t,
-  )
-    .groups.flatMap(({ links }) => links)
-    .filter(({ enabled, href }) => enabled && href !== null);
-  const content =
-    model.state === 'unavailable' ? (
+  ).groups.flatMap(({ links }) => links.filter(({ enabled, href }) => enabled && href !== null));
+  const content = Match.value(model).pipe(
+    Match.when({ state: 'unavailable' }, () => (
       <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full max-w-2xl gap-200 p-300">
         <h1 className="font-semibold text-xl">{t('shell.search.agenda_title')}</h1>
         <p className="text-fg-secondary text-sm">{t('shell.search.agenda_hint')}</p>
@@ -151,25 +146,22 @@ const SearchPage = () => {
           ))}
         </ul>
       </section>
-    ) : model.state !== 'ready' ? (
-      <StatusText aria-live="polite" showIcon status="error">
-        {t(`shell.search.${model.state}`)}
-      </StatusText>
-    ) : (
+    )),
+    Match.when({ state: 'ready' }, (ready) => (
       <section aria-labelledby="search-results-title" className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
         <h2 className="shell:text-title-lg" id="search-results-title">
           {t('shell.search.title')}
         </h2>
-        {model.response.partial ? (
+        {ready.response.partial ? (
           <StatusText aria-live="polite" showIcon status="warning">
             {t('shell.search.partial')}
           </StatusText>
         ) : null}
-        {model.response.results.length === 0 ? (
+        {ready.response.results.length === 0 ? (
           <StatusText status="default">{t('shell.search.empty')}</StatusText>
         ) : (
           <ul className="shell:grid shell:gap-3">
-            {model.response.results.map((result) => (
+            {ready.response.results.map((result) => (
               <SearchResultItem
                 currentTenantId={currentTenantId}
                 key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
@@ -179,7 +171,13 @@ const SearchPage = () => {
           </ul>
         )}
       </section>
-    );
+    )),
+    Match.orElse((other) => (
+      <StatusText aria-live="polite" showIcon status="error">
+        {t(`shell.search.${other.state}`)}
+      </StatusText>
+    )),
+  );
   return (
     <ShellContentLayout
       controls={controls}

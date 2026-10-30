@@ -31,5 +31,4 @@ export const dividedListClassName = 'divide-y divide-border-primary/60';
 export const dividerColorClassName = 'border-border-primary/60';
 
 /** Side panel content: the panel edge is the outline, so cards inside it drop theirs. */
-export const sidePanelSurfaceClassName =
-  '[&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';
+export const sidePanelSurfaceClassName = '[&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';

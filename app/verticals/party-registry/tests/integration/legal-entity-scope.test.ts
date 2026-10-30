@@ -2,8 +2,8 @@ import type { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
 import { Crypto, Data, Effect, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
-import type { Row } from 'effect/unstable/sql/SqlConnection';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { Row } from 'effect/sql/SqlConnection';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import {
   hasPostgreSqlCode,
@@ -40,18 +40,18 @@ const openFixture = Effect.gen(function* openLegalEntityFixture() {
   const clients = yield* openPartyBoundaryClients({ runtimeMaxConnections: 1 });
   const crypto = yield* Crypto.Crypto;
   const ids = yield* Effect.all({
-    tenant: crypto.randomUUIDv4,
-    l1: crypto.randomUUIDv4,
-    l2: crypto.randomUUIDv4,
-    party: crypto.randomUUIDv4,
-    principal: crypto.randomUUIDv4,
-    c1: crypto.randomUUIDv4,
-    c2: crypto.randomUUIDv4,
-    r1: crypto.randomUUIDv4,
-    r2: crypto.randomUUIDv4,
-    i1: crypto.randomUUIDv4,
-    i2: crypto.randomUUIDv4,
-    globalInvocation: crypto.randomUUIDv4,
+    tenant: crypto.randomUUIDv4(),
+    l1: crypto.randomUUIDv4(),
+    l2: crypto.randomUUIDv4(),
+    party: crypto.randomUUIDv4(),
+    principal: crypto.randomUUIDv4(),
+    c1: crypto.randomUUIDv4(),
+    c2: crypto.randomUUIDv4(),
+    r1: crypto.randomUUIDv4(),
+    r2: crypto.randomUUIDv4(),
+    i1: crypto.randomUUIDv4(),
+    i2: crypto.randomUUIDv4(),
+    globalInvocation: crypto.randomUUIDv4(),
   });
   const selected = yield* registerPartyGatewayScope(clients, { tenantId: ids.tenant, legalEntityId: ids.l1 });
   const tenantWide = yield* registerPartyGatewayScope(clients, { tenantId: ids.tenant });

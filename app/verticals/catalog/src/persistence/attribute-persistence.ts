@@ -1,8 +1,10 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Effect, Option, Schema } from 'effect';
-import { createHash, randomUUID } from 'node:crypto';
+import { Crypto, Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { isDeepStrictEqual } from 'node:util';
 
 import type { AttributeDefinition, AttributeValue } from '../../shared/domain/attribute-values.ts';
@@ -380,7 +382,14 @@ const attributeValueItemRow = (
  * from the owning Action invocation and value-set identity so retries address the same revisions.
  */
 const valueMigrationInvocationId = (actionInvocationId: string, attributeValueSetId: string): string => {
-  const hex = createHash('sha256').update(actionInvocationId).update(':').update(attributeValueSetId).digest('hex');
+  const hex = Hex.encode(
+    sha256
+      .create()
+      .update(utf8ToBytes(actionInvocationId))
+      .update(utf8ToBytes(':'))
+      .update(utf8ToBytes(attributeValueSetId))
+      .digest(),
+  );
   const variantNibble = ['8', '9', 'a', 'b'][Number.parseInt(hex.slice(16, 17), 16) % 4] ?? '8';
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variantNibble}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
@@ -733,7 +742,8 @@ export const attributePersistenceForScope = (
     ) {
       return yield* conflict('INVALID_INPUT', 'Controlled definition specialization is missing or inapplicable');
     }
-    const attributeDefinitionId = randomUUID();
+    const crypto = yield* Crypto.Crypto;
+    const attributeDefinitionId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const snapshot = {
       allowsNone: input.allowsNone ? 1 : 0,
       allowsNotApplicable: input.allowsNotApplicable ? 1 : 0,
@@ -1085,7 +1095,8 @@ export const attributePersistenceForScope = (
     if (definition.controlledValueKind !== input.specialization) {
       return yield* conflict('INVALID_STATE', 'Controlled value specialization differs from its definition');
     }
-    const controlledAttributeValueId = randomUUID();
+    const crypto = yield* Crypto.Crypto;
+    const controlledAttributeValueId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const snapshot = {
       attributeDefinitionId: input.attributeDefinitionRef.resourceId,
       colorDetails: input.color ?? null,

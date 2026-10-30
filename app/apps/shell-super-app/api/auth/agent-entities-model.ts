@@ -46,8 +46,14 @@ export const agentDraftProblem = (input: AgentDraftInput): string | null => {
   if (moduleIds.size !== input.modules.length) {
     return 'Každý modul vyberte jen jednou.';
   }
+  const optionsByModule = new Map<string, AgentModuleOption>();
+  for (const option of input.options) {
+    if (!optionsByModule.has(option.moduleId)) {
+      optionsByModule.set(option.moduleId, option);
+    }
+  }
   for (const module of input.modules) {
-    const option = input.options.find((candidate) => candidate.moduleId === module.moduleId);
+    const option = optionsByModule.get(module.moduleId);
     if (option === undefined) {
       return `Modul ${input.labelOf(module.moduleId)} tato firma nemá.`;
     }
@@ -55,10 +61,11 @@ export const agentDraftProblem = (input: AgentDraftInput): string | null => {
       return `${option.label}: zápis tu nemá žádná role, agent ho dostat nemůže.`;
     }
   }
-  if (!input.memberIds.includes(input.ownerPrincipalId)) {
+  const members = new Set(input.memberIds);
+  if (!members.has(input.ownerPrincipalId)) {
     return 'Za agenta může odpovídat jen aktivní člověk z firmy.';
   }
-  if (input.operatorPrincipalIds.some((id) => !input.memberIds.includes(id))) {
+  if (input.operatorPrincipalIds.some((id) => !members.has(id))) {
     return 'Agenta mohou připojit jen aktivní lidé z firmy.';
   }
   return null;

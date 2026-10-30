@@ -5,7 +5,7 @@ import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { CommercePortalAuthDatabaseConnectionError } from '../../../api/portal-auth/db/connection-error.ts';
 import { CommercePortalAuthConfig } from '../../../api/portal-auth/provider/config.ts';

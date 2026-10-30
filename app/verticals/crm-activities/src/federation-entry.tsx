@@ -19,12 +19,8 @@ const CrmActivitiesRouteContent = () => {
       data-modern-boundary-id="verticalCrmActivities"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="crmactivities:text-2xl crmactivities:font-black">
-        {t('crm-activities.title')}
-      </h2>
-      <p className="crmactivities:mt-2 crmactivities:text-stone-600">
-        {t('crm-activities.routeSurface')}
-      </p>
+      <h2 className="crmactivities:text-2xl crmactivities:font-black">{t('crm-activities.title')}</h2>
+      <p className="crmactivities:mt-2 crmactivities:text-stone-600">{t('crm-activities.routeSurface')}</p>
     </section>
   );
 };

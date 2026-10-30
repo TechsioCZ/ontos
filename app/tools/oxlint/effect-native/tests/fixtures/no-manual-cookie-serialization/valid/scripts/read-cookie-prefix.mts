@@ -1,4 +1,4 @@
-import { Cookies } from 'effect/unstable/http';
+import { Cookies } from 'effect/http';
 
 const securePrefix = '__Secure-';
 const hostPrefix = '__Host-';

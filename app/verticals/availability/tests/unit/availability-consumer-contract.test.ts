@@ -27,7 +27,7 @@ import {
 } from '@app/core-runtime';
 import { Context, Effect, Layer, Match, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { Headers, HttpServerRequest, FetchHttpClient } from 'effect/unstable/http';
+import { Headers, HttpServerRequest, FetchHttpClient } from 'effect/http';
 import {
   AvailabilityConsumerRequestSchema,
   AvailabilityConsumerResponseSchema,

@@ -7,6 +7,7 @@ import { Link } from "@techsio/ui-kit/atoms/link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { Select } from "@techsio/ui-kit/molecules/select";
 import type { CategoryFilters as Filters } from "@/ontos/category-filters";
+import { cs } from "@/i18n/cs";
 
 const availabilityOptions = [
   { value: "all", label: "Všechny produkty" },
@@ -36,10 +37,11 @@ export function CategoryFilters({
     filters.minMinor > filters.maxMinor;
   return (
     <form
+      data-akros-category-filters
       action={pathname}
       method="get"
       aria-label="Filtrování produktů"
-      className="mb-6 grid min-w-0 gap-4 rounded-sm border-(length:--border-sm) border-base-dark bg-base p-4"
+      className="mb-6 grid min-w-0 gap-6 rounded-sm border-(length:--border-sm) border-base-dark bg-base p-6"
     >
       <div className="grid min-w-0 items-end gap-4 sm:grid-cols-2">
         <FormInput
@@ -75,6 +77,7 @@ export function CategoryFilters({
         </fieldset>
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2">
           <Select
+            className="akros-select"
             id="category-availability"
             items={availabilityOptions}
             value={[availability]}
@@ -99,6 +102,7 @@ export function CategoryFilters({
             </Select.Positioner>
           </Select>
           <Select
+            className="akros-select"
             id="category-sort"
             items={sortOptions}
             value={[sort]}
@@ -128,8 +132,7 @@ export function CategoryFilters({
       <input type="hidden" name="sort" value={sort} />
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-base-dark pt-4">
         <p className="text-sm text-(--color-fg-secondary)">
-          Nalezeno produktů: <strong>{count}</strong>. Cena za jednotku s DPH, u variant nejnižší
-          cena „od“.
+          Nalezeno produktů: <strong>{count}</strong>. {cs.catalog.filters.priceInformation}
         </p>
         <div className="flex flex-wrap items-center gap-4">
           <Link as={StoreLink} href={pathname}>

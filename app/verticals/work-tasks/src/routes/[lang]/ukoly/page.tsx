@@ -14,7 +14,7 @@ import { Effect, Match, Option, Predicate, Random, Schedule, Schema, Struct } fr
 import type { Types } from 'effect';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
@@ -25,8 +25,15 @@ import type {
   WorkCommand,
 } from '../../../../shared/actions/apply-command.ts';
 import { canTransition, isClosedTaskState } from '../../../../shared/actions/task-transitions.ts';
+import { TaskRefSchema } from '../../../../shared/resources/task.ts';
 import { PartyIdSchema } from '../../../../shared/apis/records.ts';
-import type { LookupAccess, RecordsResponse, Task, TaskState } from '../../../../shared/apis/records.ts';
+import type {
+  LookupAccess,
+  RecordsRequest,
+  RecordsResponse,
+  Task,
+  TaskState,
+} from '../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { buildTaskColumns } from './tasks-columns.tsx';
 import type { LookupState } from './tasks-columns.tsx';
@@ -145,10 +152,16 @@ const useNarrowViewport = () =>
 
 const formatCount = (value: number | undefined) => (value === undefined ? '—' : count.format(value));
 
-const recordsRequest = (partyId: typeof PartyIdSchema.Type | undefined, includeArchived: boolean) => ({
-  ...(partyId === undefined ? {} : { partyId }),
-  ...(includeArchived ? { includeArchived } : {}),
-});
+const recordsRequest = (partyId: typeof PartyIdSchema.Type | undefined, includeArchived: boolean): RecordsRequest => {
+  const request: RecordsRequest = {};
+  if (partyId !== undefined) {
+    Object.assign(request, { partyId });
+  }
+  if (includeArchived) {
+    Object.assign(request, { includeArchived });
+  }
+  return request;
+};
 
 /** The task list a page shows: the person's legal entity, the optional `partyId` filter and the archive toggle. */
 interface TasksInput {
@@ -219,16 +232,20 @@ const preloadTasks = (input: TasksInput) =>
   );
 
 /** Decodes a raw query string (`?partyId=…`, the shape the Shell passes as `search`); none when the filter is invalid. */
-const partySearchCodec = Schema.toCodecJson(
-  Schema.fromURLSearchParams(Schema.Struct({ partyId: Schema.optional(PartyIdSchema) })),
+const taskSearchCodec = Schema.toCodecJson(
+  Schema.fromURLSearchParams(
+    Schema.Struct({
+      partyId: Schema.optional(PartyIdSchema),
+      resourceId: Schema.optional(TaskRefSchema.fields.resourceId),
+    }),
+  ),
 );
-const requestedParty = (search: string) =>
-  Schema.decodeOption(partySearchCodec)(search).pipe(Option.map((decoded) => decoded.partyId));
+const requestedSearch = Schema.decodeOption(taskSearchCodec);
 
 export const preloadPage = modulePagePreload((props) =>
-  Option.match(requestedParty(props.search), {
+  Option.match(requestedSearch(props.search), {
     onNone: () => Effect.void,
-    onSome: (partyId) =>
+    onSome: ({ partyId }) =>
       preloadTasks({ includeArchived: false, legalEntityId: props.context?.legalEntityId ?? '', partyId }),
   }),
 );
@@ -251,6 +268,23 @@ const useDirectory = <A, E>(directory: PageData<string, A, E>, legalEntityId: st
 const noCustomers: readonly CustomerOption[] = [];
 const noOpportunities: readonly OpportunityOption[] = [];
 
+const objectOptions = (records: Effect.Success<ReturnType<typeof propertyRecords>>): ObjectOption[] => {
+  const unitsByProperty = new Map<string, (typeof records.units)[number][]>();
+  for (const unit of records.units) {
+    const siblings = unitsByProperty.get(unit.propertyRef.resourceId) ?? [];
+    siblings.push(unit);
+    unitsByProperty.set(unit.propertyRef.resourceId, siblings);
+  }
+  return records.properties.flatMap((property) => [
+    { id: property.propertyRef.resourceId, label: `${property.code} · ${property.name}` },
+    ...(unitsByProperty.get(property.propertyRef.resourceId) ?? []).map((unit) => ({
+      id: unit.unitRef.resourceId,
+      label: `${property.code} / ${unit.code} · ${unit.name}`,
+      propertyId: property.propertyRef.resourceId,
+    })),
+  ]);
+};
+
 /** Properties and units for the Objekt filter and the history names. Units sort under their property. */
 const loadObjects = (setObjects: (objects: readonly ObjectOption[] | undefined) => void) => {
   browserRuntime.runFork(
@@ -262,21 +296,7 @@ const loadObjects = (setObjects: (objects: readonly ObjectOption[] | undefined) 
           Effect.logWarning('Property list unavailable.', error).pipe(
             Effect.andThen(Effect.sync(() => setObjects(undefined))),
           ),
-        onSuccess: (records) =>
-          Effect.sync(() =>
-            setObjects(
-              records.properties.flatMap((property) => [
-                { id: property.propertyRef.resourceId, label: `${property.code} · ${property.name}` },
-                ...records.units
-                  .filter((unit) => unit.propertyRef.resourceId === property.propertyRef.resourceId)
-                  .map((unit) => ({
-                    id: unit.unitRef.resourceId,
-                    label: `${property.code} / ${unit.code} · ${unit.name}`,
-                    propertyId: property.propertyRef.resourceId,
-                  })),
-              ]),
-            ),
-          ),
+        onSuccess: (records) => Effect.sync(() => setObjects(objectOptions(records))),
       }),
     ),
   );
@@ -366,10 +386,102 @@ const loadStateOf = (snapshot: PageDataSnapshot<RecordsResponse, { readonly _tag
   return Predicate.isTagged('RecordsForbiddenProblem')(snapshot.error) ? 'forbidden' : 'error';
 };
 
+const useTaskLookups = (legalEntityId: string, records: RecordsResponse | undefined) => {
+  const lookupAccess = records?.lookupAccess;
+  const customersAllowed = lookupAccess?.customers === 'allowed';
+  const opportunitiesAllowed = lookupAccess?.opportunities === 'allowed';
+  const customersSnapshot = useDirectory(customerDirectory, legalEntityId, customersAllowed);
+  const opportunitiesSnapshot = useDirectory(opportunityDirectory, legalEntityId, opportunitiesAllowed);
+  const customers = customersAllowed && customersSnapshot.state === 'ready' ? customersSnapshot.value : noCustomers;
+  const opportunities =
+    opportunitiesAllowed && opportunitiesSnapshot.state === 'ready' ? opportunitiesSnapshot.value : noOpportunities;
+  const referenceFailed =
+    lookupAccess?.customers === 'unavailable' ||
+    lookupAccess?.opportunities === 'unavailable' ||
+    (customersAllowed && lookupFailed(customersSnapshot)) ||
+    (opportunitiesAllowed && lookupFailed(opportunitiesSnapshot));
+  // A directory the list does not allow is settled at once; an allowed one once it loaded or failed.
+  const lookups: LookupState = {
+    customers: !customersAllowed || customersSnapshot.state !== 'pending',
+    opportunities: !opportunitiesAllowed || opportunitiesSnapshot.state !== 'pending',
+    principals: records !== undefined,
+  };
+  const [loadedObjects, setLoadedObjects] = useState<readonly ObjectOption[]>();
+  // The Objekt filter and the history names are secondary, so they load after the page shows.
+  const propertiesAccess = lookupAccess?.properties;
+  useEffect(() => {
+    if (propertiesAccess === 'allowed') {
+      loadObjects(setLoadedObjects);
+    }
+  }, [propertiesAccess]);
+  const objects = propertiesAccess === 'allowed' ? loadedObjects : undefined;
+
+  return { customers, lookupAccess, lookups, objects, opportunities, referenceFailed };
+};
+
+const useLinkedTask = ({
+  onOpen,
+  onUnavailable,
+  records,
+  resourceId,
+}: {
+  readonly onOpen: (task: Task) => void;
+  readonly onUnavailable: () => void;
+  readonly records: RecordsResponse | undefined;
+  readonly resourceId: Task['ref']['resourceId'] | undefined;
+}) => {
+  const opened = useRef(false);
+  const openLinked = useEffectEvent(onOpen);
+  const unavailable = useEffectEvent(onUnavailable);
+  const receive = useEffectEvent((result: RecordsResponse) => {
+    const linked = result.items.find((task) => task.ref.resourceId === resourceId);
+    if (linked === undefined) {
+      unavailable();
+    } else {
+      openLinked(linked);
+    }
+  });
+  useEffect(() => {
+    if (resourceId === undefined || records === undefined || opened.current) {
+      return;
+    }
+    opened.current = true;
+    const listed = records.items.find((task) => task.ref.resourceId === resourceId);
+    if (listed !== undefined) {
+      openLinked(listed);
+      return;
+    }
+    // A task hidden from the list still opens from its direct link.
+    browserRuntime.runFork(
+      requestId.pipe(
+        Effect.flatMap((correlation) => executeRecords({ resourceId }, correlation)),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.logWarning('Linked task is unavailable.', error).pipe(
+              Effect.andThen(Effect.sync(() => unavailable())),
+            ),
+          onSuccess: (result) => Effect.sync(() => receive(result)),
+        }),
+      ),
+    );
+  }, [records, resourceId]);
+};
+
+const hasTaskFilters = (filters: TaskFilters): boolean =>
+  filters.search !== '' ||
+  filters.assignee !== ALL ||
+  filters.due !== ALL ||
+  filters.priority !== ALL ||
+  filters.state !== ALL ||
+  filters.object !== ALL ||
+  filters.dueFrom !== '' ||
+  filters.dueTo !== '';
+
 const useTasksPage = (
   legalEntityId: string,
   partyId: typeof PartyIdSchema.Type | undefined,
   invalidFilter: boolean,
+  resourceId: Task['ref']['resourceId'] | undefined,
 ) => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -387,26 +499,10 @@ const useTasksPage = (
   }, [invalidFilter, legalEntityId, partyId, showHidden]);
   const records = recordsSnapshot.state === 'ready' ? recordsSnapshot.value : undefined;
   const loadState = loadStateOf(recordsSnapshot);
-  const lookupAccess = records?.lookupAccess;
-  const customersAllowed = lookupAccess?.customers === 'allowed';
-  const opportunitiesAllowed = lookupAccess?.opportunities === 'allowed';
-  const customersSnapshot = useDirectory(customerDirectory, legalEntityId, customersAllowed);
-  const opportunitiesSnapshot = useDirectory(opportunityDirectory, legalEntityId, opportunitiesAllowed);
-  const customers = customersAllowed && customersSnapshot.state === 'ready' ? customersSnapshot.value : noCustomers;
-  const opportunities =
-    opportunitiesAllowed && opportunitiesSnapshot.state === 'ready' ? opportunitiesSnapshot.value : noOpportunities;
-  const referenceFailed =
-    lookupAccess?.customers === 'unavailable' ||
-    lookupAccess?.opportunities === 'unavailable' ||
-    (customersAllowed && lookupFailed(customersSnapshot)) ||
-    (opportunitiesAllowed && lookupFailed(opportunitiesSnapshot));
-  // A directory the list does not allow is settled at once; an allowed one once it loaded or failed.
-  const lookups: LookupState = {
-    customers: !customersAllowed || customersSnapshot.state !== 'pending',
-    principals: records !== undefined,
-    opportunities: !opportunitiesAllowed || opportunitiesSnapshot.state !== 'pending',
-  };
-  const [loadedObjects, setLoadedObjects] = useState<readonly ObjectOption[]>();
+  const { customers, lookupAccess, lookups, objects, opportunities, referenceFailed } = useTaskLookups(
+    legalEntityId,
+    records,
+  );
   const { filters: storedFilters, setFilters, setTab, tab: preferredTab } = useTaskView(partyId, invalidFilter);
   // A saved filter from a broader role cannot silently hide rows when its directory is no longer available.
   const filters = storedFilters;
@@ -443,50 +539,16 @@ const useTasksPage = (
     });
   };
 
-  // The Objekt filter and the history names are secondary, so they load after the page shows.
-  const propertiesAccess = lookupAccess?.properties;
-  useEffect(() => {
-    if (propertiesAccess === 'allowed') {
-      loadObjects(setLoadedObjects);
-    }
-  }, [propertiesAccess]);
-  const objects = propertiesAccess === 'allowed' ? loadedObjects : undefined;
-
-  const linkedTaskOpened = useRef(false);
-  useEffect(() => {
-    const id = new URL(globalThis.location.href).searchParams.get('resourceId');
-    if (id === null || records === undefined || linkedTaskOpened.current) {
-      return;
-    }
-    linkedTaskOpened.current = true;
-    const openLinked = (linked: Task) => {
+  useLinkedTask({
+    onOpen: (linked) => {
       setTab('all');
       setFilters(initialTaskFilters);
       openEditor({ mode: 'edit', task: linked });
-    };
-    const listed = records.items.find((task) => task.ref.resourceId === id);
-    if (listed !== undefined) {
-      openLinked(listed);
-      return;
-    }
-    // A task hidden from the list still opens from its direct link.
-    browserRuntime.runFork(
-      requestId.pipe(
-        Effect.flatMap((correlation) => executeRecords({ resourceId: id }, correlation)),
-        Effect.match({
-          onFailure: () => setActionError(t(`${key}.forbidden`)),
-          onSuccess: (result) => {
-            const linked = result.items.find((task) => task.ref.resourceId === id);
-            if (linked === undefined) {
-              setActionError(t(`${key}.forbidden`));
-            } else {
-              openLinked(linked);
-            }
-          },
-        }),
-      ),
-    );
-  }, [records, t]);
+    },
+    onUnavailable: () => setActionError(t(`${key}.forbidden`)),
+    records,
+    resourceId,
+  });
   const today = todayIsoDate();
   const principals = records?.assignablePrincipals ?? [];
   const principalNames = new Map<string, string>(
@@ -528,15 +590,7 @@ const useTasksPage = (
   const selectedIds = selectedTasks.map((task) => task.ref.resourceId);
   const stateTargets = commonTransitionTargets(selectedTasks);
   const closedRowsShown = canWrite && visibleTasks.some((task) => isClosedTaskState(task.state));
-  const filtersActive =
-    filters.search !== '' ||
-    filters.assignee !== ALL ||
-    filters.due !== ALL ||
-    filters.priority !== ALL ||
-    filters.state !== ALL ||
-    filters.object !== ALL ||
-    filters.dueFrom !== '' ||
-    filters.dueTo !== '';
+  const filtersActive = hasTaskFilters(filters);
 
   const showSavedTask = (saved: Task, revision: number) => {
     taskRecords.update(input, (current) => withSavedTask(current, saved, revision));
@@ -610,10 +664,12 @@ const useTasksPage = (
     if (records === undefined || editor === undefined) {
       return;
     }
+    const draft: Partial<EditFields> = {};
+    if (lookupAccess?.properties === 'allowed' || lookupAccess?.contracts === 'allowed') {
+      draft.contextRefs = submission.contextRefs;
+    }
     const fields: EditFields = {
-      ...(lookupAccess?.properties === 'allowed' || lookupAccess?.contracts === 'allowed'
-        ? { contextRefs: submission.contextRefs }
-        : {}),
+      ...draft,
       description: submission.description,
       priority: submission.priority,
       title: submission.title,
@@ -791,13 +847,13 @@ const useTasksPage = (
     customerNames,
     customers,
     editor,
-    principalNames,
-    principals,
     filters,
     filtersActive,
     formError,
     handleArchive: (archived: boolean) => {
-      if (editor?.mode !== 'edit' || records === undefined) return;
+      if (editor?.mode !== 'edit' || records === undefined) {
+        return;
+      }
       setSaving(true);
       setFormError(undefined);
       runCommand({ _tag: 'SetTaskArchived', archived, taskRef: editor.task.ref }, records.revision, (outcome) => {
@@ -808,7 +864,9 @@ const useTasksPage = (
             title: t(archived ? `${key}.archivedToast` : `${key}.restoredToast`),
             type: 'success',
           });
-        } else setFormError(outcome.message);
+        } else {
+          setFormError(outcome.message);
+        }
       });
     },
     handleBulkAssign,
@@ -818,11 +876,15 @@ const useTasksPage = (
     handleClearFilters: () => handleFiltersChange(initialTaskFilters),
     handleCloseEditor,
     handleComment: (text: string) => {
-      if (editor?.mode !== 'edit' || records === undefined) return;
+      if (editor?.mode !== 'edit' || records === undefined) {
+        return;
+      }
       setSaving(true);
       runCommand({ _tag: 'AddTaskComment', taskRef: editor.task.ref, text }, records.revision, (outcome) => {
         setSaving(false);
-        if (!outcome.ok) setFormError(outcome.message);
+        if (!outcome.ok) {
+          setFormError(outcome.message);
+        }
       });
     },
     handleFiltersChange,
@@ -844,6 +906,8 @@ const useTasksPage = (
     objects,
     opportunities,
     opportunityTitles,
+    principalNames,
+    principals,
     records,
     referenceFailed,
     rowBusy,
@@ -864,24 +928,81 @@ const useTasksPage = (
 const taskStatCount = (records: RecordsResponse | undefined, countRows: (items: readonly Task[]) => number) =>
   records === undefined ? undefined : countRows(records.items);
 
+const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage> }) => {
+  if (model.editor === undefined) {
+    return null;
+  }
+  return (
+    <TaskFormDialog
+      actorName={model.actorName}
+      assignmentAvailable={model.records !== undefined}
+      busy={model.saving}
+      contextLabels={model.contextLabels}
+      customers={model.customers}
+      customersLoading={!model.lookups.customers}
+      error={model.formError}
+      lookupAccess={model.lookupAccess}
+      onArchive={model.canWrite ? model.handleArchive : undefined}
+      onClose={model.handleCloseEditor}
+      onComment={model.handleComment}
+      onSubmit={model.handleSave}
+      opportunities={model.opportunities}
+      opportunitiesLoading={!model.lookups.opportunities}
+      principalNames={model.principalNames}
+      principals={model.principals}
+      projects={model.records?.projects ?? []}
+      readOnly={!model.canWrite}
+      task={model.editor.mode === 'edit' ? model.editor.task : undefined}
+    />
+  );
+};
+
+const TaskWriteActions = ({
+  canPlan,
+  onCreate,
+  onTogglePlanning,
+  planningOpen,
+}: {
+  readonly canPlan: boolean;
+  readonly onCreate: () => void;
+  readonly onTogglePlanning: () => void;
+  readonly planningOpen: boolean;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="flex flex-wrap gap-100">
+      {canPlan && (
+        <Button onClick={onTogglePlanning} size="sm" theme="outlined" variant="secondary">
+          {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
+        </Button>
+      )}
+      <Button onClick={onCreate} size="sm" variant="primary">
+        {t(`${key}.newTask`)}
+      </Button>
+    </div>
+  );
+};
+
 const TasksPageContent = ({
   invalidFilter,
   legalEntityId,
   partyId,
+  resourceId,
 }: {
   readonly invalidFilter: boolean;
   readonly legalEntityId: string;
   readonly partyId: typeof PartyIdSchema.Type | undefined;
+  readonly resourceId: Task['ref']['resourceId'] | undefined;
 }) => {
-  const model = useTasksPage(legalEntityId, partyId, invalidFilter);
+  const model = useTasksPage(legalEntityId, partyId, invalidFilter, resourceId);
   const { t } = model;
   const { records } = model;
   const columns = buildTaskColumns({
     customerNames: model.customerNames,
-    principalNames: model.principalNames,
     lookupAccess: model.lookupAccess,
     lookups: model.lookups,
     opportunityTitles: model.opportunityTitles,
+    principalNames: model.principalNames,
     t,
     today: model.today,
   });
@@ -899,16 +1020,12 @@ const TasksPageContent = ({
       <PageHeader
         actions={
           model.canWrite ? (
-            <div className="flex flex-wrap gap-100">
-              {records !== undefined && (
-                <Button onClick={() => setPlanningOpen((open) => !open)} size="sm" theme="outlined" variant="secondary">
-                  {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
-                </Button>
-              )}
-              <Button onClick={model.handleOpenCreate} size="sm" variant="primary">
-                {t(`${key}.newTask`)}
-              </Button>
-            </div>
+            <TaskWriteActions
+              canPlan={records !== undefined}
+              onCreate={model.handleOpenCreate}
+              onTogglePlanning={() => setPlanningOpen((open) => !open)}
+              planningOpen={planningOpen}
+            />
           ) : undefined
         }
         description={t(`${key}.pageDescription`)}
@@ -918,8 +1035,8 @@ const TasksPageContent = ({
       {planningOpen && records !== undefined && (
         <WorkPlanning
           actorName={model.actorName}
-          apply={model.handlePlanning}
-          openTask={model.handleOpenEdit}
+          onApply={model.handlePlanning}
+          onOpenTask={model.handleOpenEdit}
           principalNames={model.principalNames}
           principals={model.principals}
           records={records}
@@ -966,12 +1083,12 @@ const TasksPageContent = ({
       <TaskFilterBar
         active={model.filtersActive}
         canAssign={records !== undefined}
-        principals={model.principals}
         filters={model.filters}
         objects={model.objects}
         onChange={model.handleFiltersChange}
         onClear={model.handleClearFilters}
         onShowHiddenChange={model.canWrite ? model.setShowHidden : undefined}
+        principals={model.principals}
         showHidden={model.showHidden}
       />
 
@@ -980,10 +1097,10 @@ const TasksPageContent = ({
           busy={model.bulkBusy}
           canAssign={records !== undefined}
           count={selectedCount}
-          principals={model.principals}
           onAssign={model.handleBulkAssign}
           onChangeState={model.handleBulkChangeState}
           onClear={() => model.handleSelectionChange({})}
+          principals={model.principals}
           targets={model.stateTargets}
         />
       )}
@@ -1099,29 +1216,7 @@ const TasksPageContent = ({
         }}
       />
 
-      {model.editor !== undefined && (
-        <TaskFormDialog
-          actorName={model.actorName}
-          assignmentAvailable={records !== undefined}
-          busy={model.saving}
-          contextLabels={model.contextLabels}
-          customers={model.customers}
-          customersLoading={!model.lookups.customers}
-          error={model.formError}
-          lookupAccess={model.lookupAccess}
-          onArchive={model.canWrite ? model.handleArchive : undefined}
-          onClose={model.handleCloseEditor}
-          onComment={model.handleComment}
-          onSubmit={model.handleSave}
-          opportunities={model.opportunities}
-          opportunitiesLoading={!model.lookups.opportunities}
-          principalNames={model.principalNames}
-          principals={model.principals}
-          projects={records?.projects ?? []}
-          readOnly={!model.canWrite}
-          task={model.editor.mode === 'edit' ? model.editor.task : undefined}
-        />
-      )}
+      <TaskEditor model={model} />
     </>
   );
 };
@@ -1133,7 +1228,7 @@ const TasksPageContent = ({
 export const RecordsPage = (props: Partial<ModulePageProps>) => {
   const routerSearch = useRouterState({ select: (state) => state.location.searchStr });
   const href = useRouterState({ select: (state) => state.location.href });
-  const requested = requestedParty(props.search ?? routerSearch);
+  const requested = requestedSearch(props.search ?? routerSearch);
   return (
     <FederatedI18nBoundary
       defaultNamespace="work-tasks"
@@ -1146,7 +1241,8 @@ export const RecordsPage = (props: Partial<ModulePageProps>) => {
         invalidFilter={Option.isNone(requested)}
         key={href}
         legalEntityId={props.context?.legalEntityId ?? ''}
-        partyId={Option.getOrUndefined(requested)}
+        partyId={Option.getOrUndefined(requested)?.partyId}
+        resourceId={Option.getOrUndefined(requested)?.resourceId}
       />
     </FederatedI18nBoundary>
   );

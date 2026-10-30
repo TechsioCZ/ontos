@@ -1,8 +1,15 @@
-// @effect-diagnostics *:off
+import { Match } from 'effect';
 import type { AgendaNotificationInput, AkrosOrderInput, RentReminderInput } from './contract.ts';
-import { SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
+import { EmailDeliveryEventSchema, SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
 
-export type AkrosOrderEmailEvent = 'ORDER_CREATED' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
+export const AkrosOrderEmailEventSchema = EmailDeliveryEventSchema.pick([
+  'ORDER_CREATED',
+  'CONFIRMED',
+  'SHIPPED',
+  'DELIVERED',
+  'CANCELLED',
+]);
+export type AkrosOrderEmailEvent = typeof AkrosOrderEmailEventSchema.Type;
 
 export interface RenderedEmail {
   readonly html: string;
@@ -32,13 +39,13 @@ const layout = (brand: string, color: string, title: string, bodyHtml: string, f
   `<h1 style="font-size:18px;margin:0 0 16px">${escapeHtml(title)}</h1>${bodyHtml}` +
   `<hr style="border:none;border-top:1px solid #e4e4e7;margin:24px 0"><div style="font-size:12px;color:#52525b">${footerHtml}</div></div></body></html>`;
 
-const statusLabels: Readonly<Record<AkrosOrderEmailEvent, string>> = {
-  ORDER_CREATED: 'Nová',
-  CONFIRMED: 'Zpracovává se',
-  SHIPPED: 'Předáno dopravci',
-  DELIVERED: 'Dokončená',
+const statusLabels = {
   CANCELLED: 'Stornovaná',
-};
+  CONFIRMED: 'Zpracovává se',
+  DELIVERED: 'Dokončená',
+  ORDER_CREATED: 'Nová',
+  SHIPPED: 'Předáno dopravci',
+} satisfies Readonly<Record<AkrosOrderEmailEvent, string>>;
 
 const demoNote =
   'Ukázkové prostředí OntOS (DEMO): tento e-mail byl skutečně odeslán přes SMTP, ale zboží se nevychystává, ' +
@@ -53,65 +60,60 @@ export const customerShippingLabel = (order: AkrosOrderInput): string =>
   'doprava dle objednávky';
 
 /** Czech receipt label of one e-mailed event (shown next to „Odesláno e-mailem“ in the shop and staff app). */
-export const orderEventLabel = (order: AkrosOrderInput, event: AkrosOrderEmailEvent): string => {
-  switch (event) {
-    case 'ORDER_CREATED':
-      return 'Přijetí objednávky';
-    case 'CONFIRMED':
-      return 'Zpracovává se';
-    case 'SHIPPED':
-      return isPickupOrder(order) ? 'Připraveno k vyzvednutí' : 'Předáno dopravci';
-    case 'DELIVERED':
-      return 'Dokončená';
-    case 'CANCELLED':
-      return 'Stornovaná';
-  }
-};
+export const orderEventLabel = (order: AkrosOrderInput, event: AkrosOrderEmailEvent): string =>
+  Match.value(event).pipe(
+    Match.when('ORDER_CREATED', () => 'Přijetí objednávky'),
+    Match.when('CONFIRMED', () => 'Zpracovává se'),
+    Match.when('SHIPPED', () => (isPickupOrder(order) ? 'Připraveno k vyzvednutí' : 'Předáno dopravci')),
+    Match.when('DELIVERED', () => 'Dokončená'),
+    Match.when('CANCELLED', () => 'Stornovaná'),
+    Match.exhaustive,
+  );
 
-const subjectOf = (event: AkrosOrderEmailEvent, number: string, pickup: boolean): string => {
-  switch (event) {
-    case 'ORDER_CREATED':
-      return `AKROS – přijali jsme vaši objednávku ${number}`;
-    case 'CONFIRMED':
-      return `AKROS – objednávka ${number} se zpracovává`;
-    case 'SHIPPED':
-      return pickup
+const subjectOf = (event: AkrosOrderEmailEvent, number: string, pickup: boolean): string =>
+  Match.value(event).pipe(
+    Match.when('ORDER_CREATED', () => `AKROS – přijali jsme vaši objednávku ${number}`),
+    Match.when('CONFIRMED', () => `AKROS – objednávka ${number} se zpracovává`),
+    Match.when('SHIPPED', () =>
+      pickup
         ? `AKROS – objednávka ${number} je připravena k vyzvednutí`
-        : `AKROS – objednávka ${number} byla předána dopravci`;
-    case 'DELIVERED':
-      return `AKROS – objednávka ${number} je dokončená`;
-    case 'CANCELLED':
-      return `AKROS – objednávka ${number} byla stornována`;
-  }
-};
+        : `AKROS – objednávka ${number} byla předána dopravci`,
+    ),
+    Match.when('DELIVERED', () => `AKROS – objednávka ${number} je dokončená`),
+    Match.when('CANCELLED', () => `AKROS – objednávka ${number} byla stornována`),
+    Match.exhaustive,
+  );
 
-const leadOf = (event: AkrosOrderEmailEvent, number: string, shippingLabel: string, pickup: boolean): string => {
-  switch (event) {
-    case 'ORDER_CREATED':
-      return `Děkujeme za vaši objednávku č. ${number}. Přijali jsme ji a předali ke zpracování.`;
-    case 'CONFIRMED':
-      return `Vaši objednávku č. ${number} jsme přijali ke zpracování a připravujeme ji k expedici.`;
-    case 'SHIPPED':
-      return pickup
+const leadOf = (event: AkrosOrderEmailEvent, number: string, shippingLabel: string, pickup: boolean): string =>
+  Match.value(event).pipe(
+    Match.when(
+      'ORDER_CREATED',
+      () => `Děkujeme za vaši objednávku č. ${number}. Přijali jsme ji a předali ke zpracování.`,
+    ),
+    Match.when(
+      'CONFIRMED',
+      () => `Vaši objednávku č. ${number} jsme přijali ke zpracování a připravujeme ji k expedici.`,
+    ),
+    Match.when('SHIPPED', () =>
+      pickup
         ? `Objednávka č. ${number} je připravena k vyzvednutí (${shippingLabel}).`
-        : `Objednávku č. ${number} jsme předali dopravci (${shippingLabel}).`;
-    case 'DELIVERED':
-      return `Objednávka č. ${number} je dokončená. Děkujeme za nákup.`;
-    case 'CANCELLED':
-      return `Objednávka č. ${number} byla stornována.`;
-  }
-};
+        : `Objednávku č. ${number} jsme předali dopravci (${shippingLabel}).`,
+    ),
+    Match.when('DELIVERED', () => `Objednávka č. ${number} je dokončená. Děkujeme za nákup.`),
+    Match.when('CANCELLED', () => `Objednávka č. ${number} byla stornována.`),
+    Match.exhaustive,
+  );
 
 export const akrosOrderEmail = (
   order: AkrosOrderInput,
   event: AkrosOrderEmailEvent,
   options: { readonly reason?: string; readonly storefrontUrl: string },
 ): RenderedEmail => {
-  const number = order.number;
+  const { number } = order;
   const pickup = isPickupOrder(order);
   const shippingLabel = customerShippingLabel(order);
   const subject = subjectOf(event, number, pickup);
-  const reason = options.reason;
+  const { reason } = options;
   const reasonSuffix = event === 'CANCELLED' && reason !== undefined && reason !== '' ? ` Důvod: ${reason}` : '';
   const lead = `${leadOf(event, number, shippingLabel, pickup)}${reasonSuffix}`;
   const status = event === 'SHIPPED' && pickup ? 'Připraveno k vyzvednutí' : statusLabels[event];
@@ -119,15 +121,15 @@ export const akrosOrderEmail = (
     const hasVariant = line.variantName !== undefined && line.variantName !== '';
     return {
       name: hasVariant ? `${line.productName} – ${line.variantName}` : line.productName,
-      quantity: line.quantity.toLocaleString('cs-CZ'),
       price: formatCzk(lineGrossMinor(order, line)),
+      quantity: line.quantity.toLocaleString('cs-CZ'),
     };
   });
   const shippingPrice = formatCzk(order.shipping?.priceMinor ?? 0);
   const total = formatCzk(order.totalMinor);
   const vat = formatCzk(order.totalVatMinor);
   const address = order.deliveryAddress;
-  const storefrontUrl = options.storefrontUrl;
+  const { storefrontUrl } = options;
 
   const text = [
     'Dobrý den,',
@@ -135,7 +137,7 @@ export const akrosOrderEmail = (
     `Aktuální stav: ${status}`,
     ['Shrnutí objednávky', ...lines.map((l) => `${l.name}\nMnožství: ${l.quantity}\n${l.price}`)].join('\n\n'),
     `Doprava – ${shippingLabel}: ${shippingPrice}\nCelkem vč. DPH: ${total}\nz toho DPH: ${vat}`,
-    ...(address !== undefined ? [`Doručovací adresa\n${address.street}\n${address.postalCode} ${address.city}`] : []),
+    ...(address === undefined ? [] : [`Doručovací adresa\n${address.street}\n${address.postalCode} ${address.city}`]),
     'S pozdravem\nTým e-shopu AKROS',
     `${demoNote}\nObchod AKROS: ${storefrontUrl}`,
   ].join('\n\n');
@@ -148,6 +150,11 @@ export const akrosOrderEmail = (
         `<td style="padding:8px 0;border-bottom:1px solid #f4f4f5;text-align:right">${escapeHtml(l.price)}</td></tr>`,
     )
     .join('');
+  const deliveryAddress =
+    address === undefined
+      ? ''
+      : `<h2 style="font-size:15px;margin:24px 0 8px">Doručovací adresa</h2>` +
+        `<p>${escapeHtml(address.street)}<br>${escapeHtml(address.postalCode)} ${escapeHtml(address.city)}</p>`;
   const body =
     `<p>Dobrý den,</p>` +
     `<p>${escapeHtml(lead)}</p>` +
@@ -161,17 +168,12 @@ export const akrosOrderEmail = (
     `</tr></thead><tbody>${rows}</tbody></table>` +
     `<p style="margin:12px 0 0">Doprava – ${escapeHtml(shippingLabel)}: ${escapeHtml(shippingPrice)}<br>` +
     `Celkem vč. DPH: <strong>${escapeHtml(total)}</strong><br>` +
-    `z toho DPH: ${escapeHtml(vat)}</p>` +
-    (address !== undefined
-      ? `<h2 style="font-size:15px;margin:24px 0 8px">Doručovací adresa</h2>` +
-        `<p>${escapeHtml(address.street)}<br>${escapeHtml(address.postalCode)} ${escapeHtml(address.city)}</p>`
-      : '') +
-    `<p>S pozdravem<br>Tým e-shopu AKROS</p>`;
+    `z toho DPH: ${escapeHtml(vat)}</p>${deliveryAddress}<p>S pozdravem<br>Tým e-shopu AKROS</p>`;
   const footer =
     `<p style="margin:0 0 8px">${escapeHtml(demoNote)}</p>` +
     `<p style="margin:0">Obchod AKROS: <a href="${escapeHtml(storefrontUrl)}">${escapeHtml(storefrontUrl)}</a></p>`;
 
-  return { subject, text, html: layout('AKROS', '#c8102e', subject, body, footer) };
+  return { html: layout('AKROS', '#c8102e', subject, body, footer), subject, text };
 };
 
 /** Display name of the issuing company: legal name without the „(demo)“ suffix. */
@@ -181,11 +183,11 @@ export const companyDisplayName = (legalName: string | null): string =>
 /** Payment reminder in the name of the company that issued the invoice (Siampark, Obchodní firma, …). */
 export const rentReminderEmail = (input: RentReminderInput): RenderedEmail => {
   const company = companyDisplayName(input.legalName);
-  const invoiceNumber = input.invoiceNumber;
+  const { invoiceNumber } = input;
   const subject =
-    invoiceNumber !== null && invoiceNumber !== ''
-      ? `${company} – upomínka k faktuře ${invoiceNumber}`
-      : `${company} – upomínka k neuhrazené faktuře`;
+    invoiceNumber === null || invoiceNumber === ''
+      ? `${company} – upomínka k neuhrazené faktuře`
+      : `${company} – upomínka k faktuře ${invoiceNumber}`;
   const footerText = `Ukázkové prostředí OntOS (DEMO): e-mail odeslán přes SMTP z finančního modulu OntOS jménem společnosti ${company}.`;
   const text = `${input.reminder.text}\n\n—\n${footerText}`;
   const paragraphs = input.reminder.text
@@ -193,16 +195,16 @@ export const rentReminderEmail = (input: RentReminderInput): RenderedEmail => {
     .map((paragraph) => `<p style="margin:0 0 12px">${escapeHtml(paragraph).replaceAll('\n', '<br>')}</p>`)
     .join('');
   const color = input.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? '#0f766e' : '#1e3a8a';
-  return { subject, text, html: layout(company, color, subject, paragraphs, escapeHtml(footerText)) };
+  return { html: layout(company, color, subject, paragraphs, escapeHtml(footerText)), subject, text };
 };
 
 /** Same wording as the in-app notification centre (facility-operations locales agenda.json „inbox.category“). */
-export const agendaCategoryLabels: Readonly<Record<AgendaNotificationInput['category'], string>> = {
+export const agendaCategoryLabels = {
   ASSIGNED: 'Přiřazeno vám',
   CHANGE: 'Změna',
   DEADLINE: 'Blíží se termín',
   OVERDUE: 'Po termínu',
-};
+} satisfies Readonly<Record<AgendaNotificationInput['category'], string>>;
 
 const czechDate = (iso: string): string => {
   const [year, month, day] = iso.slice(0, 10).split('-');
@@ -217,9 +219,16 @@ export const agendaNotificationEmail = (input: {
 }): RenderedEmail => {
   const company = companyDisplayName(input.legalName);
   const items = input.notifications;
-  const first = items[0];
+  const [first] = items;
   const count = items.length;
-  const plural = count === 1 ? 'nové upozornění' : count < 5 ? 'nová upozornění' : 'nových upozornění';
+  const plural = Match.value(count).pipe(
+    Match.when(1, () => 'nové upozornění'),
+    Match.when(
+      (value) => value < 5,
+      () => 'nová upozornění',
+    ),
+    Match.orElse(() => 'nových upozornění'),
+  );
   const subject =
     count === 1 && first !== undefined
       ? `${company} – ${agendaCategoryLabels[first.category].toLowerCase()}: ${first.title}`
@@ -236,26 +245,28 @@ export const agendaNotificationEmail = (input: {
     `Ukázkové prostředí OntOS (DEMO): e-mail odeslán přes SMTP z agendy OntOS (${company}), protože máte v nastavení ` +
     'upozornění zapnuté posílání e-mailem. Změnit to můžete v Moje agenda → Nastavení upozornění.';
   const agendaUrl = `${input.appUrl}/cs/provoz/agenda`;
+  const introduction = count === 1 ? 'v agendě máte nové upozornění:' : `v agendě máte ${count} ${plural}:`;
   const text = [
     'Dobrý den,',
-    count === 1 ? 'v agendě máte nové upozornění:' : `v agendě máte ${count} ${plural}:`,
+    introduction,
     ...items.map(lineOf),
     `Všechna upozornění: ${agendaUrl}`,
     `—\n${footerText}`,
   ].join('\n\n');
   const rows = items
-    .map(
-      (item) =>
+    .map((item) => {
+      const detail =
+        item.detail === undefined ? '' : `<br><span style="color:#52525b">${escapeHtml(item.detail)}</span>`;
+      const dueDate = item.dueDate === undefined ? '' : `<br>Termín: ${escapeHtml(czechDate(item.dueDate))}`;
+      return (
         `<li style="margin:0 0 12px"><strong>${escapeHtml(agendaCategoryLabels[item.category])}:</strong> ` +
-        `<a href="${escapeHtml(linkOf(item))}">${escapeHtml(item.title)}</a>` +
-        (item.detail === undefined ? '' : `<br><span style="color:#52525b">${escapeHtml(item.detail)}</span>`) +
-        (item.dueDate === undefined ? '' : `<br>Termín: ${escapeHtml(czechDate(item.dueDate))}`) +
-        `</li>`,
-    )
+        `<a href="${escapeHtml(linkOf(item))}">${escapeHtml(item.title)}</a>${detail}${dueDate}</li>`
+      );
+    })
     .join('');
   const body =
-    `<p>Dobrý den,</p><p>${escapeHtml(count === 1 ? 'v agendě máte nové upozornění:' : `v agendě máte ${count} ${plural}:`)}</p>` +
+    `<p>Dobrý den,</p><p>${escapeHtml(introduction)}</p>` +
     `<ul style="padding-left:20px">${rows}</ul>` +
     `<p><a href="${escapeHtml(agendaUrl)}">Otevřít Moje agenda</a></p>`;
-  return { subject, text, html: layout(company, '#0f766e', subject, body, escapeHtml(footerText)) };
+  return { html: layout(company, '#0f766e', subject, body, escapeHtml(footerText)), subject, text };
 };

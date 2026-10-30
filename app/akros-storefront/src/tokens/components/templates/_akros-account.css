@@ -156,6 +156,18 @@
     var(--dimension-24);
 }
 
+@media (width < 64rem) {
+  [data-account-phone-control] {
+    --width-phone-input-trigger: max-content;
+    --padding-input-sm: var(--dimension-16) var(--dimension-8);
+    --text-phone-input-sm: var(--dimension-18);
+  }
+
+  [data-account-phone-control] [data-part="trigger"] {
+    --padding-select-trigger-sm: var(--dimension-16) var(--dimension-8);
+  }
+}
+
 [data-account-newsletter] {
   --size-checkbox: var(--dimension-28);
   --radius-checkbox: var(--radius-full);

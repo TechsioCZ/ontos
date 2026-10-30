@@ -7,7 +7,10 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
-import { createHash } from 'node:crypto';
+import { Hex } from 'effect/encoding';
+import type { Crypto } from 'effect';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   ProductVariantSnapshotRequestSchema,
   ProductVariantSnapshotResponseSchema,
@@ -74,14 +77,14 @@ const snapshotIdFor = (
     variants: source.variants,
   }).pipe(
     Effect.flatMap(encodeSnapshotDigestInput),
-    Effect.map((encoded) => createHash('sha256').update(encoded).digest('hex')),
+    Effect.map((encoded) => Hex.encode(sha256(utf8ToBytes(encoded)))),
   );
 
 export interface ProductVariantSnapshotServices {
   readonly assess: (input: {
     readonly purpose: 'PRICING';
     readonly selection: ProductVariantSnapshotResponse['targets'][number]['target'];
-  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult>;
+  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult, never, Crypto.Crypto>;
   readonly source: ProductVariantSnapshotSource;
 }
 
@@ -143,7 +146,7 @@ export const readProductVariantSnapshot = Effect.fn('ProductVariantSnapshotRead.
     input: ProductVariantSnapshotRequest,
     trustedTenantId: string,
     services: ProductVariantSnapshotServices,
-  ): Effect.fn.Return<ProductVariantSnapshotResponse, ReadHandlerNotFound | ReadHandlerUnavailable> {
+  ): Effect.fn.Return<ProductVariantSnapshotResponse, ReadHandlerNotFound | ReadHandlerUnavailable, Crypto.Crypto> {
     if (input.productRef.tenantId !== trustedTenantId) {
       return yield* notFound('The requested Product is not in the trusted Tenant');
     }

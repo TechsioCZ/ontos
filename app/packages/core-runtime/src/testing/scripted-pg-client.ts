@@ -1,8 +1,8 @@
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Function as Fn, Layer } from 'effect';
-import type { Reactivity } from 'effect/unstable/reactivity';
-import { SqlClient, Statement } from 'effect/unstable/sql';
-import type { Acquirer } from 'effect/unstable/sql/SqlConnection';
+import type { Reactivity } from 'effect/reactivity';
+import { SqlClient, Statement } from 'effect/sql';
+import type { Acquirer } from 'effect/sql/SqlConnection';
 
 /**
  * Test double of the `PgClient` service over scripted in-memory connections.

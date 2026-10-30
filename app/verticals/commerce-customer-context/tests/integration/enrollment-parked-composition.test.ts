@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import {
@@ -12,7 +11,7 @@ import {
 } from '@app/core-runtime';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { sql } from 'drizzle-orm';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -34,6 +33,9 @@ import {
 } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import { installEnrollmentTestAuthority } from '../support/enrollment-composition-authority.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+
+const randomId = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
 type TestDatabase = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof coreRelations>>>;
 type Transaction = Parameters<Parameters<TestDatabase['transaction']>[0]>[0];
@@ -73,8 +75,8 @@ const expectRefused = (execute: Execute, operation: Effect.Effect<unknown, unkno
 const parkedJourney = (transaction: Transaction, revisionA: string, revisionB: string) =>
   Effect.gen(function* parkedJourneyAcceptance() {
     const execute: Execute = (statement) => transaction.execute(statement, 'objects');
-    const tenantId = randomUUID();
-    const actorId = randomUUID();
+    const tenantId = yield* randomId;
+    const actorId = yield* randomId;
     const scope = { tenantId };
     yield* execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
     // The fixture starts with the formerly published trigger, proving that the correcting
@@ -91,11 +93,11 @@ const parkedJourney = (transaction: Transaction, revisionA: string, revisionB: s
     const invoker = scopedRoutineInvokerFromTransaction(execute, scope);
     const persistence = commerceEnrollmentAttemptPersistenceForTransaction(invoker, scope);
     const input = yield* Schema.decodeEffect(StartEnrollmentAttemptInputSchema)({
-      actionInvocationId: randomUUID(),
+      actionInvocationId: yield* randomId,
       actorPrincipalId: actorId,
       compositionRevision: revisionA,
       intentDigest: 'a'.repeat(64),
-      intentKey: `parked:${randomUUID()}`,
+      intentKey: `parked:${yield* randomId}`,
       journey: 'RETAIL_SELF_ENROLLMENT',
       tenantId,
     });
@@ -109,7 +111,7 @@ const parkedJourney = (transaction: Transaction, revisionA: string, revisionB: s
       actorPrincipalId: actorId,
       expectedRevision: started.attempt.revision,
       leaseDurationMs: 30_000,
-      ownerInvocationId: randomUUID(),
+      ownerInvocationId: yield* randomId,
       ownerModuleKey: 'commerce.customer-context',
       requestDigest: 'b'.repeat(64),
       required: true,
@@ -121,7 +123,7 @@ const parkedJourney = (transaction: Transaction, revisionA: string, revisionB: s
       ...identity,
       accountSubject: {
         authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
-        providerSubjectId: randomUUID(),
+        providerSubjectId: yield* randomId,
         subjectType: 'user',
       },
       actorPrincipalId: actorId,
@@ -185,7 +187,7 @@ const resumeUnderCurrentRelease = (fixture: ParkedFixture) =>
     yield* expectRefused(
       execute,
       execute(
-        sql`select * from commerce_customer_context.admit_portal_enrollment_attempt(${randomUUID()}::uuid, ${identity.portalEnrollmentAttemptId}::uuid, ${revisionB})`,
+        sql`select * from commerce_customer_context.admit_portal_enrollment_attempt(${yield* randomId}::uuid, ${identity.portalEnrollmentAttemptId}::uuid, ${revisionB})`,
       ),
     );
     yield* execute(sql`set local role ontos_runtime`);
@@ -203,7 +205,7 @@ const resumeUnderCurrentRelease = (fixture: ParkedFixture) =>
     const claim = yield* Schema.decodeEffect(ClaimEnrollmentTransitionInputSchema)({
       ...fixture.claim,
       expectedRevision: resumed.revision,
-      ownerInvocationId: randomUUID(),
+      ownerInvocationId: yield* randomId,
       transitionKey: 'provider.account.verify',
     });
     const claimed = yield* persistence.claim(claim);
@@ -231,7 +233,7 @@ const unresolvedOwnersPinTheirRelease = (
     yield* expectRefused(
       execute,
       execute(sql`update commerce_customer_context.portal_enrollment_owner_operations
-      set owner_invocation_id = ${randomUUID()}::uuid where owner_invocation_id = ${claim.ownerInvocationId}::uuid`),
+      set owner_invocation_id = ${yield* randomId}::uuid where owner_invocation_id = ${claim.ownerInvocationId}::uuid`),
     );
     yield* execute(sql`update commerce_customer_context.portal_enrollment_owner_operations
       set lease_expires_at = clock_timestamp() - interval '1 second'
@@ -262,7 +264,7 @@ const unresolvedOwnersPinTheirRelease = (
       execute,
       execute(sql`insert into commerce_customer_context.portal_enrollment_owner_operations
       (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id, actor_principal_id, request_digest, status)
-      values (${identity.tenantId}::uuid, ${identity.portalEnrollmentAttemptId}::uuid, 'commerce.customer-context', 'new.closed.operation', ${randomUUID()}::uuid, ${fixture.actorId}::uuid, ${'c'.repeat(64)}, 'IN_PROGRESS')`),
+      values (${identity.tenantId}::uuid, ${identity.portalEnrollmentAttemptId}::uuid, 'commerce.customer-context', 'new.closed.operation', ${yield* randomId}::uuid, ${fixture.actorId}::uuid, ${'c'.repeat(64)}, 'IN_PROGRESS')`),
     );
     // Only an authoritative final answer clears the publication fence; the parked Attempt stays.
     yield* execute(sql`update commerce_customer_context.portal_enrollment_owner_operations
@@ -307,7 +309,7 @@ it.live(
             ),
           );
       }),
-    ),
+    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('a journaled owner reconciliation wait releases publication and resumes unchanged under the next release', () =>
@@ -349,7 +351,7 @@ it.live('a journaled owner reconciliation wait releases publication and resumes 
                 outcomeCode: 'party_candidate_ambiguous',
                 ownerInvocationId: claim.ownerInvocationId,
                 ownerModuleKey: claim.ownerModuleKey,
-                resultReference: randomUUID(),
+                resultReference: yield* randomId,
                 status: 'FAILED',
                 transitionKey: claim.transitionKey,
                 workerId: claim.workerId,
@@ -404,7 +406,7 @@ it.live('a journaled owner reconciliation wait releases publication and resumes 
             for (const table of ['portal_enrollment_attempts', 'portal_enrollment_owner_operations']) {
               yield* execute(sql`savepoint retained_lease`);
               yield* execute(sql`update commerce_customer_context.${sql.identifier(table)}
-            set lease_owner = 'retained-worker', lease_token = ${randomUUID()}::uuid,
+            set lease_owner = 'retained-worker', lease_token = ${yield* randomId}::uuid,
               lease_expires_at = clock_timestamp() - interval '1 second'
             where portal_enrollment_attempt_id = ${identity.portalEnrollmentAttemptId}::uuid`);
               expect(yield* settleParkedEnrollmentPublicationWork(transaction, releaseB.composition.revision)).toBe(0);
@@ -453,8 +455,8 @@ it.live('a journaled owner reconciliation wait releases publication and resumes 
                 outcomeCode: 'party_candidate_matched',
                 ownerInvocationId: claim.ownerInvocationId,
                 ownerModuleKey: claim.ownerModuleKey,
-                reconciliationRef: randomUUID(),
-                resultReference: randomUUID(),
+                reconciliationRef: yield* randomId,
+                resultReference: yield* randomId,
                 status: 'SUCCEEDED',
                 transitionKey: claim.transitionKey,
               }),
@@ -486,5 +488,5 @@ it.live('a journaled owner reconciliation wait releases publication and resumes 
           ),
         );
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

@@ -1,7 +1,9 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import type {
   CartOpenSelectionPopulationPort,
@@ -246,9 +248,10 @@ export const productTypeImpactRevisionToken = (
     readonly tenantId: string;
   },
 ): string => {
-  const hash = createHash('sha256');
+  const hash = sha256.create();
   const write = (value: string) => {
-    hash.update(`${Buffer.byteLength(value)}:`).update(value);
+    const bytes = utf8ToBytes(value);
+    hash.update(utf8ToBytes(`${bytes.length}:`)).update(bytes);
   };
   write('product-type-impact-v2');
   write(input.tenantId);
@@ -315,7 +318,7 @@ export const productTypeImpactRevisionToken = (
     }
   }
   write(input.selectionRevisionToken);
-  return hash.digest('hex');
+  return Hex.encode(hash.digest());
 };
 
 /** Owner-local scan. A missing #479 reader or unknown value validity cannot authorize revision. */

@@ -26,7 +26,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
           const { admin, runtime } = yield* testDatabaseClients;
           const fileSystem = yield* FileSystem.FileSystem;
           const crypto = yield* Crypto.Crypto;
-          const name = `composition_durable_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
+          const name = `composition_durable_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
           const schema = `"${name}"`;
           const authority = `${schema}.application_composition_authority`;
           const ledger = `${schema}.application_composition_durable_work`;

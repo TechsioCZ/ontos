@@ -2,7 +2,7 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Effect, Order, Schema, Redacted } from 'effect';
 import { PgClient } from '@effect/sql-pg';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { PRIVACY_SCHEMA_NAME, PRIVACY_TABLE_INVENTORY, PRIVACY_TABLES } from '../src/database/schema.ts';
 

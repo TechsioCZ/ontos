@@ -1,4 +1,4 @@
-import { notFound, redirect } from '@modern-js/plugin-tanstack/runtime';
+import { notFound, throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 
@@ -55,42 +55,43 @@ export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
   ['/profil', '/profile'],
 ]);
 
-const redirectTo = (href: string): never => {
-  throw redirect({ href });
-};
+const redirectTo = (href: string): never => throwTanstackRedirect(href);
+
+export type CanonicalPageModel =
+  | ModuleTargetPageModel
+  | AgentPlatformPageModel
+  | ConnectionsAdminPageModel
+  | PeoplePageModel;
 
 export const loader = ({
   params,
   request,
-}: CanonicalPageLoaderArguments): Promise<
-  ModuleTargetPageModel | AgentPlatformPageModel | ConnectionsAdminPageModel | PeoplePageModel | NotFoundError
-> => {
-  const canonicalPath = canonicalPathFromRequest(request, params.lang);
-  if (canonicalPath === undefined) {
-    return Promise.resolve().then(() => notFound({ throw: true }));
-  }
-  const legacyTarget = legacyCanonicalRedirects.get(canonicalPath);
-  if (legacyTarget !== undefined) {
-    const { search } = new URL(request.url);
-    return Promise.resolve().then(() => redirectTo(`/${encodeURIComponent(params.lang)}${legacyTarget}${search}`));
-  }
-  const platformPage = agentPlatformPageByPath.get(canonicalPath);
-  if (platformPage !== undefined) {
-    return loadAgentPlatformPageModel(request, platformPage);
-  }
-  if (canonicalPath === PEOPLE_ADMIN_PATH) {
-    return browserRuntime.runPromise(
-      loadPeoplePageModel(request).pipe(Effect.map((model) => requireSignedIn(request, model))),
-      { signal: request.signal },
-    );
-  }
-  if (canonicalPath === CONNECTIONS_ADMIN_PATH) {
-    return loadConnectionsAdminPageModel(request);
-  }
-  return browserRuntime
-    .runPromise(
-      loadModulePageModel({ canonicalPath, request }).pipe(Effect.tap((model) => prepareModuleTarget(model, request))),
-      { signal: request.signal },
-    )
-    .then((model) => requireSignedIn(request, model));
-};
+}: CanonicalPageLoaderArguments): Promise<CanonicalPageModel | NotFoundError> =>
+  browserRuntime.runPromise(
+    Effect.gen(function* loadCanonicalPage() {
+      const canonicalPath = canonicalPathFromRequest(request, params.lang);
+      if (canonicalPath === undefined) {
+        return notFound({ throw: true });
+      }
+      const legacyTarget = legacyCanonicalRedirects.get(canonicalPath);
+      if (legacyTarget !== undefined) {
+        const { search } = new URL(request.url);
+        return redirectTo(`/${encodeURIComponent(params.lang)}${legacyTarget}${search}`);
+      }
+      const platformPage = agentPlatformPageByPath.get(canonicalPath);
+      let model: CanonicalPageModel;
+      if (platformPage !== undefined) {
+        model = yield* loadAgentPlatformPageModel(request, platformPage);
+      } else if (canonicalPath === PEOPLE_ADMIN_PATH) {
+        model = yield* loadPeoplePageModel(request);
+      } else if (canonicalPath === CONNECTIONS_ADMIN_PATH) {
+        model = yield* loadConnectionsAdminPageModel(request);
+      } else {
+        model = yield* loadModulePageModel({ canonicalPath, request }).pipe(
+          Effect.tap((target) => prepareModuleTarget(target, request)),
+        );
+      }
+      return requireSignedIn(request, model);
+    }),
+    { signal: request.signal },
+  );

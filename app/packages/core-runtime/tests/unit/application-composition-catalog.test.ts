@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
-
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Schema, Struct } from 'effect';
+import { Hex } from 'effect/encoding';
 import { expect, it, rstest } from 'effect-rstest';
 
 import { moduleReleaseWorkerName } from '../../src/http/module-release-identity.ts';
@@ -23,7 +24,7 @@ import { ONTOS_MODULE_CONTRACT_MAX_BYTES, OntosModuleDeploymentContractSchema } 
 import type { OntosModuleDeploymentContract, OntosOutboxSubscriptionContract } from '../../src/modules/manifest.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 
-const digest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+const digest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
 const workerVersionId = '023e105f-2a42-4f8b-a1c1-73f6a2a30c0f';
 const anotherWorkerVersionId = 'a38f1f86-7c38-4507-b592-48e03025baaf';
 const workerVersionSchema = ApplicationCompositionCloudflareWorkerBackendSchema.fields.versionId;

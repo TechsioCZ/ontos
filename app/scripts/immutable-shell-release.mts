@@ -4,9 +4,9 @@ import path from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { SHELL_RELEASE_ENVELOPE_KIND } from '@modern-js/app-tools-extensions/release-envelope';
 import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
-import { Config, Duration, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Config, Duration, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 
 import { moduleReleaseServiceBinding } from '../packages/core-runtime/src/http/module-release-identity.ts';
 import { OntosShellRuntimeContractSchema } from '../packages/core-runtime/src/modules/application-composition.ts';
@@ -30,7 +30,7 @@ import {
   readReleaseFiles,
   readRetainedImmutableWorkerVersion,
   readVerifiedReleaseFiles,
-  requirePlannedSourceRevision,
+  requirePlannedUnitInputs,
   resolveCleanImmutableApplicationSourceRevision,
   retryTransientImmutableUpload,
   validateImmutableAssetRedirects,
@@ -43,11 +43,13 @@ import {
 import type {
   ImmutableApplicationReleasePlan,
   ImmutableShellArtifactReceipt,
+  PlannedUnitInputs,
   ReleaseFile,
 } from './immutable-application-release.mts';
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
 import { assertPublishedShellIngressSnapshot } from './publish-active-application-composition.mts';
 
+const RECEIPT_FILE_FLAG = 'receipt-file';
 const SHELL_ID = 'shell-super-app';
 const SHELL_SELF_SERVICE_BINDING = 'ONTOS_SHELL_SELF';
 const RUNTIME_PATH = '.well-known/ontos-shell-runtime.json';
@@ -64,6 +66,19 @@ const ShellTopologySchema = Schema.Struct({
     id: Schema.Literal(SHELL_ID),
   }),
 });
+const ShellIngressTopologySchema = Schema.Struct({
+  verticals: Schema.Array(
+    Schema.Struct({
+      cloudflare: Schema.Struct({ workerName: Schema.NonEmptyString }),
+      id: Schema.NonEmptyString,
+    }),
+  ),
+});
+const NativeServiceBindingSchema = Schema.StructWithRest(
+  Schema.Struct({ binding: Schema.NonEmptyString, service: Schema.NonEmptyString }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
+type NativeServiceBinding = typeof NativeServiceBindingSchema.Type;
 const NativeOutputConfigSchema = Schema.Struct({
   assets: Schema.Struct({ directory: Schema.NonEmptyString }),
   compatibility_date: Schema.NonEmptyString,
@@ -136,13 +151,14 @@ export const validateImmutableShellReleaseArtifacts = Effect.fn('ImmutableShellR
 const verifyShellOutput = Effect.fn('ImmutableShellRelease.output')(function* shellOutput(
   appDirectory: string,
   plan: ImmutableApplicationReleasePlan,
+  evidence: PlannedUnitInputs,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   yield* validateReleasePlan(plan);
   if (plan.appId !== SHELL_ID) {
     return yield* fail('Shell publication must identify the Shell deployment');
   }
-  yield* requirePlannedSourceRevision(appDirectory, plan, SOURCE_MISMATCH);
+  yield* requirePlannedUnitInputs(appDirectory, plan, SOURCE_MISMATCH, evidence);
   const output = path.resolve(appDirectory, '.output');
   yield* readVerifiedReleaseFiles(output, plan, [], SHELL_RELEASE_ENVELOPE_KIND);
   const config = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(NativeOutputConfigSchema))(
@@ -177,10 +193,12 @@ const verifyRetainedShellAssetBytes = (
   );
 
 export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.deploy')(
-  function* deployShellAssets(input: {
-    readonly appDirectory: string;
-    readonly plan: ImmutableApplicationReleasePlan;
-  }) {
+  function* deployShellAssets(
+    input: {
+      readonly appDirectory: string;
+      readonly plan: ImmutableApplicationReleasePlan;
+    } & PlannedUnitInputs,
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const client = yield* HttpClient.HttpClient;
     const accountId = yield* Config.String('CLOUDFLARE_ACCOUNT_ID');
@@ -188,7 +206,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
     if (!/^[a-f\d]{32}$/u.test(accountId)) {
       return yield* fail('Shell asset publication requires an exact provider account');
     }
-    const { assets: compiledAssets, config, output } = yield* verifyShellOutput(input.appDirectory, input.plan);
+    const { assets: compiledAssets, config, output } = yield* verifyShellOutput(input.appDirectory, input.plan, input);
     yield* verifyImmutableAssetsAccountOrigin(accountId, token, input.plan);
     const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${input.plan.assetsScriptName}`;
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -219,7 +237,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
         immutableAssetsWranglerConfig(input.plan, retainedAssets, config.compatibility_date),
       ),
     );
-    yield* requirePlannedSourceRevision(input.appDirectory, input.plan, SOURCE_MISMATCH);
+    yield* requirePlannedUnitInputs(input.appDirectory, input.plan, SOURCE_MISMATCH, input);
     yield* readVerifiedReleaseFiles(output, input.plan, [retainedAssets, configFile], SHELL_RELEASE_ENVELOPE_KIND);
     // Only the upload can fail transiently, so a reused release never enters the retry's half-release removal.
     if (!reuseExisting) {
@@ -252,12 +270,40 @@ export const shellReleaseServiceBindings = (modules: readonly Pick<ApplicationCo
       : [],
   );
 
+/** Native API and SSR aliases must reach the same approved release as identity-keyed dispatch. */
+export const retargetShellNativeServiceBindings = Effect.fn('ImmutableShellRelease.nativeServiceBindings')(
+  function* retargetNativeServices(input: {
+    readonly modules: readonly Pick<ApplicationCompositionModule, 'backend' | 'deployment'>[];
+    readonly services: readonly NativeServiceBinding[];
+    readonly verticals: (typeof ShellIngressTopologySchema.Type)['verticals'];
+  }) {
+    const services: NativeServiceBinding[] = [];
+    for (const binding of input.services) {
+      const owners = input.verticals.filter(({ cloudflare }) => cloudflare.workerName === binding.service);
+      if (owners.length === 0) {
+        services.push(binding);
+        continue;
+      }
+      const [owner] = owners;
+      const approved = input.modules.filter(({ deployment }) => deployment.appId === owner?.id);
+      const [module] = approved;
+      if (owners.length !== 1 || approved.length !== 1 || module?.backend.transport !== 'cloudflare-worker') {
+        return yield* fail('each native module service binding must identify one approved Worker release');
+      }
+      services.push({ ...binding, service: module.backend.workerName });
+    }
+    return services;
+  },
+);
+
 /** The one public Shell ingress is deployed separately from its retained frontend artifact release. */
 export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingress')(
-  function* deployShellIngress(input: {
-    readonly appDirectory: string;
-    readonly receipt: ImmutableShellArtifactReceipt;
-  }) {
+  function* deployShellIngress(
+    input: {
+      readonly appDirectory: string;
+      readonly receipt: ImmutableShellArtifactReceipt;
+    } & PlannedUnitInputs,
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const receipt = yield* Schema.decodeUnknownEffect(ImmutableShellArtifactReceiptSchema, {
       onExcessProperty: 'error',
@@ -267,7 +313,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
       assetsDirectory,
       config,
       output,
-    } = yield* verifyShellOutput(input.appDirectory, receipt.plan);
+    } = yield* verifyShellOutput(input.appDirectory, receipt.plan, input);
     const runtime = yield* fileSystem.readFile(path.join(assetsDirectory, RUNTIME_PATH));
     const federation = yield* fileSystem.readFile(path.join(assetsDirectory, FEDERATION_PATH));
     if (
@@ -305,7 +351,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
       return yield* fail('the retained Shell provider deployment no longer matches its receipt');
     }
     yield* verifyRetainedShellAssetBytes(receipt.plan, retainedAssets);
-    yield* requirePlannedSourceRevision(input.appDirectory, receipt.plan, SOURCE_MISMATCH);
+    yield* requirePlannedUnitInputs(input.appDirectory, receipt.plan, SOURCE_MISMATCH, input);
     yield* readVerifiedReleaseFiles(output, receipt.plan, [], SHELL_RELEASE_ENVELOPE_KIND);
     const approved = yield* assertPublishedShellIngressSnapshot({
       deployment: { appId: receipt.plan.appId, buildMarker: receipt.plan.buildMarker },
@@ -323,12 +369,20 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         Schema.StructWithRest(
           Schema.Struct({
             assets: Schema.Record(Schema.String, Schema.Json),
-            services: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Json))),
+            services: Schema.optionalKey(Schema.Array(NativeServiceBindingSchema)),
           }),
           [Schema.Record(Schema.String, Schema.Json)],
         ),
       ),
     )(yield* fileSystem.readFileString(path.join(output, 'wrangler.json')));
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ShellIngressTopologySchema))(
+      yield* fileSystem.readFileString(path.resolve(input.appDirectory, '../../topology/reference-topology.json')),
+    );
+    const approvedNativeServices = yield* retargetShellNativeServiceBindings({
+      modules: approved.composition.modules,
+      services: nativeServices,
+      verticals: topology.verticals,
+    });
     yield* fileSystem.writeFileString(
       ingressConfig,
       yield* Schema.encodeEffect(JsonText)({
@@ -336,7 +390,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         assets: { ...nativeConfig.assets, directory: ingressAssets },
         main: path.resolve(output, config.main),
         services: [
-          ...nativeServices,
+          ...approvedNativeServices,
           ...shellReleaseServiceBindings(approved.composition.modules),
           // Server rendering reaches this Shell's own BFF on this machine instead of through its public domain.
           { binding: SHELL_SELF_SERVICE_BINDING, service: config.name },
@@ -400,20 +454,70 @@ const planCommand = Command.make(
       );
     }),
 );
+/** Shell retention pins its immutable assets; the mutable ingress is always redeployed. */
+export const verifyRetainedImmutableShellRelease = Effect.fn('ImmutableShellRelease.verifyRetained')(
+  function* verifyRetainedShellRelease(raw: ImmutableShellArtifactReceipt) {
+    const receipt = yield* Schema.decodeUnknownEffect(ImmutableShellArtifactReceiptSchema, {
+      onExcessProperty: 'error',
+    })(raw).pipe(Effect.mapError((cause) => fail('retained Shell receipt failed validation', cause)));
+    const { plan } = receipt;
+    yield* validateReleasePlan(plan);
+    if (
+      plan.appId !== SHELL_ID ||
+      receipt.artifacts.runtimeContract.url !== `${plan.assetsOrigin}${RUNTIME_PATH}` ||
+      receipt.artifacts.federationManifest.url !== `${plan.assetsOrigin}${FEDERATION_PATH}`
+    ) {
+      return yield* fail('the retained receipt must identify the exact immutable Shell release');
+    }
+    const accountId = yield* Config.String('CLOUDFLARE_ACCOUNT_ID');
+    const token = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
+    if (!/^[a-f\d]{32}$/u.test(accountId)) {
+      return yield* fail('retained Shell verification requires an exact Cloudflare account');
+    }
+    yield* verifyImmutableAssetsAccountOrigin(accountId, token, plan);
+    if (
+      (yield* readRetainedImmutableWorkerVersion(accountId, token, plan.assetsScriptName)) !== receipt.assetsVersionId
+    ) {
+      return yield* fail('the retained Shell provider deployment no longer matches its receipt');
+    }
+    return yield* Effect.void;
+  },
+);
+
+const verifyRetainedCommand = Command.make(
+  'verify-retained',
+  { receiptFile: Flag.String(RECEIPT_FILE_FLAG) },
+  ({ receiptFile }) =>
+    Effect.gen(function* verifyRetainedShellCommand() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const receipt = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ImmutableShellArtifactReceiptSchema))(
+        yield* fileSystem.readFileString(receiptFile),
+      );
+      yield* verifyRetainedImmutableShellRelease(receipt);
+    }),
+);
+
 const deployCommand = Command.make(
   'deploy',
   {
     appDirectory: Flag.String('app-directory'),
+    artifactName: Flag.String('artifact-name').pipe(Flag.optional),
+    inputsFile: Flag.String('inputs-file').pipe(Flag.optional),
     planFile: Flag.String('plan-file'),
-    receiptFile: Flag.String('receipt-file'),
+    receiptFile: Flag.String(RECEIPT_FILE_FLAG),
   },
-  ({ appDirectory, planFile, receiptFile }) =>
+  ({ appDirectory, artifactName, inputsFile, planFile, receiptFile }) =>
     Effect.gen(function* publishShellArtifacts() {
       const fileSystem = yield* FileSystem.FileSystem;
       const plan = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ImmutableApplicationReleasePlanSchema))(
         yield* fileSystem.readFileString(planFile),
       );
-      const receipt = yield* deployImmutableShellRelease({ appDirectory, plan });
+      const receipt = yield* deployImmutableShellRelease({
+        appDirectory,
+        artifactName: Option.getOrUndefined(artifactName),
+        inputsFile: Option.getOrUndefined(inputsFile),
+        plan,
+      });
       yield* fileSystem.writeFileString(
         receiptFile,
         yield* Schema.encodeEffect(Schema.fromJsonString(ImmutableShellArtifactReceiptSchema))(receipt),
@@ -422,18 +526,28 @@ const deployCommand = Command.make(
 ).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
 const ingressCommand = Command.make(
   'ingress-deploy',
-  { appDirectory: Flag.String('app-directory'), receiptFile: Flag.String('receipt-file') },
-  ({ appDirectory, receiptFile }) =>
+  {
+    appDirectory: Flag.String('app-directory'),
+    artifactName: Flag.String('artifact-name').pipe(Flag.optional),
+    inputsFile: Flag.String('inputs-file').pipe(Flag.optional),
+    receiptFile: Flag.String(RECEIPT_FILE_FLAG),
+  },
+  ({ appDirectory, artifactName, inputsFile, receiptFile }) =>
     Effect.gen(function* publishShellIngress() {
       const fileSystem = yield* FileSystem.FileSystem;
       const receipt = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ImmutableShellArtifactReceiptSchema), {
         onExcessProperty: 'error',
       })(yield* fileSystem.readFileString(receiptFile));
-      yield* deployImmutableShellIngress({ appDirectory, receipt });
+      yield* deployImmutableShellIngress({
+        appDirectory,
+        artifactName: Option.getOrUndefined(artifactName),
+        inputsFile: Option.getOrUndefined(inputsFile),
+        receipt,
+      });
     }),
 ).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
 const command = Command.make('immutable-shell-release').pipe(
-  Command.withSubcommands([planCommand, deployCommand, ingressCommand]),
+  Command.withSubcommands([planCommand, deployCommand, verifyRetainedCommand, ingressCommand]),
 );
 const executableLayer = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(

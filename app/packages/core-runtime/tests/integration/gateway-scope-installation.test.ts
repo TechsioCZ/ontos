@@ -167,9 +167,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
     Effect.gen(function* gatewayScopeInstallation() {
       const { admin, issuer, party } = yield* gatewayScopeClients;
       const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4;
-      const otherTenantId = yield* crypto.randomUUIDv4;
-      const principalId = yield* crypto.randomUUIDv4;
+      const tenantId = yield* crypto.randomUUIDv4();
+      const otherTenantId = yield* crypto.randomUUIDv4();
+      const principalId = yield* crypto.randomUUIDv4();
       yield* insertGrantFixture(admin, tenantId, otherTenantId, principalId);
       const database = yield* makeTestDatabaseFromClient(party, coreRelations);
       const readTrustedTenant = (scope: OperationalScope) =>
@@ -194,11 +194,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
       const { admin, issuer, party, worker } = yield* gatewayScopeClients;
       yield* installSearchTestAuthority();
       const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4;
-      const otherTenantId = yield* crypto.randomUUIDv4;
-      const partyId = yield* crypto.randomUUIDv4;
-      const otherPartyId = yield* crypto.randomUUIDv4;
-      const principalId = yield* crypto.randomUUIDv4;
+      const tenantId = yield* crypto.randomUUIDv4();
+      const otherTenantId = yield* crypto.randomUUIDv4();
+      const partyId = yield* crypto.randomUUIDv4();
+      const otherPartyId = yield* crypto.randomUUIDv4();
+      const principalId = yield* crypto.randomUUIDv4();
       const tenants = [tenantId, otherTenantId];
       yield* insertGrantFixture(admin, tenantId, otherTenantId, principalId);
       const workerStore = makePostgresCoreSearchProjectionStore(

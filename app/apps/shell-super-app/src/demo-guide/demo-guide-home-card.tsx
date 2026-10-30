@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 
@@ -13,10 +14,11 @@ const actionLabel = (done: number, total: number): string => {
 };
 
 const GuideCard = ({ guide }: { readonly guide: DemoGuide }) => {
+  const { t } = useModernI18n();
   const summary = summarizeGuideProgress(guide, useDemoGuideProgress(guide.id));
   return (
     <section
-      aria-label="Průvodce ukázkou"
+      aria-label={t('shell.demoGuide.title')}
       className="flex w-full max-w-5xl flex-wrap items-center gap-250 rounded-lg bg-primary-light p-300"
     >
       <span className="flex size-icon-control-lg shrink-0 items-center justify-center rounded-md bg-primary text-fg-primary">
@@ -24,7 +26,7 @@ const GuideCard = ({ guide }: { readonly guide: DemoGuide }) => {
       </span>
       {/* Wraps by available width, not viewport: the open guide panel narrows the page on desktop. */}
       <div className="flex min-w-0 grow basis-md flex-col gap-100">
-        <span className="text-fg-secondary text-xs uppercase tracking-wide">Průvodce ukázkou</span>
+        <span className="text-fg-secondary text-xs uppercase tracking-wide">{t('shell.demoGuide.title')}</span>
         <h2 className="font-semibold text-fg-primary text-xl">{`${guide.companyName}: připravená ukázka`}</h2>
         <p className="text-fg-secondary text-sm">{guide.intro}</p>
         <p className="text-fg-secondary text-xs">{`Hotovo ${summary.done} z ${summary.total} kroků`}</p>

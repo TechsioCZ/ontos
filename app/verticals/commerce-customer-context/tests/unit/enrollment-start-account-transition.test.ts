@@ -23,8 +23,13 @@ import {
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
-import type { EnrollmentAttemptSnapshot, EnrollmentOwnerOperationSnapshot } from '../../shared/enrollment-contracts.ts';
+import type {
+  EnrollmentAttemptSnapshot,
+  EnrollmentOwnerOperationSnapshot,
+  ReadEnrollmentAttemptInput,
+} from '../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import type { CommerceEnrollmentContinuationOptions } from '../../src/enrollment/continuation/enrollment-continuation.ts';
 
 /**
  * What the enrollment start route owes the Attempt journal once its one provider effect has run,
@@ -284,5 +289,32 @@ it.effect('manual recovery keeps the original native Attempt identity and leaves
     }
     expect(Option.isNone(yield* commercePortalAuthEnrollmentResumeOnRead(continuation, attempt()))).toBe(true);
     expect(calls).toEqual([attemptId]);
+  }),
+);
+
+it.effect('HTTP resume selects verification yielding on the native continuation, not from a browser identifier', () =>
+  Effect.gen(function* requestSelectsTheNativeYieldPolicy() {
+    const calls: {
+      readonly input: ReadEnrollmentAttemptInput;
+      readonly options: CommerceEnrollmentContinuationOptions | undefined;
+    }[] = [];
+    const continuation = {
+      advance: (input: ReadEnrollmentAttemptInput, options?: CommerceEnrollmentContinuationOptions) =>
+        Effect.sync(() => {
+          calls.push({ input, options });
+          return { outcome: 'COMPLETE' as const };
+        }),
+      openSweepPass: Effect.die('Explicit resume must not depend on background discovery'),
+    };
+    yield* commercePortalAuthEnrollmentResumeOnRead(
+      continuation,
+      attempt({
+        lease: { leaseExpiresAt: DateTime.makeUnsafe(0), leaseToken, workerId },
+        state: 'VERIFICATION_REQUIRED',
+      }),
+    );
+    expect(calls).toStrictEqual([
+      { input: { portalEnrollmentAttemptId: attemptId, tenantId }, options: { yieldAfterVerification: true } },
+    ]);
   }),
 );

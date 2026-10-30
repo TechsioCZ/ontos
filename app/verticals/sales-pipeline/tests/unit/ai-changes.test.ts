@@ -1,13 +1,20 @@
-import { AiSnapshotSchema } from '@app/shared-contracts/ai-approvals';
+import { AiAdapterFailure, AiFailure, AiSnapshotSchema } from '@app/shared-contracts/ai-approvals';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SalesPipelineCommandSchema, SalesPipelinePermissionDenied } from '../../shared/actions/apply-command.ts';
-import type { SalesPipelineCommand } from '../../shared/actions/apply-command.ts';
+import {
+  salesPipelineAiCommandSchemas,
+  SalesPipelineCommandSchema,
+  SalesPipelineLifecycleConflict,
+  SalesPipelinePermissionDenied,
+} from '../../shared/actions/apply-command.ts';
 import { SalesPipelineStateSchema } from '../../shared/apis/records.ts';
 import type { SalesPipelineState } from '../../shared/apis/records.ts';
 import { assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { applySalesPipelineAiCommand } from '../../src/services/ai-changes.ts';
 import { evolveOpportunityState } from '../../src/services/persistence.service.ts';
+
+/** A real asynchronous boundary with no timing assertion or external I/O. */
+const nextMicrotask = Effect.promise(() => Promise.resolve());
 
 it('round-trips JSON values in shared approval snapshots', () => {
   for (const value of [null, 42, true, 'value', [1, null], { nested: { values: [1, 'value', false] } }]) {
@@ -30,16 +37,11 @@ const opportunityA = '60000000-0000-4000-8000-000000000001';
 const agent = 'ai-agent-c-obchod';
 const approver = 'vedouci-obchodu';
 
-type AiCommand = Extract<
-  SalesPipelineCommand,
-  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
->;
 const decode = Schema.decodeUnknownSync(SalesPipelineCommandSchema);
-/** Persistence round trip: every step starts from what the database would return. */
+const StateJsonSchema = Schema.fromJsonString(SalesPipelineStateSchema);
+/** Persistence round trip: every step starts from the encoded JSON the database would return. */
 const roundTrip = (state: SalesPipelineState) =>
-  Schema.decodeUnknownSync(SalesPipelineStateSchema)(
-    JSON.parse(JSON.stringify(Schema.encodeSync(SalesPipelineStateSchema)(state))),
-  );
+  Schema.decodeUnknownSync(StateJsonSchema)(Schema.encodeSync(StateJsonSchema)(state));
 
 const seeded = Effect.gen(function* seed() {
   const created = yield* evolveOpportunityState(
@@ -56,13 +58,14 @@ const seeded = Effect.gen(function* seed() {
   return roundTrip(created.state);
 });
 
-const ai = (state: SalesPipelineState, input: unknown, invocationId: string, principalId: string) =>
-  applySalesPipelineAiCommand(
-    state,
-    decode(input) as AiCommand,
-    { invocationId, now, principalId },
-    evolveOpportunityState,
-  ).pipe(Effect.map((outcome) => ({ ...outcome, state: roundTrip(outcome.state) })));
+const AiCommandSchema = Schema.Union(salesPipelineAiCommandSchemas);
+const decodeAiCommand = Schema.decodeUnknownSync(AiCommandSchema);
+
+/** Callers decode their raw fixtures at the same schema boundary as incoming AI commands. */
+const ai = (state: SalesPipelineState, input: typeof AiCommandSchema.Type, invocationId: string, principalId: string) =>
+  applySalesPipelineAiCommand(state, input, { invocationId, now, principalId }, evolveOpportunityState).pipe(
+    Effect.map((outcome) => ({ ...outcome, state: roundTrip(outcome.state) })),
+  );
 
 const proposal = {
   _tag: 'AiProposeChanges',
@@ -80,19 +83,19 @@ const proposal = {
 it.effect('a proposal changes nothing until a person approves it; Vrátit vše restores the original', () =>
   Effect.gen(function* flow() {
     const start = yield* seeded;
-    const proposed = yield* ai(start, proposal, '80000000-0000-4000-8000-000000000001', agent);
+    const proposed = yield* ai(start, decodeAiCommand(proposal), '80000000-0000-4000-8000-000000000001', agent);
     expect(proposed.state.opportunities[0]?.stage).toBe('LEAD');
     const change = proposed.state.aiChanges?.changes[0];
     expect(change?.status).toBe('pending');
     expect(change?.diff).toEqual([{ after: 'Vyjednávání', before: 'Nová', field: 'stage', label: 'Fáze' }]);
 
     // Same runId: no duplicate batch.
-    const replay = yield* ai(proposed.state, proposal, '80000000-0000-4000-8000-000000000002', agent);
+    const replay = yield* ai(proposed.state, decodeAiCommand(proposal), '80000000-0000-4000-8000-000000000002', agent);
     expect(replay.state.aiChanges?.batches).toHaveLength(1);
 
     const approved = yield* ai(
       proposed.state,
-      { _tag: 'AiDecideChanges', changeIds: [change?.id], decision: 'approve' },
+      decodeAiCommand({ _tag: 'AiDecideChanges', changeIds: [change?.id], decision: 'approve' }),
       '80000000-0000-4000-8000-000000000003',
       approver,
     );
@@ -101,7 +104,7 @@ it.effect('a proposal changes nothing until a person approves it; Vrátit vše r
 
     const reverted = yield* ai(
       approved.state,
-      { _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] },
+      decodeAiCommand({ _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] }),
       '80000000-0000-4000-8000-000000000004',
       approver,
     );
@@ -124,7 +127,7 @@ it.effect('a proposal changes nothing until a person approves it; Vrátit vše r
 it.effect('a stale proposal is refused and an impossible one is rejected at proposal time', () =>
   Effect.gen(function* stale() {
     const start = yield* seeded;
-    const proposed = yield* ai(start, proposal, '80000000-0000-4000-8000-000000000011', agent);
+    const proposed = yield* ai(start, decodeAiCommand(proposal), '80000000-0000-4000-8000-000000000011', agent);
     const moved = yield* evolveOpportunityState(
       proposed.state,
       decode({ _tag: 'ChangeOpportunityStage', id: opportunityA, toStage: 'PROPOSAL' }),
@@ -132,7 +135,11 @@ it.effect('a stale proposal is refused and an impossible one is rejected at prop
     );
     const refused = yield* ai(
       roundTrip(moved.state),
-      { _tag: 'AiDecideChanges', changeIds: [proposed.state.aiChanges?.changes[0]?.id], decision: 'approve' },
+      decodeAiCommand({
+        _tag: 'AiDecideChanges',
+        changeIds: [proposed.state.aiChanges?.changes[0]?.id],
+        decision: 'approve',
+      }),
       '80000000-0000-4000-8000-000000000013',
       approver,
     ).pipe(Effect.flip);
@@ -145,11 +152,14 @@ it.effect('a stale proposal is refused and an impossible one is rejected at prop
     );
     const impossible = yield* ai(
       roundTrip(won.state),
-      { ...proposal, runId: 'run-closed' },
+      decodeAiCommand({ ...proposal, runId: 'run-closed' }),
       '80000000-0000-4000-8000-000000000015',
       agent,
     ).pipe(Effect.flip);
     expect(impossible.message).toContain('Uzavřenou');
+    expect(Schema.is(AiFailure)(impossible)).toBe(true);
+    expect(Schema.is(AiAdapterFailure)(impossible.cause)).toBe(true);
+    expect(Schema.is(SalesPipelineLifecycleConflict)(impossible.cause?.cause)).toBe(true);
   }),
 );
 
@@ -158,14 +168,14 @@ it.effect('an approved new opportunity is archived (not deleted) by Vrátit vše
     const start = yield* seeded;
     const proposed = yield* ai(
       start,
-      {
+      decodeAiCommand({
         _tag: 'AiProposeChanges',
         changes: [
           {
             operation: {
               _tag: 'CreateOpportunity',
               expectedCloseDate: '2026-11-30',
-              lines: [{ productName: 'Servis', quantity: 2, unitPriceMinor: 150000, vatRate: 21 }],
+              lines: [{ productName: 'Servis', quantity: 2, unitPriceMinor: 150_000, vatRate: 21 }],
               partyId,
               title: 'Servisní smlouva',
             },
@@ -173,22 +183,22 @@ it.effect('an approved new opportunity is archived (not deleted) by Vrátit vše
           },
         ],
         instruction: 'Založ příležitost na servis.',
-      },
+      }),
       '80000000-0000-4000-8000-000000000021',
       agent,
     );
     expect(proposed.state.opportunities).toHaveLength(1);
     const approved = yield* ai(
       proposed.state,
-      { _tag: 'AiDecideChanges', changeIds: [proposed.entityIds[1]], decision: 'approve' },
+      decodeAiCommand({ _tag: 'AiDecideChanges', changeIds: [proposed.entityIds[1]], decision: 'approve' }),
       '80000000-0000-4000-8000-000000000022',
       approver,
     );
     expect(approved.state.opportunities).toHaveLength(2);
-    expect(approved.state.opportunities[1]?.amountMinor).toBe(300000);
+    expect(approved.state.opportunities[1]?.amountMinor).toBe(300_000);
     const reverted = yield* ai(
       approved.state,
-      { _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] },
+      decodeAiCommand({ _tag: 'AiRevertBatch', batchId: proposed.entityIds[0] }),
       '80000000-0000-4000-8000-000000000023',
       approver,
     );
@@ -205,5 +215,38 @@ it.effect('API keys may propose but never decide or revert', () =>
       expect(Schema.is(SalesPipelinePermissionDenied)(denied)).toBe(true);
       yield* assertCommandAllowed('human', tag);
     }
+  }),
+);
+
+it.live('opportunity proposals await an asynchronous owner reducer and retain encoded snapshots', () =>
+  Effect.gen(function* asynchronousOpportunityProposal() {
+    const start = yield* seeded;
+    const proposed = yield* applySalesPipelineAiCommand(
+      start,
+      decodeAiCommand(proposal),
+      {
+        invocationId: 'asynchronous-opportunity-proposal',
+        now,
+        principalId: agent,
+      },
+      (state, command, input) => evolveOpportunityState(state, command, input).pipe(Effect.tap(() => nextMicrotask)),
+    );
+    expect(proposed.state.opportunities).toBe(start.opportunities);
+    expect(proposed.state.aiChanges?.changes[0]?.diff).toEqual([
+      { after: 'Vyjednávání', before: 'Nová', field: 'stage', label: 'Fáze' },
+    ]);
+    const snapshots = proposed.state.aiChanges?.changes[0]?.proposedSnapshots;
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots?.[0]?.before).toMatchObject({
+      id: opportunityA,
+      stage: 'LEAD',
+      updatedAt: DateTime.formatIso(now),
+    });
+    expect(snapshots?.[0]?.after).toMatchObject({
+      id: opportunityA,
+      stage: 'NEGOTIATION',
+      updatedAt: DateTime.formatIso(now),
+    });
+    expect(start.aiChanges).toBeUndefined();
   }),
 );

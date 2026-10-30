@@ -1,3 +1,6 @@
+import { pipe, DateTime, Schema } from 'effect';
+import { orderDateText, needsReview } from '../../../../../shared/domain/imports.ts';
+import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/imports.ts';
 // AREA: imports — owned by the crm-imports lane. C03 Import objednávek: imported orders with their source state,
 // CSV import with preview, import history with per-row results, the documented template and sample files.
 import {
@@ -14,31 +17,39 @@ import {
   surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
+import type { ComponentProps } from 'react';
+
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
-import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/imports.ts';
-import { needsReview } from '../../../../../shared/domain/imports.ts';
+
 import { ORDERS_CSV_FORMAT, ordersCsvColumns, ordersCsvTemplate } from '../../../../../shared/imports/csv.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
-import { CrmScopeNote, CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import {
+  CrmScopeNote,
+  CrmStateGate,
+  useCrmRouteSelection,
+  crmPaginationProps,
+  crmTableTranslations,
+} from '../../../../crm/ui.tsx';
 import { ImportPanel, RowResults } from './import-panel.tsx';
 import type { ImportDraft } from './import-panel.tsx';
+
 import {
   RESIZE_LABEL,
   batchStatusMeta,
   clientLabel,
   downloadText,
-  formatAmount,
+  useFormatAmount,
   lastChange,
   orderDate,
   orderSearchText,
@@ -50,9 +61,14 @@ import {
 import { OrderDetailPanel, PairingStateBadge, RawStatusBadge } from './order-panels.tsx';
 
 const ALL = '__all__';
-type OrderFilter = 'all' | 'paired' | 'queue' | 'review';
+const OrderFilterSchema = Schema.Literals(['all', 'paired', 'queue', 'review']);
+type OrderFilter = typeof OrderFilterSchema.Type;
+const isOrderFilter = Schema.is(OrderFilterSchema);
 
-const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
+const orderColumns = (
+  records: RecordsResponse,
+  formatAmount: ReturnType<typeof useFormatAmount>,
+): ColumnDef<ImportedOrder>[] => [
   {
     accessorFn: (order) => orderTitle(order),
     cell: (info) => (
@@ -67,7 +83,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
   },
   { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 115 } },
   {
-    accessorFn: (order) => order.orderedAt ?? '',
+    accessorFn: (order) => orderDateText(order.orderedAt) ?? '',
     cell: (info) => orderDate(info.row.original),
     header: 'Datum',
     id: 'orderedAt',
@@ -110,7 +126,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     meta: { type: 'string', width: 130 },
   },
   {
-    accessorFn: (order) => order.lastEventAt ?? order.receivedAt,
+    accessorFn: (order) => DateTime.formatIso(order.lastEventAt ?? order.receivedAt),
     cell: (info) => <span className="text-sm">{lastChange(info.row.original)}</span>,
     header: 'Poslední změna',
     id: 'lastEventAt',
@@ -120,11 +136,14 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     accessorFn: (order) => (needsReview(order) ? 1 : 0),
     cell: (info) => {
       const order = info.row.original;
-      return needsReview(order) ? (
-        <Badge size="sm" variant="warning">
-          Ke kontrole
-        </Badge>
-      ) : order.duplicateOf === undefined ? null : (
+      if (needsReview(order)) {
+        return (
+          <Badge size="sm" variant="warning">
+            Ke kontrole
+          </Badge>
+        );
+      }
+      return order.duplicateOf === undefined ? null : (
         <Badge size="sm" variant="outline">
           Duplicita
         </Badge>
@@ -138,18 +157,15 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
 
 const batchColumns = (records: RecordsResponse): ColumnDef<ImportBatch>[] => [
   {
-    accessorKey: 'importedAt',
-    cell: (info) => formatDateTime(info.row.original.importedAt),
+    accessorFn: (batch) => DateTime.formatIso(batch.importedAt),
+    cell: (info) => pipe(info.row.original.importedAt, orderDateText, formatDateTime),
     header: 'Importováno',
+    id: 'importedAt',
     meta: { type: 'string', width: 150 },
   },
   {
     accessorKey: 'fileName',
-    cell: (info) => (
-      <span className="block truncate font-medium" title={info.row.original.fileName}>
-        {info.row.original.fileName}
-      </span>
-    ),
+    cell: (info) => <span className="block truncate font-medium">{info.row.original.fileName}</span>,
     header: 'Soubor',
     meta: { type: 'string', width: 300 },
   },
@@ -216,7 +232,7 @@ const BatchPanel = ({
           Zavřít
         </Button>
       }
-      description={`${formatDateTime(batch.importedAt)} · ${principalLabel(records, batch.importedBy)}`}
+      description={`${pipe(batch.importedAt, orderDateText, formatDateTime)} · ${principalLabel(records, batch.importedBy)}`}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -248,7 +264,7 @@ const BatchPanel = ({
             { label: 'Vyžaduje kontrolu', value: formatNumber(batch.review ?? 0) },
             { label: 'Nové bez klienta', value: formatNumber(batch.unpaired ?? 0) },
             { label: 'Soubor dávky', value: batch.fileName },
-            { label: 'Importováno', value: formatDateTime(batch.importedAt) },
+            { label: 'Importováno', value: pipe(batch.importedAt, orderDateText, formatDateTime) },
           ]}
         />
         {batch.errors.length > 0 && (
@@ -282,137 +298,134 @@ const TemplateTab = ({
   readonly canImport: boolean;
   readonly onImportSample: (draft: ImportDraft) => void;
   readonly samples: NonNullable<RecordsResponse['importSamples']>;
-}) => (
-  <div className="grid grid-cols-1 gap-250 xl:grid-cols-[3fr_2fr]">
-    <SectionCard
-      actions={
-        <Button
-          icon="icon-[mdi--download]"
-          onClick={() => downloadText('sablona-import-objednavek.csv', ordersCsvTemplate())}
-          size="sm"
-          theme="outlined"
-          variant="secondary"
-        >
-          Stáhnout šablonu
-        </Button>
-      }
-      title={`Šablona ${ORDERS_CSV_FORMAT}`}
-    >
-      <p className="text-fg-secondary text-sm">
-        Středník nebo čárka jako oddělovač, UTF-8, první řádek hlavička. Čas bez časového pásma se čte jako čas v Praze.
-        Šablona obsahuje nezávislý fiktivní příklad, nikoli objednávku z evidence firmy. Až dodá WR tým finální šablonu,
-        mapování sloupců se upraví – pravidla níže zůstanou.
-      </p>
-      <div className="overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-surface text-fg-secondary text-xs">
-            <tr>
-              <th className="px-150 py-100 text-left font-normal">Sloupec</th>
-              <th className="px-150 py-100 text-left font-normal">Význam</th>
-              <th className="px-150 py-100 text-left font-normal">Příklad</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ordersCsvColumns.map((column) => (
-              <tr className="border-border-primary border-t align-top" key={column.key}>
-                <td className="px-150 py-100">
-                  <span className="font-mono text-xs">{column.key}</span>
-                  {column.required && (
-                    <Badge className="ms-100" size="sm" variant="info">
-                      povinné
-                    </Badge>
-                  )}
-                </td>
-                <td className="px-150 py-100">{column.label}</td>
-                <td className="max-w-64 break-all px-150 py-100 font-mono text-fg-secondary text-xs">
-                  {column.example}
-                </td>
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="grid grid-cols-1 gap-250 xl:grid-cols-[3fr_2fr]">
+      <SectionCard
+        actions={
+          <Button
+            icon="icon-[mdi--download]"
+            onClick={() => downloadText('sablona-import-objednavek.csv', ordersCsvTemplate())}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Stáhnout šablonu
+          </Button>
+        }
+        title={`Šablona ${ORDERS_CSV_FORMAT}`}
+      >
+        <p className="text-fg-secondary text-sm">
+          Středník nebo čárka jako oddělovač, UTF-8, první řádek hlavička. Čas bez časového pásma se čte jako čas v
+          Praze. Šablona obsahuje nezávislý fiktivní příklad, nikoli objednávku z evidence firmy. Až dodá WR tým finální
+          šablonu, mapování sloupců se upraví – pravidla níže zůstanou.
+        </p>
+        <div className="overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-surface text-fg-secondary text-xs">
+              <tr>
+                <th className="px-150 py-100 text-left font-normal">Sloupec</th>
+                <th className="px-150 py-100 text-left font-normal">Význam</th>
+                <th className="px-150 py-100 text-left font-normal">Příklad</th>
               </tr>
+            </thead>
+            <tbody>
+              {ordersCsvColumns.map((column) => (
+                <tr className="border-border-primary border-t align-top" key={column.key}>
+                  <td className="px-150 py-100">
+                    <span className="font-mono text-xs">{column.key}</span>
+                    {column.required && (
+                      <Badge className="ms-100" size="sm" variant="info">
+                        povinné
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="px-150 py-100">{column.label}</td>
+                  <td className="max-w-64 break-all px-150 py-100 font-mono text-fg-secondary text-xs">
+                    {column.example}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ul className="flex list-disc flex-col gap-50 ps-250 text-sm">
+          <li>
+            Objednávku určuje dvojice zdroj + ID objednávky. Další řádek se stejným ID přidá stav do historie, nikdy
+            druhou objednávku.
+          </li>
+          <li>Stejná událost (ID události, nebo stav + čas) se při opakovaném importu ignoruje – počty se nezmění.</li>
+          <li>Starší nebo současně sporná událost nepřepíše novější stav; uloží se a označí „vyžaduje kontrolu“.</li>
+          <li>
+            Klient se přiřadí jen podle schválené vazby ID zákazníka. Shoda IČO, e-mailu nebo názvu je jen návrh k ruční
+            kontrole.
+          </li>
+          <li>Stejné číslo objednávky ze dvou zdrojů se nesčítá dvakrát – čeká na rozhodnutí.</li>
+          <li>
+            Chybný řádek dostane čitelnou chybu, ostatní řádky se uloží. Položky se ukládají jen, když je zdroj posílá.
+          </li>
+        </ul>
+      </SectionCard>
+      <SectionCard title={t('crm.ciWorkflow.sampleFiles')}>
+        <div className="flex flex-col gap-150">
+          {!canImport && (
+            <p className="text-fg-secondary text-sm">
+              Vzorové soubory obsahují objednávky celé firmy, proto jsou dostupné jen vedení obchodu s právem importu.
+              Šablonu s fiktivním příkladem si můžete stáhnout i bez tohoto oprávnění; popis formátu najdete vedle.
+            </p>
+          )}
+          {canImport &&
+            samples.map((sample, index) => (
+              <div className={`${surfaceTileClassName} flex flex-col gap-100 p-200`} key={sample.key}>
+                <div className="flex items-center gap-100">
+                  <Badge size="sm" variant="secondary">
+                    {String(index + 1)}
+                  </Badge>
+                  <span className="font-medium text-sm">{sample.title}</span>
+                </div>
+                <span className="text-fg-secondary text-sm">{sample.description}</span>
+                <span className="font-mono text-fg-secondary text-xs">{sample.fileName}</span>
+                <div className="flex flex-wrap gap-100">
+                  <Button
+                    icon="icon-[mdi--download]"
+                    onClick={() => downloadText(sample.fileName, sample.csv)}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
+                    Stáhnout
+                  </Button>
+                  <Button
+                    icon="icon-[mdi--database-import-outline]"
+                    onClick={() => onImportSample({ csv: sample.csv, fileName: sample.fileName })}
+                    size="sm"
+                    theme="borderless"
+                    variant="secondary"
+                  >
+                    Otevřít v importu
+                  </Button>
+                </div>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
-      <ul className="flex list-disc flex-col gap-50 ps-250 text-sm">
-        <li>
-          Objednávku určuje dvojice zdroj + ID objednávky. Další řádek se stejným ID přidá stav do historie, nikdy
-          druhou objednávku.
-        </li>
-        <li>Stejná událost (ID události, nebo stav + čas) se při opakovaném importu ignoruje – počty se nezmění.</li>
-        <li>Starší nebo současně sporná událost nepřepíše novější stav; uloží se a označí „vyžaduje kontrolu“.</li>
-        <li>
-          Klient se přiřadí jen podle schválené vazby ID zákazníka. Shoda IČO, e-mailu nebo názvu je jen návrh k ruční
-          kontrole.
-        </li>
-        <li>Stejné číslo objednávky ze dvou zdrojů se nesčítá dvakrát – čeká na rozhodnutí.</li>
-        <li>
-          Chybný řádek dostane čitelnou chybu, ostatní řádky se uloží. Položky se ukládají jen, když je zdroj posílá.
-        </li>
-      </ul>
-    </SectionCard>
-    <SectionCard title="Vzorové soubory">
-      <div className="flex flex-col gap-150">
-        {!canImport && (
-          <p className="text-fg-secondary text-sm">
-            Vzorové soubory obsahují objednávky celé firmy, proto jsou dostupné jen vedení obchodu s právem importu.
-            Šablonu s fiktivním příkladem si můžete stáhnout i bez tohoto oprávnění; popis formátu najdete vedle.
-          </p>
-        )}
-        {canImport &&
-          samples.map((sample, index) => (
-            <div className={`${surfaceTileClassName} flex flex-col gap-100 p-200`} key={sample.key}>
-              <div className="flex items-center gap-100">
-                <Badge size="sm" variant="secondary">
-                  {String(index + 1)}
-                </Badge>
-                <span className="font-medium text-sm">{sample.title}</span>
-              </div>
-              <span className="text-fg-secondary text-sm">{sample.description}</span>
-              <span className="font-mono text-fg-secondary text-xs">{sample.fileName}</span>
-              <div className="flex flex-wrap gap-100">
-                <Button
-                  icon="icon-[mdi--download]"
-                  onClick={() => downloadText(sample.fileName, sample.csv)}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  Stáhnout
-                </Button>
-                <Button
-                  icon="icon-[mdi--database-import-outline]"
-                  onClick={() => onImportSample({ csv: sample.csv, fileName: sample.fileName })}
-                  size="sm"
-                  theme="borderless"
-                  variant="secondary"
-                >
-                  Otevřít v importu
-                </Button>
-              </div>
-            </div>
-          ))}
-      </div>
-    </SectionCard>
-  </div>
-);
-
-const useQueryParam = (key: string) => {
-  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-  return useMemo(() => new URLSearchParams(searchStr).get(key) ?? undefined, [key, searchStr]);
+        </div>
+      </SectionCard>
+    </div>
+  );
 };
 
 const ImportsContent = () => {
+  const formatAmount = useFormatAmount();
   const { t } = useModernI18n();
   const { busy, load, state, submit } = useCrmRecords();
-  const orderParam = useQueryParam('objednavka');
+  const [orderId, setOrderId] = useCrmRouteSelection('objednavka');
   const [tab, setTab] = useState('orders');
   const [filter, setFilter] = useState<OrderFilter>('all');
   const [source, setSource] = useState(ALL);
   const [search, setSearch] = useState('');
-  const [orderId, setOrderId] = useState<string | undefined>(orderParam);
   const [batchId, setBatchId] = useState<string | undefined>();
   const [importDraft, setImportDraft] = useState<ImportDraft | undefined>();
   const [importOpen, setImportOpen] = useState(false);
-  useEffect(() => setOrderId(orderParam), [orderParam]);
 
   const openImport = (draft?: ImportDraft) => {
     setImportDraft(draft);
@@ -428,22 +441,30 @@ const ImportsContent = () => {
         const queue = orders.filter((order) => order.pairing !== 'paired');
         const sources = sourcesOf(orders);
         const visible = orders
-          .filter((order) =>
-            filter === 'paired'
-              ? order.pairing === 'paired'
-              : filter === 'queue'
-                ? order.pairing !== 'paired'
-                : filter === 'review'
-                  ? needsReview(order)
-                  : true,
-          )
-          .filter((order) => source === ALL || order.source === source)
-          .filter((order) => matchesSearch(orderSearchText(records, order), search))
+          .filter((order) => {
+            let matchesFilter = true;
+            if (filter === 'paired') {
+              matchesFilter = order.pairing === 'paired';
+            } else if (filter === 'queue') {
+              matchesFilter = order.pairing !== 'paired';
+            } else if (filter === 'review') {
+              matchesFilter = needsReview(order);
+            }
+            return (
+              matchesFilter &&
+              (source === ALL || order.source === source) &&
+              matchesSearch(orderSearchText(records, order), search)
+            );
+          })
           .toSorted((left, right) =>
-            (right.lastEventAt ?? right.receivedAt).localeCompare(left.lastEventAt ?? left.receivedAt),
+            DateTime.Order(right.lastEventAt ?? right.receivedAt, left.lastEventAt ?? left.receivedAt),
           );
-        const lastBatch = batches[0];
+        const [lastBatch] = batches;
         const detail = orders.find((order) => order.id === orderId);
+        const initialImport: Pick<ComponentProps<typeof ImportPanel>, 'initial'> = {};
+        if (importDraft !== undefined) {
+          Object.assign(initialImport, { initial: importDraft });
+        }
         return (
           <>
             <PageHeader
@@ -482,22 +503,24 @@ const ImportsContent = () => {
               {lead && (
                 <StatCard
                   hint={
-                    lastBatch === undefined ? 'zatím žádný import' : `Poslední ${formatDateTime(lastBatch.importedAt)}`
+                    lastBatch === undefined
+                      ? 'zatím žádný import'
+                      : `Poslední ${pipe(lastBatch.importedAt, orderDateText, formatDateTime)}`
                   }
-                  label="Importní dávky"
+                  label={t('crm.ciWorkflow.importBatches')}
                   value={formatNumber(batches.length)}
                 />
               )}
               {lead && (
                 <StatCard
                   hint="bez schválené vazby na klienta"
-                  label="K napárování"
+                  label={t('crm.ciWorkflow.awaitingPairing')}
                   value={formatNumber(queue.length)}
                 />
               )}
               <StatCard
                 hint="sporné pořadí stavů nebo duplicita zdrojů"
-                label="Vyžaduje kontrolu"
+                label={t('crm.ciWorkflow.needsReview')}
                 value={formatNumber(reviewCount(orders))}
               />
             </StatRow>
@@ -518,10 +541,10 @@ const ImportsContent = () => {
               <Tabs.Content className="flex flex-col gap-200 pt-250" value="orders">
                 <div className="flex flex-wrap items-end gap-150">
                   <Input
-                    aria-label="Hledat objednávku"
+                    aria-label={t('crm.ciWorkflow.searchOrder')}
                     className="w-72"
                     onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Číslo, ID, zákazník, IČO, stav"
+                    placeholder={t('crm.ciWorkflow.searchOrderPlaceholder')}
                     size="sm"
                     type="search"
                     value={search}
@@ -534,9 +557,14 @@ const ImportsContent = () => {
                         ...(lead ? [{ label: 'K napárování', value: 'queue' }] : []),
                         { label: 'Vyžaduje kontrolu', value: 'review' },
                       ]}
-                      label="Zobrazit"
+                      label={t('crm.ciWorkflow.show')}
                       name="orderFilter"
-                      onValueChange={(details) => setFilter((details.value[0] ?? 'all') as OrderFilter)}
+                      onValueChange={(details) => {
+                        const selected = details.value[0] ?? 'all';
+                        if (isOrderFilter(selected)) {
+                          setFilter(selected);
+                        }
+                      }}
                       size="sm"
                       value={[filter]}
                     />
@@ -547,7 +575,7 @@ const ImportsContent = () => {
                         { label: 'Všechny zdroje', value: ALL },
                         ...sources.map((entry) => ({ label: entry, value: entry })),
                       ]}
-                      label="Zdroj"
+                      label={t('crm.ciWorkflow.source')}
                       name="sourceFilter"
                       onValueChange={(details) => setSource(details.value[0] ?? ALL)}
                       size="sm"
@@ -570,12 +598,12 @@ const ImportsContent = () => {
                           ? 'Naimportujte první soubor objednávek.'
                           : 'Vašim klientům zatím nebyla přiřazena žádná objednávka.'
                       }
-                      title="Zatím žádné objednávky"
+                      title={t('crm.ciWorkflow.noOrdersYet')}
                     />
                   </SectionCard>
                 ) : (
                   <DataTable
-                    columns={orderColumns(records)}
+                    columns={orderColumns(records, formatAmount)}
                     data={visible}
                     enablePagination
                     enableSorting
@@ -598,7 +626,7 @@ const ImportsContent = () => {
                     <SectionCard>
                       <EmptyState
                         description="Každý import se tu uloží s počty a chybami po řádcích."
-                        title="Zatím žádný import"
+                        title={t('crm.ciWorkflow.noImportsYet')}
                       />
                     </SectionCard>
                   ) : (
@@ -638,7 +666,7 @@ const ImportsContent = () => {
             {canImport && importOpen && (
               <ImportPanel
                 busy={busy}
-                {...(importDraft === undefined ? {} : { initial: importDraft })}
+                {...initialImport}
                 onClose={() => setImportOpen(false)}
                 onImported={(id) => {
                   setImportOpen(false);

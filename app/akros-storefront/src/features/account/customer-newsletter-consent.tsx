@@ -5,6 +5,7 @@ import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { isCustomerNewsletterConsent } from "@/ontos/consent-model";
 import type { CustomerNewsletterConsent } from "@/ontos/consent-model";
+import { cs } from "@/i18n/cs";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -46,9 +47,9 @@ export function CustomerNewsletterConsentForm() {
     if (!consent || pending) return;
     const fields = {
       decision: subscribed ? "GRANTED" : "WITHDRAWN",
-      noticeAcknowledged: true,
+      noticeAcknowledged: subscribed,
       noticeVersionId: consent.notice.noticeVersionId,
-      purposeVersionId: consent.notice.purposeVersionId,
+      expectedRevision: consent.revision,
     };
     const identity = JSON.stringify(fields);
     if (request.current?.identity !== identity)
@@ -63,6 +64,12 @@ export function CustomerNewsletterConsentForm() {
         body: JSON.stringify({ ...fields, requestId: request.current.requestId }),
       });
       const result = (await response.json()) as { consent?: unknown; message?: string };
+      if (response.status === 409) {
+        request.current = null;
+        await load();
+        setError(result.message ?? "Stav se změnil. Zkontrolujte aktuální volbu.");
+        return;
+      }
       if (
         !response.ok ||
         !isCustomerNewsletterConsent(result.consent) ||
@@ -83,16 +90,24 @@ export function CustomerNewsletterConsentForm() {
     }
   }
   return (
-    <section aria-labelledby="newsletter-consent-heading" className="akros-auth-form">
-      <h2 id="newsletter-consent-heading">Newsletter</h2>
+    <section
+      aria-labelledby="newsletter-consent-heading"
+      className="grid min-w-0 gap-(--dimension-24) rounded-(--dimension-8) bg-(--akros-account-surface) p-(--dimension-24)"
+    >
+      <h2
+        id="newsletter-consent-heading"
+        className="text-(length:--akros-account-section-size) leading-(--akros-account-heading-leading) font-bold"
+      >
+        {cs.account.newsletterHeading}
+      </h2>
       {consent ? (
         <>
           <p className="whitespace-pre-wrap" lang={consent.notice.language}>
             {consent.notice.wording}
           </p>
           <p>
-            Změnou volby potvrzuji seznámení s uvedenými informacemi. Souhlas je dobrovolný a lze
-            jej zde kdykoli odvolat. Nesouvisí s přijetím obchodních podmínek.
+            Zaškrtnutím potvrzuji seznámení s uvedenými informacemi. Souhlas je dobrovolný a lze jej
+            zde kdykoli odvolat odškrtnutím. Nesouvisí s přijetím obchodních podmínek.
           </p>
           <FormCheckbox
             id="account-newsletter"
@@ -101,7 +116,9 @@ export function CustomerNewsletterConsentForm() {
             size="sm"
             checked={consent.decision === "GRANTED"}
             disabled={pending}
-            onCheckedChange={(checked) => void choose(checked)}
+            onCheckedChange={(checked) => {
+              void choose(checked);
+            }}
           />
           <p>
             Stav v OntOS:{" "}

@@ -1,3 +1,4 @@
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 import { expect, test } from 'effect-rstest';
 
 import {
@@ -34,8 +35,8 @@ test('explicit module list keeps only modules the principal holds live', () => {
     live: { read: new Set(['work.tasks']), write: new Set() },
     policyCap: 'direct',
     requested: [
-      { access: 'write', moduleId: 'work.tasks' },
-      { access: 'read', moduleId: 'finance.billing' },
+      { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
+      { access: 'read', moduleId: AgentModuleKeySchema.make('finance.billing') },
     ],
     requestedPolicy: 'direct',
   });
@@ -61,13 +62,17 @@ test('read_only policy turns every write off', () => {
     requested: 'all',
     requestedPolicy: 'direct',
   });
-  expect(authority.modules.every((m) => m.write === false)).toBe(true);
+  expect(authority.modules.every((m) => !m.write)).toBe(true);
 });
 
 test('isModulesRequestWithin rejects write beyond offered write and accepts all', () => {
   const offered = offeredModules(live, 'read_only', labelOf);
-  expect(isModulesRequestWithin([{ access: 'write', moduleId: 'work.tasks' }], offered)).toBe(false);
-  expect(isModulesRequestWithin([{ access: 'read', moduleId: 'work.tasks' }], offered)).toBe(true);
+  expect(
+    isModulesRequestWithin([{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }], offered),
+  ).toBe(false);
+  expect(isModulesRequestWithin([{ access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') }], offered)).toBe(
+    true,
+  );
   expect(isModulesRequestWithin('all', offered)).toBe(true);
 });
 

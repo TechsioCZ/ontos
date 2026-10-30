@@ -32,6 +32,8 @@ import { TagRefSchema } from '../../shared/resources/tag.ts';
 import type { TagRef } from '../../shared/resources/tag.ts';
 import { taggingStates } from '../database/schema.ts';
 
+const OWNER_MODULE_KEY = 'demo.tagging';
+
 const withCause = <E extends object>(error: E, cause: unknown) =>
   Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
 
@@ -270,7 +272,10 @@ const contextGrants = Effect.fn('Tagging.contextGrants')(function* contextGrants
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: permissions.map((permission) => ({ moduleId: 'demo.tagging', permission: `demo.tagging.${permission}` })),
+    targets: permissions.map((permission) => ({
+      moduleId: OWNER_MODULE_KEY,
+      permission: `demo.tagging.${permission}`,
+    })),
     tenantId: scope.tenantId,
   });
   if (
@@ -299,7 +304,7 @@ export type RecordsGrants = Effect.Success<ReturnType<typeof taggingRecordsGrant
 
 const tagRefFor = Effect.fn('Tagging.tagRef')(function* tagRefFor(tagId: string, tenantId: string) {
   return yield* Schema.decodeEffect(TagRefSchema)({
-    moduleId: 'demo.tagging',
+    moduleId: OWNER_MODULE_KEY,
     resourceId: tagId,
     resourceType: 'demo.tagging.tag',
     tenantId,
@@ -390,7 +395,7 @@ export const finishTaggingRecords = Effect.fn('Tagging.finishRecords')(function*
   );
   return {
     assignments,
-    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.tagging'),
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, OWNER_MODULE_KEY),
     indicators: { assignmentCount: assignments.length, tagCount: tags.length },
     revision: snapshot.revision,
     tags: tags.map((tag) => ({ ...tag, counts: countsFor(snapshot.state.assignments, tag.id) })),

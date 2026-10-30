@@ -77,6 +77,11 @@ const run = Effect.fn('run')(
 
 /** @param {string} relativePath - Application-relative script path. */
 const runAppScript = (relativePath) => run(process.execPath, [path.join(appDirectory, relativePath)]);
+
+/** @param {'core' | 'party'} owner - Reviewed owner whose histories converge as one ordered group. */
+const migrateConvergentOwner = (owner) =>
+  run(process.execPath, [path.join(appDirectory, 'scripts/migration-convergence-cli.mts'), owner]);
+
 /**
  * @param {string} relativeDirectory - Application-relative package directory.
  * @param {string} config - Drizzle configuration filename.
@@ -151,11 +156,9 @@ const main = Effect.scoped(
     const portalAuthDatabase = yield* loadOptionalCommercePortalAuthDatabaseConfig();
     yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-    yield* migrate('packages/core-runtime', 'drizzle.config.ts');
+    yield* migrateConvergentOwner('core');
     yield* migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
-    yield* runAppScript('verticals/party-registry/scripts/prepare-contacts-migration.mts');
-    yield* migrate('verticals/party-registry', 'drizzle.contacts.config.ts');
-    yield* migrate('verticals/party-registry', 'drizzle.config.ts');
+    yield* migrateConvergentOwner('party');
     yield* migrate('verticals/payment-term-catalog', 'drizzle.config.ts');
     yield* migrate('verticals/price-group-catalog', 'drizzle.config.ts');
     yield* migrate('verticals/assortment', 'drizzle.config.ts');
@@ -174,13 +177,14 @@ const main = Effect.scoped(
     yield* migrate('verticals/work-tasks', 'drizzle.config.ts');
     yield* migrate('verticals/workforce', 'drizzle.config.ts');
     yield* migrate('verticals/tagging', 'drizzle.config.ts');
-    yield* migrate('verticals/crm', 'drizzle.config.ts');
     yield* migrate('verticals/sales-pipeline', 'drizzle.config.ts');
     yield* migrate('verticals/merchandise', 'drizzle.config.ts');
     yield* migrate('verticals/facility-operations', 'drizzle.config.ts');
     yield* migrate('verticals/sales-insights', 'drizzle.config.ts');
     yield* migrate('verticals/finance-billing', 'drizzle.config.ts');
     yield* migrate('verticals/crm-activities', 'drizzle.config.ts');
+    yield* migrate('verticals/crm', 'drizzle.config.ts');
+    yield* migrate('verticals/projects', 'drizzle.config.ts');
     // </generated-vertical-provider-migrations>
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     if (Option.isSome(portalAuthDatabase)) {

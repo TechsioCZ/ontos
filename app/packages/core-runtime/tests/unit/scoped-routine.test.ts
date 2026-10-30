@@ -4,7 +4,7 @@ import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { Cause, DateTime, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
+import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';

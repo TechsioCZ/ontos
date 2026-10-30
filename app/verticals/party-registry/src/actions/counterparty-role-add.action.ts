@@ -38,6 +38,8 @@ export {
 } from '../../shared/actions/counterparty-role-add.ts';
 export type { CounterpartyRoleAddPayload } from '../../shared/actions/counterparty-role-add.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const CounterpartyRoleAddError = Schema.Union([
   CounterpartyEvidenceInsufficient,
   CounterpartyNotFound,
@@ -111,8 +113,8 @@ const handleCounterpartyRoleAdd = Effect.fn('CounterpartyRoleAddAction.handleCou
       accessKind: 'read',
       queryHash: `counterparty-role-overlap:${payload.counterpartyRef.resourceId}:${payload.roleType}`,
       resultCount: 0,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
+      servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+      targetModuleKey: PARTY_REGISTRY_MODULE_ID,
       targetResourceId: payload.counterpartyRef.resourceId,
       targetResourceType: 'party.registry.counterparty',
     });
@@ -126,8 +128,8 @@ const handleCounterpartyRoleAdd = Effect.fn('CounterpartyRoleAddAction.handleCou
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.counterparty-role-added.v1',
       payloadJson: actionResult,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: payload.counterpartyRef.resourceId,
       subjectResourceType: 'party.registry.counterparty',
     });
@@ -159,12 +161,12 @@ export const counterpartyRoleAddAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.counterparty-role-add',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CounterpartyRoleAddPayloadSchema,
     policies: [],
     resourcePermission: defineActionResourcePermission<CounterpartyRoleAddPayload>(counterpartyRoleWritePermission),

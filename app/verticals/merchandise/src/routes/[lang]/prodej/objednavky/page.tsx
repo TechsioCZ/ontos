@@ -19,8 +19,9 @@ import {
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { useMemo, useState } from 'react';
+import { Effect, Option, Schema, SchemaGetter } from 'effect';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
@@ -74,6 +75,20 @@ const bulkStatusItems = orderStatuses.map((value) => ({ label: statusPresentatio
 const isTableLoading = (ordersLoading: boolean, tagStatus: SubjectTagFilter['status']): boolean =>
   ordersLoading || tagStatus === 'loading';
 
+const bulkSelectionHint = (hasSelection: boolean, canWriteTags: boolean) => {
+  if (hasSelection) {
+    return 'bulk.selectionScope';
+  }
+  return canWriteTags ? 'bulk.selectHint' : 'bulk.selectStatusHint';
+};
+
+const bulkUnavailableStatusHint = (allFinal: boolean, canWriteTags: boolean) => {
+  if (!allFinal) {
+    return 'bulk.noCommonStatus';
+  }
+  return canWriteTags ? 'bulk.finalStatus' : 'bulk.finalStatusOnly';
+};
+
 const statusChangeNotification = (
   t: ReturnType<typeof useModernI18n>['t'],
   status: OrderStatus,
@@ -99,7 +114,22 @@ interface OrdersPageContentProps {
   readonly legalEntityId: string;
 }
 
-const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
+const OrdersPageSearchSchema = Schema.Struct({
+  orderId: Schema.optionalKey(Schema.String.pipe(Schema.brand('OrdersPageOrderIdParameter'))),
+});
+const ordersQueryString = Schema.toCodecJson(Schema.URLSearchParams);
+/** Decode the original query spelling, including leading zeroes and the first repeated exact key. */
+const OrdersPageQuerySchema = ordersQueryString.pipe(
+  Schema.decodeTo<typeof OrdersPageSearchSchema, typeof ordersQueryString>(OrdersPageSearchSchema, {
+    decode: SchemaGetter.transform((params) => {
+      const orderId = params.get('orderId');
+      return orderId === null ? {} : { orderId };
+    }),
+    encode: SchemaGetter.encodeURLSearchParams(),
+  }),
+);
+
+const useOrdersPage = ({ legalEntityId }: OrdersPageContentProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [search, setSearch] = useState('');
@@ -110,23 +140,17 @@ const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
   const [canEditOrders, setCanEditOrders] = useState(false);
   const directory = useCustomerDirectory(legalEntityId, canEditOrders);
   const customerEntries = directory.entries;
-  const customerPartyIds = useMemo(
-    () => customersMatching(customerEntries, settledSearch),
-    [customerEntries, settledSearch],
-  );
+  const customerPartyIds = customersMatching(customerEntries, settledSearch);
   const tagFilter = useSubjectTagFilter('order');
   const taggedIds = tagFilter.ids;
-  const query = useMemo<OrdersQuery>(
-    () => ({
-      customerPartyIds,
-      limit: pagination.pageSize,
-      offset: pagination.pageIndex * pagination.pageSize,
-      search: settledSearch,
-      status: statusFilter,
-      taggedIds,
-    }),
-    [customerPartyIds, pagination, settledSearch, statusFilter, taggedIds],
-  );
+  const query: OrdersQuery = {
+    customerPartyIds,
+    limit: pagination.pageSize,
+    offset: pagination.pageIndex * pagination.pageSize,
+    search: settledSearch,
+    status: statusFilter,
+    taggedIds,
+  };
   const orders$ = useOrders(legalEntityId, query);
   const { state } = orders$;
   // Selected orders by id, kept across pages: bulk actions need each order's status, not only its id.
@@ -134,8 +158,14 @@ const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
   const [createOpen, setCreateOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   // `?orderId=` (e.g. from an opportunity's related orders) opens that order's detail.
+  const initialSearch = useRouterState({ select: (router) => router.location.searchStr });
   const [detailId, setDetailId] = useState<string | null>(() =>
-    globalThis.location === undefined ? null : new URL(globalThis.location.href).searchParams.get('orderId'),
+    globalThis.location === undefined
+      ? null
+      : Option.match(Schema.decodeOption(OrdersPageQuerySchema)(initialSearch), {
+          onNone: () => null,
+          onSome: (decodedSearch) => decodedSearch.orderId ?? null,
+        }),
   );
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -187,13 +217,20 @@ const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
       return;
     }
     setBusy(true);
+    const input: {
+      -readonly [Key in keyof Parameters<typeof changeOrderStatuses>[0]]: Parameters<
+        typeof changeOrderStatuses
+      >[0][Key];
+    } = {
+      orders: targets,
+      revision: ready.records.revision,
+      status,
+    };
+    if (reason !== undefined) {
+      input.reason = reason;
+    }
     void browserRuntime.runPromise(
-      changeOrderStatuses({
-        orders: targets,
-        revision: ready.records.revision,
-        status,
-        ...(reason === undefined ? {} : { reason }),
-      }).pipe(
+      changeOrderStatuses(input).pipe(
         Effect.flatMap(({ changed, failed }) =>
           Effect.sync(() => {
             toaster.create(statusChangeNotification(t, status, targets.length, changed, failed));
@@ -220,60 +257,222 @@ const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
     runStatusChange(targets, status);
   };
 
+  return {
+    availableBulkStatuses,
+    busy,
+    canEditOrders,
+    canWrite,
+    createOpen,
+    detail,
+    directory,
+    filtered,
+    load,
+    orders,
+    orderTags,
+    pagination,
+    pendingCancel,
+    ready,
+    refilter,
+    requestStatus,
+    resetOpen,
+    runStatusChange,
+    search,
+    selected,
+    selectedOrdersAreFinal,
+    selectedStatusItems,
+    selection,
+    setCreateOpen,
+    setDetailId,
+    setPagination,
+    setPendingCancel,
+    setResetOpen,
+    setSearch,
+    setSelectedOrders,
+    setSelection,
+    setStatusFilter,
+    setTagsOpen,
+    stale,
+    state,
+    stats,
+    statusFilter,
+    statusItems,
+    t,
+    tagFilter,
+    tagsOpen,
+    toaster,
+    totalOrders,
+  };
+};
+
+const renderOrderStats = ({ stats, t }: ReturnType<typeof useOrdersPage>) => (
+  <StatRow>
+    <StatCard label={t(key('stats.total'))} value={stats === undefined ? '—' : formatNumber(stats.total)} />
+    <StatCard
+      hint={t(key('stats.openHint'))}
+      label={t(key('stats.open'))}
+      value={stats === undefined ? '—' : formatKc(stats.openValueMinor)}
+    />
+    <StatCard
+      label={t(key('stats.shipped'))}
+      value={stats?.shipped === undefined ? '—' : formatNumber(stats.shipped)}
+    />
+    <StatCard
+      label={t(key('stats.cancelled'))}
+      value={stats?.cancelled === undefined ? '—' : formatNumber(stats.cancelled)}
+    />
+  </StatRow>
+);
+
+const renderOrdersPageHeader = ({
+  canWrite,
+  ready,
+  setCreateOpen,
+  setResetOpen,
+  t,
+}: ReturnType<typeof useOrdersPage>) => (
+  <PageHeader
+    actions={
+      (ready?.records.canEditOrders ?? canWrite) || ready?.records.canResetDemo === true ? (
+        <div className="flex flex-wrap items-center gap-100">
+          {ready?.records.canResetDemo === true && (
+            <Button
+              className="shrink-0 whitespace-nowrap"
+              icon="icon-[mdi--restore]"
+              onClick={() => setResetOpen(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Obnovit ukázková data
+            </Button>
+          )}
+          {(ready?.records.canEditOrders ?? canWrite) && (
+            <Button
+              className="shrink-0 whitespace-nowrap"
+              icon="icon-[mdi--plus]"
+              onClick={() => setCreateOpen(true)}
+              size="sm"
+              variant="primary"
+            >
+              {t(key('create.title'))}
+            </Button>
+          )}
+        </div>
+      ) : undefined
+    }
+    description={t(key('description'))}
+    title={t(key('title'))}
+  />
+);
+
+/** Bulk controls keep the same selected orders and callbacks as the table model. */
+const renderOrderBulkActions = ({
+  availableBulkStatuses,
+  busy,
+  canWrite,
+  orderTags,
+  requestStatus,
+  selected,
+  selectedOrdersAreFinal,
+  selectedStatusItems,
+  setSelectedOrders,
+  setTagsOpen,
+  t,
+}: ReturnType<typeof useOrdersPage>) =>
+  canWrite && (
+    <>
+      <StatusText status="default">{t(key(bulkSelectionHint(selected.length > 0, orderTags.canWrite)))}</StatusText>
+      <BulkActionBar onClear={() => setSelectedOrders({})} selectedCount={selected.length}>
+        {orderTags.canWrite && (
+          <Button
+            disabled={busy}
+            icon="icon-[mdi--tag-multiple-outline]"
+            onClick={() => setTagsOpen(true)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(key('bulk.tags'))}
+          </Button>
+        )}
+        {availableBulkStatuses.length > 0 ? (
+          <SelectTemplate
+            disabled={busy}
+            items={selectedStatusItems}
+            label={t(key('bulk.changeStatus'))}
+            labelProps={{ className: 'sr-only' }}
+            name="bulkStatus"
+            onValueChange={(details) => {
+              const [next] = details.value;
+              const status = availableBulkStatuses.find((candidate) => candidate === next);
+              if (status !== undefined) {
+                requestStatus(selected, status);
+              }
+            }}
+            placeholder={t(key('bulk.statusPlaceholder'))}
+            size="sm"
+            value={[]}
+          />
+        ) : (
+          <StatusText showIcon status="default">
+            {t(key(bulkUnavailableStatusHint(selectedOrdersAreFinal, orderTags.canWrite)))}
+          </StatusText>
+        )}
+      </BulkActionBar>
+    </>
+  );
+
+const OrdersPageContent = (props: OrdersPageContentProps) => {
+  const model = useOrdersPage(props);
+  const {
+    busy,
+    canEditOrders,
+    canWrite,
+    createOpen,
+    detail,
+    directory,
+    filtered,
+    load,
+    orders,
+    orderTags,
+    pagination,
+    pendingCancel,
+    ready,
+    refilter,
+    requestStatus,
+    resetOpen,
+    runStatusChange,
+    search,
+    selected,
+    selection,
+    setCreateOpen,
+    setDetailId,
+    setPagination,
+    setPendingCancel,
+    setResetOpen,
+    setSearch,
+    setSelectedOrders,
+    setSelection,
+    setStatusFilter,
+    setTagsOpen,
+    stale,
+    state,
+    statusFilter,
+    statusItems,
+    t,
+    tagFilter,
+    tagsOpen,
+    toaster,
+    totalOrders,
+  } = model;
+
   return (
     <>
       <UltramodernRouteHead />
       <section className="flex min-w-0 flex-col gap-250">
-        <PageHeader
-          actions={
-            (ready?.records.canEditOrders ?? canWrite) || ready?.records.canResetDemo === true ? (
-              <div className="flex flex-wrap items-center gap-100">
-                {ready?.records.canResetDemo === true && (
-                  <Button
-                    className="shrink-0 whitespace-nowrap"
-                    icon="icon-[mdi--restore]"
-                    onClick={() => setResetOpen(true)}
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    Obnovit ukázková data
-                  </Button>
-                )}
-                {(ready?.records.canEditOrders ?? canWrite) && (
-                  <Button
-                    className="shrink-0 whitespace-nowrap"
-                    icon="icon-[mdi--plus]"
-                    onClick={() => setCreateOpen(true)}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {t(key('create.title'))}
-                  </Button>
-                )}
-              </div>
-            ) : undefined
-          }
-          description={t(key('description'))}
-          title={t(key('title'))}
-        />
+        {renderOrdersPageHeader(model)}
 
-        <StatRow>
-          <StatCard label={t(key('stats.total'))} value={stats === undefined ? '—' : formatNumber(stats.total)} />
-          <StatCard
-            hint={t(key('stats.openHint'))}
-            label={t(key('stats.open'))}
-            value={stats === undefined ? '—' : formatKc(stats.openValueMinor)}
-          />
-          <StatCard
-            label={t(key('stats.shipped'))}
-            value={stats?.shipped === undefined ? '—' : formatNumber(stats.shipped)}
-          />
-          <StatCard
-            label={t(key('stats.cancelled'))}
-            value={stats?.cancelled === undefined ? '—' : formatNumber(stats.cancelled)}
-          />
-        </StatRow>
+        {renderOrderStats(model)}
 
         <div className="flex flex-wrap items-end gap-150">
           <Input
@@ -322,66 +521,7 @@ const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
           </StatusText>
         )}
 
-        {canWrite && (
-          <>
-            <StatusText status="default">
-              {t(
-                key(
-                  selected.length === 0
-                    ? orderTags.canWrite
-                      ? 'bulk.selectHint'
-                      : 'bulk.selectStatusHint'
-                    : 'bulk.selectionScope',
-                ),
-              )}
-            </StatusText>
-            <BulkActionBar onClear={() => setSelectedOrders({})} selectedCount={selected.length}>
-              {orderTags.canWrite && (
-                <Button
-                  disabled={busy}
-                  icon="icon-[mdi--tag-multiple-outline]"
-                  onClick={() => setTagsOpen(true)}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {t(key('bulk.tags'))}
-                </Button>
-              )}
-              {availableBulkStatuses.length > 0 ? (
-                <SelectTemplate
-                  disabled={busy}
-                  items={selectedStatusItems}
-                  label={t(key('bulk.changeStatus'))}
-                  labelProps={{ className: 'sr-only' }}
-                  name="bulkStatus"
-                  onValueChange={(details) => {
-                    const [next] = details.value;
-                    const status = availableBulkStatuses.find((candidate) => candidate === next);
-                    if (status !== undefined) {
-                      requestStatus(selected, status);
-                    }
-                  }}
-                  placeholder={t(key('bulk.statusPlaceholder'))}
-                  size="sm"
-                  value={[]}
-                />
-              ) : (
-                <StatusText showIcon status="default">
-                  {t(
-                    key(
-                      selectedOrdersAreFinal
-                        ? orderTags.canWrite
-                          ? 'bulk.finalStatus'
-                          : 'bulk.finalStatusOnly'
-                        : 'bulk.noCommonStatus',
-                    ),
-                  )}
-                </StatusText>
-              )}
-            </BulkActionBar>
-          </>
-        )}
+        {renderOrderBulkActions(model)}
 
         <DataTable
           columnPinning={{ end: [], start: ['__select', 'number'] }}
@@ -475,9 +615,9 @@ const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
 
         <OrderDetailDialog
           busy={busy}
-          canWrite={canWrite}
-          canEditOrders={ready?.records.canEditOrders ?? canWrite}
           canCleanupDemo={ready?.records.canCleanupDemo === true}
+          canEditOrders={ready?.records.canEditOrders ?? canWrite}
+          canWrite={canWrite}
           currentPrincipalId={ready?.records.actorPrincipalRef.principalId}
           customers={directory}
           detail={detail}

@@ -132,10 +132,10 @@ describe('Inventory Stock Sharing Eligibility owner service', () => {
       let sequence = 0;
       const service = makeStockSharingEligibilityService({
         commerceValidator: validator,
-        makeEligibilityId: () => {
+        makeEligibilityId: Effect.sync(() => {
           sequence += 1;
           return `55555555-5555-4555-8555-55555555555${sequence}`;
-        },
+        }),
         persistence,
       });
       const broad = yield* service.establish(establishInput);
@@ -155,7 +155,7 @@ describe('Inventory Stock Sharing Eligibility owner service', () => {
       const persistence = yield* makePersistence;
       const service = makeStockSharingEligibilityService({
         commerceValidator: validator,
-        makeEligibilityId: () => '55555555-5555-4555-8555-555555555555',
+        makeEligibilityId: Effect.succeed('55555555-5555-4555-8555-555555555555'),
         persistence,
       });
       yield* service.establish(establishInput);
@@ -184,7 +184,7 @@ describe('Inventory Stock Sharing Eligibility owner service', () => {
       const persistence = yield* makePersistence;
       const service = makeStockSharingEligibilityService({
         commerceValidator: validator,
-        makeEligibilityId: () => '55555555-5555-4555-8555-555555555555',
+        makeEligibilityId: Effect.succeed('55555555-5555-4555-8555-555555555555'),
         persistence,
       });
       const established = yield* service.establish(establishInput);
@@ -222,10 +222,10 @@ describe('Inventory Stock Sharing Eligibility owner service', () => {
       let sequence = 0;
       const service = makeStockSharingEligibilityService({
         commerceValidator: validator,
-        makeEligibilityId: () => {
+        makeEligibilityId: Effect.sync(() => {
           sequence += 1;
           return `55555555-5555-4555-8555-55555555555${sequence}`;
-        },
+        }),
         persistence,
       });
       const broad = yield* service.establish(establishInput);

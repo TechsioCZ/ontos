@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -162,7 +163,7 @@ describe('Product attribute value committed selection source event', () => {
             message.topic === 'commerce.catalog.selection-source-changed.v1',
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('publishes the exact affected Variant for a Product source removal', () =>
@@ -187,7 +188,7 @@ describe('Product attribute value committed selection source event', () => {
         variantRef: inheritedVariants[1],
       });
       expect(state.outbox[0]?.event).toBe(state.events[0]?.reference);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('stays silent for an empty proven population and fails closed when proof is absent', () =>
@@ -212,6 +213,6 @@ describe('Product attribute value committed selection source event', () => {
       expect(failure).toMatchObject({ reason: 'Catalog could not prove the affected Variant population' });
       expect(unproven.events).toHaveLength(0);
       expect(unproven.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

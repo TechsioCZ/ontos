@@ -1,4 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { NodeCrypto } from '@effect/platform-node';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -24,7 +25,7 @@ import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { catalogImportAcceptanceServiceFactoryLive } from '../src/persistence/catalog-import-acceptance-service.ts';
 import { catalogLocalOverrideServiceFactoryLive } from '../src/persistence/catalog-local-override-service.ts';
@@ -255,8 +256,8 @@ const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabase
 
 const catalogReadinessLayer = HttpApiBuilder.group(catalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
-    // The marker comes from JSON, so its literal fields are decoded against the published schema.
-    Schema.decodeUnknownEffect(catalogMarkerSchema)(ultramodernApiMarker).pipe(
+    // The typed build marker is still decoded against the published readiness schema.
+    Schema.decodeEffect(catalogMarkerSchema)(ultramodernApiMarker).pipe(
       Effect.orDie,
       Effect.map((marker) => ({
         checks: {
@@ -334,6 +335,7 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const catalogReadRuntime = ReadRuntimeLive.pipe(
   Layer.provide(catalogExternalCorrelationResolverLive),
@@ -342,6 +344,7 @@ const catalogReadRuntime = ReadRuntimeLive.pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -584,6 +587,7 @@ export const makeCatalogApiRuntime = (
     Layer.provideMerge(nativeCompositionSourceLive),
     Layer.provideMerge(runtimeObservabilityLive),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   type CatalogHandlerRequirements =

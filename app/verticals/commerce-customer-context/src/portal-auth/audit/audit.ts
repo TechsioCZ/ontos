@@ -1,6 +1,9 @@
-import { createHmac } from 'node:crypto';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { Context, Effect, Layer, Redacted } from 'effect';
+import { Base64Url } from 'effect/encoding';
 import type { Scope } from 'effect';
 
 import { CommercePortalAuthDatabase } from '../persistence/portal-auth-database.ts';
@@ -39,7 +42,7 @@ export const unauditedCommercePortalAuthRecorder: CommercePortalAuthAuditRecorde
  * audit trail becoming a readable list of the portal's customers.
  */
 export const commercePortalAuthSubjectDigest = (email: string, secret: Redacted.Redacted): string =>
-  createHmac('sha256', Redacted.value(secret)).update(email.trim().toLowerCase()).digest('base64url');
+  Base64Url.encode(hmac(sha256, utf8ToBytes(Redacted.value(secret)), utf8ToBytes(email.trim().toLowerCase())));
 
 /**
  * The lenient recorder, for read-side and decision-only events: a refused sign-in, a rate-limited

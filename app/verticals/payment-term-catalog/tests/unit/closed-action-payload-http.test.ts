@@ -5,7 +5,7 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient as stableFetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient as stableFetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';

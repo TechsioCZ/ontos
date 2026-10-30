@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -164,7 +165,7 @@ describe('Variant attribute override committed selection source event', () => {
         topic: 'commerce.catalog.selection-source-changed.v1',
       });
       expect(Object.keys(state.events[0]?.payloadJson ?? {})).not.toContain('currentAtCommit');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('links one inherited-value event to the committed override release', () =>
@@ -193,7 +194,7 @@ describe('Variant attribute override committed selection source event', () => {
       });
       expect(state.outbox).toHaveLength(1);
       expect(state.outbox[0]?.event).toBe(state.events[0]?.reference);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('emits neither event nor outbox when the override write is rejected or stale', () =>
@@ -217,7 +218,7 @@ describe('Variant attribute override committed selection source event', () => {
       yield* handleRemoveVariantAttributeOverride(removePayload, rejectedRelease.value).pipe(Effect.flip);
       expect(rejectedRelease.events).toHaveLength(0);
       expect(rejectedRelease.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('emits nothing for a NEW_REALIZATION classification that cannot be an in-place override', () =>
@@ -240,6 +241,6 @@ describe('Variant attribute override committed selection source event', () => {
       yield* handleSetVariantAttributeOverride(payload, state.value).pipe(Effect.flip);
       expect(state.events).toHaveLength(0);
       expect(state.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

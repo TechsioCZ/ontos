@@ -4,10 +4,16 @@ import nodePath from 'node:path';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { appRoot, runOxlint } from './oxlint.mts';
+import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
 import type { LintRun } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
+import { noServiceConstructorImportsRule } from '../../anti-slop/effect/rules/no-service-constructor-imports.ts';
+import {
+  proveDictionaryElementOpenness,
+  proveInheritedPropertyLookups,
+  replaceOpaqueDecodedValue,
+} from '../../anti-slop/tests/fixtures/no-service-constructor-imports/runtime-counterexamples.ts';
 
 const factoryFilename = 'factory.ts';
 const consumerFilename = 'consumer.ts';
@@ -21,6 +27,8 @@ const boundSchemaDeclaration = (bound: string) =>
     bound,
     'export const BoundSchema = S.Finite.check(S.isInt(), S.isLessThanOrEqualTo(ceiling));',
   ].join('\n');
+
+const fixtureExecutable = () => 'executable';
 
 const ruleCode = 'anti-slop-effect(no-service-constructor-imports)';
 const serviceConstructorMessage =
@@ -572,28 +580,7 @@ it('proves closed schema dictionaries without erasing opaque or executable value
 });
 
 it('preserves dictionary element openness through local and parameter destructuring', () => {
-  const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));
-  const run = () => 'executable';
-  const value = { item: { id: 'data', run } };
-  const local = (input: typeof codec.Type) => {
-    const { item } = input;
-    return item;
-  };
-  const parameter = ({ item }: typeof codec.Type) => item;
-  expect(local(value)).toBe(value.item);
-  expect(parameter(value)).toBe(value.item);
-  expect(value.item.run()).toBe('executable');
-  let inheritedReads = 0;
-  const prototype = Object.defineProperty({}, 'item', {
-    get: () => {
-      inheritedReads += 1;
-      return value.item;
-    },
-  });
-  const inherited = { __proto__: prototype } as unknown as typeof codec.Type;
-  expect(local(inherited)).toBe(value.item);
-  expect(parameter(inherited)).toBe(value.item);
-  expect(inheritedReads).toBe(2);
+  proveDictionaryElementOpenness(fixtureExecutable);
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
     const consumer = nodePath.join(directory, consumerFilename);
@@ -640,11 +627,11 @@ it('keeps unknown present values unsafe through local, nested, and parameter def
     const { item } = value;
     if ('extra' in item) {
       const { extra = 'safe' } = item;
-      return (decode(extra) as unknown as string).replace('old', 'new');
+      return replaceOpaqueDecodedValue(decode(extra));
     }
     return 'safe';
   };
-  const value = { item: { id: 'data', extra: replacement } };
+  const value = { item: { extra: replacement, id: 'data' } };
   expect(unsafeMakeData(value)).toBe('executed');
   expect(calls).toBe(1);
 
@@ -697,7 +684,7 @@ it('joins every record branch when projecting named fields and dictionary elemen
   });
   const unsafeMakeData = (value: typeof codec.Type, flag: boolean) => {
     const selected = flag ? value : { item: { id: 'safe' } };
-    return (decode(selected.item) as unknown as string).replace('old', 'new');
+    return replaceOpaqueDecodedValue(decode(selected.item));
   };
   expect(unsafeMakeData({ item: replacement }, true)).toBe('executed');
   expect(calls).toBe(1);
@@ -756,7 +743,7 @@ it('preserves uncertainty when later object spreads can overwrite closed named f
   });
   const unsafeMakeData = (value: typeof codec.Type) => {
     const selected = { item: { id: 'safe' }, ...value };
-    return (decode(selected.item) as unknown as string).replace('old', 'new');
+    return replaceOpaqueDecodedValue(decode(selected.item));
   };
   expect(unsafeMakeData({ item: replacement })).toBe('executed');
   expect(calls).toBe(1);
@@ -796,80 +783,7 @@ it('preserves uncertainty when later object spreads can overwrite closed named f
 });
 
 it('does not prove inherited property lookups undefined through defaults, joins, or spreads', () => {
-  const decode = Schema.decodeUnknownSync(Schema.Json);
-  let calls = 0;
-  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
-    value: () => {
-      calls += 1;
-      return 'executed';
-    },
-  });
-  const execute = (value: { readonly id: string }) => (decode(value) as unknown as string).replace('old', 'new');
-  const decodeDictionary = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Literal('safe')));
-  expect(decodeDictionary({}).label).toBeUndefined();
-  expect(decodeDictionary({ label: 'safe' }).label).toBe('safe');
-  expect(Reflect.get(decodeDictionary({ toString: 'safe' }), 'toString')).toBe('safe');
-  expect(Reflect.get(decodeDictionary({ constructor: 'safe' }), 'constructor')).toBe('safe');
-  expect(Object.getPrototypeOf(decodeDictionary({ __proto__: null }))).toBe(Object.prototype);
-  expect(Object.getPrototypeOf(/(?<name>safe)/u.exec('safe')!.groups)).toBeNull();
-  const variants = [
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      return (dict.toString as unknown) === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      const { constructor = 'safe' } = dict;
-      return (constructor as unknown) === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      const selected = replacement.id === 'data' ? dict : { constructor: 'safe' };
-      return selected.constructor === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      return dict.label === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const empty = {};
-      return empty.toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const { toString = undefined } = {};
-      return toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const selected: { readonly toString?: unknown } = replacement.id === 'data' ? {} : { toString: undefined };
-      return selected.toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const selected = { ...{} };
-      return selected.toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const branch: { readonly toString?: unknown } = replacement.id === 'data' ? {} : { toString: undefined };
-      const selected = { ...branch };
-      const { toString = undefined } = selected;
-      return toString === undefined ? 'safe' : execute(value);
-    },
-  ];
-  expect(variants.map((makeData) => makeData(replacement))).toEqual(variants.map(() => 'executed'));
-  expect(calls).toBe(variants.length);
-  expect({}.constructor).toBe(Object);
-  expect(Reflect.get({}, '__proto__')).toBe(Object.prototype);
-  let getterCalls = 0;
-  const prototype = Object.defineProperty({ id: 'prototype' }, 'extra', {
-    get: () => {
-      getterCalls += 1;
-      return 'inherited';
-    },
-  });
-  const inherited: { readonly extra?: string } = { __proto__: prototype } as { readonly extra?: string };
-  expect(inherited.extra === undefined ? 'safe' : execute(replacement)).toBe('executed');
-  expect(getterCalls).toBe(1);
-  expect(calls).toBe(variants.length + 1);
-
+  proveInheritedPropertyLookups();
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
     const consumer = nodePath.join(directory, consumerFilename);
@@ -944,14 +858,13 @@ it('does not prove inherited property lookups undefined through defaults, joins,
 });
 
 it('does not treat Schema.Json validation as closure of opaque object inputs', () => {
-  const run = () => 'executable';
-  const hidden = Object.defineProperty({ id: 'data' }, 'run', { value: run });
+  const hidden = Object.defineProperty({ id: 'data' }, 'run', { value: fixtureExecutable });
   const symbol = Symbol('run');
-  const symbolValue = Object.defineProperty({ id: 'data' }, symbol, { value: run });
+  const symbolValue = Object.defineProperty({ id: 'data' }, symbol, { value: fixtureExecutable });
   const decode = Schema.decodeUnknownSync(Schema.Json);
   expect(decode(hidden)).toBe(hidden);
-  expect(Object.getOwnPropertyDescriptor(decode(hidden), 'run')?.value).toBe(run);
-  expect(Object.getOwnPropertyDescriptor(decode(symbolValue), symbol)?.value).toBe(run);
+  expect(Object.getOwnPropertyDescriptor(decode(hidden), 'run')?.value).toBe(fixtureExecutable);
+  expect(Object.getOwnPropertyDescriptor(decode(symbolValue), symbol)?.value).toBe(fixtureExecutable);
   const dictionary = { item: hidden };
   expect(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(dictionary).item).toBe(hidden);
   let calls = 0;
@@ -961,11 +874,11 @@ it('does not treat Schema.Json validation as closure of opaque object inputs', (
       return 'executed';
     },
   });
-  const unsafeMakeData = (value: { readonly id: string }) => (decode(value) as unknown as string).replace('old', 'new');
+  const unsafeMakeData = (value: { readonly id: string }) => replaceOpaqueDecodedValue(decode(value));
   expect(unsafeMakeData(replacement)).toBe('executed');
   const decodeDictionary = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json));
   const unsafeDictionaryMakeData = (value: { readonly item: { readonly id: string } }) =>
-    (decodeDictionary(value).item as unknown as string).replace('old', 'new');
+    replaceOpaqueDecodedValue(decodeDictionary(value).item);
   expect(unsafeDictionaryMakeData({ item: replacement })).toBe('executed');
   expect(calls).toBe(2);
 
@@ -1064,6 +977,34 @@ it('requires concrete data calls for opaque generic payloads', () => {
     );
     expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
   });
+});
+
+it('proves pure byte hashing in generic data calls and rejects executable or unmodeled hashing', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(
+      factory,
+      'export const makePayload = <Value extends object>({ id, entries }: { readonly id: string; readonly entries: readonly Value[] }) => ({ id, entries });',
+    );
+    const shaImport = "import { sha256 } from '@noble/hashes/sha2.js';";
+    const declaration = [
+      shaImport,
+      "import { utf8ToBytes } from '@noble/hashes/utils.js';",
+      "import { Hex } from 'effect/encoding';",
+      "import { makePayload } from './factory.ts';",
+      'export const makeEnvelope = (id: string) => makePayload({ id: Hex.encode(sha256(utf8ToBytes(id))), entries: [{ label: id }] });',
+    ].join('\n');
+    writeFileSync(consumer, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(true);
+    writeFileSync(consumer, declaration.replace('utf8ToBytes(id)', 'utf8ToBytes(fetch(id))'));
+    expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
+    writeFileSync(
+      consumer,
+      declaration.replace(shaImport, "import { sha512 as sha256 } from '@noble/hashes/sha2.js';"),
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
+  }, testsDirectory);
 });
 
 it('rejects typed effectful schema helpers and shadowed native assignments', () => {
@@ -1554,6 +1495,124 @@ it('accepts reference factories beside native domain contracts but rejects execu
     for (const [declaration, expected] of declarations) {
       writeFileSync(factory, declaration);
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(expected);
+    }
+  });
+});
+
+it('accepts only deployment-bound native Layer composition and preserves constructor controls', () => {
+  withTemporaryWorkspace((directory) => {
+    const actualRuntime = nodePath.relative(
+      directory,
+      nodePath.join(appRoot, 'packages/core-runtime/src/actions/runtime.ts'),
+    );
+    const layerFactorySource = './layer-factory.ts';
+    const layerFactory = [
+      'import { Effect, Layer, Context } from "effect";',
+      'const Tag = Context.Service("Tag");',
+      'export const makeRuntime = (deployment) => Layer.effect(Tag, Effect.gen(function* () { return deployment; }));',
+    ].join('\n');
+    writeFileSync(nodePath.join(directory, 'layer-factory.ts'), layerFactory);
+    writeFileSync(
+      nodePath.join(directory, 'effect-factory.ts'),
+      layerFactory.replace(
+        'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
+        'Effect.succeed(deployment)',
+      ),
+    );
+    writeFileSync(
+      nodePath.join(directory, 'eager-factory.ts'),
+      layerFactory.replace(
+        'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
+        '{ fetch("runtime"); return Layer.effect(Tag, Effect.gen(function* () { return deployment; })); }',
+      ),
+    );
+    writeFileSync(nodePath.join(directory, 'mutated-factory.ts'), `${layerFactory}\nLayer.effect = counterfeit;`);
+    writeFileSync(
+      nodePath.join(directory, 'escaped-factory-namespace.ts'),
+      `${layerFactory}\nObject.assign(Layer, counterfeit);`,
+    );
+    const source = [
+      'import { Effect as Fx, Layer as Layers } from "effect";',
+      'import { ActiveApplicationCompositionService as Composition } from "@app/core-runtime/modules/active-application-composition";',
+      'import { makeRuntime as makeBoundRuntime } from "./layer-factory.ts";',
+      'const runtime = Layers.unwrap(Fx.gen(function* () {',
+      '  const snapshot = yield* (yield* Composition).load;',
+      '  return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
+      '}));',
+    ].join('\n');
+    const valid = {
+      'actual-runtime.ts': source
+        .replace('makeRuntime as makeBoundRuntime', 'makeActionRuntimeLive as makeBoundRuntime')
+        .replace(layerFactorySource, actualRuntime),
+      'native-layer.ts': source,
+    };
+    const invalid = {
+      'eager-factory-consumer.ts': source.replace(layerFactorySource, './eager-factory.ts'),
+      'effect-factory-consumer.ts': source.replace(layerFactorySource, './effect-factory.ts'),
+      'escaped-factory-namespace-consumer.ts': source.replace(layerFactorySource, './escaped-factory-namespace.ts'),
+      'escaped-factory.ts': `${source}\nvoid makeBoundRuntime;`,
+      'escaped-layer.ts': `${source}\nObject.assign(Layers, counterfeit);`,
+      'fake-snapshot.ts': source.replace(
+        'yield* (yield* Composition).load',
+        '{ composition: { shell: { deployment: {} } } }',
+      ),
+      'foreign-composition.ts': source.replace(
+        '@app/core-runtime/modules/active-application-composition',
+        './foreign-composition.ts',
+      ),
+      'foreign-effect.ts': source.replace('from "effect"', 'from "foreign-effect"'),
+      'hardcoded-deployment.ts': source.replace(
+        'snapshot.composition.shell.deployment',
+        '{ appId: "shell", buildMarker: "fake" }',
+      ),
+      'laundered-return.ts': source.replace(
+        'return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
+        'return Fx.succeed(makeBoundRuntime(snapshot.composition.shell.deployment));',
+      ),
+      'mutated-deployment.ts': source.replace(
+        '  return makeBoundRuntime',
+        '  snapshot.composition.shell.deployment = replacement;\n  return makeBoundRuntime',
+      ),
+      'mutated-factory-consumer.ts': source.replace(layerFactorySource, './mutated-factory.ts'),
+      'mutated-layer.ts': `${source}\nLayers.unwrap = counterfeit;`,
+      'nested-business.ts': source.replace('const runtime =', 'function business() { return').replace('}));', '})); }'),
+      'shadowed-composition.ts': source.replace(
+        '  const snapshot',
+        '  const Composition = fakeService;\n  const snapshot',
+      ),
+      'shadowed-layer.ts': source
+        .replace('const runtime =', 'function business(Layers) { return')
+        .replace('}));', '})); }'),
+      'wrong-deployment.ts': source.replace(
+        'snapshot.composition.shell.deployment',
+        'snapshot.composition.other.deployment',
+      ),
+    };
+    const files = Object.entries({ ...valid, ...invalid }).map(([name, candidate]) => {
+      const filename = nodePath.join(directory, name);
+      writeFileSync(filename, candidate);
+      return filename;
+    });
+    const run = runOxlint(lintConfig, files, directory);
+    expect(run.numberOfFiles).toBe(files.length);
+    for (const name of Object.keys(valid)) {
+      expect(
+        run.diagnostics.filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name),
+        name,
+      ).toEqual([]);
+    }
+    for (const name of Object.keys(invalid)) {
+      expect(
+        run.diagnostics.filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name),
+        name,
+      ).toHaveLength(1);
+      expect(
+        run.diagnostics.find(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name)
+          ?.message,
+        name,
+      ).toBe(
+        noServiceConstructorImportsRule.meta?.messages?.serviceConstructorImport.replace('{{name}}', 'makeRuntime'),
+      );
     }
   });
 });

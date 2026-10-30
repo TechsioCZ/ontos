@@ -1,4 +1,4 @@
-import { cpSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync } from 'node:fs';
 import nodePath from 'node:path';
 
 import { Schema } from 'effect';
@@ -29,6 +29,11 @@ for (const rule of listRuleNames()) {
         });
       }
       const paths = listFilesRecursively(directory).map((file) => nodePath.relative(directory, file));
+      // Imported fixture sources belong to the copied graph, but are not lint targets.
+      const support = nodePath.join(fixturesDirectory, rule, 'support');
+      if (existsSync(support)) {
+        cpSync(support, nodePath.join(directory, 'support'), { recursive: true });
+      }
       const run = runOxlint(nodePath.join(testsDirectory, 'production-fixture.config.ts'), paths, directory, rule);
       expect(run.numberOfFiles, `${rule}: production run skipped fixture files`).toBe(paths.length);
       expect(run.exitCode, `${rule}: production defaults must have a positive fixture`).toBe(1);

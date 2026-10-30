@@ -4,8 +4,8 @@ const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxL
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 
-const brandedReference = <Brand extends string>(brand: Brand) =>
-  stableReference.pipe(Schema.brand(brand), Schema.decodeTo(Schema.String));
+const brandedReference = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
+  stableReference.pipe(Schema.brand<Brand>(brand), Schema.decodeTo(Schema.String));
 
 export const PricingTenantIdSchema = brandedReference('PricingTenantId');
 export const PricingRevisionSchema = brandedReference('PricingRevision');

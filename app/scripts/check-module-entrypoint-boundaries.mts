@@ -14,7 +14,7 @@ import {
   Schema,
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { ActionProvisioningIntentSchema } from '../packages/core-runtime/src/authorization/entrypoint-classification.ts';
 import {

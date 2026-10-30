@@ -1,11 +1,7 @@
 import { DateTime } from 'effect';
 import { expect, it } from 'effect-rstest';
-import {
-  addDays,
-  attentionItems,
-  type FinanceRecords,
-  type OverviewSources,
-} from '../../src/routes/[lang]/nemovitosti/prehled/overview-model.ts';
+import { addDays, attentionItems } from '../../src/routes/[lang]/nemovitosti/prehled/overview-model.ts';
+import type { FinanceRecords, OverviewSources } from '../../src/routes/[lang]/nemovitosti/prehled/overview-model.ts';
 
 it('uses Czech cardinal day forms in overdue invoice attention details', () => {
   const now = DateTime.makeUnsafe('2026-10-20T00:00:00Z');
@@ -19,8 +15,6 @@ it('uses Czech cardinal day forms in overdue invoice attention details', () => {
   ] as const) {
     const finance: FinanceRecords = {
       canWrite: true,
-      referenceDate: '2026-10-05',
-      revision: 0,
       indicators: {
         costMinor: 0,
         costVarianceMinor: 0,
@@ -37,6 +31,8 @@ it('uses Czech cardinal day forms in overdue invoice attention details', () => {
         revenueMinor: 100_000,
         revenueVarianceMinor: 100_000,
       },
+      referenceDate: '2026-10-05',
+      revision: 0,
       state: {
         financialPlanEntries: [],
 
@@ -47,12 +43,11 @@ it('uses Czech cardinal day forms in overdue invoice attention details', () => {
             businessState: 'CONFIRMED',
             counterpartyRef: {
               moduleId: 'party.registry',
-              resourceType: 'party.registry.counterparty',
               resourceId: 'counterparty',
+              resourceType: 'party.registry.counterparty',
               tenantId,
             },
             createdAt: now,
-            updatedAt: now,
             currency: 'CZK',
             direction: 'OUTGOING',
             documentNumber: 'FV-2026-0007',
@@ -60,20 +55,21 @@ it('uses Czech cardinal day forms in overdue invoice attention details', () => {
             issueDate: '2026-09-01',
             paidMinor: 40_000,
             paymentState: 'PARTIALLY_PAID',
-            totalMinor: 100_000,
             ref: {
               moduleId: 'finance.billing',
-              resourceType: 'finance.billing.invoice',
               resourceId: 'invoice',
+              resourceType: 'finance.billing.invoice',
               tenantId,
             },
+            totalMinor: 100_000,
+            updatedAt: now,
           },
         ],
       },
     };
     const sources: OverviewSources = {
-      finance: { status: 'ready', data: finance },
       agreements: { status: 'unavailable' },
+      finance: { data: finance, status: 'ready' },
       occupancy: { status: 'unavailable' },
       property: { status: 'unavailable' },
       work: { status: 'unavailable' },

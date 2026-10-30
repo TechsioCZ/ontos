@@ -218,7 +218,7 @@ it.effect('non-enrolled audiences and contexts without an assertion keep the ses
       expect(statements[0]?.sql).toContain("set_config('ontos.tenant_id'");
       expect(statements[0]?.params).toEqual([tenantId, '']);
       expect(statements[1]?.sql).toContain("current_setting('ontos.tenant_id', true)");
-      expect(statements.some(({ sql }) => sql.includes('trust.'))).toBe(false);
+      expect(statements.some(({ sql: statementSql }) => statementSql.includes('trust.'))).toBe(false);
       expect(statements.some(({ params }) => params.includes(assertionValue))).toBe(false);
     }
   }),
@@ -242,7 +242,7 @@ it.effect('a gateway-grant role never trusts session settings, even when they ma
         tenant_id: tenantId,
       });
       expectOperationContextUnavailable(result);
-      expect(statements.some(({ sql }) => sql.includes('trust.'))).toBe(false);
+      expect(statements.some(({ sql: statementSql }) => statementSql.includes('trust.'))).toBe(false);
     }
   }),
 );
@@ -353,11 +353,9 @@ it.effect('a login outside the enrolled identities cannot authorize domain SQL e
       const result = yield* Effect.exit(
         database.transaction((transaction) =>
           Effect.gen(function* installBeforeDomainSql() {
-            if (installer === 'scope') {
-              yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-            } else {
-              yield* installOperationalScopeAt(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-            }
+            yield* installer === 'scope'
+              ? installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+              : installOperationalScopeAt(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             yield* transaction.execute(sql`select * from private_owner_data`, 'objects');
           }),
         ),
@@ -366,8 +364,10 @@ it.effect('a login outside the enrolled identities cannot authorize domain SQL e
       expect(statements[0]?.sql).toBe('BEGIN');
       expect(statements[1]?.sql).toContain("set_config('ontos.tenant_id'");
       expect(statements[1]?.params).toEqual([scope.tenantId, scope.legalEntityId]);
-      expect(statements.some(({ sql }) => sql.includes('current_user::text as role'))).toBe(true);
-      expect(statements.some(({ sql }) => sql.includes('private_owner_data'))).toBe(false);
+      expect(statements.some(({ sql: statementSql }) => statementSql.includes('current_user::text as role'))).toBe(
+        true,
+      );
+      expect(statements.some(({ sql: statementSql }) => statementSql.includes('private_owner_data'))).toBe(false);
       expect(statements).toHaveLength(installer === 'scope' ? 4 : 3);
       expect(statements.at(-1)?.sql).toBe('ROLLBACK');
     }

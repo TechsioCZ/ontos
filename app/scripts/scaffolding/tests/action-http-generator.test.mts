@@ -13,7 +13,11 @@ import {
   renderActionHttpContract,
   renderActionHttpProblems,
 } from '../action-http/scaffold.mts';
-import { createOrUpdateOwnedGeneratedMutationEffect } from '../shared.mts';
+import {
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  createOrUpdateOwnedGeneratedMutationEffect,
+} from '../shared.mts';
 import type { OntosVerticalMetadata } from '../shared.mts';
 
 const vertical = {
@@ -56,6 +60,43 @@ it('accepts callable Effect union domain schemas and rejects malformed schema de
     'createProductAction',
   );
   expect(Option.isNone(invalid)).toBe(true);
+});
+
+it('composes the production Action runtime with Node platform Crypto beside the database configuration', () => {
+  const assemblerImport = "import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';";
+  const runtimeRoot = [
+    "import { DatabaseConfigLive } from '@app/core-runtime';",
+    assemblerImport,
+    "import { Layer } from '@modern-js/bff-effect/effect-edge';",
+    "import { pricingPolicyReadRuntimeLive } from './pricing-policy-production-layers.ts';",
+    '',
+    'const productionReadRuntimeLive = pricingPolicyReadRuntimeLive.pipe(',
+    '  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),',
+    ');',
+    'const handlers = Layer.mergeAll(',
+    `  ${GOVERNED_HTTP_HANDLER_LAYER_SLOT_START}`,
+    `  ${GOVERNED_HTTP_HANDLER_LAYER_SLOT_END}`,
+    ');',
+    '',
+  ].join('\n');
+  const patched = patchRuntimeRoot(runtimeRoot, vertical, 'changeRateActionApiLive');
+  expect(patched).toContain(
+    'const productionActionRuntimeLive = pricingPolicyActionRuntimeLive.pipe(\n  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),\n  Layer.provide(actionHttpDatabaseIdentitiesLive),\n);\nconst productionReadRuntimeLive',
+  );
+  expect(patched).toContain(
+    'const actionHttpDatabaseIdentitiesLive = makeActionHttpDatabaseIdentityEnrollmentLive(\n  defineActionHttpDatabaseIdentityEnrollment([]),\n);',
+  );
+  expect(patched).toContain(
+    'const productionReadRuntimeLive = pricingPolicyReadRuntimeLive.pipe(\n  Layer.provide(actionHttpDatabaseIdentitiesLive),\n  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),\n);',
+  );
+  expect(patched).toContain(`import { NodeCrypto } from '@effect/platform-node';\n${assemblerImport}`);
+  expect(patched).toContain(
+    "import { pricingPolicyActionRuntimeLive, pricingPolicyReadRuntimeLive } from './pricing-policy-production-layers.ts';",
+  );
+  expect(patchRuntimeRoot(patched, vertical, 'changeRateActionApiLive')).toBe(patched);
+  expect(() =>
+    patchRuntimeRoot(runtimeRoot.replace(`${assemblerImport}\n`, ''), vertical, 'changeRateActionApiLive'),
+  ).toThrow();
 });
 
 it('renders one exact typed Action endpoint and exhaustive domain mapping', () => {
@@ -275,6 +316,7 @@ it.live(
 
 it('publishes bare Action groups and exposes the injected runtime through request services exactly once', () => {
   const source = `
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { pricingPolicyReadRuntimeLive } from './pricing-policy-production-layers.ts';
 const productionReadRuntimeLive = pricingPolicyReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
 type PricingPolicyApiRuntimeArguments = readonly [

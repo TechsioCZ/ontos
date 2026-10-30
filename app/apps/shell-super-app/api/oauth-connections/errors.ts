@@ -1,47 +1,6 @@
-/**
- * Errors of the OAuth connection grant (lane mcp-connection-grants). HTTP mapping used by connect-http.ts and
- * connector-http.ts: Unavailable 503, Unauthorized 401 (connector: `WWW-Authenticate: Bearer error="invalid_token"`),
- * Forbidden 403, Invalid 400 (`oauth_query_invalid`, `modules_invalid`) or 404 (`draft_not_found`, `grant_not_found`,
- * `connection_active`).
- */
-import { Data } from 'effect';
-
-/** Database, SpiceDB or catalog failure. */
-export class ConnectionUnavailable extends Data.TaggedError('ConnectionUnavailable')<{ readonly cause: unknown }> {}
-
-export type ConnectionUnauthorizedCode =
-  | 'agent_disabled'
-  | 'binding_inactive'
-  | 'connector_key_invalid'
-  | 'grant_inactive'
-  | 'membership_missing'
-  | 'operator_removed'
-  | 'principal_inactive'
-  | 'session_missing'
-  | 'token_invalid'
-  | 'token_missing'
-  | 'user_disabled';
-
-/** Missing/invalid connector secret, user token, session or an inactive grant. `code` is for logs only. */
-export class ConnectionUnauthorized extends Data.TaggedError('ConnectionUnauthorized')<{
-  readonly code: ConnectionUnauthorizedCode;
-}> {}
-
-/** Authenticated but not allowed. `code` is a `ConnectProblemCode`; `reason` is Czech and shown to the person. */
-export class ConnectionForbidden extends Data.TaggedError('ConnectionForbidden')<{
-  readonly code: string;
-  readonly reason: string;
-}> {}
-
-/**
- * Expired/forged signed OAuth query, unknown draft or grant, a malformed module list, or `connection_active` (this
- * session already approved the connection, e.g. Back or reload after Povolit přístup).
- */
-export class ConnectionInvalid extends Data.TaggedError('ConnectionInvalid')<{
-  readonly code:
-    | 'connection_active'
-    | 'draft_not_found'
-    | 'grant_not_found'
-    | 'modules_invalid'
-    | 'oauth_query_invalid';
-}> {}
+/** OAuth connection errors retain the connect and connector transport mappings. */
+export { ConnectionForbidden } from './connection-forbidden.ts';
+export { ConnectionInvalid } from './connection-invalid.ts';
+export { ConnectionUnauthorized } from './connection-unauthorized.ts';
+export type { ConnectionUnauthorizedCode } from './connection-unauthorized.ts';
+export { ConnectionUnavailable } from './connection-unavailable.ts';

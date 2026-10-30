@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -123,7 +124,7 @@ describe('govern Product Attribute applicability Action', () => {
         productRef,
         revision: 1,
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('declares conflict and unavailable failures under the governed Action lifecycle', () => {

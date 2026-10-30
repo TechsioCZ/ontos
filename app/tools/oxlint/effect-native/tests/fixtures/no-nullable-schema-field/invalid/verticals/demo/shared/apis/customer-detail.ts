@@ -1,6 +1,6 @@
 // expect-count: 5
 import { Schema } from 'effect';
-import { HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const ContactsIsoTimestampSchema = Schema.String.check(Schema.isMinLength(1));
 const ContactsIcoSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u));

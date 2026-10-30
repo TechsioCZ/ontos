@@ -46,7 +46,7 @@ const requireDeclaredSellerVatRegime = (
   );
 
 /** CZK is the Launch currency cutline; foreign Price/FX data never activates another currency (#918 F31-F33). */
-const requireLaunchCurrency = (currency: string): Result.Result<void, TaxCaseUnsupported> =>
+export const requireLaunchCurrency = (currency: string): Result.Result<void, TaxCaseUnsupported> =>
   currency === 'CZK'
     ? Result.void
     : Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NON_CZK_CURRENCY' });
@@ -61,6 +61,20 @@ const requireOrdinaryDomesticRegime = (
     : Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: unsupported });
 };
 
+/** A positive unsupported requirement is decisive even when the rest of the material predicate is incomplete. */
+export const requireLaunchCaseRequirements = (
+  input: Pick<LaunchTaxCoverageInput, 'requiredTaxRegimes' | 'requiredTaxTreatments'>,
+): Result.Result<void, TaxCaseUnsupported> =>
+  pipe(
+    requireOrdinaryDomesticRegime(input.requiredTaxRegimes),
+    Result.flatMap(() =>
+      Result.all(
+        pipe(Arr.sort(input.requiredTaxTreatments, Order.String), Arr.map(requireLaunchActivatedTaxTreatment)),
+      ),
+    ),
+    Result.flatMap(() => Result.void),
+  );
+
 /**
  * Closed-world Launch Tax Coverage over explicit inputs (#918 F1-F42). Scope is decided before the seller
  * prerequisite, so a known-negative seller is reported only for an otherwise supported case (#938 F7). Required
@@ -72,12 +86,7 @@ export const evaluateLaunchTaxCoverage = (
 ): Result.Result<LaunchTaxCoverageResult, LaunchTaxCoverageFailure> =>
   pipe(
     requireLaunchCurrency(input.currency),
-    Result.flatMap(() => requireOrdinaryDomesticRegime(input.requiredTaxRegimes)),
-    Result.flatMap(() =>
-      Result.all(
-        pipe(Arr.sort(input.requiredTaxTreatments, Order.String), Arr.map(requireLaunchActivatedTaxTreatment)),
-      ),
-    ),
+    Result.flatMap(() => requireLaunchCaseRequirements(input)),
     Result.flatMap(() => mapTaxableSupplyUnits(input.supplyMeanings)),
     Result.flatMap((units) =>
       pipe(

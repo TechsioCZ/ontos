@@ -1,9 +1,11 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // E-shop product administration: real variants (SKU, price, stock, active), images, publication and availability.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
@@ -11,9 +13,15 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { formatDateTime, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { Availability, ProductVariant, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
+import type {
+  Availability,
+  ProductVariant,
+  StockMovementReason,
+  VariantId,
+} from '../../../../../shared/domain/merchandise-model.ts';
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
@@ -23,20 +31,22 @@ import { moveImage } from './product-images.ts';
 import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../../../../shared/storefront-urls.ts';
 
 export const imageUrl = (reference: string): string | undefined => {
-  if (/^https?:\/\//u.test(reference)) return reference;
+  if (/^https?:\/\//u.test(reference)) {
+    return reference;
+  }
   const path = reference.startsWith('/') ? reference : `/${reference}`;
   const origin = path.startsWith('/akros/') ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
   return origin === undefined ? undefined : `${origin}${path}`;
 };
 
-const availabilityPresentation: Readonly<
-  Record<Availability, { readonly label: string; readonly variant: 'danger' | 'outline' | 'success' | 'warning' }>
-> = {
+const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
   LOW_STOCK: { label: 'Poslední kusy', variant: 'warning' },
   OUT_OF_STOCK: { label: 'Nedostupné', variant: 'danger' },
   UNKNOWN: { label: 'Nelze ověřit', variant: 'outline' },
-};
+} as const satisfies Readonly<
+  Record<Availability, { readonly label: string; readonly variant: 'danger' | 'outline' | 'success' | 'warning' }>
+>;
 
 export const AvailabilityBadge = ({ value }: { readonly value: Availability | undefined }) => {
   const presentation = availabilityPresentation[value ?? 'UNKNOWN'];
@@ -48,7 +58,7 @@ export const AvailabilityBadge = ({ value }: { readonly value: Availability | un
 };
 
 const parseCzk = (text: string): number | null => {
-  const normalized = text.replace(/\s/gu, '').replace(',', '.');
+  const normalized = text.replaceAll(/\s/gu, '').replace(',', '.');
   if (normalized === '') {
     return null;
   }
@@ -66,33 +76,232 @@ interface VariantDraft {
   readonly sku: string;
 }
 
-const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] =>
-  (product.variants ?? []).filter(isRealVariant).map((variant) => ({
-    active: variant.active !== false,
-    attributes: variant.attributes,
-    id: variant.id,
-    key: variant.id,
-    name: variant.name,
-    priceText: moneyInputText(variant.priceMinor / 100),
-    sku: variant.sku ?? '',
-  }));
+const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] => {
+  const drafts: VariantDraft[] = [];
+  for (const variant of product.variants ?? []) {
+    if (isRealVariant(variant)) {
+      drafts.push({
+        active: variant.active !== false,
+        attributes: variant.attributes,
+        id: variant.id,
+        key: variant.id,
+        name: variant.name,
+        priceText: moneyInputText(variant.priceMinor / 100),
+        sku: variant.sku ?? '',
+      });
+    }
+  }
+  return drafts;
+};
 
 interface PanelProps {
-  readonly storefrontOrigin?: string;
-  readonly onArchived?: () => void;
-  readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
+  readonly canWrite: boolean;
+  readonly onArchived?: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
   readonly product: ProductRecord;
   readonly revision: number;
+  readonly storefrontOrigin?: string;
 }
+
+type MovementReason = Exclude<StockMovementReason, 'ORDER'>;
+const reasonLabels = {
+  ADJUSTMENT: 'Korekce (inventura)',
+  ISSUE: 'Výdej',
+  RECEIPT: 'Příjem',
+} as const satisfies Readonly<Record<MovementReason, string>>;
+const movementReasons = Object.keys(reasonLabels).filter(
+  (value): value is MovementReason => value === 'ADJUSTMENT' || value === 'ISSUE' || value === 'RECEIPT',
+);
+const variantMovementDelta = (reason: MovementReason, quantity: number) => {
+  if (reason === 'ISSUE') {
+    return -Math.abs(quantity);
+  }
+  return reason === 'RECEIPT' ? Math.abs(quantity) : quantity;
+};
+
+/** Stock movement for one variant (ledger entry with variantId). */
+const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
+  const { t } = useModernI18n();
+  const failure = useCommandFailure();
+  const variants = product.variantRecords ?? [];
+  const [variantId, setVariantId] = useState<string>(variants[0]?.id ?? '');
+  const [reason, setReason] = useState<MovementReason>('RECEIPT');
+  const [quantityText, setQuantityText] = useState('10');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!canWrite) {
+    return null;
+  }
+  const variant = variants.find((entry) => entry.id === variantId);
+  const quantity = Number(quantityText.replaceAll(/\s/gu, '').replace(',', '.'));
+  const valid =
+    variant !== undefined && Number.isInteger(quantity) && quantity !== 0 && (reason === 'ADJUSTMENT' || quantity > 0);
+
+  const submit = () => {
+    if (!valid || variant === undefined || busy) {
+      setError('Zadejte celé nenulové množství.');
+      return;
+    }
+    const delta = variantMovementDelta(reason, quantity);
+    setBusy(true);
+    setError(null);
+    runCommand(
+      {
+        _tag: 'RecordStockMovement',
+        delta,
+        note: `Varianta ${variant.name}`,
+        productId: product.id,
+        reason,
+        variantId: variant.id,
+      },
+      revision,
+      (outcome) => {
+        setBusy(false);
+        if (!outcome.ok) {
+          setError(
+            outcome.reason === 'rejected'
+              ? 'Sklad varianty nesmí klesnout pod nulu.'
+              : failure(outcome.reason, onReload),
+          );
+          return;
+        }
+        onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
+      },
+    );
+  };
+
+  return (
+    <SectionCard title={t('merchandise.ui.variantStockMovement')}>
+      <div className="grid grid-cols-1 items-end gap-200 sm:grid-cols-[minmax(0,1fr)_12rem_8rem_auto]">
+        <SelectTemplate
+          items={variants.map((entry) => ({ label: `${entry.name} (${entry.stockOnHand} ks)`, value: entry.id }))}
+          label={t('merchandise.ui.variant')}
+          name="stockVariant"
+          onValueChange={(details) => setVariantId(details.value[0] ?? '')}
+          placeholder={t('merchandise.ui.selectVariant')}
+          size="sm"
+          value={variantId === '' ? [] : [variantId]}
+        />
+        <SelectTemplate
+          items={movementReasons.map((value) => ({
+            label: reasonLabels[value],
+            value,
+          }))}
+          label={t('merchandise.ui.movementType')}
+          name="stockReason"
+          onValueChange={(details) => {
+            const next = movementReasons.find((value) => value === details.value[0]);
+            if (next !== undefined) {
+              setReason(next);
+            }
+          }}
+          placeholder={t('merchandise.ui.type')}
+          size="sm"
+          value={[reason]}
+        />
+        <FormNumericInput
+          formatOptions={WHOLE_NUMBER_FORMAT}
+          id="variant-stock-quantity"
+          label={t('merchandise.ui.quantityPieces')}
+          locale="cs-CZ"
+          name="variantStockQuantity"
+          onValueChange={(details) => setQuantityText(details.value)}
+          size="sm"
+          value={quantityText}
+        >
+          <NumericInput.Control>
+            <NumericInput.Input aria-valuemax={undefined} />
+          </NumericInput.Control>
+        </FormNumericInput>
+        <Button
+          isLoading={busy}
+          loadingText="Zapisuji…"
+          onClick={submit}
+          theme="outlined"
+          type="button"
+          variant="secondary"
+        >
+          Zapsat pohyb
+        </Button>
+      </div>
+      {error !== null && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+    </SectionCard>
+  );
+};
+
+export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
+  const { t } = useModernI18n();
+  const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
+    variant.priceHistory.map((entry, index) => ({
+      at: entry.effectiveFrom,
+      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
+      key: `${variant.id}-${index}`,
+      name: `${variant.name} · ${variant.sku}`,
+      net: entry.priceMinor,
+      previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
+    })),
+  );
+  const rows = [
+    ...variantRows,
+    ...product.priceHistory.map((entry, index) => ({
+      at: entry.effectiveFrom,
+      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
+      key: `product-${index}`,
+      name: `Základní cena produktu · ${product.sku}`,
+      net: entry.priceMinor,
+      previous: entry.previousPriceMinor ?? product.priceHistory[index - 1]?.priceMinor,
+    })),
+  ];
+  const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
+  return (
+    <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
+      {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */}
+      <section aria-label={t('merchandise.ui.variantPriceHistory')} style={{ overflowX: 'auto' }} tabIndex={0}>
+        {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+        <Table size="sm" variant="line">
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeader>Platí od</Table.ColumnHeader>
+              <Table.ColumnHeader>Varianta</Table.ColumnHeader>
+              <Table.ColumnHeader align="end">Původní cena bez DPH</Table.ColumnHeader>
+              <Table.ColumnHeader align="end">Cena bez DPH</Table.ColumnHeader>
+              <Table.ColumnHeader align="end">Cena s DPH</Table.ColumnHeader>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {sorted.map((row) => (
+              <Table.Row key={row.key}>
+                <Table.Cell>{formatDateTime(DateTime.formatIso(row.at))}</Table.Cell>
+                <Table.Cell>{row.name}</Table.Cell>
+                <Table.Cell align="end" className="tabular-nums">
+                  {row.previous === undefined ? 'počáteční cena' : formatMoney(row.previous)}
+                </Table.Cell>
+                <Table.Cell align="end" className="tabular-nums">
+                  {formatMoney(row.net)}
+                </Table.Cell>
+                <Table.Cell align="end" className="tabular-nums">
+                  {formatMoney(row.gross)}
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </section>
+    </SectionCard>
+  );
+};
 
 /**
  * Real variants: each has its own identity, SKU, net price (gross shown), stock and active flag. Saving sends one
  * UpdateProduct; the server keeps a per-variant price history, so a price change stays traceable.
  */
-export const VariantsPanel = ({
+const useVariantsPanel = ({
   canWrite,
   canMoveStock = canWrite,
   onCommitted,
@@ -104,7 +313,7 @@ export const VariantsPanel = ({
   const [drafts, setDrafts] = useState<readonly VariantDraft[]>(() => variantDraftsOf(product));
   const [variantPage, setVariantPage] = useState(0);
   const [variantSearch, setVariantSearch] = useState('');
-  const [sequence, setSequence] = useState(0);
+  const sequence = useRef(0);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -137,16 +346,18 @@ export const VariantsPanel = ({
         const original = (product.variants ?? []).find(
           (variant) => variant.id !== undefined && variant.id === draft.id,
         );
-        return {
+        const variant: { -readonly [Key in keyof ProductVariant]: ProductVariant[Key] } = {
           ...original,
           active: draft.active,
           attributes: draft.attributes.trim(),
-          ...(draft.id === undefined ? {} : { id: draft.id }),
           name: draft.name.trim(),
-          ...(original?.priceHistory === undefined ? {} : { priceHistory: original.priceHistory }),
           priceMinor: parseCzk(draft.priceText) ?? 0,
           sku: draft.sku.trim(),
         };
+        if (draft.id !== undefined) {
+          variant.id = draft.id;
+        }
+        return variant;
       }),
       ...legacy,
     ];
@@ -163,6 +374,130 @@ export const VariantsPanel = ({
     });
   };
 
+  const addDraft = () => {
+    const key = `new-${sequence.current}`;
+    setDrafts((current) => [
+      ...current,
+      {
+        active: true,
+        attributes: '',
+        key,
+        name: '',
+        priceText: moneyInputText(product.currentPriceMinor / 100),
+        sku: `${product.sku}-${current.length + 1}`,
+      },
+    ]);
+    sequence.current += 1;
+  };
+
+  return {
+    addDraft,
+    busy,
+    canMoveStock,
+    canWrite,
+    currentPage,
+    drafts,
+    duplicateSku,
+    errors,
+    onCommitted,
+    onReload,
+    pageCount,
+    patchDraft,
+    product,
+    records,
+    revision,
+    save,
+    serverError,
+    setVariantPage,
+    setVariantSearch,
+    submitted,
+    variantSearch,
+    visibleDrafts,
+  };
+};
+
+type VariantRecord = NonNullable<ProductRecord['variantRecords']>[number];
+
+const variantFieldError = (submitted: boolean, helpText: string, invalid = false) => {
+  if (submitted && invalid) {
+    return { helpText, validateStatus: 'error' as const };
+  }
+  return {};
+};
+
+const variantGrossPrice = (
+  price: number | null,
+  record: VariantRecord | undefined,
+  vatRate: ProductRecord['vatRate'],
+) => {
+  if (price === null) {
+    return '—';
+  }
+  return formatMoney(record?.priceMinor === price ? record.grossPriceMinor : grossUnitPriceMinor(price, vatRate));
+};
+
+const variantPlaceholders = (product: ProductRecord) => {
+  if (product.sourceGroupId === undefined) {
+    return { attributes: 'Hmotnost: 250 g; Forma: zrnková', name: 'např. 250 g / zrnková' };
+  }
+  return { attributes: 'Vlastnosti varianty (nepovinné)', name: 'např. M6 × 20 / A2' };
+};
+
+const variantStockText = (record: VariantRecord | undefined, unit: ProductRecord['unit']) =>
+  record === undefined ? (
+    <span className="text-fg-secondary">nová</span>
+  ) : (
+    `${record.stockOnHand} ${record.sourceUnit ?? unit}`
+  );
+
+const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: ProductRecord['unit']) => {
+  if (record?.priceTiers === undefined) {
+    return null;
+  }
+  return (
+    <div className="text-fg-secondary text-xs">
+      <p>
+        Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? unit}
+        {record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}
+      </p>
+      {record.priceTiers.map((tier) => (
+        <p key={tier.minimumQuantity}>
+          Od {tier.minimumQuantity} {record.sourceUnit ?? unit}: {formatMoney(tier.priceMinor)} s DPH ·{' '}
+          {formatMoney(tier.priceExcludingVatMinor)} bez DPH
+        </p>
+      ))}
+    </div>
+  );
+};
+
+export const VariantsPanel = (props: PanelProps) => {
+  const { t } = useModernI18n();
+  const {
+    addDraft,
+    busy,
+    canMoveStock,
+    canWrite,
+    currentPage,
+    drafts,
+    duplicateSku,
+    errors,
+    onCommitted,
+    onReload,
+    pageCount,
+    patchDraft,
+    product,
+    records,
+    revision,
+    save,
+    serverError,
+    setVariantPage,
+    setVariantSearch,
+    submitted,
+    variantSearch,
+    visibleDrafts,
+  } = useVariantsPanel(props);
+  const placeholders = variantPlaceholders(product);
+
   return (
     <div className="flex flex-col gap-250">
       <p className="text-fg-secondary text-sm">
@@ -172,20 +507,20 @@ export const VariantsPanel = ({
       <div className="flex flex-wrap items-center gap-150">
         <FormInput
           id="variant-search"
-          label="Hledat variantu"
+          label={t('merchandise.ui.searchVariants')}
           name="variant-search"
-          placeholder="SKU nebo název varianty"
-          value={variantSearch}
           onChange={(event) => {
             setVariantSearch(event.target.value);
             setVariantPage(0);
           }}
+          placeholder={t('merchandise.ui.variantSearchPlaceholder')}
+          value={variantSearch}
         />
         <Button
-          theme="outlined"
-          variant="secondary"
           disabled={currentPage === 0}
           onClick={() => setVariantPage(currentPage - 1)}
+          theme="outlined"
+          variant="secondary"
         >
           Předchozí
         </Button>
@@ -193,10 +528,10 @@ export const VariantsPanel = ({
           Strana {currentPage + 1} z {pageCount} · {visibleDrafts.length} variant
         </span>
         <Button
-          theme="outlined"
-          variant="secondary"
           disabled={currentPage + 1 >= pageCount}
           onClick={() => setVariantPage(currentPage + 1)}
+          theme="outlined"
+          variant="secondary"
         >
           Další
         </Button>
@@ -208,12 +543,13 @@ export const VariantsPanel = ({
             variantu, pokud se prodává například ve více gramážích nebo provedeních.
           </p>
         ) : (
-          <div
-            aria-label="Varianty — posuňte vodorovně pro cenu, sklad a aktivitu"
-            role="region"
+          /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */
+          <section
+            aria-label={t('merchandise.ui.variantsScrollLabel')}
             style={{ maxWidth: '100%', overflowX: 'auto' }}
             tabIndex={0}
           >
+            {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
             <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
@@ -242,14 +578,10 @@ export const VariantsPanel = ({
                             label={<span className="sr-only">Název varianty</span>}
                             name={`variant-label-${draft.key}`}
                             onChange={(event) => patchDraft(draft.key, { name: event.target.value })}
-                            placeholder={
-                              product.sourceGroupId === undefined ? 'např. 250 g / zrnková' : 'např. M6 × 20 / A2'
-                            }
+                            placeholder={placeholders.name}
                             size="sm"
                             value={draft.name}
-                            {...(submitted && error?.name === true
-                              ? { helpText: 'Zadejte název', validateStatus: 'error' as const }
-                              : {})}
+                            {...variantFieldError(submitted, 'Zadejte název', error?.name)}
                           />
                           <FormInput
                             disabled={!canWrite}
@@ -257,29 +589,11 @@ export const VariantsPanel = ({
                             label={<span className="sr-only">Vlastnosti varianty</span>}
                             name={`variant-attrs-${draft.key}`}
                             onChange={(event) => patchDraft(draft.key, { attributes: event.target.value })}
-                            placeholder={
-                              product.sourceGroupId === undefined
-                                ? 'Hmotnost: 250 g; Forma: zrnková'
-                                : 'Vlastnosti varianty (nepovinné)'
-                            }
+                            placeholder={placeholders.attributes}
                             size="sm"
                             value={draft.attributes}
                           />
-                          {record?.priceTiers !== undefined && (
-                            <div className="text-fg-secondary text-xs">
-                              <p>
-                                Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? product.unit}
-                                {record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}
-                              </p>
-                              {record.priceTiers.map((tier) => (
-                                <p key={tier.minimumQuantity}>
-                                  Od {tier.minimumQuantity} {record.sourceUnit ?? product.unit}:{' '}
-                                  {formatMoney(tier.priceMinor)} s DPH · {formatMoney(tier.priceExcludingVatMinor)} bez
-                                  DPH
-                                </p>
-                              ))}
-                            </div>
-                          )}
+                          {renderVariantPriceTiers(record, product.unit)}
                         </div>
                       </Table.Cell>
                       <Table.Cell>
@@ -292,9 +606,7 @@ export const VariantsPanel = ({
                             onChange={(event) => patchDraft(draft.key, { sku: event.target.value })}
                             size="sm"
                             value={draft.sku}
-                            {...(submitted && error?.sku === true
-                              ? { helpText: 'Zadejte SKU', validateStatus: 'error' as const }
-                              : {})}
+                            {...variantFieldError(submitted, 'Zadejte SKU', error?.sku)}
                           />
                         </div>
                       </Table.Cell>
@@ -311,9 +623,7 @@ export const VariantsPanel = ({
                             onValueChange={(details) => patchDraft(draft.key, { priceText: details.value })}
                             size="sm"
                             value={draft.priceText}
-                            {...(submitted && error?.price === true
-                              ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
-                              : {})}
+                            {...variantFieldError(submitted, 'Zadejte cenu', error?.price)}
                           >
                             <NumericInput.Control>
                               <NumericInput.Input />
@@ -322,20 +632,10 @@ export const VariantsPanel = ({
                         </div>
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
-                        {price === null
-                          ? '—'
-                          : formatMoney(
-                              record?.priceMinor === price
-                                ? record.grossPriceMinor
-                                : grossUnitPriceMinor(price, product.vatRate),
-                            )}
+                        {variantGrossPrice(price, record, product.vatRate)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
-                        {record === undefined ? (
-                          <span className="text-fg-secondary">nová</span>
-                        ) : (
-                          `${record.stockOnHand} ${record.sourceUnit ?? product.unit}`
-                        )}
+                        {variantStockText(record, product.unit)}
                       </Table.Cell>
                       <Table.Cell>
                         {record === undefined ? (
@@ -365,7 +665,7 @@ export const VariantsPanel = ({
                 })}
               </Table.Body>
             </Table>
-          </div>
+          </section>
         )}
       </SectionCard>
       {submitted && duplicateSku && (
@@ -380,26 +680,7 @@ export const VariantsPanel = ({
       )}
       {canWrite && (
         <div className="flex flex-wrap justify-between gap-150">
-          <Button
-            icon="icon-[mdi--plus]"
-            onClick={() => {
-              setDrafts((current) => [
-                ...current,
-                {
-                  active: true,
-                  attributes: '',
-                  key: `new-${sequence}`,
-                  name: '',
-                  priceText: moneyInputText(product.currentPriceMinor / 100),
-                  sku: `${product.sku}-${current.length + 1}`,
-                },
-              ]);
-              setSequence(sequence + 1);
-            }}
-            theme="outlined"
-            type="button"
-            variant="secondary"
-          >
+          <Button icon="icon-[mdi--plus]" onClick={addDraft} theme="outlined" type="button" variant="secondary">
             Přidat variantu
           </Button>
           <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" variant="primary">
@@ -421,197 +702,36 @@ export const VariantsPanel = ({
   );
 };
 
-type MovementReason = 'RECEIPT' | 'ISSUE' | 'ADJUSTMENT';
-const reasonLabels: Readonly<Record<MovementReason, string>> = {
-  ADJUSTMENT: 'Korekce (inventura)',
-  ISSUE: 'Výdej',
-  RECEIPT: 'Příjem',
-};
-
-/** Stock movement for one variant (ledger entry with variantId). */
-const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
-  const failure = useCommandFailure();
-  const variants = product.variantRecords ?? [];
-  const [variantId, setVariantId] = useState<string>(variants[0]?.id ?? '');
-  const [reason, setReason] = useState<MovementReason>('RECEIPT');
-  const [quantityText, setQuantityText] = useState('10');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (!canWrite) {
-    return null;
+const slugFieldError = (invalid: boolean, taken: boolean) => {
+  if (invalid) {
+    return { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const };
   }
-  const variant = variants.find((entry) => entry.id === variantId);
-  const quantity = Number(quantityText.replace(/\s/gu, '').replace(',', '.'));
-  const valid =
-    variant !== undefined && Number.isInteger(quantity) && quantity !== 0 && (reason === 'ADJUSTMENT' || quantity > 0);
-
-  const submit = () => {
-    if (!valid || variant === undefined || busy) {
-      setError('Zadejte celé nenulové množství.');
-      return;
-    }
-    const delta = reason === 'ISSUE' ? -Math.abs(quantity) : reason === 'RECEIPT' ? Math.abs(quantity) : quantity;
-    setBusy(true);
-    setError(null);
-    runCommand(
-      {
-        _tag: 'RecordStockMovement',
-        delta,
-        note: `Varianta ${variant.name}`,
-        productId: product.id,
-        reason,
-        variantId: variant.id,
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setError(
-            outcome.reason === 'rejected'
-              ? 'Sklad varianty nesmí klesnout pod nulu.'
-              : failure(outcome.reason, onReload),
-          );
-          return;
-        }
-        onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
-      },
-    );
-  };
-
-  return (
-    <SectionCard title="Skladový pohyb varianty">
-      <div className="grid grid-cols-1 items-end gap-200 sm:grid-cols-[minmax(0,1fr)_12rem_8rem_auto]">
-        <SelectTemplate
-          items={variants.map((entry) => ({ label: `${entry.name} (${entry.stockOnHand} ks)`, value: entry.id }))}
-          label="Varianta"
-          name="stockVariant"
-          onValueChange={(details) => setVariantId(details.value[0] ?? '')}
-          placeholder="Vyberte variantu"
-          size="sm"
-          value={variantId === '' ? [] : [variantId]}
-        />
-        <SelectTemplate
-          items={(Object.keys(reasonLabels) as MovementReason[]).map((value) => ({
-            label: reasonLabels[value],
-            value,
-          }))}
-          label="Typ pohybu"
-          name="stockReason"
-          onValueChange={(details) => {
-            const next = (Object.keys(reasonLabels) as MovementReason[]).find((value) => value === details.value[0]);
-            if (next !== undefined) {
-              setReason(next);
-            }
-          }}
-          placeholder="Typ"
-          size="sm"
-          value={[reason]}
-        />
-        <FormNumericInput
-          formatOptions={WHOLE_NUMBER_FORMAT}
-          id="variant-stock-quantity"
-          label="Množství (ks)"
-          locale="cs-CZ"
-          name="variantStockQuantity"
-          onValueChange={(details) => setQuantityText(details.value)}
-          size="sm"
-          value={quantityText}
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-valuemax={undefined} />
-          </NumericInput.Control>
-        </FormNumericInput>
-        <Button
-          isLoading={busy}
-          loadingText="Zapisuji…"
-          onClick={submit}
-          theme="outlined"
-          type="button"
-          variant="secondary"
-        >
-          Zapsat pohyb
-        </Button>
-      </div>
-      {error !== null && (
-        <StatusText showIcon status="error">
-          {error}
-        </StatusText>
-      )}
-    </SectionCard>
-  );
+  if (taken) {
+    return { helpText: 'Tuto adresu už má jiný produkt', validateStatus: 'error' as const };
+  }
+  return {};
 };
 
-export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
-  const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
-    variant.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
-      key: `${variant.id}-${index}`,
-      name: `${variant.name} · ${variant.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
-    })),
-  );
-  const rows = [
-    ...variantRows,
-    ...product.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
-      key: `product-${index}`,
-      name: `Základní cena produktu · ${product.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? product.priceHistory[index - 1]?.priceMinor,
-    })),
-  ];
-  const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
-  return (
-    <SectionCard flush title="Historie cen variant">
-      <div role="region" aria-label="Historie cen variant" tabIndex={0} style={{ overflowX: 'auto' }}>
-        <Table size="sm" variant="line">
-          <Table.Header>
-            <Table.Row>
-              <Table.ColumnHeader>Platí od</Table.ColumnHeader>
-              <Table.ColumnHeader>Varianta</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Původní cena bez DPH</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Cena bez DPH</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Cena s DPH</Table.ColumnHeader>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {sorted.map((row) => (
-              <Table.Row key={row.key}>
-                <Table.Cell>{formatDateTime(DateTime.formatIso(row.at))}</Table.Cell>
-                <Table.Cell>{row.name}</Table.Cell>
-                <Table.Cell align="end" className="tabular-nums">
-                  {row.previous === undefined ? 'počáteční cena' : formatMoney(row.previous)}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums">
-                  {formatMoney(row.net)}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums">
-                  {formatMoney(row.gross)}
-                </Table.Cell>
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
-      </div>
-    </SectionCard>
-  );
-};
+interface GalleryImage {
+  readonly id: number;
+  readonly reference: string;
+}
 
 /** Storefront presentation: images, publication, slug and how availability is reported. */
-export const EshopPanel = ({
+const useEshopPanel = ({
   canWrite,
+  onArchived,
   onCommitted,
   onReload,
-  onArchived,
-  storefrontOrigin = STOREFRONT_ORIGIN,
   product,
   revision,
+  storefrontOrigin = STOREFRONT_ORIGIN,
 }: PanelProps) => {
   const failure = useCommandFailure();
-  const [images, setImages] = useState<readonly string[]>(() => product.images ?? []);
+  const [images, setImages] = useState<readonly GalleryImage[]>(() =>
+    (product.images ?? []).map((reference, id) => ({ id, reference })),
+  );
+  const nextImageId = useRef(product.images?.length ?? 0);
   const [newImage, setNewImage] = useState('');
   const newImageInvalid = newImage.trim() !== '' && !/^(?:\/(?!\/)|https:\/\/)\S+$/u.test(newImage.trim());
   const [slug, setSlug] = useState(product.slug ?? '');
@@ -634,38 +754,112 @@ export const EshopPanel = ({
     }
     setBusy(true);
     setServerError(null);
-    runCommand(
-      {
-        _tag: 'UpdateProduct',
-        id: product.id,
-        patch: {
-          images: [...images],
-          published,
-          stockTracked,
-          ...(slug.trim() === '' ? {} : { slug: slug.trim() }),
-        },
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          // The only business refusal of this save is a slug another product already uses.
-          if (outcome.reason === 'rejected' && slug.trim() !== '' && slug.trim() !== (product.slug ?? '')) {
-            setTakenSlug(slug.trim());
-            setServerError('Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.');
-            return;
-          }
-          setServerError(failure(outcome.reason, onReload));
+    const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {
+      images: images.map((image) => image.reference),
+      published,
+      stockTracked,
+    };
+    if (slug.trim() !== '') {
+      patch.slug = slug.trim();
+    }
+    runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        // The only business refusal of this save is a slug another product already uses.
+        if (outcome.reason === 'rejected' && slug.trim() !== '' && slug.trim() !== (product.slug ?? '')) {
+          setTakenSlug(slug.trim());
+          setServerError('Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.');
           return;
         }
-        onCommitted('Nastavení e-shopu uloženo. Změnu uvidí zákazník po obnovení stránky.');
-      },
-    );
+        setServerError(failure(outcome.reason, onReload));
+        return;
+      }
+      onCommitted('Nastavení e-shopu uloženo. Změnu uvidí zákazník po obnovení stránky.');
+    });
   };
+
+  const archive = () => {
+    setBusy(true);
+    runCommand({ _tag: 'ArchiveDemoProduct', id: product.id, reason: archiveReason.trim() }, revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        setServerError(failure(outcome.reason, onReload));
+        return;
+      }
+      onCommitted('DEMO produkt archivován. Audit a skladové pohyby zachovány.');
+      onArchived?.();
+    });
+  };
+
+  const addImage = () => {
+    const id = nextImageId.current;
+    nextImageId.current += 1;
+    setImages([...images, { id, reference: newImage.trim() }]);
+    setNewImage('');
+  };
+
+  return {
+    addImage,
+    archive,
+    archiveReason,
+    broken,
+    busy,
+    canWrite,
+    images,
+    newImage,
+    newImageInvalid,
+    product,
+    published,
+    save,
+    serverError,
+    setArchiveReason,
+    setBroken,
+    setImages,
+    setNewImage,
+    setPublished,
+    setSlug,
+    setStockTracked,
+    slug,
+    slugInvalid,
+    slugTakenNow,
+    stockTracked,
+    storefrontHref,
+  };
+};
+
+export const EshopPanel = (props: PanelProps) => {
+  const { t } = useModernI18n();
+  const {
+    addImage,
+    archive,
+    archiveReason,
+    broken,
+    busy,
+    canWrite,
+    images,
+    newImage,
+    newImageInvalid,
+    product,
+    published,
+    save,
+    serverError,
+    setArchiveReason,
+    setBroken,
+    setImages,
+    setNewImage,
+    setPublished,
+    setSlug,
+    setStockTracked,
+    slug,
+    slugInvalid,
+    slugTakenNow,
+    stockTracked,
+    storefrontHref,
+  } = useEshopPanel(props);
 
   return (
     <div className="flex flex-col gap-250">
-      <SectionCard title="Jak produkt vidí zákazník">
+      <SectionCard title={t('merchandise.ui.customerProductView')}>
         <div className="flex flex-wrap items-center gap-150">
           <span className="font-semibold text-lg tabular-nums">
             {product.grossPriceMinor === undefined
@@ -692,38 +886,23 @@ export const EshopPanel = ({
       </SectionCard>
 
       {canWrite && !product.active && product.published === false && (
-        <SectionCard title="Archivace DEMO produktu">
+        <SectionCard title={t('merchandise.ui.archiveDemoProduct')}>
           <p className="text-fg-secondary text-sm">
             Produkt zmizí ze seznamu i e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.
           </p>
           <FormInput
             id="demo-archive-reason"
-            name="archiveReason"
-            label="Důvod archivace"
-            value={archiveReason}
-            onChange={(event) => setArchiveReason(event.target.value)}
+            label={t('merchandise.ui.archiveReason')}
             maxLength={500}
+            name="archiveReason"
+            onChange={(event) => setArchiveReason(event.target.value)}
+            value={archiveReason}
           />
           <Button
-            variant="danger"
-            theme="outlined"
             disabled={busy || archiveReason.trim().length < 5}
-            onClick={() => {
-              setBusy(true);
-              runCommand(
-                { _tag: 'ArchiveDemoProduct', id: product.id, reason: archiveReason.trim() },
-                revision,
-                (outcome) => {
-                  setBusy(false);
-                  if (!outcome.ok) {
-                    setServerError(failure(outcome.reason, onReload));
-                    return;
-                  }
-                  onCommitted('DEMO produkt archivován. Audit a skladové pohyby zachovány.');
-                  onArchived?.();
-                },
-              );
-            }}
+            onClick={archive}
+            theme="outlined"
+            variant="danger"
           >
             Archivovat DEMO produkt
           </Button>
@@ -739,8 +918,8 @@ export const EshopPanel = ({
           </div>
         ) : (
           <ul className="grid grid-cols-2 gap-200 sm:grid-cols-4">
-            {images.map((image, index) => (
-              <li className="flex flex-col gap-100" key={`${image}-${index}`}>
+            {images.map(({ id, reference: image }, index) => (
+              <li className="flex flex-col gap-100" key={id}>
                 <div
                   className={`${surfaceTileClassName} flex aspect-square items-center justify-center overflow-hidden`}
                 >
@@ -758,10 +937,12 @@ export const EshopPanel = ({
                     />
                   )}
                 </div>
-                <span className="truncate text-fg-secondary text-xs" title={image}>
-                  {index === 0 ? 'Hlavní · ' : ''}
-                  {image}
-                </span>
+                <Tooltip content={image}>
+                  <span className="truncate text-fg-secondary text-xs">
+                    {index === 0 ? 'Hlavní · ' : ''}
+                    {image}
+                  </span>
+                </Tooltip>
                 {canWrite && (
                   <div className="flex flex-wrap items-center gap-50">
                     {index > 0 && (
@@ -771,7 +952,7 @@ export const EshopPanel = ({
                         onClick={() => setImages(moveImage(images, index, 0))}
                         size="sm"
                         theme="borderless"
-                        title="Nastavit jako hlavní"
+                        title={t('merchandise.ui.setMainImage')}
                         type="button"
                         variant="secondary"
                       />
@@ -783,7 +964,7 @@ export const EshopPanel = ({
                       onClick={() => setImages(moveImage(images, index, index - 1))}
                       size="sm"
                       theme="borderless"
-                      title="Posunout dopředu"
+                      title={t('merchandise.ui.moveImageEarlier')}
                       type="button"
                       variant="secondary"
                     />
@@ -794,7 +975,7 @@ export const EshopPanel = ({
                       onClick={() => setImages(moveImage(images, index, index + 1))}
                       size="sm"
                       theme="borderless"
-                      title="Posunout dozadu"
+                      title={t('merchandise.ui.moveImageLater')}
                       type="button"
                       variant="secondary"
                     />
@@ -804,7 +985,7 @@ export const EshopPanel = ({
                       onClick={() => setImages(images.filter((_, position) => position !== index))}
                       size="sm"
                       theme="borderless"
-                      title="Odebrat"
+                      title={t('merchandise.ui.remove')}
                       type="button"
                       variant="secondary"
                     />
@@ -818,7 +999,7 @@ export const EshopPanel = ({
           <div className="mt-200 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
             <FormInput
               id="eshop-new-image"
-              label="Přidat obrázek (cesta v e-shopu nebo URL)"
+              label={t('merchandise.ui.addImagePath')}
               name="newImage"
               onChange={(event) => setNewImage(event.target.value)}
               placeholder={`/img/${product.slug ?? 'produkt'}.svg`}
@@ -834,10 +1015,7 @@ export const EshopPanel = ({
             <Button
               disabled={newImage.trim() === '' || newImageInvalid || images.length >= 20}
               icon="icon-[mdi--image-plus-outline]"
-              onClick={() => {
-                setImages([...images, newImage.trim()]);
-                setNewImage('');
-              }}
+              onClick={addImage}
               theme="outlined"
               type="button"
               variant="secondary"
@@ -848,20 +1026,16 @@ export const EshopPanel = ({
         )}
       </SectionCard>
 
-      <SectionCard title="Zveřejnění a dostupnost">
+      <SectionCard title={t('merchandise.ui.publicationAvailability')}>
         <div className="flex flex-col gap-200">
           <FormInput
             disabled={!canWrite}
             id="eshop-slug"
-            label="Adresa produktu v e-shopu (slug)"
+            label={t('merchandise.ui.productSlug')}
             name="slug"
             onChange={(event) => setSlug(event.target.value)}
             value={slug}
-            {...(slugInvalid
-              ? { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const }
-              : slugTakenNow
-                ? { helpText: 'Tuto adresu už má jiný produkt', validateStatus: 'error' as const }
-                : {})}
+            {...slugFieldError(slugInvalid, slugTakenNow)}
           />
           <Switch
             checked={published}

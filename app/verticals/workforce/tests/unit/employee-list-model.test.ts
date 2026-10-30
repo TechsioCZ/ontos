@@ -26,8 +26,8 @@ const employee = (id: string, fullName: string, email: string): Employee => ({
   updatedAt: now,
 });
 
-const jana = employee('6f1d3c2a-9b8e-4d7f-8a6b-5c4d3e2f1a01', 'Jana Nováková', 'jana.novakova@siampark.demo');
-const people = [jana, employee('6f1d3c2a-9b8e-4d7f-8a6b-5c4d3e2f1a02', 'Tomáš Černý', 'tomas.cerny@siampark.demo')];
+const jana = employee('6f1d3c2a-9b8e-4d7f-8a6b-5c4d3e2f1a01', 'Jana Nováková', 'jana.novakova@najempark.demo');
+const people = [jana, employee('6f1d3c2a-9b8e-4d7f-8a6b-5c4d3e2f1a02', 'Tomáš Černý', 'tomas.cerny@najempark.demo')];
 
 it('finds a name or e-mail whether or not the query has diacritics', () => {
   const names = (query: string) => filterEmployees(people, { ...noFilters, query }).map((person) => person.fullName);

@@ -8,13 +8,13 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
@@ -89,6 +89,10 @@ const productLoadState = (
     : { query: settled.input.query, response: snapshot.value, status: 'ready' };
 };
 
+const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
+const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
+
 /** The products page for `query`. A refresh keeps the rows on screen; only the first load shows the loading state. */
 const useProductPage = (legalEntityId: string, query: ProductListQuery) => {
   const input: ProductListInput = { legalEntityId, query };
@@ -97,10 +101,24 @@ const useProductPage = (legalEntityId: string, query: ProductListQuery) => {
     () => productListData.snapshot(input),
     () => pageDataPending,
   );
-  // Cold mounts only: under the Shell the first page is prepared before the page shows.
+  const { category, categoryId, limit, lowStockOnly, offset, search, sort } = query;
+  const taggedIdsJson = query.taggedIds === null ? null : Result.getOrThrow(encodeQueryIds(query.taggedIds));
+  // The effect owns its request object; only changed filter values ensure another entry.
   useEffect(() => {
-    productListData.ensure({ legalEntityId, query });
-  }, [legalEntityId, query]);
+    productListData.ensure({
+      legalEntityId,
+      query: {
+        category,
+        categoryId,
+        limit,
+        lowStockOnly,
+        offset,
+        search,
+        sort,
+        taggedIds: taggedIdsJson === null ? null : Result.getOrThrow(decodeQueryIds(taggedIdsJson)),
+      },
+    });
+  }, [category, categoryId, legalEntityId, limit, lowStockOnly, offset, search, sort, taggedIdsJson]);
   const settled = useSettledPageData(snapshot, input);
   return {
     reload: () => {
@@ -193,7 +211,7 @@ interface RecordsPageContentProps {
   readonly legalEntityId: string;
 }
 
-const RecordsPageContent = ({ legalEntityId }: RecordsPageContentProps) => {
+const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
@@ -216,19 +234,16 @@ const RecordsPageContent = ({ legalEntityId }: RecordsPageContentProps) => {
   const treeCategoryId = byTree ? (treeCategory?.id ?? null) : null;
   const category = byTree ? null : labelCategory;
   const taggedIds = tagFilter.ids;
-  const query = useMemo<ProductListQuery>(
-    () => ({
-      category,
-      categoryId: treeCategoryId,
-      limit: pagination.pageSize,
-      lowStockOnly,
-      offset: pagination.pageIndex * pagination.pageSize,
-      search: settledSearch,
-      sort,
-      taggedIds,
-    }),
-    [category, lowStockOnly, pagination, settledSearch, sort, taggedIds, treeCategoryId],
-  );
+  const query: ProductListQuery = {
+    category,
+    categoryId: treeCategoryId,
+    limit: pagination.pageSize,
+    lowStockOnly,
+    offset: pagination.pageIndex * pagination.pageSize,
+    search: settledSearch,
+    sort,
+    taggedIds,
+  };
   const { reload, state } = useProductPage(legalEntityId, query);
 
   /** A filter change starts again at the first page. */
@@ -240,7 +255,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsPageContentProps) => {
   const canWrite = (ready?.canManageCatalog ?? ready?.canWrite) === true;
   const productTags = useSubjectTags('product', canWrite ? products.map((product) => product.id) : []);
   const revision = ready?.revision ?? 0;
-  const labelItems = useMemo(() => labelOptions(choices), [choices]);
+  const labelItems = labelOptions(choices);
 
   const selectedIds = Object.keys(selection).filter(isProductId);
   const filtersActive =
@@ -320,6 +335,94 @@ const RecordsPageContent = ({ legalEntityId }: RecordsPageContentProps) => {
     setSelection({});
     onCommitted(message);
   };
+
+  return {
+    bulkBusy,
+    byTree,
+    canWrite,
+    clearFilters,
+    clearSelectionThen,
+    closeDialog,
+    dialog,
+    filtersActive,
+    firstPage,
+    k,
+    labelCategory,
+    labelItems,
+    lowStockOnly,
+    onCategoriesCommitted,
+    onCommitted,
+    openDetail,
+    openDialog,
+    pagination,
+    products,
+    productTags,
+    ready,
+    reload,
+    revision,
+    runBulk,
+    search,
+    selectedIds,
+    selection,
+    setLabelCategory,
+    setLowStockOnly,
+    setPagination,
+    setSearch,
+    setSelection,
+    setSort,
+    setTreeCategory,
+    sort,
+    state,
+    t,
+    tableStatus,
+    tagFilter,
+    treeCategory,
+  };
+};
+
+const RecordsPageContent = (props: RecordsPageContentProps) => {
+  const {
+    bulkBusy,
+    byTree,
+    canWrite,
+    clearFilters,
+    clearSelectionThen,
+    closeDialog,
+    dialog,
+    filtersActive,
+    firstPage,
+    k,
+    labelCategory,
+    labelItems,
+    lowStockOnly,
+    onCategoriesCommitted,
+    onCommitted,
+    openDetail,
+    openDialog,
+    pagination,
+    products,
+    productTags,
+    ready,
+    reload,
+    revision,
+    runBulk,
+    search,
+    selectedIds,
+    selection,
+    setLabelCategory,
+    setLowStockOnly,
+    setPagination,
+    setSearch,
+    setSelection,
+    setSort,
+    setTreeCategory,
+    sort,
+    state,
+    t,
+    tableStatus,
+    tagFilter,
+    treeCategory,
+  } = useProductListPage(props);
 
   return (
     <>

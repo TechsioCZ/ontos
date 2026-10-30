@@ -19,10 +19,8 @@ const SourceActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe
   Schema.decodeTo(Schema.String),
 );
 
-const PriceGroupContainmentProjectionIntentSchema = Schema.Struct({
+const intentFields = {
   catalogVersion: Schema.Literal('1'),
-  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null is the durable PENDING sentinel; expires: 2027-03-31.
-  completedAt: Schema.NullOr(PriceGroupInstantSchema),
   definition: PriceGroupDefinitionRevisionSchema,
   mutationId: PriceGroupAuthorizationTopologyMutationIdSchema,
   operation: Schema.Literal('touch_containment'),
@@ -31,14 +29,24 @@ const PriceGroupContainmentProjectionIntentSchema = Schema.Struct({
   requestedAt: PriceGroupInstantSchema,
   schemaVersion: Schema.Literal('1'),
   sourceActionInvocationId: SourceActionInvocationIdSchema,
-  state: Schema.Literals(['PENDING', 'APPLIED']),
-}).check(
+};
+
+const PriceGroupContainmentProjectionIntentSchema = Schema.Union([
+  Schema.Struct({
+    ...intentFields,
+    completedAt: Schema.Null,
+    state: Schema.Literal('PENDING'),
+  }),
+  Schema.Struct({
+    ...intentFields,
+    completedAt: PriceGroupInstantSchema,
+    state: Schema.Literal('APPLIED'),
+  }),
+]).check(
   Schema.makeFilter((intent) =>
     intent.priceGroupRef.tenantId === intent.pricingCatalogRef.tenantId &&
     intent.definition.priceGroupRef.resourceId === intent.priceGroupRef.resourceId &&
-    intent.definition.priceGroupRef.tenantId === intent.priceGroupRef.tenantId &&
-    ((intent.state === 'PENDING' && intent.completedAt === null) ||
-      (intent.state === 'APPLIED' && intent.completedAt !== null))
+    intent.definition.priceGroupRef.tenantId === intent.priceGroupRef.tenantId
       ? undefined
       : 'The Price Group containment projection intent is internally inconsistent',
   ),

@@ -99,7 +99,9 @@ test('oauthNotFoundResponse answers 404', () => {
 });
 
 test('validateAuthorizeRedirectUri accepts an ephemeral loopback port for a registered loopback path', () => {
-  expect(validateAuthorizeRedirectUri('http://localhost:54321/callback', ['http://localhost/callback'], false)).toBe(true);
+  expect(validateAuthorizeRedirectUri('http://localhost:54321/callback', ['http://localhost/callback'], false)).toBe(
+    true,
+  );
 });
 
 test('validateAuthorizeRedirectUri accepts the built-in exact match', () => {
@@ -115,7 +117,9 @@ test('validateAuthorizeRedirectUri rejects a different loopback path', () => {
 });
 
 test('validateAuthorizeRedirectUri rejects a different loopback host', () => {
-  expect(validateAuthorizeRedirectUri('http://127.0.0.1:5000/callback', ['http://localhost/callback'], false)).toBe(false);
+  expect(validateAuthorizeRedirectUri('http://127.0.0.1:5000/callback', ['http://localhost/callback'], false)).toBe(
+    false,
+  );
 });
 
 test('validateAuthorizeRedirectUri rejects a non-loopback redirect', () => {
@@ -123,7 +127,9 @@ test('validateAuthorizeRedirectUri rejects a non-loopback redirect', () => {
 });
 
 test('validateAuthorizeRedirectUri rejects a loopback redirect carrying a fragment', () => {
-  expect(validateAuthorizeRedirectUri('http://localhost:1/callback#x', ['http://localhost/callback'], false)).toBe(false);
+  expect(validateAuthorizeRedirectUri('http://localhost:1/callback#x', ['http://localhost/callback'], false)).toBe(
+    false,
+  );
 });
 
 test('validateAuthorizeRedirectUri accepts an exact registered https redirect', () => {

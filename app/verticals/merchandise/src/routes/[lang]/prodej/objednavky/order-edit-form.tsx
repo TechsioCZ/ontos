@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -8,7 +9,7 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
@@ -29,6 +30,8 @@ import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts'
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 
 type EditCommand = Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>;
+type EditLine = NonNullable<EditCommand['lines']>[number];
+type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
 interface DraftLine {
   readonly key: string;
@@ -58,7 +61,7 @@ interface Draft {
 }
 
 const parseCzk = (text: string): number | null => {
-  const normalized = text.replace(/\s/gu, '').replace(',', '.');
+  const normalized = text.replaceAll(/\s/gu, '').replace(',', '.');
   if (normalized === '') {
     return null;
   }
@@ -67,25 +70,34 @@ const parseCzk = (text: string): number | null => {
 };
 
 const parseQuantity = (text: string): number | null => {
-  const value = Number(text.replace(/\s/gu, '').replace(',', '.'));
+  const value = Number(text.replaceAll(/\s/gu, '').replace(',', '.'));
   return Number.isFinite(value) && value > 0 && value <= 1_000_000 ? value : null;
 };
 
-const draftOf = (order: Order): Draft => ({
-  city: order.deliveryAddress?.city ?? '',
-  country: order.deliveryAddress?.country ?? '',
-  email: order.contact?.email ?? '',
-  lines: order.lines.map((line, index) => ({
+const draftLineOf = (line: Order['lines'][number], index: number): DraftLine => {
+  const draft: Mutable<DraftLine> = {
     key: `existing-${index}`,
     name: line.productName,
     priceText: moneyInputText(line.unitPriceMinor / 100),
     productId: line.productId,
     quantityText: String(line.quantity),
     sku: line.sku,
-    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-    ...(line.variantName === undefined ? {} : { variantName: line.variantName }),
     vatRate: line.vatRate,
-  })),
+  };
+  if (line.variantId !== undefined) {
+    draft.variantId = line.variantId;
+  }
+  if (line.variantName !== undefined) {
+    draft.variantName = line.variantName;
+  }
+  return draft;
+};
+
+const draftOf = (order: Order): Draft => ({
+  city: order.deliveryAddress?.city ?? '',
+  country: order.deliveryAddress?.country ?? '',
+  email: order.contact?.email ?? '',
+  lines: order.lines.map((line, index) => draftLineOf(line, index)),
   name: order.contact?.name ?? '',
   note: order.note ?? '',
   phone: order.contact?.phone ?? '',
@@ -143,6 +155,128 @@ const sameContact = (order: Order, draft: Draft) =>
   (order.contact?.email ?? '') === draft.email.trim() &&
   (order.contact?.phone ?? '') === draft.phone.trim();
 
+interface ParsedLine {
+  readonly line: DraftLine;
+  readonly price: number | null;
+  readonly quantity: number | null;
+}
+
+const previewTotals = (
+  order: Order,
+  parsedLines: readonly ParsedLine[],
+  shippingMethod: ShippingMethod | null,
+  shippingPrice: number | null,
+) => {
+  const input: Mutable<Parameters<typeof fullOrderTotals>[0]> = {
+    lines: parsedLines.flatMap(({ line, price, quantity }) =>
+      price === null || quantity === null
+        ? []
+        : [
+            {
+              productId: line.productId,
+              productName: '',
+              quantity,
+              sku: '',
+              unitPriceMinor: price,
+              vatRate: line.vatRate,
+            },
+          ],
+    ),
+    pricesIncludeVat: order.pricesIncludeVat,
+  };
+  if (shippingMethod !== null && shippingPrice !== null) {
+    input.shipping = { label: '', method: shippingMethod, priceMinor: shippingPrice, vatRate: 21 };
+  }
+  return fullOrderTotals(input);
+};
+
+const editLineOf = (
+  productId: ProductId,
+  quantity: number,
+  unitPriceMinor: number,
+  variantId: VariantId | undefined,
+): EditLine => {
+  const line: Mutable<EditLine> = { productId, quantity, unitPriceMinor };
+  if (variantId !== undefined) {
+    line.variantId = variantId;
+  }
+  return line;
+};
+
+const editAddress = (draft: Draft): NonNullable<EditCommand['deliveryAddress']> => {
+  const address: Mutable<NonNullable<EditCommand['deliveryAddress']>> = {
+    city: draft.city.trim(),
+    postalCode: draft.postalCode.trim(),
+    street: draft.street.trim(),
+  };
+  if (draft.country.trim() !== '') {
+    address.country = draft.country.trim();
+  }
+  return address;
+};
+
+const editContact = (draft: Draft): NonNullable<EditCommand['contact']> => {
+  const contact: Mutable<NonNullable<EditCommand['contact']>> = { email: draft.email.trim(), name: draft.name.trim() };
+  if (draft.phone.trim() !== '') {
+    contact.phone = draft.phone.trim();
+  }
+  return contact;
+};
+
+const editCommandOf = (
+  order: Order,
+  draft: Draft,
+  parsedLines: readonly ParsedLine[],
+  shippingPrice: number | null,
+  addressTouched: boolean,
+  contactTouched: boolean,
+): EditCommand | null => {
+  const lines = parsedLines.map(({ line, price, quantity }) =>
+    editLineOf(line.productId, quantity ?? 1, price ?? 0, line.variantId),
+  );
+  const original = order.lines.map((line) =>
+    editLineOf(line.productId, line.quantity, line.unitPriceMinor, line.variantId),
+  );
+  const linesChanged =
+    lines.length !== original.length ||
+    lines.some((line, index) => {
+      const previous = original[index];
+      return (
+        previous === undefined ||
+        line.productId !== previous.productId ||
+        line.quantity !== previous.quantity ||
+        line.unitPriceMinor !== previous.unitPriceMinor ||
+        line.variantId !== previous.variantId
+      );
+    });
+  const shippingChanged =
+    draft.shippingMethod !== null &&
+    shippingPrice !== null &&
+    (draft.shippingMethod !== order.shipping?.method || shippingPrice !== order.shipping.priceMinor);
+  const noteChanged = draft.note.trim() !== (order.note ?? '');
+  const reason = draft.reason.trim();
+  const command: Mutable<EditCommand> = { _tag: 'EditOrder', expectedUpdatedAt: order.updatedAt, id: order.id };
+  if (linesChanged) {
+    command.lines = lines;
+  }
+  if (shippingChanged && draft.shippingMethod !== null && shippingPrice !== null) {
+    command.shipping = { method: draft.shippingMethod, priceMinor: shippingPrice };
+  }
+  if (addressTouched) {
+    command.deliveryAddress = editAddress(draft);
+  }
+  if (contactTouched) {
+    command.contact = editContact(draft);
+  }
+  if (noteChanged) {
+    command.note = draft.note.trim();
+  }
+  if (reason !== '') {
+    command.reason = reason;
+  }
+  return linesChanged || shippingChanged || addressTouched || contactTouched || noteChanged ? command : null;
+};
+
 interface OrderEditFormProps {
   /** The order wrote ORDER stock movements; quantity edits then move stock the same way. */
   readonly movesStock: boolean;
@@ -159,9 +293,10 @@ interface OrderEditFormProps {
  * totals and writes a before/after history entry per changed area. The price list never changes; when the order
  * already took goods from stock, quantity changes write the matching ORDER movements.
  */
-export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revision }: OrderEditFormProps) => {
+const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revision }: OrderEditFormProps) => {
+  const { t } = useModernI18n();
   const [draft, setDraft] = useState<Draft>(() => draftOf(order));
-  const [sequence, setSequence] = useState(0);
+  const sequence = useRef(0);
   // The product picked for a new line, with its full record (variants) read on pick.
   const [pick, setPick] = useState<{
     readonly product: Pick<ProductRecord, 'id' | 'name' | 'sku'>;
@@ -193,12 +328,12 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
 
   const rulesFor = (line: Pick<DraftLine, 'productId' | 'variantId'>) => {
     const product = [...products, ...addedProducts].find((entry) => entry.id === line.productId);
-    const unit =
+    const stockUnit =
       line.variantId === undefined ? product : product?.variantRecords?.find((entry) => entry.id === line.variantId);
     const original = order.lines.find(
       (entry) => entry.productId === line.productId && entry.variantId === line.variantId,
     );
-    return orderQuantityRules(unit ?? { stockOnHand: 1_000_000 }, movesStock ? (original?.quantity ?? 0) : 0);
+    return orderQuantityRules(stockUnit ?? { stockOnHand: 1_000_000 }, movesStock ? (original?.quantity ?? 0) : 0);
   };
   const parsedLines = draft.lines.map((line) => {
     const quantity = parseQuantity(line.quantityText);
@@ -220,79 +355,17 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
   const contactInvalid =
     contactTouched && (draft.name.trim() === '' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(draft.email.trim()));
 
-  const previewLines = parsedLines.flatMap(({ line, price, quantity }) =>
-    price === null || quantity === null ? [] : [{ quantity, unitPriceMinor: price, vatRate: line.vatRate }],
-  );
-  const previewShipping =
-    draft.shippingMethod === null || shippingPrice === null
-      ? undefined
-      : { label: '', method: draft.shippingMethod, priceMinor: shippingPrice, vatRate: 21 as const };
-  const preview = fullOrderTotals({
-    lines: previewLines.map((line) => ({ ...line, productId: '' as ProductId, productName: '', sku: '' })),
-    pricesIncludeVat: order.pricesIncludeVat,
-    ...(previewShipping === undefined ? {} : { shipping: previewShipping }),
-  });
+  const preview = previewTotals(order, parsedLines, draft.shippingMethod, shippingPrice);
 
-  const buildCommand = (): EditCommand | null => {
-    const lines = parsedLines.map(({ line, price, quantity }) => ({
-      productId: line.productId,
-      quantity: quantity ?? 1,
-      unitPriceMinor: price ?? 0,
-      ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-    }));
-    const original = order.lines.map((line) => ({
-      productId: line.productId,
-      quantity: line.quantity,
-      unitPriceMinor: line.unitPriceMinor,
-      ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-    }));
-    const linesChanged = JSON.stringify(lines) !== JSON.stringify(original);
-    const shippingChanged =
-      draft.shippingMethod !== null &&
-      shippingPrice !== null &&
-      (draft.shippingMethod !== order.shipping?.method || shippingPrice !== order.shipping.priceMinor);
-    const noteChanged = draft.note.trim() !== (order.note ?? '');
-    const reason = draft.reason.trim();
-    const command: EditCommand = {
-      _tag: 'EditOrder',
-      expectedUpdatedAt: order.updatedAt,
-      id: order.id,
-      ...(linesChanged ? { lines } : {}),
-      ...(shippingChanged && draft.shippingMethod !== null && shippingPrice !== null
-        ? { shipping: { method: draft.shippingMethod, priceMinor: shippingPrice } }
-        : {}),
-      ...(addressTouched
-        ? {
-            deliveryAddress: {
-              city: draft.city.trim(),
-              postalCode: draft.postalCode.trim(),
-              street: draft.street.trim(),
-              ...(draft.country.trim() === '' ? {} : { country: draft.country.trim() }),
-            },
-          }
-        : {}),
-      ...(contactTouched
-        ? {
-            contact: {
-              email: draft.email.trim(),
-              name: draft.name.trim(),
-              ...(draft.phone.trim() === '' ? {} : { phone: draft.phone.trim() }),
-            },
-          }
-        : {}),
-      ...(noteChanged ? { note: draft.note.trim() } : {}),
-      ...(reason === '' ? {} : { reason }),
-    };
-    return linesChanged || shippingChanged || addressTouched || contactTouched || noteChanged ? command : null;
-  };
+  const buildCommand = () => editCommandOf(order, draft, parsedLines, shippingPrice, addressTouched, contactTouched);
 
   const save = () => {
     setSubmitted(true);
     if (linesInvalid || shippingInvalid || addressInvalid || contactInvalid || busy) {
       const invalid = parsedLines.find((entry) => entry.quantity === null || entry.price === null);
       if (invalid !== undefined) {
-        const field = document.getElementById(
-          `edit-${invalid.quantity === null ? 'qty' : 'price'}-${invalid.line.key}`,
+        const field = document.querySelector<HTMLElement>(
+          `[id="edit-${invalid.quantity === null ? 'qty' : 'price'}-${invalid.line.key}"]`,
         );
         field?.scrollIntoView({ block: 'center' });
         field?.focus();
@@ -345,23 +418,23 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
         : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
     );
     const unitPrice = gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor;
-    patch({
-      lines: [
-        ...draft.lines,
-        {
-          key: `new-${sequence}`,
-          name: unit.name,
-          priceText: moneyInputText(unitPrice / 100),
-          productId: unit.productId,
-          quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
-          sku: unit.sku,
-          ...(unit.variantId === undefined ? {} : { variantId: unit.variantId }),
-          ...(unit.variantName === undefined ? {} : { variantName: unit.variantName }),
-          vatRate: unit.vatRate,
-        },
-      ],
-    });
-    setSequence(sequence + 1);
+    const line: Mutable<DraftLine> = {
+      key: `new-${sequence.current}`,
+      name: unit.name,
+      priceText: moneyInputText(unitPrice / 100),
+      productId: unit.productId,
+      quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
+      sku: unit.sku,
+      vatRate: unit.vatRate,
+    };
+    if (unit.variantId !== undefined) {
+      line.variantId = unit.variantId;
+    }
+    if (unit.variantName !== undefined) {
+      line.variantName = unit.variantName;
+    }
+    patch({ lines: [...draft.lines, line] });
+    sequence.current += 1;
     clearPick();
   };
 
@@ -370,6 +443,185 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
     label: `${shippingMethodFor(option.method, akros).label} · ${formatMoney(option.priceMinor)}`,
     value: option.method,
   }));
+
+  return {
+    addLine,
+    addressInvalid,
+    busy,
+    contactInvalid,
+    draft,
+    gross,
+    linesInvalid,
+    methodItems,
+    movesStock,
+    onCancel,
+    order,
+    parsedLines,
+    patch,
+    patchLine,
+    pick,
+    pickedVariantId,
+    pickedVariants,
+    pickProduct,
+    preview,
+    save,
+    serverError,
+    setPickedVariantId,
+    shippingInvalid,
+    submitted,
+    t,
+    unit,
+  };
+};
+
+const renderOrderShipping = ({
+  draft,
+  methodItems,
+  patch,
+  shippingInvalid,
+  submitted,
+  t,
+}: ReturnType<typeof useOrderEditForm>) => (
+  <SectionCard title={t('merchandise.ui.shipping')}>
+    <div className="grid grid-cols-1 gap-200 sm:grid-cols-[minmax(0,1fr)_10rem]">
+      <SelectTemplate
+        items={methodItems}
+        label={t('merchandise.ui.shippingMethod')}
+        name="shippingMethod"
+        onValueChange={(details) => {
+          const [next] = details.value;
+          const method = shippingOptions.find((option) => option.method === next);
+          if (method !== undefined) {
+            patch({
+              shippingMethod: method.method,
+              shippingPriceText: moneyInputText(shippingMethods[method.method].grossPriceMinor / 100),
+            });
+          }
+        }}
+        placeholder={t('merchandise.ui.selectShipping')}
+        size="sm"
+        value={draft.shippingMethod === null ? [] : [draft.shippingMethod]}
+      />
+      <FormNumericInput
+        formatOptions={MONEY_FORMAT}
+        id="edit-shipping-price"
+        label={t('merchandise.ui.shippingPriceInclVat')}
+        locale="cs-CZ"
+        min={0}
+        name="shippingPrice"
+        onValueChange={(details) => patch({ shippingPriceText: details.value })}
+        size="sm"
+        value={draft.shippingPriceText}
+        {...(submitted && shippingInvalid ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
+      >
+        <NumericInput.Control>
+          <NumericInput.Input />
+        </NumericInput.Control>
+      </FormNumericInput>
+    </div>
+  </SectionCard>
+);
+
+const renderOrderAddress = ({ addressInvalid, draft, patch, submitted, t }: ReturnType<typeof useOrderEditForm>) => (
+  <SectionCard title={t('merchandise.ui.deliveryAddress')}>
+    <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+      <FormInput
+        id="edit-street"
+        label={t('merchandise.ui.streetNumber')}
+        name="street"
+        onChange={(event) => patch({ street: event.target.value })}
+        value={draft.street}
+      />
+      <FormInput
+        id="edit-city"
+        label={t('merchandise.ui.city')}
+        name="city"
+        onChange={(event) => patch({ city: event.target.value })}
+        value={draft.city}
+      />
+      <FormInput
+        id="edit-postal"
+        label={t('merchandise.ui.postalCode')}
+        name="postalCode"
+        onChange={(event) => patch({ postalCode: event.target.value })}
+        value={draft.postalCode}
+      />
+      <FormInput
+        id="edit-country"
+        label={t('merchandise.ui.country')}
+        name="country"
+        onChange={(event) => patch({ country: event.target.value })}
+        value={draft.country}
+      />
+    </div>
+    {submitted && addressInvalid && (
+      <StatusText showIcon status="error">
+        Vyplňte ulici, město i PSČ.
+      </StatusText>
+    )}
+  </SectionCard>
+);
+
+const renderOrderContact = ({ contactInvalid, draft, patch, submitted, t }: ReturnType<typeof useOrderEditForm>) => (
+  <SectionCard title={t('merchandise.ui.demoCustomerContact')}>
+    <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
+      <FormInput
+        id="edit-name"
+        label={t('merchandise.ui.contactName')}
+        name="name"
+        onChange={(event) => patch({ name: event.target.value })}
+        value={draft.name}
+      />
+      <FormInput
+        id="edit-email"
+        label={t('merchandise.ui.email')}
+        name="email"
+        onChange={(event) => patch({ email: event.target.value })}
+        type="email"
+        value={draft.email}
+      />
+      <FormInput
+        id="edit-phone"
+        label={t('merchandise.ui.phone')}
+        name="phone"
+        onChange={(event) => patch({ phone: event.target.value })}
+        value={draft.phone}
+      />
+    </div>
+    {submitted && contactInvalid && (
+      <StatusText showIcon status="error">
+        Zadejte jméno a platný e-mail.
+      </StatusText>
+    )}
+  </SectionCard>
+);
+
+export const OrderEditForm = (props: OrderEditFormProps) => {
+  const model = useOrderEditForm(props);
+  const {
+    addLine,
+    busy,
+    draft,
+    gross,
+    linesInvalid,
+    movesStock,
+    onCancel,
+    order,
+    parsedLines,
+    patch,
+    patchLine,
+    pick,
+    pickedVariantId,
+    pickedVariants,
+    pickProduct,
+    preview,
+    save,
+    serverError,
+    setPickedVariantId,
+    submitted,
+    t,
+    unit,
+  } = model;
 
   return (
     <form
@@ -387,8 +639,10 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
           ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
           : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
       </p>
-      <SectionCard flush title="Položky">
-        <div role="region" aria-label="Položky objednávky" tabIndex={0} style={{ overflowX: 'auto' }}>
+      <SectionCard flush title={t('merchandise.ui.items')}>
+        {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */}
+        <section aria-label={t('merchandise.ui.orderItems')} style={{ overflowX: 'auto' }} tabIndex={0}>
+          {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
           <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
@@ -417,6 +671,7 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
                   <Table.Cell align="end">
                     <div className="ml-auto" style={{ minWidth: 100 }}>
                       <FormNumericInput
+                        clampValueOnBlur={false}
                         formatOptions={{ maximumFractionDigits: 6 }}
                         id={`edit-qty-${line.key}`}
                         label={<span className="sr-only">Množství</span>}
@@ -426,7 +681,6 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
                         onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
                         size="sm"
                         step={rules.step}
-                        clampValueOnBlur={false}
                         value={line.quantityText}
                         {...(submitted && quantity === null
                           ? {
@@ -489,18 +743,18 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
               ))}
             </Table.Body>
           </Table>
-        </div>
+        </section>
         <div className="flex flex-col gap-150 p-200">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
             <ProductSearchCombobox
               activeOnly
               errorMessage="Produkty se nepodařilo načíst."
               id="order-edit-add-product"
-              label="Přidat položku"
+              label={t('merchandise.ui.addItem')}
               loadingMessage="Načítám…"
               noResultsMessage="Žádný produkt neodpovídá."
               onSelect={pickProduct}
-              placeholder="Hledat produkt…"
+              placeholder={t('merchandise.ui.searchProduct')}
               retryLabel="Zkusit znovu"
               selected={pick?.product ?? null}
             />
@@ -518,13 +772,13 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
           {pickedVariants.length > 0 && (
             <SelectTemplate
               items={pickedVariants.map((entry) => ({ label: `${entry.name} (${entry.sku})`, value: entry.id }))}
-              label="Varianta"
+              label={t('merchandise.ui.variant')}
               name="order-edit-add-variant"
               onValueChange={(details) => {
                 const [next] = details.value;
                 setPickedVariantId(pickedVariants.find((entry) => entry.id === next)?.id ?? null);
               }}
-              placeholder="Vyberte variantu"
+              placeholder={t('merchandise.ui.selectVariant')}
               size="sm"
               value={pickedVariantId === null ? [] : [pickedVariantId]}
             />
@@ -537,118 +791,15 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
         </div>
       </SectionCard>
 
-      <SectionCard title="Doprava">
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-[minmax(0,1fr)_10rem]">
-          <SelectTemplate
-            items={methodItems}
-            label="Způsob dopravy"
-            name="shippingMethod"
-            onValueChange={(details) => {
-              const [next] = details.value;
-              const method = shippingOptions.find((option) => option.method === next);
-              if (method !== undefined) {
-                patch({
-                  shippingMethod: method.method,
-                  shippingPriceText: moneyInputText(shippingMethods[method.method].grossPriceMinor / 100),
-                });
-              }
-            }}
-            placeholder="Vyberte dopravu"
-            size="sm"
-            value={draft.shippingMethod === null ? [] : [draft.shippingMethod]}
-          />
-          <FormNumericInput
-            formatOptions={MONEY_FORMAT}
-            id="edit-shipping-price"
-            label="Cena dopravy s DPH (Kč)"
-            locale="cs-CZ"
-            min={0}
-            name="shippingPrice"
-            onValueChange={(details) => patch({ shippingPriceText: details.value })}
-            size="sm"
-            value={draft.shippingPriceText}
-            {...(submitted && shippingInvalid ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
-          >
-            <NumericInput.Control>
-              <NumericInput.Input />
-            </NumericInput.Control>
-          </FormNumericInput>
-        </div>
-      </SectionCard>
+      {renderOrderShipping(model)}
 
-      <SectionCard title="Doručovací adresa">
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
-            id="edit-street"
-            label="Ulice a číslo"
-            name="street"
-            onChange={(event) => patch({ street: event.target.value })}
-            value={draft.street}
-          />
-          <FormInput
-            id="edit-city"
-            label="Město"
-            name="city"
-            onChange={(event) => patch({ city: event.target.value })}
-            value={draft.city}
-          />
-          <FormInput
-            id="edit-postal"
-            label="PSČ"
-            name="postalCode"
-            onChange={(event) => patch({ postalCode: event.target.value })}
-            value={draft.postalCode}
-          />
-          <FormInput
-            id="edit-country"
-            label="Země"
-            name="country"
-            onChange={(event) => patch({ country: event.target.value })}
-            value={draft.country}
-          />
-        </div>
-        {submitted && addressInvalid && (
-          <StatusText showIcon status="error">
-            Vyplňte ulici, město i PSČ.
-          </StatusText>
-        )}
-      </SectionCard>
+      {renderOrderAddress(model)}
 
-      <SectionCard title="Kontakt zákazníka (fiktivní údaje)">
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
-          <FormInput
-            id="edit-name"
-            label="Jméno"
-            name="name"
-            onChange={(event) => patch({ name: event.target.value })}
-            value={draft.name}
-          />
-          <FormInput
-            id="edit-email"
-            label="E-mail"
-            name="email"
-            onChange={(event) => patch({ email: event.target.value })}
-            type="email"
-            value={draft.email}
-          />
-          <FormInput
-            id="edit-phone"
-            label="Telefon"
-            name="phone"
-            onChange={(event) => patch({ phone: event.target.value })}
-            value={draft.phone}
-          />
-        </div>
-        {submitted && contactInvalid && (
-          <StatusText showIcon status="error">
-            Zadejte jméno a platný e-mail.
-          </StatusText>
-        )}
-      </SectionCard>
+      {renderOrderContact(model)}
 
       <FormTextarea
         id="edit-note"
-        label="Poznámka k objednávce"
+        label={t('merchandise.ui.orderNote')}
         maxLength={1000}
         name="note"
         onChange={(event) => patch({ note: event.target.value })}
@@ -656,11 +807,11 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
       />
       <FormInput
         id="edit-reason"
-        label="Důvod změny (zapíše se do historie)"
+        label={t('merchandise.ui.changeReason')}
         maxLength={500}
         name="reason"
         onChange={(event) => patch({ reason: event.target.value })}
-        placeholder="Např. zákazník telefonicky změnil množství"
+        placeholder={t('merchandise.ui.changeReasonPlaceholder')}
         value={draft.reason}
       />
 

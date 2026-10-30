@@ -67,13 +67,23 @@
  *   wire contract.
  * - Type-level declarations (`interface Problem { status: 503 }`) — those are `TSPropertySignature`
  *   nodes owned by `effect-native/no-hand-rolled-tagged-union`, not this rule.
+ * - A sibling contract's native TaggedStruct.make argument whose literal status matches both
+ *   its Schema.Literal and HttpApiSchema.status declarations. Source, imports and use sites
+ *   must establish that contract; a Schema suffix alone proves nothing. Raw driver messages
+ *   in these arguments remain forbidden.
  *
  * Report-only: no fixer, no suggestion. The existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
+import { readFileSync, realpathSync } from 'node:fs';
+import path from 'node:path';
+import { parseSync } from 'oxc-parser';
 
-import { unwrapNode } from '../shared/ast.ts';
+import { asNode, unwrapNode, walk } from '../shared/ast.ts';
+import type { Syntax } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { valueReference } from '../shared/provenance.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
 import { optionRecord } from '../shared/options.ts';
 import { compile, stringArray } from '../shared/options.ts';
@@ -261,6 +271,212 @@ function isExemptContext(context: Context, node: ESTree.ObjectExpression, option
     current = current.parent;
   }
   return false;
+}
+
+interface DeclaredProblemModule {
+  readonly program: Syntax;
+  readonly schemaName: string;
+}
+
+const PROBLEM_SCHEMA_BARRELS = new Set(['@modern-js/bff-effect/effect-client', '@modern-js/bff-effect/effect-edge']);
+
+/** Sibling public contracts are inspected as source only; missing/opaque declarations fail closed. */
+function declaredProblemModule(context: Context, binding: ESTree.Node): DeclaredProblemModule | null {
+  if (binding.type !== 'Identifier') return null;
+  const variable = lookupVariable(context, binding);
+  if (variable?.defs.length !== 1 || variable.references.some((reference) => reference.isWrite())) return null;
+  if (
+    !variable.references.every((reference) => {
+      if (!valueReference(context, reference.identifier))
+        return reference.identifier.parent?.type !== 'ExportSpecifier';
+      const member = reference.identifier.parent;
+      const call = member?.parent;
+      return (
+        member?.type === 'MemberExpression' &&
+        member.object === reference.identifier &&
+        !member.computed &&
+        !member.optional &&
+        member.property.type === 'Identifier' &&
+        member.property.name === 'make' &&
+        call?.type === 'CallExpression' &&
+        !call.optional &&
+        call.callee === member
+      );
+    })
+  )
+    return null;
+  const definition = variable.defs[0];
+  const imported = definition?.node;
+  const declaration = definition?.parent;
+  if (
+    definition?.type !== 'ImportBinding' ||
+    imported?.type !== 'ImportSpecifier' ||
+    imported.importKind === 'type' ||
+    declaration?.type !== 'ImportDeclaration' ||
+    declaration.importKind === 'type' ||
+    !/^\.\/[^/]+\.ts$/u.test(declaration.source.value)
+  )
+    return null;
+  const schemaName = imported.imported.type === 'Identifier' ? imported.imported.name : imported.imported.value;
+  try {
+    const directory = realpathSync(path.dirname(context.filename));
+    const filename = realpathSync(path.resolve(directory, declaration.source.value));
+    if (path.dirname(filename) !== directory) return null;
+    const source = readFileSync(filename, 'utf-8');
+    if (source.length > 1_000_000) return null;
+    const parsed = parseSync(filename, source, { sourceType: 'module' });
+    const program = asNode(parsed.program);
+    return parsed.errors.length === 0 && program !== null ? { program, schemaName } : null;
+  } catch {
+    return null;
+  }
+}
+
+function declaredNativeMember(module: DeclaredProblemModule, node: Syntax, namespace: string, member: string): boolean {
+  if (
+    node.type !== 'MemberExpression' ||
+    node.computed ||
+    node.optional ||
+    node.object.type !== 'Identifier' ||
+    node.property.type !== 'Identifier' ||
+    node.property.name !== member
+  )
+    return false;
+  const objectName = node.object.name;
+  const imports = module.program.body.filter((statement: Syntax) => statement.type === 'ImportDeclaration');
+  const candidates = imports.flatMap((declaration: Syntax) =>
+    declaration.specifiers.flatMap((specifier: Syntax) => {
+      if (specifier.local.name !== objectName || declaration.importKind === 'type' || specifier.importKind === 'type')
+        return [];
+      const source = declaration.source.value;
+      const root = namespace === 'Schema' ? source === 'effect' : source === 'effect/http-api';
+      const named =
+        specifier.type === 'ImportSpecifier' &&
+        specifier.imported.type === 'Identifier' &&
+        specifier.imported.name === namespace &&
+        (root || PROBLEM_SCHEMA_BARRELS.has(source));
+      const submodule = specifier.type === 'ImportNamespaceSpecifier' && source === `effect/${namespace}`;
+      return named || submodule ? [specifier] : [];
+    }),
+  );
+  return candidates.length === 1;
+}
+
+function problemSourceWritten(module: DeclaredProblemModule): boolean {
+  let written = false;
+  const protectedNames = new Set<string>([module.schemaName]);
+  for (const declaration of module.program.body) {
+    if (declaration.type !== 'ImportDeclaration') continue;
+    for (const specifier of declaration.specifiers) {
+      if (PROBLEM_SCHEMA_BARRELS.has(declaration.source.value) || declaration.source.value.startsWith('effect'))
+        protectedNames.add(specifier.local.name);
+    }
+  }
+  walk(module.program, {}, (node) => {
+    if (node.type === 'VariableDeclarator' && node.init?.type === 'Identifier' && protectedNames.has(node.init.name))
+      written = true;
+    let target =
+      node.type === 'AssignmentExpression'
+        ? node.left
+        : node.type === 'UpdateExpression'
+          ? node.argument
+          : node.type === 'UnaryExpression' && node.operator === 'delete'
+            ? node.argument
+            : null;
+    while (target?.type === 'MemberExpression') target = target.object;
+    if (target?.type === 'Identifier' && protectedNames.has(target.name)) written = true;
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression' &&
+      node.callee.property.type === 'Identifier' &&
+      ['assign', 'defineProperty', 'defineProperties', 'set'].includes(node.callee.property.name) &&
+      node.arguments.some((argument: Syntax) => argument.type === 'Identifier' && protectedNames.has(argument.name))
+    )
+      written = true;
+  });
+  return written;
+}
+
+function declaredProblemStatus(module: DeclaredProblemModule): number | null {
+  const declarations = module.program.body.flatMap((statement: Syntax) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : null;
+    return declaration?.type === 'VariableDeclaration' && declaration.kind === 'const'
+      ? declaration.declarations.filter(
+          (entry: Syntax) => entry.id.type === 'Identifier' && entry.id.name === module.schemaName,
+        )
+      : [];
+  });
+  const expression = declarations.length === 1 ? declarations[0]?.init : null;
+  if (
+    expression?.type !== 'CallExpression' ||
+    expression.callee.type !== 'MemberExpression' ||
+    expression.callee.computed ||
+    expression.callee.property.name !== 'pipe' ||
+    expression.arguments.length !== 2 ||
+    problemSourceWritten(module)
+  )
+    return null;
+  const tagged = expression.callee.object;
+  if (
+    tagged.type !== 'CallExpression' ||
+    tagged.arguments.length !== 2 ||
+    !declaredNativeMember(module, tagged.callee, 'Schema', 'TaggedStruct')
+  )
+    return null;
+  const [tag, fields] = tagged.arguments;
+  if (
+    tag?.type !== 'Literal' ||
+    typeof tag.value !== 'string' ||
+    !tag.value.endsWith('Problem') ||
+    fields?.type !== 'ObjectExpression'
+  )
+    return null;
+  const status = fields.properties.at(-1);
+  if (
+    status?.type !== 'Property' ||
+    status.computed ||
+    status.key.name !== 'status' ||
+    status.value.type !== 'CallExpression' ||
+    status.value.arguments.length !== 1 ||
+    !declaredNativeMember(module, status.value.callee, 'Schema', 'Literal')
+  )
+    return null;
+  const value = status.value.arguments[0];
+  if (value?.type !== 'Literal' || typeof value.value !== 'number' || !Number.isInteger(value.value)) return null;
+  const [json, annotation] = expression.arguments;
+  return json?.type === 'CallExpression' &&
+    json.arguments.length === 1 &&
+    json.arguments[0]?.type === 'ObjectExpression' &&
+    declaredNativeMember(module, json.callee, 'HttpApiSchema', 'asJson') &&
+    annotation?.type === 'CallExpression' &&
+    annotation.arguments.length === 1 &&
+    declaredNativeMember(module, annotation.callee, 'HttpApiSchema', 'status') &&
+    annotation.arguments[0]?.type === 'Literal' &&
+    annotation.arguments[0].value === value.value
+    ? value.value
+    : null;
+}
+
+/** A declared schema's checked literal field is not an independent hand-built status authority. */
+function isDeclaredProblemMake(context: Context, object: ESTree.ObjectExpression): boolean {
+  const call = object.parent;
+  if (
+    call?.type !== 'CallExpression' ||
+    call.optional ||
+    call.arguments.length !== 1 ||
+    call.arguments[0] !== object ||
+    call.callee.type !== 'MemberExpression' ||
+    call.callee.computed ||
+    call.callee.optional ||
+    call.callee.property.type !== 'Identifier' ||
+    call.callee.property.name !== 'make'
+  )
+    return false;
+  const module = declaredProblemModule(context, call.callee.object);
+  if (module === null) return false;
+  const status = propertyValue(indexProperties(object).get('status') ?? object);
+  const declared = declaredProblemStatus(module);
+  return declared !== null && status !== null && integerLiteral(status) === declared;
 }
 
 /** Leftmost identifier of a member chain: `error.cause.message` → `error`. */
@@ -524,7 +740,7 @@ export const rule = defineRule({
         if (node.properties.length === 0 || isExemptContext(context, node, options)) return;
         const properties = indexProperties(node);
         const shape = problemShape(properties, options);
-        reportProblemShape(context, shape);
+        if (!isDeclaredProblemMake(context, node)) reportProblemShape(context, shape);
         if (shape.problemShaped && options.reportRawDriverMessages) reportDriverMessages(context, properties, options);
       },
     };

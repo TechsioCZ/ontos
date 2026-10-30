@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, Console, Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { Command } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { ONTOS_SHELL_RUNTIME_CONTRACT_PATH } from '../../packages/core-runtime/src/index.ts';
 import type { CloudflareApiError } from './cloudflare-api-error.mts';

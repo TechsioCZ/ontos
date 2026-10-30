@@ -1,11 +1,12 @@
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 import { NodeServices } from '@effect/platform-node';
 import { is } from 'drizzle-orm';
 import { getTableConfig, PgPolicy, PgTable } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Config, Effect, FileSystem, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { makeCoreMigrationSchema } from '../../database/core-schema.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
@@ -109,7 +110,7 @@ for (const { enrollment, name } of enrollments) {
     Effect.gen(function* verifyDrizzlePolicyCollection() {
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const temporaryRoot = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault('/private/tmp'));
+      const temporaryRoot = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault(tmpdir()));
       const directory = yield* fs.makeTempDirectoryScoped({ directory: temporaryRoot });
       const fixturePath = `${directory}/core-schema.cts`;
       yield* fs.writeFileString(fixturePath, fixtureSource);

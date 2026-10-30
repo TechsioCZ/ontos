@@ -75,29 +75,32 @@ const inMemoryServices = (initial: SalesPipelineState, initialRevision: number) 
   let state = initial;
   let revision = initialRevision;
   return {
-    apply: (command: typeof SalesPipelineCommandSchema.Type, _expectedRevision: number, invocationId: string) =>
-      Effect.gen(function* apply() {
-        const change = yield* evolveOpportunityState(state, command, { invocationId, now: changedAt });
-        const { results: bulkResults } = change;
-        const results = bulkResults === undefined ? {} : { results: [...bulkResults] };
-        if (change.affected.length === 0) {
-          const unchanged: AppliedCommand = {
-            changedAt,
-            result: { opportunities: [], revision, ...results },
-            stageChanges: [],
-          };
-          return unchanged;
-        }
-        ({ state } = change);
-        revision += 1;
-        const applied: AppliedCommand = {
+    apply: Effect.fn('SalesPipelineTest.apply')(function* apply(
+      command: typeof SalesPipelineCommandSchema.Type,
+      _expectedRevision: number,
+      invocationId: string,
+    ) {
+      const change = yield* evolveOpportunityState(state, command, { invocationId, now: changedAt });
+      const { results: bulkResults } = change;
+      const results = bulkResults === undefined ? {} : { results: [...bulkResults] };
+      if (change.affected.length === 0) {
+        const unchanged: AppliedCommand = {
           changedAt,
-          result: { opportunities: [...change.affected], revision, ...results },
-          stageChanges: change.stageChanges,
+          result: { opportunities: [], revision, ...results },
+          stageChanges: [],
         };
-        return applied;
-      }),
-    records: () => Effect.die('records is not used by apply-command'),
+        return unchanged;
+      }
+      ({ state } = change);
+      revision += 1;
+      const applied: AppliedCommand = {
+        changedAt,
+        result: { opportunities: [...change.affected], revision, ...results },
+        stageChanges: change.stageChanges,
+      };
+      return applied;
+    }),
+    loadRecords: () => Effect.die('loadRecords is not used by apply-command'),
   };
 };
 

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 
@@ -126,7 +127,7 @@ describe('governed Product historical lookup', () => {
         expect(response.lookup.evidence.evidenceRefs).toEqual(['evidence:original']);
         expect(response.lookup.evidence.retained).not.toHaveProperty('catalogReady');
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('returns MISSING for an absent exact revision and rejects a foreign Tenant', () =>
@@ -152,7 +153,7 @@ describe('governed Product historical lookup', () => {
         historyServices,
       ).pipe(Effect.catchTag('ReadHandlerNotFound', (error) => Effect.succeed(error)));
       expect(Schema.is(ReadHandlerNotFound)(foreign)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('returns exact locale-qualified rename revisions without substituting Current text', () =>
@@ -177,7 +178,7 @@ describe('governed Product historical lookup', () => {
           name: 'Original name',
         });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps the old Product reference historical after retirement', () =>
@@ -205,6 +206,6 @@ describe('governed Product historical lookup', () => {
       if (response.lookup?.kind === 'FOUND') {
         expect(response.lookup.evidence.retained.lifecycle).toBe('DRAFT');
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

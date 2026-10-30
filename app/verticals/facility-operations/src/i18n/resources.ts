@@ -15,9 +15,9 @@ import enPurchasing from '../../locales/en/agendas/purchasing.json';
 import enSecurity from '../../locales/en/agendas/security.json';
 import enBase from '../../locales/en/facility-operations.json';
 
-export const csResource = {
+export const withCsAgendaResources = ({ 'facility-operations': base }: typeof csBase) => ({
   'facility-operations': {
-    ...csBase['facility-operations'],
+    ...base,
     agenda: csAgenda,
     assets: csAssets,
     documents: csDocuments,
@@ -25,11 +25,11 @@ export const csResource = {
     purchasing: csPurchasing,
     security: csSecurity,
   },
-};
+});
 
-export const enResource = {
+export const withEnAgendaResources = ({ 'facility-operations': base }: typeof enBase) => ({
   'facility-operations': {
-    ...enBase['facility-operations'],
+    ...base,
     agenda: enAgenda,
     assets: enAssets,
     documents: enDocuments,
@@ -37,7 +37,10 @@ export const enResource = {
     purchasing: enPurchasing,
     security: enSecurity,
   },
-};
+});
+
+export const csResource = withCsAgendaResources(csBase);
+export const enResource = withEnAgendaResources(enBase);
 
 export const facilityOperationsI18nResources = {
   cs: { 'facility-operations': csResource },

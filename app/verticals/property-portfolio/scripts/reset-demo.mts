@@ -2,8 +2,8 @@ import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 
 import { PropertyStateSchema } from '../shared/apis/records.ts';
 import { propertyRelations, propertyState } from '../src/database/schema.ts';
@@ -50,7 +50,7 @@ const main = (fixturePath: string) =>
         set: { payload: input.state, revision: 0, updatedAt: now },
         target: [propertyState.tenantId, propertyState.legalEntityId],
       });
-    return yield* Console.log('Siampark property demo reset to revision 0');
+    return yield* Console.log('Nájempark property demo reset to revision 0');
   });
 const command = Command.make('demo-fixture', { fixture: Flag.String('fixture') }, ({ fixture }) =>
   main(fixture).pipe(Effect.tapError((failure) => Console.error(`Fixture port failed: ${failure._tag}`))),

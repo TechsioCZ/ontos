@@ -122,6 +122,12 @@ const wrappedFactory = (context: Context, fn: ESTree.Node): Syntax | null => {
   return staticString(builder.arguments[0], { templates: false }) === null ? null : call;
 };
 
+/** A factory reference in the native transaction-bound slot is owned by Core, rather than called by its importer. */
+export const isNativeServiceFactoryArgument = (context: Context, node: ESTree.Node): boolean => {
+  const held = skipWrappers(node, transparentWrappers);
+  return nativeDefinitionArgument(context, held.node, held.parent);
+};
+
 /** The three runtime arguments belong to the native transaction/scope/revision contract. */
 export const isNativeServiceFactoryCallback = (context: Context, node: ESTree.Node): boolean => {
   if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') {

@@ -6,7 +6,6 @@ import { PrincipalIdSchema } from '../auth/external-identity-contracts.ts';
 export const OutboxPayloadSchema = Schema.Struct({
   data: Schema.Struct({ principalId: PrincipalIdSchema }),
 });
-export type OutboxPayload = typeof OutboxPayloadSchema.Type;
 
 export const outboxTopic = 'core.identity.principal-lifecycle-changed.v1' as const;
 export const outboxProducerModuleKey = 'core.identity' as const;

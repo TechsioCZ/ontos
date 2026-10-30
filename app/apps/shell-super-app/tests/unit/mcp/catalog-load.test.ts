@@ -1,5 +1,5 @@
 // @rstest-environment node
-import { createServer } from 'node:http';
+import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from '@effect/platform-node/Undici';
 
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -15,31 +15,36 @@ import {
   fixtureModule,
 } from './fixture-vertical.ts';
 
-interface Release {
-  readonly close: () => void;
-  readonly origin: string;
-  readonly reads: string[];
-}
-
-/** A module release on loopback that serves the fixture tool catalog and records each read. */
+/** The native release transport receives in-memory HTTP replies, retaining real body and digest handling. */
 const release = Effect.acquireRelease(
-  Effect.callback<Release>((resume) => {
+  Effect.sync(() => {
+    const previousDispatcher = getGlobalDispatcher();
+    const agent = new MockAgent();
+    const origin = 'http://127.0.0.1:9';
     const reads: string[] = [];
-    const server = createServer((request, response) => {
-      reads.push(request.url ?? '');
-      if (request.url === FIXTURE_TOOL_CATALOG_PATH) {
-        response.writeHead(200, { 'content-type': 'application/json' }).end(FIXTURE_TOOL_CATALOG_TEXT);
-      } else {
-        response.writeHead(404).end();
-      }
-    });
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address !== null ? address.port : 0;
-      resume(Effect.succeed({ close: () => server.close(), origin: `http://127.0.0.1:${port}`, reads }));
-    });
+    agent.disableNetConnect();
+    agent
+      .get(origin)
+      .intercept({ method: 'GET', path: /.*/u })
+      .reply(({ path }) => {
+        reads.push(path);
+        if (path === FIXTURE_TOOL_CATALOG_PATH) {
+          return {
+            data: FIXTURE_TOOL_CATALOG_TEXT,
+            responseOptions: { headers: { 'content-type': 'application/json' } },
+            statusCode: 200,
+          };
+        }
+        return { data: '', statusCode: 404 };
+      })
+      .persist();
+    setGlobalDispatcher(agent);
+    return { agent, origin, previousDispatcher, reads };
   }),
-  ({ close }) => Effect.sync(close),
+  ({ agent, previousDispatcher }) =>
+    Effect.sync(() => {
+      setGlobalDispatcher(previousDispatcher);
+    }).pipe(Effect.andThen(Effect.promise(agent.close.bind(agent)))),
 );
 
 it('describes modules from their contracts without loading any tool', () => {

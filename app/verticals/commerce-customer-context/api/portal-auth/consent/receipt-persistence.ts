@@ -4,8 +4,12 @@ import { CommerceEnrollmentOwnerTransactionRunner } from '../../../src/enrollmen
 import { attemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 import { CustomerConsentReceiptSchema } from './model.ts';
 import type { CustomerConsentReceipt } from './model.ts';
-import type { CustomerConsentScope } from './privacy-gateway.ts';
 import { consentConflict, consentUnavailable } from './problems.ts';
+
+interface ConsentReceiptScope {
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+}
 
 const readRoutine = defineScopedRoutine({
   name: 'read_customer_consent_receipt',
@@ -34,7 +38,7 @@ const writeRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 export const readCustomerConsentReceipt = Effect.fn('CustomerConsent.readReceipt')(function* readReceipt(
-  scope: Pick<CustomerConsentScope, 'tenantId' | 'legalEntityId'>,
+  scope: ConsentReceiptScope,
   requestId: string,
 ) {
   const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
@@ -55,7 +59,7 @@ export const readCustomerConsentReceipt = Effect.fn('CustomerConsent.readReceipt
   return Option.fromNullishOr(rows[0]?.receipt);
 });
 export const recordCustomerConsentReceipt = Effect.fn('CustomerConsent.recordReceipt')(function* recordReceipt(
-  scope: CustomerConsentScope,
+  scope: ConsentReceiptScope,
   receipt: CustomerConsentReceipt,
 ) {
   const runner = yield* CommerceEnrollmentOwnerTransactionRunner;

@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 // Zerops deploys the installed workspace, so every dependency link must resolve inside it.
 // A global virtual store links into the build user's pnpm cache, which the runtime never receives.

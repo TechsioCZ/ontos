@@ -3,8 +3,8 @@ import { PgClient } from '@effect/sql-pg';
 import { Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import type { Effect as EffectType } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { makeGatewayScopeGrantRegistrar } from '../../src/auth/gateway-scope-grant.ts';
 import type { GatewayScopeGrantInput } from '../../src/auth/gateway-scope-grant.ts';

@@ -4,6 +4,7 @@
 // The central dispatcher (shared/agendas.ts) picks the agenda by tag; nothing else needs editing.
 import { Effect, Match, Schema } from 'effect';
 import {
+  optionalField,
   auditCreated,
   auditUpdated,
   defineAgenda,
@@ -16,7 +17,7 @@ import {
   PropertyRefSchema,
   TextSchema,
 } from '../domain/common.ts';
-import type { OpsCommandInput } from '../domain/common.ts';
+import type { OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import {
   CommentIdSchema,
   ContractTermsSchema,
@@ -33,12 +34,12 @@ const LinksSchema = Schema.Array(SubjectRefSchema).check(Schema.isMaxLength(20))
 export const documentsCommandSchemas = [
   /** New document (smlouva, dodatek, protokol, revize, fotografie…), optionally with its first file version. */
   Schema.TaggedStruct('DocumentCreate', {
-    title: TextSchema(300),
     category: TextSchema(120),
-    related: Schema.optionalKey(PropertyRefSchema),
-    links: Schema.optionalKey(LinksSchema),
-    description: Schema.optionalKey(NoteSchema),
     contract: Schema.optionalKey(ContractTermsSchema),
+    description: Schema.optionalKey(NoteSchema),
+    links: Schema.optionalKey(LinksSchema),
+    related: Schema.optionalKey(PropertyRefSchema),
+    title: TextSchema(300),
     /** Dodatek / příloha k původní smlouvě (must be an existing document). */
     amendsDocumentId: Schema.optionalKey(DocumentIdSchema),
     /** Optional first version: the `file` returned by a prior FileUpload command. */
@@ -47,12 +48,12 @@ export const documentsCommandSchemas = [
   }),
   /** Metadata change. Omitted fields stay as they are; files and versions are never touched. */
   Schema.TaggedStruct('DocumentUpdate', {
-    documentId: DocumentIdSchema,
-    title: Schema.optionalKey(TextSchema(300)),
     category: Schema.optionalKey(TextSchema(120)),
-    links: Schema.optionalKey(LinksSchema),
-    description: Schema.optionalKey(NoteSchema),
     contract: Schema.optionalKey(ContractTermsSchema),
+    description: Schema.optionalKey(NoteSchema),
+    documentId: DocumentIdSchema,
+    links: Schema.optionalKey(LinksSchema),
+    title: Schema.optionalKey(TextSchema(300)),
   }),
   /** Adds a new file version; earlier versions stay downloadable (S12-02). */
   Schema.TaggedStruct('DocumentVersionAdd', {
@@ -69,15 +70,15 @@ export const documentsCommandSchemas = [
   }),
   /** New comment or message on any record or channel (S14-01). */
   Schema.TaggedStruct('DocumentCommentPost', {
-    subject: SubjectRefSchema,
-    body: TextSchema(4000),
     attachment: Schema.optionalKey(SubjectRefSchema),
+    body: TextSchema(4000),
     mentions: Schema.optionalKey(Schema.Array(TextSchema(200)).check(Schema.isMaxLength(20))),
+    subject: SubjectRefSchema,
   }),
   /** Author rewrites a comment; the previous wording is kept in `edits`. */
   Schema.TaggedStruct('DocumentCommentEdit', {
-    commentId: CommentIdSchema,
     body: TextSchema(4000),
+    commentId: CommentIdSchema,
   }),
   /** Author withdraws a comment; it stays in the history marked as withdrawn. */
   Schema.TaggedStruct('DocumentCommentRetract', {
@@ -91,12 +92,12 @@ type CommandOf<Tag extends DocumentsCommand['_tag']> = Extract<DocumentsCommand,
 
 const findDocument = (state: DocumentsState, documentId: string) =>
   Effect.fromNullishOr(state.documents.find((document) => document.id === documentId)).pipe(
-    Effect.mapError(() => opsNotFound(`Document ${documentId} does not exist`)),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound(`Document ${documentId} does not exist`))),
   );
 
 const findComment = (state: DocumentsState, commentId: string) =>
   Effect.fromNullishOr((state.comments ?? []).find((comment) => comment.id === commentId)).pipe(
-    Effect.mapError(() => opsNotFound(`Comment ${commentId} does not exist`)),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound(`Comment ${commentId} does not exist`))),
   );
 
 const replaceDocument = (state: DocumentsState, next: DocumentRecord): DocumentsState => ({
@@ -111,8 +112,7 @@ const replaceComment = (state: DocumentsState, next: CommentRecord): DocumentsSt
 
 const createDocument = Effect.fn('FacilityOperations.Documents.create')(function* createDocument(
   state: DocumentsState,
-  value: CommandOf<'DocumentCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'DocumentCreate'>>,
 ) {
   if (value.amendsDocumentId !== undefined) {
     yield* findDocument(state, value.amendsDocumentId);
@@ -127,7 +127,15 @@ const createDocument = Effect.fn('FacilityOperations.Documents.create')(function
     versions:
       file === undefined
         ? []
-        : [{ file, ...(note === undefined ? {} : { note }), uploadedAt: input.now, uploadedBy: input.actor, version: 1 }],
+        : [
+            {
+              file,
+              ...optionalField('note', note),
+              uploadedAt: input.now,
+              uploadedBy: input.actor,
+              version: 1,
+            },
+          ],
   };
   const entity = yield* entityIdOf(id);
   return { entityIds: [entity], state: { ...state, documents: [...state.documents, record] } };
@@ -156,7 +164,11 @@ const addVersion = Effect.fn('FacilityOperations.Documents.addVersion')(function
   if (current.versions.some((version) => version.file.id === value.file.id)) {
     return yield* opsConflict('This file is already a version of the document');
   }
-  const version = current.versions.reduce((highest, entry) => Math.max(highest, entry.version), 0) + 1;
+  let highestVersion = 0;
+  for (const entry of current.versions) {
+    highestVersion = Math.max(highestVersion, entry.version);
+  }
+  const version = highestVersion + 1;
   const next = auditUpdated(
     {
       ...current,
@@ -164,7 +176,7 @@ const addVersion = Effect.fn('FacilityOperations.Documents.addVersion')(function
         ...current.versions,
         {
           file: value.file,
-          ...(value.note === undefined ? {} : { note: value.note }),
+          ...optionalField('note', value.note),
           uploadedAt: input.now,
           uploadedBy: input.actor,
           version,
@@ -186,13 +198,14 @@ const recordSignature = Effect.fn('FacilityOperations.Documents.recordSignature'
   if (!current.versions.some((version) => version.version === value.version)) {
     return yield* opsConflict(`Version ${value.version} does not exist; upload the signed scan first`);
   }
-  const contract = current.contract;
+  const { contract } = current;
   const next = auditUpdated(
     {
       ...current,
-      ...(contract !== undefined && contract.status === 'draft'
-        ? { contract: { ...contract, status: 'active' as const } }
-        : {}),
+      ...optionalField(
+        'contract',
+        contract !== undefined && contract.status === 'draft' ? { ...contract, status: 'active' as const } : undefined,
+      ),
       signature: {
         recordedAt: input.now,
         recordedBy: input.actor,
@@ -270,7 +283,7 @@ const retractComment = Effect.fn('FacilityOperations.Documents.retractComment')(
 /** Pure reducer: applies one command to the `documents` state. Persistence decides when it is saved. */
 export const evolveDocuments = (state: DocumentsState, command: DocumentsCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('DocumentCreate', (value) => createDocument(state, value, input)),
+    Match.tag('DocumentCreate', (value) => createDocument(state, { input, value })),
     Match.tag('DocumentUpdate', (value) => updateDocument(state, value, input)),
     Match.tag('DocumentVersionAdd', (value) => addVersion(state, value, input)),
     Match.tag('DocumentSignatureRecord', (value) => recordSignature(state, value, input)),

@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // Storefront content of one product: category, labels, parameters, main image alt text and its change history.
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -6,7 +7,8 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { formatDateTime, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { runCommand } from './products-api.ts';
@@ -31,12 +33,12 @@ interface ParameterDraft {
   readonly value: string;
 }
 
-type Flags = {
+interface Flags {
   readonly isAction: boolean;
   readonly isNew: boolean;
   readonly isRecommended: boolean;
   readonly isSale: boolean;
-};
+}
 
 export const CatalogContentPanel = ({
   canWrite,
@@ -47,8 +49,10 @@ export const CatalogContentPanel = ({
   product,
   revision,
 }: CatalogContentPanelProps) => {
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
-  const [picked, setPicked] = useState<CategoryTrail | null>(category);
+  const [categoryDraft, setCategoryDraft] = useState<CategoryTrail | null>();
+  const picked = categoryDraft === undefined ? category : categoryDraft;
   const categoryId = picked?.id ?? product.categoryId;
   const [parameters, setParameters] = useState<readonly ParameterDraft[]>(() =>
     (product.parameters ?? []).map((parameter, index) => ({
@@ -58,7 +62,7 @@ export const CatalogContentPanel = ({
       value: parameter.value,
     })),
   );
-  const [nextKey, setNextKey] = useState(() => (product.parameters ?? []).length);
+  const nextKey = useRef((product.parameters ?? []).length);
   const [flags, setFlags] = useState<Flags>(() => ({
     isAction: product.isAction === true,
     isNew: product.isNew === true,
@@ -73,6 +77,8 @@ export const CatalogContentPanel = ({
     (parameter) => parameter.label.trim() === '' || parameter.value.trim() === '',
   );
 
+  const removeParameter = (key: number) => setParameters((current) => current.filter((entry) => entry.key !== key));
+
   const patchParameter = (key: number, next: Partial<ParameterDraft>) =>
     setParameters((current) =>
       current.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)),
@@ -84,38 +90,35 @@ export const CatalogContentPanel = ({
     }
     setBusy(true);
     setServerError(null);
-    runCommand(
-      {
-        _tag: 'UpdateProduct',
-        id: product.id,
-        patch: {
-          ...(categoryId !== undefined && categoryId !== product.categoryId ? { categoryId } : {}),
-          parameters: parameters.map(({ label, value, unit }) => ({
-            label: label.trim(),
-            unit: unit.trim(),
-            value: value.trim(),
-          })),
-          ...flags,
-          imageAlt: imageAlt.trim(),
-        },
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setServerError(failure(outcome.reason, onReload));
-          return;
-        }
-        onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.');
-      },
-    );
+    const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {};
+    if (categoryId !== undefined && categoryId !== product.categoryId) {
+      patch.categoryId = categoryId;
+    }
+    patch.parameters = parameters.map(({ label, unit, value }) => ({
+      label: label.trim(),
+      unit: unit.trim(),
+      value: value.trim(),
+    }));
+    patch.isAction = flags.isAction;
+    patch.isNew = flags.isNew;
+    patch.isRecommended = flags.isRecommended;
+    patch.isSale = flags.isSale;
+    patch.imageAlt = imageAlt.trim();
+    runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        setServerError(failure(outcome.reason, onReload));
+        return;
+      }
+      onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.');
+    });
   };
 
   const history = (product.contentHistory ?? []).toReversed();
 
   return (
     <div className="flex flex-col gap-250">
-      <SectionCard title="Kategorie v e-shopu">
+      <SectionCard title={t('merchandise.ui.storefrontCategory')}>
         {hasCategoryTree ? (
           <>
             <p className="text-sm">
@@ -125,14 +128,14 @@ export const CatalogContentPanel = ({
               <CategorySearchCombobox
                 errorMessage="Kategorie se nepodařilo načíst."
                 id="content-category-search"
-                label="Hledat kategorii"
+                label={t('merchandise.ui.searchCategories')}
                 loadingMessage="Načítám kategorie…"
                 moreMessage={(shown, total) =>
                   `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.`
                 }
                 noResultsMessage="Žádná kategorie neodpovídá hledání."
-                onSelect={setPicked}
-                placeholder="název nebo cesta, např. din 912 a 2"
+                onSelect={setCategoryDraft}
+                placeholder={t('merchandise.ui.categoryPathPlaceholder')}
                 retryLabel="Zkusit znovu"
                 selected={picked}
               />
@@ -145,7 +148,7 @@ export const CatalogContentPanel = ({
         )}
       </SectionCard>
 
-      <SectionCard title="Štítky v e-shopu">
+      <SectionCard title={t('merchandise.ui.storefrontLabels')}>
         <div className="flex flex-wrap gap-200">
           <Switch
             checked={flags.isAction}
@@ -195,7 +198,7 @@ export const CatalogContentPanel = ({
                 <FormInput
                   disabled={!canWrite}
                   id={`parameter-label-${parameter.key}`}
-                  label="Název parametru"
+                  label={t('merchandise.ui.parameterName')}
                   name={`parameter-label-${parameter.key}`}
                   onChange={(event) => patchParameter(parameter.key, { label: event.target.value })}
                   size="sm"
@@ -204,7 +207,7 @@ export const CatalogContentPanel = ({
                 <FormInput
                   disabled={!canWrite}
                   id={`parameter-value-${parameter.key}`}
-                  label="Hodnota"
+                  label={t('merchandise.ui.value')}
                   name={`parameter-value-${parameter.key}`}
                   onChange={(event) => patchParameter(parameter.key, { value: event.target.value })}
                   size="sm"
@@ -213,7 +216,7 @@ export const CatalogContentPanel = ({
                 <FormInput
                   disabled={!canWrite}
                   id={`parameter-unit-${parameter.key}`}
-                  label="Jednotka"
+                  label={t('merchandise.ui.unit')}
                   name={`parameter-unit-${parameter.key}`}
                   onChange={(event) => patchParameter(parameter.key, { unit: event.target.value })}
                   size="sm"
@@ -223,7 +226,7 @@ export const CatalogContentPanel = ({
                   <Button
                     aria-label={`Odebrat parametr ${index + 1}`}
                     icon="icon-[mdi--delete-outline]"
-                    onClick={() => setParameters((current) => current.filter((entry) => entry.key !== parameter.key))}
+                    onClick={() => removeParameter(parameter.key)}
                     size="sm"
                     theme="borderless"
                     type="button"
@@ -244,8 +247,9 @@ export const CatalogContentPanel = ({
             <Button
               icon="icon-[mdi--plus]"
               onClick={() => {
-                setParameters((current) => [...current, { key: nextKey, label: '', unit: '', value: '' }]);
-                setNextKey((current) => current + 1);
+                const key = nextKey.current;
+                nextKey.current += 1;
+                setParameters((current) => [...current, { key, label: '', unit: '', value: '' }]);
               }}
               size="sm"
               theme="outlined"
@@ -258,11 +262,11 @@ export const CatalogContentPanel = ({
         ) : null}
       </SectionCard>
 
-      <SectionCard title="Hlavní obrázek">
+      <SectionCard title={t('merchandise.ui.mainImage')}>
         <FormInput
           disabled={!canWrite}
           id="content-image-alt"
-          label="Popis hlavního obrázku (alt)"
+          label={t('merchandise.ui.mainImageAlt')}
           name="imageAlt"
           onChange={(event) => setImageAlt(event.target.value)}
           value={imageAlt}
@@ -285,11 +289,13 @@ export const CatalogContentPanel = ({
         </div>
       ) : null}
 
-      <SectionCard title="Historie změn obsahu">
+      <SectionCard title={t('merchandise.ui.contentChangeHistory')}>
         {history.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
         ) : (
-          <div role="region" aria-label="Historie změn obsahu" style={{ overflowX: 'auto' }} tabIndex={0}>
+          /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */
+          <section aria-label={t('merchandise.ui.contentChangeHistory')} style={{ overflowX: 'auto' }} tabIndex={0}>
+            {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
             <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
@@ -310,7 +316,7 @@ export const CatalogContentPanel = ({
                 ))}
               </Table.Body>
             </Table>
-          </div>
+          </section>
         )}
       </SectionCard>
     </div>

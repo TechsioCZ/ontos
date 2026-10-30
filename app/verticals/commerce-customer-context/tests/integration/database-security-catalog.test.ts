@@ -112,6 +112,7 @@ const grantedRoutines = [
   'read_customer_group_members',
   'read_customer_payment_terms',
   'read_customer_profile',
+  'read_demo_newsletter_choice',
   'read_effective_customer_group_memberships',
   'read_guest_attribution',
   'read_portal_enrollment_attempt',
@@ -161,6 +162,7 @@ const grantedRoutines = [
   'verify_invitation_claim_authority',
   'verify_payment_terms_reconciliation_owner',
   'write_customer_consent_receipt',
+  'write_demo_newsletter_choice',
   'write_retail_enrollment_registration',
 ] as const;
 

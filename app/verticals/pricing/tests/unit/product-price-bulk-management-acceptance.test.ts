@@ -3,7 +3,7 @@ import { getVerticalRuntimeActions } from '@app/core-runtime';
 import { PriceSourceProvenanceSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import {
   ManageProductPriceOperationSchema,

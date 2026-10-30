@@ -32,6 +32,7 @@ import {
   commerceQuantityRuleRevisions,
   commerceQuantityRuleAssignments,
   customerCommercePolicyCompletenessGenerations,
+  demoNewsletterChoices,
 } from '../../src/database/schema.ts';
 
 it('owns an exact private Commerce Customer Context table catalog', () => {
@@ -48,8 +49,44 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(51);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(52);
   expect(actual).toEqual(expected);
+});
+
+it('stores only the current scoped demo newsletter choice with a positive integer revision', () => {
+  const config = getTableConfig(demoNewsletterChoices);
+  expect(
+    EffectArray.sort(
+      config.columns.map(({ name }) => name),
+      Order.String,
+    ),
+  ).toEqual([
+    'changed_at',
+    'decision',
+    'last_request_id',
+    'legal_entity_id',
+    'notice_version',
+    'party_id',
+    'revision',
+    'tenant_id',
+  ]);
+  expect(config.columns.every(({ notNull }) => notNull)).toBe(true);
+  expect(config.columns.find(({ name }) => name === 'revision')?.getSQLType()).toBe('integer');
+  expect(config.columns.find(({ name }) => name === 'last_request_id')?.getSQLType()).toBe('uuid');
+  expect(config.columns.find(({ name }) => name === 'changed_at')?.hasDefault).toBe(true);
+  expect(config.primaryKeys.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
+    ['tenant_id', 'legal_entity_id', 'party_id'],
+  ]);
+  expect(
+    EffectArray.sort(
+      config.checks.map(({ name }) => name),
+      Order.String,
+    ),
+  ).toEqual([
+    'ccc_demo_newsletter_choice_decision_ck',
+    'ccc_demo_newsletter_choice_notice_ck',
+    'ccc_demo_newsletter_choice_revision_ck',
+  ]);
 });
 
 it('stores exact Market retirement evidence behind one active reservation per scoped Market', () => {
@@ -262,7 +299,7 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
     }
     expect(config.policies[4]?.to).toBe('public');
     expect(
-      [...config.uniqueConstraints, ...config.indexes].some((candidate) => {
+      [...config.primaryKeys, ...config.uniqueConstraints, ...config.indexes].some((candidate) => {
         const columns = 'columns' in candidate ? candidate.columns : candidate.config.columns;
         const names = new Set(columns.flatMap((column) => ('name' in column ? [column.name] : [])));
         return tenantOnly

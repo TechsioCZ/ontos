@@ -18,7 +18,8 @@ import type { SeedClient, SeedTarget } from './seed-client.mts';
 const defaultEvidenceReference = 'demo:sales-rental-v1:customer';
 const seedSource = 'demo.sales-rental-v1';
 const partyAudience = 'party-registry';
-export const rentalCustomerName = 'Ukázkový nájemce Siampark';
+export const rentalCustomerName = 'Ukázkový nájemce Nájempark';
+const legacyRentalCustomerName = 'Ukázkový nájemce Siampark';
 /** One synthetic customer: subject kind, display name and a stable evidence key. */
 export interface SeedCustomerSpec {
   readonly evidenceKey: string;
@@ -62,7 +63,11 @@ export const seedCustomerList = (client: SeedClient) =>
 
 export const existingSeedCustomer = (items: readonly (typeof Customer.Type)[], name: string = rentalCustomerName) =>
   Effect.gen(function* existingCustomer() {
-    const matches = items.filter((item) => item.displayName === name);
+    // A label change must never create a second Party for an already-seeded rental customer.
+    const matches = items.filter(
+      (item) =>
+        item.displayName === name || (name === rentalCustomerName && item.displayName === legacyRentalCustomerName),
+    );
     if (matches.length > 1 || (matches.length === 1 && matches[0]?.status !== 'ACTIVE')) {
       return yield* new DemoSeedError({
         reason: 'Demo customer name is duplicated or archived; review it before seeding.',

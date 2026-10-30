@@ -2,11 +2,15 @@
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { DateTime, Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const boundedOwnerReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
-const profileResourceId = (brand: 'CounterpartyPurchasingProfileResourceId' | 'RetailCustomerProfileResourceId') =>
-  Schema.toEncoded(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand(brand)));
+const profileResourceId = <Brand extends 'CounterpartyPurchasingProfileResourceId' | 'RetailCustomerProfileResourceId'>(
+  brand: Parameters<typeof Schema.brand<Brand>>[0],
+) =>
+  Schema.toEncoded(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand<Brand>(brand)),
+  );
 const profileBoundedKey = Schema.toEncoded(
   Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('ProfileBoundedKey')),
 );

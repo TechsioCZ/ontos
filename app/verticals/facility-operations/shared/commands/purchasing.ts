@@ -16,7 +16,7 @@ import {
   opsConflict,
   opsNotFound,
 } from '../domain/common.ts';
-import type { EntityId, OpsCommandInput } from '../domain/common.ts';
+import type { EntityId, OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import { evolveSales, salesCommandSchemas } from './sales.ts';
 import {
   BatchSchema,
@@ -36,6 +36,7 @@ import {
   StockTrackingSchema,
   StockWarehouseIdSchema,
   SupplierIdSchema,
+  SupplierIcoSchema,
   SupplierQuoteIdSchema,
   emptyPurchasingState,
 } from '../domain/purchasing.ts';
@@ -55,8 +56,8 @@ import { batchQuantityIn, onHandIn, serialsInStock } from '../domain/purchasing-
 const RefsSchema = Schema.optionalKey(Schema.Array(StockRefSchema).check(Schema.isMaxLength(10)));
 const SerialsSchema = Schema.optionalKey(Schema.Array(SerialNumberSchema).check(Schema.isMaxLength(500)));
 const NewLineSchema = Schema.Struct({
-  itemId: Schema.optionalKey(StockItemIdSchema),
   description: TextSchema(300),
+  itemId: Schema.optionalKey(StockItemIdSchema),
   quantity: QuantitySchema,
   unitPriceMinor: MinorAmountSchema,
 });
@@ -65,91 +66,91 @@ const NewLinesSchema = Schema.Array(NewLineSchema).check(Schema.isMinLength(1), 
 export const purchasingCommandSchemas = [
   Schema.TaggedStruct('StockWarehouseCreate', {
     code: TextSchema(32),
-    name: TextSchema(200),
     location: Schema.optionalKey(PropertyRefSchema),
+    name: TextSchema(200),
   }),
   Schema.TaggedStruct('PurchaseSupplierCreate', {
-    name: TextSchema(200),
-    ico: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d{8}$/))),
     contact: Schema.optionalKey(TextSchema(200)),
     email: Schema.optionalKey(TextSchema(200)),
-    phone: Schema.optionalKey(TextSchema(64)),
+    ico: Schema.optionalKey(SupplierIcoSchema),
     leadTimeDays: Schema.optionalKey(LeadTimeDaysSchema),
+    name: TextSchema(200),
     note: Schema.optionalKey(NoteSchema),
+    phone: Schema.optionalKey(TextSchema(64)),
   }),
   Schema.TaggedStruct('StockItemCreate', {
-    sku: TextSchema(64),
-    name: TextSchema(200),
     category: StockItemCategorySchema,
-    warehouseId: StockWarehouseIdSchema,
-    unit: TextSchema(16),
-    tracking: StockTrackingSchema,
-    minimum: LevelSchema,
-    maximum: LevelSchema,
     leadTimeDays: LeadTimeDaysSchema,
+    maximum: LevelSchema,
+    minimum: LevelSchema,
+    name: TextSchema(200),
+    sku: TextSchema(64),
     supplierId: Schema.optionalKey(SupplierIdSchema),
+    tracking: StockTrackingSchema,
+    unit: TextSchema(16),
+    warehouseId: StockWarehouseIdSchema,
     /** Usual purchase unit price (CZK minor units); a received order line overwrites it. */
     lastPriceMinor: Schema.optionalKey(MinorAmountSchema),
     location: Schema.optionalKey(PropertyRefSchema),
     note: Schema.optionalKey(NoteSchema),
   }),
   Schema.TaggedStruct('StockItemUpdate', {
-    itemId: StockItemIdSchema,
-    name: Schema.optionalKey(TextSchema(200)),
     category: Schema.optionalKey(StockItemCategorySchema),
-    warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
-    minimum: Schema.optionalKey(LevelSchema),
-    maximum: Schema.optionalKey(LevelSchema),
-    leadTimeDays: Schema.optionalKey(LeadTimeDaysSchema),
-    supplierId: Schema.optionalKey(SupplierIdSchema),
+    itemId: StockItemIdSchema,
     lastPriceMinor: Schema.optionalKey(MinorAmountSchema),
+    leadTimeDays: Schema.optionalKey(LeadTimeDaysSchema),
+    maximum: Schema.optionalKey(LevelSchema),
+    minimum: Schema.optionalKey(LevelSchema),
+    name: Schema.optionalKey(TextSchema(200)),
     note: Schema.optionalKey(NoteSchema),
+    supplierId: Schema.optionalKey(SupplierIdSchema),
+    warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
   }),
   Schema.TaggedStruct('StockReceipt', {
-    itemId: StockItemIdSchema,
-    warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
-    quantity: QuantitySchema,
-    date: IsoDateSchema,
-    reason: TextSchema(500),
     batch: Schema.optionalKey(BatchSchema),
-    serialNumbers: SerialsSchema,
+    date: IsoDateSchema,
+    itemId: StockItemIdSchema,
+    quantity: QuantitySchema,
+    reason: TextSchema(500),
     refs: RefsSchema,
+    serialNumbers: SerialsSchema,
+    warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
   }),
   Schema.TaggedStruct('StockIssue', {
-    itemId: StockItemIdSchema,
-    warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
-    quantity: QuantitySchema,
-    date: IsoDateSchema,
-    reason: TextSchema(500),
     batch: Schema.optionalKey(BatchSchema),
-    serialNumbers: SerialsSchema,
-    refs: RefsSchema,
+    date: IsoDateSchema,
+    itemId: StockItemIdSchema,
     plannedIssueId: Schema.optionalKey(StockPlannedIssueIdSchema),
+    quantity: QuantitySchema,
+    reason: TextSchema(500),
+    refs: RefsSchema,
+    serialNumbers: SerialsSchema,
+    warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
   }),
   Schema.TaggedStruct('StockTransfer', {
-    itemId: StockItemIdSchema,
-    fromWarehouseId: StockWarehouseIdSchema,
-    toWarehouseId: StockWarehouseIdSchema,
-    quantity: QuantitySchema,
-    date: IsoDateSchema,
-    reason: TextSchema(500),
     batch: Schema.optionalKey(BatchSchema),
+    date: IsoDateSchema,
+    fromWarehouseId: StockWarehouseIdSchema,
+    itemId: StockItemIdSchema,
+    quantity: QuantitySchema,
+    reason: TextSchema(500),
     serialNumbers: SerialsSchema,
+    toWarehouseId: StockWarehouseIdSchema,
   }),
   Schema.TaggedStruct('StockAdjustment', {
+    date: IsoDateSchema,
+    delta: Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1_000_000), Schema.isLessThanOrEqualTo(1_000_000)),
     itemId: StockItemIdSchema,
     warehouseId: Schema.optionalKey(StockWarehouseIdSchema),
-    delta: Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1_000_000), Schema.isLessThanOrEqualTo(1_000_000)),
-    date: IsoDateSchema,
     /** S05: a correction always needs a reason. */
-    reason: TextSchema(500),
     batch: Schema.optionalKey(BatchSchema),
+    reason: TextSchema(500),
     serialNumbers: SerialsSchema,
   }),
   Schema.TaggedStruct('StockPlannedIssueCreate', {
+    date: IsoDateSchema,
     itemId: StockItemIdSchema,
     quantity: QuantitySchema,
-    date: IsoDateSchema,
     reason: TextSchema(500),
     refs: RefsSchema,
   }),
@@ -157,57 +158,57 @@ export const purchasingCommandSchemas = [
     plannedIssueId: StockPlannedIssueIdSchema,
   }),
   Schema.TaggedStruct('PurchaseQuoteCreate', {
-    supplierId: SupplierIdSchema,
-    number: TextSchema(64),
-    date: IsoDateSchema,
-    validUntil: Schema.optionalKey(IsoDateSchema),
     currency: CurrencySchema,
+    date: IsoDateSchema,
     lines: NewLinesSchema,
     note: Schema.optionalKey(NoteSchema),
+    number: TextSchema(64),
+    supplierId: SupplierIdSchema,
+    validUntil: Schema.optionalKey(IsoDateSchema),
   }),
   Schema.TaggedStruct('PurchaseQuoteReject', {
-    quoteId: SupplierQuoteIdSchema,
     note: Schema.optionalKey(NoteSchema),
+    quoteId: SupplierQuoteIdSchema,
   }),
   Schema.TaggedStruct('PurchaseOrderCreate', {
-    supplierId: SupplierIdSchema,
-    warehouseId: StockWarehouseIdSchema,
     currency: CurrencySchema,
     expectedDate: Schema.optionalKey(IsoDateSchema),
     lines: NewLinesSchema,
     note: Schema.optionalKey(NoteSchema),
+    supplierId: SupplierIdSchema,
+    warehouseId: StockWarehouseIdSchema,
   }),
   Schema.TaggedStruct('PurchaseOrderCreateFromQuote', {
-    quoteId: SupplierQuoteIdSchema,
-    warehouseId: StockWarehouseIdSchema,
     expectedDate: Schema.optionalKey(IsoDateSchema),
     note: Schema.optionalKey(NoteSchema),
+    quoteId: SupplierQuoteIdSchema,
+    warehouseId: StockWarehouseIdSchema,
   }),
   Schema.TaggedStruct('PurchaseOrderTransition', {
     orderId: PurchaseOrderIdSchema,
     /** approve (návrh→schváleno), order (schváleno→objednáno), cancel, close (částečně dodáno→dokončeno). */
-    to: Schema.Literals(['approved', 'ordered', 'cancelled', 'completed']),
     note: Schema.optionalKey(NoteSchema),
+    to: Schema.Literals(['approved', 'ordered', 'cancelled', 'completed']),
   }),
   Schema.TaggedStruct('PurchaseOrderReceive', {
-    orderId: PurchaseOrderIdSchema,
     date: IsoDateSchema,
     deliveryNote: Schema.optionalKey(TextSchema(64)),
     lines: Schema.Array(
       Schema.Struct({
+        batch: Schema.optionalKey(BatchSchema),
         lineId: PurchaseLineIdSchema,
         quantity: QuantitySchema,
-        batch: Schema.optionalKey(BatchSchema),
         serialNumbers: SerialsSchema,
       }),
     ).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+    orderId: PurchaseOrderIdSchema,
   }),
   Schema.TaggedStruct('PurchaseOrderLinkInvoice', {
-    orderId: PurchaseOrderIdSchema,
-    number: TextSchema(64),
-    invoiceDate: Schema.optionalKey(IsoDateSchema),
     amountMinor: Schema.optionalKey(MinorAmountSchema),
+    invoiceDate: Schema.optionalKey(IsoDateSchema),
     note: Schema.optionalKey(NoteSchema),
+    number: TextSchema(64),
+    orderId: PurchaseOrderIdSchema,
   }),
   ...salesCommandSchemas,
 ] as const;
@@ -221,11 +222,11 @@ const change = (entityIds: readonly EntityId[], state: PurchasingState) => ({ en
 
 const findItem = (state: PurchasingState, itemId: string) =>
   Effect.fromNullishOr(state.items.find((entry) => entry.id === itemId)).pipe(
-    Effect.mapError(() => opsNotFound('Stock item not found')),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound('Stock item not found'))),
   );
 const findOrder = (state: PurchasingState, orderId: string) =>
   Effect.fromNullishOr(state.orders.find((entry) => entry.id === orderId)).pipe(
-    Effect.mapError(() => opsNotFound('Purchase order not found')),
+    Effect.catchTag('NoSuchElementError', () => Effect.fail(opsNotFound('Purchase order not found'))),
   );
 const requireWarehouse = (state: PurchasingState, warehouseId: string) =>
   state.warehouses.some((entry) => entry.id === warehouseId)
@@ -307,13 +308,18 @@ const movementOf = (
   fields: Omit<StockMovement, 'createdAt' | 'createdBy' | 'id'>,
 ): StockMovement => ({ ...fields, createdAt: input.now, createdBy: input.actor, id });
 
-const optional = <K extends string, V>(key: K, value: V | undefined) =>
-  (value === undefined ? {} : { [key]: value }) as { readonly [P in K]?: V };
+type OptionalField<Key extends string, Value> = Partial<Record<Key, Value>>;
+const optional = <Key extends string, Value>(key: Key, value: Value | undefined) => {
+  const fields: OptionalField<Key, Value> = {};
+  if (value !== undefined) {
+    fields[key] = value;
+  }
+  return fields;
+};
 
 const createWarehouse = Effect.fn('FacilityOperations.Purchasing.warehouseCreate')(function* createWarehouse(
   state: PurchasingState,
-  value: CommandOf<'StockWarehouseCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'StockWarehouseCreate'>>,
 ) {
   if (state.warehouses.some((entry) => same(entry.code, value.code))) {
     return yield* opsConflict('A warehouse with this code already exists');
@@ -328,8 +334,7 @@ const createWarehouse = Effect.fn('FacilityOperations.Purchasing.warehouseCreate
 
 const createSupplier = Effect.fn('FacilityOperations.Purchasing.supplierCreate')(function* createSupplier(
   state: PurchasingState,
-  value: CommandOf<'PurchaseSupplierCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'PurchaseSupplierCreate'>>,
 ) {
   if (
     state.suppliers.some(
@@ -348,8 +353,7 @@ const createSupplier = Effect.fn('FacilityOperations.Purchasing.supplierCreate')
 
 const createItem = Effect.fn('FacilityOperations.Purchasing.itemCreate')(function* createItem(
   state: PurchasingState,
-  value: CommandOf<'StockItemCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'StockItemCreate'>>,
 ) {
   if (state.items.some((entry) => same(entry.sku, value.sku))) {
     return yield* opsConflict('A stock item with this SKU already exists');
@@ -492,11 +496,9 @@ const adjustment = Effect.fn('FacilityOperations.Purchasing.adjustment')(functio
   }
   const warehouseId = value.warehouseId ?? item.warehouseId;
   yield* requireWarehouse(state, warehouseId);
-  if (value.delta > 0) {
-    yield* checkIncoming(state, item, value.delta, value.batch, value.serialNumbers);
-  } else {
-    yield* checkOutgoing(state, item, warehouseId, -value.delta, value.batch, value.serialNumbers);
-  }
+  yield* value.delta > 0
+    ? checkIncoming(state, item, value.delta, value.batch, value.serialNumbers)
+    : checkOutgoing(state, item, warehouseId, -value.delta, value.batch, value.serialNumbers);
   const id = yield* mintId(StockMovementIdSchema, input.resourceId);
   const movement = movementOf(input, id, {
     date: value.date,
@@ -554,8 +556,7 @@ const lineIdOf = (input: OpsCommandInput, index: number) =>
 
 const createQuote = Effect.fn('FacilityOperations.Purchasing.quoteCreate')(function* createQuote(
   state: PurchasingState,
-  value: CommandOf<'PurchaseQuoteCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'PurchaseQuoteCreate'>>,
 ) {
   yield* requireSupplier(state, value.supplierId);
   yield* requireItems(
@@ -566,8 +567,10 @@ const createQuote = Effect.fn('FacilityOperations.Purchasing.quoteCreate')(funct
     return yield* opsConflict('This supplier quote is already recorded');
   }
   const id = yield* mintId(SupplierQuoteIdSchema, input.resourceId);
-  const lines = yield* Effect.forEach(value.lines, (line, index) =>
-    Effect.map(lineIdOf(input, index), (lineId) => ({ ...line, id: lineId })),
+  const lines = yield* Effect.forEach(
+    value.lines,
+    (line, index) => Effect.map(lineIdOf(input, index), (lineId) => ({ ...line, id: lineId })),
+    { concurrency: 1 },
   );
   const { _tag: _ignored, lines: _lines, ...fields } = value;
   return change([yield* entityIdOf(id)], {
@@ -634,8 +637,7 @@ const newOrder = (
 
 const createOrder = Effect.fn('FacilityOperations.Purchasing.orderCreate')(function* createOrder(
   state: PurchasingState,
-  value: CommandOf<'PurchaseOrderCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'PurchaseOrderCreate'>>,
 ) {
   yield* requireSupplier(state, value.supplierId);
   yield* requireWarehouse(state, value.warehouseId);
@@ -644,8 +646,11 @@ const createOrder = Effect.fn('FacilityOperations.Purchasing.orderCreate')(funct
     value.lines.map((line) => line.itemId),
   );
   const id = yield* mintId(PurchaseOrderIdSchema, input.resourceId);
-  const lines = yield* Effect.forEach(value.lines, (line, index) =>
-    Effect.map(lineIdOf(input, index), (lineId): PurchaseOrderLine => ({ ...line, id: lineId, receivedQuantity: 0 })),
+  const lines = yield* Effect.forEach(
+    value.lines,
+    (line, index) =>
+      Effect.map(lineIdOf(input, index), (lineId): PurchaseOrderLine => ({ ...line, id: lineId, receivedQuantity: 0 })),
+    { concurrency: 1 },
   );
   const order = newOrder(state, input, id, {
     currency: value.currency,
@@ -661,8 +666,7 @@ const createOrder = Effect.fn('FacilityOperations.Purchasing.orderCreate')(funct
 /** S06-01: the order keeps the quoted item, quantity, price and the link to the quote. */
 const createOrderFromQuote = Effect.fn('FacilityOperations.Purchasing.orderFromQuote')(function* createOrderFromQuote(
   state: PurchasingState,
-  value: CommandOf<'PurchaseOrderCreateFromQuote'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'PurchaseOrderCreateFromQuote'>>,
 ) {
   const quote = state.quotes.find((entry) => entry.id === value.quoteId);
   if (quote === undefined) {
@@ -673,16 +677,19 @@ const createOrderFromQuote = Effect.fn('FacilityOperations.Purchasing.orderFromQ
   }
   yield* requireWarehouse(state, value.warehouseId);
   const id = yield* mintId(PurchaseOrderIdSchema, input.resourceId);
-  const lines = yield* Effect.forEach(quote.lines, (line, index) =>
-    Effect.map(lineIdOf(input, index), (lineId): PurchaseOrderLine => ({
-      description: line.description,
-      id: lineId,
-      quantity: line.quantity,
-      quoteLineId: line.id,
-      receivedQuantity: 0,
-      unitPriceMinor: line.unitPriceMinor,
-      ...optional('itemId', line.itemId),
-    })),
+  const lines = yield* Effect.forEach(
+    quote.lines,
+    (line, index) =>
+      Effect.map(lineIdOf(input, index), (lineId): PurchaseOrderLine => ({
+        description: line.description,
+        id: lineId,
+        quantity: line.quantity,
+        quoteLineId: line.id,
+        receivedQuantity: 0,
+        unitPriceMinor: line.unitPriceMinor,
+        ...optional('itemId', line.itemId),
+      })),
+    { concurrency: 1 },
   );
   const order = newOrder(state, input, id, {
     currency: quote.currency,
@@ -704,14 +711,12 @@ const createOrderFromQuote = Effect.fn('FacilityOperations.Purchasing.orderFromQ
   });
 });
 
-const allowedTransitions: Readonly<
-  Record<CommandOf<'PurchaseOrderTransition'>['to'], ReadonlyArray<PurchaseOrder['status']>>
-> = {
+const allowedTransitions = {
   approved: ['draft'],
   cancelled: ['draft', 'approved', 'ordered'],
   completed: ['partially_delivered'],
   ordered: ['approved'],
-};
+} satisfies Readonly<Record<CommandOf<'PurchaseOrderTransition'>['to'], readonly PurchaseOrder['status'][]>>;
 
 const transitionOrder = Effect.fn('FacilityOperations.Purchasing.orderTransition')(function* transitionOrder(
   state: PurchasingState,
@@ -719,7 +724,7 @@ const transitionOrder = Effect.fn('FacilityOperations.Purchasing.orderTransition
   input: OpsCommandInput,
 ) {
   const order = yield* findOrder(state, value.orderId);
-  if (!allowedTransitions[value.to].includes(order.status)) {
+  if (!allowedTransitions[value.to].some((previous) => previous === order.status)) {
     return yield* opsConflict(`Order in status ${order.status} cannot move to ${value.to}`);
   }
   if (value.to === 'cancelled' && order.deliveries.length > 0) {
@@ -751,42 +756,51 @@ const receiveOrder = Effect.fn('FacilityOperations.Purchasing.orderReceive')(fun
   if (new Set(value.lines.map((line) => line.lineId)).size !== value.lines.length) {
     return yield* opsConflict('Each order line may appear once per delivery');
   }
+  const deliveryNote = value.deliveryNote === undefined ? '' : `, dodací list ${value.deliveryNote}`;
   let working: PurchasingState = state;
   const movementIds: StockMovement['id'][] = [];
   const received = new Map<string, number>();
   const prices = new Map<string, number>();
-  for (const [index, delivered] of value.lines.entries()) {
-    const line = order.lines.find((entry) => entry.id === delivered.lineId);
-    if (line === undefined) {
-      return yield* opsNotFound('Order line not found');
-    }
-    if (delivered.quantity > line.quantity - line.receivedQuantity) {
-      return yield* opsConflict('Delivered quantity exceeds the remaining quantity');
-    }
-    received.set(line.id, delivered.quantity);
-    if (line.itemId === undefined) {
-      continue;
-    }
-    const item = yield* findItem(working, line.itemId);
-    yield* checkIncoming(working, item, delivered.quantity, delivered.batch, delivered.serialNumbers);
-    const movementId = yield* mintId(StockMovementIdSchema, `${input.resourceId}:receipt-${index + 1}`);
-    const ref: StockRef = { id: order.id, kind: 'purchase_order', label: order.number };
-    const movement = movementOf(input, movementId, {
-      date: value.date,
-      itemId: item.id,
-      kind: 'receipt',
-      purchaseOrderId: order.id,
-      quantity: delivered.quantity,
-      reason: `Příjem z objednávky ${order.number}${value.deliveryNote === undefined ? '' : `, dodací list ${value.deliveryNote}`}`,
-      refs: [ref],
-      warehouseId: order.warehouseId,
-      ...optional('batch', delivered.batch),
-      ...optional('serialNumbers', delivered.serialNumbers),
-    });
-    movementIds.push(movementId);
-    prices.set(item.id, line.unitPriceMinor);
-    working = { ...working, movements: [...working.movements, movement] };
-  }
+  yield* Effect.forEach(
+    value.lines,
+    Effect.fn('FacilityOperations.Purchasing.receiveLine')(function* receiveLine(
+      delivered: CommandOf<'PurchaseOrderReceive'>['lines'][number],
+      index: number,
+    ) {
+      const line = order.lines.find((entry) => entry.id === delivered.lineId);
+      if (line === undefined) {
+        return yield* opsNotFound('Order line not found');
+      }
+      if (delivered.quantity > line.quantity - line.receivedQuantity) {
+        return yield* opsConflict('Delivered quantity exceeds the remaining quantity');
+      }
+      received.set(line.id, delivered.quantity);
+      if (line.itemId === undefined) {
+        return yield* Effect.void;
+      }
+      const item = yield* findItem(working, line.itemId);
+      yield* checkIncoming(working, item, delivered.quantity, delivered.batch, delivered.serialNumbers);
+      const movementId = yield* mintId(StockMovementIdSchema, `${input.resourceId}:receipt-${index + 1}`);
+      const ref: StockRef = { id: order.id, kind: 'purchase_order', label: order.number };
+      const movement = movementOf(input, movementId, {
+        date: value.date,
+        itemId: item.id,
+        kind: 'receipt',
+        purchaseOrderId: order.id,
+        quantity: delivered.quantity,
+        reason: `Příjem z objednávky ${order.number}${deliveryNote}`,
+        refs: [ref],
+        warehouseId: order.warehouseId,
+        ...optional('batch', delivered.batch),
+        ...optional('serialNumbers', delivered.serialNumbers),
+      });
+      movementIds.push(movementId);
+      prices.set(item.id, line.unitPriceMinor);
+      working = { ...working, movements: [...working.movements, movement] };
+      return yield* Effect.void;
+    }),
+    { concurrency: 1, discard: true },
+  );
   const lines = order.lines.map((line) => ({
     ...line,
     receivedQuantity: line.receivedQuantity + (received.get(line.id) ?? 0),
@@ -816,7 +830,10 @@ const receiveOrder = Effect.fn('FacilityOperations.Purchasing.orderReceive')(fun
     { ...order, deliveries: [...order.deliveries, delivery], history, lines, status },
     input,
   );
-  const entityIds = [yield* entityIdOf(order.id), ...(yield* Effect.forEach(movementIds, entityIdOf))];
+  const entityIds = [
+    yield* entityIdOf(order.id),
+    ...(yield* Effect.forEach(movementIds, entityIdOf, { concurrency: 1 })),
+  ];
   return change(entityIds, {
     ...working,
     items: working.items.map((item) =>
@@ -857,9 +874,9 @@ const linkInvoice = Effect.fn('FacilityOperations.Purchasing.orderLinkInvoice')(
 /** Pure reducer: applies one command to the `purchasing` state. Persistence decides when it is saved. */
 export const evolvePurchasing = (state: PurchasingState, command: PurchasingCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('StockWarehouseCreate', (value) => createWarehouse(state, value, input)),
-    Match.tag('PurchaseSupplierCreate', (value) => createSupplier(state, value, input)),
-    Match.tag('StockItemCreate', (value) => createItem(state, value, input)),
+    Match.tag('StockWarehouseCreate', (value) => createWarehouse(state, { input, value })),
+    Match.tag('PurchaseSupplierCreate', (value) => createSupplier(state, { input, value })),
+    Match.tag('StockItemCreate', (value) => createItem(state, { input, value })),
     Match.tag('StockItemUpdate', (value) => updateItem(state, value, input)),
     Match.tag('StockReceipt', (value) => receipt(state, value, input)),
     Match.tag('StockIssue', (value) => issue(state, value, input)),
@@ -867,10 +884,10 @@ export const evolvePurchasing = (state: PurchasingState, command: PurchasingComm
     Match.tag('StockAdjustment', (value) => adjustment(state, value, input)),
     Match.tag('StockPlannedIssueCreate', (value) => planIssue(state, value, input)),
     Match.tag('StockPlannedIssueCancel', (value) => cancelPlannedIssue(state, value, input)),
-    Match.tag('PurchaseQuoteCreate', (value) => createQuote(state, value, input)),
+    Match.tag('PurchaseQuoteCreate', (value) => createQuote(state, { input, value })),
     Match.tag('PurchaseQuoteReject', (value) => rejectQuote(state, value, input)),
-    Match.tag('PurchaseOrderCreate', (value) => createOrder(state, value, input)),
-    Match.tag('PurchaseOrderCreateFromQuote', (value) => createOrderFromQuote(state, value, input)),
+    Match.tag('PurchaseOrderCreate', (value) => createOrder(state, { input, value })),
+    Match.tag('PurchaseOrderCreateFromQuote', (value) => createOrderFromQuote(state, { input, value })),
     Match.tag('PurchaseOrderTransition', (value) => transitionOrder(state, value, input)),
     Match.tag('PurchaseOrderReceive', (value) => receiveOrder(state, value, input)),
     Match.tag('PurchaseOrderLinkInvoice', (value) => linkInvoice(state, value, input)),

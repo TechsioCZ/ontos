@@ -1,6 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';

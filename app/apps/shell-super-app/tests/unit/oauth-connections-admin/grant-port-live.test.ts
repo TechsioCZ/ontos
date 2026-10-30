@@ -1,4 +1,5 @@
 // @rstest-environment node
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 import {
   ContextAccess,
   OAuthAuthenticationAudit,
@@ -11,7 +12,11 @@ import {
 } from '@app/core-runtime';
 import type { ContextAccessResult, OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { CONNECTION_STATUSES } from '@app/shared-contracts/agent-access';
+import {
+  AgentAccessGrantIdSchema,
+  CONNECTION_STATUSES,
+  ConnectionSummarySchema as AdminConnectionSummarySchema,
+} from '@app/shared-contracts/agent-access';
 import type { AgentModuleGrant } from '@app/shared-contracts/agent-access';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -209,6 +214,14 @@ it.effect(
           Effect.provide(test.dependencies),
         );
       expect(result).toHaveLength(1);
+      expect(
+        result[0] === undefined ? result[0] : Schema.encodeSync(AdminConnectionSummarySchema)(result[0]),
+      ).toMatchObject({
+        client: { logoUri: null },
+        createdAt: '2026-10-25T10:00:00.000Z',
+        delegatedBy: null,
+        lastUsedAt: null,
+      });
       expect(test.selections).toEqual([filter]);
       expect(test.noteRequests).toHaveLength(1);
     }),
@@ -218,7 +231,7 @@ it.effect(
   'unknown and draft grants are None; every canonical management status is retained and drafts are omitted',
   () =>
     Effect.gen(function* canonicalStatuses() {
-      const draft = { ...retainedGrant, grantId: 'draft', status: 'draft' as const };
+      const draft = { ...retainedGrant, grantId: AgentAccessGrantIdSchema.make('draft'), status: 'draft' as const };
       const rows = CONNECTION_STATUSES.map((status, index) => ({
         ...retainedGrant,
         grantId: `00000000-0000-4000-8000-00000000001${index}`,
@@ -240,7 +253,7 @@ it.effect('retains granted authority separately from effective modules and fresh
     const requested: OAuthGrantRecord = {
       ...retainedGrant,
       modules: yield* Schema.decodeUnknownEffect(OAuthGrantModulesSchema)([
-        { access: 'write', moduleId: 'work.tasks' },
+        { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
       ]),
     };
     const test = yield* fixture({ rows: [requested] });
@@ -262,7 +275,7 @@ it.effect(
     Effect.gen(function* originalIngress() {
       const test = yield* fixture({ rows: [revoked] });
       const result = yield* test.grants.get(revoked.grantId);
-      expect(Option.isSome(result) && result.value.revokeNote).toBe('Reason');
+      expect(Option.isSome(result) && Option.getOrNull(result.value.revokeNote)).toBe('Reason');
       expect(test.noteRequests).toMatchObject([{ input: { grantIds: [revoked.grantId] }, principal, transport }]);
       const [observed] = test.noteRequests;
       expect(Predicate.hasProperty(observed, 'principal') && observed.principal).toBe(principal);
@@ -319,7 +332,7 @@ it.effect('retains native authority, catalog, credentials and mutation owners fr
       .update({
         actorPrincipalId: principal.principalId,
         grantId: retainedGrant.grantId,
-        modules: [{ access: 'read', moduleId: 'work.tasks' }],
+        modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') }],
         writePolicy: 'read_only',
       })
       .pipe(Effect.provide(second.dependencies));
@@ -365,8 +378,8 @@ it.effect('rejects empty, unoffered and write requests beyond the native read au
     const test = yield* fixture({ readableModules: ['work.tasks'] });
     const deniedModules: readonly (readonly AgentModuleGrant[])[] = [
       [],
-      [{ access: 'read', moduleId: 'other.module' }],
-      [{ access: 'write', moduleId: 'work.tasks' }],
+      [{ access: 'read', moduleId: AgentModuleKeySchema.make('other.module') }],
+      [{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }],
     ];
     for (const modules of deniedModules) {
       const failure = yield* test.grants
@@ -386,7 +399,7 @@ it.effect('rejects empty, unoffered and write requests beyond the native read au
 it.effect('encodes both module snapshots before the native update can mutate the grant', () =>
   Effect.gen(function* encodingBeforeMutation() {
     const modules = yield* Schema.decodeUnknownEffect(OAuthGrantModulesSchema.members[1])([
-      { access: 'read', moduleId: 'work.tasks' },
+      { access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') },
     ]);
     const row: OAuthGrantRecord = {
       ...retainedGrant,
@@ -397,7 +410,7 @@ it.effect('encodes both module snapshots before the native update can mutate the
       .update({
         actorPrincipalId: principal.principalId,
         grantId: row.grantId,
-        modules,
+        modules: modules.map((module) => ({ ...module, moduleId: AgentModuleKeySchema.make(module.moduleId) })),
         writePolicy: 'read_only',
       })
       .pipe(Effect.flip);
@@ -414,7 +427,7 @@ it.effect('propagates native update audit failure after mutation instead of retu
       .update({
         actorPrincipalId: principal.principalId,
         grantId: retainedGrant.grantId,
-        modules: [{ access: 'read', moduleId: 'work.tasks' }],
+        modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') }],
         writePolicy: 'read_only',
       })
       .pipe(Effect.flip);

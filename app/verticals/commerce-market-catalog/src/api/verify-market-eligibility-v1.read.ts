@@ -152,10 +152,8 @@ export const verifyMarketEligibilityV1Read = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
     prepare: (input, context) => prepareVerifyMarketEligibilityV1(input, context),
     load: handleVerifyMarketEligibilityV1,
-    // oxlint-enable perfectionist/sort-objects
   },
   marketResolutionPersistenceForScope,
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),

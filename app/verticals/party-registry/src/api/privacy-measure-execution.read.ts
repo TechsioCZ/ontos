@@ -10,11 +10,13 @@ import type { PrivacyMeasureExecutionRequest } from '../../shared/apis/privacy-m
 import { privacyMeasureExecutionService } from '../services/privacy-measure-execution.service.ts';
 import type { PrivacyMeasureExecutionService } from '../services/privacy-measure-execution.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const privacyMeasureExecutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.privacy-measure-execution',
-  moduleKey: 'party.registry',
+  moduleKey: PARTY_REGISTRY_MODULE_ID,
   role: 'api',
 });
 
@@ -28,7 +30,7 @@ export const privacyMeasureExecutionRead = defineRead(
     },
     inputSchema: PrivacyMeasureExecutionRequestSchema,
     legalEntityScope: 'required',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     permissionTarget: 'module',
     policies: [],
     readKey: 'party.registry.api.privacy-measure-execution',
@@ -54,5 +56,5 @@ export const privacyMeasureExecutionRead = defineRead(
       ),
   },
   (transaction, scope) => privacyMeasureExecutionService(transaction, scope),
-  () => ({ kind: 'module', moduleId: 'party.registry' }),
+  () => ({ kind: 'module', moduleId: PARTY_REGISTRY_MODULE_ID }),
 );

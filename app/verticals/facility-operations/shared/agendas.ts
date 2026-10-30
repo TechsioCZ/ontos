@@ -1,13 +1,14 @@
 // Central agenda registry (owned by ops-scaffold). Lanes never need to edit this file:
 // add commands in shared/commands/<agenda>.ts, state in shared/domain/<agenda>.ts.
 import { Schema } from 'effect';
+import type { Effect } from 'effect';
 import { agendaAgenda, agendaCommandSchemas } from './commands/agenda.ts';
 import { assetsAgenda, assetsCommandSchemas } from './commands/assets.ts';
 import { documentsAgenda, documentsCommandSchemas } from './commands/documents.ts';
 import { metersAgenda, metersCommandSchemas } from './commands/meters.ts';
 import { purchasingAgenda, purchasingCommandSchemas } from './commands/purchasing.ts';
 import { securityAgenda, securityCommandSchemas } from './commands/security.ts';
-import type { AgendaDefinition, AgendaId } from './domain/common.ts';
+import type { AgendaId, AgendaSensitivity, EntityId, OpsCommandError, OpsCommandInput } from './domain/common.ts';
 import { TextSchema } from './domain/common.ts';
 
 /** Maximum decoded size of one uploaded file (bytes). */
@@ -24,7 +25,7 @@ export const FileUploadCommandSchema = Schema.TaggedStruct('FileUpload', {
   contentBase64: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(MAX_FILE_BASE64_LENGTH),
-    Schema.isPattern(/^[A-Za-z0-9+/]*={0,2}$/),
+    Schema.isPattern(/^[A-Za-z0-9+/]*={0,2}$/u),
   ),
   mime: TextSchema(200),
   name: TextSchema(300),
@@ -42,10 +43,7 @@ export const OpsCommandSchema = Schema.Union([
 ]);
 export type OpsCommand = typeof OpsCommandSchema.Type;
 
-// biome-ignore lint: heterogeneous registry; each entry is fully typed in its own module.
-type AnyAgenda = AgendaDefinition<any, any, any>;
-
-export const agendaDefinitions: Readonly<Record<AgendaId, AnyAgenda>> = {
+export const agendaDefinitions = {
   agenda: agendaAgenda,
   assets: assetsAgenda,
   documents: documentsAgenda,
@@ -56,6 +54,26 @@ export const agendaDefinitions: Readonly<Record<AgendaId, AnyAgenda>> = {
 
 export const agendaIds: readonly AgendaId[] = ['assets', 'meters', 'security', 'documents', 'agenda', 'purchasing'];
 
+type DecodedAgendaState = (typeof agendaDefinitions)[AgendaId]['stateSchema']['Type'];
+type EncodedAgendaState = (typeof agendaDefinitions)[AgendaId]['stateSchema']['Encoded'];
+
+/** One checked reducer outcome; encoding is deferred until record-conflict checks succeed. */
+export interface AgendaDispatchResult {
+  readonly encoding: Effect.Effect<EncodedAgendaState, Schema.SchemaError>;
+  readonly entityIds: readonly EntityId[];
+}
+
+/** A selected owner keeps its schema-specific state behind its checked dispatch boundary. */
+export interface AgendaCommandOwner {
+  readonly dispatch: (
+    state: DecodedAgendaState,
+    command: Exclude<OpsCommand, FileUploadCommand>,
+    input: OpsCommandInput,
+  ) => Effect.Effect<AgendaDispatchResult, Schema.SchemaError | OpsCommandError>;
+  readonly id: AgendaId;
+  readonly sensitivity: AgendaSensitivity;
+}
+
 /** Agenda that owns a command (by schema membership). `undefined` for FileUpload. */
-export const agendaOfCommand = (command: OpsCommand): AnyAgenda | undefined =>
+export const agendaOfCommand = (command: OpsCommand): AgendaCommandOwner | undefined =>
   agendaIds.map((id) => agendaDefinitions[id]).find((definition) => Schema.is(definition.commandSchema)(command));

@@ -42,6 +42,8 @@ import { createUpdateContactPointPartyRegistryContactPointUpdatedV1OutboxMessage
 export { UpdateContactPointPayloadSchema } from '../../shared/actions/update-contact-point.ts';
 export type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const UpdateContactPointErrorSchema = Schema.Union([
   PartyAliasWriteRejected,
   PartyContactPointNotFound,
@@ -211,8 +213,8 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
         partyRef: contactPoint.partyRef,
         revision: eventRevision,
       },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: eventContactPointRef.resourceId,
       subjectResourceType: eventContactPointRef.resourceType,
     });
@@ -246,12 +248,12 @@ export const updateContactPointAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.update-contact-point',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: UpdateContactPointPayloadSchema,
     policies: [],
     resultSchema: UpdateContactPointResultSchema,

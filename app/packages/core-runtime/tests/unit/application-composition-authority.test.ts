@@ -1,9 +1,10 @@
 // @effect-diagnostics strictEffectProvide:off -- Test-owned composition service entrypoints; expires: 2026-12-31.
-import { createHash } from 'node:crypto';
-
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ConfigProvider, DateTime, Effect, Layer, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActiveApplicationCompositionSourceLive } from '../../src/modules/active-application-composition-source.node.ts';
@@ -36,7 +37,7 @@ const unrevisedComposition = {
     sharedSingletons: [],
   },
 } as const;
-const revision = createHash('sha256').update(canonicalizeApplicationComposition(unrevisedComposition)).digest('hex');
+const revision = Hex.encode(sha256(utf8ToBytes(canonicalizeApplicationComposition(unrevisedComposition))));
 const composition = { ...unrevisedComposition, revision };
 
 const encodedSnapshot = {

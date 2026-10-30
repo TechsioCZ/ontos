@@ -1,5 +1,5 @@
 import { Effect, Exit, Schema } from 'effect';
-import { Headers } from 'effect/unstable/http';
+import { Headers } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActionTransportMetadataSchema } from '../../src/actions/context.ts';

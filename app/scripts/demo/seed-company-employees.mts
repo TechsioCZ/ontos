@@ -7,8 +7,8 @@ import { NodeServices } from '@effect/platform-node';
 import { WorkforceCommandSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
 import { EmployeeSchema } from '../../verticals/workforce/shared/apis/records.ts';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Argument, Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Argument, Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { akrosDemoLegalEntityId, crmDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';

@@ -1,4 +1,7 @@
-import { createHash } from 'node:crypto';
+import { NodeCrypto } from '@effect/platform-node';
+import { sha256 as sha256Hash } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 
 import { getTableColumns } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
@@ -136,7 +139,7 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
       manifest: { ...contract.manifest, publicSurface },
     }),
   );
-  const sha256 = createHash('sha256').update(contractDocument).digest('hex');
+  const sha256 = Hex.encode(sha256Hash(utf8ToBytes(contractDocument)));
   const next = {
     ...base,
     modules: [
@@ -150,9 +153,9 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
   };
   return {
     ...next,
-    revision: createHash('sha256')
-      .update(canonicalizeApplicationComposition({ ...next, revision: '0'.repeat(64) }))
-      .digest('hex'),
+    revision: Hex.encode(
+      sha256Hash(utf8ToBytes(canonicalizeApplicationComposition({ ...next, revision: '0'.repeat(64) }))),
+    ),
   };
 });
 const reservationId = '70000000-0000-4000-8000-000000000001';
@@ -201,6 +204,7 @@ const authority = (execute: 'allowed' | 'denied' = 'allowed'): ActionAuthoritySe
 
 it.layer(
   Layer.mergeAll(
+    NodeCrypto.layer,
     outboxWorkerCompositionLayer(),
     Layer.succeed(ActionAuthority, authority()),
     Layer.succeed(AgentProposalQueueModuleReview, { review: () => Effect.die('Unexpected module review') }),

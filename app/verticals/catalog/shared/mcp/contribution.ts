@@ -249,11 +249,11 @@ export const catalogMcpContribution = defineOntosMcpContribution({
       },
     },
     'release-local-override': {
+      destructive: true,
       title: {
         cs: 'Zrušit místní přepsání katalogových údajů',
         en: 'Release a local catalog override',
       },
-      destructive: true,
     },
     'remove-catalog-media': {
       title: {
@@ -346,74 +346,74 @@ export const catalogMcpContribution = defineOntosMcpContribution({
       },
     },
     'retire-brand': {
+      destructive: true,
       title: {
         cs: 'Vyřadit značku',
         en: 'Retire a brand',
       },
-      destructive: true,
     },
     'retire-configuration-unit': {
+      destructive: true,
       title: {
         cs: 'Vyřadit konfigurační jednotku',
         en: 'Retire a configuration unit',
       },
-      destructive: true,
     },
     'retire-controlled-attribute-value': {
+      destructive: true,
       title: {
         cs: 'Vyřadit číselníkovou hodnotu atributu',
         en: 'Retire a controlled attribute value',
       },
-      destructive: true,
     },
     'retire-gtin': {
+      destructive: true,
       title: {
         cs: 'Vyřadit identifikátor GTIN',
         en: 'Retire a GTIN identifier',
       },
-      destructive: true,
     },
     'retire-package-definition': {
+      destructive: true,
       title: {
         cs: 'Vyřadit definici balení',
         en: 'Retire a package definition',
       },
-      destructive: true,
     },
     'retire-package-option': {
+      destructive: true,
       title: {
         cs: 'Vyřadit možnost balení',
         en: 'Retire a package option',
       },
-      destructive: true,
     },
     'retire-product': {
+      destructive: true,
       title: {
         cs: 'Vyřadit produkt',
         en: 'Retire a product',
       },
-      destructive: true,
     },
     'retire-product-category': {
+      destructive: true,
       title: {
         cs: 'Vyřadit kategorii produktů',
         en: 'Retire a product category',
       },
-      destructive: true,
     },
     'retire-product-unit': {
+      destructive: true,
       title: {
         cs: 'Vyřadit jednotku produktu',
         en: 'Retire a product unit',
       },
-      destructive: true,
     },
     'retire-variant': {
+      destructive: true,
       title: {
         cs: 'Vyřadit variantu produktu',
         en: 'Retire a product variant',
       },
-      destructive: true,
     },
     'revise-attribute-definition': {
       title: {

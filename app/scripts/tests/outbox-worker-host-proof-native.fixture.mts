@@ -5,8 +5,8 @@ import {
   resolveUltramodernSourceRevision,
 } from '@modern-js/app-tools-extensions/release-identity';
 import { Array as EffectArray, Console, Effect, FileSystem, Order, Ref, Schema } from 'effect';
-import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
-import { Command, Flag } from 'effect/unstable/cli';
+import { FetchHttpClient, HttpClient } from 'effect/http';
+import { Command, Flag } from 'effect/cli';
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { OntosModuleDeploymentContractSchema } from '../../packages/core-runtime/src/modules/manifest.ts';
 import {
@@ -57,9 +57,10 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   });
   const artifact = yield* Schema.decodeEffect(HostWorkerArtifactSchema, { onExcessProperty: 'error' })({
     appId: 'outbox-worker-host',
+    artifactDigest: null,
     entry: 'worker.mjs',
     ownerBuildIdentities,
-    schemaVersion: 2,
+    schemaVersion: 3,
     serviceId: 'outbox-worker-host',
     sourceInputs: [host.entry],
     sourceRevision,
@@ -109,6 +110,7 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   ]) {
     const altered = yield* Schema.decodeEffect(HostWorkerArtifactSchema)({
       ...artifact,
+      artifactDigest: null,
       ownerBuildIdentities: alteredIdentities,
     });
     const rejected = yield* Effect.flip(verifyHostProofOwnerIdentities({ ...base, artifact: altered }));

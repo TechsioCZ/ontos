@@ -3,7 +3,7 @@
 // @ontos-action-http-slug upsert-dsr-owner-task
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { UpsertDsrOwnerTaskPayloadSchema, UpsertDsrOwnerTaskResultSchema } from '../actions/upsert-dsr-owner-task.ts';
 
 export { UpsertDsrOwnerTaskPayloadSchema } from '../actions/upsert-dsr-owner-task.ts';

@@ -1,6 +1,8 @@
 import { DateTime, Effect, Match, Random, Schema } from 'effect';
+import type { Employee } from '@app/workforce/contracts/records';
+import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import { useState } from 'react';
-import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
+import type { ApplyCommandResult, PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { PropertyCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import { PropertyLifecycleSchema } from '../../../../shared/apis/records.ts';
 import type { RecordsResponse } from '../../../../shared/apis/records.ts';
@@ -8,89 +10,119 @@ import { executeApplyCommand } from '../../../api/apply-command-action-client.ts
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 
 type Property = RecordsResponse['properties'][number];
+type EmployeeOption = Pick<Employee, 'active' | 'fullName' | 'id'>;
 interface PropertyDraft {
   readonly address: string;
   readonly code: string;
+  readonly lifecycleState: Property['lifecycleState'];
   readonly name: string;
   readonly note: string;
-  readonly propertyType: string;
-  readonly responsiblePerson: string;
-  readonly lifecycleState: Property['lifecycleState'];
   readonly property?: Property;
+  readonly propertyType: string;
+  readonly responsibleEmployeeIds: readonly Employee['id'][];
+  readonly unit?: Unit;
   readonly unitFor?: Property;
 }
 const emptyDraft: PropertyDraft = {
   address: '',
   code: '',
+  lifecycleState: 'PLANNED',
   name: '',
   note: '',
   propertyType: '',
-  responsiblePerson: '',
-  lifecycleState: 'PLANNED',
+  responsibleEmployeeIds: [],
 };
 
-type DraftField = 'address' | 'code' | 'name' | 'note' | 'propertyType' | 'responsiblePerson';
+const TextFieldSchema = Schema.Literals(['address', 'code', 'name', 'note', 'propertyType']);
+type TextField = typeof TextFieldSchema.Type;
+const DraftFieldSchema = Schema.Literals([...TextFieldSchema.literals, 'responsibleEmployeeIds']);
+type DraftField = typeof DraftFieldSchema.Type;
+const DraftErrorSchema = Schema.Literals(['required', 'tooLong', 'duplicateCode', 'responsibleRequired']);
+type DraftError = typeof DraftErrorSchema.Type;
+interface DraftErrors {
+  address?: DraftError;
+  code?: DraftError;
+  name?: DraftError;
+  note?: DraftError;
+  propertyType?: DraftError;
+  responsibleEmployeeIds?: DraftError;
+}
 type Unit = RecordsResponse['units'][number];
-const fieldNames: Record<DraftField, string> = {
-  address: 'adresu',
-  code: 'kód',
-  name: 'název',
-  note: 'popis',
-  propertyType: 'typ nemovitosti',
-  responsiblePerson: 'odpovědnou osobu',
-};
-/** Czech inline messages for the property and unit form (rules 3.8 and 3.9); empty when the draft is valid. */
-export const propertyDraftErrors = (
-  draft: PropertyDraft,
-  records: RecordsResponse | undefined,
-): Partial<Record<DraftField, string>> => {
-  const fields: readonly DraftField[] =
-    draft.unitFor === undefined ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson'] : ['code', 'name'];
-  const errors: Partial<Record<DraftField, string>> = {};
+/** Translation keys for invalid draft fields; empty when the editable fields are valid. */
+export const propertyDraftErrors = (draft: PropertyDraft, records?: RecordsResponse): DraftErrors => {
+  let fields: readonly TextField[] =
+    draft.unitFor === undefined ? ['code', 'name', 'address', 'propertyType'] : ['code', 'name'];
+  if (draft.unit !== undefined) {
+    fields = ['name'];
+  }
+  const errors: DraftErrors = {};
   for (const field of fields) {
     const value = draft[field].trim();
-    if (value.length === 0) errors[field] = `Vyplňte ${fieldNames[field]}.`;
-    else if (value.length > 300) errors[field] = 'Nejvýše 300 znaků.';
+    if (value.length === 0) {
+      errors[field] = 'required';
+    } else if (value.length > 300) {
+      errors[field] = 'tooLong';
+    }
+  }
+  if (draft.unit === undefined && draft.unitFor === undefined && draft.responsibleEmployeeIds.length === 0) {
+    errors.responsibleEmployeeIds = 'responsibleRequired';
   }
   const code = draft.code.trim();
   if (
     draft.property === undefined &&
+    draft.unit === undefined &&
     code.length > 0 &&
     [...(records?.properties ?? []), ...(records?.units ?? []), ...(records?.assets ?? [])].some(
       (record) => record.code === code,
     )
-  )
-    errors.code = 'Tento kód už používá jiná nemovitost, jednotka nebo vybavení.';
+  ) {
+    errors.code = 'duplicateCode';
+  }
   return errors;
 };
 
-export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved: () => void) => {
+export const usePropertyEditor = (
+  records: RecordsResponse | undefined,
+  employees: readonly EmployeeOption[] | undefined,
+  onSaved: (result: ApplyCommandResult) => void,
+) => {
   const [draft, setDraft] = useState<PropertyDraft>();
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<'conflict' | 'forbidden' | 'saved' | 'unavailable' | 'validation'>();
-  const change = (field: 'address' | 'code' | 'name' | 'note' | 'propertyType' | 'responsiblePerson', value: string) =>
-    setDraft((current) => (current === undefined ? current : { ...current, [field]: value }));
+  const [feedback, setFeedback] = useState<
+    'alreadyCommitted' | 'commitIndeterminate' | 'conflict' | 'forbidden' | 'saved' | 'unavailable' | 'validation'
+  >();
+  const blocked = feedback === 'alreadyCommitted' || feedback === 'commitIndeterminate';
+  const change = (field: TextField, value: string) =>
+    setDraft((current) => {
+      if (current === undefined || (current.unit !== undefined && field !== 'name' && field !== 'note')) {
+        return current;
+      }
+      return { ...current, [field]: value };
+    });
   const begin = (property?: Property) => {
     setFeedback(undefined);
     setSubmitted(false);
+    const legacyEmployees = employees?.filter((employee) => employee.fullName === property?.responsiblePerson) ?? [];
     setDraft(
       property === undefined
         ? emptyDraft
         : {
             address: property.address,
             code: property.code,
+            lifecycleState: property.lifecycleState,
             name: property.name,
             note: property.note ?? '',
-            propertyType: property.propertyType ?? '',
-            responsiblePerson: property.responsiblePerson ?? '',
-            lifecycleState: property.lifecycleState,
             property,
+            propertyType: property.propertyType ?? '',
+            responsibleEmployeeIds:
+              property.responsibleEmployeeIds ??
+              (legacyEmployees.length === 1 ? legacyEmployees.map((employee) => employee.id) : []),
           },
     );
   };
   const submit = (raw: PropertyCommand) => {
-    if (records === undefined || busy) {
+    if (records === undefined || busy || blocked) {
       return;
     }
     setBusy(true);
@@ -110,6 +142,11 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
           onFailure: (error) => {
             setFeedback(
               Match.value(error).pipe(
+                Match.when({ _tag: 'ApplyCommandActionAlreadyCommittedProblem' }, () => 'alreadyCommitted' as const),
+                Match.when(
+                  { _tag: 'ApplyCommandActionCommitIndeterminateProblem' },
+                  () => 'commitIndeterminate' as const,
+                ),
                 Match.when({ _tag: 'SchemaError' }, () => 'validation' as const),
                 Match.when({ status: 400 }, () => 'validation' as const),
                 Match.when({ status: 403 }, () => 'forbidden' as const),
@@ -119,10 +156,10 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
               ),
             );
           },
-          onSuccess: () => {
+          onSuccess: (result) => {
             setDraft(undefined);
             setFeedback('saved');
-            onSaved();
+            onSaved(result);
           },
         }),
         Effect.ensuring(Effect.sync(() => setBusy(false))),
@@ -130,7 +167,11 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     );
   };
   const save = () => {
-    if (draft === undefined) {
+    if (draft === undefined || busy || blocked) {
+      return;
+    }
+    if (draft.unit === undefined && draft.unitFor === undefined && employees === undefined) {
+      setFeedback('unavailable');
       return;
     }
     setSubmitted(true);
@@ -142,22 +183,22 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
       _tag: 'CreateProperty',
       address: draft.address,
       code: draft.code,
+      lifecycleState: draft.lifecycleState,
       name: draft.name,
       note: draft.note.trim() || null,
       propertyType: draft.propertyType,
-      responsiblePerson: draft.responsiblePerson,
-      lifecycleState: draft.lifecycleState,
+      responsibleEmployeeIds: draft.responsibleEmployeeIds,
     };
     if (draft.property !== undefined) {
       raw = {
         _tag: 'UpdateProperty',
-        propertyType: draft.propertyType,
-        responsiblePerson: draft.responsiblePerson,
-        lifecycleState: draft.lifecycleState,
         address: draft.address,
+        lifecycleState: draft.lifecycleState,
         name: draft.name,
         note: draft.note.trim() || null,
         propertyRef: draft.property.propertyRef,
+        propertyType: draft.propertyType,
+        responsibleEmployeeIds: draft.responsibleEmployeeIds,
       };
     }
     if (draft.unitFor !== undefined) {
@@ -169,11 +210,19 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
         propertyRef: draft.unitFor.propertyRef,
       };
     }
+    if (draft.unit !== undefined) {
+      raw = {
+        _tag: 'UpdateUnit',
+        name: draft.name,
+        note: draft.note.trim() || null,
+        unitRef: draft.unit.unitRef,
+      };
+    }
     submit(raw);
   };
-  const visibleFields: readonly ('code' | 'name' | 'address' | 'note' | 'propertyType' | 'responsiblePerson')[] =
+  let visibleFields: readonly DraftField[] =
     draft?.unitFor === undefined
-      ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson', 'note']
+      ? ['code', 'name', 'address', 'propertyType', 'responsibleEmployeeIds', 'note']
       : ['code', 'name'];
   let title = 'create';
   if (draft?.property !== undefined) {
@@ -182,12 +231,21 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
   if (draft?.unitFor !== undefined) {
     title = 'createUnit';
   }
+  if (draft?.unit !== undefined) {
+    visibleFields = ['name', 'note'];
+    title = 'editUnit';
+  }
   return {
     begin,
     beginUnit: (property: Property) => {
       setFeedback(undefined);
       setSubmitted(false);
       setDraft({ ...emptyDraft, unitFor: property });
+    },
+    beginUnitEdit: (unit: Unit) => {
+      setFeedback(undefined);
+      setSubmitted(false);
+      setDraft({ ...emptyDraft, code: unit.code, name: unit.name, note: unit.note ?? '', unit });
     },
     errors: draft === undefined || !submitted ? {} : propertyDraftErrors(draft, records),
     /** S02: a unit is taken out of service, returned to service or retired (history stays). */
@@ -196,19 +254,35 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     /** Staff-only archive (S02 demo hygiene): hides a test record from every register, history stays. */
     archiveProperty: (property: Property, reason: string) =>
       submit({ _tag: 'ArchiveProperty', propertyRef: property.propertyRef, reason }),
-    restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
     archiveUnit: (unit: Unit, reason: string) => submit({ _tag: 'ArchiveUnit', reason, unitRef: unit.unitRef }),
-    restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
+    blocked,
     busy,
-    cancel: () => setDraft(undefined),
+    cancel: () => {
+      setDraft(undefined);
+      setFeedback(undefined);
+    },
     change,
     changeLifecycle: (value: string) => {
-      if (Schema.is(PropertyLifecycleSchema)(value))
+      if (Schema.is(PropertyLifecycleSchema)(value)) {
         setDraft((current) => (current === undefined ? current : { ...current, lifecycleState: value }));
+      }
     },
+    changeResponsibleEmployees: (value: string | string[]) =>
+      setDraft((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              responsibleEmployeeIds: [
+                ...new Set((Array.isArray(value) ? value : [value]).filter(Schema.is(EmployeeIdSchema))),
+              ],
+            },
+      ),
     draft,
     feedback,
     fields: visibleFields,
+    restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
+    restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
     save,
     title,
     toggleLifecycle: (property: Property) =>

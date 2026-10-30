@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Layer, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess } from 'effect/unstable/process';
+import { ChildProcess } from 'effect/process';
 
 const failedStartup = Effect.gen(function* failedStartupEffect() {
   const child = yield* ChildProcess.make(

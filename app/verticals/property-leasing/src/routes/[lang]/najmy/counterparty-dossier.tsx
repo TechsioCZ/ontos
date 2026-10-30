@@ -1,20 +1,56 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { DetailList, PageHeader, SectionCard, formatDate } from '@app/admin-ui';
 import { PartyDocuments } from '@app/facility-operations/ui/record-discussion';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Effect, PlatformError } from 'effect';
-import type { RecordsResponse } from '../../../../shared/apis/records.ts';
+import type { Occupancy, RecordsResponse } from '../../../../shared/apis/records.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import { TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierChanges } from './tenant-dossier.tsx';
 
 const stateLabels = {
-  DRAFT: 'Návrh',
-  CONFIRMED: 'Potvrzeno',
   ACTIVE: 'Aktivní',
-  COMPLETED: 'Dokončeno',
   CANCELLED: 'Zrušeno',
+  COMPLETED: 'Dokončeno',
+  CONFIRMED: 'Potvrzeno',
+  DRAFT: 'Návrh',
 } as const;
+
+const CounterpartyLeases = ({
+  language,
+  leases,
+  unitName,
+}: {
+  readonly language: string;
+  readonly leases: readonly Occupancy[] | undefined;
+  readonly unitName: (id: string) => string;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <SectionCard title={t('property-leasing.demo.list')}>
+      {leases === undefined || leases.length === 0 ? (
+        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+          Zatím bez nájmu. Až bude dohodnut, založte ho tlačítkem Nový nájem v přehledu nájmů.
+        </p>
+      ) : (
+        <ul className="propertyleasing:space-y-2 propertyleasing:text-sm">
+          {leases.map((record) => (
+            <li key={record.occupancyRef.resourceId}>
+              <a
+                className="propertyleasing:underline"
+                href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
+              >
+                {unitName(record.unitRef.resourceId)} · {formatDate(record.startDate)} –{' '}
+                {record.endDate === null ? 'bez konce' : formatDate(record.endDate)} · {stateLabels[record.state]}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
+  );
+};
 
 /** S01: contacts, timeline and business case of one counterparty, with or without a lease. */
 export const CounterpartyDossierView = ({
@@ -42,6 +78,7 @@ export const CounterpartyDossierView = ({
   readonly snapshot: RecordsResponse | undefined;
   readonly unitName: (id: string) => string;
 }) => {
+  const { t } = useModernI18n();
   const leases = snapshot?.occupancies.filter(
     (record) => record.customerCounterpartyRef?.resourceId === counterpartyId,
   );
@@ -93,12 +130,12 @@ export const CounterpartyDossierView = ({
                 onUpdate={onUpdate}
               />
             )}
-            <SectionCard title="Dokumenty a soubory">
+            <SectionCard title={t('property-leasing.documents.filesTitle')}>
               <PartyDocuments counterpartyId={counterpartyId} label={name} language={language} />
             </SectionCard>
           </div>
           <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
-            <SectionCard title="Údaje protistrany">
+            <SectionCard title={t('property-leasing.dossier.detailsTitle')}>
               <DetailList
                 items={[
                   { label: 'Název / jméno', value: name },
@@ -118,28 +155,7 @@ export const CounterpartyDossierView = ({
                 Otevřít v registru zákazníků →
               </LinkButton>
             </SectionCard>
-            <SectionCard title="Nájmy a pobyty">
-              {leases === undefined || leases.length === 0 ? (
-                <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-                  Zatím bez nájmu. Až bude dohodnut, založte ho tlačítkem Nový nájem v přehledu nájmů.
-                </p>
-              ) : (
-                <ul className="propertyleasing:space-y-2 propertyleasing:text-sm">
-                  {leases.map((record) => (
-                    <li key={record.occupancyRef.resourceId}>
-                      <a
-                        className="propertyleasing:underline"
-                        href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
-                      >
-                        {unitName(record.unitRef.resourceId)} · {formatDate(record.startDate)} –{' '}
-                        {record.endDate === null ? 'bez konce' : formatDate(record.endDate)} ·{' '}
-                        {stateLabels[record.state]}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SectionCard>
+            <CounterpartyLeases language={language} leases={leases} unitName={unitName} />
           </div>
         </div>
       )}

@@ -1,6 +1,6 @@
 import { Effect, Stream } from 'effect';
-import { ChildProcessSpawner } from 'effect/unstable/process';
-import type { ChildProcess } from 'effect/unstable/process';
+import { ChildProcessSpawner } from 'effect/process';
+import type { ChildProcess } from 'effect/process';
 
 export const collectToolingProcess = Effect.fn(function* collectToolingProcess(command: ChildProcess.Command) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

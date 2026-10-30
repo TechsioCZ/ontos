@@ -1,4 +1,9 @@
 import { Schema } from 'effect';
+import {
+  AiBatchIdSchema,
+  AiChangeIdSchema,
+  AiRunIdSchema as OwnerAiRunIdSchema,
+} from '@app/shared-contracts/ai-approvals';
 import { SalesPipelineScopeMismatch } from '../errors/sales-pipeline-scope-mismatch.ts';
 import { SalesPipelineNotFound } from '../errors/sales-pipeline-not-found.ts';
 import { SalesPipelineLifecycleConflict } from '../errors/sales-pipeline-lifecycle-conflict.ts';
@@ -74,7 +79,10 @@ export const SalesPipelineAiOperationSchema = Schema.Union([
 export type SalesPipelineAiOperation = typeof SalesPipelineAiOperationSchema.Type;
 
 const AiReasonSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(2000));
-const AiIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const AiRunIdSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.decodeTo(OwnerAiRunIdSchema),
+);
+export const AiResultEntityIdsSchema = Schema.Array(Schema.Union([AiBatchIdSchema, AiChangeIdSchema]));
 
 /** AI approval commands (shared engine `@app/shared-contracts/ai-approvals`). Decide and revert are human-only. */
 export const salesPipelineAiCommandSchemas = [
@@ -85,15 +93,18 @@ export const salesPipelineAiCommandSchemas = [
       Schema.isMaxLength(20),
     ),
     instruction: AiReasonSchema,
-    runId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    runId: Schema.optionalKey(AiRunIdSchema),
   }),
   Schema.TaggedStruct('AiDecideChanges', {
-    changeIds: Schema.Array(AiIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+    changeIds: Schema.Array(AiChangeIdSchema.check(Schema.isMinLength(1))).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(50),
+    ),
     decision: Schema.Literals(['approve', 'reject']),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   }),
   Schema.TaggedStruct('AiRevertBatch', {
-    batchId: AiIdSchema,
+    batchId: AiBatchIdSchema.check(Schema.isMinLength(1)),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   }),
 ] as const;
@@ -134,7 +145,7 @@ export type BulkOpportunityResult = typeof BulkOpportunityResultSchema.Type;
  */
 export const ApplyCommandResultSchema = Schema.Struct({
   /** AI approval commands: the batch id (propose/revert) followed by change ids, or the decided change ids. */
-  entityIds: Schema.optionalKey(Schema.Array(Schema.String)),
+  entityIds: Schema.optionalKey(AiResultEntityIdsSchema),
   opportunities: Schema.Array(OpportunitySchema),
   results: Schema.optionalKey(Schema.Array(BulkOpportunityResultSchema)),
   revision: Schema.Int,

@@ -1,6 +1,12 @@
-import { AGENT_PAGE_SIZE, AgentCommandSchema } from '@app/shared-contracts/agent-proposals';
-import type { AgentProposalInput } from '@app/shared-contracts/agent-proposals';
-import { Schema } from 'effect';
+import {
+  AGENT_PAGE_SIZE,
+  AgentCommandSchema,
+  AgentAppIdSchema,
+  AgentPageCursorSchema,
+  AgentProposalInputSchema,
+  AgentBatchKeySchema,
+} from '@app/shared-contracts/agent-proposals';
+import { DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AgentProposalRow } from '../../../api/agent-platform/mappers.ts';
@@ -43,7 +49,7 @@ const row: AgentProposalRow = {
   tenantId: 'tenant',
 };
 
-const proposal: AgentProposalInput = {
+const proposal = Schema.decodeUnknownSync(AgentProposalInputSchema)({
   appId: row.appId,
   command: row.command,
   diff: [],
@@ -51,7 +57,7 @@ const proposal: AgentProposalInput = {
   risk: row.risk,
   summary: row.summary,
   targetLabel: row.targetLabel,
-};
+});
 
 it('recognizes a pending retry despite nested object key order and presentation metadata', () => {
   const retry = {
@@ -86,7 +92,7 @@ it('does not equate a different command value, array order, module or Action', (
   const changed = [
     { ...proposal, command: { ...row.command, extra: null } },
     { ...proposal, command: { _tag: 'UpdateContact', contact: { name: 'Jana', phones: ['456', '123'] } } },
-    { ...proposal, appId: 'sales' },
+    { ...proposal, appId: AgentAppIdSchema.make('sales') },
     { ...proposal, actionSlug: 'update-contact' },
   ];
   for (const candidate of changed) {
@@ -102,10 +108,12 @@ it('orders stored proposals by position but preserves the submitted command orde
 });
 
 it('retains the 31st native candidate even when private visibility removes every proposal', () => {
-  const candidates = Array.from({ length: AGENT_PAGE_SIZE + 1 }, (_, index) => ({
-    at: new Date(Date.UTC(2026, 9, 25, 0, 0, AGENT_PAGE_SIZE - index)).toISOString(),
-    id: `core:batch-${index}`,
-  }));
+  const candidates = Array.from({ length: AGENT_PAGE_SIZE + 1 }, (_, index) =>
+    Schema.decodeUnknownSync(AgentPageCursorSchema)({
+      at: new Date(Date.UTC(2026, 9, 25, 0, 0, AGENT_PAGE_SIZE - index)).toISOString(),
+      id: `core:batch-${index}`,
+    }),
+  );
   const page = paginateAgentQueue(candidates, [], []);
   expect(page.batches).toEqual([]);
   expect(page.nextCursor).toEqual(candidates.at(AGENT_PAGE_SIZE - 1));
@@ -121,9 +129,16 @@ it('merges native candidates and legacy batches without rebuilding candidates fr
   if (batch === undefined) {
     throw new Error('Expected the real queue mapper to produce a batch');
   }
-  const legacy = { ...batch, createdAt: '2026-10-24T23:59:59.000Z', key: 'legacy:crm:batch' };
-  const visible = { at: batch.createdAt, id: batch.key };
-  const hidden = { at: '2026-10-25T00:00:01.000Z', id: 'core:hidden' };
+  const legacy = {
+    ...batch,
+    createdAt: DateTime.makeUnsafe('2026-10-24T23:59:59.000Z'),
+    key: AgentBatchKeySchema.make('legacy:crm:batch'),
+  };
+  const visible = Schema.decodeUnknownSync(AgentPageCursorSchema)({
+    at: DateTime.formatIso(batch.createdAt),
+    id: batch.key,
+  });
+  const hidden = Schema.decodeUnknownSync(AgentPageCursorSchema)({ at: '2026-10-25T00:00:01.000Z', id: 'core:hidden' });
   const page = paginateAgentQueue([hidden, visible], [batch], [legacy]);
   expect(page.batches.map((entry) => entry.key)).toEqual([batch.key, legacy.key]);
   expect(page.nextCursor).toBeUndefined();

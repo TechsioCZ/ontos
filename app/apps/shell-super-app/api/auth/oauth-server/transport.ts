@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { AuthenticationService } from '../service.ts';
 import { forwardOAuthRequest } from './forward.ts';
@@ -17,14 +17,18 @@ export const OAuthServerTransportLive = HttpRouter.add('*', '/oauth/*', (request
         ),
       ),
     ),
-    Effect.match({
-      onFailure: () =>
-        HttpServerResponse.text('OAuth server is unavailable', {
-          headers: { 'cache-control': 'no-store' },
-          status: 503,
-        }),
+    Effect.matchEffect({
+      onFailure: (failure) =>
+        Effect.logError('OAuth request conversion failed', failure).pipe(
+          Effect.as(
+            HttpServerResponse.text('OAuth server is unavailable', {
+              headers: { 'cache-control': 'no-store' },
+              status: 503,
+            }),
+          ),
+        ),
       onSuccess: (response) =>
-        HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText }),
+        Effect.succeed(HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText })),
     }),
   ),
 );

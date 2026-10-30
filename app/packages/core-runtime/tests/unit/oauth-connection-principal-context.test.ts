@@ -39,9 +39,9 @@ test('valid oauth connection context with all modules is accepted', () => {
 });
 
 test('oauth connection context with a distinct delegating principal is accepted', () => {
-  expect(
-    Exit.isSuccess(decode({ ...base, delegatedByPrincipalId: '20000000-0000-4000-8000-000000000002' })),
-  ).toBe(true);
+  expect(Exit.isSuccess(decode({ ...base, delegatedByPrincipalId: '20000000-0000-4000-8000-000000000002' }))).toBe(
+    true,
+  );
 });
 
 test('oauth connection context delegated by its own principal is rejected', () => {
@@ -63,9 +63,9 @@ test('oauth connection context without a legal entity is rejected', () => {
 });
 
 test('oauth connection context with an impersonator is rejected', () => {
-  expect(
-    Exit.isSuccess(decode({ ...base, impersonatedByPrincipalId: '20000000-0000-4000-8000-000000000003' })),
-  ).toBe(false);
+  expect(Exit.isSuccess(decode({ ...base, impersonatedByPrincipalId: '20000000-0000-4000-8000-000000000003' }))).toBe(
+    false,
+  );
 });
 
 test('session context carrying connection data is rejected', () => {

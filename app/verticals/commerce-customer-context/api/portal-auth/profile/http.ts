@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto';
 import { ContextAccess, ModuleEntrypointGateway, toContextPermissionAccessKey } from '@app/core-runtime';
 import type { ModuleEntrypointDescriptor, TrustedPrincipalContext } from '@app/core-runtime';
 import {
@@ -6,8 +5,9 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { DateTime, Effect } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import { Crypto, DateTime, Effect } from 'effect';
+import { Hex } from 'effect/encoding';
+import type { HttpServerRequest } from 'effect/http';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CustomerOwnProfileSchemaError } from '../../../shared/portal-auth/profile-api.ts';
 import type { UpdateCustomerOwnProfile } from '../../../shared/portal-auth/profile-api.ts';
@@ -86,13 +86,14 @@ const admittedScope = Effect.fn('CustomerOwnProfile.admit')(function* admit(
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
     Effect.mapError(profileUnavailable),
   );
+  const crypto = yield* Crypto.Crypto;
   return {
     current,
     scope: {
       compositionRevision: active.composition.revision,
       legalEntityId: current.workloadPrincipal.legalEntityId,
       partyId: current.account.partyId,
-      requestCorrelation: randomUUID(),
+      requestCorrelation: yield* crypto.randomUUIDv4().pipe(Effect.mapError(profileUnavailable)),
       tenantId: current.workloadPrincipal.tenantId,
     },
   };
@@ -114,7 +115,10 @@ const update = Effect.fn('CustomerOwnProfile.update')(function* updateProfile(
     return yield* Effect.fail(profileConflict());
   }
   const audit = yield* CommercePortalAuthAudit;
-  const correlationDigest = createHash('sha256').update(scope.requestCorrelation).digest('hex');
+  const crypto = yield* Crypto.Crypto;
+  const correlationDigest = yield* crypto
+    .digest('SHA-256', new TextEncoder().encode(scope.requestCorrelation))
+    .pipe(Effect.map(Hex.encode), Effect.mapError(profileUnavailable));
   const event = {
     correlationDigest,
     operation: 'customer-profile-update',

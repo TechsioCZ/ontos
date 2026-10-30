@@ -5,7 +5,7 @@ import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { commerceMarketCatalogRelations } from './schema.ts';
 import { CommerceMarketCatalogDatabaseConnectionError } from './connection-error.ts';
 import type { CommerceMarketCatalogDatabaseExecutor } from './types.ts';

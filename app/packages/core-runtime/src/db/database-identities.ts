@@ -8,7 +8,6 @@ export {
   defineDatabaseIdentityEnrollment,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  trustRoutinesForIdentities,
 } from './database-identity-manifest.ts';
 export type {
   DatabaseAcceptedFinding,

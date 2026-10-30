@@ -1,7 +1,7 @@
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '../shared/database-identities.ts';
+} from '@app/party-registry-identity-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
@@ -11,7 +11,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { partyRegistryApi } from '../shared/api.ts';
 import type { PartySearchProjectionGateway } from '../shared/domain/search-projection-gateway.ts';
@@ -67,12 +67,13 @@ export { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 declare const ULTRAMODERN_SHELL_ORIGIN: unknown;
 
 const readShellOrigin = () => {
-  let configuredShellOrigin: unknown;
-  try {
-    configuredShellOrigin = ULTRAMODERN_SHELL_ORIGIN;
-  } catch {
-    configuredShellOrigin = undefined;
-  }
+  const configuredShellOrigin = (() => {
+    try {
+      return ULTRAMODERN_SHELL_ORIGIN;
+    } catch {
+      return null;
+    }
+  })();
   return resolvePartyRegistryShellOrigin(
     Schema.is(Schema.String)(configuredShellOrigin) ? configuredShellOrigin : undefined,
   );
@@ -175,6 +176,7 @@ export const makePartyRegistryApiRuntime = (
     gatewayAssertionRedemption,
   ).pipe(
     Layer.provideMerge(runtimeObservabilityLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.provideMerge(
       ActiveApplicationCompositionSourceLive.pipe(
         Layer.provide(

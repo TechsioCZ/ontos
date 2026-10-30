@@ -30,8 +30,7 @@ export interface RemoteSearchResponse {
 }
 
 /** Kai's placeholder groups (a product literally named "AKCE") are not real goods. */
-export const isPlaceholderGroup = (name: string) =>
-  name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
+const isPlaceholderGroup = (name: string) => name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
 
 /** Real products first; placeholder groups keep their place in the total but move to the end. */
 export const placeholdersLast = <T extends { name: string }>(products: T[]): T[] => [

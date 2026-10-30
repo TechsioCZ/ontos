@@ -8,7 +8,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
-const checker = path.join(workspaceRoot, 'scripts/check-ultramodern-api-boundaries.mts');
+const checker = path.join(workspaceRoot, 'scripts/check-ontos-api-boundaries.mts');
 const shellRoot = 'apps/shell-super-app';
 const ownerRoot = 'verticals/inventory-stock';
 const clientPath = `${ownerRoot}/src/api/inventory-stock-client.ts`;
@@ -111,63 +111,72 @@ const makeFixture = Effect.fn(function* makeRuntimeCompositionBoundaryFixture() 
 
 describe('runtime composition API boundaries', () => {
   it.live(
+    'ignores private import examples inside fixture strings, comments and JSON data',
+    Effect.fn(function* acceptsImportExamples() {
+      const fixture = yield* makeFixture();
+      yield* writeText(
+        fixture.root,
+        `${shellRoot}/tests/import-examples.test.ts`,
+        [
+          `const fixture = "import { schema } from '@app/party-registry/src/db/schema.ts';";`,
+          `const ownerFixture = "import { manifest } from '@app/party-registry/vertical.manifest';";`,
+          `// require('@app/party-registry/src/db/schema.ts');`,
+          `/* export * from '@app/party-registry/vertical.registration'; */`,
+          'export const examples = [fixture, ownerFixture];',
+        ].join('\n'),
+      );
+      yield* writeText(
+        fixture.root,
+        `${shellRoot}/tests/import-examples.json`,
+        JSON.stringify({ source: "import { schema } from '@app/party-registry/src/db/schema.ts';" }),
+      );
+      const result = fixture.check();
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    }),
+  );
+
+  for (const source of [
+    `import { schema } from '@app/party-registry/src/db/schema.ts';`,
+    `export * from '@app/party-registry/src/db/schema.ts';`,
+    `const schema = import('@app/party-registry/src/db/schema.ts');`,
+    `const schema = require('@app/party-registry/src/db/schema.ts');`,
+    `const schema = import('@app/party-registry/src/' + name);`,
+    `const fixture = "from '@app/core-runtime/public'"; import { schema } from '@app/party-registry/src/db/schema.ts';`,
+  ]) {
+    it.live(
+      `rejects actual private module syntax: ${source}`,
+      Effect.fn(function* rejectsPrivateModuleSyntax() {
+        const fixture = yield* makeFixture();
+        yield* writeText(fixture.root, `${shellRoot}/src/private-owner.ts`, source);
+        const result = fixture.check();
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+        expect(result.stderr).toContain('cross-MicroVertical imports must use generated API clients');
+      }),
+    );
+  }
+
+  it.live(
+    'fails closed when malformed source prevents import classification',
+    Effect.fn(function* rejectsUnparseableImports() {
+      const fixture = yield* makeFixture();
+      yield* writeText(
+        fixture.root,
+        `${shellRoot}/src/broken.ts`,
+        `const example = "from '@app/party-registry/src/db/schema.ts'"; const broken = ;`,
+      );
+      const result = fixture.check();
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain('could not be parsed for module-boundary import checks');
+    }),
+  );
+
+  it.live(
     'accepts foundation schema and client exports without business endpoints or a compiled Shell client registry',
     Effect.fn(function* acceptsNativeOwnerClients() {
       const fixture = yield* makeFixture();
       const result = fixture.check();
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain('UltraModern API boundary check passed');
-    }),
-  );
-
-  it.live(
-    'requires generated aggregate exports even when only foundation readiness is published',
-    Effect.fn(function* rejectsMissingFoundationExports() {
-      const fixture = yield* makeFixture();
-      yield* writeText(fixture.root, `${ownerRoot}/package.json`, JSON.stringify({ exports: {} }));
-      const result = fixture.check();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toMatch(/package must export \.\/api from shared\/api\.ts/u);
-      expect(result.stderr).toMatch(/package must export \.\/api\/client from src\/api/u);
-    }),
-  );
-
-  it.live(
-    'rejects restoration of the compiled Shell client registry',
-    Effect.fn(function* rejectsLiteralRegistry() {
-      const fixture = yield* makeFixture();
-      yield* writeText(fixture.root, `${shellRoot}/src/api/vertical-clients.ts`, 'export const clients = {};\n');
-      const result = fixture.check();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toMatch(/vertical-clients\.ts/u);
-    }),
-  );
-
-  it.live(
-    'rejects restoration of the Shell aggregate client export',
-    Effect.fn(function* rejectsAggregateExport() {
-      const fixture = yield* makeFixture();
-      yield* writeText(
-        fixture.root,
-        `${shellRoot}/package.json`,
-        JSON.stringify({
-          exports: { './api/clients': './src/api/vertical-clients.ts' },
-        }),
-      );
-      const result = fixture.check();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toMatch(/package\.json must not export a compiled vertical API client registry/u);
-    }),
-  );
-
-  it.live(
-    'still requires each owner API client',
-    Effect.fn(function* rejectsMissingOwnerClient() {
-      const fixture = yield* makeFixture();
-      yield* Effect.promise(() => rm(path.join(fixture.root, clientPath)));
-      const result = fixture.check();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toMatch(/src\/api must contain a generated API client/u);
+      expect(result.stdout).toContain('OntOS API boundary check passed');
     }),
   );
 

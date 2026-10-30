@@ -6,18 +6,27 @@ import { makeAiApprovalSchemas } from '@app/shared-contracts/ai-approvals';
 import { MerchandiseAiOperationSchema } from '../actions/apply-command.ts';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import {
+  CatalogCategoryIdSchema,
+  ClientRequestIdSchema,
+  CustomerAccountIdSchema,
   MinorAmountSchema,
+  OpportunityIdSchema,
+  OrderIdReferenceSchema,
+  OrderIdSchema,
+  PartyIdSchema,
+  VariantIdReferenceSchema,
   CatalogCategorySchema,
   CategoryNodeSchema,
   OrderSchema,
   OrderStatusSchema,
+  ProductIdReferenceSchema,
   ProductIdSchema,
   ProductRecordSchema,
   ProductSchema,
   StockMovementSchema,
   ShippingMethodSchema,
 } from '../domain/merchandise-model.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export { OrderSchema, ProductRecordSchema, ProductSchema, StockMovementSchema } from '../domain/merchandise-model.ts';
 export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '../domain/merchandise-model.ts';
@@ -33,26 +42,26 @@ export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '..
  * category selection, publication visibility and ordering are unchanged. Default mode: `products`.
  */
 export const StorefrontCatalogQuerySchema = Schema.Struct({
+  availability: Schema.optionalKey(Schema.Literals(['in-stock', 'out-of-stock'])),
+  categorySlug: Schema.optionalKey(Schema.String),
+  featured: Schema.optionalKey(Schema.Boolean),
+  fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
+  label: Schema.optionalKey(Schema.Literals(['action', 'recommended', 'sale', 'new'])),
+  maxMinor: Schema.optionalKey(MinorAmountSchema),
+  minMinor: Schema.optionalKey(MinorAmountSchema),
   mode: Schema.optionalKey(Schema.Literals(['products', 'categories'])),
   page: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
-  pageSize: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 250 }))),
-  slug: Schema.optionalKey(Schema.String),
-  categorySlug: Schema.optionalKey(Schema.String),
+  pageSize: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 250, minimum: 1 }))),
+  productIds: Schema.optionalKey(Schema.Array(ProductIdReferenceSchema).check(Schema.isMaxLength(200))),
   q: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
-  featured: Schema.optionalKey(Schema.Boolean),
-  label: Schema.optionalKey(Schema.Literals(['action', 'recommended', 'sale', 'new'])),
-  productIds: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(200))),
-  minMinor: Schema.optionalKey(MinorAmountSchema),
-  maxMinor: Schema.optionalKey(MinorAmountSchema),
-  availability: Schema.optionalKey(Schema.Literals(['in-stock', 'out-of-stock'])),
+  slug: Schema.optionalKey(Schema.String),
   sort: Schema.optionalKey(Schema.Literals(['name', 'price-asc', 'price-desc'])),
-  fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
   /**
    * Cart/checkout: with `fields: 'full'`, each product's `variantRecords` hold only these variants and up to 50
    * products are returned. Without it a `full` page holds at most 2 products (one product can carry 400 variants).
    */
-  variantIds: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(200))),
   includeCategories: Schema.optionalKey(Schema.Boolean),
+  variantIds: Schema.optionalKey(Schema.Array(VariantIdReferenceSchema).check(Schema.isMaxLength(200))),
   /** With includeCategories false: only the active category and its children, not the navigation tree. */
   includeCategoryContent: Schema.optionalKey(Schema.Boolean),
 });
@@ -60,7 +69,7 @@ export type StorefrontCatalogQuery = typeof StorefrontCatalogQuerySchema.Type;
 
 /** Customer-safe order status: no contact, address, lines or totals. `statusLabel` is Czech. */
 export const StorefrontOrderStatusSchema = Schema.Struct({
-  id: Schema.String,
+  id: OrderIdReferenceSchema,
   number: Schema.String,
   status: OrderStatusSchema,
   statusLabel: Schema.String,
@@ -70,25 +79,21 @@ export type StorefrontOrderStatus = typeof StorefrontOrderStatusSchema.Type;
 
 /** Storefront status lookup: both the order id and the secret clientRequestId the storefront generated must match. */
 export const StorefrontOrderStatusLookupSchema = Schema.Struct({
-  orderId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-  clientRequestId: Schema.String.check(Schema.isMinLength(8), Schema.isMaxLength(120)),
+  clientRequestId: ClientRequestIdSchema.check(Schema.isMinLength(8), Schema.isMaxLength(120)),
+  orderId: OrderIdSchema,
 });
 export type StorefrontOrderStatusLookup = typeof StorefrontOrderStatusLookupSchema.Type;
 
-const IdListSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
-  Schema.isMaxLength(250),
-);
+const ProductIdListSchema = Schema.Array(ProductIdSchema).check(Schema.isMaxLength(250));
+const OrderIdListSchema = Schema.Array(OrderIdSchema).check(Schema.isMaxLength(250));
 /** Ids carrying the tag the staff list filters by (read from tagging); bounded by the size of a tag. */
-const TaggedIdListSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
-  Schema.isMaxLength(5000),
-);
-const CustomerPartyIdListSchema = Schema.Array(
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-).check(Schema.isMaxLength(500));
+const TaggedProductIdListSchema = Schema.Array(ProductIdSchema).check(Schema.isMaxLength(5000));
+const TaggedOrderIdListSchema = Schema.Array(OrderIdSchema).check(Schema.isMaxLength(5000));
+const CustomerPartyIdListSchema = Schema.Array(PartyIdSchema).check(Schema.isMaxLength(500));
 
 /** One distinct product category label (`products.category`) with the number of products filed under it. */
 /** One tree category with its root-first path label (`Šrouby › DIN 912 › A 2`). */
-export const CategoryTrailSchema = Schema.Struct({ id: Schema.String, trail: Schema.String });
+export const CategoryTrailSchema = Schema.Struct({ id: CatalogCategoryIdSchema, trail: Schema.String });
 export type CategoryTrail = typeof CategoryTrailSchema.Type;
 
 export const ProductCategoryCountSchema = Schema.Struct({
@@ -118,14 +123,14 @@ export type ProductCategoryCount = typeof ProductCategoryCountSchema.Type;
  */
 export const RecordsViewSchema = Schema.Struct({
   /** Trusted storefront server supplies the verified portal subject, never a browser-supplied identity. */
+  storefrontCheckout: Schema.optionalKey(Schema.Boolean),
   storefrontCustomerOrders: Schema.optionalKey(
     Schema.Struct({
-      customerAccountId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-      orderId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+      customerAccountId: CustomerAccountIdSchema,
       offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+      orderId: Schema.optionalKey(OrderIdSchema),
     }),
   ),
-  storefrontCheckout: Schema.optionalKey(Schema.Boolean),
   /** Storefront catalog page; response adds total/page/pageSize/categories/homepageFeaturedProductIds. */
   storefrontCatalog: Schema.optionalKey(StorefrontCatalogQuerySchema),
   /** Storefront order status; response `orderStatus` (null when not found) and `products: []`. */
@@ -135,37 +140,39 @@ export const RecordsViewSchema = Schema.Struct({
   /** Staff reads: tree categories matching the words of `text` (see above). */
   categorySearch: Schema.optionalKey(
     Schema.Struct({
-      limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+      limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 50, minimum: 1 }))),
       text: Schema.String.check(Schema.isMaxLength(200)),
     }),
   ),
   /** Staff reads: path labels of the listed products' categories and of `categoryId` as `categoryTrails`. */
+  active: Schema.optionalKey(Schema.Boolean),
+  category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
+  categoryId: Schema.optionalKey(CatalogCategoryIdSchema),
   categoryTrails: Schema.optionalKey(Schema.Boolean),
-  slug: Schema.optionalKey(Schema.String),
-  categoryId: Schema.optionalKey(Schema.String),
-  search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 250, minimum: 0 }))),
+  lowStockOnly: Schema.optionalKey(Schema.Boolean),
   offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 250 }))),
   productSort: Schema.optionalKey(
     Schema.Literals(['name', 'sku', 'price-asc', 'price-desc', 'stock-asc', 'stock-desc', 'updated-desc']),
   ),
+  search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  slug: Schema.optionalKey(Schema.String),
   summary: Schema.optionalKey(Schema.Boolean),
-  active: Schema.optionalKey(Schema.Boolean),
-  category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
-  lowStockOnly: Schema.optionalKey(Schema.Boolean),
   /**
    * Staff reads: also return the distinct `products.category` labels with counts as `productCategories`; with
    * `includeCategories`, only when the company has no storefront tree.
    */
   includeProductCategories: Schema.optionalKey(Schema.Boolean),
   /** Only products with these ids: the products carrying the tag selected in the staff list. */
-  taggedProductIds: Schema.optionalKey(TaggedIdListSchema),
+  taggedProductIds: Schema.optionalKey(TaggedProductIdListSchema),
   /** Storefront lookup of one guest order by its submission id (only with `storefront: true`). */
-  orderClientRequestId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120))),
+  orderClientRequestId: Schema.optionalKey(
+    Schema.Trim.pipe(Schema.decodeTo(ClientRequestIdSchema.check(Schema.isMinLength(8), Schema.isMaxLength(120)))),
+  ),
+  orderId: Schema.optionalKey(OrderIdSchema),
+  orderIds: Schema.optionalKey(OrderIdListSchema),
+  orderOpportunityId: Schema.optionalKey(OpportunityIdSchema),
   orderStatus: Schema.optionalKey(OrderStatusSchema),
-  orderId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
-  orderIds: Schema.optionalKey(IdListSchema),
-  orderOpportunityId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   /** Order number, customer name, e-mail or phone (diacritics-insensitive). */
   orderSearch: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   /**
@@ -174,15 +181,16 @@ export const RecordsViewSchema = Schema.Struct({
    */
   orderCustomerPartyIds: Schema.optionalKey(CustomerPartyIdListSchema),
   /** Only orders with these ids: the orders carrying the tag selected in the staff list. */
-  taggedOrderIds: Schema.optionalKey(TaggedIdListSchema),
+  ordersLimit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 250, minimum: 0 }))),
   ordersOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  ordersLimit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 250 }))),
   productId: Schema.optionalKey(ProductIdSchema),
-  productIds: Schema.optionalKey(IdListSchema),
+  productIds: Schema.optionalKey(ProductIdListSchema),
+  taggedOrderIds: Schema.optionalKey(TaggedOrderIdListSchema),
   /** Customer projection: only published, active products; no movements; orders only by `orderClientRequestId`. */
   storefront: Schema.optionalKey(Schema.Boolean),
 });
 export type RecordsView = typeof RecordsViewSchema.Type;
+export type RecordsViewEncoded = typeof RecordsViewSchema.Encoded;
 
 /** AI level C proposals, decisions, reverts and their log (see `@app/shared-contracts/ai-approvals`). */
 export const MerchandiseAiSchemas = makeAiApprovalSchemas(MerchandiseAiOperationSchema);
@@ -193,7 +201,7 @@ export type MerchandiseAiChange = typeof MerchandiseAiSchemas.change.Type;
 export const MerchandiseStateSchema = Schema.Struct({
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
   categories: Schema.optionalKey(Schema.Array(CatalogCategorySchema)),
-  homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
+  homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(ProductIdReferenceSchema)),
   movements: Schema.Array(StockMovementSchema),
   orders: Schema.Array(OrderSchema),
   products: Schema.Array(ProductSchema),
@@ -224,15 +232,15 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const RecordsResponseSchema = Schema.Struct({
   checkout: Schema.optionalKey(
     Schema.Struct({
+      carrierTrackingAvailable: Schema.Boolean,
+      paymentAvailable: Schema.Boolean,
       shippingMethods: Schema.Array(
         Schema.Struct({
           id: ShippingMethodSchema,
-          title: Schema.String,
           priceMinor: MinorAmountSchema,
+          title: Schema.String,
         }),
       ),
-      paymentAvailable: Schema.Boolean,
-      carrierTrackingAvailable: Schema.Boolean,
     }),
   ),
   /** AI proposals for this company's orders; present for staff principals with read_all. */
@@ -240,23 +248,23 @@ export const RecordsResponseSchema = Schema.Struct({
   categories: Schema.optionalKey(Schema.Array(CategoryNodeSchema)),
   productCategories: Schema.optionalKey(Schema.Array(ProductCategoryCountSchema)),
   /** With `includeProductCategories`: whether the company has a storefront category tree. */
-  hasCategoryTree: Schema.optionalKey(Schema.Boolean),
+  actorPrincipalRef: PrincipalRefSchema,
+  canCleanupDemo: Schema.optionalKey(Schema.Boolean),
+  canEditOrders: Schema.optionalKey(Schema.Boolean),
+  canManageCatalog: Schema.optionalKey(Schema.Boolean),
+  canWrite: Schema.Boolean,
   categoryMatches: Schema.optionalKey(Schema.Array(CategoryTrailSchema)),
   categoryMatchTotal: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   categoryTrails: Schema.optionalKey(Schema.Array(CategoryTrailSchema)),
-  homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
-  total: Schema.optionalKey(Schema.Int),
-  totalOrders: Schema.optionalKey(Schema.Int),
+  hasCategoryTree: Schema.optionalKey(Schema.Boolean),
+  homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(ProductIdReferenceSchema)),
+  orderStatus: Schema.optionalKey(Schema.OptionFromNullOr(StorefrontOrderStatusSchema)),
   page: Schema.optionalKey(Schema.Int),
   pageSize: Schema.optionalKey(Schema.Int),
-  orderStatus: Schema.optionalKey(Schema.NullOr(StorefrontOrderStatusSchema)),
-  totalProducts: Schema.optionalKey(Schema.Int),
-  actorPrincipalRef: PrincipalRefSchema,
-  canWrite: Schema.Boolean,
-  canManageCatalog: Schema.optionalKey(Schema.Boolean),
   storefrontOrigin: Schema.optionalKey(Schema.String),
-  canEditOrders: Schema.optionalKey(Schema.Boolean),
-  canCleanupDemo: Schema.optionalKey(Schema.Boolean),
+  total: Schema.optionalKey(Schema.Int),
+  totalOrders: Schema.optionalKey(Schema.Int),
+  totalProducts: Schema.optionalKey(Schema.Int),
   /** AKROS administrators may reset the company's demo data to its baseline (ResetDemoData). */
   canResetDemo: Schema.optionalKey(Schema.Boolean),
   indicators: Schema.Struct({

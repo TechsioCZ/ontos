@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -69,7 +70,11 @@ const makeRepository = Effect.gen(function* makeRepository() {
 
 const makeService = makeRepository.pipe(
   Effect.flatMap((repository) =>
-    StockItemService.pipe(Effect.provide(StockItemServiceLive), Effect.provideService(StockItemRepository, repository)),
+    StockItemService.pipe(
+      Effect.provide(StockItemServiceLive),
+      Effect.provide(NodeCrypto.layer),
+      Effect.provideService(StockItemRepository, repository),
+    ),
   ),
 );
 
@@ -87,6 +92,7 @@ describe('Stock Item identity and lifecycle', () => {
       const repository = yield* makeRepository;
       const service = yield* StockItemService.pipe(
         Effect.provide(StockItemServiceLive),
+        Effect.provide(NodeCrypto.layer),
         Effect.provideService(StockItemRepository, repository),
       );
 

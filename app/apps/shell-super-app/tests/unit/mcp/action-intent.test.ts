@@ -2,7 +2,6 @@
 import { defineAction } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { AgentProposalSubmitRequestSchema } from '@app/shared-contracts/agent-proposals';
-import type { AgentProposalSubmitRequest } from '@app/shared-contracts/agent-proposals';
 import { Effect, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -20,7 +19,7 @@ const principal = {
   tenantId: '30000000-0000-4000-8000-000000000001',
 } as const;
 
-const request: AgentProposalSubmitRequest = {
+const request = Schema.decodeUnknownSync(AgentProposalSubmitRequestSchema)({
   instruction: 'Keep the original payload',
   legalEntityId: principal.legalEntityId,
   proposals: [
@@ -36,7 +35,7 @@ const request: AgentProposalSubmitRequest = {
     },
   ],
   runId: 'actual-agent-run-not-the-intent-key',
-};
+});
 
 // This is a native lifecycle fixture, not a replacement for the production proposal queue or OAuth authentication.
 // Core's real runtime owns authorization, hash conflicts, persistence and committed retry evidence.
@@ -102,7 +101,8 @@ describe('authenticated MCP caller intent boundary with native Action runtime', 
             })),
           },
         ]) {
-          const conflict = yield* run(changed).pipe(Effect.flip);
+          const decoded = yield* Schema.decodeEffect(AgentProposalSubmitRequestSchema)(changed);
+          const conflict = yield* run(decoded).pipe(Effect.flip);
           expect(Predicate.isTagged(conflict, 'ActionRequestHashConflict')).toBe(true);
         }
         const snapshot = harness.snapshot();

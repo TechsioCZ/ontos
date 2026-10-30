@@ -1,10 +1,11 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { getTableColumns, getTableName } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import type { OAuthGrantRecord } from '../../src/auth/oauth-grant-registry-contract.ts';
 import { OAuthGrantRegistryLive } from '../../src/auth/oauth-grant-registry-live.ts';
@@ -166,7 +167,7 @@ const parameterFor = (query: Query | undefined, column: string): string | number
   throw new Error(`expected a bound parameter for ${column}`);
 };
 
-it.layer(Reactivity.layer)('OAuthGrantRegistry native storage', (suite) => {
+it.layer(Layer.merge(Reactivity.layer, NodeCrypto.layer))('OAuthGrantRegistry native storage', (suite) => {
   for (const malformed of malformedFacts) {
     for (const operation of grantReads) {
       suite.effect(`${operation.name} rejects malformed ${malformed.name} as a typed storage failure`, () =>

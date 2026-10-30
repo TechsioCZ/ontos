@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -364,7 +365,7 @@ describe('Product lifecycle acceptance (#414)', () => {
           revision: 1,
           variantId,
         });
-      }),
+      }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('distinguishes one complete sibling Variant from an incomplete one without claiming Current proof', () => {
@@ -437,7 +438,7 @@ describe('Product lifecycle acceptance (#414)', () => {
         revision: 2,
       });
       expect(state.lifecycleEvents[0]).toMatchObject({ event: 'ACTIVATED' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('refuses activation when a current Catalog name is missing, without writing history', () =>
@@ -466,7 +467,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(state.product.lifecycleState).toBe('DRAFT');
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('retirement preserves identity and Variants while appending immutable lifecycle history', () =>
@@ -520,7 +521,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       );
       expect(repeatedOutcome).not.toBeNull();
       expect(state.revisions).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('retirement blocks a new Current acceptance while exact references stay readable', () =>
@@ -553,7 +554,7 @@ describe('Product lifecycle acceptance (#414)', () => {
         ['PRODUCT', 4],
         ['VARIANT', 7],
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reactivation keeps the same identity, re-assesses, and never restores a retired Variant', () =>
@@ -589,7 +590,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(state.product.retiredReason).toBeNull();
       expect(state.revisions[0]).toMatchObject({ changeKind: 'LIFECYCLE', lifecycleState: 'ACTIVE', revision: 4 });
       expect(state.lifecycleEvents[0]).toMatchObject({ event: 'ACTIVATED' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reactivation fails closed when no exact-selection Current evidence reader is bound', () =>
@@ -617,7 +618,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(state.product.lifecycleState).toBe('RETIRED');
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('the Reactivate Product Action succeeds through transaction-bound exact-selection evidence', () =>
@@ -638,7 +639,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(state.product.lifecycleState).toBe('ACTIVE');
       expect(state.revisions).toHaveLength(1);
       expect(state.lifecycleEvents).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('the Reactivate Product Action reports unavailable Current evidence without lifecycle history', () =>
@@ -660,7 +661,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(state.product.currentRevision).toBe(3);
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reactivation refuses a Product whose Variant was retired instead of resurrecting it', () =>
@@ -685,7 +686,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(refused?.reasons).toEqual(['Product needs at least one ACTIVE Variant']);
       expect(state.product.lifecycleState).toBe('RETIRED');
       expect(state.revisions).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('a stale editor cannot silently overwrite a newer Product change', () =>
@@ -741,7 +742,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(reactivateConflict?.actualRevision).toBe(5);
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps stale, cross-tenant, missing, and illegal lifecycle edits to typed failures', () =>
@@ -780,6 +781,6 @@ describe('Product lifecycle acceptance (#414)', () => {
         notRetired,
       ).pipe(Effect.flip);
       expect(Schema.is(ProductLifecycleConflict)(lifecycleError)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
