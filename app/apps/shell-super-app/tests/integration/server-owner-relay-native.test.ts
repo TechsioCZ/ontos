@@ -699,25 +699,85 @@ const assertNativeManagedIdentityActions = Effect.fn('ServerOwnerRelayNative.ass
 
 const assertNativeManufacturerMutationAudit = Effect.fn('ServerOwnerRelayNative.assertManufacturerMutationAudit')(
   function* assertNativeManufacturerMutationAudit(
+    fixture: Effect.Success<ReturnType<typeof makeLiveOperationFixture>>,
     database: NativeCoreDatabase,
     input: {
       readonly authBindingId: string;
       readonly authContextRef: Redacted.Redacted;
+      readonly correlationId: string;
       readonly principalId: string;
-      readonly productResourceId: string;
+      readonly productRef: typeof CoreSearchResourceRefSchema.Type;
       readonly tenantId: string;
     },
   ) {
-    const invocation = yield* database.query.actionInvocations.findFirst({
-      where: { actionKey: 'commerce.catalog.set-product-manufacturer', tenantId: input.tenantId },
-    });
-    expect(invocation?.status).toBe('succeeded');
-    expect(invocation?.legalEntityId).toBeNull();
-    expect(invocation?.authBindingId).toBe(input.authBindingId);
-    expect(invocation?.authMethod).toBe('api_key');
-    expect(invocation?.targetResourceId).toBe(input.productResourceId);
-    expect(invocation?.principalId).toBe(input.principalId);
-    expect(invocation?.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+    const evidence = yield* fixture.evidence(database);
+    const invocation = evidence.invocations.find(
+      (row) =>
+        row.actionKey === 'commerce.catalog.set-product-manufacturer' &&
+        row.tenantId === input.tenantId &&
+        row.correlationId === input.correlationId,
+    );
+    if (invocation === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Exact native Manufacturer invocation evidence missing' });
+    }
+    expect(invocation.status).toBe('succeeded');
+    expect(invocation.legalEntityId).toBeNull();
+    expect(invocation.authBindingId).toBe(input.authBindingId);
+    expect(invocation.authMethod).toBe('api_key');
+    // The declared Action target is Tenant-scoped; the product is linked execution evidence.
+    expect(invocation.targetModuleKey).toBeNull();
+    expect(invocation.targetResourceType).toBeNull();
+    expect(invocation.targetResourceId).toBeNull();
+    expect(invocation.principalId).toBe(input.principalId);
+    expect(invocation.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+    const executedAudits = evidence.audits.filter(
+      (row) => row.actionInvocationId === invocation.actionInvocationId && row.eventType === 'action.executed',
+    );
+    expect(executedAudits).toHaveLength(1);
+    for (const audit of executedAudits) {
+      expect(audit.tenantId).toBe(input.tenantId);
+      expect(audit.legalEntityId).toBeNull();
+      expect(audit.principalId).toBe(input.principalId);
+      expect(audit.authBindingId).toBe(input.authBindingId);
+      expect(audit.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+      expect(audit.authMethod).toBe('api_key');
+      expect(audit.outcome).toBe('succeeded');
+      expect(audit.outcomeCode).toBe('action_executed');
+      expect(audit.outcomeStage).toBe('execution');
+      expect(audit.targetModuleKey).toBeNull();
+      expect(audit.targetResourceType).toBeNull();
+      expect(audit.targetResourceId).toBeNull();
+      expect(
+        Schema.is(Schema.Struct({ actionKey: Schema.Literal('commerce.catalog.set-product-manufacturer') }))(
+          audit.evidenceJson,
+        ),
+      ).toBe(true);
+    }
+    const accesses = evidence.accesses.filter(
+      (row) => row.actionInvocationId === invocation.actionInvocationId && row.servingModuleKey === 'commerce.catalog',
+    );
+    expect(accesses).toHaveLength(1);
+    for (const access of accesses) {
+      expect(access.tenantId).toBe(input.tenantId);
+      expect(access.tenantId).toBe(input.productRef.tenantId);
+      expect(access.legalEntityId).toBeNull();
+      expect(access.principalId).toBe(input.principalId);
+      expect(access.authBindingId).toBe(input.authBindingId);
+      expect(access.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+      expect(access.authMethod).toBe('api_key');
+      expect(access.outcome).toBe('allowed');
+      expect(access.outcomeCode).toBe('action_read_allowed');
+      expect(access.outcomeStage).toBe('execution');
+      expect(access.accessKind).toBe('read');
+      expect(access.targetModuleKey).toBe(input.productRef.moduleId);
+      expect(access.targetResourceType).toBe(input.productRef.resourceType);
+      expect(access.targetResourceId).toBe(input.productRef.resourceId);
+      expect(access.queryHash).toBe(
+        `catalog-manufacturer-subject:${input.productRef.resourceType}:${input.productRef.resourceId}`,
+      );
+      expect(access.resultCount).toBe(1);
+    }
+    return yield* Effect.void;
   },
 );
 
@@ -2287,11 +2347,12 @@ it.live('completes the real Catalog to Party Manufacturer happy path with the or
             },
             owner: { canonicalTarget: { kind: 'PARTY', partyRef }, kind: 'PARTY', state: 'CURRENT' },
           });
-          yield* assertNativeManufacturerMutationAudit(database, {
+          yield* assertNativeManufacturerMutationAudit(fixture.core, database, {
             authBindingId: personalKey.authBindingId,
             authContextRef: personalAuthContextRef,
+            correlationId: setCorrelation,
             principalId: fixture.core.manager.principalId,
-            productResourceId: productRef.resourceId,
+            productRef,
             tenantId: fixture.core.tenantId,
           });
           expect(sourceExchange !== undefined).toBe(true);
@@ -2305,6 +2366,7 @@ it.live('completes the real Catalog to Party Manufacturer happy path with the or
               row.outcome === 'allowed',
           );
           expect(providerReads.length).toBeGreaterThan(0);
+          expect(providerReads.every((row) => row.principalId !== serviceId)).toBe(true);
           expect(providerReads.some((row) => row.legalEntityId === null)).toBe(true);
           expect(providerReads.some((row) => row.legalEntityId === fixture.core.legalEntityId)).toBe(true);
           expect(
