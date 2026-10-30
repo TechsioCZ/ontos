@@ -10,10 +10,21 @@ describe("credential query guard", () => {
       url.searchParams.set(key, "query-probe");
       const response = proxy(new NextRequest(url));
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toBe("https://store.test/prihlaseni");
+      expect(response.headers.get("location")).toBe("/prihlaseni");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     },
   );
+  it("does not redirect a Zerops request to Next's internal listener origin", () => {
+    const url = new URL("https://0.0.0.0:3070/prihlaseni");
+    url.searchParams.set("password", "proxy-origin-probe");
+    const response = proxy(
+      new NextRequest(url, {
+        headers: { host: "ontos-stage-akros.web-revolution.cz", "x-forwarded-proto": "https" },
+      }),
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/prihlaseni");
+  });
   it("preserves legitimate verification tokens and normal navigation", () => {
     for (const path of ["/overeni-emailu?token=one-use", "/prihlaseni?returnTo=%2Fkosik"]) {
       expect(proxy(new NextRequest(new URL(path, "https://store.test"))).status).toBe(200);
