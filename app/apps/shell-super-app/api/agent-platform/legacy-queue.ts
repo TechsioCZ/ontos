@@ -1,6 +1,6 @@
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import type { AgentQueueBatch, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
-import { Crypto, Effect, Result } from 'effect';
+import { Crypto, Effect, Result, Struct } from 'effect';
 
 import { AgentModuleCallError, applyModuleCommand, callModuleAs, recordsReadOf } from './module-call.ts';
 import { normalizeLegacySlice, sliceFromRecords } from './legacy-normalize.ts';
@@ -27,7 +27,8 @@ const readLegacyOnce = Effect.fn('AgentPlatform.readLegacyOnce')(function* readL
     Effect.flatMap((read) =>
       callModuleAs(principal, module.appId, read.path, {
         ...read.query,
-        agentHistory: { ...options.request, mode: 'queue' },
+        // Owners read only their history fields; the module filter stays in the Shell.
+        agentHistory: { ...Struct.pick(options.request, ['batchKey', 'cursor', 'pendingOnly']), mode: 'queue' },
       }),
     ),
     Effect.result,
