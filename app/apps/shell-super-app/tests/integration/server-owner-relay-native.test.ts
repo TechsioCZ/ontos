@@ -10,6 +10,7 @@ import {
   CoreSearchResourceRefSchema,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
+  toSpiceDbActionObjectId,
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
   lockApplicationCompositionPublication,
@@ -87,6 +88,11 @@ const nativeManufacturerSubjectKey = Brand.nominal<PartySubjectKey>()('manufactu
 
 // Catalog's emitted public product-detail contract declares this shared Problem Details schema.
 const CatalogProductAuthenticationProblemSchema = makeProblemDetailsSchema('ProductDetailAuthenticationProblem', 401);
+const CatalogManufacturerForbiddenProblemSchema = makeProblemDetailsSchema(
+  'SetProductManufacturerActionForbiddenProblem',
+  403,
+  { code: Schema.Literal('manufacturer_target_forbidden') },
+);
 
 const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePackagedShellUserFixture')(
   function* makePackagedShellUserFixture(
@@ -107,6 +113,7 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
     const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
     const core = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        actionExecutor: 'manager-only',
         actionKeys: [
           'core.identity.create-non-human-principal',
           'core.identity.bind-managed-api-key',
@@ -404,7 +411,7 @@ const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.
         () => new PackagedOwnerStartupError({ reason: 'Actual public personal-key gateway issuance failed' }),
       ),
     );
-    yield* Effect.logInfo('Real native personal-key gateway issued', { audience: input.audience });
+    yield* Effect.logInfo('Real native API-key gateway issued', { audience: input.audience });
     const token = Redacted.make(issued.token);
     const verified = yield* Effect.tryPromise({
       catch: () => new PackagedOwnerStartupError({ reason: 'Actual issued gateway signature verification failed' }),
@@ -863,7 +870,7 @@ const grantNativeManufacturerReadPermissions = Effect.fn('ServerOwnerRelayNative
         sourceWorkloadIndependentlyDenied: true,
       });
     }
-    return yield* Effect.void;
+    return { check, mutation };
   },
 );
 
@@ -1700,169 +1707,188 @@ it.live('creates a real separately bound managed service credential through pack
   ),
 );
 
-it.live('completes the real Catalog to Party Manufacturer happy path with the original authenticated actor', () =>
-  Effect.gen(function* realManufacturerHappyPath() {
-    const children: ChildProcessHandle[] = [];
-    const result = yield* Effect.exit(
-      Effect.scoped(
-        Effect.gen(function* completeRealManufacturerHappyPath() {
-          const signingKeyPair = yield* Effect.tryPromise(() =>
-            generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
-          );
-          const signingCrypto = yield* Crypto.Crypto;
-          const signingKid = `native-${yield* signingCrypto.randomUUIDv4()}`;
-          const privateJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.privateKey));
-          const publicJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.publicKey));
-          const gatewayMaterial = {
-            privateJwk: Redacted.make(JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid: signingKid, use: 'sig' })),
-            publicJwks: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: signingKid, use: 'sig' }] }),
-          };
-          let encoded: string | null = null;
-          const source = yield* startNativeHttpServer((request) => {
-            if (new URL(request.url).pathname !== '/active') {
-              return Promise.resolve(new Response(null, { status: 404 }));
-            }
-            if (encoded === null) {
-              return Promise.resolve(new Response(null, { status: 503 }));
-            }
-            return Promise.resolve(
-              new Response(encoded, { headers: { 'content-type': 'application/json' }, status: 200 }),
+it.live(
+  'completes the real Catalog to Party Manufacturer happy path and provider permission controls with the original authenticated actor',
+  () =>
+    Effect.gen(function* realManufacturerHappyPath() {
+      const children: ChildProcessHandle[] = [];
+      const result = yield* Effect.exit(
+        Effect.scoped(
+          Effect.gen(function* completeRealManufacturerHappyPath() {
+            const signingKeyPair = yield* Effect.tryPromise(() =>
+              generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
             );
-          });
-          const compositionUrl = `${source.origin}/active`;
-          const fixture = yield* makePackagedShellUserFixture(
-            compositionUrl,
-            [
-              'core.identity.bind-self-api-key',
-              'party.registry.create-party',
-              'commerce.catalog.create-product',
-              'commerce.catalog.set-product-manufacturer',
-            ],
-            gatewayMaterial,
-          );
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'initial-shell-fixture-returned' });
-          const cleanupConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'cleanup-config-loaded' });
-          const releaseDisposableManufacturerQueue = Effect.fn(
-            'ServerOwnerRelayNative.releaseDisposableManufacturerQueue',
-          )(function* releaseDisposableManufacturerQueue() {
-            yield* Effect.logInfo('Disposable Manufacturer queue release started', { tenantId: fixture.core.tenantId });
-            const cleanupAdmin = yield* PgClient.make({
-              url: Redacted.make(cleanupConnections.admin.connectionString),
+            const signingCrypto = yield* Crypto.Crypto;
+            const signingKid = `native-${yield* signingCrypto.randomUUIDv4()}`;
+            const privateJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.privateKey));
+            const publicJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.publicKey));
+            const gatewayMaterial = {
+              privateJwk: Redacted.make(JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid: signingKid, use: 'sig' })),
+              publicJwks: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: signingKid, use: 'sig' }] }),
+            };
+            let encoded: string | null = null;
+            const source = yield* startNativeHttpServer((request) => {
+              if (new URL(request.url).pathname !== '/active') {
+                return Promise.resolve(new Response(null, { status: 404 }));
+              }
+              if (encoded === null) {
+                return Promise.resolve(new Response(null, { status: 503 }));
+              }
+              return Promise.resolve(
+                new Response(encoded, { headers: { 'content-type': 'application/json' }, status: 200 }),
+              );
             });
-            const cleanupDatabase = yield* testCoreDatabase.pipe(
-              Effect.provideService(PgClient.PgClient, cleanupAdmin),
+            const compositionUrl = `${source.origin}/active`;
+            const fixture = yield* makePackagedShellUserFixture(
+              compositionUrl,
+              [
+                'core.identity.bind-self-api-key',
+                'party.registry.create-party',
+                'commerce.catalog.create-product',
+                'commerce.catalog.set-product-manufacturer',
+              ],
+              gatewayMaterial,
             );
-            yield* deleteTestCoreOutbox(cleanupAdmin, fixture.core.tenantId);
-            const remaining = yield* cleanupDatabase.query.outboxMessages.findMany({
-              where: { tenantId: fixture.core.tenantId },
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'initial-shell-fixture-returned' });
+            const cleanupConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'cleanup-config-loaded' });
+            const releaseDisposableManufacturerQueue = Effect.fn(
+              'ServerOwnerRelayNative.releaseDisposableManufacturerQueue',
+            )(function* releaseDisposableManufacturerQueue() {
+              yield* Effect.logInfo('Disposable Manufacturer queue release started', {
+                tenantId: fixture.core.tenantId,
+              });
+              const cleanupAdmin = yield* PgClient.make({
+                url: Redacted.make(cleanupConnections.admin.connectionString),
+              });
+              const cleanupDatabase = yield* testCoreDatabase.pipe(
+                Effect.provideService(PgClient.PgClient, cleanupAdmin),
+              );
+              yield* deleteTestCoreOutbox(cleanupAdmin, fixture.core.tenantId);
+              const remaining = yield* cleanupDatabase.query.outboxMessages.findMany({
+                where: { tenantId: fixture.core.tenantId },
+              });
+              expect(remaining).toHaveLength(0);
+              yield* Effect.logInfo('Disposable Manufacturer fixture dispatch queue released', {
+                queueCount: 0,
+                tenantId: fixture.core.tenantId,
+              });
             });
-            expect(remaining).toHaveLength(0);
-            yield* Effect.logInfo('Disposable Manufacturer fixture dispatch queue released', {
-              queueCount: 0,
-              tenantId: fixture.core.tenantId,
-            });
-          });
-          // Receivers stop before this fresh scoped cleanup; canonical/domain/access evidence remains retained.
-          yield* Effect.addFinalizer(() =>
-            releaseDisposableManufacturerQueue().pipe(Effect.scoped, Effect.timeout('10 seconds'), Effect.orDie),
-          );
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'cleanup-finalizer-registered' });
+            // Receivers stop before this fresh scoped cleanup; canonical/domain/access evidence remains retained.
+            yield* Effect.addFinalizer(() =>
+              releaseDisposableManufacturerQueue().pipe(Effect.scoped, Effect.timeout('10 seconds'), Effect.orDie),
+            );
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'cleanup-finalizer-registered' });
 
-          const shell = fixture.application;
-          children.push(shell.child);
-          const party = yield* startPackagedApplication({
-            appId: 'party-registry',
-            compositionUrl,
-            gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
-            relativeDirectory: '../../verticals/party-registry',
-          });
-          children.push(party.child);
-          const catalog = yield* startPackagedApplication({
-            appId: 'catalog',
-            compositionUrl,
-            gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
-            relativeDirectory: '../../verticals/catalog',
-          });
-          children.push(catalog.child);
-          const client = yield* HttpClient.HttpClient;
-          const observe = Effect.fn('ServerOwnerRelayNative.observeCompositionArtifact')(
-            function* observeCompositionArtifact(url: string) {
-              yield* Effect.logInfo('Native Manufacturer artifact observation', { phase: 'request', url });
-              const response = yield* client
-                .get(url, { headers: { 'cache-control': 'no-cache' } })
-                .pipe(Effect.timeout('10 seconds'));
-              yield* Effect.logInfo('Native Manufacturer artifact observation', {
-                phase: 'headers',
-                status: response.status,
-                url,
-              });
-              expect(response.status).toBe(200);
-              const bytes = new Uint8Array(yield* response.arrayBuffer.pipe(Effect.timeout('10 seconds')));
-              yield* Effect.logInfo('Native Manufacturer artifact observation', {
-                byteCount: bytes.length,
-                phase: 'body',
-                url,
-              });
-              return { bytes, url };
-            },
-          );
-          const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
-            environment: 'development',
-            modules: [
-              {
-                appId: 'party-registry',
-                backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
-                contract: yield* observe(`${party.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
-                federationManifest: yield* observe(`${party.origin}/mf-manifest.json`),
-              },
-              {
-                appId: 'catalog',
-                backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
-                contract: yield* observe(`${catalog.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
-                federationManifest: yield* observe(`${catalog.origin}/mf-manifest.json`),
-              },
-            ],
-            observedAt: yield* DateTime.now,
-            shell: {
-              federationManifest: yield* observe(`${shell.origin}/mf-manifest.json`),
-              runtimeContract: yield* observe(`${shell.origin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`),
-            },
-            validity: Duration.minutes(15),
-          });
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'snapshot-derived' });
-          const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'snapshot-validated' });
-          const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-          const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) });
-          const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'authority-publication-start' });
-          yield* database
-            .transaction(
-              Effect.fn('ServerOwnerRelayNative.drainPreviousAuthority')(function* drainPreviousAuthority(transaction) {
-                yield* lockApplicationCompositionPublication(transaction);
-                const previous = yield* transaction.query.applicationCompositionAuthority.findFirst({
-                  where: { authorityKey: 'active' },
+            const shell = fixture.application;
+            children.push(shell.child);
+            const party = yield* startPackagedApplication({
+              appId: 'party-registry',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/party-registry',
+            });
+            children.push(party.child);
+            const catalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/catalog',
+            });
+            children.push(catalog.child);
+            const client = yield* HttpClient.HttpClient;
+            const observe = Effect.fn('ServerOwnerRelayNative.observeCompositionArtifact')(
+              function* observeCompositionArtifact(url: string) {
+                yield* Effect.logInfo('Native Manufacturer artifact observation', { phase: 'request', url });
+                const response = yield* client
+                  .get(url, { headers: { 'cache-control': 'no-cache' } })
+                  .pipe(Effect.timeout('10 seconds'));
+                yield* Effect.logInfo('Native Manufacturer artifact observation', {
+                  phase: 'headers',
+                  status: response.status,
+                  url,
                 });
-                if (previous !== undefined && previous.revision !== approved.composition.revision) {
-                  if (
-                    previous.phase !== 'active' &&
-                    !(previous.phase === 'draining' && previous.durableWorkAdmission === 'closed')
-                  ) {
-                    return yield* new PackagedOwnerStartupError({
-                      reason:
-                        'Previous fixture authority is outside the supported active or closed-draining lifecycle states',
+                expect(response.status).toBe(200);
+                const bytes = new Uint8Array(yield* response.arrayBuffer.pipe(Effect.timeout('10 seconds')));
+                yield* Effect.logInfo('Native Manufacturer artifact observation', {
+                  byteCount: bytes.length,
+                  phase: 'body',
+                  url,
+                });
+                return { bytes, url };
+              },
+            );
+            const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
+              environment: 'development',
+              modules: [
+                {
+                  appId: 'party-registry',
+                  backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
+                  contract: yield* observe(`${party.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                  federationManifest: yield* observe(`${party.origin}/mf-manifest.json`),
+                },
+                {
+                  appId: 'catalog',
+                  backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
+                  contract: yield* observe(`${catalog.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                  federationManifest: yield* observe(`${catalog.origin}/mf-manifest.json`),
+                },
+              ],
+              observedAt: yield* DateTime.now,
+              shell: {
+                federationManifest: yield* observe(`${shell.origin}/mf-manifest.json`),
+                runtimeContract: yield* observe(`${shell.origin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`),
+              },
+              validity: Duration.minutes(15),
+            });
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'snapshot-derived' });
+            const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'snapshot-validated' });
+            const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+            const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) });
+            const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'authority-publication-start' });
+            yield* database
+              .transaction(
+                Effect.fn('ServerOwnerRelayNative.drainPreviousAuthority')(
+                  function* drainPreviousAuthority(transaction) {
+                    yield* lockApplicationCompositionPublication(transaction);
+                    const previous = yield* transaction.query.applicationCompositionAuthority.findFirst({
+                      where: { authorityKey: 'active' },
                     });
-                  }
-                  if (previous.phase === 'active') {
-                    yield* closeApplicationCompositionDurableAdmission(transaction, previous.revision);
-                  }
-                  yield* drainApplicationCompositionAuthority(transaction, previous.revision);
-                }
-                return yield* Effect.void;
-              }),
-            )
-            .pipe(
+                    if (previous !== undefined && previous.revision !== approved.composition.revision) {
+                      if (
+                        previous.phase !== 'active' &&
+                        !(previous.phase === 'draining' && previous.durableWorkAdmission === 'closed')
+                      ) {
+                        return yield* new PackagedOwnerStartupError({
+                          reason:
+                            'Previous fixture authority is outside the supported active or closed-draining lifecycle states',
+                        });
+                      }
+                      if (previous.phase === 'active') {
+                        yield* closeApplicationCompositionDurableAdmission(transaction, previous.revision);
+                      }
+                      yield* drainApplicationCompositionAuthority(transaction, previous.revision);
+                    }
+                    return yield* Effect.void;
+                  },
+                ),
+              )
+              .pipe(
+                Effect.tapError((error) =>
+                  Schema.is(ApplicationCompositionAuthorityError)(error)
+                    ? Effect.logInfo('Declared native Composition lifecycle failure before cleanup', {
+                        code: error.code,
+                        reason: error.reason,
+                      })
+                    : Effect.logInfo('Native Composition lifecycle failure before cleanup', {
+                        declaredAuthorityError: false,
+                      }),
+                ),
+              );
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'previous-authority-drained' });
+            yield* publishTestApplicationCompositionAuthority(database, approved).pipe(
               Effect.tapError((error) =>
                 Schema.is(ApplicationCompositionAuthorityError)(error)
                   ? Effect.logInfo('Declared native Composition lifecycle failure before cleanup', {
@@ -1874,533 +1900,871 @@ it.live('completes the real Catalog to Party Manufacturer happy path with the or
                     }),
               ),
             );
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'previous-authority-drained' });
-          yield* publishTestApplicationCompositionAuthority(database, approved).pipe(
-            Effect.tapError((error) =>
-              Schema.is(ApplicationCompositionAuthorityError)(error)
-                ? Effect.logInfo('Declared native Composition lifecycle failure before cleanup', {
-                    code: error.code,
-                    reason: error.reason,
-                  })
-                : Effect.logInfo('Native Composition lifecycle failure before cleanup', {
-                    declaredAuthorityError: false,
-                  }),
-            ),
-          );
-          yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'authority-published' });
-          encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
-          const response = yield* client.get(compositionUrl);
-          expect(response.status).toBe(200);
-          const received = yield* response.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)),
-          );
-          const current = yield* validateActiveApplicationCompositionSnapshot(received);
-          expect(current.composition.revision).toBe(approved.composition.revision);
-          expect(current.composition.shell.deployment).toEqual({
-            appId: 'shell-super-app',
-            buildMarker: shell.compiled.buildMarker,
-          });
-          expect(current.composition.modules).toHaveLength(2);
-          expect(current.composition.modules).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
-                deployment: { appId: 'party-registry', buildMarker: party.compiled.buildMarker },
-                federation: expect.objectContaining({ execution: 'browser' }),
-              }),
-              expect.objectContaining({
-                backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
-                deployment: { appId: 'catalog', buildMarker: catalog.compiled.buildMarker },
-                federation: expect.objectContaining({ execution: 'browser' }),
-              }),
-            ]),
-          );
-          const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
-          const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
-          const authority = yield* runtimeDatabase.query.applicationCompositionAuthority.findFirst({
-            where: { authorityKey: 'active' },
-          });
-          expect(authority?.revision).toBe(current.composition.revision);
-          expect(authority?.phase).toBe('active');
-          expect(authority?.durableWorkAdmission).toBe('open');
+            yield* Effect.logInfo('Native Manufacturer setup phase', { phase: 'authority-published' });
+            encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
+            const response = yield* client.get(compositionUrl);
+            expect(response.status).toBe(200);
+            const received = yield* response.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)),
+            );
+            const current = yield* validateActiveApplicationCompositionSnapshot(received);
+            expect(current.composition.revision).toBe(approved.composition.revision);
+            expect(current.composition.shell.deployment).toEqual({
+              appId: 'shell-super-app',
+              buildMarker: shell.compiled.buildMarker,
+            });
+            expect(current.composition.modules).toHaveLength(2);
+            expect(current.composition.modules).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
+                  deployment: { appId: 'party-registry', buildMarker: party.compiled.buildMarker },
+                  federation: expect.objectContaining({ execution: 'browser' }),
+                }),
+                expect.objectContaining({
+                  backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
+                  deployment: { appId: 'catalog', buildMarker: catalog.compiled.buildMarker },
+                  federation: expect.objectContaining({ execution: 'browser' }),
+                }),
+              ]),
+            );
+            const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
+            const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
+            const authority = yield* runtimeDatabase.query.applicationCompositionAuthority.findFirst({
+              where: { authorityKey: 'active' },
+            });
+            expect(authority?.revision).toBe(current.composition.revision);
+            expect(authority?.phase).toBe('active');
+            expect(authority?.durableWorkAdmission).toBe('open');
 
-          yield* grantNativeIdentityAdministration(fixture.core);
-          const crypto = yield* Crypto.Crypto;
-          const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
-            body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
-            headers: { origin: fixture.origin },
-          });
-          expect(signIn.status).toBe(200);
-          const cookie = Redacted.make(Cookies.toCookieHeader(signIn.cookies));
-          const sessionResponse = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
-            headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
-          });
-          expect(sessionResponse.status).toBe(200);
-          const sessionView = yield* sessionResponse.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(AuthenticatedSessionSchema)),
-          );
-          expect(sessionView.identity.principalId).toBe(fixture.core.manager.principalId);
-          const realSession = yield* fixture.persistence.executor.query.session.findFirst({
-            columns: { id: true },
-            where: { userId: fixture.core.manager.authBindingId },
-          });
-          if (realSession === undefined) {
-            return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
-          }
-          const realAuthContextRef = `better-auth-session:${realSession.id}`;
-          expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
-          const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
-            body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
-            headers: {
-              cookie: Redacted.value(cookie),
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              origin: fixture.origin,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
-            },
-          });
-          yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
-          expect(create.status).toBe(200);
-          const created = yield* create.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(PrincipalMutationResponseSchema)),
-          );
-          const serviceId = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema.fields.principalId)(
-            created.principalId,
-          );
-          expect(serviceId).not.toBe(fixture.core.manager.principalId);
-          const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-            body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
-            headers: {
-              cookie: Redacted.value(cookie),
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              origin: fixture.origin,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
-            },
-          });
-          yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
-          if (issue.status !== 200) {
-            const failure = yield* issue.json;
-            const mergedCookies = Cookies.merge(Cookies.merge(signIn.cookies, sessionResponse.cookies), create.cookies);
-            const sameSession = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
+            yield* grantNativeIdentityAdministration(fixture.core);
+            const crypto = yield* Crypto.Crypto;
+            const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
+              body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
+              headers: { origin: fixture.origin },
+            });
+            expect(signIn.status).toBe(200);
+            const cookie = Redacted.make(Cookies.toCookieHeader(signIn.cookies));
+            const sessionResponse = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
               headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
             });
-            yield* Effect.logInfo('Sanitized managed provider authentication diagnostic', {
-              declaredShellAuthenticationRequired: Schema.is(ShellAuthenticationRequiredProblemSchema)(failure),
-              providerExpectedSessionCookieName: getCookies({ baseURL: fixture.configuration.baseUrl }).sessionToken
-                .name,
-              receivedCookieNames: Object.keys(signIn.cookies.cookies),
-              responseCookieUpdatesChanged: Cookies.toCookieHeader(mergedCookies) !== Redacted.value(cookie),
-              sameCookieSessionHttpStatus: sameSession.status,
-              secureCookieConfiguration: fixture.configuration.secureCookies,
-              status: issue.status,
+            expect(sessionResponse.status).toBe(200);
+            const sessionView = yield* sessionResponse.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(AuthenticatedSessionSchema)),
+            );
+            expect(sessionView.identity.principalId).toBe(fixture.core.manager.principalId);
+            const realSession = yield* fixture.persistence.executor.query.session.findFirst({
+              columns: { id: true },
+              where: { userId: fixture.core.manager.authBindingId },
             });
-          }
-          expect(issue.status).toBe(200);
-          const issued = yield* issue.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
-            Effect.mapError(
-              () => new PackagedOwnerStartupError({ reason: 'Managed key response failed its public JSON codec' }),
-            ),
-          );
-          const keys = yield* makeApiKeyService().pipe(
-            Effect.provideService(AuthConfig, fixture.configuration),
-            Effect.provideService(AuthDatabase, fixture.persistence),
-          );
-          const provider = yield* keys.verify(Redacted.value(issued.secret));
-          const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
-          expect(service.principalId).toBe(serviceId);
-          expect(service.authBindingId).toBe(issued.authBindingId);
-          expect(service.tenantId).toBe(fixture.core.tenantId);
-          expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-          const principal = yield* database.query.principals.findFirst({ where: { principalId: serviceId } });
-          expect(principal?.kind).toBe('service');
-          expect(principal?.status).toBe('active');
-          const binding = yield* database.query.principalAuthBindings.findFirst({
-            where: { principalAuthBindingId: issued.authBindingId },
-          });
-          expect(binding?.principalId).toBe(serviceId);
-          expect(binding?.subjectType).toBe('api_key');
-          expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
-          expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-          const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
-            authContextRef: Redacted.make(realAuthContextRef),
-            principalId: fixture.core.manager.principalId,
-            tenantId: fixture.core.tenantId,
-          });
-          yield* Effect.logInfo('Real managed service credential independently verified', {
-            actionCount: identityActionCount,
-            compositionRevision: approved.composition.revision,
-            namespaceMatches: true,
-            originalActorPreservedInCanonicalActions: true,
-            serviceDistinctFromActor: true,
-          });
-
-          const { personalAuthContextRef, personalKey } = yield* issueNativeOriginalHumanKey(fixture, database, keys, {
-            cookie,
-            sessionAuthContextRef: Redacted.make(realAuthContextRef),
-            workloadBindingId: issued.authBindingId,
-            workloadPrincipalId: serviceId,
-          });
-
-          expect(yield* shell.child.isRunning).toBe(true);
-          yield* shell.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
-          expect(yield* shell.child.isRunning).toBe(false);
-          const enrolledShell = yield* startPackagedApplication({
-            appId: 'shell-super-app',
-            authentication: fixture.authentication,
-            compositionUrl,
-            gateway: {
-              issuer: fixture.origin,
-              privateJwk: gatewayMaterial.privateJwk,
-              publicJwks: gatewayMaterial.publicJwks,
-            },
-            relativeDirectory: '.',
-            sourceBindings: Redacted.make(
-              JSON.stringify([
-                {
-                  compositionRevision: approved.composition.revision,
-                  providerKeyId: provider.providerKeyId,
-                  sourceAppId: 'catalog',
-                  sourceBuildMarker: catalog.compiled.buildMarker,
-                },
-              ]),
-            ),
-          });
-          children.push(enrolledShell.child);
-          expect(enrolledShell.origin).toBe(shell.origin);
-          expect(enrolledShell.compiled).toEqual(shell.compiled);
-          expect(yield* catalog.child.isRunning).toBe(true);
-          yield* catalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
-          expect(yield* catalog.child.isRunning).toBe(false);
-          const enrolledCatalog = yield* startPackagedApplication({
-            appId: 'catalog',
-            compositionUrl,
-            gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
-            port: Number(new URL(catalog.origin).port),
-            relativeDirectory: '../../verticals/catalog',
-            relaySource: { apiKey: issued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
-          });
-          children.push(enrolledCatalog.child);
-          expect(enrolledCatalog.origin).toBe(catalog.origin);
-          expect(enrolledCatalog.compiled).toEqual(catalog.compiled);
-          yield* grantNativeCatalogModuleAccess(fixture.core);
-          const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
-            apiKey: personalKey.secret,
-            audience: 'party-registry',
-            authBindingId: personalKey.authBindingId,
-            authContextRef: personalAuthContextRef,
-            buildMarker: party.compiled.buildMarker,
-            origin: fixture.origin,
-            principalId: fixture.core.manager.principalId,
-            publicKey: signingKeyPair.publicKey,
-            revision: approved.composition.revision,
-          });
-          yield* Effect.logInfo('Native Manufacturer Party seed started', { phase: 'actual-public-party-create' });
-          const createdParty = yield* createPartyWithAuthorization(
-            {
-              candidate: {
-                displayName: 'Native manufacturer organization',
-                evidenceRefs: ['native/manufacturer'],
-                officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
-                partyType: 'ORGANIZATION',
-                provenance: { method: 'DOCUMENT', source: 'native-manufacturer-proof' },
-                subjectEvidence: [
-                  {
-                    basis: 'REVIEWED_DOCUMENT',
-                    evidenceRef: 'native/manufacturer',
-                    kind: 'ACTOR_ATTESTATION',
-                    observedSubject: 'ORGANIZATION',
-                    statement: 'Reviewed this concrete external organization',
-                    subjectKey: nativeManufacturerSubjectKey,
-                  },
-                ],
-                validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+            if (realSession === undefined) {
+              return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
+            }
+            const realAuthContextRef = `better-auth-session:${realSession.id}`;
+            expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
+              body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
+              headers: {
+                cookie: Redacted.value(cookie),
+                'idempotency-key': yield* crypto.randomUUIDv4(),
+                origin: fixture.origin,
+                'x-correlation-id': yield* crypto.randomUUIDv4(),
               },
-            },
-            Redacted.value(partyAuthorization.authorization),
-            {
-              baseUrl: `${party.origin}${party.apiPrefix}`,
-              compositionRevision: approved.composition.revision,
-              correlationId: yield* crypto.randomUUIDv4(),
-              idempotencyKey: yield* crypto.randomUUIDv4(),
-            },
-          );
-          expect(createdParty.outcome).toBe('CREATED');
-          if (createdParty.outcome !== 'CREATED') {
-            return yield* new PackagedOwnerStartupError({
-              reason: 'Actual verified Party seed did not create a fresh identity',
             });
-          }
-          const { partyRef } = createdParty;
-          yield* setNativeTenantRole(
-            {
+            yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
+            expect(create.status).toBe(200);
+            const created = yield* create.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(PrincipalMutationResponseSchema)),
+            );
+            const serviceId = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema.fields.principalId)(
+              created.principalId,
+            );
+            expect(serviceId).not.toBe(fixture.core.manager.principalId);
+            const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
+              body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
+              headers: {
+                cookie: Redacted.value(cookie),
+                'idempotency-key': yield* crypto.randomUUIDv4(),
+                origin: fixture.origin,
+                'x-correlation-id': yield* crypto.randomUUIDv4(),
+              },
+            });
+            yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
+            if (issue.status !== 200) {
+              const failure = yield* issue.json;
+              const mergedCookies = Cookies.merge(
+                Cookies.merge(signIn.cookies, sessionResponse.cookies),
+                create.cookies,
+              );
+              const sameSession = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
+                headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
+              });
+              yield* Effect.logInfo('Sanitized managed provider authentication diagnostic', {
+                declaredShellAuthenticationRequired: Schema.is(ShellAuthenticationRequiredProblemSchema)(failure),
+                providerExpectedSessionCookieName: getCookies({ baseURL: fixture.configuration.baseUrl }).sessionToken
+                  .name,
+                receivedCookieNames: Object.keys(signIn.cookies.cookies),
+                responseCookieUpdatesChanged: Cookies.toCookieHeader(mergedCookies) !== Redacted.value(cookie),
+                sameCookieSessionHttpStatus: sameSession.status,
+                secureCookieConfiguration: fixture.configuration.secureCookies,
+                status: issue.status,
+              });
+            }
+            expect(issue.status).toBe(200);
+            const issued = yield* issue.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
+              Effect.mapError(
+                () => new PackagedOwnerStartupError({ reason: 'Managed key response failed its public JSON codec' }),
+              ),
+            );
+            const keys = yield* makeApiKeyService().pipe(
+              Effect.provideService(AuthConfig, fixture.configuration),
+              Effect.provideService(AuthDatabase, fixture.persistence),
+            );
+            const provider = yield* keys.verify(Redacted.value(issued.secret));
+            const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
+            expect(service.principalId).toBe(serviceId);
+            expect(service.authBindingId).toBe(issued.authBindingId);
+            expect(service.tenantId).toBe(fixture.core.tenantId);
+            expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
+            const principal = yield* database.query.principals.findFirst({ where: { principalId: serviceId } });
+            expect(
+              Schema.is(
+                Schema.Struct({
+                  kind: Schema.Literal('service'),
+                  status: Schema.Literal('active'),
+                  tenantId: Schema.Literal(fixture.core.tenantId),
+                }),
+              )(principal),
+            ).toBe(true);
+            const binding = yield* database.query.principalAuthBindings.findFirst({
+              where: { principalAuthBindingId: issued.authBindingId },
+            });
+            expect(binding?.principalId).toBe(serviceId);
+            expect(
+              Schema.is(
+                Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(fixture.core.tenantId) }),
+              )(binding),
+            ).toBe(true);
+            expect(binding?.subjectType).toBe('api_key');
+            expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
+            expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
+            const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
+              authContextRef: Redacted.make(realAuthContextRef),
               principalId: fixture.core.manager.principalId,
-              relation: 'party_identity_manager',
               tenantId: fixture.core.tenantId,
-            },
-            false,
-          );
-          yield* Effect.acquireRelease(
-            setNativeTenantRole(
+            });
+            yield* Effect.logInfo('Real managed service credential independently verified', {
+              actionCount: identityActionCount,
+              compositionRevision: approved.composition.revision,
+              namespaceMatches: true,
+              originalActorPreservedInCanonicalActions: true,
+              serviceDistinctFromActor: true,
+            });
+
+            const { personalAuthContextRef, personalKey } = yield* issueNativeOriginalHumanKey(
+              fixture,
+              database,
+              keys,
+              {
+                cookie,
+                sessionAuthContextRef: Redacted.make(realAuthContextRef),
+                workloadBindingId: issued.authBindingId,
+                workloadPrincipalId: serviceId,
+              },
+            );
+
+            expect(yield* shell.child.isRunning).toBe(true);
+            yield* shell.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            expect(yield* shell.child.isRunning).toBe(false);
+            const enrolledShell = yield* startPackagedApplication({
+              appId: 'shell-super-app',
+              authentication: fixture.authentication,
+              compositionUrl,
+              gateway: {
+                issuer: fixture.origin,
+                privateJwk: gatewayMaterial.privateJwk,
+                publicJwks: gatewayMaterial.publicJwks,
+              },
+              relativeDirectory: '.',
+              sourceBindings: Redacted.make(
+                JSON.stringify([
+                  {
+                    compositionRevision: approved.composition.revision,
+                    providerKeyId: provider.providerKeyId,
+                    sourceAppId: 'catalog',
+                    sourceBuildMarker: catalog.compiled.buildMarker,
+                  },
+                ]),
+              ),
+            });
+            children.push(enrolledShell.child);
+            expect(enrolledShell.origin).toBe(shell.origin);
+            expect(enrolledShell.compiled).toEqual(shell.compiled);
+            expect(yield* catalog.child.isRunning).toBe(true);
+            yield* catalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            expect(yield* catalog.child.isRunning).toBe(false);
+            const enrolledCatalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              port: Number(new URL(catalog.origin).port),
+              relativeDirectory: '../../verticals/catalog',
+              relaySource: { apiKey: issued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
+            });
+            children.push(enrolledCatalog.child);
+            expect(enrolledCatalog.origin).toBe(catalog.origin);
+            expect(enrolledCatalog.compiled).toEqual(catalog.compiled);
+            yield* grantNativeCatalogModuleAccess(fixture.core);
+            const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'party-registry',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: party.compiled.buildMarker,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            yield* Effect.logInfo('Native Manufacturer Party seed started', { phase: 'actual-public-party-create' });
+            const createdParty = yield* createPartyWithAuthorization(
+              {
+                candidate: {
+                  displayName: 'Native manufacturer organization',
+                  evidenceRefs: ['native/manufacturer'],
+                  officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+                  partyType: 'ORGANIZATION',
+                  provenance: { method: 'DOCUMENT', source: 'native-manufacturer-proof' },
+                  subjectEvidence: [
+                    {
+                      basis: 'REVIEWED_DOCUMENT',
+                      evidenceRef: 'native/manufacturer',
+                      kind: 'ACTOR_ATTESTATION',
+                      observedSubject: 'ORGANIZATION',
+                      statement: 'Reviewed this concrete external organization',
+                      subjectKey: nativeManufacturerSubjectKey,
+                    },
+                  ],
+                  validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+                },
+              },
+              Redacted.value(partyAuthorization.authorization),
+              {
+                baseUrl: `${party.origin}${party.apiPrefix}`,
+                compositionRevision: approved.composition.revision,
+                correlationId: yield* crypto.randomUUIDv4(),
+                idempotencyKey: yield* crypto.randomUUIDv4(),
+              },
+            );
+            expect(createdParty.outcome).toBe('CREATED');
+            if (createdParty.outcome !== 'CREATED') {
+              return yield* new PackagedOwnerStartupError({
+                reason: 'Actual verified Party seed did not create a fresh identity',
+              });
+            }
+            const { partyRef } = createdParty;
+            yield* setNativeTenantRole(
               {
                 principalId: fixture.core.manager.principalId,
-                relation: 'party_identity_reader',
+                relation: 'party_identity_manager',
                 tenantId: fixture.core.tenantId,
               },
-              true,
-            ),
-            () =>
+              false,
+            );
+            yield* Effect.acquireRelease(
               setNativeTenantRole(
                 {
                   principalId: fixture.core.manager.principalId,
                   relation: 'party_identity_reader',
                   tenantId: fixture.core.tenantId,
                 },
-                false,
-              ).pipe(Effect.scoped, Effect.orDie),
-          );
-          expect(
-            yield* checkNativeTenantPermission({
-              permission: 'manage_party_identity',
-              principalId: fixture.core.manager.principalId,
-              tenantId: fixture.core.tenantId,
-            }),
-          ).toBe(false);
-          expect(
-            yield* checkNativeTenantPermission({
-              permission: 'read_party_identity',
-              principalId: fixture.core.manager.principalId,
-              tenantId: fixture.core.tenantId,
-            }),
-          ).toBe(true);
-          expect(
-            yield* checkNativeTenantPermission({
-              permission: 'read_party_identity',
-              principalId: serviceId,
-              tenantId: fixture.core.tenantId,
-            }),
-          ).toBe(false);
-          yield* grantNativeManufacturerReadPermissions(fixture, serviceId);
-          const createAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
-            apiKey: personalKey.secret,
-            audience: 'catalog',
-            authBindingId: personalKey.authBindingId,
-            authContextRef: personalAuthContextRef,
-            buildMarker: catalog.compiled.buildMarker,
-            origin: fixture.origin,
-            principalId: fixture.core.manager.principalId,
-            publicKey: signingKeyPair.publicKey,
-            revision: approved.composition.revision,
-          });
-          const productResponse = yield* client.post(
-            `${catalog.origin}${catalog.apiPrefix}/catalog/actions/create-product`,
-            {
-              body: yield* HttpBody.json({
-                classification: { kind: 'INDEPENDENT_PRODUCT' },
-                reason: 'Native manufacturer proof',
-              }),
-              headers: {
-                authorization: Redacted.value(createAuthorization.authorization),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
-                'x-ontos-composition-revision': approved.composition.revision,
-              },
-            },
-          );
-          yield* Effect.logInfo('Native Manufacturer Catalog product creation HTTP result', {
-            status: productResponse.status,
-          });
-          if (productResponse.status !== 200) {
-            yield* logCatalogActionProblem(productResponse, enrolledCatalog.diagnostics, 'create-product');
-          }
-          expect(productResponse.status).toBe(200);
-          const productResult = yield* productResponse.json.pipe(
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.Struct({ product: Schema.Struct({ productRef: CoreSearchResourceRefSchema }) }),
+                true,
               ),
-            ),
-          );
-          const { productRef } = productResult.product;
-          expect(productRef.moduleId).toBe('commerce.catalog');
-          expect(productRef.resourceType).toBe('commerce.catalog.product');
-          expect(productRef.tenantId).toBe(fixture.core.tenantId);
-          yield* fixture.core.grantResourceAccess(productRef, fixture.core.manager.principalId, 'writer');
-          yield* fixture.core.grantResourceAccess(productRef, fixture.core.manager.principalId, 'reader');
-          const readsBefore = yield* database.query.dataAccessEvents.findMany({
-            where: { servingModuleKey: PARTY_MODULE_KEY, tenantId: fixture.core.tenantId },
-          });
-          const previousReads = new Set(readsBefore.map((row) => row.dataAccessEventId));
-          const relationId = yield* crypto.randomUUIDv4();
-          const setAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
-            apiKey: personalKey.secret,
-            audience: 'catalog',
-            authBindingId: personalKey.authBindingId,
-            authContextRef: personalAuthContextRef,
-            buildMarker: catalog.compiled.buildMarker,
-            origin: fixture.origin,
-            principalId: fixture.core.manager.principalId,
-            publicKey: signingKeyPair.publicKey,
-            revision: approved.composition.revision,
-          });
-          const setCorrelation = yield* crypto.randomUUIDv4();
-          const setResponse = yield* client.post(
-            `${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
-            {
-              body: yield* HttpBody.json({
-                effectivePeriod: {},
+              () =>
+                setNativeTenantRole(
+                  {
+                    principalId: fixture.core.manager.principalId,
+                    relation: 'party_identity_reader',
+                    tenantId: fixture.core.tenantId,
+                  },
+                  false,
+                ).pipe(Effect.scoped, Effect.orDie),
+            );
+            expect(
+              yield* checkNativeTenantPermission({
+                permission: 'manage_party_identity',
+                principalId: fixture.core.manager.principalId,
+                tenantId: fixture.core.tenantId,
+              }),
+            ).toBe(false);
+            expect(
+              yield* checkNativeTenantPermission({
+                permission: 'read_party_identity',
+                principalId: fixture.core.manager.principalId,
+                tenantId: fixture.core.tenantId,
+              }),
+            ).toBe(true);
+            expect(
+              yield* checkNativeTenantPermission({
+                permission: 'read_party_identity',
+                principalId: serviceId,
+                tenantId: fixture.core.tenantId,
+              }),
+            ).toBe(false);
+            const providerPermissions = yield* grantNativeManufacturerReadPermissions(fixture, serviceId);
+            const createAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'catalog',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: catalog.compiled.buildMarker,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const productResponse = yield* client.post(
+              `${catalog.origin}${catalog.apiPrefix}/catalog/actions/create-product`,
+              {
+                body: yield* HttpBody.json({
+                  classification: { kind: 'INDEPENDENT_PRODUCT' },
+                  reason: 'Native manufacturer proof',
+                }),
+                headers: {
+                  authorization: Redacted.value(createAuthorization.authorization),
+                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-ontos-composition-revision': approved.composition.revision,
+                },
+              },
+            );
+            yield* Effect.logInfo('Native Manufacturer Catalog product creation HTTP result', {
+              status: productResponse.status,
+            });
+            if (productResponse.status !== 200) {
+              yield* logCatalogActionProblem(productResponse, enrolledCatalog.diagnostics, 'create-product');
+            }
+            expect(productResponse.status).toBe(200);
+            const productResult = yield* productResponse.json.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Struct({ product: Schema.Struct({ productRef: CoreSearchResourceRefSchema }) }),
+                ),
+              ),
+            );
+            const { productRef } = productResult.product;
+            expect(productRef.moduleId).toBe('commerce.catalog');
+            expect(productRef.resourceType).toBe('commerce.catalog.product');
+            expect(productRef.tenantId).toBe(fixture.core.tenantId);
+            yield* fixture.core.grantResourceAccess(productRef, fixture.core.manager.principalId, 'writer');
+            yield* fixture.core.grantResourceAccess(productRef, fixture.core.manager.principalId, 'reader');
+            const readsBefore = yield* database.query.dataAccessEvents.findMany({
+              where: { servingModuleKey: PARTY_MODULE_KEY, tenantId: fixture.core.tenantId },
+            });
+            const previousReads = new Set(readsBefore.map((row) => row.dataAccessEventId));
+            const relationId = yield* crypto.randomUUIDv4();
+            const setAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'catalog',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: catalog.compiled.buildMarker,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const setCorrelation = yield* crypto.randomUUIDv4();
+            const setResponse = yield* client.post(
+              `${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
+              {
+                body: yield* HttpBody.json({
+                  effectivePeriod: {},
+                  evidenceRefs: ['native/manufacturer'],
+                  reason: 'Manufacturer identity verified through Party',
+                  relationId,
+                  subject: productRef,
+                  target: { kind: 'PARTY', partyRef },
+                }),
+                headers: {
+                  authorization: Redacted.value(setAuthorization.authorization),
+                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': setCorrelation,
+                  'x-ontos-composition-revision': approved.composition.revision,
+                },
+              },
+            );
+            yield* Effect.logInfo('Native Manufacturer real server adapter HTTP result', {
+              status: setResponse.status,
+            });
+            const sourceExchange = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+              where: { sourceJti: setAuthorization.sourceJti },
+            });
+            yield* Effect.logInfo('Native Manufacturer relay stage evidence', {
+              sourceExchangeRecorded: sourceExchange !== undefined,
+            });
+            if (setResponse.status !== 200) {
+              yield* logCatalogActionProblem(
+                setResponse,
+                [...enrolledCatalog.diagnostics, ...enrolledShell.diagnostics],
+                'set-product-manufacturer',
+              );
+              yield* diagnoseOutsideManufacturerTransaction({
+                compositionRevision: approved.composition.revision,
+                explicitPartyScope: {
+                  apiKey: personalKey.secret,
+                  authBindingId: personalKey.authBindingId,
+                  authContextRef: personalAuthContextRef,
+                  buildMarker: party.compiled.buildMarker,
+                  database,
+                  legalEntityId: fixture.core.legalEntityId,
+                  principalId: fixture.core.manager.principalId,
+                  publicKey: signingKeyPair.publicKey,
+                },
+                partyRef,
+                requestCorrelation: setCorrelation,
+                shellOrigin: fixture.origin,
+                sourceAssertion: setAuthorization.sourceAssertion,
+                sourceWorkloadApiKey: issued.secret,
+              }).pipe(Effect.timeout('20 seconds'));
+            }
+
+            expect(setResponse.status).toBe(200);
+            const mutation = yield* setResponse.json.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Struct({
+                    relationId: CoreSearchResourceRefSchema.fields.resourceId,
+                    revision: Schema.Literal(1),
+                    subject: CoreSearchResourceRefSchema,
+                  }),
+                ),
+              ),
+            );
+            expect(mutation.relationId).toBe(relationId);
+            expect(mutation.subject).toEqual(productRef);
+            const readAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'catalog',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: catalog.compiled.buildMarker,
+              legalEntityId: fixture.core.legalEntityId,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const readResponse = yield* client.post(
+              `${catalog.origin}${catalog.apiPrefix}/reads/manufacturer-relation-current`,
+              {
+                body: yield* HttpBody.json({ subject: productRef }),
+                headers: {
+                  authorization: Redacted.value(readAuthorization.authorization),
+                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-ontos-composition-revision': approved.composition.revision,
+                },
+              },
+            );
+            if (readResponse.status !== 200) {
+              yield* logCatalogActionProblem(
+                readResponse,
+                enrolledCatalog.diagnostics,
+                'manufacturer-relation-current',
+              );
+            }
+            expect(readResponse.status).toBe(200);
+            const relationView = yield* readResponse.json;
+            expect(relationView).toMatchObject({
+              claim: {
                 evidenceRefs: ['native/manufacturer'],
-                reason: 'Manufacturer identity verified through Party',
                 relationId,
+                revision: 1,
                 subject: productRef,
                 target: { kind: 'PARTY', partyRef },
-              }),
-              headers: {
-                authorization: Redacted.value(setAuthorization.authorization),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
-                'x-correlation-id': setCorrelation,
-                'x-ontos-composition-revision': approved.composition.revision,
               },
-            },
-          );
-          yield* Effect.logInfo('Native Manufacturer real server adapter HTTP result', { status: setResponse.status });
-          const sourceExchange = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
-            where: { sourceJti: setAuthorization.sourceJti },
-          });
-          yield* Effect.logInfo('Native Manufacturer relay stage evidence', {
-            sourceExchangeRecorded: sourceExchange !== undefined,
-          });
-          if (setResponse.status !== 200) {
-            yield* logCatalogActionProblem(
-              setResponse,
-              [...enrolledCatalog.diagnostics, ...enrolledShell.diagnostics],
-              'set-product-manufacturer',
-            );
-            yield* diagnoseOutsideManufacturerTransaction({
-              compositionRevision: approved.composition.revision,
-              explicitPartyScope: {
-                apiKey: personalKey.secret,
-                authBindingId: personalKey.authBindingId,
-                authContextRef: personalAuthContextRef,
-                buildMarker: party.compiled.buildMarker,
-                database,
-                legalEntityId: fixture.core.legalEntityId,
-                principalId: fixture.core.manager.principalId,
-                publicKey: signingKeyPair.publicKey,
-              },
-              partyRef,
-              requestCorrelation: setCorrelation,
-              shellOrigin: fixture.origin,
-              sourceAssertion: setAuthorization.sourceAssertion,
-              sourceWorkloadApiKey: issued.secret,
-            }).pipe(Effect.timeout('20 seconds'));
-          }
-
-          expect(setResponse.status).toBe(200);
-          const mutation = yield* setResponse.json.pipe(
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.Struct({
-                  relationId: CoreSearchResourceRefSchema.fields.resourceId,
-                  revision: Schema.Literal(1),
-                  subject: CoreSearchResourceRefSchema,
-                }),
-              ),
-            ),
-          );
-          expect(mutation.relationId).toBe(relationId);
-          expect(mutation.subject).toEqual(productRef);
-          const readAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
-            apiKey: personalKey.secret,
-            audience: 'catalog',
-            authBindingId: personalKey.authBindingId,
-            authContextRef: personalAuthContextRef,
-            buildMarker: catalog.compiled.buildMarker,
-            legalEntityId: fixture.core.legalEntityId,
-            origin: fixture.origin,
-            principalId: fixture.core.manager.principalId,
-            publicKey: signingKeyPair.publicKey,
-            revision: approved.composition.revision,
-          });
-          const readResponse = yield* client.post(
-            `${catalog.origin}${catalog.apiPrefix}/reads/manufacturer-relation-current`,
-            {
-              body: yield* HttpBody.json({ subject: productRef }),
-              headers: {
-                authorization: Redacted.value(readAuthorization.authorization),
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
-                'x-ontos-composition-revision': approved.composition.revision,
-              },
-            },
-          );
-          if (readResponse.status !== 200) {
-            yield* logCatalogActionProblem(readResponse, enrolledCatalog.diagnostics, 'manufacturer-relation-current');
-          }
-          expect(readResponse.status).toBe(200);
-          const relationView = yield* readResponse.json;
-          expect(relationView).toMatchObject({
-            claim: {
-              evidenceRefs: ['native/manufacturer'],
-              relationId,
-              revision: 1,
-              subject: productRef,
-              target: { kind: 'PARTY', partyRef },
-            },
-            owner: { canonicalTarget: { kind: 'PARTY', partyRef }, kind: 'PARTY', state: 'CURRENT' },
-          });
-          yield* assertNativeManufacturerMutationAudit(fixture.core, database, {
-            authBindingId: personalKey.authBindingId,
-            authContextRef: personalAuthContextRef,
-            correlationId: setCorrelation,
-            principalId: fixture.core.manager.principalId,
-            productRef,
-            tenantId: fixture.core.tenantId,
-          });
-          expect(sourceExchange !== undefined).toBe(true);
-          const readsAfter = yield* database.query.dataAccessEvents.findMany({
-            where: { servingModuleKey: PARTY_MODULE_KEY, tenantId: fixture.core.tenantId },
-          });
-          const providerReads = readsAfter.filter(
-            (row) =>
-              !previousReads.has(row.dataAccessEventId) &&
-              row.outcomeCode === 'read_allowed' &&
-              row.outcome === 'allowed',
-          );
-          expect(providerReads.length).toBeGreaterThan(0);
-          expect(providerReads.every((row) => row.principalId !== serviceId)).toBe(true);
-          expect(providerReads.some((row) => row.legalEntityId === null)).toBe(true);
-          expect(providerReads.some((row) => row.legalEntityId === fixture.core.legalEntityId)).toBe(true);
-          expect(
-            providerReads.every(
+              owner: { canonicalTarget: { kind: 'PARTY', partyRef }, kind: 'PARTY', state: 'CURRENT' },
+            });
+            yield* assertNativeManufacturerMutationAudit(fixture.core, database, {
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              correlationId: setCorrelation,
+              principalId: fixture.core.manager.principalId,
+              productRef,
+              tenantId: fixture.core.tenantId,
+            });
+            expect(sourceExchange !== undefined).toBe(true);
+            const readsAfter = yield* database.query.dataAccessEvents.findMany({
+              where: { servingModuleKey: PARTY_MODULE_KEY, tenantId: fixture.core.tenantId },
+            });
+            const providerReads = readsAfter.filter(
               (row) =>
-                row.principalId === fixture.core.manager.principalId &&
-                row.authBindingId === personalKey.authBindingId &&
-                row.authContextRef === Redacted.value(personalAuthContextRef) &&
-                row.authMethod === 'api_key',
-            ),
-          ).toBe(true);
-          yield* Effect.logInfo('Native Manufacturer happy path verified', {
-            actualProviderReadAuditRows: providerReads.length,
-            catalogSourceDurablyGrantRedeemed: false,
-            compositionRevision: approved.composition.revision,
-            defaultServerFactoryAndGovernedPartyDestinationUsed: true,
-            originalActorAuthMethod: 'api_key',
-            originalActorPreserved: true,
-            originalPersonalKeyReferencePreserved: true,
-            partyReaderServicePrincipalDenied: true,
-            sameOriginsAfterEnrolledRestarts: true,
-          });
-          return yield* Effect.void;
-        }),
-      ),
-    );
-    for (const child of children) {
-      expect(yield* child.isRunning).toBe(false);
-    }
-    if (Exit.isFailure(result)) {
-      yield* Effect.failCause(result.cause);
-    }
-  }).pipe(
-    Effect.timeout('120 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
-  ),
+                !previousReads.has(row.dataAccessEventId) &&
+                row.outcomeCode === 'read_allowed' &&
+                row.outcome === 'allowed',
+            );
+            expect(providerReads.length).toBeGreaterThan(0);
+            expect(providerReads.every((row) => row.principalId !== serviceId)).toBe(true);
+            expect(providerReads.some((row) => row.legalEntityId === null)).toBe(true);
+            expect(providerReads.some((row) => row.legalEntityId === fixture.core.legalEntityId)).toBe(true);
+            expect(
+              providerReads.every(
+                (row) =>
+                  row.principalId === fixture.core.manager.principalId &&
+                  row.authBindingId === personalKey.authBindingId &&
+                  row.authContextRef === Redacted.value(personalAuthContextRef) &&
+                  row.authMethod === 'api_key',
+              ),
+            ).toBe(true);
+            yield* Effect.logInfo('Native Manufacturer happy path verified', {
+              actualProviderReadAuditRows: providerReads.length,
+              catalogSourceDurablyGrantRedeemed: false,
+              compositionRevision: approved.composition.revision,
+              defaultServerFactoryAndGovernedPartyDestinationUsed: true,
+              originalActorAuthMethod: 'api_key',
+              originalActorPreserved: true,
+              originalPersonalKeyReferencePreserved: true,
+              partyReaderServicePrincipalDenied: true,
+              sameOriginsAfterEnrolledRestarts: true,
+            });
+            const serviceMembership = {
+              principalId: serviceId,
+              relation: 'member',
+              tenantId: fixture.core.tenantId,
+            };
+            expect(
+              yield* checkNativeTenantPermission({
+                permission: 'access',
+                principalId: serviceId,
+                tenantId: fixture.core.tenantId,
+              }),
+            ).toBe(false);
+            yield* Effect.addFinalizer(() =>
+              setNativeTenantRole(serviceMembership, false).pipe(
+                Effect.andThen(
+                  checkNativeTenantPermission({
+                    permission: 'access',
+                    principalId: serviceId,
+                    tenantId: fixture.core.tenantId,
+                  }),
+                ),
+                Effect.map((allowed) => expect(allowed).toBe(false)),
+                Effect.scoped,
+                Effect.orDie,
+              ),
+            );
+            yield* setNativeTenantRole(serviceMembership, true);
+            expect(
+              yield* checkNativeTenantPermission({
+                permission: 'access',
+                principalId: serviceId,
+                tenantId: fixture.core.tenantId,
+              }),
+            ).toBe(true);
+            const executionClient = yield* openNativeSpiceClient();
+            for (const actionKey of [
+              'core.identity.create-non-human-principal',
+              'core.identity.bind-managed-api-key',
+              'core.identity.bind-self-api-key',
+              'commerce.catalog.create-product',
+              'commerce.catalog.set-product-manufacturer',
+            ]) {
+              for (const principalId of [fixture.core.manager.principalId, serviceId]) {
+                const execution = yield* Effect.tryPromise({
+                  catch: () => new PackagedOwnerStartupError({ reason: 'Exact fixture Action execution check failed' }),
+                  try: () =>
+                    executionClient.promises.checkPermission(
+                      v1.CheckPermissionRequest.create({
+                        consistency: v1.Consistency.create({
+                          requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
+                        }),
+                        permission: 'execute',
+                        resource: { objectId: toSpiceDbActionObjectId(actionKey), objectType: 'action' },
+                        subject: { object: { objectId: principalId, objectType: 'principal' } },
+                      }),
+                    ),
+                });
+                expect(execution.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION).toBe(
+                  principalId === fixture.core.manager.principalId,
+                );
+              }
+            }
+            const serviceReader = {
+              principalId: serviceId,
+              relation: 'party_identity_reader',
+              tenantId: fixture.core.tenantId,
+            };
+            yield* Effect.addFinalizer(() =>
+              setNativeTenantRole(serviceReader, false).pipe(
+                Effect.andThen(
+                  checkNativeTenantPermission({
+                    permission: 'read_party_identity',
+                    principalId: serviceId,
+                    tenantId: fixture.core.tenantId,
+                  }),
+                ),
+                Effect.map((allowed) => expect(allowed).toBe(false)),
+                Effect.scoped,
+                Effect.orDie,
+              ),
+            );
+            yield* setNativeTenantRole(serviceReader, true);
+            const partyModuleTarget = { moduleId: PARTY_MODULE_KEY, permission: 'module.access' };
+            const serviceModuleGrant = {
+              principal: { principalId: serviceId, tenantId: fixture.core.tenantId },
+              target: partyModuleTarget,
+              tenantId: fixture.core.tenantId,
+            };
+            const serviceModuleRequest = {
+              principalId: serviceId,
+              targets: [partyModuleTarget],
+              tenantId: fixture.core.tenantId,
+            };
+            yield* Effect.addFinalizer(() =>
+              providerPermissions.mutation.mutate({ ...serviceModuleGrant, operation: 'revoke' }).pipe(
+                Effect.andThen(providerPermissions.check(serviceModuleRequest)),
+                Effect.map((decisions) => expect(decisions[0]?.decision).toBe('denied')),
+                Effect.orDie,
+              ),
+            );
+            yield* providerPermissions.mutation.mutate({ ...serviceModuleGrant, operation: 'grant' });
+            expect((yield* providerPermissions.check(serviceModuleRequest))[0]?.decision).toBe('allowed');
+            expect(
+              yield* checkNativeTenantPermission({
+                permission: 'read_party_identity',
+                principalId: serviceId,
+                tenantId: fixture.core.tenantId,
+              }),
+            ).toBe(true);
+            const serviceAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: issued.secret,
+              audience: 'party-registry',
+              authBindingId: service.authBindingId,
+              authContextRef: Redacted.make(`better-auth-api-key:${provider.providerKeyId}`),
+              buildMarker: party.compiled.buildMarker,
+              origin: fixture.origin,
+              principalId: serviceId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const serviceParty = yield* executePartyDetailWithAuthorization(
+              { partyRef },
+              Redacted.value(serviceAuthorization.authorization),
+              yield* crypto.randomUUIDv4(),
+              {
+                baseUrl: serviceAuthorization.apiUrl,
+                compositionRevision: serviceAuthorization.compositionRevision,
+              },
+            ).pipe(
+              Effect.tapError((error) => observeOutsideRelayFailure(error, 'provider')),
+              Effect.mapError(
+                () => new PackagedOwnerStartupError({ reason: 'Actual broader service Party read failed' }),
+              ),
+            );
+            expect(serviceParty.party.partyRef).toEqual(partyRef);
+            for (const gate of ['tenant-read', 'tenant-module-access'] as const) {
+              yield* Effect.scoped(
+                Effect.gen(function* deniedManufacturerAttempt() {
+                  const originalModuleGrant = {
+                    principal: { principalId: fixture.core.manager.principalId, tenantId: fixture.core.tenantId },
+                    target: partyModuleTarget,
+                    tenantId: fixture.core.tenantId,
+                  };
+                  const changeOriginalGate = Effect.fn('ServerOwnerRelayNative.changeOriginalProviderGate')(
+                    function* changeOriginalProviderGate(enabled: boolean) {
+                      if (gate === 'tenant-read') {
+                        return yield* setNativeTenantRole(
+                          {
+                            principalId: fixture.core.manager.principalId,
+                            relation: 'party_identity_reader',
+                            tenantId: fixture.core.tenantId,
+                          },
+                          enabled,
+                        ).pipe(Effect.scoped);
+                      }
+                      return yield* providerPermissions.mutation.mutate({
+                        ...originalModuleGrant,
+                        operation: enabled ? 'grant' : 'revoke',
+                      });
+                    },
+                  );
+                  // Restore the exact original P grant even if the denied-request assertion fails.
+                  yield* Effect.addFinalizer(() => changeOriginalGate(true).pipe(Effect.orDie));
+                  yield* changeOriginalGate(false);
+                  expect(
+                    yield* checkNativeTenantPermission({
+                      permission: 'read_party_identity',
+                      principalId: fixture.core.manager.principalId,
+                      tenantId: fixture.core.tenantId,
+                    }),
+                  ).toBe(gate !== 'tenant-read');
+                  const originalModule = yield* providerPermissions.check({
+                    principalId: fixture.core.manager.principalId,
+                    targets: [partyModuleTarget],
+                    tenantId: fixture.core.tenantId,
+                  });
+                  expect(originalModule[0]?.decision).toBe(gate === 'tenant-read' ? 'allowed' : 'denied');
+                  expect((yield* providerPermissions.check(serviceModuleRequest))[0]?.decision).toBe('allowed');
+                  expect(
+                    yield* checkNativeTenantPermission({
+                      permission: 'read_party_identity',
+                      principalId: serviceId,
+                      tenantId: fixture.core.tenantId,
+                    }),
+                  ).toBe(true);
+                  const beforeDenial = yield* fixture.core.evidence(database);
+                  const previousAccesses = new Set(beforeDenial.accesses.map((row) => row.dataAccessEventId));
+                  const deniedAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+                    apiKey: personalKey.secret,
+                    audience: 'catalog',
+                    authBindingId: personalKey.authBindingId,
+                    authContextRef: personalAuthContextRef,
+                    buildMarker: catalog.compiled.buildMarker,
+                    origin: fixture.origin,
+                    principalId: fixture.core.manager.principalId,
+                    publicKey: signingKeyPair.publicKey,
+                    revision: approved.composition.revision,
+                  });
+                  const deniedCorrelation = yield* crypto.randomUUIDv4();
+                  const deniedResponse = yield* client.post(
+                    `${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
+                    {
+                      body: yield* HttpBody.json({
+                        effectivePeriod: {},
+                        evidenceRefs: ['native/manufacturer'],
+                        reason: 'Current provider permission control',
+                        relationId,
+                        subject: productRef,
+                        target: { kind: 'PARTY', partyRef },
+                      }),
+                      headers: {
+                        authorization: Redacted.value(deniedAuthorization.authorization),
+                        'idempotency-key': yield* crypto.randomUUIDv4(),
+                        'x-correlation-id': deniedCorrelation,
+                        'x-ontos-composition-revision': approved.composition.revision,
+                      },
+                    },
+                  );
+                  const deniedBody = yield* deniedResponse.json;
+                  if (Schema.is(OutsideRelayProblemSchema)(deniedBody)) {
+                    yield* Effect.logInfo('Native Manufacturer current permission public outcome', {
+                      code: deniedBody.code,
+                      gate,
+                      status: deniedResponse.status,
+                      title: deniedBody.title,
+                      type: deniedBody.type,
+                    });
+                  }
+                  expect(deniedResponse.status).toBe(403);
+                  expect(Schema.is(CatalogManufacturerForbiddenProblemSchema)(deniedBody)).toBe(true);
+                  const deniedEvidence = yield* fixture.core.evidence(database);
+                  const deniedInvocation = deniedEvidence.invocations.find(
+                    (row) =>
+                      row.actionKey === 'commerce.catalog.set-product-manufacturer' &&
+                      row.correlationId === deniedCorrelation,
+                  );
+                  expect(deniedInvocation?.principalId).toBe(fixture.core.manager.principalId);
+                  expect(deniedInvocation?.principalId === serviceId).toBe(false);
+                  expect(deniedInvocation?.tenantId).toBe(fixture.core.tenantId);
+                  expect(deniedInvocation?.legalEntityId).toBeNull();
+                  expect(deniedInvocation?.authBindingId).toBe(personalKey.authBindingId);
+                  expect(deniedInvocation?.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(deniedInvocation?.authMethod).toBe('api_key');
+                  expect(deniedInvocation?.status === 'succeeded').toBe(false);
+                  expect(
+                    deniedEvidence.audits.some(
+                      (row) =>
+                        row.actionInvocationId === deniedInvocation?.actionInvocationId &&
+                        row.eventType === 'action.executed',
+                    ),
+                  ).toBe(false);
+                  const providerDenials = deniedEvidence.accesses.filter(
+                    (row) =>
+                      !previousAccesses.has(row.dataAccessEventId) &&
+                      row.servingModuleKey === PARTY_MODULE_KEY &&
+                      row.outcome === 'denied',
+                  );
+                  expect(providerDenials).toHaveLength(1);
+                  for (const denial of providerDenials) {
+                    expect(denial.principalId).toBe(fixture.core.manager.principalId);
+                    expect(denial.principalId === serviceId).toBe(false);
+                    expect(denial.authBindingId).toBe(personalKey.authBindingId);
+                    expect(denial.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                    expect(denial.authMethod).toBe('api_key');
+                    expect(denial.tenantId).toBe(fixture.core.tenantId);
+                    expect(denial.legalEntityId).toBeNull();
+                  }
+                  yield* Effect.logInfo('Native Manufacturer current permission denial verified', {
+                    actualCanonicalStatus: deniedInvocation?.status,
+                    gate,
+                    originalActorPreserved: true,
+                    providerDeniedAuditRows: providerDenials.length,
+                    sourceWorkloadWasAllowedButNeverSubstituted: true,
+                  });
+                  return yield* Effect.void;
+                }),
+              );
+            }
+            const restoredAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'catalog',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: catalog.compiled.buildMarker,
+              legalEntityId: fixture.core.legalEntityId,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const unchangedResponse = yield* client.post(
+              `${catalog.origin}${catalog.apiPrefix}/reads/manufacturer-relation-current`,
+              {
+                body: yield* HttpBody.json({ subject: productRef }),
+                headers: {
+                  authorization: Redacted.value(restoredAuthorization.authorization),
+                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-ontos-composition-revision': approved.composition.revision,
+                },
+              },
+            );
+            if (unchangedResponse.status !== 200) {
+              yield* logCatalogActionProblem(
+                unchangedResponse,
+                enrolledCatalog.diagnostics,
+                'manufacturer-relation-current',
+              );
+            }
+            expect(unchangedResponse.status).toBe(200);
+            expect(yield* unchangedResponse.json).toMatchObject({
+              claim: {
+                evidenceRefs: ['native/manufacturer'],
+                relationId,
+                revision: 1,
+                subject: productRef,
+                target: { kind: 'PARTY', partyRef },
+              },
+              owner: { canonicalTarget: { kind: 'PARTY', partyRef }, kind: 'PARTY', state: 'CURRENT' },
+            });
+            yield* Effect.logInfo('Native Manufacturer provider revocation controls verified', {
+              actualBroaderServiceReadSucceeded: true,
+              independentTenantReadAndModuleAccessGatesDeniedOriginalActor: true,
+              savedRelationAndRevisionUnchangedAfterRestoringOriginalGrants: true,
+            });
+
+            return yield* Effect.void;
+          }),
+        ),
+      );
+      for (const child of children) {
+        expect(yield* child.isRunning).toBe(false);
+      }
+      if (Exit.isFailure(result)) {
+        yield* Effect.failCause(result.cause);
+      }
+    }).pipe(
+      Effect.timeout('120 seconds'),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+    ),
 );
