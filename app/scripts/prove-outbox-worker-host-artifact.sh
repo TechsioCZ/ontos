@@ -133,12 +133,18 @@ until [ -s "$source_url_file" ]; do
 done
 source_url="$(cat "$source_url_file")"
 
+# The app host derives the Shell gateway base from the Shell's loopback port and hands each owner its secrets.
+# Customer Context's enrollment recovery requires both before it starts; with an empty journal it presents the
+# proof credential to nobody.
+shell_gateway_base_url='http://127.0.0.1:3020/shell-super-app-api'
 log="$artifact/outbox-worker-host.log"
 (
   cd "$artifact"
   exec env \
     NODE_ENV=production \
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="$source_url" \
+    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY=outbox-worker-host-proof \
+    ONTOS_SHELL_GATEWAY_BASE_URL="$shell_gateway_base_url" \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
     sh -c "exec $start"
