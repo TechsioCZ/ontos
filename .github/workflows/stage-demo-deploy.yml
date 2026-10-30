@@ -1330,9 +1330,12 @@ jobs:
         timeout-minutes: 5
         working-directory: app
         # A deliberate deployment rerun reauthorizes the convergent operation; never retry an uncertain write here.
-        run: >-
-          mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL"
-          --idempotency-key "${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-najempark-v1"
+        # Workers KV can serve the previous composition for up to 60 s after publication, and the Shell admits no
+        # Action under a stale revision, so the write waits out that window first.
+        run: |
+          sleep 60
+          mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL" \
+            --idempotency-key "${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-najempark-v1"
 
       - name: Deploy the AKROS storefront
         if: ${{ !inputs.outbox_only }}

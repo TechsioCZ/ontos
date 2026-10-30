@@ -2,7 +2,7 @@
 import { demoCompanyTenantId, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { NodeServices } from '@effect/platform-node';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
-import { Config, Console, Effect, Exit, Layer, Option, Ref, Schema } from 'effect';
+import { Cause, Config, Console, Effect, Exit, Layer, Option, Ref, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
@@ -166,9 +166,12 @@ export const rentalDemoRebrandCommand = Command.make(
 if (import.meta.main) {
   const runtime = Layer.effectDiscard(
     Command.run({ renderErrors: false, version: '1.0.0' })(rentalDemoRebrandCommand).pipe(
-      Effect.catchCause(() =>
+      Effect.catchCause((cause) =>
         Console.error(
-          'Rental demo rebrand stopped. No automatic retry; inspect the native operation before rerunning.',
+          `Rental demo rebrand stopped at ${Cause.findErrorOption(cause).pipe(
+            Option.filter(Schema.is(RentalDemoRebrandError)),
+            Option.match({ onNone: () => 'an unexpected failure', onSome: ({ step }) => `step "${step}"` }),
+          )}. No automatic retry; inspect the native operation before rerunning.`,
         ).pipe(Effect.andThen(Effect.fail(failed('operator-command')))),
       ),
     ),

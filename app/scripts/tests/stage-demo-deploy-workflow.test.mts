@@ -102,10 +102,11 @@ const readWorkflow = () => Schema.decodeUnknownSync(WorkflowSchema)(parse(readFi
 const readJobs = () => readWorkflow().jobs;
 const SHELL_INGRESS = 'Activate the Shell ingress';
 const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
+const RENTAL_REBRAND = 'Rebrand the rental demo through the native Shell Action';
 
 it('runs the native rental rebrand only after Shell activation and gates it on its own tests', () => {
   const { release, 'release-script-tests': tests } = readJobs();
-  const rebrandName = 'Rebrand the rental demo through the native Shell Action';
+  const rebrandName = RENTAL_REBRAND;
   const position = release.steps.findIndex((step) => step.name === rebrandName);
   const step = release.steps[position];
   expect(position).toBeGreaterThan(release.steps.findIndex(({ name }) => name === SHELL_INGRESS));
@@ -117,7 +118,12 @@ it('runs the native rental rebrand only after Shell activation and gates it on i
   expect(step?.['timeout-minutes']).toBe(5);
   expect(step?.['continue-on-error']).toBeUndefined();
   expect(step?.run).toBe(
-    `mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL" --idempotency-key "\${GITHUB_SHA}-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}-najempark-v1"`,
+    [
+      'sleep 60',
+      'mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL" \\',
+      `  --idempotency-key "\${GITHUB_SHA}-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}-najempark-v1"`,
+      '',
+    ].join('\n'),
   );
   expect(tests.steps.find(({ run }) => run?.includes('rstest') === true)?.run).toContain(
     'scripts/tests/rebrand-rental-demo.test.mts',
@@ -1199,7 +1205,10 @@ it('always redeploys the outbox host after the configuration apply, with no live
 it('deploys the prebuilt outbox host beside the Shell tail after publication and requires positive admission', () => {
   const { steps } = readJobs().release;
   expect(steps.some(({ name }) => name === 'Install Zerops CLI')).toBe(false);
-  expect(steps.some(({ run }) => run?.includes('sleep 60') === true)).toBe(false);
+  // Only the rental rebrand waits, for Workers KV to serve the published composition everywhere.
+  expect(steps.filter(({ run }) => run?.includes('sleep 60') === true).map(({ name }) => name)).toEqual([
+    RENTAL_REBRAND,
+  ]);
   const start = steps.find(({ name }) => name === HOST_DEPLOY_START);
   // The deploy activates the version staged before publication; it neither fetches nor uploads the artifact.
   expect(start?.run).not.toContain('release-stream.mts fetch');
@@ -1237,7 +1246,7 @@ it('deploys the prebuilt outbox host beside the Shell tail after publication and
     RECOVERY_CONFIG_APPLY,
     HOST_DEPLOY_START,
     SHELL_INGRESS,
-    'Rebrand the rental demo through the native Shell Action',
+    RENTAL_REBRAND,
     STOREFRONT_DEPLOY,
     HOST_DEPLOY_JOIN,
     HOST_ADMISSION,
