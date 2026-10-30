@@ -547,10 +547,8 @@ it.effect('admits only the observed native backend placement for the exact deplo
     const loopbackBackend = { baseUrl: 'http://localhost:4001/', transport: 'node-http' as const };
     const nodeInput = { ...input, modules: [{ ...module, backend: loopbackBackend }] };
     const nodeEvidence = { ...evidence(), backends: { contacts: loopbackBackend } };
-    yield* assertInvalid(
-      validateApplicationCompositionCandidate(nodeInput, nodeEvidence),
-      /HTTPS outside development/u,
-    );
+    // An owner co-hosted with the Shell is reached on its loopback origin in every environment.
+    expect(yield* validateApplicationCompositionCandidate(nodeInput, nodeEvidence)).toEqual(nodeInput);
     expect(
       yield* validateApplicationCompositionCandidate(nodeInput, { ...nodeEvidence, environment: 'development' }),
     ).toEqual(nodeInput);
