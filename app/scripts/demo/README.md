@@ -325,6 +325,22 @@ and the bot creates one task. Agents use the Shell MCP endpoint `http://localhos
 Pages: `/cs/ukoly` (Úkoly) and `/cs/finance` (Faktury a finance). The business
 date is 2026-10-05.
 
+### Operator acceptance tests
+
+`pnpm test:operator` runs the rstest `operator` project. The workspace gates never run it, because each
+test needs an environment CI does not provision; prepare that environment first:
+
+- `scripts/integration/siampark-demo-http.test.mts` drives the running stack over HTTP at
+  `http://localhost:3020`. Start the stack with `./scripts/demo/up.sh` (or run `pnpm demo:reset` on a running
+  stack) immediately before it: the test commits Nájempark changes and expects the reset golden fixture.
+- `scripts/integration/agent-profile-replay.test.mts` replays the reviewed agent profiles. Point
+  `DATABASE_URL` and `DATABASE_ADMIN_URL` at the same freshly migrated scratch database whose name matches
+  `people_model_scratch_20261023_<hex>`, `SPICEDB_ENDPOINT` at a local SpiceDB (`localhost:<port>`), and set
+  `ONTOS_AGENT_REPLAY_PROOF_INPUT` to the reviewed nine-row profile file and `ONTOS_AGENT_REPLAY_PROOF_SHA256`
+  to its SHA-256. The test rewrites that SpiceDB schema and the scratch database.
+
+Run one of them with `pnpm test:operator scripts/integration/<file>`.
+
 ## Known issues
 
 - `pnpm authorization:provision-current-actions` requires an owner-only v3 policy file through
