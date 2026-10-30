@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /** Stage-only canonical schema, additive service/admin role policy and isolated verification provisioning. */
-import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
+import {
+  StageContextBootstrapError,
+  reconcileStageServicePrincipals,
+} from '@app/core-runtime/install/stage-context-bootstrap';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
@@ -477,9 +480,14 @@ type ReconciliationFailure =
   | Effect.Error<ReturnType<typeof reconcileStageServicePrincipals>>
   | Effect.Error<ReturnType<typeof ensureStageVerification>>
   | Effect.Error<ReturnType<typeof verificationContext>>;
-/** The failure's tag names the failing step (a config key, the composition source, SpiceDB) without any value. */
-const failureTag = (error: ReconciliationFailure): string =>
-  Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag) ? error._tag : 'untagged';
+/**
+ * The failure's tag and authored reason name the failing step (a config key, the composition source, SpiceDB)
+ * without any value.
+ */
+const failureTag = (error: ReconciliationFailure): string => {
+  const tag = Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag) ? error._tag : 'untagged';
+  return Schema.is(StageContextBootstrapError)(error) ? `${tag}: ${error.reason}` : tag;
+};
 const reportFailure = (error: ReconciliationFailure) =>
   Console.error(
     Schema.is(ServiceGrantError)(error)

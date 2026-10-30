@@ -36,6 +36,7 @@ import {
   Schedule,
   Schema,
   Stream,
+  Struct,
 } from 'effect';
 import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ChildProcess } from 'effect/process';
@@ -563,13 +564,16 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     );
     yield* publish;
     // The canonical SpiceDB schema and the stage service grants follow the published release. A failure is logged
-    // loudly but does not stop a release whose data is already served.
+    // loudly but does not stop a release whose data is already served. Like the migrator, the reconciliation is
+    // supervisor work: it installs the stage service principals with the database administrator identity.
     yield* runChild(
       'service-grants',
       node,
       ['scripts/demo/reconcile-stage-service-grants.mts', '--apply'],
       workspaceRoot,
-      processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment,
+      Struct.omit(processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment, [
+        'DATABASE_ADMIN_URL',
+      ]),
     ).pipe(
       Effect.tapError((problem) => Console.error(`[app-host] service grant reconciliation failed: ${problem.reason}`)),
       Effect.ignore,
