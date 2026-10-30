@@ -11,7 +11,7 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { dialogCloseLabel, formatDate, formatMoney, PageHeader } from '@app/admin-ui';
 import { DateTime, Option, Schema } from 'effect';
 import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';

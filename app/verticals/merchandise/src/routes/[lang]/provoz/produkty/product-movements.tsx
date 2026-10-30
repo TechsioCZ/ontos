@@ -7,7 +7,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';

@@ -14,7 +14,7 @@ import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
 
 export interface FormDialogProps {

@@ -11,7 +11,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime, formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';

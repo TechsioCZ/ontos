@@ -7,7 +7,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';

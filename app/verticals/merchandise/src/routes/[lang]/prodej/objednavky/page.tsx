@@ -37,7 +37,7 @@ import { formatKc } from '../../../../list-cells.tsx';
 import { customersMatching, useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
 import { ResetDemoDialog } from './reset-demo-dialog.tsx';
 import {

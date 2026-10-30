@@ -45,7 +45,7 @@ import { ProductBulkBar } from './product-bulk-bar.tsx';
 import { CategoryAdminButton } from './category-admin-panel.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
 import { ALL_CATEGORIES, DEFAULT_SORT, SORTS, sortSelectItems } from './select-items.ts';
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
 

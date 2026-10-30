@@ -1,4 +1,4 @@
-import { selectItem } from '../../../../components/select-item.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import type { ProductSort } from './products-api.ts';
 
 export const ALL_CATEGORIES = '__all__';
