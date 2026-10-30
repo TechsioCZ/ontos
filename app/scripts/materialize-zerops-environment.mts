@@ -89,7 +89,7 @@ export const joinZeropsDeployments = (texts: readonly string[]) =>
   });
 
 /** Retains exactly one setup unchanged, within Zerops' 50 kB build-file limit, for a setup that names no environment. */
-export const selectZeropsSetup = (zeropsYamlText: string, setup: string) =>
+const selectZeropsSetup = (zeropsYamlText: string, setup: string) =>
   parseSetups(zeropsYamlText, setup).pipe(
     Effect.flatMap(({ document }) => withinBuildFileLimit(document.toString({ lineWidth: 0 }), setup)),
   );
