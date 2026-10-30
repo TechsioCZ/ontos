@@ -1,6 +1,6 @@
 /* oxlint-disable effect-native/no-effect-provide-in-library -- Native Drizzle construction is this owner's database factory boundary; expires: 2027-03-31. */
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
-import { configureDatabasePool, DatabaseConfig } from '@app/core-runtime';
+import { configureDatabasePool, openDatabaseClient, DatabaseConfig } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
@@ -46,7 +46,7 @@ export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatab
     ),
   );
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make(poolConfiguration).pipe(
+  const client = yield* openDatabaseClient(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

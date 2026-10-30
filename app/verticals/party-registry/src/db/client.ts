@@ -1,5 +1,5 @@
 import type { DatabasePoolDeadlines } from '@app/core-runtime';
-import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool, openDatabaseClient } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
@@ -38,7 +38,7 @@ export const makePartyDatabase = Effect.fn('Client.makePartyDatabase')(function*
     configuration.maxConnections,
   ).pipe(Effect.mapError((error) => new PartyDatabaseConnectionError({ reason: error.reason })));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make(poolConfiguration).pipe(
+  const client = yield* openDatabaseClient(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

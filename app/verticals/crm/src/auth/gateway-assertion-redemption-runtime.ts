@@ -3,6 +3,7 @@
 import {
   DatabaseConfig,
   configureDatabasePool,
+  openDatabaseClient,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
@@ -34,7 +35,7 @@ export const GatewayAssertionRedemptionDatabaseLive = PgClient.layerFrom(
     const pool = yield* configureDatabasePool(Redacted.make(config.connectionString)).pipe(
       Effect.mapError(unavailable),
     );
-    return yield* PgClient.make(pool).pipe(Effect.mapError(unavailable));
+    return yield* openDatabaseClient(pool).pipe(Effect.mapError(unavailable));
   }),
 );
 

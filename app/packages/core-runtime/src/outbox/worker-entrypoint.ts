@@ -2,6 +2,7 @@
 export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 export { databaseRuntime } from '#database-runtime';
 export { configureDatabasePool } from '../db/pool-configuration.ts';
+export { openDatabaseClient } from '../db/database-client.ts';
 export {
   ApplicationCompositionSchema,
   ApplicationCompositionModuleSchema,

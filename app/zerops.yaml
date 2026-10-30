@@ -134,10 +134,11 @@ zerops:
         NODE_ENV: production
         # Private, container-local directory where composition publication retains its legacy completion evidence.
         ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
-        # One container serves every owner, each with several pools, and a deploy runs two containers side by side;
-        # small pools that drop idle connections keep both inside db18's 150 connection slots.
+        # Every owner in a process shares one pool per database configuration and role. Small pools
+        # keep the old and new containers inside db18's 150 slots during deployment.
         ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '10000'
-        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '4'
+        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
+        ONTOS_DATABASE_POOL_SHARED: 'true'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
         PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}

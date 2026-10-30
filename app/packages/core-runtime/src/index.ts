@@ -198,6 +198,7 @@ export type {
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export { openDatabaseClient } from './db/database-client.ts';
 export { verifySessionRoleOnFirstUse } from './db/session-identity.ts';
 export { databaseRuntime } from '#database-runtime';
 export type { DatabaseConnectionPair } from './db/config.ts';

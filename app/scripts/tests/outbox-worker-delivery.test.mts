@@ -147,13 +147,13 @@ const makeFixture = () =>
       writeFile(path.join(root, SHELL_PATH, CORE_WORKER_ENTRY), 'export const outboxWorkerEntry = {};\n'),
     );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
-    yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
-    // Artifact tests may pass this factory to a fake host, but must never run mail startup.
+    yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts/zerops'), { recursive: true }));
+    // Artifact tests pass this factory to a fake host but must not run process startup.
     // The real scoped trigger and host lifecycle have their own unit tests.
     yield* Effect.tryPromise(() =>
       writeFile(
-        path.join(root, 'scripts/email-dispatch-trigger.mts'),
-        'export const startEmailDispatchTrigger = () => { throw new Error("Artifact fixtures must never execute email startup"); };\n',
+        path.join(root, 'scripts/zerops/outbox-host-startup.mts'),
+        'export const startZeropsOutboxHost = () => { throw new Error("Artifact fixtures must never execute email startup"); };\n',
       ),
     );
     yield* Effect.tryPromise(() =>
@@ -232,8 +232,8 @@ it.live('generates the Outbox Worker host entry that hosts every owner and the C
     const root = yield* makeFixture();
     const hostEntry = (yield* Effect.tryPromise(() => generateOutboxWorkerHostEntry(root))) ?? '';
     expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
-    expect(hostEntry).toContain('  startup: startEmailDispatchTrigger,\n');
-    expect(hostEntry).not.toContain('startEmailDispatchTrigger();');
+    expect(hostEntry).toContain('  startup: startZeropsOutboxHost,\n');
+    expect(hostEntry).not.toContain('startZeropsOutboxHost();');
     expect(hostEntry).toContain("import { outboxHostArtifactDigest } from './outbox-worker-host-artifact.mts';\n");
     expect(hostEntry).toContain('  artifactDigest: outboxHostArtifactDigest,\n');
     expect(hostEntry).toContain(

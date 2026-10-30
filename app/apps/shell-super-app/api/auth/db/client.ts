@@ -8,6 +8,7 @@ import {
   SHARED_RUNTIME_IDENTITY,
   acceptPersonInvitationFromTransaction,
   configureDatabasePool,
+  openDatabaseClient,
   verifySessionRoleOnFirstUse,
 } from '@app/core-runtime';
 import type { RuntimeDatabaseConfigValue } from '@app/core-runtime';
@@ -46,7 +47,7 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
     Effect.mapError(mapPoolConfigurationError),
   );
   const reactivity = yield* Reactivity.make;
-  const pool = yield* PgClient.make(poolConfiguration).pipe(
+  const pool = yield* openDatabaseClient(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

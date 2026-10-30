@@ -7,6 +7,7 @@ import { Reactivity } from 'effect/reactivity';
 import type { RuntimeDatabaseConfigValue } from './config.ts';
 import { DatabaseConfig, loadDatabaseConnectionPair } from './config.ts';
 import { DatabaseConnectionError } from './connection-error.ts';
+import { openDatabaseClient } from './database-client.ts';
 import type { DatabasePoolDeadlines } from './pool-configuration.ts';
 import { configureDatabasePool } from './pool-configuration.ts';
 import { coreRelations } from './schema.ts';
@@ -24,19 +25,31 @@ export class CoreDatabase extends Context.Service<
   }
 >()('@app/core-runtime/db/client/CoreDatabase') {}
 
-/** Every Core client, including private lock sessions, owns its reactivity and guards acquisition. */
+/**
+ * Every Core client, including private lock sessions, owns its reactivity and guards acquisition. A pooled client
+ * may draw from the process-shared pool; a private session always owns its pool, because it holds session state.
+ */
 export const guardedPgClientLayer = (
   connectionString: Redacted.Redacted,
-  maxConnections?: number,
-  poolDeadlines?: Partial<DatabasePoolDeadlines>,
+  session: {
+    readonly maxConnections?: number | undefined;
+    readonly poolDeadlines?: Partial<DatabasePoolDeadlines> | undefined;
+    readonly pooling: 'pooled' | 'private';
+  },
 ) =>
   Layer.effect(
     PgClient.PgClient,
     Effect.gen(function* guardedPgClient() {
       yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool');
-      const configuration = yield* configureDatabasePool(connectionString, poolDeadlines, maxConnections);
+      const configuration = yield* configureDatabasePool(
+        connectionString,
+        session.poolDeadlines,
+        session.maxConnections,
+      );
       const reactivity = yield* Reactivity.make;
-      const client = yield* PgClient.make(configuration).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
+      const client = yield* (
+        session.pooling === 'pooled' ? openDatabaseClient(configuration) : PgClient.make(configuration)
+      ).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
       return guardPoolAcquisition(client);
     }),
   );
@@ -48,11 +61,11 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
   },
 ): Effect.fn.Return<(typeof CoreDatabase)['Service'], DatabaseConnectionError, Scope.Scope> {
   const context = yield* Layer.build(
-    guardedPgClientLayer(
-      Redacted.make(configuration.connectionString),
-      configuration.maxConnections,
-      configuration.poolDeadlines,
-    ),
+    guardedPgClientLayer(Redacted.make(configuration.connectionString), {
+      maxConnections: configuration.maxConnections,
+      poolDeadlines: configuration.poolDeadlines,
+      pooling: 'pooled',
+    }),
   ).pipe(
     Effect.mapError(
       (cause) => new DatabaseConnectionError({ cause, reason: 'Unable to initialize the native PostgreSQL client' }),

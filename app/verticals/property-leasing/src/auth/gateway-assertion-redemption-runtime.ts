@@ -2,6 +2,7 @@
 // @ontos-action-boundary-owner property-leasing
 import {
   configureDatabasePool,
+  openDatabaseClient,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
@@ -38,7 +39,7 @@ export const GatewayAssertionPgClientLive = Layer.effect(
     const pool = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
       Effect.mapError(unavailable),
     );
-    return yield* PgClient.make(pool).pipe(Effect.mapError(unavailable));
+    return yield* openDatabaseClient(pool).pipe(Effect.mapError(unavailable));
   }),
 );
 export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(

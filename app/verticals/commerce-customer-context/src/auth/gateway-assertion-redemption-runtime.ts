@@ -5,6 +5,7 @@ import {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
   configureDatabasePool,
+  openDatabaseClient,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';

@@ -5,6 +5,7 @@ import {
   GatewayAssertionReplayError,
   recoverSqlTransactionError,
   configureDatabasePool,
+  openDatabaseClient,
 } from '@app/core-runtime';
 import type {
   DatabasePoolDeadlines,
@@ -133,7 +134,7 @@ const makeGatewayAssertionRedemptionDatabase = Effect.fn('PricingGatewayAssertio
       configuration.maxConnections,
     ).pipe(Effect.mapError((error) => unavailableError(error)));
     const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.make(poolConfiguration).pipe(
+    const client = yield* openDatabaseClient(poolConfiguration).pipe(
       Effect.provideService(Reactivity.Reactivity, reactivity),
       Effect.mapError(unavailableError),
     );

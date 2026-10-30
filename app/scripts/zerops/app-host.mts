@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
  * of the release intent and the Outbox Worker host, each as its own process on a loopback port.
@@ -635,6 +636,7 @@ if (import.meta.main) {
     ),
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
+    Effect.provide(ProcessDatabasePoolsLive),
     Effect.tapCause((cause) => Console.error(`[app-host] stopped: ${String(cause)}`)),
   );
   const exit = await Effect.runPromiseExit(program);
