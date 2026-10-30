@@ -283,23 +283,56 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
     return yield* new AgentPlatformForbidden({ reason: NO_DECIDER });
   }
   const transport = yield* AgentReadRequestIdentity;
-  const names = yield* principalNames(caller.principal, transport);
-  const composed = yield* loadComposedModules;
-  const page = yield* listCompanyProposalPage(caller.principal, request);
+  // Names, the release's modules and the proposal page are independent reads.
+  const [names, composed, page] = yield* Effect.all(
+    [
+      principalNames(caller.principal, transport),
+      loadComposedModules,
+      listCompanyProposalPage(caller.principal, request),
+    ],
+    { concurrency: 3 },
+  );
   const moduleRows = page.proposals;
+  const legacyModules = composed.all.flatMap((module) => {
+    if (
+      !module.ownProposalEngine ||
+      !modules.access.has(module.moduleId) ||
+      (request.moduleKey !== undefined && request.moduleKey !== module.moduleId)
+    ) {
+      return [];
+    }
+    const entry = { appId: module.appId, label: module.label.cs, moduleKey: module.moduleId };
+    return [module.approvalsPage === undefined ? entry : { ...entry, approvalsPage: module.approvalsPage }];
+  });
   // Approval runs as the approver: each module reviews its proposals once as this person (visibility, whether they
   // can carry them out, live before -> after lines). Other modules use the existing SpiceDB write grant;
-  // their governed Action checks its command-specific permissions again when approved.
-  const reviews = yield* reviewByModule(
-    caller.principal,
-    composed.byAppId,
-    moduleRows.map((row) => ({
-      actionSlug: row.actionSlug,
-      appId: row.appId,
-      command: row.command,
-      key: row.proposalId,
-      stage: row.status === 'pending' ? ('proposed' as const) : ('history' as const),
-    })),
+  // their governed Action checks its command-specific permissions again when approved. Legacy module engines answer
+  // their own batches meanwhile: neither read depends on the other.
+  const [reviews, legacy] = yield* Effect.all(
+    [
+      reviewByModule(
+        caller.principal,
+        composed.byAppId,
+        moduleRows.map((row) => ({
+          actionSlug: row.actionSlug,
+          appId: row.appId,
+          command: row.command,
+          key: row.proposalId,
+          stage: row.status === 'pending' ? ('proposed' as const) : ('history' as const),
+        })),
+      ),
+      Effect.forEach(
+        legacyModules,
+        (module) =>
+          readLegacyBatches(caller.principal, module, {
+            canDecide: modules.write.has(module.moduleKey),
+            names,
+            request,
+          }).pipe(Effect.map((result) => ({ module, result }))),
+        { concurrency: 3 },
+      ),
+    ],
+    { concurrency: 2 },
   );
   const itemOf = (row: AgentProposalRow) => reviewedItem(reviews.get(row.appId), row.proposalId);
   // Native Core already enforced exact Action rights and private-record visibility. This second projection
@@ -317,27 +350,6 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
     names,
     reviewOf: itemOf,
   });
-  const legacyModules = composed.all.flatMap((module) => {
-    if (
-      !module.ownProposalEngine ||
-      !modules.access.has(module.moduleId) ||
-      (request.moduleKey !== undefined && request.moduleKey !== module.moduleId)
-    ) {
-      return [];
-    }
-    const entry = { appId: module.appId, label: module.label.cs, moduleKey: module.moduleId };
-    return [module.approvalsPage === undefined ? entry : { ...entry, approvalsPage: module.approvalsPage }];
-  });
-  const legacy = yield* Effect.forEach(
-    legacyModules,
-    (module) =>
-      readLegacyBatches(caller.principal, module, {
-        canDecide: modules.write.has(module.moduleKey),
-        names,
-        request,
-      }).pipe(Effect.map((result) => ({ module, result }))),
-    { concurrency: 3 },
-  );
   const legacyBatches = legacy.flatMap(({ result }) => (result.state === 'ok' ? result.batches : []));
   const unavailableModules = legacy.flatMap(({ module, result }) =>
     result.state === 'unavailable' ? [module.label] : [],
