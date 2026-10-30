@@ -468,6 +468,7 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
  *   packageDir: string,
  *   packageName: string,
  *   runtimeDir: string,
+ *   servedUnits?: readonly string[] | undefined,
  *   workspaceRoot: string,
  * }} MaterializeOptions
  */
@@ -477,16 +478,20 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
  *   appId: string,
  *   packageDir: string,
  *   packageName: string,
+ *   servedUnits?: readonly string[] | undefined,
  *   workspaceRoot: string,
  * }} WorkerIdentity
  */
 
 /**
  * The deployable worker an identity names: the Outbox Worker host, which runs every hosted owner's entry in
- * one process. Its service id names the runtime directory and the artifact.
+ * one process. Its service id names the runtime directory and the artifact. A deployment that serves only some
+ * units (`servedUnits`, which must include the Shell) hosts only their workers: a worker whose owner the
+ * deployment does not publish is never admitted by its Application Composition. Its entry is then the committed
+ * host entry rendered for those owners.
  * @param {WorkerIdentity} identity Materialization identity.
  */
-const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRoot }) =>
+const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, servedUnits, workspaceRoot }) =>
   Effect.gen(function* resolveWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -510,16 +515,30 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
         failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
       );
     }
+    if (servedUnits === undefined) {
+      return {
+        entryPoint: host.entry,
+        entrySource: null,
+        owners: [host.coreOwner, ...host.owners],
+        serviceId: appId,
+      };
+    }
+    const served = new Set(servedUnits);
+    if (!served.has(host.coreOwner.ownerId)) {
+      return yield* Effect.fail(failure('The served units must include the Shell that owns the Core system worker'));
+    }
+    const owners = host.owners.filter(({ ownerId }) => served.has(ownerId));
     return {
       entryPoint: host.entry,
-      owners: [host.coreOwner, ...host.owners],
+      entrySource: owners.length === host.owners.length ? null : renderOutboxWorkerHostEntry({ ...host, owners }),
+      owners: [host.coreOwner, ...owners],
       serviceId: appId,
     };
   });
 
 /**
  * @param {WorkerIdentity} identity Materialization identity.
- * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner[], serviceId: string }>} The host's bundle entry, hosted owners, and service id.
+ * @returns {PromiseLike<{ entryPoint: string, entrySource: string | null, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner[], serviceId: string }>} The host's bundle entry (and its rendered source for a partial deployment), hosted owners, and service id.
  */
 export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveOutboxWorkerEffect(identity));
 
@@ -534,12 +553,13 @@ const materializeOutboxWorkerEffect = ({
   packageDir,
   packageName,
   runtimeDir,
+  servedUnits,
   workspaceRoot,
 }) =>
   Effect.gen(function* materializeWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, workspaceRoot });
+    const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, servedUnits, workspaceRoot });
     const hostArtifact = yield* resolveHostArtifact({ artifactDigest, workspaceRoot });
     const revisions = yield* resolveOwnerRevisions({
       hostArtifact,
@@ -635,7 +655,17 @@ const materializeOutboxWorkerEffect = ({
               js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
             },
             bundle: true,
-            entryPoints: [delivery.entryPoint],
+            // A partial deployment bundles the rendered entry in place of the committed one, under the same path.
+            ...(delivery.entrySource === null
+              ? { entryPoints: [delivery.entryPoint] }
+              : {
+                  stdin: {
+                    contents: delivery.entrySource,
+                    loader: 'ts',
+                    resolveDir: path.dirname(path.join(workspaceRoot, delivery.entryPoint)),
+                    sourcefile: path.basename(delivery.entryPoint),
+                  },
+                }),
             format: 'esm',
             metafile: true,
             outfile: path.join(runtimeDir, WORKER_ENTRY),
