@@ -116,10 +116,10 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         // Seed-only configuration; no authority is published and core.layer is never provided.
         compositionRevision: 'a'.repeat(64),
-        enabledModuleIds: ['commerce.catalog'],
+        moduleKeys: ['party.registry', 'commerce.catalog'],
         runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
       }),
-      (fixture) => fixture.close(),
+      (fixture) => fixture.close().pipe(Effect.orDie),
     );
     const crypto = yield* Crypto.Crypto;
     const secret = Redacted.make(yield* crypto.randomUUIDv4());
@@ -1092,10 +1092,10 @@ it.live('connects role-separated local databases and provisions the real public 
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             // Seed-only fixture configuration; no authority is published and fixture.layer is never provided.
             compositionRevision: 'a'.repeat(64),
-            enabledModuleIds: ['commerce.catalog'],
+            moduleKeys: ['party.registry', 'commerce.catalog'],
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),
-          (value) => value.close().pipe(Effect.andThen(recordFixtureClosed)),
+          (value) => value.close().pipe(Effect.andThen(recordFixtureClosed), Effect.orDie),
         );
         const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
         const tenant = yield* database.query.tenants.findFirst({ where: { tenantId: fixture.tenantId } });

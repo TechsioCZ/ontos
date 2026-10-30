@@ -1,6 +1,15 @@
+import {
+  ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+} from '@app/core-runtime';
 import { NodeSocketServer } from '@effect/platform-node';
 import { Config, Crypto, Deferred, Effect, FileSystem, Path, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
+import { HttpClient } from 'effect/http';
+
+const SHELL_APP_ID = 'shell-super-app';
 
 export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerStartupError>()(
   'PackagedOwnerStartupError',
@@ -10,62 +19,61 @@ export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerS
 ) {}
 
 const IdentitySchema = Schema.Struct({
-  appId: Schema.Literals(['shell-super-app', 'party-registry', 'catalog']),
-  buildMarker: Schema.String.check(Schema.isMinLength(1)),
+  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog']),
+  build: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  buildMarker: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   sourceRevision: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u)),
+  unitId: Schema.Literals(['app/shell-super-app', 'app/party-registry', 'app/catalog']),
+  version: Schema.String.check(Schema.isMinLength(1)),
 });
 const PackagedBuildSchema = Schema.Struct({ deliveryUnit: IdentitySchema });
+const ReleaseEnvelopeSchema = Schema.Struct({
+  identity: Schema.Struct({
+    buildMarker: IdentitySchema.fields.buildMarker,
+    releaseVersion: IdentitySchema.fields.version,
+    sourceRevision: IdentitySchema.fields.sourceRevision,
+    unitId: IdentitySchema.fields.unitId,
+  }),
+  target: Schema.Literal('node'),
+});
+const sameIdentity = Schema.toEquivalence(IdentitySchema);
 const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]*$/u));
 
-export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startPackagedApplication')(
-  function* startPackagedApplication(input: {
-    readonly appId: 'shell-super-app' | 'party-registry' | 'catalog';
-    readonly authentication?: {
-      readonly baseUrl: string;
-      readonly connectionString: Redacted.Redacted;
-      readonly issuerConnectionString: Redacted.Redacted;
-      readonly port: number;
-      readonly secret: Redacted.Redacted;
-      readonly spice: {
-        readonly caCertificate: string;
-        readonly endpoint: string;
-        readonly preSharedKey: Redacted.Redacted;
-      };
+const PACKAGED_STARTUP_PHASE = 'Packaged native startup phase';
+
+interface PackagedApplicationInput {
+  readonly appId: typeof SHELL_APP_ID | 'party-registry' | 'catalog';
+  readonly authentication?: {
+    readonly baseUrl: string;
+    readonly connectionString: Redacted.Redacted;
+    readonly issuerConnectionString: Redacted.Redacted;
+    readonly port: number;
+    readonly secret: Redacted.Redacted;
+    readonly spice: {
+      readonly caCertificate: string;
+      readonly endpoint: string;
+      readonly preSharedKey: Redacted.Redacted;
     };
-    readonly compositionUrl?: string;
-    readonly relativeDirectory: string;
-  }) {
-    const filesystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = path.resolve(input.relativeDirectory);
-    const compiled = yield* filesystem
-      .readFileString(path.join(directory, '.output', 'ultramodern-build.json'))
-      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
-    if (compiled.deliveryUnit.appId !== input.appId) {
-      return yield* new PackagedOwnerStartupError({ reason: 'Packaged application identity mismatch' });
-    }
-    const routes = yield* filesystem.readFileString(path.join(directory, '.output', 'route.json')).pipe(
-      Effect.flatMap(
-        Schema.decodeEffect(
-          Schema.fromJsonString(
-            Schema.Struct({
-              routes: Schema.Array(
-                Schema.Struct({ isApi: Schema.optionalKey(Schema.Boolean), urlPath: Schema.String }),
-              ),
-            }),
-          ),
-        ),
-      ),
-    );
-    const apiRoute = routes.routes.find((route) => route.isApi === true);
-    if (apiRoute === undefined) {
-      return yield* new PackagedOwnerStartupError({ reason: 'Packaged API prefix is missing' });
-    }
+  };
+  readonly compositionUrl?: string;
+  readonly gateway?: {
+    readonly issuer: string;
+    readonly privateJwk?: Redacted.Redacted;
+    readonly publicJwks: string;
+  };
+  readonly port?: number;
+  readonly relativeDirectory: string;
+  readonly relaySource?: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
+  readonly sourceBindings?: Redacted.Redacted;
+}
+
+const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEnvironment')(
+  function* makePackagedEnvironment(input: PackagedApplicationInput) {
     const environment = {
       APP_ENV_PATH: '/dev/null',
       NODE_ENV: 'production',
       PATH: yield* Config.String('PATH'),
-      PORT: String(input.authentication?.port ?? 0),
+      PORT: String(input.authentication?.port ?? input.port ?? 0),
       SPICEDB_CA_CERT: yield* Config.String('SPICEDB_CA_CERT'),
       SPICEDB_ENDPOINT: yield* Config.String('SPICEDB_ENDPOINT'),
       SPICEDB_PRESHARED_KEY: Redacted.value(yield* Config.Redacted('SPICEDB_PRESHARED_KEY')),
@@ -77,7 +85,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     } else {
       Object.assign(environment, { DATABASE_URL: Redacted.value(yield* Config.Redacted('DATABASE_URL')) });
     }
-    if (input.appId === 'shell-super-app') {
+    if (input.appId === SHELL_APP_ID) {
       const crypto = yield* Crypto.Crypto;
       const anonymousSecret = yield* crypto.randomUUIDv4();
       Object.assign(environment, {
@@ -102,6 +110,76 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     if (input.compositionUrl !== undefined) {
       Object.assign(environment, { ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl });
     }
+    if (input.gateway !== undefined) {
+      Object.assign(environment, {
+        ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
+        ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
+      });
+      if (input.gateway.privateJwk !== undefined) {
+        Object.assign(environment, { ONTOS_GATEWAY_PRIVATE_JWK: Redacted.value(input.gateway.privateJwk) });
+      }
+    }
+    if (input.relaySource !== undefined) {
+      Object.assign(environment, {
+        ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(input.relaySource.apiKey),
+        ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
+      });
+    }
+    if (input.sourceBindings !== undefined) {
+      Object.assign(environment, { ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS: Redacted.value(input.sourceBindings) });
+    }
+    return environment;
+  },
+);
+
+export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startPackagedApplication')(
+  function* startPackagedApplication(input: PackagedApplicationInput) {
+    const filesystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = path.resolve(input.relativeDirectory);
+    const compiled = yield* filesystem
+      .readFileString(path.join(directory, '.output', 'ultramodern-build.json'))
+      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
+    if (compiled.deliveryUnit.appId !== input.appId) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Packaged application identity mismatch' });
+    }
+    const publishedBuild = yield* filesystem
+      .readFileString(path.join(directory, '.output', 'public', 'ultramodern-build.json'))
+      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
+    const release = yield* filesystem
+      .readFileString(path.join(directory, '.output', 'release', 'microvertical-release-envelope.json'))
+      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReleaseEnvelopeSchema))));
+    const identity = compiled.deliveryUnit;
+    if (
+      !sameIdentity(identity, publishedBuild.deliveryUnit) ||
+      identity.build !== identity.buildMarker ||
+      release.identity.buildMarker !== identity.buildMarker ||
+      release.identity.sourceRevision !== identity.sourceRevision ||
+      release.identity.unitId !== identity.unitId ||
+      release.identity.releaseVersion !== identity.version
+    ) {
+      return yield* new PackagedOwnerStartupError({
+        reason: 'Compiled, public and immutable release identities disagree',
+      });
+    }
+    const routes = yield* filesystem.readFileString(path.join(directory, '.output', 'route.json')).pipe(
+      Effect.flatMap(
+        Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              routes: Schema.Array(
+                Schema.Struct({ isApi: Schema.optionalKey(Schema.Boolean), urlPath: Schema.String }),
+              ),
+            }),
+          ),
+        ),
+      ),
+    );
+    const apiRoute = routes.routes.find((route) => route.isApi === true);
+    if (apiRoute === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Packaged API prefix is missing' });
+    }
+    const environment = yield* makePackagedEnvironment(input);
     const child = yield* ChildProcess.make('node', ['.output/index.js'], {
       cwd: directory,
       env: environment,
@@ -143,6 +221,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       ),
       Effect.forkScoped,
     );
+    yield* Effect.logInfo(PACKAGED_STARTUP_PHASE, { appId: input.appId, phase: 'await-ready-address' });
     const origin = yield* Effect.raceFirst(
       Deferred.await(ready),
       child.exitCode.pipe(
@@ -151,6 +230,29 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
         ),
       ),
     );
+    yield* Effect.logInfo(PACKAGED_STARTUP_PHASE, { appId: input.appId, phase: 'ready-address-observed' });
+    const client = yield* HttpClient.HttpClient;
+    const contractPath = input.appId === SHELL_APP_ID ? ONTOS_SHELL_RUNTIME_CONTRACT_PATH : ONTOS_MODULE_CONTRACT_PATH;
+    const response = yield* client.get(`${origin}${contractPath}`);
+    if (response.status !== 200) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Actual packaged contract endpoint is unavailable' });
+    }
+    yield* Effect.logInfo(PACKAGED_STARTUP_PHASE, {
+      appId: input.appId,
+      phase: 'contract-response',
+      status: response.status,
+    });
+    const body = yield* response.json;
+    const contract =
+      input.appId === SHELL_APP_ID
+        ? yield* Schema.decodeUnknownEffect(OntosShellRuntimeContractSchema)(body)
+        : yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(body);
+    if (contract.deployment.appId !== identity.appId || contract.deployment.buildMarker !== identity.buildMarker) {
+      return yield* new PackagedOwnerStartupError({
+        reason: 'Actual HTTP deployment does not match immutable packaged identity',
+      });
+    }
+    yield* Effect.logInfo(PACKAGED_STARTUP_PHASE, { appId: input.appId, phase: 'contract-identity-verified' });
     return { apiPrefix: apiRoute.urlPath, child, compiled: compiled.deliveryUnit, diagnostics, origin };
   },
 );

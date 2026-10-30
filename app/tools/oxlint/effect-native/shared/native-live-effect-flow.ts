@@ -486,6 +486,17 @@ const deferredHttpBody = (context: Context, input: ESTree.Node): boolean => {
   return request !== null && responseRequest(context, request) && stableHttpHandle(context, node.object, false);
 };
 
+const nativeNonCallEffect = (context: Context, node: ESTree.Node): boolean => {
+  const method = nativeMethod(context, node, 'Effect');
+  return (
+    deferredHttpBody(context, node) ||
+    (method !== null && effectValues.has(method)) ||
+    nativeMethod(context, node, 'Clock') === 'currentTimeMillis' ||
+    isNativeEffectValue(context, node) ||
+    isNativeDeferredProgram(context, node)
+  );
+};
+
 const effectProof = {
   flatMapCallback: (context: Context, call: ESTree.CallExpression, seen: Set<FunctionNode>): boolean => {
     const index = call.arguments.length === 1 ? 0 : 1;
@@ -555,14 +566,7 @@ const effectProof = {
       );
     }
     if (node.type !== 'CallExpression') {
-      const method = nativeMethod(context, node, 'Effect');
-      return (
-        deferredHttpBody(context, node) ||
-        (method !== null && effectValues.has(method)) ||
-        nativeMethod(context, node, 'Clock') === 'currentTimeMillis' ||
-        isNativeEffectValue(context, node) ||
-        isNativeDeferredProgram(context, node)
-      );
+      return nativeNonCallEffect(context, node);
     }
     if (node.arguments.some((argument) => argument.type === 'SpreadElement')) {
       return false;
