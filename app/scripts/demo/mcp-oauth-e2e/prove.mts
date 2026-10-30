@@ -581,6 +581,7 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         const outcome = yield* Effect.suspend(() =>
           callJson(client, 'ontos_execute', {
             id: candidate,
+            idempotencyKey: `${runId}-out-of-grant`,
             input: {},
             reason: 'Test zápisu mimo oprávnění',
           }),
