@@ -599,6 +599,8 @@ zerops:
         - sudo apk add --no-cache curl git libstdc++
         - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
+        # Zerops restores the build cache as root; the build user must own the directories it recreated.
+        - sudo chown -R "$(id -u):$(id -g)" app
         - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
         - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
         - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" sh scripts/zerops/build-app.sh
