@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 
@@ -24,6 +24,7 @@ import {
   agentProposalQueueDenied,
   agentProposalQueueUnavailable as unavailable,
 } from './agent-proposal-queue-unavailable.ts';
+import { isApprovalConnection } from './oauth-connection-scope.ts';
 
 /** Derived solely from the admitted active composition and current module/Action checks. */
 export interface AgentProposalQueueAction {
@@ -34,14 +35,19 @@ export interface AgentProposalQueueAction {
   readonly review: { readonly path: string; readonly privateRecords: boolean } | undefined;
 }
 type Proposal = typeof agentProposals.$inferSelect;
+type Proposer = typeof principals.$inferSelect;
 type QueueResult = typeof AgentProposalQueueResultSchema.Type;
 const OWN_RECENT_MODE = 'own-recent';
 const companyPredicate = ({ legalEntityId, tenantId }: OperationalScope) =>
   and(eq(agentProposals.tenantId, tenantId), eq(agentProposals.legalEntityId, legalEntityId ?? ''));
-const ownRead = (input: AgentProposalQueueInput) =>
+/** Modes that read only the caller's own proposals. */
+export const isOwnProposalRead = (input: AgentProposalQueueInput) =>
   input.mode === 'own-run' ||
   input.mode === OWN_RECENT_MODE ||
   (input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE && input.payload.operation === 'insert');
+/** Agents propose; a person proposes only through their own approval connection. */
+const proposerKinds = (scope: OperationalScope): Proposer['kind'][] =>
+  isApprovalConnection(scope) ? ['agent', 'human'] : ['agent'];
 
 const toRow = (row: Proposal) => ({
   actionSlug: row.actionSlug,
@@ -266,7 +272,7 @@ export const proposalQueueFromTransaction = (transaction: ScopedTransactionExecu
     if (legalEntityId === undefined || scope.tenantId !== tenantId || scope.legalEntityId !== legalEntityId) {
       return yield* unavailable('An exact company context is required');
     }
-    const own = ownRead(input);
+    const own = isOwnProposalRead(input);
     const admitted = yield* transaction
       .select({ principalId: principals.principalId })
       .from(principals)
@@ -274,7 +280,7 @@ export const proposalQueueFromTransaction = (transaction: ScopedTransactionExecu
         and(
           eq(principals.tenantId, tenantId),
           eq(principals.principalId, principalId),
-          eq(principals.kind, own ? 'agent' : 'human'),
+          own ? inArray(principals.kind, proposerKinds(scope)) : eq(principals.kind, 'human'),
           eq(principals.status, 'active'),
         ),
       )

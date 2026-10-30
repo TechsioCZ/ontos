@@ -18,6 +18,13 @@ const PROPOSAL_READ_KEYS: ReadonlySet<string> = new Set([
 ]);
 const PROPOSAL_ACTION_KEY = 'core.identity.mutate-agent-proposals';
 
+/**
+ * A connection with policy 'approval' writes only by proposing, also when it acts as its person rather than an
+ * agent. The proposal queue then accepts that person as the proposer of their own proposals.
+ */
+export const isApprovalConnection = (principal: Partial<ScopedPrincipal>): boolean =>
+  principal.authMethod === 'oauth_connection' && principal.connection?.writePolicy === 'approval';
+
 /** Non-connection principals are unaffected; a connection may read only its granted modules and its proposals. */
 export const isConnectionReadAllowed = (
   principal: ScopedPrincipal,

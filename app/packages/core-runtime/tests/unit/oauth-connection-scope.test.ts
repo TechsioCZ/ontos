@@ -6,6 +6,7 @@ import { TrustedPrincipalContextSchema } from '../../src/actions/principal-conte
 import {
   CONNECTION_SCOPE_REASON_CODE,
   connectionScopePolicy,
+  isApprovalConnection,
   isConnectionReadAllowed,
   isConnectionWriteAllowed,
 } from '../../src/auth/oauth-connection-scope.ts';
@@ -160,3 +161,11 @@ it.effect('an approval connection may insert proposals only for modules it may w
     expect(Exit.isFailure(yield* evaluateScope(readOnly, mutate, insertProposal('work.tasks')))).toBe(true);
   }),
 );
+
+test('only an approval connection may propose as the person it acts for', () => {
+  const modules = [{ access: 'write' as const, moduleId: 'work.tasks' }];
+  expect(isApprovalConnection(connectionPrincipal('approval', modules))).toBe(true);
+  expect(isApprovalConnection(connectionPrincipal('direct', modules))).toBe(false);
+  expect(isApprovalConnection(connectionPrincipal('read_only', modules))).toBe(false);
+  expect(isApprovalConnection(sessionPrincipal)).toBe(false);
+});
