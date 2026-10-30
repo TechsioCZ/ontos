@@ -128,7 +128,7 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
 export const processEnvironment = (
   processIds: readonly string[],
   ownerSecrets: OwnerSecrets,
-  derived: Readonly<Record<string, string>>,
+  derived: ChildEnvironment,
 ) => {
   const served = new Set(processIds);
   const hidden = [
@@ -165,21 +165,44 @@ const PublicOriginSchema = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
     url.protocol === 'https:' && url.pathname === '/' && url.search === '' && url.hash === '' && url.username === ''
       ? undefined
-      : 'ONTOS_PUBLIC_ORIGIN must be a bare HTTPS origin',
+      : 'the public origins must be bare HTTPS origins',
   ),
 );
 
 const loopbackOrigin = (port: number) => `http://127.0.0.1:${String(port)}`;
 
-/** Settings every process derives from the one public origin of this environment and the host's own port. */
-export const derivedEnvironment = (origin: string, hostPort: number) => ({
-  BETTER_AUTH_TRUSTED_ORIGINS: origin,
-  BETTER_AUTH_URL: origin,
-  NODE_ENV: 'production',
-  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${loopbackOrigin(hostPort)}${COMPOSITION_PATH}`,
-  ONTOS_GATEWAY_ISSUER: origin,
-  ONTOS_SHELL_GATEWAY_BASE_URL: `${loopbackOrigin(SHELL_PORT)}/shell-super-app-api`,
-});
+/**
+ * Settings every process derives from the public origins of this environment and the host's own ports. They win over
+ * stored owner secrets, whose URL values name whatever hostnames the bundle was written for.
+ */
+export const derivedEnvironment = (
+  origin: string,
+  storefrontOrigin: string,
+  hostPort: number,
+  ports: ReadonlyMap<string, number>,
+) => {
+  const shellGateway = `${loopbackOrigin(SHELL_PORT)}/shell-super-app-api`;
+  const priceGroupCatalog = ports.get('price-group-catalog');
+  return {
+    AKROS_STOREFRONT_PUBLIC_URL: storefrontOrigin,
+    BETTER_AUTH_TRUSTED_ORIGINS: `${origin},${storefrontOrigin}`,
+    BETTER_AUTH_URL: origin,
+    COMMERCE_CORE_IDENTITY_BASE_URL: shellGateway,
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: `${origin},${storefrontOrigin}`,
+    COMMERCE_PORTAL_AUTH_URL: storefrontOrigin,
+    NODE_ENV: 'production',
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${loopbackOrigin(hostPort)}${COMPOSITION_PATH}`,
+    ONTOS_EMAIL_DISPATCH_URL: `${origin}/shell-super-app-api/email/dispatch`,
+    ONTOS_EMAIL_FROM: `noreply@${new URL(origin).hostname}`,
+    ONTOS_GATEWAY_ISSUER: origin,
+    ONTOS_OAUTH_ISSUER: `${origin}/shell-super-app-api/oauth`,
+    ONTOS_PUBLIC_URL: origin,
+    // An environment without the owner leaves the variable unset (undefined removes it from the child).
+    ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
+      priceGroupCatalog === undefined ? undefined : `${loopbackOrigin(priceGroupCatalog)}/price-group-catalog-api`,
+    ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway,
+  };
+};
 
 /** `/_m/<appId>/rest` → that owner's own root path; everything else → the Shell. */
 export const routeRequest = (
@@ -479,6 +502,7 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
 export const runAppHost = Effect.gen(function* runAppHost() {
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
+  const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
   const ownerSecrets = yield* Config.Redacted('ONTOS_OWNER_SECRETS_JSON').pipe(
     Config.withDefault(Redacted.make('{}')),
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
@@ -486,7 +510,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const derived = derivedEnvironment(publicOrigin, publicPort);
+  const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports);
   const node = process.execPath;
   const published = yield* Ref.make(false);
   const pointer = yield* makeCompositionPointer;
@@ -551,17 +575,15 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       Effect.ignore,
     );
     yield* Ref.set(published, true);
-    const outbox = yield* startChild(
-      OUTBOX_HOST_ID,
-      node,
-      [OUTBOX_HOST_BUNDLE],
-      workspaceRoot,
-      {
-        ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
-        OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
-        PORT: String(OUTBOX_HEALTH_PORT),
-      },
-    );
+    const outbox = yield* startChild(OUTBOX_HOST_ID, node, [OUTBOX_HOST_BUNDLE], workspaceRoot, {
+      ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
+      // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
+      ...Object.fromEntries(
+        Object.entries(ownerSecrets[SHELL_ID] ?? {}).filter(([key]) => key === 'ONTOS_EMAIL_DISPATCH_SECRET'),
+      ),
+      OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
+      PORT: String(OUTBOX_HEALTH_PORT),
+    });
     // The host renews its own lease well inside the validity window; no external refresh schedule exists.
     const renew = publish.pipe(
       Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),

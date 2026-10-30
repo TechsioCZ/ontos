@@ -140,15 +140,20 @@ describe('processEnvironment', () => {
   });
 });
 
+const STOREFRONT = 'https://akros.example';
+
 describe('derivedEnvironment', () => {
   it('uses the public origin as the issuer and auth URL', () => {
-    const derivedValues = derivedEnvironment(ORIGIN, 3000);
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]));
     expect(derivedValues.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);
     expect(derivedValues.BETTER_AUTH_URL).toBe(ORIGIN);
+    expect(derivedValues.ONTOS_OAUTH_ISSUER).toBe(`${ORIGIN}/shell-super-app-api/oauth`);
+    expect(derivedValues.COMMERCE_PORTAL_AUTH_URL).toBe(STOREFRONT);
+    expect(derivedValues.ONTOS_PRICE_GROUP_CATALOG_BASE_URL).toBe('http://127.0.0.1:4204/price-group-catalog-api');
   });
 
   it('points the composition source at the host loopback port', () => {
-    expect(derivedEnvironment(ORIGIN, 3000).ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
+    expect(derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map()).ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
       'http://127.0.0.1:3000/_host/composition',
     );
   });
