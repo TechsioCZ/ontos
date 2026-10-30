@@ -21,6 +21,17 @@ export class OwnerEntryError extends Schema.TaggedError<OwnerEntryError>()('Owne
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 
 const MAIN = 'async function main() {';
+/** A package without `"type": "module"` gets the CommonJS variant of the generated entry. */
+const COMMONJS_SERVER = "require('@modern-js/prod-server')";
+/** Loads the CommonJS entry, so the host imports every unit through the same `dist/zerops-entry.mjs`. */
+const COMMONJS_SHIM = [
+  "import { createRequire } from 'node:module';",
+  '',
+  "export const { start } = createRequire(import.meta.url)('./zerops-entry.cjs');",
+  '',
+].join('\n');
+
+export const isCommonJsEntry = (generated: string): boolean => generated.includes(COMMONJS_SERVER);
 const PORT = 'const port = process.env.PORT || 8080;';
 const RUN = '\nmain();';
 
@@ -48,14 +59,18 @@ export const ownerEntrySource = (
     )
     .replaceAll(/ from '(?<specifier>(?:@[^'/]+\/)?[^'./][^':]*)'/gu, (_match, specifier: string) =>
       specifier.startsWith('node:') ? _match : ` from ${relativeImport(distDirectory, resolvePackage(specifier))}`,
+    )
+    .replaceAll(/require\('(?<specifier>(?:@[^'/]+\/)?[^'./][^':]*)'\)/gu, (_match, specifier: string) =>
+      specifier.startsWith('node:') ? _match : `require(${relativeImport(distDirectory, resolvePackage(specifier))})`,
     );
+  const commonJs = isCommonJsEntry(generated);
   return (
     relocated
-      .replace(MAIN, 'export async function start(port) {')
+      .replace(MAIN, commonJs ? 'async function start(port) {' : 'export async function start(port) {')
       .replace(PORT, '')
       // Owners answer only the host's loopback relay, never the container's private network.
       .replace('app.listen({', "app.listen({ host: '127.0.0.1',")
-      .replace(/\nmain\(\);\s*$/u, '\n')
+      .replace(/\nmain\(\);\s*$/u, commonJs ? '\nmodule.exports = { start };\n' : '\n')
       .replace(RUN, '')
   );
 };
@@ -81,7 +96,12 @@ const writeOwnerEntry = Effect.fn('OwnerEntry.write')(function* writeOwnerEntry(
   if (source === undefined) {
     return yield* new OwnerEntryError({ reason: `${unitDirectory}/.output/index.js has an unexpected shape` });
   }
-  yield* fs.writeFileString(path.join(dist, 'zerops-entry.mjs'), source);
+  if (isCommonJsEntry(generated)) {
+    yield* fs.writeFileString(path.join(dist, 'zerops-entry.cjs'), source);
+    yield* fs.writeFileString(path.join(dist, 'zerops-entry.mjs'), COMMONJS_SHIM);
+  } else {
+    yield* fs.writeFileString(path.join(dist, 'zerops-entry.mjs'), source);
+  }
   return yield* Console.log(`wrote ${path.relative(workspaceRoot, path.join(dist, 'zerops-entry.mjs'))}`);
 });
 
