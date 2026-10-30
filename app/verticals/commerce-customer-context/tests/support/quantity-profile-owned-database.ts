@@ -10,6 +10,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect } from 'effect-rstest';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 
 const databaseUsernameArgument = '--username';
 
@@ -348,6 +349,8 @@ export const makeQuantityProfileOwnedDatabase = Effect.fn('QuantityProfileAdmiss
   function* makeOwnedDatabase(snapshot: ActiveApplicationCompositionSnapshot) {
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      // Core's db:verify below checks the trust catalog against the provisioned gateway audiences.
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1266-quantity-profile-admission',
     });

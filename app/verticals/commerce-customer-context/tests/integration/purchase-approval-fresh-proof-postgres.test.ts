@@ -69,6 +69,7 @@ import {
   commerceCustomerContextRelations,
   purchaseApprovalRequests,
 } from '../../src/database/schema.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const oldClockDefinition = (current: string): string => {
   const old = current
@@ -463,6 +464,8 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   const snapshot = yield* enrollmentApplicationCompositionSnapshot;
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
+    // Core's db:verify below checks the trust catalog against the provisioned gateway audiences.
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     mode: 'schema-only',
     purpose: 'stabilization-1257-approval-fresh-proof',
     sourceConnections: yield* loadDatabaseConnectionPair(),
