@@ -19,7 +19,6 @@ import type {
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
-  ActionTransportMetadataSchema,
   makeActionRuntimeLive,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
@@ -85,11 +84,13 @@ import {
   Tracer,
 } from 'effect';
 import type { Types } from 'effect';
-import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/http';
+import { FetchHttpClient, HttpRouter } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest } from '../src/module-api/transport.ts';
+import { mcpRequestIdentityMiddleware } from './mcp/request-identity.ts';
+import { McpEndpointTransportLive } from './mcp/transport.ts';
 import { ShellTransportLive } from './shell-transport.ts';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import { listDeliveries } from '@app/email-delivery/deliveries';
@@ -107,7 +108,6 @@ import {
   CurrentSessionSchema,
   ConfigureDemoCompaniesResponseSchema,
   DemoAccountCapabilitySchema,
-  IdentityRequestHeadersSchema,
   ManagedApiKeyListResponseSchema,
   MediaAttachmentResponseSchema,
   PrincipalMutationResponseSchema,
@@ -3042,57 +3042,6 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
 ];
 
-const mcpRequestHeadersSchema = Schema.Struct({
-  ...IdentityRequestHeadersSchema.fields,
-  'x-correlation-id': Schema.optionalKey(ActionTransportMetadataSchema.fields.correlationId),
-  'x-trace-id': ActionTransportMetadataSchema.fields.traceId,
-});
-
-// Own each HTTP request's correlation before SDK callbacks capture services; standard MCP clients need no custom header.
-// Invalid supplied metadata stays unbound. Only the caller can supply an Action's durable idempotency key.
-const bindMcpRequestIdentity = Effect.fn('Mcp.bindRequestIdentity')(function* bindMcpRequestIdentity(
-  handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
-  generatedCorrelationId: Effect.Effect<Option.Option<string>>,
-): Effect.fn.Return<HttpServerResponse.HttpServerResponse, Types.unhandled, HttpServerRequest.HttpServerRequest> {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const headers = yield* Effect.option(Schema.decodeUnknownEffect(mcpRequestHeadersSchema)(request.headers));
-  if (Option.isNone(headers)) {
-    return yield* handler;
-  }
-  const correlationId =
-    headers.value['x-correlation-id'] === undefined
-      ? yield* generatedCorrelationId
-      : Option.some(headers.value['x-correlation-id']);
-  if (Option.isNone(correlationId)) {
-    return yield* handler;
-  }
-  let identity: OperationalScopeRequest = { correlationId: correlationId.value };
-  if (headers.value['x-trace-id'] !== undefined) {
-    identity = { ...identity, traceId: headers.value['x-trace-id'] };
-  }
-  const forwarded = request.modify({
-    headers: HttpHeaders.set(request.headers, 'x-correlation-id', correlationId.value),
-  });
-  const readHandler = handler.pipe(
-    Effect.provideService(HttpServerRequest.HttpServerRequest, forwarded),
-    Effect.provideService(AgentReadRequestIdentity, identity),
-  );
-  const idempotencyKey = headers.value['idempotency-key'];
-  return yield* idempotencyKey === undefined
-    ? readHandler
-    : readHandler.pipe(Effect.provideService(AgentActionRequestIdentity, { ...identity, idempotencyKey }));
-});
-
-export const mcpRequestIdentityMiddleware = HttpRouter.middleware()(
-  Effect.gen(function* makeMcpRequestIdentityMiddleware() {
-    const crypto = yield* Crypto.Crypto;
-    // The router infers its error and requirement channels from this plain handler signature.
-    const generatedCorrelationId = Effect.option(crypto.randomUUIDv4());
-    return (handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>) =>
-      bindMcpRequestIdentity(handler, generatedCorrelationId);
-  }),
-);
-
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
 ): EffectBffDefinition<typeof ShellAuthenticationApi> & EffectBffRuntime<typeof ShellAuthenticationApi> => {
@@ -3341,7 +3290,27 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.orDie,
   );
 
-  const mcpRequestIdentityLive = mcpRequestIdentityMiddleware.layer.pipe(Layer.provide(ShellCryptoLive));
+  // Shell-owned routes outside the HTTP API resolve their request services from the same memoized instances as the
+  // handlers: the middleware captures them once when the API builds and provides them to each request.
+  const shellTransportServicesLive = HttpRouter.middleware<{ provides: Layer.Success<typeof apiServicesLive> }>()(
+    Effect.map(
+      Effect.context<Layer.Success<typeof apiServicesLive>>(),
+      (services) =>
+        (
+          route: Effect.Effect<
+            HttpServerResponse.HttpServerResponse,
+            Types.unhandled,
+            Layer.Success<typeof apiServicesLive>
+          >,
+        ) =>
+          Effect.provideContext(route, services),
+    ),
+  ).layer;
+  // The MCP endpoint runs tools as the connection's principal, with the agent platform's services.
+  const mcpEndpointRoutesLive = McpEndpointTransportLive.pipe(
+    Layer.provide(mcpRequestIdentityMiddleware.layer),
+    Layer.provide(shellTransportServicesLive),
+  );
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
     authenticationGroupLive,
@@ -3368,7 +3337,12 @@ export const makeShellAuthenticationApiRuntime = (
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    transport: ShellTransportLive.pipe(Layer.provide(mcpRequestIdentityLive), Layer.provide(apiServicesLive)),
+    transport: ShellTransportLive.pipe(
+      // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
+      Layer.provide(mcpEndpointRoutesLive),
+      Layer.provide(shellTransportServicesLive),
+      Layer.provide(apiServicesLive),
+    ),
   });
 };
 

@@ -107,6 +107,8 @@ const effectNativeRules = {
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
         'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
         'apps/shell-super-app/api/auth/db/client.ts',
+        // The MCP route middleware binds each request's own correlation and Action identity for the route it wraps.
+        'apps/shell-super-app/api/mcp/request-identity.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.

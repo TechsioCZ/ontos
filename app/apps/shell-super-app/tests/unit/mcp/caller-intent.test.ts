@@ -12,7 +12,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
 import { AgentActionRequestIdentity } from '../../../api/auth/agent-action-request-identity.ts';
-import { mcpRequestIdentityMiddleware } from '../../../api/index.ts';
+import { mcpRequestIdentityMiddleware } from '../../../api/mcp/request-identity.ts';
 import type { JsonObject } from '../../../api/mcp/catalog.ts';
 import { serveMcp } from '../../../api/mcp/http.ts';
 import { buildConnectionTools } from '../../../api/mcp/tools.ts';
