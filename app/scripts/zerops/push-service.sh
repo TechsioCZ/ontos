@@ -5,7 +5,8 @@
 #
 #   ZEROPS_TOKEN=… [PUSH_EXCLUDE=<path>] push-service.sh <service-id> <setup> <version-name>   (from the repository root)
 #
-# Keep the package small: Zerops silently truncates an upload that runs longer than about 30 s.
+# Keep the package small and push one service at a time: Zerops silently truncates an upload that runs longer
+# than about 30 s, so a slower upload goes again (UPLOAD_LIMIT_SECONDS, default 25).
 set -euo pipefail
 
 service_id="${1:?service id is required}"
@@ -24,13 +25,23 @@ tar --format=pax --exclude='node_modules' --exclude='.output' --exclude='*.map' 
   -czf "$work/package.tar.gz" -- "${entries[@]}"
 echo "package: $(du -h "$work/package.tar.gz" | cut -f1)"
 
-created="$(jq -n --arg name "$version_name" '{name: $name}' |
-  curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/service-stack/$service_id/app-version" -d @-)"
-version_id="$(jq -er '.id' <<<"$created")"
-upload_url="$(jq -er '.uploadUrl' <<<"$created")"
-started="$(date +%s)"
-curl -fsS --http1.1 --retry 2 -X PUT -T "$work/package.tar.gz" "$upload_url" -o /dev/null
-echo "uploaded in $(($(date +%s) - started))s"
+# An upload that took longer than the limit is assumed truncated and goes again to a fresh app version.
+upload_limit_seconds="${UPLOAD_LIMIT_SECONDS:-25}"
+for attempt in 1 2 3; do
+  created="$(jq -n --arg name "$version_name" '{name: $name}' |
+    curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/service-stack/$service_id/app-version" -d @-)"
+  version_id="$(jq -er '.id' <<<"$created")"
+  upload_url="$(jq -er '.uploadUrl' <<<"$created")"
+  started="$(date +%s)"
+  curl -fsS --http1.1 --retry 2 -X PUT -T "$work/package.tar.gz" "$upload_url" -o /dev/null
+  took=$(($(date +%s) - started))
+  echo "uploaded in ${took}s (attempt $attempt)"
+  ((took <= upload_limit_seconds)) && break
+  if ((attempt == 3)); then
+    echo "every upload took longer than ${upload_limit_seconds}s; Zerops would build a truncated package" >&2
+    exit 1
+  fi
+done
 
 process="$(jq -n --rawfile yaml app/zerops.yaml --arg setup "$setup" '{zeropsYaml: $yaml, zeropsYamlSetup: $setup}' |
   curl -fsS -X PUT "${auth[@]}" -H 'content-type: application/json' "$api/app-version/$version_id/build-and-deploy" -d @-)"

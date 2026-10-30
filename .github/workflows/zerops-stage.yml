@@ -153,6 +153,8 @@ jobs:
         run: |
           started="$(date +%s)"
           bash app/scripts/zerops/push-service.sh "$ZEROPS_APP_SERVICE_ID" app "$GITHUB_SHA" >"$RUNNER_TEMP/push-app.log" 2>&1 & app=$!
+          # The builds overlap, the uploads do not: two uploads at once each run past Zerops' ~30 s upload limit.
+          until grep -q '^build and deploy process' "$RUNNER_TEMP/push-app.log" || ! kill -0 "$app" 2>/dev/null; do sleep 1; done
           PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
           status=0
           wait "$app" || status=1
