@@ -31,6 +31,7 @@ import type { AgentProposalCommandPayload } from '@app/core-runtime';
 import { AgentActionRequestIdentity } from '../auth/agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 import { demoAccountCapability, derivedUuid } from '../auth/demo-accounts.ts';
+import type { McpModule } from '../mcp/catalog.ts';
 import { listGrants } from '../oauth-connections/grant-store.ts';
 import { CompanyDirectory } from '../oauth-connections-admin/company-directory.ts';
 import { commandRecordReference, resolveActivityLinks } from './activity-links.ts';
@@ -65,6 +66,8 @@ const DEFAULT_ACTION_SLUG = 'apply-command';
 /** Named Action slugs, e.g. `update-party`; `apply-command` is the default command envelope. */
 const ACTION_SLUG = /^[a-z][a-z0-9-]{0,99}$/u;
 const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
+/** Module reviews and owner-engine records reads of one activity page; a composition has only a few of each. */
+const MODULE_READ_CONCURRENCY = 4;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
 
 const agentCommandAllowed = (actionSlug: string, command: AgentCommand) =>
@@ -357,113 +360,131 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
 
 /** Agent reads, writes, denials, proposals and decisions in the modules where the person approves changes.
  * Transport is the Core Read request identity from ingress, not an ambient tracing correlation.
+ * Independent reads run concurrently: each one waits only for the module review that can hide its module.
  */
 export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(function* loadAgentActivity(
   caller: AgentPlatformCaller,
   request: AgentActivityRequest,
 ) {
   const transport = yield* AgentReadRequestIdentity;
-  const modules = yield* callerModuleAccess(caller);
+  const [modules, composed] = yield* Effect.all([callerModuleAccess(caller), loadComposedModules], {
+    concurrency: 2,
+  });
   if (modules.write.size === 0) {
     return yield* new AgentPlatformForbidden({ reason: NO_DECIDER });
   }
   const { legalEntityId, tenantId } = caller.principal;
   // People see agent activity only in modules where they approve agent changes, and in modules with private
-  // records only when the module shows them every record (not only their own).
-  const composed = yield* loadComposedModules;
-  const scoped = yield* Effect.forEach(
-    composed.all.filter(
-      (module) => module.approvalReview?.privateRecords === true && modules.write.has(module.moduleId),
-    ),
-    (module) =>
-      reviewInModule(caller.principal, module, []).pipe(
-        Effect.map((review) => (review.state === 'ok' && review.seesAllRecords ? [] : [module.moduleId])),
-      ),
-    { concurrency: 2 },
-  );
-  const hidden = new Set(scoped.flat());
-  const activity = yield* listAgentActivity(
-    caller.principal,
-    request,
-    {
-      modules: moduleTextsOf(composed),
-      visibleModules: new Set([...modules.write].filter((moduleKey) => !hidden.has(moduleKey))),
-    },
-    transport,
-  );
-  const recordModules = composed.all.filter(
-    (module) =>
-      modules.access.has(module.moduleId) &&
-      modules.write.has(module.moduleId) &&
-      !hidden.has(module.moduleId) &&
-      module.ownProposalEngine &&
-      (request.moduleKey === undefined || request.moduleKey === module.moduleId),
-  );
-  const records = new Map(
+  // records only when the module shows them every record (not only their own). One review per module, shared.
+  const reviews = new Map(
     yield* Effect.forEach(
-      recordModules,
+      composed.all.filter(
+        (module) => module.approvalReview?.privateRecords === true && modules.write.has(module.moduleId),
+      ),
       (module) =>
-        recordsReadOf(module.appId).pipe(
-          Effect.flatMap((read) =>
-            callModuleAs(caller.principal, module.appId, read.path, {
-              ...read.query,
-              // Owners read only their history fields; the page size and module filter stay in the Shell.
-              agentHistory: { ...Struct.pick(request, ['agentPrincipalId', 'cursor', 'kind']), mode: 'activity' },
-            }),
+        Effect.cached(
+          reviewInModule(caller.principal, module, []).pipe(
+            Effect.map((review) => review.state === 'ok' && review.seesAllRecords),
           ),
-          Effect.map((result) => [module.moduleId, result.status === 200 ? result.body : undefined] as const),
-          Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
-        ),
-      { concurrency: 2 },
+        ).pipe(Effect.map((seesAll) => [module.moduleId, seesAll] as const)),
+      { concurrency: 1 },
     ),
   );
-  const names =
-    recordModules.length === 0 ? new Map<string, string>() : yield* principalNames(caller.principal, transport);
-  const native = recordModules.flatMap((module) =>
-    module.ownProposalEngine
-      ? moduleActivityFromRecords(
-          { appId: module.appId, label: module.label.cs, moduleKey: module.moduleId },
-          records.get(module.moduleId),
-          {
-            names,
-            recordLinks: module.recordLinks,
-          },
-        )
-      : [],
+  const visibleIn = (moduleId: string) => reviews.get(moduleId) ?? Effect.succeed(true);
+  const activityRead = Effect.forEach(
+    [...modules.write],
+    (moduleKey) => visibleIn(moduleKey).pipe(Effect.map((visible) => (visible ? [moduleKey] : []))),
+    { concurrency: MODULE_READ_CONCURRENCY },
+  ).pipe(
+    Effect.flatMap((visible) =>
+      listAgentActivity(
+        caller.principal,
+        request,
+        { modules: moduleTextsOf(composed), visibleModules: new Set(visible.flat()) },
+        transport,
+      ),
+    ),
+  );
+  const recordsOf = (module: McpModule) =>
+    recordsReadOf(module.appId).pipe(
+      Effect.flatMap((read) =>
+        callModuleAs(caller.principal, module.appId, read.path, {
+          ...read.query,
+          // Owners read only their history fields; the page size and module filter stay in the Shell.
+          agentHistory: { ...Struct.pick(request, ['agentPrincipalId', 'cursor', 'kind']), mode: 'activity' },
+        }),
+      ),
+      Effect.map((result) => ({ body: result.status === 200 ? result.body : undefined, module })),
+      Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+    );
+  const recordsRead = Effect.forEach(
+    composed.all.filter(
+      (module) =>
+        modules.access.has(module.moduleId) &&
+        modules.write.has(module.moduleId) &&
+        module.ownProposalEngine &&
+        (request.moduleKey === undefined || request.moduleKey === module.moduleId),
+    ),
+    (module) =>
+      visibleIn(module.moduleId).pipe(
+        Effect.flatMap((visible) => (visible ? Effect.map(recordsOf(module), (read) => [read]) : Effect.succeed([]))),
+      ),
+    { concurrency: MODULE_READ_CONCURRENCY },
+  ).pipe(Effect.map((reads) => reads.flat()));
+  // Same live capability as the destination. Never turn approval rights into identity-administration rights.
+  const identityRead = Effect.gen(function* identityLinks() {
+    const canManage = yield* demoAccountCapability(caller).pipe(
+      Effect.map((capability) => capability.canManage),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!canManage) {
+      return { agents: new Set<string>(), canManage, grants: [], people: new Set<string>() };
+    }
+    const directory = yield* CompanyDirectory;
+    const [visible, grants] = yield* Effect.all(
+      [
+        directory.snapshot.pipe(
+          Effect.map(({ agents, people }) => ({
+            agents: new Set(agents.flatMap((agent) => (agent.status === 'archived' ? [] : [agent.principalId]))),
+            people: new Set(people.map((person) => person.principalId)),
+          })),
+          Effect.orElseSucceed(() => ({ agents: new Set<string>(), people: new Set<string>() })),
+        ),
+        // Only grants in force are the agent's permissions; revoked and superseded history stays on its own page.
+        listGrants({ legalEntityId, statuses: ['active'], tenantId }).pipe(Effect.orElseSucceed(() => [])),
+      ],
+      { concurrency: 2 },
+    );
+    return { ...visible, canManage, grants };
+  });
+  const [activity, records, identity] = yield* Effect.all([activityRead, recordsRead, identityRead], {
+    concurrency: 3,
+  });
+  const recordsByModule = new Map(records.map(({ body, module }) => [module.moduleId, body] as const));
+  const native = records.flatMap(({ body, module }) =>
+    moduleActivityFromRecords({ appId: module.appId, label: module.label.cs, moduleKey: module.moduleId }, body, {
+      names: activity.names,
+      recordLinks: module.recordLinks,
+    }),
   );
   const combined = buildActivityResponse([...activity.entries, ...native], request);
-  // Same live capability as the destination. Never turn approval rights into identity-administration rights.
-  const canManage = yield* demoAccountCapability(caller).pipe(
-    Effect.map((capability) => capability.canManage),
-    Effect.orElseSucceed(() => false),
-  );
-  const visiblePrincipals = canManage
-    ? yield* (yield* CompanyDirectory).snapshot.pipe(
-        Effect.map(({ agents, people }) => ({
-          agents: new Set(agents.flatMap((agent) => (agent.status === 'archived' ? [] : [agent.principalId]))),
-          people: new Set(people.map((person) => person.principalId)),
-        })),
-        Effect.orElseSucceed(() => ({ agents: new Set<string>(), people: new Set<string>() })),
-      )
-    : { agents: new Set<string>(), people: new Set<string>() };
-  const grants = canManage ? yield* listGrants({ legalEntityId, tenantId }).pipe(Effect.orElseSucceed(() => [])) : [];
   // Identity management belongs to the Shell, independent of installed workforce modules.
-  const identityPage = canManage ? '/sprava/lide-a-role' : undefined;
+  const identityPage = identity.canManage ? '/sprava/lide-a-role' : undefined;
   return {
     ...combined,
     agents: [...new Map([...activity.agents, ...combined.agents].map((agent) => [agent.principalId, agent])).values()],
     entries: combined.entries.map((entry) => {
       const module = Option.isNone(entry.moduleKey) ? undefined : composed.byModuleId(entry.moduleKey.value);
       return resolveActivityLinks(entry, {
-        agentExists: visiblePrincipals.agents.has(entry.agentPrincipalId),
-        canManageAgents: canManage,
+        agentExists: identity.agents.has(entry.agentPrincipalId),
+        canManageAgents: identity.canManage,
         canOpenModule: module !== undefined && modules.access.has(module.moduleId),
         canReviewProposals: true,
-        grants,
+        grants: identity.grants,
         identityPage,
         module,
-        personExists: visiblePrincipals.people.has(entry.agentPrincipalId),
-        records: Option.isNone(entry.moduleKey) ? undefined : records.get(entry.moduleKey.value),
+        personExists: identity.people.has(entry.agentPrincipalId),
+        records: Option.isNone(entry.moduleKey) ? undefined : recordsByModule.get(entry.moduleKey.value),
       });
     }),
     modules: [

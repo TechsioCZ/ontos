@@ -423,5 +423,6 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
     ),
     ...proposals.flatMap((row) => proposalRowToEntries(row, names, scope.modules)),
   ].filter((entry) => Option.isSome(entry.moduleKey) && scope.visibleModules.has(entry.moduleKey.value));
-  return buildActivityResponse(entries, { ...request, limit: AGENT_PAGE_SIZE + 1 });
+  // The native read already resolved the actor names; owner-engine history reuses them without a second read.
+  return { ...buildActivityResponse(entries, { ...request, limit: AGENT_PAGE_SIZE + 1 }), names };
 });
