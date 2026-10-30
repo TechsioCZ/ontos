@@ -22,6 +22,7 @@
     "stage:bootstrap-accounts": "node scripts/bootstrap-stage-accounts.mts",
     "test:e2e": "playwright test",
     "test:integration": "rstest --project integration",
+    "test:operator": "rstest --project operator --pool.maxWorkers 1",
     "test:unit": "rstest --project unit"
   },
   "dependencies": {

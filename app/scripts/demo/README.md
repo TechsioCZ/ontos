@@ -341,6 +341,10 @@ test needs an environment CI does not provision; prepare that environment first:
 
 Run one of them with `pnpm test:operator scripts/integration/<file>`.
 
+The people-model scratch proofs need the same scratch database and local SpiceDB, and also rewrite its schema:
+`pnpm --filter @app/core-runtime test:operator` runs the company membership and agent profile, operator and status
+lifecycles, and `pnpm --filter @app/shell-super-app test:operator` runs the person invitation lifecycle.
+
 ## Known issues
 
 - `pnpm authorization:provision-current-actions` requires an owner-only v3 policy file through

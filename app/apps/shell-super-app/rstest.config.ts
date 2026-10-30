@@ -58,6 +58,20 @@ const swc = {
   jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
 } as const;
 
+// The person-invitation proof needs a migrated people_model_scratch_* database and a local SpiceDB whose schema it
+// rewrites; no gate provisions one. `pnpm test:operator` runs it (app/scripts/demo/README.md).
+const operatorTests = ['tests/integration/person-invitation-runtime.test.ts'];
+const integration = {
+  source: {
+    define: {
+      ULTRAMODERN_SITE_URL: encodedSiteUrl,
+    },
+  },
+  testEnvironment: 'node' as const,
+  testTimeout: 30_000,
+  tools: { rspack: { externals: [externalizeRuntimeDependencies, externalizeCoreRuntime] }, swc },
+};
+
 export default defineConfig({
   output: { distPath: path.join(tmpdir(), `ontos-shell-rstest-${process.pid}`) },
   performance: { buildCache: false },
@@ -93,16 +107,15 @@ export default defineConfig({
       tools: { rspack: { externals: [externalizeRuntimeDependencies] } },
     },
     {
+      ...integration,
+      exclude: operatorTests,
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
-      source: {
-        define: {
-          ULTRAMODERN_SITE_URL: encodedSiteUrl,
-        },
-      },
-      testEnvironment: 'node',
-      testTimeout: 30_000,
-      tools: { rspack: { externals: [externalizeRuntimeDependencies, externalizeCoreRuntime] }, swc },
+    },
+    {
+      ...integration,
+      include: operatorTests,
+      name: 'operator',
     },
   ],
 });
