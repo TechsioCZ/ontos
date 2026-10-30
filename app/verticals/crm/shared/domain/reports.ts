@@ -334,10 +334,6 @@ const exclusionOf = (order: ImportedOrder): ExclusionReason | undefined => {
   return undefined;
 };
 
-/** Orders that count into confirmed figures: paired, not an undecided or confirmed duplicate. */
-export const confirmedOrders = (state: CrmState) =>
-  state.imports.orders.filter((order) => exclusionOf(order) === undefined);
-
 const reportGroup = ({
   accumulator,
   key,

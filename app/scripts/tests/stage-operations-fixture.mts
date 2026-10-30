@@ -460,16 +460,6 @@ export const fakeStage = (initial: FakeStageInitial): FakeStage => {
   return stage;
 };
 
-const MUTATING_ZCLI = /^zcli (?:project (?:create|service-import)|service delete|push)/u;
-const MUTATING_GH = /^gh (?:variable set|secret set|workflow run|api -X)/u;
-
-/** Commands that change Zerops, GitHub or a Worker (as opposed to reads). */
-export const mutatingCommands = (commands: readonly OpsCommand[]) =>
-  commands.filter((command) => {
-    const rendered = renderCommand(command);
-    return MUTATING_ZCLI.test(rendered) || MUTATING_GH.test(rendered) || rendered.includes('wrangler secret');
-  });
-
 // ---------------------------------------------------------------------------------------------
 // Zerops REST API
 

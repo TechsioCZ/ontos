@@ -3,7 +3,7 @@
 import { formatDateTime } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Effect, Option, Schema, DateTime as DateTimeModule } from 'effect';
+import { Effect, Schema, DateTime as DateTimeModule } from 'effect';
 import { FileIdSchema } from '../../shared/domain/common.ts';
 import type { DocumentRecord, SubjectRef } from '../../shared/domain/documents.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
@@ -185,23 +185,6 @@ export const fetchFileObjectUrl = Effect.fn('FacilityOperations.fetchFileObjectU
     },
   });
 });
-
-const calendarEpochMillis = (date: string) => {
-  const year = Number(date.slice(0, 4));
-  return DateTimeModule.make({
-    day: Number(date.slice(8, 10)),
-    month: Number(date.slice(5, 7)),
-    // Date.UTC treats years 0–99 as 1900–1999; retain that existing conversion.
-    year: year >= 0 && year <= 99 ? year + 1900 : year,
-  }).pipe(
-    Option.map(DateTimeModule.toEpochMillis),
-    Option.getOrElse(() => Number.NaN),
-  );
-};
-
-/** Whole days from today (Europe/Prague business date) to an ISO date; negative when in the past. */
-export const daysUntil = (isoDate: string, today: string) =>
-  Math.round((calendarEpochMillis(isoDate) - calendarEpochMillis(today)) / 86_400_000);
 
 /** Today's business date in Prague as `YYYY-MM-DD`. */
 const pragueDateFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });

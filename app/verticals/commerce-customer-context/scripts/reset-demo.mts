@@ -6,7 +6,7 @@
 //   - one COUNTERPARTY purchasing profile per seeded customer (reused by Counterparty),
 //   - exactly one current segment membership per seeded customer; any other segment membership of a seeded
 //     customer (for example one made in the UI) is deleted.
-import { NodeServices } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { customerSegmentDefinitions } from '@app/party-registry/api/client';
 import type { CustomerSegmentCode } from '@app/party-registry/api/client';
@@ -258,4 +258,4 @@ const command = Command.make(
 const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(NodeServices.layer),
 );
-await Effect.runPromise(Effect.scoped(Layer.build(runtimeLive)));
+NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));

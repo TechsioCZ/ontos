@@ -20,13 +20,6 @@ const externalizeRuntimeDependencies = (
   { request }: Rspack.ExternalItemFunctionData,
   resolveExternal: (error?: Error, external?: string) => void,
 ): void => {
-  if (request === 'cloudflare:workers' || request?.endsWith('/fixtures/worker-environment.ts') === true) {
-    resolveExternal(
-      undefined,
-      `module-import ${new URL('tests/fixtures/worker-environment.ts', import.meta.url).href}`,
-    );
-    return;
-  }
   resolveExternal(
     undefined,
     request !== undefined && /^(?:@better-auth\/|better-auth(?:\/|$))/u.test(request)

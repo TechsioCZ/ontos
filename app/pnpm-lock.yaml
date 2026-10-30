@@ -4465,9 +4465,6 @@ importers:
       effect-rstest:
         specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
         version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
-      jose:
-        specifier: 6.2.5
-        version: 6.2.5
       pg:
         specifier: 8.22.0
         version: 8.22.0

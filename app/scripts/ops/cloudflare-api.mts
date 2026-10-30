@@ -86,7 +86,6 @@ const RulesetRuleSchema = Schema.Struct({
   id: Schema.NonEmptyString,
   ref: optional(Schema.String),
 });
-export type CloudflareRulesetRule = typeof RulesetRuleSchema.Type;
 
 const RulesetSchema = Schema.Struct({ id: Schema.NonEmptyString, rules: optional(Schema.Array(RulesetRuleSchema)) });
 export type CloudflareRuleset = typeof RulesetSchema.Type;
@@ -287,9 +286,6 @@ interface VpcServiceBody {
   readonly tls_settings: { readonly cert_verification_mode: VpcCertificateVerification };
   readonly type: 'http' | 'tcp';
 }
-
-/** The check Workers VPC applies when a service names none. */
-export const VPC_CERT_VERIFICATION_MODE: VpcCertificateVerification = 'verify_full';
 
 /** The body Wrangler sends for `hyperdrive create --service-id … --caching-disabled`; secrets are revealed only here. */
 const hyperdriveBody = (spec: HyperdriveSpec) => ({
@@ -702,9 +698,3 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
 });
 
 export const CloudflareApiLive = Layer.effect(CloudflareApi, makeCloudflareApi);
-
-/** Independently scoped Zone Read probe for a narrower token, without reusing the account API Layer. */
-export const CloudflareZoneApi = Context.Service<Pick<CloudflareApiService, 'findZoneId'>>(
-  '@app/scripts/ops/cloudflare-api/CloudflareZoneApi',
-);
-export const CloudflareZoneApiLive = Layer.effect(CloudflareZoneApi, makeCloudflareApi);

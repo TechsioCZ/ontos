@@ -45,8 +45,7 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "pg": "8.22.0",
-    "typescript": "7.0.2",
-    "jose": "6.2.5"
+    "typescript": "7.0.2"
   },
   "modernjs": {
     "preset": "presetUltramodern",

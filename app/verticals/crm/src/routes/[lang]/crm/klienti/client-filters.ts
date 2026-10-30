@@ -42,8 +42,6 @@ export const kpiMetricIds = [
 ] as const;
 export type ClientMetric = (typeof kpiMetricIds)[number];
 
-export const defaultMetricId: ClientMetric = 'activeClients';
-
 export const KPI_ALL = 'all';
 export const KPI_UNASSIGNED = 'none';
 

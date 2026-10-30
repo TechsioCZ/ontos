@@ -7,7 +7,7 @@ import type {
   Schema,
 } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
 import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
@@ -98,8 +98,6 @@ export type ShellAuthenticationClient = HttpApiClient.Client<
 export interface ShellAuthenticationClientOptions {
   readonly baseUrl?: string | URL;
   readonly cookie?: string;
-  /** Transport for server rendering on Workers (the Shell's self service binding); the global fetch otherwise. */
-  readonly fetch?: typeof globalThis.fetch;
   readonly locale?: string;
 }
 
@@ -192,16 +190,10 @@ const invokeShellAuthenticationClient = <Success, Failure>(
   options: ShellAuthenticationClientOptions,
   operation: (client: ShellAuthenticationClient) => Effect.Effect<Success, Failure>,
 ): Effect.Effect<Success, Failure> =>
-  options.fetch === undefined
-    ? shellAuthenticationClient.pipe(
-        Effect.flatMap(operation),
-        Effect.provideService(ShellAuthenticationRequestOptions, options),
-      )
-    : shellAuthenticationClient.pipe(
-        Effect.flatMap(operation),
-        Effect.provideService(ShellAuthenticationRequestOptions, options),
-        Effect.provideService(FetchHttpClient.Fetch, options.fetch),
-      );
+  shellAuthenticationClient.pipe(
+    Effect.flatMap(operation),
+    Effect.provideService(ShellAuthenticationRequestOptions, options),
+  );
 
 export const signIn = (
   payload: SignInPayload,

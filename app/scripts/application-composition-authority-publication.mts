@@ -135,23 +135,6 @@ export const ApplicationCompositionReadinessSchema = Schema.Struct({
 });
 export type ApplicationCompositionReadiness = typeof ApplicationCompositionReadinessSchema.Type;
 
-/** An observation selects a retry target; only the locked native CAS can authorize resealing. */
-export const migratedRevisionForSchemaRetry = (
-  result: ApplicationCompositionReadiness,
-  exitCode: number,
-): string | undefined =>
-  exitCode === 1 &&
-  result.status === 'blocked' &&
-  result.reason === REPLACEMENT_PUBLICATION_REQUIRED &&
-  result.authority?.phase === 'migrated' &&
-  result.authority.durableWorkAdmission === 'closed' &&
-  /^[a-f0-9]{64}$/u.test(result.authority.revision) &&
-  result.blockers?.durable === 0 &&
-  result.blockers.messages === 0 &&
-  result.blockers.deliveries === 0
-    ? result.authority.revision
-    : undefined;
-
 const unknownReadiness = (
   reason: typeof DIAGNOSTIC_TIMEOUT | typeof DIAGNOSTIC_UNAVAILABLE,
 ): ApplicationCompositionReadiness => ({ advisoryOnly: true, reason, status: 'unknown' });
@@ -176,67 +159,6 @@ export const withApplicationCompositionReadinessDeadline = <Failure, Requirement
       isSqlError(defect) ? Effect.succeed(unknownReadiness(DIAGNOSTIC_UNAVAILABLE)) : Effect.die(defect),
     ),
   );
-
-/** Advisory SELECTs only: no lock, settlement, renewal, admission write, or native drain transition. */
-export const readApplicationCompositionReadiness = Effect.gen(function* readPublicationReadiness() {
-  const database = yield* CoreDatabase;
-  const [schema] = yield* database.executor.execute<{ readonly initialized: boolean }>(
-    sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
-    'objects',
-  );
-  if (!schema?.initialized) {
-    return {
-      advisoryOnly: true,
-      reason: AUTHORITY_MISSING,
-      status: 'unknown',
-    } satisfies ApplicationCompositionReadiness;
-  }
-  // One statement observes authority and the global durable/outbox predicate in one snapshot.
-  const [row] = yield* database.executor.execute<{
-    readonly admission: 'open' | 'closed';
-    readonly deliveries: number;
-    readonly durable: number;
-    readonly fresh: boolean;
-    readonly messages: number;
-    readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
-    readonly revision: string;
-  }>(
-    sql`select phase, revision, durable_work_admission as admission,
-    valid_until > clock_timestamp() as fresh,
-    (select count(*)::integer from (select 1 from ${applicationCompositionDurableWork} limit 11) d) as durable,
-    (select count(*)::integer from (select 1 from ${outboxMessages} where matched_at is null limit 11) m) as messages,
-    (select count(*)::integer from (select 1 from ${outboxDeliveries} where status <> 'done' limit 11) d) as deliveries
-    from ${applicationCompositionAuthority} where authority_key = 'active'`,
-    'objects',
-  );
-  if (row === undefined) {
-    return {
-      advisoryOnly: true,
-      reason: AUTHORITY_MISSING,
-      status: 'unknown',
-    } satisfies ApplicationCompositionReadiness;
-  }
-  const result = {
-    authority: { durableWorkAdmission: row.admission, phase: row.phase, revision: row.revision },
-    blockers: { deliveries: row.deliveries, durable: row.durable, messages: row.messages },
-  };
-  let reason: ApplicationCompositionReadiness['reason'] = 'drained';
-  if (row.phase === 'migrated') {
-    reason = REPLACEMENT_PUBLICATION_REQUIRED;
-  } else if (row.phase === 'sealed') {
-    reason = 'authority-sealed';
-  } else if (!row.fresh) {
-    reason = 'authority-expired';
-  } else if (row.durable + row.messages + row.deliveries > 0) {
-    reason = 'pending-work';
-  }
-  return {
-    ...result,
-    advisoryOnly: true,
-    reason,
-    status: reason === 'drained' ? 'ready' : 'blocked',
-  } satisfies ApplicationCompositionReadiness;
-});
 
 /** Logs only controlled phase names and explicit blocker metadata, never request bodies or credentials. */
 export const withApplicationCompositionPublicationProgress = <
@@ -377,18 +299,6 @@ export const withApplicationCompositionPublicationLock = <Value, Failure, Requir
     { key: "hashtextextended('ontos.application-composition-publication', 0)", params: [] },
     publication,
   );
-
-/**
- * An immutable application release upload registers nothing in the database, so distinct releases upload in
- * parallel. Only the same release identity is serialized, keeping its absence check, upload and readback atomic.
- */
-export const withImmutableApplicationReleaseIdentityLock =
-  (releaseIdentity: string) =>
-  <Value, Failure, Requirements>(upload: Effect.Effect<Value, Failure, Requirements>) =>
-    withSessionAdvisoryLock(
-      { key: 'hashtextextended($1, 0)', params: [`ontos.immutable-application-release:${releaseIdentity}`] },
-      upload,
-    );
 
 // Live runtimes keep running short transactions, such as the Outbox matcher, so one snapshot can
 // catch one in flight. Waiting for a quiet snapshot is still only an observation; owner locks fence.
@@ -659,43 +569,6 @@ export const resumeApplicationCompositionDurableWork = Effect.fn('ApplicationCom
   },
 );
 
-/** Checks a completed migration without changing authority or running another migration. */
-export const verifyMigratedApplicationCompositionForPublication = Effect.fn(
-  'ApplicationCompositionAuthority.verifyMigratedForPublication',
-)(function* verifyMigratedForPublication(expectedRevision: string) {
-  if (!/^[a-f0-9]{64}$/u.test(expectedRevision)) {
-    return yield* unavailable('An exact retired Application Composition revision is required');
-  }
-  const database = yield* CoreDatabase;
-  return yield* withApplicationCompositionPublicationLock(
-    Effect.gen(function* verifyCompletedMigrationAuthority() {
-      const [schema] = yield* database.executor.execute<{ readonly initialized: boolean }>(
-        sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
-        'objects',
-      );
-      if (!schema?.initialized) {
-        return yield* unavailable('Replacement publication requires an existing migrated authority');
-      }
-      const [current] = yield* database.executor
-        .select({
-          durableWorkAdmission: applicationCompositionAuthority.durableWorkAdmission,
-          phase: applicationCompositionAuthority.phase,
-          revision: applicationCompositionAuthority.revision,
-        })
-        .from(applicationCompositionAuthority)
-        .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-      if (
-        current?.phase !== 'migrated' ||
-        current.revision !== expectedRevision ||
-        current.durableWorkAdmission !== 'closed'
-      ) {
-        return yield* unavailable('Replacement publication requires the exact migrated and closed retired authority');
-      }
-      return yield* Effect.void;
-    }),
-  );
-});
-
 /** Sealing is committed before the migration; the session lock remains held until its native callback finishes. */
 export const runApplicationCompositionMigration = Effect.fn('ApplicationCompositionAuthority.migrate')(
   function* runApplicationCompositionMigration<Value, Failure, Requirements, InitialFailure, InitialRequirements>(
@@ -845,30 +718,6 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
     );
   },
 );
-
-/** Run before incompatible migrations; first publication repeats the same provider and transaction proof. */
-export const verifyInitialApplicationCompositionPublicationEnvironment = Effect.fn(
-  'ApplicationCompositionAuthority.verifyInitialEnvironment',
-)(function* verifyInitialApplicationCompositionPublicationEnvironment<Failure, Requirements>(
-  verifyInitialCutover: Effect.Effect<void, Failure, Requirements>,
-) {
-  const database = yield* CoreDatabase;
-  const [schema] = yield* database.executor.execute<{ readonly initialized: boolean }>(
-    sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
-    'objects',
-  );
-  if (schema?.initialized) {
-    const [current] = yield* database.executor
-      .select({ revision: applicationCompositionAuthority.revision })
-      .from(applicationCompositionAuthority)
-      .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-    if (current !== undefined) {
-      return yield* Effect.void;
-    }
-  }
-  yield* verifyInitialCutover;
-  return yield* requireNoLegacyRuntimeTransactions();
-});
 
 /**
  * Draining commits before promotion, so an outstanding delivery cannot undo the write fence.

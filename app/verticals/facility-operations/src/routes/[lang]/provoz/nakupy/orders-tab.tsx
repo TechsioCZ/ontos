@@ -2,7 +2,7 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import { Effect, Result, Schema } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // S06: purchase orders list + detail panel (lines with delivered/remaining, deliveries, invoices, history).
-import { DetailList, EmptyState, SectionCard, SidePanel, formatDate, surfaceTileClassName } from '@app/admin-ui';
+import { DetailList, SectionCard, SidePanel, formatDate, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -1144,9 +1144,4 @@ export const OrderPanel = ({
       </div>
     </SidePanel>
   );
-};
-
-export const EmptyOrders = () => {
-  const k = usePurchasingT();
-  return <EmptyState title={k('empty.orders')} />;
 };

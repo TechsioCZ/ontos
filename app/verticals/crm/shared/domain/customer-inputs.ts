@@ -11,14 +11,6 @@ export const CustomerInputIdSchema = Schema.Literals(customerInputIds);
 export type CustomerInputId = typeof CustomerInputIdSchema.Type;
 
 export const CustomerInputStatusSchema = Schema.Literals(['requested', 'received', 'approved', 'not_needed']);
-type CustomerInputStatus = typeof CustomerInputStatusSchema.Type;
-
-export const customerInputStatusLabels = {
-  approved: 'Odsouhlaseno zákazníkem',
-  not_needed: 'Už není potřeba',
-  received: 'Dodáno – čeká na odsouhlasení',
-  requested: 'Vyžádáno – čeká na zákazníka',
-} satisfies Record<CustomerInputStatus, string>;
 
 /** One state change of an input, newest last. */
 export const CustomerInputChangeSchema = Schema.Struct({
@@ -51,68 +43,6 @@ export type CustomerInput = typeof CustomerInputSchema.Type;
 export const CustomerInputsSliceSchema = Schema.Array(CustomerInputSchema);
 export type CustomerInputsSlice = typeof CustomerInputsSliceSchema.Type;
 
-interface CustomerInputDefinition {
-  /** What must not be declared done without it. */
-  readonly blocks: string;
-  /** What may be shown until the input arrives. */
-  readonly demoFallback: string;
-  readonly id: CustomerInputId;
-  /** What the customer has to supply / decide. */
-  readonly title: string;
-}
-
-/** CRM.md §6 table, verbatim meaning. */
-export const customerInputDefinitions: readonly CustomerInputDefinition[] = [
-  {
-    blocks: 'Živé propojení s reálným e-shopem či účetnictvím',
-    demoFallback: 'Import dle vzorové CSV šablony a demo data',
-    id: 'R01',
-    title: 'Vzorek objednávky a změny stavu; CSV, API nebo webhook; přístup / testovací prostředí',
-  },
-  {
-    blocks: 'Správné odstranění duplicit napříč zdroji',
-    demoFallback: 'Zdrojově označené záznamy; nejasné případy k prověření',
-    id: 'R02',
-    title: 'Určení autoritativního zdroje; pravidlo korelace e-shop / účetnictví',
-  },
-  {
-    blocks: 'Automatické spolehlivé rozpoznání všech klientů',
-    demoFallback: 'Ruční přiřazení objednávek',
-    id: 'R03',
-    title: 'Externí zákaznické ID a schválené mapování na Party / Counterparty',
-  },
-  {
-    blocks: 'Čistá tržba, definitivní počet dokončených prodejů; statistiky podle významu stavů',
-    demoFallback: 'Surové stavy; počty a hodnoty evidovaných objednávek',
-    id: 'R04',
-    title: 'Význam všech stavů, storen, vratek, změny cen',
-  },
-  {
-    blocks: 'Prodejnost konkrétních výrobků',
-    demoFallback: 'Souhrn podle objednávek a klientů',
-    id: 'R05',
-    title: 'Dostupnost položek, SKU a množství',
-  },
-  {
-    blocks: 'Definitivní konfigurace obchodních oprávnění',
-    demoFallback: 'Jednoduché přidělení a omezený přístup',
-    id: 'R06',
-    title: 'Organizace týmu, pravidla přidělení a sdílení klientů',
-  },
-  {
-    blocks: 'Automatický výběr klientů k telefonátu (C07)',
-    demoFallback: 'Ruční plán, počty a data objednávek',
-    id: 'R07',
-    title: 'Pravidlo opakovanosti a doporučení + testovací příklady',
-  },
-  {
-    blocks: 'Bezpodmínečné produkční zpracování osobních údajů',
-    demoFallback: 'Testovací / anonymní data, omezené role',
-    id: 'R08',
-    title: 'Pravidla ochrany kontaktů, právní titul, retenční doby',
-  },
-];
-
 /** Version of the status mapping proposal and of the CSV template the demo offers for approval. */
 export const proposedSampleVersions = new Map([
   ['R01', 'crm-orders-csv-v1'],
@@ -136,10 +66,6 @@ const defaultInput = (id: CustomerInputId): CustomerInput => {
   }
   return result;
 };
-
-/** All eight inputs: persisted state over the defaults, in R01–R08 order. */
-export const customerInputsOf = (slice: CustomerInputsSlice | undefined): readonly CustomerInput[] =>
-  customerInputIds.map((id) => slice?.find((entry) => entry.id === id) ?? defaultInput(id));
 
 export const customerInputOf = (slice: CustomerInputsSlice | undefined, id: CustomerInputId): CustomerInput =>
   slice?.find((entry) => entry.id === id) ?? defaultInput(id);

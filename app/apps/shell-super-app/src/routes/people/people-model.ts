@@ -38,12 +38,6 @@ export type PendingPeopleChange =
   | { readonly kind: 'role'; readonly result: SetPeopleRoleResponse };
 
 export const isCompanyScope = Schema.is(PeopleScopeSchema.members[1]);
-export const scopeLabel = (scope: PeopleList['scope']) =>
-  Match.value(scope).pipe(
-    Match.tag('tenant', () => 'tenant'),
-    Match.tag('company', () => 'firma'),
-    Match.exhaustive,
-  );
 export const sameScope = (a: PeopleList['scope'], b: PeopleList['scope']): boolean =>
   Match.value(a).pipe(
     Match.tag('tenant', () => Schema.is(PeopleScopeSchema.members[0])(b)),

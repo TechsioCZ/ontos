@@ -71,17 +71,6 @@ const readProposals = Effect.fn('AgentStore.readProposals')(function* readPropos
   return yield* (yield* ReadRuntime).runRead({ input, principal, registration: agentProposalQueueRead, transport });
 });
 
-export const findRunProposals = Effect.fn('AgentStore.findRunProposals')(function* findRunProposals(
-  principal: TrustedPrincipalContext,
-  runId: string,
-) {
-  return yield* Effect.forEach(
-    (yield* readProposals(principal, { mode: 'own-run', runId })).proposals,
-    (row) => toRow(row),
-    { concurrency: 1 },
-  );
-});
-
 /** Native own-recent is agent-only, company scoped and bounded to 300 rows. */
 export const listCompanyProposals = Effect.fn('AgentStore.listCompanyProposals')(function* listCompanyProposals(
   principal: TrustedPrincipalContext,
@@ -127,13 +116,6 @@ export const batchHasApprovalInProgress = Effect.fn('AgentStore.batchHasApproval
     return (yield* readProposals(principal, { batchId, mode: 'batch-state' })).approvalInProgress;
   },
 );
-
-export const isBatchReverted = Effect.fn('AgentStore.isBatchReverted')(function* isBatchReverted(
-  principal: TrustedPrincipalContext,
-  batchId: string,
-) {
-  return (yield* readProposals(principal, { batchId, mode: 'batch-state' })).batchReverted;
-});
 
 /** Whole-batch authorization also protects current caller-owned reservation evidence. */
 export const loadProposalBatch = Effect.fn('AgentStore.loadProposalBatch')(function* loadProposalBatch(
@@ -246,8 +228,6 @@ export const insertProposals = (principal: TrustedPrincipalContext, input: Comma
   mutateAgentProposals(principal, { ...input, operation: 'insert' });
 export const claimForApproval = (principal: TrustedPrincipalContext, input: Command<'claim-approval'>) =>
   mutateAgentProposals(principal, { ...input, operation: 'claim-approval' });
-export const releaseApprovalClaim = (principal: TrustedPrincipalContext, input: Command<'release-approval'>) =>
-  mutateAgentProposals(principal, { ...input, operation: 'release-approval' });
 export const markApplied = Effect.fn('AgentStore.markApplied')(function* markApplied(
   principal: TrustedPrincipalContext,
   input: Omit<Command<'mark-applied'>, 'applyResult'> & { readonly applyResult: Schema.Json },
@@ -261,8 +241,6 @@ export const markApplied = Effect.fn('AgentStore.markApplied')(function* markApp
 });
 export const markRejected = (principal: TrustedPrincipalContext, input: Command<'mark-rejected'>) =>
   mutateAgentProposals(principal, { ...input, operation: 'mark-rejected' });
-export const markFailed = (principal: TrustedPrincipalContext, input: Command<'mark-failed'>) =>
-  mutateAgentProposals(principal, { ...input, operation: 'mark-failed' });
 export const markReverted = (principal: TrustedPrincipalContext, input: Command<'mark-reverted'>) =>
   mutateAgentProposals(principal, { ...input, operation: 'mark-reverted' });
 export const markRevertFailed = (principal: TrustedPrincipalContext, input: Command<'mark-revert-failed'>) =>

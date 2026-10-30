@@ -133,8 +133,5 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
   },
 ];
 
-export const ownerRuntimeConfiguration = (unitId: string) =>
-  OWNER_RUNTIME_CONFIGURATIONS.find((configuration) => configuration.unitId === unitId);
-
 /** An owner API base under its origin: every unit serves its API below `/<unit>-api`. */
 export const unitApiBaseUrl = (origin: string, unitId: string) => `${origin}/${unitId}-api`;
