@@ -17,7 +17,7 @@ const deployment = Result.getOrThrow(
     }),
   )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8'))),
 );
-const migratorDeployment = deployment.zerops.find((service) => service.setup === 'migrator');
+const appDeployment = deployment.zerops.find((service) => service.setup === 'app');
 
 for (const owner of [
   'price-group-catalog',
@@ -46,6 +46,7 @@ for (const owner of [
     const verification = migrator.indexOf("'scripts/verify-application-db-schema.mts'");
     expect(migration).toBeGreaterThan(-1);
     expect(verification).toBeGreaterThan(migration);
-    expect(migratorDeployment?.build?.deployFiles).toContain(`app/verticals/${owner}`);
+    // The application container runs the migrator from the whole workspace, so every owner ships with it.
+    expect(appDeployment?.build?.deployFiles).toContain('app/');
   });
 }

@@ -20,10 +20,6 @@
   "scripts": {
     "dev": "modern dev",
     "build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target cloudflare-dist && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "node ../../scripts/immutable-shell-release.mts ingress-deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app shell-super-app",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "db:generate": "drizzle-kit generate --config drizzle.auth.config.ts",
@@ -99,8 +95,7 @@
     "happy-dom": "20.8.3",
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "7.0.2",
-    "wrangler": "4.137.0"
+    "typescript": "7.0.2"
   },
   "modernjs": {
     "preset": "presetUltramodern",

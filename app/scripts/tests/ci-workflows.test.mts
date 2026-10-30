@@ -105,7 +105,6 @@ const readGatesWorkflow = () =>
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
-const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
 /** The gates that start once the merge queue proof is checked. */
@@ -115,9 +114,8 @@ const ROOT_GATE_JOBS = [
   FORMAT_AND_LINT_JOB,
   'service-integration',
   NODE_ARTIFACT_BUILD_JOB,
-  CLOUDFLARE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** Every gate job; each target's artifact proofs run inside its own build shards. */
+/** Every gate job; the node artifact proofs run inside the node build shards. */
 const GATE_JOBS = ROOT_GATE_JOBS;
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
@@ -225,7 +223,6 @@ const ArtifactBuildJobSchema = Schema.Struct({
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
     [NODE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
   }),
 });
@@ -244,10 +241,7 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
   );
   const units = [topology.shell, ...topology.verticals].map((unit) => unit.path);
-  for (const [job, script] of [
-    [NODE_ARTIFACT_BUILD_JOB, 'build'],
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB, 'cloudflare:build'],
-  ] as const) {
+  for (const [job, script] of [[NODE_ARTIFACT_BUILD_JOB, 'build']] as const) {
     const { steps, strategy } = jobs[job];
     // Every shard builds units, and the target's shards build every unit once, with the target's script.
     expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
@@ -257,34 +251,13 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
   }
 });
 
-it('supplies a placeholder public URL for every unit in Cloudflare builds and output proofs', () => {
-  const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
-    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
-  );
-  const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
-    JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
-  );
-  for (const name of [
-    "Build the shard's Cloudflare artifacts one unit at a time",
-    'Generate federated types and verify the Worker outputs',
-  ]) {
-    const step = jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB].steps.find((candidate) => candidate.name === name);
-    expect(step, name).toBeDefined();
-    for (const { id } of [topology.shell, ...topology.verticals]) {
-      const variable = `ULTRAMODERN_PUBLIC_URL_${id.replaceAll('-', '_').toUpperCase()}`;
-      expect(step?.env?.[variable], `${name}: ${variable}`).toBe(`https://${id}.invalid`);
-    }
-  }
-});
-
 const readArtifactBuildJobs = () =>
   Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
 
-it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
+it('proves the node target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
   for (const [job, proofs, artifacts, downloadCondition] of [
     [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*', NODE_PROOF_CONDITION],
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs'], 'cloudflare-units-*', "matrix.proof != 'none'"],
   ] as const) {
     const { name, permissions, steps, strategy } = jobs[job];
     // Each proof runs on exactly one shard; the other shards only build.
@@ -677,7 +650,7 @@ it('initializes every fresh CI database before reconcile bootstrap without chang
       condition: null,
       consumers: [
         'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
-        'Run the assembled stage migrator artifact against the fresh database',
+        'Run the stage migrator once against the fresh database',
         'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
       ],
       job: jobs['service-integration'],
@@ -715,10 +688,10 @@ it('initializes every fresh CI database before reconcile bootstrap without chang
       expect(step.run ?? '').not.toContain('initialize-local');
     }
   }
-  // Service integration and browser share the unconditional initializer. The artifact still proves stage.
+  // Service integration and browser share the unconditional initializer. The migrator run still proves stage.
   const integration = jobs['service-integration'].steps;
   expect(integration.find(({ name }) => name.startsWith('Apply and verify Core'))?.if).toBeUndefined();
-  const migrator = integration.find(({ name }) => name.startsWith('Run the assembled stage migrator'));
+  const migrator = integration.find(({ name }) => name.startsWith('Run the stage migrator once'));
   expect(migrator?.if).toBe(INTEGRATION_SUITE_CONDITION);
   expect(migrator?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
 });

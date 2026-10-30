@@ -58,31 +58,27 @@ export const CATEGORY_PAGE_SIZE = 24;
 // Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
 const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
 
-const productPages = catalogCache<ProductPage>("products", {
-  storage: "isolate",
+const productPages = catalogCache<ProductPage>({
   freshMs: CATALOG_CACHE_MS,
   staleMs: CATALOG_CACHE_MS,
   keepMs: CATALOG_CACHE_MS,
   limit: 100,
 });
-const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
-  storage: "shared",
+const categoryTrees = catalogCache<CatalogCategory[]>({
   freshMs: CATEGORY_CACHE_MS,
   staleMs: CATEGORY_STALE_MS,
   keepMs: CATEGORY_KEEP_MS,
   limit: 4,
 });
 /** Only price-free active-category/child content is retained for the navigation window. */
-const categoryContent = catalogCache<CatalogCategory[]>("category-details", {
-  storage: "isolate",
+const categoryContent = catalogCache<CatalogCategory[]>({
   freshMs: CATEGORY_CACHE_MS,
   staleMs: CATEGORY_STALE_MS,
   keepMs: CATEGORY_KEEP_MS,
   limit: 60,
 });
 /** The first category listing still expires strictly after ten seconds. */
-const categoryPages = catalogCache<CategoryPage>("category-content", {
-  storage: "isolate",
+const categoryPages = catalogCache<CategoryPage>({
   freshMs: CATALOG_CACHE_MS,
   staleMs: CATALOG_CACHE_MS,
   keepMs: CATALOG_CACHE_MS,

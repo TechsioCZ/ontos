@@ -81,7 +81,7 @@ Separation rules:
 
 - No process except the migrator holds the Party request credential together with any other credential.
 - Only Shell and the migrator hold the issuer credential.
-- `scripts/tests/zerops-deployment-contract.test.mts` enforces this on `zerops.yaml` and `zerops-providers.yaml`. It also checks that each `${migrator_*_DB_PASSWORD}` reference appears only in the migrator and the owning services, and that no project-level variable carries a database credential.
+- `scripts/tests/zerops-deployment-contract.test.mts` enforces this on `zerops.yaml`. It also checks that each `${migrator_*_DB_PASSWORD}` reference appears only in the application container, and that no project-level variable carries a database credential.
 - Local development keeps every key in one `app/.env`, so locally this is not a boundary.
 
 Unchanged:

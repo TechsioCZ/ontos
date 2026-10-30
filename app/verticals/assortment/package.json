@@ -36,10 +36,6 @@
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts assortment && modern dev",
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical assortment --target dist && ultramodern-create ultramodern public-surface --app assortment --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical assortment --target cloudflare-dist && ultramodern-create ultramodern public-surface --app assortment --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app assortment",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -97,8 +93,7 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "tailwindcss": "^4.3.3",
-    "typescript": "7.0.2",
-    "wrangler": "4.137.0"
+    "typescript": "7.0.2"
   },
   "modernjs": {
     "preset": "presetUltramodern",

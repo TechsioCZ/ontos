@@ -14,28 +14,12 @@ const workerStartCommand = `node --experimental-strip-types ./${workerEntry}`;
 export const OUTBOX_WORKER_BUNDLE = 'worker.mjs';
 
 /**
- * The one Zerops service that runs every generated MicroVertical Outbox Worker entry in one process.
- * The `host` Outbox Worker mode runs it instead of the dedicated per-owner worker services.
+ * The one Outbox Worker host: a single process that runs every hosted owner's generated entry.
  */
 export const OUTBOX_WORKER_HOST = Object.freeze({
   entry: 'scripts/outbox-worker-host.generated.mts',
   id: 'outbox-worker-host',
-  serviceIdEnv: 'ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID',
-  stageSetup: 'outbox-worker-host',
 });
-
-/** Dedicated Core service; its graph reconciler shares Shell's published release identity. */
-export const CORE_SYSTEM_OUTBOX_WORKER = Object.freeze({
-  entry: 'scripts/core-system-outbox-worker.generated.mts',
-  id: 'core-system-worker',
-  ownerId: 'shell-super-app',
-  serviceIdEnv: 'ZEROPS_CORE_SYSTEM_WORKER_SERVICE_ID',
-  stageSetup: 'core-system-worker',
-});
-
-/** Dedicated mode runs module workers and Core; host mode runs all their entries in one process. */
-export const OutboxWorkerModeSchema = Schema.Literals(['dedicated', 'host']);
-/** @typedef {typeof OutboxWorkerModeSchema.Type} OutboxWorkerMode */
 
 const OwnerPackageSchema = Schema.Struct({
   exports: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -47,27 +31,19 @@ const OwnerPackageSchema = Schema.Struct({
   ),
 });
 
-/**
- * The Zerops setup of a topology owner's dedicated Outbox Worker service, deployed in the `dedicated` mode.
- * @param {string} ownerId Topology vertical id.
- * @returns {string} Dedicated worker setup.
- */
-export const dedicatedOutboxWorkerSetup = (ownerId) => `${ownerId}-worker`;
-
 /** @typedef {{ readonly id: string, readonly package: string, readonly path: string }} OutboxWorkerVertical */
 /** @typedef {{ readonly _tag: 'OutboxWorkerDeliveryInvalid', readonly reason: string }} OutboxWorkerDeliveryInvalidValue */
-/** @typedef {{ readonly entry: string, readonly hostEntry: string, readonly hostExport: string, readonly id: string, readonly ownerId: string, readonly packageName: string, readonly path: string, readonly serviceIdEnv: string, readonly stageSetup: string }} OutboxWorkerDelivery */
-/** @typedef {Pick<OutboxWorkerDelivery, 'hostEntry' | 'hostExport' | 'ownerId' | 'packageName' | 'path'>} OutboxWorkerHostedOwner */
-/** @typedef {typeof OUTBOX_WORKER_HOST & { readonly coreOwner: OutboxWorkerHostedOwner, readonly owners: readonly OutboxWorkerDelivery[] }} OutboxWorkerHostDelivery */
+/** @typedef {{ readonly hostEntry: string, readonly hostExport: string, readonly ownerId: string, readonly packageName: string, readonly path: string }} OutboxWorkerHostedOwner */
+/** @typedef {typeof OUTBOX_WORKER_HOST & { readonly coreOwner: OutboxWorkerHostedOwner, readonly owners: readonly OutboxWorkerHostedOwner[] }} OutboxWorkerHostDelivery */
 
 class OutboxWorkerDeliveryInvalid extends Schema.TaggedError()('OutboxWorkerDeliveryInvalid', {
   reason: Schema.String,
 }) {}
 
 /**
- * A generated worker host is the deployment capability; topology owns its identity.
+ * A topology owner is hosted when its package declares the worker start and publishes its host entry export.
  *
- * @type {(root: string, vertical: OutboxWorkerVertical) => Effect.Effect<OutboxWorkerDelivery | undefined, OutboxWorkerDeliveryInvalidValue | Schema.SchemaError | import('effect/PlatformError').PlatformError, FileSystem.FileSystem | Path.Path>}
+ * @type {(root: string, vertical: OutboxWorkerVertical) => Effect.Effect<OutboxWorkerHostedOwner | undefined, OutboxWorkerDeliveryInvalidValue | Schema.SchemaError | import('effect/PlatformError').PlatformError, FileSystem.FileSystem | Path.Path>}
  */
 export const outboxWorkerDelivery = Effect.fn('outboxWorkerDelivery')(
   /**
@@ -108,15 +84,11 @@ export const outboxWorkerDelivery = Effect.fn('outboxWorkerDelivery')(
     }
 
     return {
-      entry: workerEntry,
       hostEntry: workerHostEntry,
       hostExport: `${vertical.package}/${OUTBOX_WORKER_HOST_EXPORT.slice(2)}`,
-      id: dedicatedOutboxWorkerSetup(vertical.id),
       ownerId: vertical.id,
       packageName: vertical.package,
       path: vertical.path,
-      serviceIdEnv: `ZEROPS_${vertical.id.replaceAll('-', '_').toUpperCase()}_WORKER_SERVICE_ID`,
-      stageSetup: dedicatedOutboxWorkerSetup(vertical.id),
     };
   },
 );

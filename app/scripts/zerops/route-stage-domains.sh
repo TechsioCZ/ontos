@@ -1,28 +1,22 @@
 #!/usr/bin/env bash
-# Routes the stage hostnames to Zerops: a Zerops public HTTP routing per service (Let's Encrypt certificate) and a
-# proxied AAAA record to the project IPv6 in the Cloudflare zone, which keeps Cloudflare's WAF and Access in front.
-# A hostname still attached to a Worker custom domain is detached first (the Worker itself stays). Idempotent.
+# Routes the stage hostnames to Zerops: a Zerops public HTTP routing per service (Let's Encrypt certificate) and
+# DNS-only A and AAAA records in the Cloudflare zone, pointing at the shared Zerops IPv4 and the project IPv6.
+# The records are not proxied: the zone's SSL mode is `flexible`, and proxying needs an SSL `full` rule that the
+# stage token cannot create. A hostname still attached to a Worker custom domain is detached first (the Worker
+# itself stays). Idempotent.
 #
-#   CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ZONE_ID=… ZEROPS_TOKEN=… ZEROPS_PROJECT_ID=… CLOUDFLARE_ACCOUNT_ID=… \
-#     route-stage-domains.sh <hostname> <zerops-service-id> <port> [<hostname> <service-id> <port> ...]
+#   CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ZONE_ID=… CLOUDFLARE_ACCOUNT_ID=… ZEROPS_TOKEN=… ZEROPS_PROJECT_ID=… \
+#   ZEROPS_SHARED_IPV4=… route-stage-domains.sh <hostname> <zerops-service-id> <port> [<hostname> <service-id> <port> ...]
+#
+# ZEROPS_SHARED_IPV4 is the shared IPv4 address the Zerops dashboard shows for the project (the API does not).
 set -euo pipefail
 
 : "${CLOUDFLARE_API_TOKEN:?}" "${CLOUDFLARE_ZONE_ID:?}" "${CLOUDFLARE_ACCOUNT_ID:?}" "${ZEROPS_TOKEN:?}" "${ZEROPS_PROJECT_ID:?}"
+: "${ZEROPS_SHARED_IPV4:?}"
 cf='https://api.cloudflare.com/client/v4'
 zerops='https://api.app-prg1.zerops.io/api/rest/public'
 cf_auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'content-type: application/json')
 z_auth=(-H "Authorization: Bearer $ZEROPS_TOKEN" -H 'content-type: application/json')
-
-# Zerops terminates TLS itself, so Cloudflare must reach it over HTTPS ("full"); the zone default is "flexible".
-# One page rule covers every ontos-stage* hostname.
-ssl_target='ontos-stage*.web-revolution.cz/*'
-if ! curl -fsS "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/pagerules" |
-  jq -e --arg target "$ssl_target" '.result[] | select(.targets[0].constraint.value == $target)' >/dev/null; then
-  jq -n --arg target "$ssl_target" \
-    '{targets: [{target: "url", constraint: {operator: "matches", value: $target}}], actions: [{id: "ssl", value: "full"}], status: "active"}' |
-    curl -fsS -X POST "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/pagerules" -d @- >/dev/null
-  echo "Cloudflare reaches $ssl_target over HTTPS (SSL full)"
-fi
 
 ipv6="$(curl -fsS "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID" | jq -er '.publicIpV6')"
 routings="$(curl -fsS "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing?limit=100&offset=0")"
@@ -39,21 +33,26 @@ while (($# >= 3)); do
       curl -fsS -X POST "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing" -d @- >/dev/null
     echo "$host routed to Zerops service $service:$port"
   fi
-  # Cloudflare: detach a Worker custom domain, then one proxied AAAA to the project IPv6.
+  # Cloudflare: detach a Worker custom domain, then exactly one DNS-only A and AAAA.
   for domain in $(curl -fsS "${cf_auth[@]}" "$cf/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains?hostname=$host" |
     jq -r --arg host "$host" '.result[] | select(.hostname == $host) | .id'); do
     curl -fsS -X DELETE "${cf_auth[@]}" "$cf/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains/$domain" >/dev/null
     echo "$host detached from its Worker custom domain"
   done
   records="$(curl -fsS "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/dns_records?name=$host")"
-  for record in $(jq -r --arg ip "$ipv6" '.result[] | select((.type == "A" or .type == "AAAA" or .type == "CNAME") and .content != $ip) | .id' <<<"$records"); do
-    curl -fsS -X DELETE "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/dns_records/$record" >/dev/null
+  for type_and_ip in "A $ZEROPS_SHARED_IPV4" "AAAA $ipv6"; do
+    type="${type_and_ip% *}" ip="${type_and_ip#* }"
+    for record in $(jq -r --arg type "$type" --arg ip "$ip" \
+      '.result[] | select((.type == $type and (.content != $ip or .proxied)) or ($type == "A" and .type == "CNAME")) | .id' <<<"$records"); do
+      curl -fsS -X DELETE "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/dns_records/$record" >/dev/null
+    done
+    if ! jq -e --arg type "$type" --arg ip "$ip" '.result[] | select(.type == $type and .content == $ip and (.proxied | not))' \
+      <<<"$records" >/dev/null; then
+      jq -n --arg type "$type" --arg host "$host" --arg ip "$ip" '{type: $type, name: $host, content: $ip, proxied: false, ttl: 60}' |
+        curl -fsS -X POST "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/dns_records" -d @- >/dev/null
+    fi
   done
-  if ! jq -e --arg ip "$ipv6" '.result[] | select(.type == "AAAA" and .content == $ip)' <<<"$records" >/dev/null; then
-    jq -n --arg host "$host" --arg ip "$ipv6" '{type: "AAAA", name: $host, content: $ip, proxied: true, ttl: 1}' |
-      curl -fsS -X POST "${cf_auth[@]}" "$cf/zones/$CLOUDFLARE_ZONE_ID/dns_records" -d @- >/dev/null
-  fi
-  echo "$host → AAAA $ipv6 (proxied)"
+  echo "$host → A $ZEROPS_SHARED_IPV4, AAAA $ipv6 (DNS only)"
 done
 
 curl -fsS -X PUT "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/sync-public-http-routing" -d '{}' >/dev/null

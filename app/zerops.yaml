@@ -37,7 +37,6 @@ zerops:
     build:
       base: alpine@3.23
       envVariables:
-        AKROS_STANDALONE_BUILD: '1'
         NEXT_TELEMETRY_DISABLED: '1'
         STOREFRONT_IMAGE_HOSTS: ''
       prepareCommands:

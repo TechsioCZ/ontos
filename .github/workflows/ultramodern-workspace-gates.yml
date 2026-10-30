@@ -359,27 +359,6 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: mise exec -- pnpm api:check
 
-      # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
-      # Compiler also compiled server code. Production imports only the quantity-preparation client;
-      # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph. It is
-      # not a delivery artifact, so it runs here, off the build-and-proof path.
-      - name: Build Commerce for workerd with the whole Catalog client barrel
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
-          ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
-          ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 00000000000000000000000000000000
-          ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
-          ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 00000000000000000000000000000000
-          ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
-        run: |
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm --filter @app/commerce-customer-context run cloudflare:build:full-catalog-client-guard
-          grep -qF '"CatalogApiFoundation"' verticals/commerce-customer-context/dist-cloudflare/worker/__modern_bff_effect.js
-
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file. Type-aware lint of the whole tree took over four minutes on one runner, so
   # each shard runs the hook over every other tracked file (`--all-files` is `git ls-files`): together
@@ -425,8 +404,8 @@ jobs:
             <"$RUNNER_TEMP/shard-files"
           git diff --exit-code HEAD
 
-  # Two suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host
-  # artifacts followed by the integration tests (as one job ran them), and the authenticated browser tests
+  # Two suites on fresh services, run side by side: the stage-shaped migrator run and Outbox Worker host
+  # artifact followed by the integration tests (as one job ran them), and the authenticated browser tests
   # on their own freshly migrated database.
   service-integration:
     name: ${{ matrix.name }}
@@ -569,21 +548,20 @@ jobs:
           DROP ROLE ontos_runtime;
           SQL
 
-      - name: Run the assembled stage migrator artifact against the fresh database
+      - name: Run the stage migrator once against the fresh database
         if: matrix.suite == 'integration'
         working-directory: app
-        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
-        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
-        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
+        # Stage-shaped: the entry point the app host runs before it starts the owners (MIGRATOR_ONCE),
+        # bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own provider
+        # runtime role that nothing pre-creates — exactly what the stage app host receives.
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
           COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-          MIGRATOR_PORT: '8080'
+          MIGRATOR_ONCE: 'true'
           NODE_ENV: production
           SPICEDB_DATABASE_PASSWORD: spicedb
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-          ULTRAMODERN_ZEROPS_SERVICE: migrator
-        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
+        run: mise exec -- node scripts/run-zerops-migrator.mjs
 
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
         working-directory: app
@@ -607,7 +585,7 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm database-trust:audit
 
-      # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
+      # Stage-shaped: the host is materialized by its build command,
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
       # database until /ready, then drains on SIGTERM.
       - name: Build and run the Outbox Worker host artifact against the fresh database
@@ -839,194 +817,6 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm node:proof
 
-  cloudflare-artifact-build:
-    name: Build cloudflare artifacts (${{ matrix.shard }}/5)
-    needs: [queue-proof]
-    # The proving shard reads its siblings' job results.
-    permissions:
-      actions: read
-      contents: read
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5]
-        include:
-          - {
-              shard: 1,
-              proof: none,
-              units: verticals/assortment verticals/pricing verticals/property-portfolio verticals/property-leasing verticals/legal-agreements,
-            }
-          - {
-              shard: 2,
-              proof: none,
-              units: verticals/party-registry verticals/price-group-catalog verticals/availability verticals/work-tasks verticals/workforce verticals/tagging,
-            }
-          - {
-              shard: 3,
-              proof: outputs,
-              units: verticals/catalog verticals/storefront-registry verticals/crm verticals/sales-pipeline verticals/merchandise,
-            }
-          - {
-              shard: 4,
-              proof: none,
-              units: verticals/commerce-customer-context apps/shell-super-app verticals/tax verticals/facility-operations verticals/sales-insights verticals/finance-billing,
-            }
-          - {
-              shard: 5,
-              proof: none,
-              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog verticals/privacy verticals/crm-activities verticals/projects,
-            }
-    env:
-      # Placeholder data-plane IDs: locally a Worker's Hyperdrive bindings connect to the proof's
-      # PostgreSQL, its SPICEDB binding is served by a local gateway Worker and its composition KV
-      # binding is a local namespace.
-      ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
-      ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: '00000000000000000000000000000000'
-      ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
-      ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: '00000000000000000000000000000000'
-      ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-
-      - name: Build the shard's Cloudflare artifacts one unit at a time
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          SHARD_UNITS: ${{ matrix.units }}
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-          ULTRAMODERN_PUBLIC_URL_ASSORTMENT: https://assortment.invalid
-          ULTRAMODERN_PUBLIC_URL_AVAILABILITY: https://availability.invalid
-          ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_CRM: https://crm.invalid
-          ULTRAMODERN_PUBLIC_URL_CRM_ACTIVITIES: https://crm-activities.invalid
-          ULTRAMODERN_PUBLIC_URL_FACILITY_OPERATIONS: https://facility-operations.invalid
-          ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING: https://finance-billing.invalid
-          ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
-          ULTRAMODERN_PUBLIC_URL_LEGAL_AGREEMENTS: https://legal-agreements.invalid
-          ULTRAMODERN_PUBLIC_URL_MERCHANDISE: https://merchandise.invalid
-          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
-          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
-          ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
-          ULTRAMODERN_PUBLIC_URL_PROJECTS: https://projects.invalid
-          ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING: https://property-leasing.invalid
-          ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO: https://property-portfolio.invalid
-          ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS: https://sales-insights.invalid
-          ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE: https://sales-pipeline.invalid
-          ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
-          ULTRAMODERN_PUBLIC_URL_TAGGING: https://tagging.invalid
-          ULTRAMODERN_PUBLIC_URL_TAX: https://tax.invalid
-          ULTRAMODERN_PUBLIC_URL_WORK_TASKS: https://work-tasks.invalid
-          ULTRAMODERN_PUBLIC_URL_WORKFORCE: https://workforce.invalid
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          filters=()
-          for unit in "${units[@]}"; do
-            filters+=(--filter "./$unit")
-          done
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run cloudflare:build
-
-      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
-      - name: Pack the shard's build outputs
-        working-directory: app
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
-            | grep -zv '/node_modules/$' \
-            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
-
-      - name: Upload the shard's build outputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cloudflare-units-${{ matrix.shard }}
-          path: ${{ runner.temp }}/units.tar.zst
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Wait for every other Cloudflare build shard to upload its outputs
-        if: matrix.proof != 'none'
-        working-directory: app
-        timeout-minutes: 15
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh 'Build cloudflare artifacts (' 5 'Build cloudflare artifacts (${{ matrix.shard }}/5)'
-
-      - name: Download every shard's Cloudflare build outputs
-        if: matrix.proof != 'none'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: cloudflare-units-*
-          path: ${{ runner.temp }}/units
-
-      - name: Unpack the Cloudflare build outputs of every delivery unit
-        if: matrix.proof != 'none'
-        working-directory: app
-        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/units" .output
-
-      - name: Generate federated types and verify the Worker outputs
-        if: matrix.proof == 'outputs'
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_ASSORTMENT: https://assortment.invalid
-          ULTRAMODERN_PUBLIC_URL_AVAILABILITY: https://availability.invalid
-          ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_CRM: https://crm.invalid
-          ULTRAMODERN_PUBLIC_URL_CRM_ACTIVITIES: https://crm-activities.invalid
-          ULTRAMODERN_PUBLIC_URL_FACILITY_OPERATIONS: https://facility-operations.invalid
-          ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING: https://finance-billing.invalid
-          ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
-          ULTRAMODERN_PUBLIC_URL_LEGAL_AGREEMENTS: https://legal-agreements.invalid
-          ULTRAMODERN_PUBLIC_URL_MERCHANDISE: https://merchandise.invalid
-          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
-          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
-          ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
-          ULTRAMODERN_PUBLIC_URL_PROJECTS: https://projects.invalid
-          ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING: https://property-leasing.invalid
-          ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO: https://property-portfolio.invalid
-          ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS: https://sales-insights.invalid
-          ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE: https://sales-pipeline.invalid
-          ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
-          ULTRAMODERN_PUBLIC_URL_TAGGING: https://tagging.invalid
-          ULTRAMODERN_PUBLIC_URL_TAX: https://tax.invalid
-          ULTRAMODERN_PUBLIC_URL_WORK_TASKS: https://work-tasks.invalid
-          ULTRAMODERN_PUBLIC_URL_WORKFORCE: https://workforce.invalid
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: |
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm mf:types --target cloudflare
-          mise exec -- pnpm cloudflare-output:verify
-
   # The one required status check of the main ruleset, so new gate jobs join it here, not the ruleset.
   # It passes when every gate passed, or when the merge queue already proved this commit and the gates were skipped.
   workspace-gates:
@@ -1040,7 +830,6 @@ jobs:
         format-and-lint,
         service-integration,
         node-artifact-build,
-        cloudflare-artifact-build,
       ]
     runs-on: ubuntu-latest
     timeout-minutes: 5

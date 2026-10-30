@@ -10,7 +10,7 @@ The rules exist because the first Zerops stage rollout was merged after source-l
 
 ## Stage on Zerops
 
-Stage runs on Zerops only. Cloudflare stays in front of it as DNS, WAF and Access. The layout below comes from `app/zerops.yaml`, `app/scripts/zerops/` and `.github/workflows/zerops-stage.yml`.
+Stage runs on Zerops only. Cloudflare serves only its DNS. The layout below comes from `app/zerops.yaml`, `app/scripts/zerops/` and `.github/workflows/zerops-stage.yml`.
 
 ### Services
 
@@ -54,7 +54,7 @@ Probes:
 
 - `/_host/live` answers as soon as the host listens.
 - `/_host/ready` returns 200 after publication. Zerops switches traffic only after it answers.
-- `ONTOS_APP_HOST_PUBLISH=false` starts and observes every unit without migrating or publishing. In that mode `/_host/ready` returns 200 after observation. The committed `app` setup in `zerops.yaml` currently sets it to `false`.
+- `ONTOS_APP_HOST_PUBLISH=false` starts and observes every unit without migrating or publishing. In that mode `/_host/ready` returns 200 after observation. Use it only to try a build next to a live stage.
 
 ### Secrets
 
@@ -71,25 +71,28 @@ Probes:
 
 ### Build
 
-- Zerops builds the `app` and `storefront` setups from `app/zerops.yaml`, in a 5 vCPU / 8 GB build container.
-- `scripts/zerops/build-app.sh` builds the units two at a time (`BUILD_JOBS=2`). Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
-- A unit whose committed inputs are unchanged keeps its cached `dist/`. The digest is in `dist/.zerops-build-digest`. Cached copies live in `.zerops/unit-cache`, which Zerops keeps in its build cache.
+- GitHub Actions builds the units, in seven parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time.
+- Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
+- A unit whose committed inputs are unchanged keeps its previous `dist/`. The digest is in `dist/.zerops-build-digest`. Each shard keeps its builds in the Actions cache, outside the checkout: any untracked file in the tree turns every release identity into `workspace`.
+- The deploy job packs every shard's `dist/` (no source maps, type bundles or precompressed copies) into `app/.zerops-prebuilt.tar.zst` and pushes it with the checkout.
+- The Zerops `app` build (`zerops.yaml`) unpacks that archive, installs the workspace, keeps every unit whose digest matches, builds the Outbox Worker host bundle under the hosted owners' revisions, and ships `app/`. It can still build any unit itself, two at a time, in its 5 vCPU / 8 GB build container.
 - `.deployignore` keeps `.output`, source maps, caches and tests out of the deployed package.
 
 ### Deploy
 
-`.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm` or `feat/zerops-only`, except pushes that touch only `docs/**` or Markdown files. It also runs on manual dispatch. Runs are serialized in the `zerops-stage` concurrency group.
+`.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm`, except pushes that touch only `docs/**` or Markdown files. It also runs on manual dispatch. Runs are serialized in the `zerops-stage` concurrency group.
 
-1. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups with `zcli push` in parallel, using the commit SHA as the version name. On failure it prints the app log.
-2. **Verify**: runs the timing probe (`/cs`, OAuth metadata and the storefront home) and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
+1. **Build units**: seven shards, as above.
+2. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups in parallel with `scripts/zerops/push-service.sh`, using the commit SHA as the version name. That script uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
+3. **Verify**: runs the timing probe (`/cs`, OAuth metadata and the storefront home) and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
 
 Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
 
 ### Edge
 
-- Cloudflare is DNS only. Proxied AAAA records point at the Zerops project IPv6. WAF and Access stay in front.
-- `scripts/zerops/route-stage-domains.sh` creates a Zerops public HTTP routing with TLS for each hostname. It detaches any Worker custom domain on that hostname (the Worker itself stays), removes other A, AAAA and CNAME records on it, and writes the proxied AAAA.
-- It adds one page rule, `ontos-stage*.web-revolution.cz/*`, with SSL `full`. Zerops terminates TLS itself, so Cloudflare must reach it over HTTPS. The zone default is `flexible`.
+- Cloudflare is DNS only. DNS-only (not proxied) A and AAAA records point at the shared Zerops IPv4 and the project IPv6. Zerops terminates TLS with a Let's Encrypt certificate.
+- WAF and Access are not in front of stage. Proxying would need SSL `full` for these hostnames (the zone default is `flexible`), and the stage token cannot create page or configuration rules.
+- `scripts/zerops/route-stage-domains.sh` creates a Zerops public HTTP routing for each hostname. It detaches any Worker custom domain on that hostname (the Worker itself stays), replaces other A, AAAA and CNAME records, and writes the DNS-only A and AAAA.
 
 ## Release invariants
 
@@ -418,9 +421,9 @@ Create `production` once, outside CI, before the first dispatch, with the operat
 [Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
 `OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
 
-`zerops.yaml` and `zerops-providers.yaml` describe stage. Zerops rejects a build file over 50 kB, so
-`zerops.yaml` (migrator, SpiceDB, cloudflared, Shell, Outbox Workers) stays small enough to push as-is,
-and `pnpm zerops:providers --write` keeps the per-vertical provider setups in `zerops-providers.yaml`.
+`zerops.yaml` describes stage: SpiceDB, the storefront and the one application container (`app`), which
+runs the owner migrations and every owner. `zerops-import.yaml` lists the services those setups deploy, plus
+the migrator service that holds the identity secrets.
 Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
 names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy;

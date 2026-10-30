@@ -7,7 +7,6 @@ import { expect, it, rstest } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/party-registry-identity-contracts/src/database-identity-data.ts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 rstest.mock('@modern-js/app-tools-extensions/config', () => ({
@@ -103,9 +102,7 @@ it.layer(NodeServices.layer)('Party development discovery', (suite) => {
       const fs = yield* FileSystem.FileSystem;
       const modernConfigUrl = new URL('../../verticals/party-registry/modern.config.ts', import.meta.url);
       const modernConfigSource = yield* fs.readFileString(fileURLToPath(modernConfigUrl));
-      expect(modernConfigSource).toMatch(
-        /createWorkspaceModernConfig\(\{\s*appId,\s*cloudflareHyperdrives: \[[^\]]+\],\s*moduleUrl: import\.meta\.url,/u,
-      );
+      expect(modernConfigSource).toMatch(/createWorkspaceModernConfig\(\{\s*appId,\s*moduleUrl: import\.meta\.url,/u);
       expect(modernConfigSource).toContain('presetUltramodernWorkspace(');
       expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
 
@@ -120,7 +117,6 @@ it.layer(NodeServices.layer)('Party development discovery', (suite) => {
       }
       const authored = createWorkspaceModernConfig({
         appId: 'party-registry',
-        cloudflareHyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
         moduleUrl: pathToFileURL(`${directory}/modern.config.ts`).href,
       });
       const native = presetUltramodernWorkspace(

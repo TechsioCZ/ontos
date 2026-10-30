@@ -1,4 +1,3 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { execFileSync, spawnSync } from 'node:child_process';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -16,12 +15,10 @@ import type {
   verifyBuildOutputReleaseEnvelope,
   verifyNodeReleaseEnvelopeStaging,
 } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
-import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
 
-import { createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -96,8 +93,6 @@ const mfManifestPath = '/mf-manifest.json';
 
 const readinessPath = '/party-registry-api/party-registry/readiness';
 const partyContactsSsrRoute = '/en/contacts';
-const apiOnlyId = 'payment-term-catalog';
-const apiOnlyReadinessPath = '/payment-term-catalog-api/payment-term-catalog/readiness';
 
 const localePath = '/locales/en/party-registry.json';
 
@@ -520,16 +515,6 @@ const TopologySchema = Schema.Struct({
       moduleFederation: Schema.optionalKey(Schema.Struct({ exposes: Schema.Array(Schema.String) })),
     }),
   ),
-});
-
-const CloudflareReportSchema = Schema.Struct({
-  results: Schema.Array(
-    Schema.Struct({
-      appId: AppIdSchema,
-      assertions: Schema.Array(Schema.Struct({ status: Schema.String })),
-    }),
-  ),
-  status: Schema.String,
 });
 
 const loadReleaseFramework = (modulePath: string): Effect.Effect<ReleaseFramework, unknown> =>
@@ -2472,7 +2457,6 @@ process.stdout.write(JSON.stringify(evidence));
 const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
   fileName: string,
   source: string,
-  cloudflare: boolean,
   injection: Readonly<Record<string, string>>,
   contractOnly = false,
 ) {
@@ -2543,7 +2527,7 @@ const framework = {
   defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
   presetUltramodernWorkspace: (value, workspace) => ({ ...value, workspace }),
   getBuildConfigEnvironment: name => environment[name],
-  resolveDeployTarget: () => ({ explicit: true, target: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')} }),
+  resolveDeployTarget: () => ({ explicit: true, target: 'node' }),
   ultramodernLocalisedUrls: {},
 };
 const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };
@@ -2634,35 +2618,6 @@ const withOntosOutputConfig = (configuration: Schema.Json): Schema.Json => {
   });
 };
 
-// OntOS's one intended extension of a generated UI vertical config: its Worker binds the private
-// data plane (Hyperdrive and the SpiceDB Workers VPC service), with the harness's placeholder IDs.
-// Party binds only its request identity's Hyperdrive (`PARTY_REGISTRY_HYPERDRIVE`), never the shared one.
-// The workspace preset owns the Worker identity, so the scaffold config may carry no deploy section.
-const OntosEvaluatedConfigSchema = Schema.Struct({
-  deploy: Schema.optional(Schema.Struct({ worker: Schema.optional(Schema.Record(Schema.String, Schema.Json)) })),
-});
-const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
-  const { deploy } = Schema.decodeUnknownSync(OntosEvaluatedConfigSchema)(configuration);
-  const workerConfig = createCloudflareWorkerConfig(
-    (name) =>
-      ({
-        ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
-        ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
-        ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-hyperdrive-id',
-        ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
-        ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
-      })[name],
-    {
-      hyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
-      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
-    },
-  );
-  return Schema.decodeUnknownSync(Schema.Json)({
-    ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
-    deploy: { ...deploy, worker: { ...workerConfig, ...deploy?.worker } },
-  });
-};
-
 it.live(
   'all published scaffold formats retain Party infrastructure behavior and source parity',
   Effect.fn(function* mergedScenario4() {
@@ -2735,53 +2690,28 @@ it.live(
                       ULTRAMODERN_SOURCE_REVISION: 'a'.repeat(40),
                     },
                   ];
-                  const evaluations: {
-                    cloudflare: boolean;
-                    injection: Readonly<Record<string, string>>;
-                  }[] = [];
-                  for (const cloudflare of [false, true]) {
-                    for (const injection of injections) {
-                      evaluations.push({ cloudflare, injection });
-                    }
-                  }
                   yield* Effect.forEach(
-                    evaluations,
-                    Effect.fn(function* evaluateInfrastructureInjection({ cloudflare, injection }) {
+                    injections,
+                    Effect.fn(function* evaluateInfrastructureInjection(injection) {
                       if (fileName === modernConfigFile) {
                         const canonicalSource = Schema.decodeUnknownSync(Schema.String)(
                           canonical.createAppModernConfig(app),
                         );
                         expect(
-                          yield* evaluatedInfrastructureSource(fileName, source, cloudflare, injection),
+                          yield* evaluatedInfrastructureSource(fileName, source, injection),
                           `${moduleFormat} must retain complete published config behavior`,
-                        ).toBe(yield* evaluatedInfrastructureSource(fileName, canonicalSource, cloudflare, injection));
+                        ).toBe(yield* evaluatedInfrastructureSource(fileName, canonicalSource, injection));
                       }
                       const [expected, evaluated] = yield* Effect.all(
                         [
-                          evaluatedInfrastructureSource(
-                            fileName,
-                            source,
-                            cloudflare,
-                            injection,
-                            fileName === modernConfigFile,
-                          ),
-                          evaluatedInfrastructureSource(
-                            fileName,
-                            actual,
-                            cloudflare,
-                            injection,
-                            fileName === modernConfigFile,
-                          ),
+                          evaluatedInfrastructureSource(fileName, source, injection, fileName === modernConfigFile),
+                          evaluatedInfrastructureSource(fileName, actual, injection, fileName === modernConfigFile),
                         ],
                         { concurrency: 'unbounded' },
                       );
                       const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
                       expect(
-                        fileName === modernConfigFile
-                          ? withOntosOutputConfig(
-                              cloudflare ? withOntosWorkerConfig(decode(expected)) : decode(expected),
-                            )
-                          : decode(expected),
+                        fileName === modernConfigFile ? withOntosOutputConfig(decode(expected)) : decode(expected),
                         `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
                       ).toEqual(decode(evaluated));
                     }),
@@ -3738,93 +3668,6 @@ it.live(
     expect(party.cloudflare.routes.apiReadiness).toBe(readinessPath);
     expect(party.backendFederation.exposes['./effect-api'].contract).toBe('verticals/party-registry/shared/api.ts');
     expect(party.backendFederation.exposes['./effect-api'].openapi).toBe('/party-registry-api/openapi.json');
-  }),
-);
-
-it.live(
-  'installed Cloudflare CLI preserves API-only routes when synthesizing a real API-only contract',
-  Effect.fn(function* scenario38() {
-    const fixture = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-proof-'))),
-      (dir) => Effect.promise(() => rm(dir, { force: true, recursive: true })),
-    );
-    const build = yield* readJson(
-      BuildArtifactSchema,
-      path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
-    );
-    // A headless unit's build artifact carries only its API surface.
-    expect(build.surfaces.ui).toBe(undefined);
-    // A deployed Worker serves the release identity of the revision being proven,
-    // which is only the generation marker for an uncommitted workspace.
-    const releaseIdentity = resolveUltramodernReleaseIdentity({
-      generationBuildMarker: build.deliveryUnit.buildMarker,
-      unitId: build.deliveryUnit.unitId,
-      workspaceRoot,
-    });
-    const requestedPath = path.join(fixture, 'requested-routes.txt');
-    const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
-    yield* Effect.promise(() =>
-      writeFile(
-        fetchMockPath,
-        `import { appendFileSync } from 'node:fs';
-const requestedPath = ${JSON.stringify(requestedPath)};
-const publicUrl = ${JSON.stringify(publicUrl)};
-const manifestPath = ${JSON.stringify(mfManifestPath)};
-const readinessPath = ${JSON.stringify(apiOnlyReadinessPath)};
-const buildMarker = ${JSON.stringify(releaseIdentity.buildMarker)};
-const headers = {
-  'access-control-allow-origin': '*',
-  'content-type': 'application/json',
-  'permissions-policy': 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-  'referrer-policy': 'strict-origin-when-cross-origin',
-  'x-content-type-options': 'nosniff',
-  'x-robots-tag': 'noindex, nofollow',
-};
-globalThis.fetch = input => {
-  const route = new URL(String(input)).pathname;
-  appendFileSync(requestedPath, route + '\\n');
-  if (route === manifestPath) {
-    return Promise.resolve(Response.json({ metaData: { publicPath: publicUrl + '/' } }, { headers }));
-  }
-  if (route === readinessPath) {
-    return Promise.resolve(Response.json({
-      checks: { api: 'ready', moduleFederation: 'ready', ssr: 'ready' },
-      marker: { build: buildMarker },
-      status: 'ready',
-    }, { headers }));
-  }
-  return Promise.resolve(Response.json({ error: 'No owner route or locale exists' }, { headers, status: 404 }));
-};
-`,
-      ),
-    );
-    const reportPath = path.join(fixture, 'proof.json');
-    runNode(
-      [
-        '--import',
-        pathToFileURL(fetchMockPath).href,
-        path.join(generatorRoot, 'templates/workspace-scripts/proof-cloudflare-version.mjs'),
-        '--app',
-        apiOnlyId,
-        '--require-public-urls',
-        '--out',
-        reportPath,
-      ],
-      {
-        env: {
-          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: publicUrl,
-          ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot,
-        },
-      },
-    );
-    const requestedSource = yield* Effect.promise(() => readFile(requestedPath, 'utf-8'));
-    const requested = requestedSource.trimEnd().split('\n');
-    // An API-only contract has no SSR or Module Federation route to probe: only its readiness route.
-    expect(requested).toEqual([apiOnlyReadinessPath, apiOnlyReadinessPath]);
-    const report = yield* readJson(CloudflareReportSchema, reportPath);
-    expect(report.status).toBe('pass');
-    expect(report.results[0].appId).toBe(apiOnlyId);
-    expect(report.results[0].assertions.every((entry) => entry.status === 'pass')).toBe(true);
   }),
 );
 

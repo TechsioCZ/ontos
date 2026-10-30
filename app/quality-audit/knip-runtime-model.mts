@@ -489,137 +489,6 @@ const forwardsArguments = (source: string, name: string): boolean => {
     /^\s*(?:if ! |nohup )?"\$@"(?:\s|$)/mu.test(body)
   );
 };
-const memberIs = (node: Node | undefined | null, object: string, property: string): boolean =>
-  node?.type === 'MemberExpression' &&
-  !node.computed &&
-  node.object.type === 'Identifier' &&
-  node.object.name === object &&
-  node.property.type === 'Identifier' &&
-  node.property.name === property;
-const fieldOf = (node: Node | undefined | null, name: string): Node | undefined =>
-  node?.type === 'ObjectExpression'
-    ? node.properties.flatMap((property) =>
-        property.type === 'Property' &&
-        ((property.key.type === 'Identifier' && property.key.name === name) ||
-          (property.key.type === 'Literal' && property.key.value === name))
-          ? [property.value]
-          : [],
-      )[0]
-    : undefined;
-const variablesIn = (node: Node): ReadonlyMap<string, Node> => {
-  const variables = new Map<string, Node>();
-  const duplicates = new Set<string>();
-  new Visitor({
-    VariableDeclarator: (binding) => {
-      if (binding.id.type === 'Identifier' && binding.init !== null) {
-        if (variables.has(binding.id.name)) {
-          duplicates.add(binding.id.name);
-        }
-        variables.set(binding.id.name, binding.init);
-      }
-    },
-  }).visit(node);
-  for (const duplicate of duplicates) {
-    variables.delete(duplicate);
-  }
-  return variables;
-};
-const importsName = (program: Program, module: string, name: string): boolean =>
-  program.body.some(
-    (statement) =>
-      statement.type === 'ImportDeclaration' &&
-      statement.source.value === module &&
-      statement.specifiers.some(
-        (specifier) =>
-          specifier.type === 'ImportSpecifier' &&
-          specifier.imported.type === 'Identifier' &&
-          specifier.imported.name === name &&
-          specifier.local.name === name,
-      ),
-  );
-
-/** Follow the exact Core entry through the native identity resolver into esbuild's entryPoints option. */
-const coreWorkerTarget = (registry: string, materializer: string): string | undefined => {
-  const declared = parseSync('outbox-worker-delivery.mjs', registry);
-  const consumer = parseSync('materialize-outbox-worker.mjs', materializer);
-  if (
-    declared.errors.length > 0 ||
-    consumer.errors.length > 0 ||
-    !importsName(consumer.program, 'esbuild', 'build') ||
-    !importsName(consumer.program, './outbox-worker-delivery.mjs', 'CORE_SYSTEM_OUTBOX_WORKER')
-  ) {
-    return undefined;
-  }
-  const descriptor = variablesIn(declared.program).get('CORE_SYSTEM_OUTBOX_WORKER');
-  if (descriptor?.type !== 'CallExpression' || !memberIs(descriptor.callee, 'Object', 'freeze')) {
-    return undefined;
-  }
-  const entry = fieldOf(descriptor.arguments[0], 'entry');
-  if (entry?.type !== 'Literal' || !Schema.is(Schema.String)(entry.value)) {
-    return undefined;
-  }
-  const variables = variablesIn(consumer.program);
-  const resolver = variables.get('resolveOutboxWorkerEffect');
-  const materialize = variables.get('materializeOutboxWorkerEffect');
-  if (resolver?.type !== 'ArrowFunctionExpression' || materialize?.type !== 'ArrowFunctionExpression') {
-    return undefined;
-  }
-  const resolverVariables = variablesIn(resolver);
-  const selected = resolverVariables.get('entryPoint');
-  const dedicated = resolverVariables.get('dedicatedCore');
-  const materializerVariables = variablesIn(materialize);
-  const delivery = materializerVariables.get('delivery');
-  if (
-    resolverVariables.has('CORE_SYSTEM_OUTBOX_WORKER') ||
-    materializerVariables.has('build') ||
-    selected?.type !== 'ConditionalExpression' ||
-    selected.test.type !== 'Identifier' ||
-    selected.test.name !== 'dedicatedCore' ||
-    !memberIs(selected.consequent, 'CORE_SYSTEM_OUTBOX_WORKER', 'entry') ||
-    dedicated?.type !== 'BinaryExpression' ||
-    dedicated.operator !== '===' ||
-    dedicated.left.type !== 'Identifier' ||
-    dedicated.left.name !== 'appId' ||
-    !memberIs(dedicated.right, 'CORE_SYSTEM_OUTBOX_WORKER', 'id') ||
-    delivery?.type !== 'YieldExpression' ||
-    delivery.argument?.type !== 'CallExpression' ||
-    delivery.argument.callee.type !== 'Identifier' ||
-    delivery.argument.callee.name !== 'resolveOutboxWorkerEffect'
-  ) {
-    return undefined;
-  }
-  let returnsEntry = false;
-  let bundled = false;
-  new Visitor({
-    ReturnStatement: (statement) => {
-      const returned = fieldOf(statement.argument, 'entryPoint');
-      if (returned?.type === 'Identifier' && returned.name === 'entryPoint') {
-        returnsEntry = true;
-      }
-    },
-  }).visit(resolver);
-  new Visitor({
-    CallExpression: (call) => {
-      const entries = fieldOf(call.arguments[0], 'entryPoints');
-      if (
-        call.callee.type === 'Identifier' &&
-        call.callee.name === 'build' &&
-        entries?.type === 'ArrayExpression' &&
-        entries.elements.length === 1 &&
-        memberIs(entries.elements[0], 'delivery', 'entryPoint')
-      ) {
-        bundled = true;
-      }
-    },
-  }).visit(materialize);
-  return returnsEntry &&
-    bundled &&
-    /^scripts\/[\w./-]+\.[cm]?[jt]s$/u.test(entry.value) &&
-    !entry.value.split('/').includes('..')
-    ? entry.value
-    : undefined;
-};
-
 const isImportMetaUrl = (node: Node | undefined): boolean =>
   node?.type === 'MemberExpression' &&
   !node.computed &&
@@ -1209,7 +1078,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
     });
     const zeropsEvidence = Effect.fn('QualityAudit.zeropsEvidence')(function* zeropsEvidence() {
       // Zerops buildCommands run from the repository root and explicitly cd into app.
-      for (const file of ['zerops.yaml', 'zerops.yml', 'zerops-providers.yaml']) {
+      for (const file of ['zerops.yaml', 'zerops.yml']) {
         const source = yield* read(file);
         if (source === undefined) {
           continue;
@@ -1393,21 +1262,6 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           );
         }
       }
-    });
-    const coreWorkerEvidence = Effect.fn('QualityAudit.coreWorkerEvidence')(function* coreWorkerEvidence() {
-      const file = 'scripts/materialize-outbox-worker.mjs';
-      const consumer = yield* read(file);
-      const registry = yield* read('scripts/outbox-worker-delivery.mjs');
-      if (consumer === undefined || registry === undefined) {
-        return;
-      }
-      yield* nativeScriptFact(
-        file,
-        consumer,
-        consumer.indexOf('entryPoints:'),
-        coreWorkerTarget(registry, consumer),
-        'Native esbuild entryPoints consumes the Core worker selected by its imported delivery identity',
-      );
     });
     const tsgoDocumentation = Effect.fn('QualityAudit.tsgoDocumentation')(function* tsgoDocumentation() {
       const readme = yield* read('node_modules/@effect/tsgo/README.md');
@@ -1780,7 +1634,6 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
     yield* workflowScriptEvidence();
     yield* demoShellScriptEvidence();
     yield* storefrontDemoEvidence();
-    yield* coreWorkerEvidence();
     yield* tsgoEvidence();
     yield* readinessEvidence();
     yield* readinessSourceEvidence();

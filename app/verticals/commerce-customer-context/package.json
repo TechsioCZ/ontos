@@ -143,11 +143,6 @@
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-customer-context --target dist && ultramodern-create ultramodern public-surface --app commerce-customer-context --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-customer-context --target cloudflare-dist && ultramodern-create ultramodern public-surface --app commerce-customer-context --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:build:full-catalog-client-guard": "modern build --deploy-target cloudflare --config full-catalog-client-guard.config.ts",
-    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app commerce-customer-context",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -208,7 +203,6 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
     "pg": "8.22.0"
   },
   "modernjs": {

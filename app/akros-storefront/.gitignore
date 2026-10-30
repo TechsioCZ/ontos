@@ -1,7 +1,4 @@
 .next/
-.open-next/
-.wrangler/
-.wrangler.generated.json
 node_modules/
 playwright-report/
 test-results/

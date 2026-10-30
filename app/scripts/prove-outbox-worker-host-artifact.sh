@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run the Outbox Worker host artifact with its real zerops.yaml start command until /ready answers and every
+# Run the Outbox Worker host artifact the way the app host starts it until /ready answers and every
 # hosted owner's polling loop has started. Then stop it with SIGTERM and require a clean exit. A hosted owner
 # whose layer cannot start, a runtime dependency the bundle does not ship, or a shutdown that hangs fails here
 # instead of after Zerops deploys it.
@@ -34,18 +34,9 @@ if [ -n "$(ls -A "$artifact")" ]; then
 fi
 artifact="$(cd "$artifact" && pwd)"
 
-# One line per field: the health port and the start command. The host setup has no Zerops build.
-service="$(cd "$app_directory" && node --input-type=module --eval "
-import { readFileSync } from 'node:fs';
-import { parse } from 'yaml';
-const service = parse(readFileSync('zerops.yaml', 'utf-8')).zerops.find(({ setup }) => setup === '$setup');
-if (service === undefined) {
-  throw new Error('zerops.yaml has no $setup setup');
-}
-process.stdout.write([service.run.envVariables.OUTBOX_WORKER_HEALTH_PORT, service.run.start].join('\n'));
-")"
-port="$(printf '%s\n' "$service" | sed -n 1p)"
-start="$(printf '%s\n' "$service" | sed -n 2p)"
+# The app host (scripts/zerops/app-host.mts) starts the bundle on this health port with this command.
+port="${OUTBOX_WORKER_HEALTH_PORT:-4100}"
+start="node $runtime/worker.mjs"
 
 # The digest a source materialization compiles in.
 proof_digest="$(node --eval "process.stdout.write(require('node:crypto').createHash('sha256').update('outbox-worker-host-artifact-proof').digest('hex'))")"
@@ -151,7 +142,6 @@ log="$artifact/outbox-worker-host.log"
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="$source_url" \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
-    ULTRAMODERN_ZEROPS_SERVICE="$setup" \
     sh -c "exec $start"
 ) >"$log" 2>&1 &
 host=$!
