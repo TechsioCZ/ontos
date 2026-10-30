@@ -459,12 +459,9 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
   const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
   if (owner === 'party') {
-    // Follow Party's source-owned db:migrate gateway: prepare Contacts, migrate Contacts, then Party.
-    const steps = [
-      ['scripts/prepare-contacts-migration.mts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.contacts.config.ts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.config.ts'],
-    ];
+    // Follow Party's source-owned db:migrate: its Contacts and Party lineages converge through the reviewed
+    // equivalence plan, which plain `drizzle-kit migrate` runs would replay twice.
+    const steps = [['../../scripts/migration-convergence-cli.mts', 'party']];
     for (const args of steps) {
       const child = yield* ChildProcess.make(process.execPath, args, {
         cwd: directory,
