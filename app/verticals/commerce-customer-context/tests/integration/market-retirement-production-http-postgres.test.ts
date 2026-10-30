@@ -453,20 +453,10 @@ it.live(
         );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
-          audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-
           compositionRevision: snapshot.composition.revision,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
-          tenantManagerRelations: [
-            'party_identity_manager',
-            'party_identity_reader',
-            'party_identity_reviewer',
-            'party_relationship_manager',
-          ],
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         yield* Effect.addFinalizer(() =>
@@ -646,20 +636,10 @@ it.live(
         );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
-          audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-
           compositionRevision: snapshot.composition.revision,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
-          tenantManagerRelations: [
-            'party_identity_manager',
-            'party_identity_reader',
-            'party_identity_reviewer',
-            'party_relationship_manager',
-          ],
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         yield* Effect.addFinalizer(() =>
@@ -807,20 +787,10 @@ it.live(
         );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
-          audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-
           compositionRevision: snapshot.composition.revision,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
-          tenantManagerRelations: [
-            'party_identity_manager',
-            'party_identity_reader',
-            'party_identity_reviewer',
-            'party_relationship_manager',
-          ],
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         yield* Effect.addFinalizer(() =>
