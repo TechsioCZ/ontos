@@ -13,7 +13,7 @@ import {
   issueApiKeyGatewayContext,
   issueRelayedGatewayContext,
 } from '@app/shared-contracts/server/gateway-context-api-key';
-import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import { SignJWT, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   ActiveApplicationCompositionSnapshotSchema,
   ActiveApplicationCompositionConfigLive,
@@ -579,6 +579,230 @@ const diagnoseExplicitPartyLegalEntity = Effect.fn('ServerOwnerRelayNative.diagn
           }),
       }),
     );
+  },
+);
+
+const assertNativeRelayHttpRejected = Effect.fn('ServerOwnerRelayNative.assertNativeRelayHttpRejected')(
+  function* assertNativeRelayHttpRejected(input: {
+    readonly apiKey: Redacted.Redacted;
+    readonly category: string;
+    readonly database: NativeCoreDatabase;
+    readonly expectedStatus: 401 | 403;
+    readonly fixture: Effect.Success<ReturnType<typeof makePackagedShellUserFixture>>;
+    readonly request: Parameters<typeof issueRelayedGatewayContext>[0];
+    readonly requestCorrelation: string;
+  }) {
+    const beforeLedger = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findMany();
+    const before = yield* input.fixture.core.evidence(input.database);
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.post(`${input.fixture.origin}/shell-super-app-api/auth/relay/gateway-context`, {
+      body: yield* HttpBody.json(input.request),
+      headers: { 'x-api-key': Redacted.value(input.apiKey), 'x-correlation-id': input.requestCorrelation },
+    });
+    const raw = yield* response.json;
+    const problem = yield* Schema.decodeUnknownEffect(OutsideRelayProblemSchema)(raw);
+    expect(response.status).toBe(input.expectedStatus);
+    expect(problem.status).toBe(input.expectedStatus);
+    expect(Schema.is(Schema.Struct({ token: Schema.String }))(raw)).toBe(false);
+    const afterLedger = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findMany();
+    expect(afterLedger.map((row) => `${row.sourceJti}:${row.exchangeId}:${row.requestFingerprint}`).toSorted()).toEqual(
+      beforeLedger.map((row) => `${row.sourceJti}:${row.exchangeId}:${row.requestFingerprint}`).toSorted(),
+    );
+    const after = yield* input.fixture.core.evidence(input.database);
+    expect(after.accesses.filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)).toEqual(
+      before.accesses.filter((row) => row.servingModuleKey === PARTY_MODULE_KEY),
+    );
+    yield* Effect.logInfo('Actual relay HTTP security rejection verified', {
+      category: input.category,
+      ledgerUnchanged: true,
+      noProviderEffect: true,
+      noToken: true,
+      status: response.status,
+    });
+  },
+);
+
+const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNativeRelayHttpSecurity')(
+  function* assertNativeRelayHttpSecurity(input: {
+    readonly database: NativeCoreDatabase;
+    readonly fixture: Effect.Success<ReturnType<typeof makePackagedShellUserFixture>>;
+    readonly gateway: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0];
+    readonly partyBuildMarker: string;
+    readonly privateKey: CryptoKey;
+    readonly signingKid: string;
+    readonly source: Effect.Success<ReturnType<typeof issueNativeApiKeyGatewayAuthorization>>;
+    readonly workloadKey: Redacted.Redacted;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const sourceToken = Redacted.value(input.source.sourceAssertion);
+    const verified = yield* Effect.tryPromise({
+      catch: () => new PackagedOwnerStartupError({ reason: 'Actual source proof verification failed' }),
+      try: async () =>
+        await jwtVerify(sourceToken, input.gateway.publicKey, {
+          algorithms: ['EdDSA'],
+          audience: 'catalog',
+          issuer: input.fixture.origin,
+        }),
+    });
+    const claims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)(verified.payload);
+    const signInvalidSource = Effect.fn('ServerOwnerRelayNative.signNegativeOnlySourceFixture')(
+      function* signNegativeOnlySourceFixture(negativeClaims: typeof GatewayContextV2ClaimsSchema.Type) {
+        return yield* Effect.tryPromise({
+          catch: () => new PackagedOwnerStartupError({ reason: 'Negative-only source fixture signing failed' }),
+          try: async () =>
+            await new SignJWT({ ...negativeClaims })
+              .setProtectedHeader({
+                alg: 'EdDSA',
+                kid: input.signingKid,
+                typ: 'JWT',
+              })
+              .sign(input.privateKey),
+        });
+      },
+    );
+    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+    // Invalid fixtures are never admitted authority: only the actual HTTP rejection path consumes them.
+    const expired = yield* signInvalidSource({
+      ...claims,
+      exp: now - 300,
+      iat: now - 300 - (claims.exp - claims.iat),
+      jti: yield* crypto.randomUUIDv4(),
+    });
+    const invalidPrincipalId = yield* crypto.randomUUIDv4();
+    const invalidScopes = [
+      {
+        category: 'changed-principal',
+        principal: { ...claims.principal, principalId: invalidPrincipalId },
+        sub: invalidPrincipalId,
+      },
+      {
+        category: 'foreign-tenant',
+        principal: { ...claims.principal, tenantId: yield* crypto.randomUUIDv4() },
+        sub: claims.sub,
+      },
+      {
+        category: 'nonexistent-legal-entity',
+        principal: { ...claims.principal, legalEntityId: yield* crypto.randomUUIDv4() },
+        sub: claims.sub,
+      },
+    ];
+    const negatives: { category: string; expectedStatus: 401 | 403; sourceAssertion: string }[] = [
+      { category: 'malformed-source', expectedStatus: 401, sourceAssertion: 'not-a-jwt' },
+      {
+        category: 'tampered-source',
+        expectedStatus: 401,
+        sourceAssertion: `${sourceToken.slice(0, sourceToken.lastIndexOf('.') + 1)}${sourceToken[sourceToken.lastIndexOf('.') + 1] === 'A' ? 'B' : 'A'}${sourceToken.slice(sourceToken.lastIndexOf('.') + 2)}`,
+      },
+      { category: 'expired-signed-source', expectedStatus: 401, sourceAssertion: expired },
+    ];
+    for (const invalid of invalidScopes) {
+      const negativeClaims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)({
+        ...claims,
+        principal: invalid.principal,
+        sub: invalid.sub,
+      });
+      negatives.push({
+        category: invalid.category,
+        expectedStatus: 403,
+        sourceAssertion: yield* signInvalidSource(negativeClaims),
+      });
+    }
+    for (const negative of negatives) {
+      yield* assertNativeRelayHttpRejected({
+        apiKey: input.workloadKey,
+        category: negative.category,
+        database: input.database,
+        expectedStatus: negative.expectedStatus,
+        fixture: input.fixture,
+        request: {
+          audience: 'party-registry',
+          compositionRevision: claims.compositionRevision,
+          exchangeId: yield* crypto.randomUUIDv4(),
+          operationKey: 'party.registry.api.party-detail',
+          sourceAssertion: negative.sourceAssertion,
+        },
+        requestCorrelation: yield* crypto.randomUUIDv4(),
+      });
+    }
+    yield* assertNativeRelayHttpRejected({
+      apiKey: input.gateway.apiKey,
+      category: 'unenrolled-personal-key-as-workload',
+      database: input.database,
+      expectedStatus: 403,
+      fixture: input.fixture,
+      request: {
+        audience: 'party-registry',
+        compositionRevision: claims.compositionRevision,
+        exchangeId: yield* crypto.randomUUIDv4(),
+        operationKey: 'party.registry.api.party-detail',
+        sourceAssertion: sourceToken,
+      },
+      requestCorrelation: yield* crypto.randomUUIDv4(),
+    });
+    const wrongAudience = yield* issueNativeApiKeyGatewayAuthorization({
+      ...input.gateway,
+      audience: 'party-registry',
+      buildMarker: input.partyBuildMarker,
+    });
+    yield* assertNativeRelayHttpRejected({
+      apiKey: input.workloadKey,
+      category: 'workload-source-audience-mismatch',
+      database: input.database,
+      expectedStatus: 401,
+      fixture: input.fixture,
+      request: {
+        audience: 'party-registry',
+        compositionRevision: claims.compositionRevision,
+        exchangeId: yield* crypto.randomUUIDv4(),
+        operationKey: 'party.registry.api.party-detail',
+        sourceAssertion: Redacted.value(wrongAudience.sourceAssertion),
+      },
+      requestCorrelation: yield* crypto.randomUUIDv4(),
+    });
+    const request: Parameters<typeof issueRelayedGatewayContext>[0] = {
+      audience: 'party-registry',
+      compositionRevision: claims.compositionRevision,
+      exchangeId: yield* crypto.randomUUIDv4(),
+      operationKey: 'party.registry.api.party-detail',
+      sourceAssertion: sourceToken,
+    };
+    const requestCorrelation = yield* crypto.randomUUIDv4();
+    const accepted = yield* issueRelayedGatewayContext(request, {
+      apiKey: input.workloadKey,
+      baseUrl: `${input.fixture.origin}/shell-super-app-api`,
+      requestCorrelation,
+    });
+    expect(accepted.compositionRevision).toBe(claims.compositionRevision);
+    expect(accepted.expiresAt).toBe(claims.exp);
+    const exchange = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+      where: { exchangeId: request.exchangeId, sourceJti: claims.jti },
+    });
+    expect(exchange !== undefined).toBe(true);
+    for (const changedCorrelation of [requestCorrelation, yield* crypto.randomUUIDv4()]) {
+      yield* assertNativeRelayHttpRejected({
+        apiKey: input.workloadKey,
+        category: changedCorrelation === requestCorrelation ? 'exact-exchange-replay' : 'same-pair-changed-correlation',
+        database: input.database,
+        expectedStatus: 403,
+        fixture: input.fixture,
+        request,
+        requestCorrelation: changedCorrelation,
+      });
+    }
+    // A fresh exchange identity for the same source is a legitimate independent receiving attempt.
+    const next = yield* issueRelayedGatewayContext(
+      { ...request, exchangeId: yield* crypto.randomUUIDv4() },
+      {
+        apiKey: input.workloadKey,
+        baseUrl: `${input.fixture.origin}/shell-super-app-api`,
+        requestCorrelation: yield* crypto.randomUUIDv4(),
+      },
+    );
+    expect(next.compositionRevision).toBe(claims.compositionRevision);
+    yield* Effect.logInfo('Actual source reuse under distinct receiving attempts verified', {
+      acceptedAttempts: 2,
+      replayPairDenied: true,
+    });
   },
 );
 
@@ -1314,6 +1538,147 @@ const grantNativeManufacturerReadPermissions = Effect.fn('ServerOwnerRelayNative
     return { check, mutation };
   },
 );
+
+const assertNativeManufacturerOutageAndOriginalKeyRevocation = Effect.fn(
+  'ServerOwnerRelayNative.manufacturerOutageAndOriginalKeyRevocation',
+)(function* assertNativeManufacturerOutageAndOriginalKeyRevocation(input: {
+  readonly catalog: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+  readonly children: ChildProcessHandle[];
+  readonly compositionUrl: string;
+  readonly cookie: Redacted.Redacted;
+  readonly database: NativeCoreDatabase;
+  readonly fixture: Effect.Success<ReturnType<typeof makePackagedShellUserFixture>>;
+  readonly gateway: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0];
+  readonly party: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+  readonly partyRef: Parameters<typeof executePartyDetailWithAuthorization>[0]['partyRef'];
+  readonly productRef: typeof CoreSearchResourceRefSchema.Type;
+  readonly publicJwks: string;
+  readonly relationId: string;
+  readonly workloadKey: Redacted.Redacted;
+}) {
+  const crypto = yield* Crypto.Crypto;
+  const client = yield* HttpClient.HttpClient;
+  expect(yield* input.party.child.isRunning).toBe(false);
+  const before = yield* input.fixture.core.evidence(input.database);
+  const correlationId = yield* crypto.randomUUIDv4();
+  const proof = yield* issueNativeApiKeyGatewayAuthorization(input.gateway);
+  const response = yield* client.post(
+    `${input.catalog.origin}${input.catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
+    {
+      body: yield* HttpBody.json({
+        effectivePeriod: {},
+        evidenceRefs: ['native/manufacturer'],
+        reason: 'Manufacturer identity verified through Party',
+        relationId: input.relationId,
+        subject: input.productRef,
+        target: { kind: 'PARTY', partyRef: input.partyRef },
+      }),
+      headers: {
+        authorization: Redacted.value(proof.authorization),
+        'idempotency-key': yield* crypto.randomUUIDv4(),
+        'x-correlation-id': correlationId,
+        'x-ontos-composition-revision': input.gateway.revision,
+      },
+    },
+  );
+  const problem = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(OutsideRelayProblemSchema)));
+  expect(response.status).toBe(503);
+  expect(problem.status).toBe(503);
+  const failed = yield* input.fixture.core.evidence(input.database);
+  const invocation = failed.invocations.find(
+    (row) => row.correlationId === correlationId && row.actionKey === 'commerce.catalog.set-product-manufacturer',
+  );
+  expect(invocation?.status).toBe('received');
+  expect(invocation?.principalId).toBe(input.gateway.principalId);
+  expect(
+    failed.audits.some(
+      (row) => row.actionInvocationId === invocation?.actionInvocationId && row.eventType === 'action.executed',
+    ),
+  ).toBe(false);
+  expect(failed.accesses.filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)).toEqual(
+    before.accesses.filter((row) => row.servingModuleKey === PARTY_MODULE_KEY),
+  );
+  // Current PARTY readback itself requires the real provider. Restore the unchanged deployment first.
+  const restoredParty = yield* startPackagedApplication({
+    appId: 'party-registry',
+    compositionUrl: input.compositionUrl,
+    gateway: { issuer: input.fixture.origin, publicJwks: input.publicJwks },
+    port: Number(new URL(input.party.origin).port),
+    relativeDirectory: '../../verticals/party-registry',
+  });
+  input.children.push(restoredParty.child);
+  expect(restoredParty.origin).toBe(input.party.origin);
+  expect(restoredParty.compiled).toEqual(input.party.compiled);
+  const beforeRevocation = yield* issueNativeApiKeyGatewayAuthorization({
+    ...input.gateway,
+    legalEntityId: input.fixture.core.legalEntityId,
+  });
+  const readback = yield* client.post(
+    `${input.catalog.origin}${input.catalog.apiPrefix}/reads/manufacturer-relation-current`,
+    {
+      body: yield* HttpBody.json({ subject: input.productRef }),
+      headers: {
+        authorization: Redacted.value(beforeRevocation.authorization),
+        'x-correlation-id': yield* crypto.randomUUIDv4(),
+        'x-ontos-composition-revision': input.gateway.revision,
+      },
+    },
+  );
+  expect(readback.status).toBe(200);
+  expect(yield* readback.json).toMatchObject({
+    claim: {
+      evidenceRefs: ['native/manufacturer'],
+      relationId: input.relationId,
+      revision: 1,
+      subject: input.productRef,
+      target: { kind: 'PARTY', partyRef: input.partyRef },
+    },
+    owner: { canonicalTarget: { kind: 'PARTY', partyRef: input.partyRef }, kind: 'PARTY', state: 'CURRENT' },
+  });
+  yield* Effect.logInfo('Actual required Party outage rejected mutation and preserved relation', {
+    canonicalStatus: invocation?.status,
+    providerRestoredBeforeReadback: true,
+    revisionUnchanged: true,
+    status: response.status,
+  });
+  // LAST: the original P credential is revoked by its real authenticated session, never private SQL.
+  const revoked = yield* client.post(`${input.fixture.origin}/shell-super-app-api/auth/identity/api-keys/self/status`, {
+    body: yield* HttpBody.json({
+      authBindingId: input.gateway.authBindingId,
+      expectedStatus: 'active',
+      newStatus: 'revoked',
+      reason: 'Native original actor credential revocation security control',
+    }),
+    headers: {
+      cookie: Redacted.value(input.cookie),
+      'idempotency-key': yield* crypto.randomUUIDv4(),
+      origin: input.fixture.origin,
+      'x-correlation-id': yield* crypto.randomUUIDv4(),
+      'x-ontos-composition-revision': input.gateway.revision,
+    },
+  });
+  expect(revoked.status).toBe(200);
+  expect(yield* revoked.json).toMatchObject({ authBindingId: input.gateway.authBindingId, enabled: false });
+  const binding = yield* input.database.query.principalAuthBindings.findFirst({
+    where: { principalAuthBindingId: input.gateway.authBindingId },
+  });
+  expect(binding?.status).toBe('revoked');
+  yield* assertNativeRelayHttpRejected({
+    apiKey: input.workloadKey,
+    category: 'original-personal-key-revoked',
+    database: input.database,
+    expectedStatus: 403,
+    fixture: input.fixture,
+    request: {
+      audience: 'party-registry',
+      compositionRevision: input.gateway.revision,
+      exchangeId: yield* crypto.randomUUIDv4(),
+      operationKey: 'party.registry.api.party-detail',
+      sourceAssertion: Redacted.value(beforeRevocation.sourceAssertion),
+    },
+    requestCorrelation: yield* crypto.randomUUIDv4(),
+  });
+});
 
 const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNative.legalEntityWithPartyStopped')(
   function* legalEntityWithPartyStopped(input: {
@@ -2385,6 +2750,7 @@ it.live(
               compositionUrl,
               [
                 'core.identity.bind-self-api-key',
+                'core.identity.set-self-api-key-binding-status',
                 'party.registry.create-party',
                 'commerce.catalog.create-product',
                 'commerce.catalog.set-product-manufacturer',
@@ -3070,6 +3436,26 @@ it.live(
               partyReaderServicePrincipalDenied: true,
               sameOriginsAfterEnrolledRestarts: true,
             });
+            yield* assertNativeRelayHttpSecurity({
+              database,
+              fixture,
+              gateway: {
+                apiKey: personalKey.secret,
+                audience: 'catalog',
+                authBindingId: personalKey.authBindingId,
+                authContextRef: personalAuthContextRef,
+                buildMarker: catalog.compiled.buildMarker,
+                origin: fixture.origin,
+                principalId: fixture.core.manager.principalId,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              },
+              partyBuildMarker: party.compiled.buildMarker,
+              privateKey: signingKeyPair.privateKey,
+              signingKid,
+              source: setAuthorization,
+              workloadKey: issued.secret,
+            });
             const serviceMembership = {
               principalId: serviceId,
               relation: 'member',
@@ -3409,6 +3795,31 @@ it.live(
               },
               party,
             });
+            yield* assertNativeManufacturerOutageAndOriginalKeyRevocation({
+              catalog: enrolledCatalog,
+              children,
+              compositionUrl,
+              cookie,
+              database,
+              fixture,
+              gateway: {
+                apiKey: personalKey.secret,
+                audience: 'catalog',
+                authBindingId: personalKey.authBindingId,
+                authContextRef: personalAuthContextRef,
+                buildMarker: catalog.compiled.buildMarker,
+                origin: fixture.origin,
+                principalId: fixture.core.manager.principalId,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              },
+              party,
+              partyRef,
+              productRef,
+              publicJwks: gatewayMaterial.publicJwks,
+              relationId,
+              workloadKey: issued.secret,
+            });
 
             return yield* Effect.void;
           }),
@@ -3424,6 +3835,7 @@ it.live(
       Effect.timeout('120 seconds'),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
+  150_000,
 );
 
 it.live('completes the real CCC Guest attribution through Party with the original authenticated actor', () =>
