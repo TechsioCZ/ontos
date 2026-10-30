@@ -10,6 +10,7 @@ import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
 const SHELL_APP_ID = 'shell-super-app';
+const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
 
 export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerStartupError>()(
   'PackagedOwnerStartupError',
@@ -19,11 +20,16 @@ export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerS
 ) {}
 
 const IdentitySchema = Schema.Struct({
-  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog']),
+  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog', CUSTOMER_CONTEXT_APP_ID]),
   build: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   buildMarker: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   sourceRevision: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u)),
-  unitId: Schema.Literals(['app/shell-super-app', 'app/party-registry', 'app/catalog']),
+  unitId: Schema.Literals([
+    'app/shell-super-app',
+    'app/party-registry',
+    'app/catalog',
+    'app/commerce-customer-context',
+  ]),
   version: Schema.String.check(Schema.isMinLength(1)),
 });
 const PackagedBuildSchema = Schema.Struct({ deliveryUnit: IdentitySchema });
@@ -42,7 +48,7 @@ const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127
 const PACKAGED_STARTUP_PHASE = 'Packaged native startup phase';
 
 interface PackagedApplicationInput {
-  readonly appId: typeof SHELL_APP_ID | 'party-registry' | 'catalog';
+  readonly appId: typeof SHELL_APP_ID | 'party-registry' | 'catalog' | typeof CUSTOMER_CONTEXT_APP_ID;
   readonly authentication?: {
     readonly baseUrl: string;
     readonly connectionString: Redacted.Redacted;
@@ -143,15 +149,18 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     if (compiled.deliveryUnit.appId !== input.appId) {
       return yield* new PackagedOwnerStartupError({ reason: 'Packaged application identity mismatch' });
     }
-    const publishedBuild = yield* filesystem
-      .readFileString(path.join(directory, '.output', 'public', 'ultramodern-build.json'))
-      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
+    const publishedBuild =
+      input.appId === CUSTOMER_CONTEXT_APP_ID
+        ? undefined
+        : yield* filesystem
+            .readFileString(path.join(directory, '.output', 'public', 'ultramodern-build.json'))
+            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
     const release = yield* filesystem
       .readFileString(path.join(directory, '.output', 'release', 'microvertical-release-envelope.json'))
       .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReleaseEnvelopeSchema))));
     const identity = compiled.deliveryUnit;
     if (
-      !sameIdentity(identity, publishedBuild.deliveryUnit) ||
+      (publishedBuild !== undefined && !sameIdentity(identity, publishedBuild.deliveryUnit)) ||
       identity.build !== identity.buildMarker ||
       release.identity.buildMarker !== identity.buildMarker ||
       release.identity.sourceRevision !== identity.sourceRevision ||
@@ -247,6 +256,13 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       input.appId === SHELL_APP_ID
         ? yield* Schema.decodeUnknownEffect(OntosShellRuntimeContractSchema)(body)
         : yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(body);
+    if (
+      input.appId === CUSTOMER_CONTEXT_APP_ID &&
+      (!Schema.is(OntosModuleDeploymentContractSchema)(contract) ||
+        contract.manifest.publicSurface.components.length !== 0)
+    ) {
+      return yield* new PackagedOwnerStartupError({ reason: 'API-only application declares a frontend surface' });
+    }
     if (contract.deployment.appId !== identity.appId || contract.deployment.buildMarker !== identity.buildMarker) {
       return yield* new PackagedOwnerStartupError({
         reason: 'Actual HTTP deployment does not match immutable packaged identity',
