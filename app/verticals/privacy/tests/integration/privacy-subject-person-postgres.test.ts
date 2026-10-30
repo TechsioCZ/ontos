@@ -63,6 +63,7 @@ import { eq } from 'drizzle-orm';
 
 import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
+import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { expect, it } from 'effect-rstest';
 
@@ -680,7 +681,8 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
         expect(detail.resolution.kind).toBe('DIRECT');
         const ref = yield* Schema.decodeUnknownEffect(PrivacyPartyRefSchema)(producedRef);
         createdParties.push({ partyRef: ref, partyType, revision: detail.party.revision });
-        const subjectId = yield* nextId();
+        // Privacy owns a Party-backed subject's identity: it derives from the tenant-scoped Party reference.
+        const subjectId = privacySubjectRefForParty(ref).resourceId;
         const key = yield* nextId();
         if (partyType === 'PERSON') {
           const created = yield* createSubject(ref, subjectId, key);
@@ -695,7 +697,8 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
               yield* nextId(),
             ),
           );
-          expect(changedIdentity).toMatchObject({ code: 'privacy_operation_conflict' });
+          // The same subject identity for another Party is refused before storage: its identity derives from the Party.
+          expect(changedIdentity).toMatchObject({ code: 'privacy_action_rejected' });
           expect(yield* Effect.flip(createSubject(ref, subjectId, key))).toMatchObject({
             code: 'action_already_committed',
           });
@@ -722,24 +725,31 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
         }
       }
       expect(createdParties.map((party) => party.partyType)).toEqual(['PERSON', 'ORGANIZATION', 'UNRESOLVED']);
+      // An unknown same-Tenant Party fails owner admission; a foreign-Tenant Party is refused before it.
       const rejectedRefs = [
-        Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
-          moduleId: 'party.registry',
-          resourceId: yield* nextId(),
-          resourceType: 'party.registry.party',
-          tenantId: fixture.tenantId,
-        }),
-        Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
-          moduleId: 'party.registry',
-          resourceId: yield* nextId(),
-          resourceType: 'party.registry.party',
-          tenantId: yield* nextId(),
-        }),
-      ];
-      for (const rejectedRef of rejectedRefs) {
-        const rejectedSubjectId = yield* nextId();
+        [
+          Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
+            moduleId: 'party.registry',
+            resourceId: yield* nextId(),
+            resourceType: 'party.registry.party',
+            tenantId: fixture.tenantId,
+          }),
+          'privacy_operation_persistence_unavailable',
+        ],
+        [
+          Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
+            moduleId: 'party.registry',
+            resourceId: yield* nextId(),
+            resourceType: 'party.registry.party',
+            tenantId: yield* nextId(),
+          }),
+          'privacy_action_rejected',
+        ],
+      ] as const;
+      for (const [rejectedRef, rejectedCode] of rejectedRefs) {
+        const rejectedSubjectId = privacySubjectRefForParty(rejectedRef).resourceId;
         const rejectedAdmission = yield* Effect.flip(createSubject(rejectedRef, rejectedSubjectId, yield* nextId()));
-        expect(rejectedAdmission).toMatchObject({ code: 'privacy_operation_persistence_unavailable' });
+        expect(rejectedAdmission).toMatchObject({ code: rejectedCode });
         const rejectedRows = yield* fixture
           .prepareOwner(
             (transaction) =>
@@ -871,8 +881,11 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
           .pipe(Effect.provideService(PrivacySubjectPartyOwner, owner), Effect.provideContext(context)),
       );
       expect(staleRead).toMatchObject({ code: 'read_handler_unavailable' });
-      const staleCreate = yield* Effect.flip(createSubject(person.partyRef, yield* nextId(), yield* nextId()));
-      expect(staleCreate).toMatchObject({ code: 'privacy_operation_persistence_unavailable' });
+      const staleCreate = yield* Effect.flip(
+        createSubject(person.partyRef, privacySubjectRefForParty(person.partyRef).resourceId, yield* nextId()),
+      );
+      // The Party's one derived subject identity is already admitted, so a second admission conflicts.
+      expect(staleCreate).toMatchObject({ code: 'privacy_operation_conflict' });
       const retained = yield* fixture
         .prepareOwner(
           (transaction) =>
