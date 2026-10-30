@@ -590,7 +590,7 @@ zerops:
     build:
       base: alpine@3.23
       envVariables:
-        BUILD_JOBS: '3'
+        BUILD_JOBS: '2'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ZE_FAIL_BUILD: 'true'
@@ -604,6 +604,12 @@ zerops:
         - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/node/'
       deployFiles:
         - app/
+      # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
+      cache:
+        - app/.zerops/unit-cache
+        - app/node_modules/.cache
+        - app/apps/*/node_modules/.cache
+        - app/verticals/*/node_modules/.cache
     deploy:
       temporaryShutdown: false
       readinessCheck:

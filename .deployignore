@@ -5,7 +5,9 @@ app/**/cloudflare-dist
 app/**/dist-cloudflare
 app/**/*.map
 app/**/@mf-types.zip
-app/**/.zerops/build-logs
+app/.zerops/build-logs
+app/.zerops/unit-cache
+app/**/node_modules/.cache
 app/apps/*/tests
 app/verticals/*/tests
 app/packages/*/tests

@@ -8,13 +8,20 @@
 #
 # Browser assets are served by the host under /_m/<appId>/, so every unit's public URL is that prefix on the one
 # public origin. Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs). Run from app/.
+#
+# A unit whose inputs did not change keeps its previous build: dist/.zerops-build-digest records the digest of its
+# committed inputs (its own directory, every workspace vertical it depends on, packages/, the root build
+# configuration and the public origin). Each built dist/ is copied to $UNIT_CACHE_DIR (default .zerops/unit-cache),
+# which zerops.yaml keeps in the Zerops build cache together with the Rspack caches, and restored from there.
 set -eu
 root="$PWD"
 
 : "${ONTOS_PUBLIC_ORIGIN:?ONTOS_PUBLIC_ORIGIN (the public HTTPS origin of the Shell) is required}"
-jobs_limit="${BUILD_JOBS:-3}"
+jobs_limit="${BUILD_JOBS:-2}"
 log_dir="${BUILD_LOG_DIR:-.zerops/build-logs}"
-mkdir -p "$log_dir"
+entry='dist/zerops-entry.mjs'
+unit_cache="${UNIT_CACHE_DIR:-.zerops/unit-cache}"
+mkdir -p "$log_dir" "$unit_cache"
 
 env_name() { printf 'ULTRAMODERN_PUBLIC_URL_%s' "$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"; }
 unit_dir() { [ "$1" = shell-super-app ] && printf 'apps/shell-super-app' || printf 'verticals/%s' "$1"; }
@@ -30,31 +37,79 @@ for unit in $units; do
   [ "$unit" = shell-super-app ] || export "$(env_name "$unit")=$ONTOS_PUBLIC_ORIGIN/_m/$unit"
 done
 export ULTRAMODERN_DISABLE_BUILD_TS_CHECKER="${ULTRAMODERN_DISABLE_BUILD_TS_CHECKER:-1}"
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2560}"
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
+
+# Workspace verticals one unit depends on, transitively (packages/ is hashed whole).
+unit_inputs() {
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const seen = new Set();
+    const visit = (dir) => {
+      if (seen.has(dir)) return;
+      seen.add(dir);
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      for (const [name, range] of Object.entries({ ...manifest.dependencies, ...manifest.devDependencies })) {
+        if (String(range).startsWith("workspace:")) {
+          visit(path.relative(process.cwd(), fs.realpathSync(path.join(dir, "node_modules", name))));
+        }
+      }
+    };
+    visit(process.argv[1]);
+    for (const dir of seen) if (!dir.startsWith("packages/")) console.log(dir);
+  ' "$1"
+}
+
+# The committed Git object ids of every input of one unit, hashed with the public origin.
+unit_digest() {
+  inputs="$(unit_inputs "$1")"
+  {
+    printf '%s\n' "$ONTOS_PUBLIC_ORIGIN"
+    for input in $inputs packages scripts/zerops scripts/generate-ontos-module-contract.mts topology \
+      package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json module-federation.shared.ts; do
+      printf '%s %s\n' "$input" "$(git rev-parse "HEAD:app/$input")"
+    done
+  } | sha256sum | cut -d' ' -f1
+}
 
 build_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
   started="$(date +%s)"
+  digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 1; }
+  if [ "$(cat "$unit_cache/$unit/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
+    rm -rf "$dir/dist" && cp -a "$unit_cache/$unit" "$dir/dist"
+  fi
+  if [ -f "$dir/$entry" ] && [ "$(cat "$dir/dist/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
+    echo "kept $unit (inputs unchanged)"
+    return 0
+  fi
   if (cd "$dir" && pnpm run build && node "$root/scripts/zerops/owner-entry.mts" "$dir") >"$log_dir/$unit.log" 2>&1; then
+    printf '%s\n' "$digest" >"$dir/dist/.zerops-build-digest"
+    rm -rf "$unit_cache/$unit" && cp -a "$dir/dist" "$unit_cache/$unit"
     echo "built $unit in $(($(date +%s) - started))s"
   else
-    tail -40 "$log_dir/$unit.log" >&2
+    tail -60 "$log_dir/$unit.log" >&2
     echo "build failed: $unit (log $log_dir/$unit.log)" >&2
     return 1
   fi
 }
 
+[ "${1:-}" != '--digest' ] || { unit_digest "$2"; exit 0; }
+
+failure_mark="$log_dir/.failed"
+rm -f "$failure_mark"
 started_all="$(date +%s)"
 pids=''
 for unit in $units; do
   while [ "$(jobs -p | wc -l | tr -d ' ')" -ge "$jobs_limit" ]; do sleep 1; done
-  build_unit "$unit" &
+  # Stop scheduling after the first failure; the builds already running finish.
+  [ ! -f "$failure_mark" ] || break
+  { build_unit "$unit" || touch "$failure_mark"; } &
   pids="$pids $!"
 done
-failed=0
 for pid in $pids; do
-  wait "$pid" || failed=1
+  wait "$pid" || true
 done
-[ "$failed" -eq 0 ] || { echo "one or more unit builds failed" >&2; exit 1; }
+[ ! -f "$failure_mark" ] || { echo "one or more unit builds failed" >&2; exit 1; }
 echo "built $(echo "$units" | wc -w | tr -d ' ') units in $(($(date +%s) - started_all))s"
