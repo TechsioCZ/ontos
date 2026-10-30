@@ -7,10 +7,10 @@ import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { useCart } from "@/features/cart/cart-provider";
 import { CartNavigation } from "@/features/cart/cart-content";
+import { CartRevalidation, useCartQuote } from "@/ontos/cart-revalidation";
 import { CartSelector } from "@/features/cart/cart-selector";
 import { checkoutSteps, getReachableStep } from "@/features/checkout/checkout-state";
 import { useCheckout } from "./checkout-provider";
-import { useCartQuote } from "@/ontos/cart-revalidation";
 import { CheckoutSummary } from "./checkout-summary";
 
 function UnconfirmedOrder() {
@@ -206,6 +206,7 @@ export function CheckoutLayout({
                   )}
                 </section>
               ))}
+            {ready && !hasUnconfirmedOrder && <CartRevalidation />}
             {ready && !hasUnconfirmedOrder && cart.lines.length > 0 && step < 3 && (
               <section
                 className="order-4 mt-(--dimension-60) min-w-0"

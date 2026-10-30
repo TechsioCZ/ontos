@@ -1,0 +1,106 @@
+.akros-variant-detail {
+  width: calc(100% - var(--dimension-32));
+  max-width: var(--container-dialog-center-w-max);
+  min-height: 0;
+  max-height: var(--container-dialog-center-h-max);
+  overflow: hidden;
+}
+.akros-variant-detail > h2 {
+  margin: 0;
+  padding-inline-end: var(--dimension-44);
+  overflow-wrap: anywhere;
+  flex-shrink: 0;
+}
+/* This heading receives initial focus for reading; it is not an interactive tab stop. */
+.akros-variant-detail__title:focus {
+  outline: none;
+}
+.akros-variant-detail__close {
+  position: absolute;
+  inset-block-start: var(--dimension-8);
+  inset-inline-end: var(--dimension-8);
+  min-width: var(--dimension-44);
+  min-height: var(--dimension-44);
+}
+.akros-variant-detail__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: var(--dimension-24);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.akros-variant-detail__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  object-fit: contain;
+}
+.akros-variant-detail__info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--dimension-16);
+}
+.akros-variant-detail__info p,
+.akros-variant-detail__parameters {
+  margin: 0;
+}
+.akros-variant-detail__parameters div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--dimension-12);
+}
+.akros-variant-detail__parameters dd {
+  margin: 0;
+  font-weight: var(--font-weight-semibold);
+}
+.akros-variant-detail__price {
+  display: flex;
+  flex-direction: column;
+}
+.akros-variant-detail__price strong {
+  font-size: var(--text-xl);
+}
+.akros-variant-detail__note,
+.akros-variant-detail__price span {
+  font-size: var(--text-sm);
+  color: var(--color-fg-secondary);
+}
+.akros-variant-detail__description {
+  grid-column: 1 / -1;
+  white-space: pre-line;
+}
+.akros-variant-detail-link {
+  min-height: var(--dimension-44);
+  max-width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.akros-variant-preview__image {
+  display: block;
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+}
+@media (max-width: 767px) {
+  .akros-variant-detail__parameters dd[data-variant-detail-sku] {
+    grid-column: 1 / -1;
+    white-space: nowrap;
+  }
+  .akros-variant-detail__body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dimension-16);
+  }
+  .akros-variant-detail__image {
+    max-height: 180px;
+  }
+}
+@media (max-width: 767px) and (max-height: 600px) {
+  .akros-variant-detail__image {
+    max-height: 120px;
+  }
+}

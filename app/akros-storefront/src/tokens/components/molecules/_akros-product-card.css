@@ -35,6 +35,10 @@
 
 .akros-product-card__favorite {
   --color-button-fg-secondary-borderless: var(--color-neutral-400);
+  --padding-button-sm: var(--dimension-0);
+  --radius-button-sm: var(--radius-full);
+  --text-button-sm: 1em;
+  --spacing-button-sm: var(--spacing-button-md);
 }
 
 .akros-product-card__stock-row {

@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { it, expect } from 'effect-rstest';
 
@@ -95,7 +96,7 @@ registerHooks({
       {
         cwd: directory,
         encoding: 'utf-8',
-        env: { ...process.env, NODE_OPTIONS: `--import=${guard}` },
+        env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(guard).href}` },
         timeout: 120_000,
       },
     );

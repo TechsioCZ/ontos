@@ -45,7 +45,7 @@ try {
     await page.goto(new URL(`/produkt/${slug}`, baseUrl).href, { waitUntil: "networkidle" });
     const table = page.locator(".akros-variant-data-table__table");
     const form = page.getByRole("form", { name: "Filtrování variant" });
-    const submit = form.getByRole("button", { name: "Filtruj" });
+    const submit = form.getByRole("button", { name: "Obnovit filtry" });
     await probe(submit, { "--font-weight-button": "600" }, async () => {
       assert.equal(await style(submit, "fontWeight"), "600");
     });
@@ -108,35 +108,24 @@ try {
       { variantId: variant.id, expected: variant.minimumQuantity + variant.packageQuantity },
     );
 
-    const nextVariants = page.locator('.akros-pagination [data-part="next-trigger"]');
-    const firstSku = await table.locator(".akros-variant-table__sku").first().textContent();
-    await nextVariants.click();
-    await page.waitForFunction(
-      (previous) => document.querySelector(".akros-variant-table__sku")?.textContent !== previous,
-      firstSku,
-    );
-
-    // Selecting no materials must show the empty state; restoring them brings rows back.
-    const checkboxes = form.getByRole("checkbox");
-    const count = await checkboxes.count();
-    assert.ok(count > 0);
-    for (let index = 0; index < count; index++) {
-      const checkbox = checkboxes.nth(index);
-      if (await checkbox.isChecked()) await checkbox.locator("..").click();
-    }
-    await submit.click();
-    await page.locator(".akros-variant-purchase__empty").waitFor();
-    for (let index = 0; index < count; index++) await checkboxes.nth(index).locator("..").click();
-    await submit.click();
-    await table.locator("tbody tr").first().waitFor();
+    assert.equal(await table.locator("tbody tr").count(), product.detail.variants.length);
+    assert.equal(await page.locator('.akros-pagination [data-part="next-trigger"]').count(), 0);
+    assert.equal(await form.getByRole("checkbox").count(), 0);
+    assert.equal(await form.getByRole("button", { name: "Filtruj", exact: true }).count(), 0);
+    assert.equal(await form.getByRole("spinbutton", { name: /Cena/ }).count(), 0);
 
     const slider = form.getByRole("slider").first();
     const before = Number(await slider.getAttribute("aria-valuenow"));
     await slider.focus();
     await slider.press("ArrowRight");
     assert.ok(Number(await slider.getAttribute("aria-valuenow")) > before);
+    await page.waitForFunction(
+      (count) =>
+        document.querySelectorAll(".akros-variant-data-table__table tbody tr").length < count,
+      product.detail.variants.length,
+    );
     await submit.click();
-    await table.locator("tbody tr").first().waitFor();
+    assert.equal(await table.locator("tbody tr").count(), product.detail.variants.length);
 
     for (const route of ["/kategorie/vruty", "/vyhledavani?q=DIN"]) {
       await page.goto(new URL(route, baseUrl).href, { waitUntil: "networkidle" });

@@ -1,0 +1,14 @@
+/* Figma 7:1992. Scope ordinary selects separately from PhoneInput's country picker. */
+.akros-select {
+  --color-form-control-bg: var(--color-base);
+  --color-select-trigger-bg-hover: var(--color-base);
+  --padding-select-trigger-sm: var(--dimension-20) var(--dimension-8) var(--dimension-20)
+    var(--dimension-24);
+  --text-icon-control-sm: var(--dimension-28);
+  --font-weight-normal: var(--font-weight-medium);
+}
+
+/* Trigger has no icon-source prop; keep the kit indicator and its open-state rotation. */
+.akros-select .token-icon-select-indicator {
+  @apply akros-checkout-icon-[akros-checkout--account-select-chevron];
+}

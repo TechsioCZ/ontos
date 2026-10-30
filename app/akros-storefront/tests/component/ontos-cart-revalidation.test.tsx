@@ -100,12 +100,12 @@ it("shows an explicit error with 'Zkusit znovu' and keeps the continue action di
   );
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByText(/Ceny a dostupnost se teď nepodařilo ověřit/);
-  expect(screen.getByText("Aktuální ceny a dostupnost z OntOS")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Kontrola cen a dostupnosti" })).toBeTruthy();
   expect(
     (screen.getByRole("button", { name: "Vybrat dopravu a platbu" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   await user.click(screen.getByRole("button", { name: "Zkusit znovu" }));
-  await screen.findByText("Ceny, množství a dostupnost byly ověřeny v OntOS.");
+  await screen.findByText("Ceny a dostupnost jsou aktuální.");
   expect(screen.getByRole("link", { name: "Vybrat dopravu a platbu" })).toBeTruthy();
 });
 

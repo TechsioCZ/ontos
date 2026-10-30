@@ -10,8 +10,7 @@ import {
   type CartState,
 } from "@/features/cart/cart-state";
 import { formatPrice } from "@/lib/format";
-
-const cartLabel = "Aktuální ceny a dostupnost z OntOS";
+import { cs } from "@/i18n/cs";
 
 interface QuoteLineIssue {
   productId: string;
@@ -168,16 +167,19 @@ export function CartRevalidation() {
   const state = useCartQuote();
   if (!cart.lines.length || !state) return null;
   const { quote, error, status, retry } = state;
+  const needsAttention =
+    status === "error" ||
+    (quote && (!quote.canCheckout || quote.priceChanged || quote.issues.length > 0));
   return (
     <section
       aria-live="polite"
-      className="mb-(--dimension-16) grid gap-2 rounded-sm bg-(--color-base) p-4 text-sm"
-      aria-label="Ověření košíku v OntOS"
+      className={`order-3 mt-(--dimension-16) grid min-w-0 gap-2 text-sm ${needsAttention ? "rounded-sm bg-(--color-base) p-4" : "text-(--color-fg-secondary)"}`}
+      aria-label={cs.checkout.quote.label}
       data-akros-cart-quote={status}
     >
-      <p className="font-bold" data-akros-cart-label>
-        {cartLabel}
-      </p>
+      <h2 className="sr-only" data-akros-cart-label>
+        {cs.checkout.quote.label}
+      </h2>
       {status === "error" ? (
         <div role="alert" className="grid gap-3 border-l-4 border-(--color-danger) pl-3">
           <p className="font-bold">Ceny a dostupnost se teď nepodařilo ověřit.</p>
@@ -187,7 +189,7 @@ export function CartRevalidation() {
           </Button>
         </div>
       ) : status === "checking" ? (
-        <p>Ověřuji aktuální cenu a dostupnost v OntOS…</p>
+        <p>{cs.checkout.quote.checking}</p>
       ) : (
         <>
           {quote!.issues.length > 0 && (
@@ -253,7 +255,7 @@ export function CartRevalidation() {
               </Button>
             </div>
           ) : quote!.canCheckout ? (
-            <p>Ceny, množství a dostupnost byly ověřeny v OntOS.</p>
+            <p>{cs.checkout.quote.verified}</p>
           ) : !quote!.issues.length ? (
             <div role="alert" className="grid gap-3">
               <p>OntOS košík nepotvrdil. {quoteFailure}</p>

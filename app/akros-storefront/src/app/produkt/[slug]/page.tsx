@@ -3,7 +3,10 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
-import { ProductDetailActions, ProductFavoriteButton } from "@/components/product-detail-actions";
+import { ProductDetailActions } from "@/components/product-detail-actions";
+import { ProductVariantDetail } from "@/components/product-variant-detail";
+import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
+import StoreLink from "@/components/store-link";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
@@ -20,7 +23,7 @@ import { purchaseProductOf, purchaseVariantOf } from "@/ontos/catalog-projection
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ variant?: string | string[] }>;
+  searchParams: Promise<{ variant?: string | string[]; variantIds?: string | string[] }>;
 }
 
 const isQuantityPricingCopy = (paragraph: string) =>
@@ -44,13 +47,17 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     featuredCatalog,
     { getCategoryById, getCategoryTrail, getProductBySlug, toProductSummary },
   ] = await Promise.all([getCatalog(), getProductDetail(slug)]);
-  const { variant: requestedVariantSearch } = await searchParams;
+  const { variant: requestedVariantSearch, variantIds } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
 
   const category = getCategoryById(product.categoryId);
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
+  const selectedIds = parseVariantIds(variantIds);
+  const selectedVariants = selectedIds.length
+    ? resolveVariantSelection(detail.variants, variantIds)
+    : detail.variants;
   const purchaseProduct = purchaseProductOf(product);
   const singleVariant = detail.variants.length === 1 ? detail.variants[0] : undefined;
   const hasMultipleVariants = detail.variants.length > 1;
@@ -83,7 +90,6 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const productDescriptionParagraphs = detail.descriptionParagraphs.filter(
     (paragraph) => !isQuantityPricingCopy(paragraph),
   );
-  const [summaryDescription, ...remainingDescriptionParagraphs] = productDescriptionParagraphs;
   const materialMarkers = product.name.match(/\bA[1-5]\b|\b1\.\d{4}\b/gi) ?? [];
   const recommendationScore = (candidateName: string) =>
     materialMarkers.filter((marker) =>
@@ -135,6 +141,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
       />
 
       <article className="akros-product-detail">
+        <ProductVariantDetail
+          product={purchaseProduct}
+          descriptionParagraphs={productDescriptionParagraphs}
+        />
         <section className="akros-product-detail__overview" aria-labelledby="product-title">
           <div className="akros-product-detail__gallery">
             <Image
@@ -201,10 +211,6 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               )}
             </header>
 
-            {summaryDescription && (
-              <p className="akros-product-detail__description">{summaryDescription}</p>
-            )}
-
             <dl className="akros-product-detail__facts">
               {packageQuantity > purchaseItem.minimumQuantity && (
                 <div>
@@ -218,7 +224,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 <dt>Kód produktu</dt>
                 <dd>{purchaseItem.sku}</dd>
               </div>
-              {product.netWeight && (
+              {!hasMultipleVariants && product.netWeight && (
                 <div>
                   <dt>Váha</dt>
                   <dd>
@@ -318,20 +324,29 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                       product={purchaseProduct}
                       variant={singleVariant ? purchaseVariantOf(singleVariant) : undefined}
                     />
-                    <ProductFavoriteButton productId={product.id} productName={product.name} />
                   </div>
                 </div>
               </>
             )}
 
-            <ProductDetailActions productId={product.id} productName={product.name} />
+            <ProductDetailActions
+              productId={product.id}
+              productName={product.name}
+              productSlug={product.slug}
+              variantId={hasMultipleVariants ? undefined : (singleVariant?.id ?? null)}
+            />
+            <div className="akros-product-delivery-info">
+              <h2>Doprava a platba</h2>
+              <p>Způsob dopravy zvolíte v košíku.</p>
+              <StoreLink href="/doprava-a-platba">Více o dopravě a platbě</StoreLink>
+            </div>
           </div>
         </section>
 
-        {(remainingDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
+        {(productDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
           <section className="akros-product-detail__surface" aria-labelledby="description-title">
             <h2 id="description-title">{cs.product.details}</h2>
-            {remainingDescriptionParagraphs.map((paragraph) => (
+            {productDescriptionParagraphs.map((paragraph) => (
               <p key={paragraph}>{paragraph}</p>
             ))}
             {detail.parameters.length > 0 && (
@@ -349,11 +364,20 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
 
         {hasMultipleVariants && (
           <section id="product-variants" aria-label="Varianty produktu">
-            <ProductPurchaseForm
-              initialVariantSearch={initialVariantSearch}
-              product={purchaseProduct}
-              variants={detail.variants.map(purchaseVariantOf)}
-            />
+            {selectedIds.length > 0 && selectedVariants.length === 0 ? (
+              <p role="alert">
+                Vybrané varianty už nejsou dostupné.{" "}
+                <StoreLink href={`/produkt/${product.slug}#product-variants`}>
+                  Zobrazit všechny varianty
+                </StoreLink>
+              </p>
+            ) : (
+              <ProductPurchaseForm
+                initialVariantSearch={initialVariantSearch}
+                product={purchaseProduct}
+                variants={selectedVariants.map(purchaseVariantOf)}
+              />
+            )}
           </section>
         )}
 
@@ -371,6 +395,46 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           </section>
         )}
       </article>
+      <section className="akros-print-sheet" aria-label="Produktový list pro tisk">
+        <p>AKROS — produktový list</p>
+        <h1>{product.name}</h1>
+        <Image
+          src={product.imageSrc}
+          alt={product.imageAlt}
+          width={1000}
+          height={824}
+          sizes="60mm"
+          loading="eager"
+        />
+        <p>Kód produktu: {purchaseItem.sku}</p>
+        {!hasMultipleVariants && (
+          <p>
+            Cena s DPH:{" "}
+            {purchaseItem.priceMinor > 0
+              ? `${formatPrice(purchaseItem.priceMinor)} / ${purchaseItem.unit}`
+              : "Cena není dostupná."}
+          </p>
+        )}
+        {hasMultipleVariants && (
+          <p>
+            Počet variant: {detail.variants.length}. Ceny a dostupnost jednotlivých variant najdete
+            v e-shopu.
+          </p>
+        )}
+        {productDescriptionParagraphs.map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+        <dl>
+          {detail.parameters.map((parameter) => (
+            <div key={parameter.label}>
+              <dt>{parameter.label}</dt>
+              <dd>
+                {parameter.value} {parameter.unit}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
     </StorefrontShell>
   );
   // The browser navigation gets only this category branch, not the whole tree.

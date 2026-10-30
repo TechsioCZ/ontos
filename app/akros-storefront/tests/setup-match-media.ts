@@ -1,5 +1,18 @@
 import { beforeEach, vi } from "vitest";
 
+// jsdom has no layout observer. UI-kit DataTable's DnD adapter imports it eagerly;
+// actual sizing and overflow remain covered in Chromium.
+if (typeof window !== "undefined" && typeof ResizeObserver === "undefined") {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  });
+}
+
 // jsdom does not implement the media queries used by UI-kit motion preferences.
 beforeEach(() => {
   if (typeof window === "undefined") return;

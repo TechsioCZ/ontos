@@ -16,17 +16,10 @@ import { useCatalog } from "@/ontos/catalog-provider";
 const isElement = (value: EventTarget): value is Element => Element.prototype.isPrototypeOf(value);
 
 const utilityLinks = [
-  { href: "/", label: cs.header.home },
   { href: "/obchodni-podminky", label: cs.header.terms },
   { href: "/o-nas", label: cs.header.about },
-  {
-    href: "/kategorie/nerezovy-spojovaci-material",
-    label: cs.header.fasteners,
-  },
-  { href: "/kategorie/nerezovy-hutni-material", label: cs.header.steel },
   { href: "/blog", label: cs.header.blog },
   { href: "/partnersky-program", label: cs.header.partnerProgram },
-  { href: "/kategorie/akroscz-vyroba", label: cs.header.production },
   { href: "/reklamace", label: cs.header.claims },
   { href: "/kontakty", label: cs.header.contacts },
 ];

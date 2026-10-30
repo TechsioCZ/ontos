@@ -1501,10 +1501,10 @@ it('accepts reference factories beside native domain contracts but rejects execu
 
 it('accepts only deployment-bound native Layer composition and preserves constructor controls', () => {
   withTemporaryWorkspace((directory) => {
-    const actualRuntime = nodePath.relative(
-      directory,
-      nodePath.join(appRoot, 'packages/core-runtime/src/actions/runtime.ts'),
-    );
+    const actualRuntime = nodePath
+      .relative(directory, nodePath.join(appRoot, 'packages/core-runtime/src/actions/runtime.ts'))
+      .split(nodePath.sep)
+      .join('/');
     const layerFactorySource = './layer-factory.ts';
     const layerFactory = [
       'import { Effect, Layer, Context } from "effect";',

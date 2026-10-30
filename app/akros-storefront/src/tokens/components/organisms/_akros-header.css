@@ -4,7 +4,20 @@
 }
 
 :root {
+  --akros-header-main-gutter: var(--dimension-44);
   --akros-header-height: calc(var(--dimension-40) + var(--dimension-64) + 2 * var(--dimension-24));
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --akros-header-main-gutter: var(--dimension-32);
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --akros-header-main-gutter: var(--dimension-16);
+  }
 }
 
 .akros-header {

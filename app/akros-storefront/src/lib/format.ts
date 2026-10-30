@@ -48,6 +48,6 @@ export function describeOfferPrice({
   if (priceMinor <= 0) return unavailable("Cena v OntOS je nulová, položku proto nelze objednat.");
   return {
     available: true,
-    label: `${priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(priceMinor, "CZK")}`,
+    label: priceIsFrom ? cs.product.variantPrice : formatPrice(priceMinor, "CZK"),
   };
 }

@@ -1,0 +1,7 @@
+/* Inline auth links share Button tokens while retaining the surrounding text layout. */
+[data-akros-auth-link] {
+  --font-weight-button: var(--font-weight-semibold);
+  --color-button-fg-secondary-borderless: var(--color-link);
+  --color-button-bg-borderless-hover: var(--color-transparent);
+  --color-button-bg-borderless-active: var(--color-transparent);
+}

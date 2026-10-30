@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,7 +14,7 @@ const ruleCode = `effect-native(${ruleName})`;
 const native = readFileSync(
   new URL(`fixtures/${ruleName}/valid/scripts/native-runtime-teardown.mts`, import.meta.url),
   'utf-8',
-);
+).replaceAll('\r\n', '\n');
 const hardExit = 'process.exit(code);';
 const forwardExit = 'onExit(code);';
 const teardownName = 'exitWhenCommandCompletes';
@@ -143,7 +143,12 @@ it('requires exact Exit and onExit forwarding with no other callback uses or exi
     ['exit-code-write', native.replace(hardExit, 'process.exitCode = code;'), 1],
     ['optional-exit', native.replace(hardExit, 'process.exit?.(code);'), 1],
   ];
-  expectFixtures(variants.map(([name, source, expected]) => ({ expected, name, source })));
+  expectFixtures(
+    variants.map(([name, source, expected]) => {
+      expect(source, `${name} must actually mutate the control`).not.toBe(native);
+      return { expected, name, source };
+    }),
+  );
 });
 
 it('retains the configured maximum exit-site policy for native teardown adapters', () => {
@@ -171,16 +176,16 @@ it('retains the configured maximum exit-site policy for native teardown adapters
   });
 });
 
-it('runs asynchronous Scope finalizers before native teardown hard-exits a child with an open handle', () => {
-  withTemporaryWorkspace((directory) => {
-    const require = createRequire(path.join(appRoot, 'package.json'));
-    const effectModule = pathToFileURL(require.resolve('effect')).href;
-    const nodeModule = pathToFileURL(require.resolve('@effect/platform-node')).href;
-    for (const [outcome, code, effectSource] of [
-      ['success', 0, 'Effect.void'],
-      ['failure', 1, "Effect.fail('expected failure')"],
-      ['interrupt', 130, 'Effect.interrupt'],
-    ] as const) {
+for (const [outcome, code, effectSource] of [
+  ['success', 0, 'Effect.void'],
+  ['failure', 1, "Effect.fail('expected failure')"],
+  ['interrupt', 130, 'Effect.interrupt'],
+] as const) {
+  it(`runs asynchronous Scope finalizers before native teardown hard-exits a child (${outcome})`, () => {
+    withTemporaryWorkspace((directory) => {
+      const require = createRequire(path.join(appRoot, 'package.json'));
+      const effectModule = pathToFileURL(require.resolve('effect')).href;
+      const nodeModule = pathToFileURL(require.resolve('@effect/platform-node')).href;
       const evidence = path.join(directory, `${outcome}.txt`);
       const child = path.join(directory, `${outcome}.mjs`);
       writeFileSync(
@@ -191,6 +196,8 @@ import { NodeRuntime } from ${JSON.stringify(nodeModule)};
 const record = (event) => appendFileSync(${JSON.stringify(evidence)}, event + '\\n');
 setInterval(() => {}, 60_000);
 process.once('exit', (code) => record('process-exit:' + code));
+// Measure teardown after SDK imports; cold Node startup uses the outer test budget.
+setTimeout(() => { record('teardown-timeout'); process.exit(124); }, 10_000);
 const exitWhenCommandCompletes = (exit, onExit) => {
   Runtime.defaultTeardown(exit, (code) => {
     onExit(code);
@@ -209,8 +216,9 @@ const program = Effect.gen(function* lifecycle() {
 NodeRuntime.runMain(program, { disableErrorReporting: true, teardown: exitWhenCommandCompletes });
 `,
       );
-      const result = spawnSync(process.execPath, [child], { encoding: 'utf-8', timeout: 10_000 });
-      expect(result.error, result.stderr).toBeUndefined();
+      const result = spawnSync(process.execPath, [child], { encoding: 'utf-8', timeout: 120_000 });
+      const lifecycle = existsSync(evidence) ? readFileSync(evidence, 'utf-8') : 'No lifecycle events recorded';
+      expect(result.error, `${result.stderr}\n${lifecycle}`).toBeUndefined();
       expect(result.status, result.stderr).toBe(code);
       expect(readFileSync(evidence, 'utf-8').trim().split('\n')).toEqual([
         'program',
@@ -218,6 +226,6 @@ NodeRuntime.runMain(program, { disableErrorReporting: true, teardown: exitWhenCo
         'release-complete',
         `process-exit:${code}`,
       ]);
-    }
+    });
   });
-});
+}

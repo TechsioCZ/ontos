@@ -1,3 +1,5 @@
+import nodePath from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type {
   Browser as NativeBrowser,
   BrowserContext as NativeBrowserContext,
@@ -20,7 +22,7 @@ export class BrowserDriverFailure extends Schema.TaggedError<BrowserDriverFailur
   operation: Schema.String,
 }) {}
 
-/** The owned handle exposes Effect cleanup; only the foreign tab has a Promise close method. */
+/** The owned handle exposes Effect cleanup for its Playwright context and browser. */
 export interface E2eTab {
   readonly close: Effect.Effect<void, BrowserDriverFailure>;
   readonly page: E2ePage;
@@ -31,20 +33,8 @@ type BrowserContext = Pick<NativeBrowserContext, 'close' | 'newPage'>;
 type Browser = Pick<NativeBrowser, 'close' | 'newContext'>;
 type Launcher = Pick<BrowserType, 'launch'>;
 
-// The external managed bridge has no published declaration. Its page, options and close
-// capabilities come from the SDK; only this bridge-specific entrypoint is declared here.
-type ForeignTab = Pick<NativeBrowserContext, 'close'> & { readonly page: E2ePage };
-interface SharedClient {
-  readonly openTab: (options: BrowserContextOptions) => Promise<ForeignTab>;
-}
-
 const LauncherSchema = Schema.Struct({
   launch: Schema.declare<Launcher['launch']>((value): value is Launcher['launch'] => Predicate.isFunction(value)),
-});
-const SharedClientSchema = Schema.Struct({
-  openTab: Schema.declare<SharedClient['openTab']>((value): value is SharedClient['openTab'] =>
-    Predicate.isFunction(value),
-  ),
 });
 const BrowserModuleSchema = Schema.Struct({ chromium: LauncherSchema });
 
@@ -97,70 +87,55 @@ export const WRITE_MODE_LABEL = {
 
 export type ActAs = { readonly kind: 'me' } | { readonly agentName: string; readonly kind: 'agent' };
 
-/** Opens one owned shared tab, or a CI-owned Playwright browser when configured. */
+/** Opens an owned Playwright browser, with an optional CI module override. */
 export const openSharedTab = () =>
   Effect.gen(function* openBrowserTab() {
-    const playwrightModule = yield* Config.String('E2E_PLAYWRIGHT_MODULE').pipe(Config.withDefault(''));
+    const configuredModule = yield* Config.String('E2E_PLAYWRIGHT_MODULE').pipe(Config.withDefault(''));
+    const playwrightModule = configuredModule || 'playwright-core';
+    const moduleSpecifier = nodePath.isAbsolute(playwrightModule)
+      ? pathToFileURL(playwrightModule).href
+      : playwrightModule;
     const options: BrowserContextOptions = { viewport: { height: 900, width: 1440 } };
-    if (playwrightModule !== '') {
-      const imported = yield* Effect.tryPromise({
-        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import Playwright' }),
-        try: async () => {
-          const loaded: unknown = await import(playwrightModule);
-          // A CommonJS `@playwright/test` default export is its test function, which carries the launchers.
-          return Predicate.hasProperty(loaded, 'chromium') ||
-            !Predicate.hasProperty(loaded, 'default') ||
-            !Predicate.hasProperty(loaded.default, 'chromium')
-            ? loaded
-            : { chromium: loaded.default.chromium };
-        },
-      });
-      // Narrow without decoding: a decoded copy would detach `launch` from its browser type.
-      if (!Schema.is(BrowserModuleSchema)(imported)) {
-        return yield* new BrowserDriverFailure({
-          cause: `${playwrightModule} exports no chromium launcher`,
-          operation: 'load Playwright',
-        });
-      }
-      const { chromium } = imported;
-      const browser = yield* Effect.tryPromise({
-        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'chromium.launch' }),
-        try: async () => await chromium.launch(),
-      });
-      const context = yield* Effect.tryPromise({
-        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.newContext' }),
-        try: async () => await browser.newContext(options),
-      }).pipe(
-        Effect.onError(() =>
-          Effect.tryPromise({
-            catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.close' }),
-            try: async () => await browser.close(),
-          }).pipe(Effect.orDie),
-        ),
-      );
-      const page = yield* Effect.tryPromise({
-        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'context.newPage' }),
-        try: async () => await context.newPage(),
-      }).pipe(Effect.onError(() => closeContextAndBrowser(context, browser).pipe(Effect.orDie)));
-      return ownedTab(page, closeContextAndBrowser(context, browser));
-    }
-    const clientPath = '/Volumes/TraceDecayKingston/techsio-demo/shared-browser/client.mjs';
     const imported = yield* Effect.tryPromise({
-      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import shared browser' }),
-      try: async () => Schema.decodeUnknownResult(SharedClientSchema)(await import(clientPath)),
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import Playwright' }),
+      try: async () => {
+        const loaded: unknown = await import(moduleSpecifier);
+        // CommonJS @playwright/test exports a callable default with the launchers attached.
+        return Predicate.hasProperty(loaded, 'chromium') ||
+          !Predicate.hasProperty(loaded, 'default') ||
+          !Predicate.hasProperty(loaded.default, 'chromium')
+          ? loaded
+          : { chromium: loaded.default.chromium };
+      },
     });
-    const client = yield* Effect.fromResult(imported);
-    const tab = yield* Effect.tryPromise({
-      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'shared.openTab' }),
-      try: async () => await client.openTab(options),
+    // Narrow without copying: launch depends on its original SDK receiver.
+    if (!Schema.is(BrowserModuleSchema)(imported)) {
+      return yield* new BrowserDriverFailure({
+        cause: `${playwrightModule} exports no chromium launcher`,
+        operation: 'load Playwright',
+      });
+    }
+    const { chromium } = imported;
+    const browser = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'chromium.launch' }),
+      try: async () => await chromium.launch(),
     });
-    return ownedTab(
-      tab.page,
-      Effect.tryPromise({
-        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'shared.closeTab' }),
-        try: async () => await tab.close(),
-      }),
+    const context = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.newContext' }),
+      try: async () => await browser.newContext(options),
+    }).pipe(
+      Effect.onError(() =>
+        Effect.tryPromise({
+          catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.close' }),
+          try: async () => await browser.close(),
+        }).pipe(Effect.orDie),
+      ),
     );
+    const page = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'context.newPage' }),
+      try: async () => await context.newPage(),
+    }).pipe(Effect.onError(() => closeContextAndBrowser(context, browser).pipe(Effect.orDie)));
+    return ownedTab(page, closeContextAndBrowser(context, browser));
   });
 
 export const loginIfNeeded = (page: E2ePage, email: string, password: Redacted.Redacted) =>

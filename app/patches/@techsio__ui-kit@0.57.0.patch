@@ -1,5 +1,5 @@
 diff --git a/dist/molecules/combobox.js b/dist/molecules/combobox.js
-index a71a2b305cd74656d2da925c36b2e10f4ff2f230..9a25e341522bc608cd90ab8ab8efdba87fdac340 100644
+index a71a2b305cd74656d2da925c36b2e10f4ff2f230..775dda1618d9bd51f596141c999b716658d48f4e 100644
 --- a/dist/molecules/combobox.js
 +++ b/dist/molecules/combobox.js
 @@ -154,7 +154,7 @@ const comboboxVariants = tv({
@@ -20,6 +20,30 @@ index a71a2b305cd74656d2da925c36b2e10f4ff2f230..9a25e341522bc608cd90ab8ab8efdba8
          selectionBehavior: navigation ? "preserve" : selectionBehavior,
          allowCustomValue: !navigation && allowCustomValue,
          autoFocus,
+@@ -282,10 +284,8 @@ function Combobox({ id, name, label, size, placeholder = "Select option", disabl
+             ...itemProps,
+             "aria-label": item.label,
+             className: itemSlot(),
+-            key: item.value,
+-            children: [
+-                itemContent,
+-                /*#__PURE__*/ jsx("span", {
++            key: item.value
++        }, itemContent, /*#__PURE__*/ jsx("span", {
+                     ...api.getItemIndicatorProps({
+                         item
+                     }),
+@@ -294,9 +294,7 @@ function Combobox({ id, name, label, size, placeholder = "Select option", disabl
+                         icon: "token-icon-check",
+                         size: "current"
+                     })
+-                })
+-            ]
+-        });
++                }));
+     };
+     return /*#__PURE__*/ jsxs("div", {
+         ...api.getRootProps(),
 diff --git a/dist/molecules/date-picker.js b/dist/molecules/date-picker.js
 index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..f4d5b10c50ab5bd2457a1018b085c20ec3f58ec5 100644
 --- a/dist/molecules/date-picker.js

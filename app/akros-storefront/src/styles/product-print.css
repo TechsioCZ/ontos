@@ -1,0 +1,56 @@
+.akros-print-sheet {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 15mm;
+  }
+  body:has(.akros-print-sheet) {
+    min-width: 0;
+    background: white;
+    color: black;
+  }
+  body:has(.akros-print-sheet) .akros-header,
+  body:has(.akros-print-sheet) .akros-sidebar,
+  body:has(.akros-print-sheet) .akros-footer,
+  body:has(.akros-print-sheet) .akros-product-detail-breadcrumb,
+  body:has(.akros-print-sheet) .akros-product-detail,
+  body:has(.akros-print-sheet) [data-scope="dialog"],
+  body:has(.akros-print-sheet) [data-scope="popover"],
+  body:has(.akros-print-sheet) [role="status"],
+  body:has(.akros-print-sheet) nextjs-portal {
+    display: none !important;
+  }
+  body:has(.akros-print-sheet) .akros-shell,
+  body:has(.akros-print-sheet) .akros-page-grid,
+  body:has(.akros-print-sheet) .akros-main {
+    display: block;
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+  .akros-print-sheet {
+    display: block;
+    font-size: 11pt;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .akros-print-sheet h1 {
+    font-size: 20pt;
+  }
+  .akros-print-sheet img {
+    max-width: 60mm;
+    height: auto;
+  }
+  .akros-print-sheet dl > div {
+    display: flex;
+    gap: 4mm;
+    break-inside: avoid;
+  }
+  .akros-print-sheet dd {
+    margin: 0;
+  }
+}

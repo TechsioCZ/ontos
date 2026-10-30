@@ -1,0 +1,166 @@
+/* Dialog lacks body/footer slots; this app composition keeps one list scroll area. */
+.akros-favorites-dialog {
+  width: calc(100% - var(--dimension-32));
+  height: min(var(--akros-favorites-height), calc(100dvh - var(--dimension-32)));
+  min-height: 0;
+  overflow: hidden;
+}
+.akros-favorites-dialog > h2 {
+  margin: 0;
+  padding-inline-end: var(--dimension-44);
+}
+.akros-favorites-dialog > :not(.akros-favorites-table) {
+  flex-shrink: 0;
+}
+.akros-favorites-close {
+  position: absolute;
+  top: var(--dimension-8);
+  right: var(--dimension-8);
+  min-width: var(--dimension-44);
+  min-height: var(--dimension-44);
+}
+.akros-favorites-dialog form button,
+.akros-favorites-selection [data-scope="checkbox"][data-part="root"] {
+  min-width: var(--dimension-44);
+  min-height: var(--dimension-44);
+}
+.akros-favorites-product {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.akros-favorites-selection {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--dimension-8) var(--dimension-24);
+  font-size: var(--text-sm);
+}
+.akros-favorites-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.akros-favorites-table__root {
+  width: 100%;
+}
+.akros-favorites-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--dimension-44);
+  min-height: var(--dimension-44);
+  cursor: pointer;
+}
+.akros-favorites-variant {
+  overflow-wrap: anywhere;
+}
+.akros-favorites-sku,
+.akros-favorites-price {
+  white-space: nowrap;
+}
+.akros-favorites-price {
+  font-weight: var(--font-weight-semibold);
+}
+.akros-favorites-total {
+  align-self: center;
+  margin-inline-end: auto;
+  font-size: var(--text-sm);
+}
+.akros-favorite-message {
+  display: block;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.akros-favorites-missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dimension-12);
+  padding-block: var(--dimension-8);
+  overflow-wrap: anywhere;
+}
+.akros-share-positioner {
+  z-index: 60;
+  max-width: calc(100vw - var(--dimension-32));
+}
+.akros-share-content {
+  display: grid;
+  gap: var(--dimension-12);
+  width: min(320px, calc(100vw - var(--dimension-32)));
+}
+.akros-share-content p {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.akros-shared-selection {
+  display: grid;
+  gap: var(--dimension-8);
+  margin-bottom: var(--dimension-16);
+}
+.akros-shared-selection p {
+  margin: 0;
+}
+
+@media (max-width: 639px) {
+  .akros-favorites-dialog {
+    --akros-favorites-inset: var(--dimension-12);
+    --akros-favorites-gap: var(--dimension-8);
+    width: calc(100% - var(--dimension-16));
+    height: calc(100dvh - var(--dimension-16));
+    max-height: calc(100dvh - var(--dimension-16));
+    padding-bottom: max(var(--akros-favorites-inset), env(safe-area-inset-bottom));
+  }
+  .akros-favorites-dialog > div:last-child {
+    flex-wrap: wrap;
+  }
+  .akros-favorites-total {
+    flex-basis: 100%;
+  }
+  .akros-favorites-table__root thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .akros-favorites-table__root,
+  .akros-favorites-table__root tbody {
+    display: block;
+  }
+  .akros-favorites-table__root caption {
+    display: block;
+    width: 100%;
+  }
+  .akros-favorites-table__root tbody tr {
+    display: grid;
+    grid-template-columns: var(--dimension-44) minmax(0, 1fr);
+    padding-block: var(--dimension-8);
+    border-bottom: 1px solid var(--color-border-primary);
+  }
+  .akros-favorites-table__root td {
+    display: block;
+    grid-column: 2;
+    padding: var(--dimension-2) var(--dimension-4);
+    border: 0;
+  }
+  .akros-favorites-table__root td:first-child {
+    grid-column: 1;
+    grid-row: 1 / span 4;
+    padding: 0;
+  }
+}
+
+@media (max-height: 600px) {
+  .akros-favorites-dialog {
+    --akros-favorites-inset: var(--dimension-12);
+    --akros-favorites-gap: var(--dimension-8);
+  }
+  .akros-favorites-product {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .akros-favorites-dialog form > label {
+    display: none;
+  }
+}

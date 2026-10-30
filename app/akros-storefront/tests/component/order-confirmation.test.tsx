@@ -1,6 +1,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { OrderConfirmation } from "@/features/checkout/order-confirmation";
+import { CartProvider } from "@/features/cart/cart-provider";
 import { GuestOrderConfirmation } from "@/features/checkout/guest-order-confirmation";
 import type { CustomerOrder } from "@/ontos/order-model";
 
@@ -40,7 +41,11 @@ it("mounts one real receipt panel and polls with only the saved recipient and or
   vi.stubGlobal("fetch", fetchMock);
 
   await act(async () => {
-    render(<OrderConfirmation order={savedOrder} />);
+    render(
+      <CartProvider storage={null}>
+        <OrderConfirmation order={savedOrder} />
+      </CartProvider>,
+    );
   });
 
   expect(screen.getAllByRole("region", { name: "E-maily k objednávce" })).toHaveLength(1);
@@ -80,7 +85,11 @@ it.each([undefined, ""])(
     };
 
     await act(async () => {
-      render(<OrderConfirmation order={order} />);
+      render(
+        <CartProvider storage={null}>
+          <OrderConfirmation order={order} />
+        </CartProvider>,
+      );
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(8_000);

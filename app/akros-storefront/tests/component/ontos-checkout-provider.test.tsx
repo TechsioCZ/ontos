@@ -130,6 +130,7 @@ describe("OntOS submission recovery", () => {
     async ({ failure, remount }) => {
       const user = userEvent.setup();
       const requests: string[] = [];
+      const initialQuote = Promise.withResolvers<void>();
       let rejectedRefreshes = 0;
       vi.stubGlobal(
         "fetch",
@@ -142,6 +143,7 @@ describe("OntOS submission recovery", () => {
                 requests.length && remount ? [] : [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
             });
           if (url.endsWith("/cart")) {
+            initialQuote.resolve();
             if (requests.length) rejectedRefreshes++;
             if (requests.length && failure === "unavailable")
               return new Response(null, { status: 503 });
@@ -176,6 +178,10 @@ describe("OntOS submission recovery", () => {
           </CartProvider>,
         );
       let view = checkout();
+      // Flush initial transport and React effects before testing submission recovery.
+      await act(async () => {
+        await initialQuote.promise;
+      });
       const submit = await screen.findByRole("button", { name: "Odeslat objednávku" });
       await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
       await user.click(submit);
@@ -397,6 +403,7 @@ describe("OntOS submission recovery", () => {
 
   it("places a guest order without an account and keeps the receipt for the guest confirmation", async () => {
     const user = userEvent.setup();
+    sessionStorage.setItem("akros-checkout-guest", "true");
     const fetchOrder = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
       Response.json({
         outcome: "PLACED",
@@ -415,7 +422,12 @@ describe("OntOS submission recovery", () => {
           });
         if (url.endsWith("/account")) return Response.json({ account: null });
         if (url.endsWith("/cart"))
-          return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
+          return Response.json({
+            cart: JSON.parse(String(init?.body)).cart,
+            canCheckout: true,
+            priceChanged: false,
+            issues: [],
+          });
         return fetchOrder(url, init);
       }),
     );
@@ -423,11 +435,23 @@ describe("OntOS submission recovery", () => {
       <CartProvider>
         <CheckoutProvider>
           <Probe />
+          <CartQuoteProvider>
+            <CheckoutLayout recommendations={[]}>
+              <ReviewStep />
+            </CheckoutLayout>
+          </CartQuoteProvider>
         </CheckoutProvider>
       </CartProvider>,
     );
     await waitFor(() => expect(screen.getByLabelText("Methods").textContent).toBe("1"));
-    await user.click(screen.getByText("Submit"));
+    const submit = await screen.findByRole("button", { name: "Odeslat objednávku" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    expect(
+      screen.getByText(
+        "Objednáváte bez registrace. Potvrzení a změny stavu pošleme na verified@example.test.",
+      ),
+    ).toBeDefined();
+    await user.click(submit);
     await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
     expect(screen.getByLabelText("Error").textContent).toBe("");
     expect(fetchOrder).toHaveBeenCalledOnce();

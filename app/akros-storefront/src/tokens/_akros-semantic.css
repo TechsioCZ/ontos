@@ -1,0 +1,4 @@
+:root {
+  /* Dialog/Popover shadow utilities resolve their aliases directly to this token. */
+  --shadow-primary: var(--shadow-md);
+}

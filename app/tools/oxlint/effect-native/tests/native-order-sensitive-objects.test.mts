@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { Schema } from 'effect';
 import { rules as nativeRules } from 'eslint-plugin-perfectionist';
@@ -83,7 +84,7 @@ it('keeps the upstream sorting rule metadata and every other rule unchanged', ()
 
 /** Exercise the actual production options through Oxlint, without unrelated rules or path overrides. */
 const productionConfigSource = `
-const { default: config } = await import(${JSON.stringify(productionConfig)});
+const { default: config } = await import(${JSON.stringify(pathToFileURL(productionConfig).href)});
 export default {
   categories: { correctness: 'off' },
   jsPlugins: [{ name: 'perfectionist', specifier: ${JSON.stringify(plugin)} }],
@@ -425,7 +426,7 @@ sort_objects_default.create = context => {
       {
         cwd: appRoot,
         encoding: 'utf-8',
-        env: { ...process.env, NODE_OPTIONS: `--import=${hook}` },
+        env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(hook).href}` },
         maxBuffer: 20 * 1024 * 1024,
         timeout: 120_000,
       },

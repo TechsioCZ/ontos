@@ -12,7 +12,9 @@ describe("describeOfferPrice", () => {
       available: true,
       label: "121,00 Kč",
     });
-    expect(label({ priceMinor: 12_100, currency: "CZK", priceIsFrom: true })).toBe("od 121,00 Kč");
+    expect(label({ priceMinor: 12_100, currency: "CZK", priceIsFrom: true })).toBe(
+      "Cena dle varianty",
+    );
   });
 
   it.each([

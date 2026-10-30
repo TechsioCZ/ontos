@@ -1,4 +1,4 @@
-import { CartQuoteProvider, CartRevalidation } from "@/ontos/cart-revalidation";
+import { CartQuoteProvider } from "@/ontos/cart-revalidation";
 import type { ReactNode } from "react";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -15,7 +15,6 @@ export default async function CartLayout({ children }: { children: ReactNode }) 
       <main>
         <CheckoutProvider>
           <CartQuoteProvider>
-            <CartRevalidation />
             <CheckoutLayout recommendations={recommendations}>{children}</CheckoutLayout>
           </CartQuoteProvider>
         </CheckoutProvider>

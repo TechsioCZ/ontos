@@ -37,13 +37,10 @@ it('proves imported Promise mirrors only when the module, guard, decoder and eve
     writeFileSync(wrongExport, 'export async function other() { return "native"; }\n');
     const template = readFileSync(path.join(appRoot, fixture), 'utf-8');
     const base = template.replace('__FOREIGN_MODULE__', JSON.stringify(driver));
-    const browser = readFileSync(path.join(appRoot, 'scripts/demo/mcp-oauth-e2e/browser.mts'), 'utf-8').replace(
-      /const clientPath = '[^']+';/u,
-      `const clientPath = ${JSON.stringify(driver)};`,
-    );
+    const browser = readFileSync(path.join(appRoot, 'scripts/demo/mcp-oauth-e2e/browser.mts'), 'utf-8');
     const valid = new Map([
       ['native-driver.mts', base],
-      ['real-browser-reproducer.mts', browser],
+      ['playwright-browser-driver.mts', browser],
       [
         'renamed-imports.mts',
         base
