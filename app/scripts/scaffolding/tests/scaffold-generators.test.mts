@@ -6897,6 +6897,17 @@ it.live(
         'ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime',
         'ActionRuntime, CounterfeitRedemptionService as GatewayAssertionRedemptionService, ReadRuntime',
       ],
+      [
+        '  GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as',
+        '  CounterfeitDatabaseLive as GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as',
+      ],
+      ['Layer.provide(GatewayAssertionRedemptionDatabaseLive),', 'Layer.provide(CounterfeitDatabaseLive),'],
+      [
+        'Layer.Error<typeof productionGatewayAssertionRedemptionLive>',
+        'Layer.Error<typeof productionActionRuntimeLive>',
+      ],
+      [tuple, `${tuple}\n  mutate(productionGatewayAssertionRedemptionLive);`],
+      [tuple, `${tuple}\n  mutate(GatewayAssertionRedemptionDatabaseLive);`],
 
       [merge, `${merge}\n  governedReadRuntimeLive['service'] = evil;`],
     ];

@@ -1075,41 +1075,68 @@ const cryptoReadImportedArguments = (
   return importedArguments;
 };
 
+interface EnrolledRedemption {
+  /** Local name of the owner's imported `GatewayAssertionRedemptionLive`. */
+  readonly alias: string;
+  /** Exact top-level `const` declaration of the enrolled runtime argument. */
+  readonly declaration: string;
+  /** The enrolled runtime argument. */
+  readonly name: string;
+}
+
+const isOwnerRedemptionImport = (source: string, binding: string, original: string): boolean => {
+  const imported = namedSourceImport(source, binding);
+  return imported?.imported === original && imported.modulePath === REDEMPTION_BOUNDARY_MODULE && !imported.typeOnly;
+};
+
 /**
- * Local names of the owner's imported `GatewayAssertionRedemptionLive` which the root passes only through the
- * canonical database enrollment `const x = Live.pipe(Layer.provide(GatewayAssertionRedemptionDatabaseLive),
- * Layer.provide(DatabaseConfigLive))`, as a non-first runtime argument.
+ * Redemption runtime arguments which the root passes through the canonical database enrollment
+ * `const x = Live.pipe(Layer.provide(GatewayAssertionRedemptionDatabaseLive), Layer.provide(DatabaseConfigLive))`.
+ * Every redemption-typed tuple element with a declared argument must prove that enrollment of the owner's imported
+ * `GatewayAssertionRedemptionLive`; any other declared redemption argument rejects the root.
  */
-const cryptoReadEnrolledRedemptionAliases = (
+const cryptoReadEnrolledRedemptions = (
   source: string,
+  elements: readonly string[],
   actualArguments: readonly string[],
-): ReadonlySet<string> => {
-  const aliases = new Set<string>();
-  const database = namedSourceImport(source, 'GatewayAssertionRedemptionDatabaseLive');
-  if (
-    database?.imported !== 'GatewayAssertionRedemptionDatabaseLive' ||
-    database.modulePath !== REDEMPTION_BOUNDARY_MODULE
-  ) {
-    return aliases;
-  }
+): readonly EnrolledRedemption[] | null => {
+  const enrolled: EnrolledRedemption[] = [];
   for (const [index, argument] of actualArguments.entries()) {
     const initializer = index === 0 ? undefined : constInitializer(source, argument);
-    const alias =
-      initializer === undefined
-        ? undefined
-        : /^(?<alias>[A-Za-z_$][A-Za-z0-9_$]*)\.pipe\(\s*Layer\.provide\(GatewayAssertionRedemptionDatabaseLive\),\s*Layer\.provide\(DatabaseConfigLive\),?\s*\)$/u.exec(
-            maskComments(initializer).trim(),
-          )?.groups?.alias;
-    const imported = alias === undefined ? undefined : namedSourceImport(source, alias);
+    const element = elements[index] ?? '';
     if (
-      alias !== undefined &&
-      imported?.imported === 'GatewayAssertionRedemptionLive' &&
-      imported.modulePath === REDEMPTION_BOUNDARY_MODULE
+      initializer === undefined ||
+      !/^[A-Za-z][A-Za-z0-9]*:\s*Layer\.Layer<\s*GatewayAssertionRedemptionService\b/u.test(element)
     ) {
-      aliases.add(alias);
+      continue;
     }
+    const alias =
+      /^(?<alias>[A-Za-z_$][A-Za-z0-9_$]*)\.pipe\(\s*Layer\.provide\(GatewayAssertionRedemptionDatabaseLive\),\s*Layer\.provide\(DatabaseConfigLive\),?\s*\)$/u.exec(
+        maskComments(initializer).trim(),
+      )?.groups?.alias;
+    const declaration = new RegExp(
+      `\\bconst\\s+${escapeRegExp(argument)}\\s*=\\s*${escapeRegExp(initializer)}\\s*;`,
+      'u',
+    ).exec(source)?.[0];
+    if (
+      alias === undefined ||
+      declaration === undefined ||
+      !new RegExp(
+        `^[A-Za-z][A-Za-z0-9]*:\\s*Layer\\.Layer<\\s*GatewayAssertionRedemptionService\\s*,\\s*Layer\\.Error<\\s*typeof\\s+${escapeRegExp(argument)}\\s*>\\s*>$`,
+        'u',
+      ).test(element) ||
+      !isOwnerRedemptionImport(source, alias, 'GatewayAssertionRedemptionLive') ||
+      !isOwnerRedemptionImport(
+        source,
+        'GatewayAssertionRedemptionDatabaseLive',
+        'GatewayAssertionRedemptionDatabaseLive',
+      )
+    ) {
+      return null;
+    }
+    enrolled.push({ alias, declaration, name: argument });
   }
-  return aliases;
+  return enrolled;
 };
 
 const cryptoReadProtectedNames = (
@@ -1119,6 +1146,7 @@ const cryptoReadProtectedNames = (
   maker: string,
   exported: string,
   importedArguments: ReadonlySet<string>,
+  enrolledRedemptions: readonly EnrolledRedemption[],
 ) => {
   const protectedNames = new Set([
     args,
@@ -1141,13 +1169,27 @@ const cryptoReadProtectedNames = (
     }
     protectedNames.add(argument);
   }
-  if (importedArguments.size > 0) {
+  const enrolledNames = enrolledRedemptions.flatMap(({ alias, name }) => [alias, name]);
+  if (enrolledRedemptions.length > 0) {
+    enrolledNames.push('GatewayAssertionRedemptionDatabaseLive');
+  }
+  for (const name of enrolledNames) {
+    if (protectedNames.has(name)) {
+      return null;
+    }
+    protectedNames.add(name);
+  }
+  if (importedArguments.size > 0 || enrolledRedemptions.length > 0) {
     protectedNames.add('GatewayAssertionRedemptionService');
   }
   return protectedNames;
 };
 
-const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<string>): boolean => {
+const hasCryptoReadImports = (
+  source: string,
+  importedArguments: ReadonlySet<string>,
+  enrolledRedemptions: readonly EnrolledRedemption[],
+): boolean => {
   // Local binding -> [module, exported name].
   const expectedImports = new Map([
     ['Layer', [EFFECT_EDGE_MODULE, 'Layer']],
@@ -1155,7 +1197,7 @@ const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<str
     ['nodeCryptoLayer', ['@effect/platform-node/NodeCrypto', 'layer']],
     ['ReadRuntime', [CORE_RUNTIME_MODULE, 'ReadRuntime']],
   ]);
-  if (importedArguments.size > 0) {
+  if (importedArguments.size > 0 || enrolledRedemptions.length > 0) {
     expectedImports.set('GatewayAssertionRedemptionService', [
       CORE_RUNTIME_MODULE,
       'GatewayAssertionRedemptionService',
@@ -1183,13 +1225,16 @@ const cryptoReadRemainingSource = (
   maker: string,
   invocation: string | undefined,
   exported: string,
-  enrolledRedemptionAliases: ReadonlySet<string> = new Set(),
+  enrolledRedemptions: readonly EnrolledRedemption[],
 ) => {
   // Remove only the declarations and imports whose identities and exact roles were proved.
   let remaining = source.replace(
     factorySource,
     factorySource.replace(signature, '()').replace(injection, '').replace(merge, ''),
   );
+  for (const { declaration } of enrolledRedemptions) {
+    remaining = remaining.replace(declaration, ' '.repeat(declaration.length));
+  }
   remaining = remaining.slice(0, tupleIndex) + ' '.repeat(closing + 1 - tupleIndex) + remaining.slice(closing + 1);
   let invalidImport = false;
   remaining = remaining.replaceAll(/^\s*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gmu, (declaration) => {
@@ -1197,7 +1242,7 @@ const cryptoReadRemainingSource = (
     for (const entry of values.split(',').map((value) => value.trim())) {
       if (
         /^GatewayAssertionRedemptionLive\b/u.test(entry) &&
-        ![...enrolledRedemptionAliases].some((alias) => entry === `GatewayAssertionRedemptionLive as ${alias}`) &&
+        !enrolledRedemptions.some(({ alias }) => entry === `GatewayAssertionRedemptionLive as ${alias}`) &&
         ![...importedArguments].some(
           (argument) =>
             entry ===
@@ -1341,7 +1386,8 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
     return false;
   }
   const importedArguments = cryptoReadImportedArguments(source, tuple.elements, invocation.actualArguments);
-  if (importedArguments === null) {
+  const enrolledRedemptions = cryptoReadEnrolledRedemptions(source, tuple.elements, invocation.actualArguments);
+  if (importedArguments === null || enrolledRedemptions === null) {
     return false;
   }
   const protectedNames = cryptoReadProtectedNames(
@@ -1351,8 +1397,9 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
     invocation.maker,
     invocation.exported,
     importedArguments,
+    enrolledRedemptions,
   );
-  if (protectedNames === null || !hasCryptoReadImports(source, importedArguments)) {
+  if (protectedNames === null || !hasCryptoReadImports(source, importedArguments, enrolledRedemptions)) {
     return false;
   }
   const remaining = cryptoReadRemainingSource(
@@ -1367,7 +1414,7 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
     invocation.maker,
     invocation.invocation,
     invocation.exported,
-    cryptoReadEnrolledRedemptionAliases(source, invocation.actualArguments),
+    enrolledRedemptions,
   );
   return remaining !== null && hasClosedCryptoReadReferences(remaining, protectedNames);
 };
