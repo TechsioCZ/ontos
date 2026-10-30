@@ -8,6 +8,18 @@ services:
   - hostname: app
     type: nodejs@24
     enableSubdomainAccess: true
+    # One container runs the Shell, every owner and the Outbox host; memory scales up before it runs out.
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 2
+      minRam: 2
+      maxRam: 4
+      minFreeRamGB: 0.5
+      minDisk: 10
+      maxDisk: 20
+    minContainers: 1
+    maxContainers: 1
   - hostname: storefront
     type: nodejs@24
     enableSubdomainAccess: true
