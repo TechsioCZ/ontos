@@ -1,3 +1,4 @@
+import { selectItem } from '../../../../ui/select-item.ts';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Facility operations — S11 Evidence bezpečnostních zařízení. OWNED BY THE `security` LANE.
@@ -538,8 +539,8 @@ const SecurityView = () => {
               <div className="w-48">
                 <Select
                   items={[
-                    { label: k('filters.allTypes'), value: ALL },
-                    ...securityDeviceTypes.map((value) => ({ label: k(`deviceType.${value}`), value })),
+                    selectItem(ALL, k('filters.allTypes')),
+                    ...securityDeviceTypes.map((value) => selectItem(value, k(`deviceType.${value}`))),
                   ]}
                   label={k('fields.deviceType')}
                   name="typeFilter"
@@ -551,8 +552,8 @@ const SecurityView = () => {
               <div className="w-48">
                 <Select
                   items={[
-                    { label: k('filters.allStates'), value: ALL },
-                    ...securityDeviceStates.map((value) => ({ label: k(`state.${value}`), value })),
+                    selectItem(ALL, k('filters.allStates')),
+                    ...securityDeviceStates.map((value) => selectItem(value, k(`state.${value}`))),
                   ]}
                   label={k('fields.state')}
                   name="stateFilter"

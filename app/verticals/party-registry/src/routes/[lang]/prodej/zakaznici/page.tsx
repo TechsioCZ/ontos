@@ -1,3 +1,4 @@
+import { selectItem } from '../../../../ui/select-item.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import {
   BulkActionBar,
@@ -157,13 +158,13 @@ const CustomerFilterRow = ({
 }: CustomerFilterRowProps) => {
   const { t } = useModernI18n();
   const segmentItems = [
-    { label: t(`${key}.filters.allSegments`), value: allSegments },
-    ...customerSegmentDefinitions.map((definition) => ({ label: definition.name, value: definition.businessCode })),
+    selectItem(allSegments, t(`${key}.filters.allSegments`)),
+    ...customerSegmentDefinitions.map((definition) => selectItem(definition.businessCode, definition.name)),
   ];
   const statusItems = [
-    { label: t(`${key}.filters.allStatuses`), value: allStatuses },
-    { label: t(`${key}.status.ACTIVE`), value: 'ACTIVE' },
-    { label: t(`${key}.status.ARCHIVED`), value: 'ARCHIVED' },
+    selectItem(allStatuses, t(`${key}.filters.allStatuses`)),
+    selectItem('ACTIVE', t(`${key}.status.ACTIVE`)),
+    selectItem('ARCHIVED', t(`${key}.status.ARCHIVED`)),
   ];
   return (
     <>

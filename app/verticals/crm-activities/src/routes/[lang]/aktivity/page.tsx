@@ -1,3 +1,4 @@
+import { selectItem } from '../../../ui/select-item.ts';
 import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
@@ -242,8 +243,8 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const partyItems = counterparties.map((item) => ({ label: item.party.title, value: item.ref.resourceId }));
-  const taskItems = tasks.map((item) => ({ label: item.title, value: item.ref.resourceId }));
+  const partyItems = counterparties.map((item) => selectItem(item.ref.resourceId, item.party.title));
+  const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
   return {
     card,
     counterpartyId,
