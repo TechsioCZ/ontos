@@ -38,6 +38,7 @@
       "records": {
         "title": "Štítky",
         "description": "Správa štítků a jejich přiřazení.",
+        "forbidden": "Štítky nemáte oprávnění zobrazit.",
         "unavailable": "Data se nepodařilo načíst."
       }
     },

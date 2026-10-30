@@ -1,9 +1,9 @@
 import { formatMoney, formatNumber } from '@app/admin-ui';
-import type { Tag } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { TagsCell, formatKc } from '../../../../list-cells.tsx';
+import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import { AvailabilityBadge, imageUrl } from './product-eshop.tsx';
 
 /** Czech plural of „varianta“ for a count. */
@@ -19,10 +19,7 @@ const variantNoun = (count: number) => {
  * variants themselves live in the detail.
  * Numbers are end-aligned, fixed widths.
  */
-export const productColumns = (
-  label: (path: string) => string,
-  tagsOf: (id: string) => readonly Tag[],
-): ColumnDef<ProductRecord>[] => [
+export const productColumns = (label: (path: string) => string, tagsOf: TagsOf): ColumnDef<ProductRecord>[] => [
   {
     accessorKey: 'sku',
     cell: (info) => <span className="whitespace-nowrap">{info.getValue<string>()}</span>,
@@ -113,11 +110,16 @@ export const productColumns = (
     header: label('columns.stockValue'),
     meta: { align: 'end', type: 'number', width: 140 },
   },
-  {
-    cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
-    enableSorting: false,
-    header: label('columns.tags'),
-    id: 'tags',
-    meta: { width: 150 },
-  },
+  // A role that may not read tags (`tagsOf` is `null`) gets no Štítky column.
+  ...(tagsOf === null
+    ? []
+    : [
+        {
+          cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
+          enableSorting: false,
+          header: label('columns.tags'),
+          id: 'tags',
+          meta: { width: 150 },
+        } satisfies ColumnDef<ProductRecord>,
+      ]),
 ];

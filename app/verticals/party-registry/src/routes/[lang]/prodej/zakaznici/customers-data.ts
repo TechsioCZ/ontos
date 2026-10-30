@@ -182,9 +182,9 @@ export const loadCustomerDetail = Effect.fn('CustomersData.loadDetail')(function
   const id = yield* correlation('customer-detail');
   // First prove access to this exact commercial context, independently of broader identity permissions.
   const counterparty = yield* executeCounterpartyRead({ counterpartyRef: customer.counterpartyRef }, id);
-  const identity = yield* section(
-    executePartyDetail({ includeFactHistory: true, partyRef: counterparty.party.canonicalPartyRef }, id),
-  );
+  // The panel shows the current identity only. Fact history needs `review_party_identity`, which read-only roles
+  // (accounting) do not hold, so asking for it would refuse the whole identity section for them.
+  const identity = yield* section(executePartyDetail({ partyRef: counterparty.party.canonicalPartyRef }, id));
   const partyRef = identity.status === 'ready' ? identity.value.resolution.canonicalPartyRef : customer.partyRef;
   const { contacts, identifiers } = yield* Effect.all(
     {

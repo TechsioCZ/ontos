@@ -2,10 +2,10 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { EmptyState } from '@app/admin-ui';
-import type { Tag } from '@app/tagging/contracts/records';
 import { Schema } from 'effect';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { paginationProps } from '../../../../form-number.ts';
+import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import { productColumns } from './products-columns.tsx';
 import { useTableTranslations } from './products-format.ts';
 
@@ -32,7 +32,7 @@ export interface ProductsTableProps {
   readonly rows: readonly ProductRecord[];
   readonly selection: Record<string, true>;
   readonly status: ProductsTableStatus;
-  readonly tagsOf: (id: string) => readonly Tag[];
+  readonly tagsOf: TagsOf;
 }
 
 /**

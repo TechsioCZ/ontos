@@ -217,6 +217,14 @@ it.effect('a commercial-context denial stops broader identity and contact reads 
   }),
 );
 
+it.effect('the detail reads the current identity only, so a read-only role is not refused for fact history', () =>
+  Effect.gen(function* currentIdentityOnly() {
+    const result = yield* loadCustomerDetail(customer);
+    expect(result.identity.status).toBe('ready');
+    expect(executePartyDetail).toHaveBeenCalledExactlyOnceWith({ partyRef }, expect.any(String));
+  }),
+);
+
 it.effect(
   'a tenant Party-read denial keeps the authorized Counterparty summary without broadening its projection',
   () =>

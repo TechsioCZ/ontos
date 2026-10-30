@@ -606,6 +606,9 @@ const TagsPageContent = () => {
         pageSizeOptions={[50, 100, 200]}
         paginationProps={{ translations: paginationTranslations }}
         renderEmpty={() => {
+          if (status === 'forbidden') {
+            return <EmptyState title={t('tagging.pages.records.forbidden')} />;
+          }
           if (status === 'error') {
             return (
               <EmptyState

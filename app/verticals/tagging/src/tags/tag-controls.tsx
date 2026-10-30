@@ -5,6 +5,9 @@
  * tagging page itself read the same tags; a page that offers pickers adds `preloadTagCatalog` to its `preloadPage`,
  * and the pickers open with their options in the first render. Loading, error and empty states stay inline.
  *
+ * - Tags are optional on every host page. A person who may not read tags here gets status `forbidden`: the filter
+ *   renders nothing and the hooks issue no read, so hosts leave their Štítky column and tag actions out instead of
+ *   showing a load error. `tagsReadable()` answers up front from the Shell's per-document navigation hint.
  * - `TagFilter({ kind, label?, catalog?, value, onChange })`: single-tag Combobox filter for subjects of `kind`.
  *   `value` is a `TagId` or `null`; `onChange` receives the same shape. Pass `label` when sibling filters show one,
  *   and `catalog` when the page already loaded the tags of the kind; without it the filter reads the shared catalog.
@@ -13,7 +16,8 @@
  * - `TagCell({ tags, loading })`: the tags of one row as chips, two at most, then `+N`. Pass `loading`
  *   while `useTagsFor` is still loading, so an empty cell never reads as "no tags".
  * - `useTagsFor(kind, ids)`: `{ canWrite, tagsBySubject, status, refetch }` for the rows of a list.
- *   `tagsBySubject` maps each subject id to its tags; `status` is `loading`, `ready` or `error`; `refetch` reloads;
+ *   `tagsBySubject` maps each subject id to its tags; `status` is `loading`, `ready`, `error` or `forbidden`;
+ *   `refetch` reloads;
  *   `canWrite` says whether the role may change tags.
  * - `useTagsOfKind(kind)`: the same for every subject of `kind`, read on mount without waiting for the list ids,
  *   plus a `catalog` to hand to `TagFilter`.
@@ -37,7 +41,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { assignTag, listTags, recordsFor, recordsOfKind, unassignTag } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { ApplyCommandActionForbiddenProblemSchema } from '../../shared/apis/apply-command-action.ts';
-import { RecordsForbiddenProblemSchema } from '../../shared/apis/records.ts';
+import { isTagReadForbidden, tagsFailureStatus, tagsReadable } from './tag-access.ts';
+import type { TagCallFailure, TagsStatus } from './tag-access.ts';
 import type { Assignment, Subject, SubjectId, SubjectKind, Tag, TagColor, TagId } from '../../shared/apis/records.ts';
 import csResource from '../../locales/cs/tagging.json';
 import enResource from '../../locales/en/tagging.json';
@@ -71,8 +76,8 @@ export const tagColorValue = {
   yellow: '#ca8a04',
 } satisfies Record<TagColor, string>;
 
-const tagsStatusValues = Schema.Literals(['loading', 'ready', 'error']);
-export type TagsStatus = typeof tagsStatusValues.Type;
+export { isTagReadForbidden, tagsFailureStatus, tagsReadable } from './tag-access.ts';
+export type { TagCallFailure, TagsStatus } from './tag-access.ts';
 
 const bulkModeValues = Schema.Literals(['add', 'remove']);
 export type BulkMode = typeof bulkModeValues.Type;
@@ -144,14 +149,15 @@ export const tagCatalogStatusOf = (snapshot: TagCatalogSnapshot): TagsStatus => 
   if (snapshot.state === 'ready') {
     return 'ready';
   }
-  return snapshot.state === 'failed' && !snapshot.refreshing ? 'error' : 'loading';
+  return snapshot.state === 'failed' && !snapshot.refreshing ? tagsFailureStatus(snapshot.error) : 'loading';
 };
 
-/** The shared catalog narrowed to the tags that apply to `kind`. */
+/** The shared catalog narrowed to the tags that apply to `kind`. Not read at all when tags are not readable here. */
 const useTagCatalog = (kind: SubjectKind, enabled: boolean): TagCatalog => {
-  const snapshot = useTagCatalogSnapshot(enabled);
+  const readable = tagsReadable();
+  const snapshot = useTagCatalogSnapshot(enabled && readable);
   const tags = snapshot.state === 'ready' ? snapshot.value.filter((tag) => tag.subjectKinds.includes(kind)) : [];
-  return { refetch: refreshTagCatalog, status: tagCatalogStatusOf(snapshot), tags };
+  return { refetch: refreshTagCatalog, status: readable ? tagCatalogStatusOf(snapshot) : 'forbidden', tags };
 };
 
 /** Tags a picker offers, loaded by the picker itself or handed in by a page that already read them. */
@@ -288,26 +294,36 @@ export interface TagFilterProps {
   value: TagId | null;
 }
 
-/** Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. */
-export const TagFilter = ({ catalog, kind, label, onChange, value }: TagFilterProps) => (
-  // The Combobox root gaps its label wider than a Select root does (6 px against 4 px). Beside Selects in a filter row,
-  // that lifts the label, so the picker takes the Select gap.
-  <div className="w-48 *:gap-(--spacing-select)">
-    {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
-    <TagPicker
-      {...(catalog === undefined ? {} : { catalog })}
-      clearable={false}
-      compact
-      enabled
-      helpText=""
-      invalid={false}
-      kind={kind}
-      {...(label === undefined ? {} : { label })}
-      onChange={onChange}
-      value={value}
-    />
-  </div>
-);
+/**
+ * Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. Renders nothing
+ * for a person who may not read tags here, so the filter row never shows a tag load error.
+ */
+export const TagFilter = ({ catalog, kind, label, onChange, value }: TagFilterProps) => {
+  const own = useTagCatalog(kind, catalog === undefined);
+  const resolved = catalog ?? own;
+  if (resolved.status === 'forbidden') {
+    return null;
+  }
+  return (
+    // The Combobox root gaps its label wider than a Select root does (6 px against 4 px). Beside Selects in a filter
+    // row, that lifts the label, so the picker takes the Select gap.
+    <div className="w-48 *:gap-(--spacing-select)">
+      {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
+      <TagPicker
+        catalog={resolved}
+        clearable={false}
+        compact
+        enabled
+        helpText=""
+        invalid={false}
+        kind={kind}
+        {...(label === undefined ? {} : { label })}
+        onChange={onChange}
+        value={value}
+      />
+    </div>
+  );
+};
 
 /** Groups the assignments of one records read by subject, resolving each tag id against the tags of that read. */
 const tagsBySubjectOf = (records: {
@@ -333,6 +349,7 @@ interface TagsRequest {
 
 /**
  * Tags for the given subjects, keyed by subject id. Failures set `status` to `error`; they never read as no tags.
+ * A person who may not read tags gets `forbidden` without a read (or after the owner refuses one).
  * `canWrite` is the records read's `demo.tagging.write_all` answer, so a page can hide tag edits from a read-only role
  * without a refused command. It stays `undefined` until a read succeeds.
  */
@@ -346,14 +363,15 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
   if (request.kind !== kind || request.subjectKey !== subjectKey) {
     setRequest({ kind, subjectIds: ids, subjectKey });
   }
+  const readable = tagsReadable();
   useEffect(() => {
     let active = true;
     // One records read carries both the tag catalog and the assignments, so a list costs one operation.
-    if (request.subjectIds.length > 0) {
+    if (readable && request.subjectIds.length > 0) {
       runTagEffect(recordsFor(request.kind, request.subjectIds), {
-        onFailure: () => {
+        onFailure: (error) => {
           if (active) {
-            setStatus('error');
+            setStatus(tagsFailureStatus(error));
             setTagsBySubject(new Map());
           }
         },
@@ -370,8 +388,12 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
     return () => {
       active = false;
     };
-  }, [request]);
+  }, [readable, request]);
   const refetch = () => setRequest((current) => ({ ...current }));
+  if (!readable) {
+    const forbidden: TagsStatus = 'forbidden';
+    return { canWrite: false, refetch, status: forbidden, tagsBySubject };
+  }
   // An empty list has nothing to load, so it is ready at once and never issues a read.
   return { canWrite, refetch, status: request.subjectIds.length === 0 ? 'ready' : status, tagsBySubject };
 };
@@ -401,35 +423,39 @@ export const useTagsOfKind = (kind: SubjectKind): KindTags => {
   if (request.kind !== kind) {
     setRequest({ kind });
   }
+  const readable = tagsReadable();
   useEffect(() => {
     let active = true;
     // One records read narrowed to the kind carries the tag catalog and every assignment of that kind.
-    runTagEffect(recordsOfKind(request.kind), {
-      onFailure: () => {
-        if (active) {
-          setState({ catalog: [], status: 'error', tagsBySubject: new Map() });
-        }
-      },
-      onSuccess: (records) => {
-        if (active) {
-          setState({
-            catalog: records.tags.filter((tag) => tag.subjectKinds.includes(request.kind)),
-            status: 'ready',
-            tagsBySubject: tagsBySubjectOf(records),
-          });
-        }
-      },
-    });
+    if (readable) {
+      runTagEffect(recordsOfKind(request.kind), {
+        onFailure: (error) => {
+          if (active) {
+            setState({ catalog: [], status: tagsFailureStatus(error), tagsBySubject: new Map() });
+          }
+        },
+        onSuccess: (records) => {
+          if (active) {
+            setState({
+              catalog: records.tags.filter((tag) => tag.subjectKinds.includes(request.kind)),
+              status: 'ready',
+              tagsBySubject: tagsBySubjectOf(records),
+            });
+          }
+        },
+      });
+    }
     return () => {
       active = false;
     };
-  }, [request]);
+  }, [readable, request]);
   // A refetch keeps the current tags on screen until the new read settles.
   const refetch = () => setRequest((current) => ({ ...current }));
+  const status = readable ? state.status : 'forbidden';
   return {
-    catalog: { refetch, status: state.status, tags: state.catalog },
+    catalog: { refetch, status, tags: state.catalog },
     refetch,
-    status: state.status,
+    status,
     tagsBySubject: state.tagsBySubject,
   };
 };
@@ -449,8 +475,9 @@ export interface BulkTagDialogProps {
 const bulkFailureValues = Schema.Literals(['none', 'retry', 'forbidden']);
 type BulkFailure = typeof bulkFailureValues.Type;
 
-/** A 403 from the records read or the apply command: retrying will not help, so the panel says so. */
-const isForbidden = Schema.is(Schema.Union([RecordsForbiddenProblemSchema, ApplyCommandActionForbiddenProblemSchema]));
+/** A refused tag read or apply command: retrying will not help, so the panel says so. */
+const isForbidden = (failure: TagCallFailure) =>
+  isTagReadForbidden(failure) || Schema.is(ApplyCommandActionForbiddenProblemSchema)(failure);
 
 const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', subjectIds }: BulkTagDialogProps) => {
   const { t } = useModernI18n();
@@ -460,9 +487,10 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<BulkFailure>('none');
   const [submitted, setSubmitted] = useState(false);
-  // The picker reads the same shared catalog; a 403 on it means this role may not tag at all, so the panel says so.
-  const catalog = useTagCatalogSnapshot(open);
-  const catalogForbidden = catalog.state === 'failed' && isForbidden(catalog.error);
+  // The picker reads the same shared catalog; a refusal means this role may not tag at all, so the panel says so.
+  const readable = tagsReadable();
+  const catalog = useTagCatalogSnapshot(open && readable);
+  const catalogForbidden = !readable || (catalog.state === 'failed' && isForbidden(catalog.error));
   const forbidden = catalogForbidden || failure === 'forbidden';
 
   const close = () => {

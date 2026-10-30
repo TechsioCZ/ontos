@@ -2,10 +2,10 @@ import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { formatDateTime, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
-import type { Tag } from '@app/tagging/contracts/records';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import { TagsCell, formatKc } from '../../../../list-cells.tsx';
+import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
 import { orderCustomerName } from './order-eshop.ts';
 
@@ -13,12 +13,11 @@ type Translate = ReturnType<typeof useModernI18n>['t'];
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
 
-/** Order table columns: seven, fixed widths. The source opportunity lives in the detail dialog. */
-export const ordersColumns = (
-  t: Translate,
-  customers: CustomerDirectory,
-  tagsOf: (id: string) => readonly Tag[],
-): ColumnDef<Order>[] => [
+/**
+ * Order table columns: seven, fixed widths. The source opportunity lives in the detail dialog. A role that may not
+ * read tags (`tagsOf` is `null`) gets six, without Štítky.
+ */
+export const ordersColumns = (t: Translate, customers: CustomerDirectory, tagsOf: TagsOf): ColumnDef<Order>[] => [
   {
     accessorKey: 'number',
     cell: (info) => <span className="whitespace-nowrap font-medium">{info.getValue<string>()}</span>,
@@ -79,13 +78,17 @@ export const ordersColumns = (
     header: t(key('columns.status')),
     meta: { type: 'string', width: 190 },
   },
-  {
-    cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
-    enableSorting: false,
-    header: t(key('columns.tags')),
-    id: 'tags',
-    meta: { width: 190 },
-  },
+  ...(tagsOf === null
+    ? []
+    : [
+        {
+          cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
+          enableSorting: false,
+          header: t(key('columns.tags')),
+          id: 'tags',
+          meta: { width: 190 },
+        } satisfies ColumnDef<Order>,
+      ]),
 ];
 
 export const ordersTranslations = (t: Translate): DataTableTranslations => ({

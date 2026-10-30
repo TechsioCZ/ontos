@@ -30,7 +30,8 @@ export interface PipelineLookups {
   readonly customersReady: boolean;
   readonly employeeById: ReadonlyMap<string, EmployeeOption>;
   readonly employeesReady: boolean;
-  readonly tagsBySubject: ReadonlyMap<string, readonly Tag[]>;
+  /** `null` for a role that may not read tags: the table then has no Štítky column. */
+  readonly tagsBySubject: ReadonlyMap<string, readonly Tag[]> | null;
 }
 
 const customerCell = (lookups: PipelineLookups, t: Translate, partyId: string): ReactElement => {
@@ -65,9 +66,21 @@ const ownerCell = (lookups: PipelineLookups, t: Translate, owner: EmployeeId | u
 const ownerSortKey = (lookups: PipelineLookups, owner: EmployeeId | undefined): string =>
   owner === undefined ? '' : (lookups.employeeById.get(owner)?.fullName ?? '');
 
-const tagsCell = (lookups: PipelineLookups, opportunityId: string): ReactElement => (
-  <TagCell tags={lookups.tagsBySubject.get(opportunityId) ?? []} />
-);
+const tagsColumns = (
+  t: Translate,
+  tagsBySubject: ReadonlyMap<string, readonly Tag[]> | null,
+): ColumnDef<Opportunity>[] =>
+  tagsBySubject === null
+    ? []
+    : [
+        {
+          cell: (info) => <TagCell tags={tagsBySubject.get(info.row.original.id) ?? []} />,
+          enableSorting: false,
+          header: t(`${K}.columns.tags`),
+          id: 'tags',
+          meta: { type: 'string', width: 110 },
+        },
+      ];
 
 const stageOptions = () =>
   opportunityStages.map((stage) => ({ label: statusPresentation('opportunity', stage).label, value: stage }));
@@ -128,13 +141,7 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     id: 'updatedAt',
     meta: { type: 'date', width: 150 },
   },
-  {
-    cell: (info) => tagsCell(lookups, info.row.original.id),
-    enableSorting: false,
-    header: t(`${K}.columns.tags`),
-    id: 'tags',
-    meta: { type: 'string', width: 110 },
-  },
+  ...tagsColumns(t, lookups.tagsBySubject),
 ];
 
 /** Probability and last-updated stay in the column menu; the default view keeps the table to seven data columns. */

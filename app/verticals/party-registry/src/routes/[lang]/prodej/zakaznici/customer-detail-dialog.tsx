@@ -37,6 +37,66 @@ export interface CustomerDetailDialogProps {
 
 type CustomerDetailViewProps = Omit<CustomerDetailDialogProps, 'customer'> & { readonly customer: CustomerListItem };
 
+/** The detail while its first read runs or after it failed. A refusal is a plain notice and offers no second read. */
+const CustomerDetailLoadNotice = ({ failure, onRetry }: Pick<CustomerDetailDialogProps, 'failure' | 'onRetry'>) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <StatusText status={failure === 'unavailable' ? 'error' : 'default'}>
+        {t(`${KEY}.${failure ?? 'loading'}`)}
+      </StatusText>
+      {failure === 'unavailable' && (
+        <Button onClick={onRetry} variant="secondary">
+          {t(`${KEY}.reload`)}
+        </Button>
+      )}
+    </>
+  );
+};
+
+/** Why the identity cannot be edited: no access reads as a plain notice, anything else as an unavailable read. */
+const CustomerIdentityNotice = ({ forbidden }: { readonly forbidden: boolean }) => {
+  const { t } = useModernI18n();
+  return (
+    <StatusText status={forbidden ? 'default' : 'error'}>
+      {t(`${KEY}.${forbidden ? 'forbidden' : 'unavailable'}`)}
+    </StatusText>
+  );
+};
+
+interface CustomerChangeBasisProps {
+  readonly evidence: string;
+  readonly onEvidenceChange: (next: string) => void;
+  readonly onReasonChange: (next: string) => void;
+  readonly reason: string;
+}
+
+/** Evidence and reason every save of the panel records. */
+const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reason }: CustomerChangeBasisProps) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <p className="text-fg-secondary text-sm">{t(`${KEY}.separateSaves`)}</p>
+      <FormInput
+        id="customer-evidence"
+        label={t(`${KEY}.evidence`)}
+        maxLength={200}
+        onChange={(event) => onEvidenceChange(event.target.value)}
+        required
+        value={evidence}
+      />
+      <FormInput
+        id="customer-reason"
+        label={t(`${KEY}.reason`)}
+        maxLength={500}
+        onChange={(event) => onReasonChange(event.target.value)}
+        required
+        value={reason}
+      />
+    </>
+  );
+};
+
 const CustomerDetailView = ({
   customer,
   failure,
@@ -108,16 +168,7 @@ const CustomerDetailView = ({
               {notice}
             </StatusText>
           )}
-          {initialSnapshot === undefined && (
-            <StatusText status={failure === undefined ? 'default' : 'error'}>
-              {t(`${KEY}.${failure ?? 'loading'}`)}
-            </StatusText>
-          )}
-          {failure !== undefined && (
-            <Button onClick={onRetry} variant="secondary">
-              {t(`${KEY}.reload`)}
-            </Button>
-          )}
+          {initialSnapshot === undefined && <CustomerDetailLoadNotice failure={failure} onRetry={onRetry} />}
           <DetailList
             items={[
               { label: t(`${KEY}.createdAt`), value: formatDate(customer.createdAt) },
@@ -131,30 +182,22 @@ const CustomerDetailView = ({
           />
           {snapshot !== undefined && (
             <>
-              <p className="text-fg-secondary text-sm">{t(`${KEY}.separateSaves`)}</p>
-              <FormInput
-                id="customer-evidence"
-                label={t(`${KEY}.evidence`)}
-                maxLength={200}
-                onChange={(event) => setEvidence(event.target.value)}
-                required
-                value={evidence}
-              />
-              <FormInput
-                id="customer-reason"
-                label={t(`${KEY}.reason`)}
-                maxLength={500}
-                onChange={(event) => setReason(event.target.value)}
-                required
-                value={reason}
-              />
+              {/* Every save needs the identity; without it (a refused or unavailable read) the panel is read-only. */}
+              {party !== undefined && (
+                <CustomerChangeBasis
+                  evidence={evidence}
+                  onEvidenceChange={setEvidence}
+                  onReasonChange={setReason}
+                  reason={reason}
+                />
+              )}
               {stale && (
                 <Button disabled={busy} onClick={refresh} variant="secondary">
                   {t(`${KEY}.reload`)}
                 </Button>
               )}
               {party === undefined ? (
-                <StatusText status="error">{t(`${KEY}.${identity?.status ?? 'unavailable'}`)}</StatusText>
+                <CustomerIdentityNotice forbidden={identity?.status === 'forbidden'} />
               ) : (
                 <>
                   <FormInput

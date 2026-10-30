@@ -80,14 +80,20 @@ export const useSubjectTagFilter = (kind: SubjectKind): SubjectTagFilter => {
   };
 };
 
+/** Tags of one row, or `null` when the role may not read tags here, so the host leaves its Štítky column out. */
+export type TagsOf = ((id: string) => readonly Tag[]) | null;
+
 export interface SubjectTags {
   readonly canWrite: boolean;
   readonly refetch: () => void;
   readonly status: TagsStatus;
-  readonly tagsOf: (id: string) => readonly Tag[];
+  readonly tagsOf: TagsOf;
 }
 
-/** Tags of the rows on screen. `tagsOf` returns no tags for a row that has none or whose lookup failed. */
+/**
+ * Tags of the rows on screen. `tagsOf` returns no tags for a row that has none or whose lookup failed; it is `null`
+ * for a role that may not read tags, which issues no tag read at all.
+ */
 export const useSubjectTags = (kind: SubjectKind, ids: readonly string[]): SubjectTags => {
   const { canWrite, refetch, status, tagsBySubject } = useTagsFor(kind, toSubjectIds(ids));
   const byId = new Map<string, readonly Tag[]>(tagsBySubject);
@@ -95,6 +101,6 @@ export const useSubjectTags = (kind: SubjectKind, ids: readonly string[]): Subje
     canWrite: ids.length > 0 && canWrite === true,
     refetch,
     status,
-    tagsOf: (id: string): readonly Tag[] => byId.get(id) ?? [],
+    tagsOf: status === 'forbidden' ? null : (id: string): readonly Tag[] => byId.get(id) ?? [],
   };
 };
