@@ -19,16 +19,22 @@ const modernConfigs = ['apps', 'verticals'].flatMap((group) =>
 );
 
 // Loads every application config the way `modern build` does and reports its resolved output policy.
+// Autoprefixer starts from the preset's ['defaults']; an object config merges into it like Modern's
+// config merge, so only a replacing function yields the app's own CSS targets.
 const probe = `
 const result = {};
 for (const config of JSON.parse(process.argv[1])) {
   const resolved = (await import(new URL(config, 'file://' + process.cwd() + '/').href)).default;
-  let autoprefixer = {};
+  let autoprefixer = { overrideBrowserslist: ['defaults'] };
   for (const configure of [resolved.tools?.autoprefixer].flat()) {
     if (typeof configure === 'function') {
       autoprefixer = configure(autoprefixer) ?? autoprefixer;
-    } else {
-      Object.assign(autoprefixer, configure);
+    } else if (configure) {
+      autoprefixer = {
+        ...autoprefixer,
+        ...configure,
+        overrideBrowserslist: [...autoprefixer.overrideBrowserslist, ...(configure.overrideBrowserslist ?? [])],
+      };
     }
   }
   result[config] = {
@@ -70,21 +76,27 @@ const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(nodeEnvironm
   return outputs;
 });
 
+// Every app gets the one shared browser policy, for JavaScript and CSS alike. The versions live in
+// createWorkspaceModernConfig and FRONTEND.md, not here.
+const expectSharedBrowserTargets = (outputs: typeof BuildOutputsSchema.Type) => {
+  const policies = new Set(Object.values(outputs).map(({ overrideBrowserslist }) => overrideBrowserslist.join(',')));
+  expect([...policies]).toHaveLength(1);
+  for (const [config, output] of Object.entries(outputs)) {
+    expect(output.overrideBrowserslist.length, `${config} must set browser targets`).toBeGreaterThan(0);
+    expect(output.autoprefixerBrowserslist, `${config} must give CSS the same browser targets`).toEqual(
+      output.overrideBrowserslist,
+    );
+  }
+};
+
 it.live(
   'every application build uses the browser baseline and keeps the published workspace preset TypeScript checker',
   Effect.fn(function* testEffect() {
     expect(modernConfigs.length).toBeGreaterThan(0);
     const outputs = yield* resolveBuildOutputs('production');
+    expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must keep output.disableTsChecker: false`).toBe(false);
-      expect(output.overrideBrowserslist, `${config} must use the OntOS browser baseline`).toEqual([
-        'Chrome >= 144',
-        'Safari >= 27',
-        'iOS >= 27',
-      ]);
-      expect(output.autoprefixerBrowserslist, `${config} must use the same CSS browser baseline`).toEqual(
-        output.overrideBrowserslist,
-      );
     }
   }),
 );
@@ -94,16 +106,9 @@ it.live(
   'every application dev server uses the browser baseline and leaves type diagnostics to pnpm typecheck',
   Effect.fn(function* testEffect() {
     const outputs = yield* resolveBuildOutputs('development');
+    expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must set output.disableTsChecker in modern dev`).toBe(true);
-      expect(output.overrideBrowserslist, `${config} must use the OntOS browser baseline`).toEqual([
-        'Chrome >= 144',
-        'Safari >= 27',
-        'iOS >= 27',
-      ]);
-      expect(output.autoprefixerBrowserslist, `${config} must use the same CSS browser baseline`).toEqual(
-        output.overrideBrowserslist,
-      );
     }
   }),
 );
