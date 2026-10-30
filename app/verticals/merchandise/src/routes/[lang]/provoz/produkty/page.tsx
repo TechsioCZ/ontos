@@ -44,6 +44,8 @@ import { useDebounced } from './product-reads.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
 import { CategoryAdminButton } from './category-admin-panel.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
+import { ALL_CATEGORIES, DEFAULT_SORT, SORTS, sortSelectItems } from './select-items.ts';
+import { selectItem } from '../../../../components/select-item.ts';
 import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
 
@@ -52,18 +54,7 @@ const merchandiseI18nResources = {
   en: { merchandise: enResource },
 } as const;
 
-const ALL_CATEGORIES = '__all__';
-const DEFAULT_SORT = '__default__';
 const PAGE_SIZE = 50;
-const SORTS: readonly ProductSort[] = [
-  'name',
-  'sku',
-  'price-asc',
-  'price-desc',
-  'stock-asc',
-  'stock-desc',
-  'updated-desc',
-];
 const isProductId = Schema.is(ProductIdSchema);
 const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category', 'tags']);
 /** The category filter keeps its label for assistive tech only, so it lines up with the other filter controls. */
@@ -149,7 +140,7 @@ const useCategoryChoices = (legalEntityId: string) => {
 /** Label filter options of a company without a storefront tree: the product category labels with their counts. */
 const labelOptions = (choices: CategoryChoices) =>
   choices.labels.flatMap((entry) =>
-    entry.name.trim() === '' ? [] : [{ label: `${entry.name} (${entry.productCount})`, value: entry.name }],
+    entry.name.trim() === '' ? [] : [selectItem(entry.name, `${entry.name} (${entry.productCount})`)],
   );
 
 /** With a tag filter active, row tags still loading read as loading and a failed load as error, never as no match. */
@@ -492,7 +483,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
           {!byTree && labelItems.length > 0 && (
             <div className="w-64">
               <SelectTemplate
-                items={[{ label: k('filters.allCategories'), value: ALL_CATEGORIES }, ...labelItems]}
+                items={[selectItem(ALL_CATEGORIES, k('filters.allCategories')), ...labelItems]}
                 label={k('filters.category')}
                 labelProps={srOnlyLabelProps}
                 name="category"
@@ -509,10 +500,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
           )}
           <div className="w-48">
             <SelectTemplate
-              items={[
-                { label: k('sort.default'), value: DEFAULT_SORT },
-                ...SORTS.map((value) => ({ label: k(`sort.${value}`), value })),
-              ]}
+              items={sortSelectItems(k)}
               label={k('sort.label')}
               labelProps={srOnlyLabelProps}
               name="sort"

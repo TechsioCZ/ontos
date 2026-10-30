@@ -7,6 +7,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { selectItem } from '../../../../components/select-item.ts';
 import { formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
@@ -248,10 +249,9 @@ export const MovementForm = ({
         <div className="flex flex-col gap-100">
           <SelectTemplate
             id="movement-variant"
-            items={variants.map((entry) => ({
-              label: `${variantLabel(entry)} – skladem ${entry.stockOnHand}`,
-              value: entry.id,
-            }))}
+            items={variants.map((entry) =>
+              selectItem(entry.id, `${variantLabel(entry)} – skladem ${entry.stockOnHand}`),
+            )}
             label={t('merchandise.ui.variant')}
             name="movementVariant"
             onValueChange={(details) => {
@@ -274,7 +274,7 @@ export const MovementForm = ({
       )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <SelectTemplate
-          items={MANUAL_REASONS.map((value) => ({ label: k(`movementType.${value}`), value }))}
+          items={MANUAL_REASONS.map((value) => selectItem(value, k(`movementType.${value}`)))}
           label={k('movements.typeField')}
           name="movementType"
           onValueChange={(details) => {

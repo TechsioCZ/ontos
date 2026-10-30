@@ -4,6 +4,7 @@ import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { selectItem } from '../../../../components/select-item.ts';
 import { formatMoney, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { VariantId, VariantRecord } from '../../../../../shared/domain/merchandise-model.ts';
@@ -109,7 +110,7 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRecord, on
       </div>
       {variants.length > 0 && (
         <SelectTemplate
-          items={variants.map((entry) => ({ label: `${entry.name} (${entry.sku})`, value: entry.id }))}
+          items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
           label={t(key('create.variant'))}
           name={`variant-${line.key}`}
           onValueChange={(details) => {

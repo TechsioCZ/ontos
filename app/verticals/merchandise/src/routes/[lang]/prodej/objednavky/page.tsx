@@ -37,6 +37,7 @@ import { formatKc } from '../../../../list-cells.tsx';
 import { customersMatching, useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
+import { selectItem } from '../../../../components/select-item.ts';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
 import { ResetDemoDialog } from './reset-demo-dialog.tsx';
 import {
@@ -69,7 +70,7 @@ type RowSelection = NonNullable<OrderTableProps['rowSelection']>;
 
 const ALL_STATUSES = '__all__';
 const PAGE_SIZE = 50;
-const bulkStatusItems = orderStatuses.map((value) => ({ label: statusPresentation('order', value).label, value }));
+const bulkStatusItems = orderStatuses.map((value) => selectItem(value, statusPresentation('order', value).label));
 
 /** With a tag filter active, order tags still loading read as loading, never as no match. */
 const isTableLoading = (ordersLoading: boolean, tagStatus: SubjectTagFilter['status']): boolean =>
@@ -189,7 +190,7 @@ const useOrdersPage = ({ legalEntityId }: OrdersPageContentProps) => {
     setCanEditOrders(readyCanEditOrders);
   }
   const orderTags = useSubjectTags('order', canEditOrders ? orders.map((order) => order.id) : []);
-  const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
+  const statusItems = [selectItem(ALL_STATUSES, t(key('filters.allStatuses'))), ...bulkStatusItems];
   const selected = Object.values(selectedOrders);
   const selection: RowSelection = Object.fromEntries(selected.map((order) => [order.id, true]));
   const setSelection = (next: RowSelection) => {
@@ -205,10 +206,9 @@ const useOrdersPage = ({ legalEntityId }: OrdersPageContentProps) => {
   };
   const availableBulkStatuses = commonOrderTransitions(selected);
   const selectedOrdersAreFinal = selected.every((order) => transitionsFrom(order.status).length === 0);
-  const selectedStatusItems = availableBulkStatuses.map((value) => ({
-    label: statusPresentation('order', value).label,
-    value,
-  }));
+  const selectedStatusItems = availableBulkStatuses.map((value) =>
+    selectItem(value, statusPresentation('order', value).label),
+  );
   const filtered = search.trim() !== '' || statusFilter !== null || tagFilter.tagId !== null;
   const stale = ready !== undefined && ready.query !== query;
 

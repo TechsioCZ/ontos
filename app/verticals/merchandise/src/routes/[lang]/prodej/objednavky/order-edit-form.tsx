@@ -7,6 +7,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { selectItem } from '../../../../components/select-item.ts';
 import { formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';
@@ -439,10 +440,9 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
   };
 
   const akros = products.some((product) => product.sourceGroupId !== undefined);
-  const methodItems = shippingOptions.map((option) => ({
-    label: `${shippingMethodFor(option.method, akros).label} · ${formatMoney(option.priceMinor)}`,
-    value: option.method,
-  }));
+  const methodItems = shippingOptions.map((option) =>
+    selectItem(option.method, `${shippingMethodFor(option.method, akros).label} · ${formatMoney(option.priceMinor)}`),
+  );
 
   return {
     addLine,
@@ -771,7 +771,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
           </div>
           {pickedVariants.length > 0 && (
             <SelectTemplate
-              items={pickedVariants.map((entry) => ({ label: `${entry.name} (${entry.sku})`, value: entry.id }))}
+              items={pickedVariants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
               label={t('merchandise.ui.variant')}
               name="order-edit-add-variant"
               onValueChange={(details) => {

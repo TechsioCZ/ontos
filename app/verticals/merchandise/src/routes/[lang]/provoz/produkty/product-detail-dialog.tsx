@@ -11,6 +11,7 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { selectItem } from '../../../../components/select-item.ts';
 import { dialogCloseLabel, formatDate, formatMoney, PageHeader } from '@app/admin-ui';
 import { DateTime, Option, Schema } from 'effect';
 import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';
@@ -430,7 +431,7 @@ const DetailForm = (props: DetailFormProps) => {
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <SelectTemplate
           disabled={disabled}
-          items={UNITS.map((value) => ({ label: value, value }))}
+          items={UNITS.map((value) => selectItem(value, value))}
           label={k('fields.unit')}
           name="unit"
           onValueChange={(details) => {
@@ -445,7 +446,7 @@ const DetailForm = (props: DetailFormProps) => {
         />
         <SelectTemplate
           disabled={disabled}
-          items={VAT_RATES.map((rate) => ({ label: `${rate} %`, value: String(rate) }))}
+          items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
           label={k('fields.vat')}
           name="vat"
           onValueChange={(details) => {

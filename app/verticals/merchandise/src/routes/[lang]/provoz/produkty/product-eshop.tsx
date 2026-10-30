@@ -11,6 +11,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { selectItem } from '../../../../components/select-item.ts';
 import { formatDateTime, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
@@ -177,7 +178,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
     <SectionCard title={t('merchandise.ui.variantStockMovement')}>
       <div className="grid grid-cols-1 items-end gap-200 sm:grid-cols-[minmax(0,1fr)_12rem_8rem_auto]">
         <SelectTemplate
-          items={variants.map((entry) => ({ label: `${entry.name} (${entry.stockOnHand} ks)`, value: entry.id }))}
+          items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.stockOnHand} ks)`))}
           label={t('merchandise.ui.variant')}
           name="stockVariant"
           onValueChange={(details) => setVariantId(details.value[0] ?? '')}
@@ -186,10 +187,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           value={variantId === '' ? [] : [variantId]}
         />
         <SelectTemplate
-          items={movementReasons.map((value) => ({
-            label: reasonLabels[value],
-            value,
-          }))}
+          items={movementReasons.map((value) => selectItem(value, reasonLabels[value]))}
           label={t('merchandise.ui.movementType')}
           name="stockReason"
           onValueChange={(details) => {
