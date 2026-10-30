@@ -9,6 +9,7 @@ import {
   InitialCutoverProviderError,
   quiesceInitialCutoverProviderInventory,
   verifyInitialCutoverProviderInventory,
+  verifyRetiredCutoverProviderInventory,
 } from '../initial-composition-cutover-provider.mts';
 import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../../packages/core-runtime/src/modules/application-composition-limits.ts';
 
@@ -78,6 +79,35 @@ it.effect('accepts only provider-confirmed absence of the exact retired inventor
         `GET https://api.cloudflare.com${cloudflarePath}`,
       ]),
     );
+  }),
+);
+
+it.effect('re-observes only retired executables once the active pointer is the published release', () =>
+  Effect.gen(function* verifiesRetiredInventoryBesideLivePointer() {
+    const livePointer = (_method: string, url: URL) =>
+      Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response('current release'));
+    const native = provider(
+      (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+      livePointer,
+    );
+    yield* verifyRetiredCutoverProviderInventory(inventory).pipe(Effect.provide(native.layer));
+    expect(native.requests.some((request) => request.endsWith(pointerPath))).toBe(false);
+
+    const initial = yield* verifyInitialCutoverProviderInventory(inventory).pipe(
+      Effect.provide(native.layer),
+      Effect.flip,
+    );
+    expect(initial.provider).toBe('cloudflare');
+
+    const running = provider(
+      (_method, url) => Effect.succeed(url.pathname === zeropsPath ? service('ACTIVE') : absentWorker()),
+      livePointer,
+    );
+    const error = yield* verifyRetiredCutoverProviderInventory(inventory).pipe(
+      Effect.provide(running.layer),
+      Effect.flip,
+    );
+    expect(error.provider).toBe('zerops');
   }),
 );
 

@@ -22,6 +22,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'applicability_decisions',
   'applicability_policies',
   'consent_decisions',
+  'consent_scope_bindings',
   'disposition_decisions',
   'dsr_cases',
   'dsr_deadlines',
@@ -36,6 +37,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'external_obligations',
   'legal_basis_assignments',
   'legal_holds',
+  'notice_acknowledgements',
   'notice_provisions',
   'notice_versions',
   'owner_contributions',
@@ -366,6 +368,67 @@ export const noticeVersions = privacySchema.table.withRLS(
   ],
 );
 
+export const noticeAcknowledgements = privacySchema.table.withRLS(
+  'notice_acknowledgements',
+  {
+    acknowledgementId: uuid('acknowledgement_id').primaryKey(),
+    ...scopeColumns(),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }).notNull(),
+    acknowledgementRecord: jsonb('acknowledgement_record').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    authBindingId: uuid('auth_binding_id').notNull(),
+    noticeVersionId: uuid('notice_version_id').notNull(),
+    presentationId: uuid('presentation_id').notNull(),
+    privacySubjectId: uuid('privacy_subject_id').notNull(),
+    recordedAt: recordedAt(),
+    retailProfileId: text('retail_profile_id').notNull(),
+    servedAt: timestamp('served_at', { withTimezone: true }).notNull(),
+    sessionContextDigest: text('session_context_digest').notNull(),
+  },
+  (table) => [
+    unique('privacy_notice_ack_scope_id_uk').on(table.tenantId, table.legalEntityId, table.acknowledgementId),
+    unique('privacy_notice_ack_presentation_uk').on(table.tenantId, table.legalEntityId, table.presentationId),
+    unique('privacy_notice_ack_invocation_uk').on(table.tenantId, table.legalEntityId, table.actionInvocationId),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.noticeVersionId],
+      foreignColumns: [noticeVersions.tenantId, noticeVersions.legalEntityId, noticeVersions.noticeVersionId],
+      name: 'privacy_notice_ack_notice_fk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.privacySubjectId],
+      foreignColumns: [privacySubjects.tenantId, privacySubjects.legalEntityId, privacySubjects.privacySubjectId],
+      name: 'privacy_notice_ack_subject_fk',
+    }),
+    check(
+      'privacy_notice_ack_period_ck',
+      sql`${table.acknowledgedAt} >= ${table.servedAt} and ${table.recordedAt} >= ${table.acknowledgedAt}`,
+    ),
+    check('privacy_notice_ack_session_digest_ck', sql`${table.sessionContextDigest} ~ '^[a-f0-9]{64}$'`),
+    check(
+      'privacy_notice_ack_record_binding_ck',
+      sql`
+      (${table.acknowledgementRecord} ->> 'acknowledgementId') is not distinct from ${table.acknowledgementId}::text and
+      (${table.acknowledgementRecord} ->> 'tenantId') is not distinct from ${table.tenantId}::text and
+      (${table.acknowledgementRecord} ->> 'legalEntityId') is not distinct from ${table.legalEntityId}::text and
+      (${table.acknowledgementRecord} ->> 'actionInvocationId') is not distinct from ${table.actionInvocationId}::text and
+      (${table.acknowledgementRecord} ->> 'actorPrincipalId') is not distinct from ${table.actorPrincipalId}::text and
+      (${table.acknowledgementRecord} ->> 'authBindingId') is not distinct from ${table.authBindingId}::text and
+      (${table.acknowledgementRecord} ->> 'noticeVersionId') is not distinct from ${table.noticeVersionId}::text and
+      (${table.acknowledgementRecord} ->> 'presentationId') is not distinct from ${table.presentationId}::text and
+      (${table.acknowledgementRecord} -> 'privacySubjectRef' ->> 'resourceId') is not distinct from ${table.privacySubjectId}::text and
+      (${table.acknowledgementRecord} -> 'privacySubjectRef' ->> 'tenantId') is not distinct from ${table.tenantId}::text and
+      (${table.acknowledgementRecord} ->> 'retailProfileId') is not distinct from ${table.retailProfileId}::text and
+      (${table.acknowledgementRecord} ->> 'sessionContextDigest') is not distinct from ${table.sessionContextDigest} and
+      (${table.acknowledgementRecord} ->> 'acknowledgedAt')::timestamptz is not distinct from ${table.acknowledgedAt} and
+      (${table.acknowledgementRecord} ->> 'recordedAt')::timestamptz is not distinct from ${table.recordedAt} and
+      (${table.acknowledgementRecord} ->> 'servedAt')::timestamptz is not distinct from ${table.servedAt}
+    `,
+    ),
+    ...tenantLegalEntityRlsPolicies('privacy_notice_ack_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
 export const noticeProvisions = privacySchema.table.withRLS(
   'notice_provisions',
   {
@@ -388,6 +451,25 @@ export const noticeProvisions = privacySchema.table.withRLS(
       sql`(${table.privacySubjectRef} is null) <> (${table.anonymousContextRef} is null)`,
     ),
     ...tenantLegalEntityRlsPolicies('privacy_notice_provisions_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/** Immutable scope identity metadata; Subjects remain owned by privacy_subjects. */
+export const consentScopeBindings = privacySchema.table.withRLS(
+  'consent_scope_bindings',
+  {
+    ...scopeColumns(),
+    privacySubjectId: uuid('privacy_subject_id').notNull(),
+    scopeRef: text('scope_ref').notNull(),
+  },
+  (table) => [
+    unique('privacy_consent_scope_bindings_scope_uk').on(table.tenantId, table.legalEntityId, table.scopeRef),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.privacySubjectId],
+      foreignColumns: [privacySubjects.tenantId, privacySubjects.legalEntityId, privacySubjects.privacySubjectId],
+      name: 'privacy_consent_scope_bindings_subject_fk',
+    }),
+    ...tenantLegalEntityRlsPolicies('privacy_consent_scope_bindings_scope', table.tenantId, table.legalEntityId),
   ],
 );
 
@@ -1273,6 +1355,7 @@ export const PRIVACY_TABLES = [
   applicabilityDecisions,
   applicabilityPolicies,
   consentDecisions,
+  consentScopeBindings,
   dispositionDecisions,
   dsrCases,
   dsrDeadlines,
@@ -1287,6 +1370,7 @@ export const PRIVACY_TABLES = [
   externalObligations,
   legalBasisAssignments,
   legalHolds,
+  noticeAcknowledgements,
   noticeProvisions,
   noticeVersions,
   ownerExecutionOutcomes,
@@ -1311,6 +1395,7 @@ const privacyDatabaseSchema = {
   applicabilityDecisions,
   applicabilityPolicies,
   consentDecisions,
+  consentScopeBindings,
   dispositionDecisions,
   dsrCases,
   dsrDeadlines,
@@ -1325,6 +1410,7 @@ const privacyDatabaseSchema = {
   externalObligations,
   legalBasisAssignments,
   legalHolds,
+  noticeAcknowledgements,
   noticeProvisions,
   noticeVersions,
   ownerContributions,

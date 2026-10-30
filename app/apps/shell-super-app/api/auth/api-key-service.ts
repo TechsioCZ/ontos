@@ -245,6 +245,8 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
       apiKey({
         enableMetadata: true,
         enableSessionForAPIKeys: false,
+        // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
+        rateLimit: { enabled: false },
         references: 'user',
       }),
     ],

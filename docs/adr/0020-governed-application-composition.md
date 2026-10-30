@@ -60,20 +60,29 @@ composition authority and portable contracts contain no provider metadata or cre
 ## Current deployment adapter
 
 The stage adapter (`app/scripts/publish-active-application-composition.mts`) observes each deployed
-unit at its public origin on the environment's deploy target (its Zerops subdomain, or on the
-Cloudflare target the Worker URL from the reviewed placement), reading the served contract, Module
-Federation manifest, and the Shell runtime contract with bounded fetches, derives the candidate,
-validates it, and publishes one snapshot `{ composition, observedAt, validUntil }` as the Zerops project variable `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON`.
-The revision is the SHA-256 of the canonical composition with its revision zeroed, and publication
-rejects different content under an already-published revision. Consumers read the variable at process
-start, so every publication restarts them. Because consumers refuse to start without a snapshot, a
-deploy publishes the inventory without the consumers it is about to deploy, deploys them, then observes
-and publishes the complete inventory. A scheduled workflow re-observes and re-publishes before
-`validUntil`; the validity window (24 hours) and refresh cadence (every 6 hours) live only in
-`ACTIVE_APPLICATION_COMPOSITION_POLICY`. Binding revisions to immutable executable release records for
-rollback remains a follow-up in [TechsioCZ/ontos#374](https://github.com/TechsioCZ/ontos/issues/374).
-On the Cloudflare target only the consumers left on Zerops restart, and the snapshot is published
-again after the edge deploy replaces the Workers.
+unit at its public origin on the environment's deploy target, reads the served contract, Module
+Federation manifest and Shell runtime contract with bounded fetches, and validates the complete
+candidate. Its revision is the SHA-256 of the canonical composition with its revision zeroed;
+publication rejects different content under an already-published revision.
+
+The current native transport supersedes the former Zerops project-variable snapshot and
+process-start/restart sequence. That older mechanism is historical. The publisher now writes
+`{ composition, observedAt, validUntil }` by native KV HTTP PUT and verifies matching readback,
+coordinated with Core DB publication authority. Node consumers lazily read the stable configured
+HTTP source with a bounded successful-read cache that cannot outlive the original lease; Workers
+read the native `ONTOS_ACTIVE_APPLICATION_COMPOSITION` KV binding, key `active`. Runtime transaction
+admission independently checks the DB authority revision, phase and deadline. KV publication and DB
+settlement are distinct boundaries; source availability alone is not business admission.
+
+The scheduled refresh re-observes only the exact approved revision and refuses changed artifacts;
+renewal does not require restarting consumers to load process-start JSON. Code/configuration changes
+may still require ordinary deployment. Publication readback does not promise immediate global KV
+propagation or add automatic fallback. The current operator commands, source configuration and failure
+steps are owned by the [deployment playbook](../../app/docs/architecture/DEPLOYMENT.md#current-composition-transport).
+`ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window and refresh policy. Binding revisions
+to immutable executable release records for rollback remains a follow-up in
+[TechsioCZ/ontos#374](https://github.com/TechsioCZ/ontos/issues/374); accepted governance and the historical
+decision above are unchanged.
 
 ## Consequences
 

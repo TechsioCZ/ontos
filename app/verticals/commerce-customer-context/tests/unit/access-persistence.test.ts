@@ -1,5 +1,5 @@
 import type { OperationalScope, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
-import { ScopedRoutineInvocationError } from '@app/core-runtime';
+import { ScopedRoutineInvocationError, toBusinessPermissionAccessKey } from '@app/core-runtime';
 import {
   AuthBindingIdSchema,
   PrincipalIdSchema,
@@ -19,6 +19,7 @@ import {
   counterpartyAccessPortForTransaction,
   currentOwnerAccessForTransaction,
   lockingCurrentOwnerAccessForTransaction,
+  readEnrollmentInvitationClaimCurrent,
 } from '../../src/persistence/access-persistence.ts';
 import { CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema } from '../../shared/domain/access-authorization-mutation.ts';
 import type {
@@ -610,55 +611,102 @@ it.effect('commits newly staged invitation successors before any relationship mu
   }),
 );
 
-it.effect('reconciles durable invitation grants and returns replay-safe terminal claim evidence', () =>
-  Effect.gen(function* reconcileInvitationClaim() {
-    let relationshipWrites = 0;
-    const transaction = invokerWith((routineKey, values) => {
-      if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-        return [claimReconciliationRow('RECONCILIATION_REQUIRED')];
+for (const control of [
+  'valid',
+  'missing-attestation',
+  'missing-source',
+  'missing-mutation',
+  'wrong-attestation-type',
+  'wrong-state',
+  'wrong-outcome',
+  'malformed-progress',
+  'missing-root-subject',
+] as const) {
+  it.effect(`reconciles durable invitation grants with strict actual finalizer wire: ${control}`, () =>
+    Effect.gen(function* reconcileInvitationClaim() {
+      let relationshipWrites = 0;
+      const transaction = invokerWith((routineKey, values) => {
+        if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
+          return [
+            control === 'missing-root-subject'
+              ? Object.fromEntries(
+                  Object.entries(claimReconciliationRow('RECONCILIATION_REQUIRED')).filter(
+                    ([key]) => key !== 'claim_subject_principal_id',
+                  ),
+                )
+              : claimReconciliationRow('RECONCILIATION_REQUIRED'),
+          ];
+        }
+        if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
+          return [
+            {
+              ...grantRow('RECONCILIATION_REQUIRED'),
+              action_invocation_id: invocationId,
+              mutation_id: mutationId,
+              mutation_staged: false,
+              recovery_operation: 'grant',
+            },
+          ];
+        }
+        if (routineKey === 'counterparty-access.transition-grant') {
+          expect(values).toEqual([grantId, mutationId, 'grant', 'ACTIVE']);
+          return [grantRow('ACTIVE')];
+        }
+        if (routineKey === 'counterparty-access.finalize-reconciled-invitation') {
+          const entries = Object.entries({ ...claimReconciliationRow('CLAIMED'), operation_outcome: 'CLAIMED' });
+          const wire = Object.fromEntries(
+            entries.filter(
+              ([key]) =>
+                key !== 'claim_subject_principal_id' &&
+                !(control === 'missing-attestation' && key === 'attestation_reference') &&
+                !(control === 'missing-source' && key === 'source_action_invocation_id') &&
+                !(control === 'missing-mutation' && key === 'claim_mutation_id'),
+            ),
+          );
+          if (control === 'wrong-attestation-type') {
+            wire.attestation_reference = 42;
+          }
+          if (control === 'wrong-state') {
+            wire.state = 'UNKNOWN';
+          }
+          if (control === 'wrong-outcome') {
+            wire.operation_outcome = 'UNKNOWN';
+          }
+          if (control === 'malformed-progress') {
+            wire.grant_progress = 'invalid';
+          }
+          return [wire];
+        }
+        return [];
+      });
+      const service = accessAuthorizationMutationReconciliationForWorker(
+        dependenciesWith(transaction).contextAccess,
+        {
+          mutate: () =>
+            Effect.sync(() => {
+              relationshipWrites += 1;
+            }),
+        },
+        allowedOwnerAccessForWorker,
+      );
+      if (control !== 'valid') {
+        const error = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest).pipe(Effect.flip);
+        expect(error.code).toBe('RECONCILIATION_UNAVAILABLE');
+        return;
       }
-      if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-        return [
-          {
-            ...grantRow('RECONCILIATION_REQUIRED'),
-            action_invocation_id: invocationId,
-            mutation_id: mutationId,
-            mutation_staged: false,
-            recovery_operation: 'grant',
-          },
-        ];
-      }
-      if (routineKey === 'counterparty-access.transition-grant') {
-        expect(values).toEqual([grantId, mutationId, 'grant', 'ACTIVE']);
-        return [grantRow('ACTIVE')];
-      }
-      if (routineKey === 'counterparty-access.finalize-reconciled-invitation') {
-        return [{ ...claimReconciliationRow('CLAIMED'), operation_outcome: 'CLAIMED' }];
-      }
-      return [];
-    });
-    const service = accessAuthorizationMutationReconciliationForWorker(
-      dependenciesWith(transaction).contextAccess,
-      {
-        mutate: () =>
-          Effect.sync(() => {
-            relationshipWrites += 1;
-          }),
-      },
-      allowedOwnerAccessForWorker,
-    );
-    const result = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
+      const result = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
 
-    expect(result.outcome).toBe('FINALIZED');
-    if (result.outcome === 'FINALIZED' || result.outcome === 'ALREADY_FINAL') {
-      expect(result.terminal.kind).toBe('INVITATION_CLAIM');
-      expect(result.terminal.completionId).toBe(claimMutationId);
-      expect(result.terminal.sourceActionInvocationId).toBe(invocationId);
-      expect(result.terminal.occurredAt.toISOString()).toBe('2026-09-09T09:02:00.000Z');
-    }
-    expect(relationshipWrites).toBe(1);
-  }),
-);
+      expect(result.outcome).toBe('FINALIZED');
+      if (result.outcome === 'FINALIZED' || result.outcome === 'ALREADY_FINAL') {
+        expect(result.terminal.kind).toBe('INVITATION_CLAIM');
+        expect(result.terminal.completionId).toBe(claimMutationId);
+        expect(result.terminal.sourceActionInvocationId).toBe(invocationId);
+        expect(result.terminal.occurredAt.toISOString()).toBe('2026-09-09T09:02:00.000Z');
+      }
+      expect(relationshipWrites).toBe(1);
+    }),
+  );
+}
 
 it.effect('durably compensates claim-created tuples when inviter authority is lost', () =>
   Effect.gen(function* compensateLostInviterAuthority() {
@@ -1310,3 +1358,97 @@ it.effect('preserves a recoverable invitation when an intended grant conflicts',
     expect(invitationOperations).toEqual(['BEGIN_CLAIM', 'FINISH_RECONCILIATION']);
   }),
 );
+
+for (const control of [
+  'valid',
+  'wrong-invitation',
+  'wrong-claim-subject',
+  'wrong-claimant',
+  'wrong-attestation',
+  'pending-owner',
+  'revoked-owner',
+  'absent-owner',
+  'foreign-counterparty',
+  'foreign-storefront',
+  'missing-core',
+  'duplicate-core',
+  'unavailable-core',
+  'foreign-core-key',
+] as const) {
+  it.effect(`checks the original accepted claim Current authority exactly: ${control}`, () =>
+    Effect.gen(function* acceptedClaimCurrentAuthority() {
+      const root = { ...claimReconciliationRow('CLAIMED'), claim_subject_principal_id: recipientId };
+      if (control === 'wrong-invitation') {
+        root.invitation_id = mutationId;
+      }
+      if (control === 'wrong-claim-subject') {
+        root.claim_subject_principal_id = actorId;
+      }
+      if (control === 'wrong-claimant') {
+        root.claimed_by_principal_id = actorId;
+      }
+      if (control === 'foreign-counterparty') {
+        root.counterparty_resource_id = 'another-counterparty';
+      }
+      const transaction = invokerWith((routineKey, values) => {
+        if (routineKey === 'counterparty-access.read-enrollment-invitation-claim') {
+          return [root];
+        }
+        if (routineKey === 'counterparty-access.list-grants') {
+          // The real scoped SQL only returns rows for the requested Counterparty/Principal.
+          if (values[0] !== counterpartyId || values[1] !== recipientId) {
+            return [];
+          }
+          if (control === 'absent-owner') {
+            return [];
+          }
+          let state: GrantState = 'ACTIVE';
+          if (control === 'revoked-owner') {
+            state = 'REVOKED';
+          }
+          if (control === 'pending-owner') {
+            state = 'PENDING_REVOKE';
+          }
+          const row = grantRow(state);
+          return [{ ...row, storefront_resource_id: control === 'foreign-storefront' ? 'another-storefront' : null }];
+        }
+        return [];
+      });
+      const accepted = yield* readEnrollmentInvitationClaimCurrent(
+        transaction,
+        { legalEntityId, tenantId },
+        {
+          expectedAttestation:
+            control === 'wrong-attestation' ? 'another-attestation' : attestation.attestationReference,
+          invitationId,
+          principalId: recipientId,
+        },
+        {
+          businessPermissions: ({ targets }) => {
+            const decisions = targets.map((target) => ({
+              decision: control === 'unavailable-core' ? ('unavailable' as const) : ('allowed' as const),
+              key: control === 'foreign-core-key' ? 'another-target' : toBusinessPermissionAccessKey(target),
+            }));
+            if (control === 'missing-core') {
+              return Effect.succeed([]);
+            }
+            if (control === 'duplicate-core') {
+              return Effect.succeed([...decisions, ...decisions]);
+            }
+            return Effect.succeed(decisions);
+          },
+          legalEntities: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
+          modules: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
+          resources: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
+          tenants: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
+        },
+      );
+      expect(Option.isSome(accepted)).toBe(true);
+      if (Option.isSome(accepted)) {
+        expect(accepted.value.current).toBe(control === 'valid');
+        expect(accepted.value.attestationReference).toBe(attestation.attestationReference);
+        expect(accepted.value.mutationId).toBe(claimMutationId);
+      }
+    }),
+  );
+}

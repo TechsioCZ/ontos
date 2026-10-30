@@ -1,4 +1,4 @@
-import { SqlError, isSqlError } from 'effect/sql/SqlError';
+import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
@@ -748,16 +748,20 @@ const checkPermissionTarget = <AccessValue extends (typeof ContextAccess)['Servi
 const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
-  entrypoint: ReadRegistration<
-    Schema.ConstraintDecoder<unknown>,
-    Schema.ConstraintDecoder<unknown>,
-    string,
-    unknown,
-    unknown
-  >['descriptor']['entrypoint'],
+  descriptor: Pick<
+    ReadRegistration<
+      Schema.ConstraintDecoder<unknown>,
+      Schema.ConstraintDecoder<unknown>,
+      string,
+      unknown,
+      unknown
+    >['descriptor'],
+    'entrypoint' | 'legalEntityScope' | 'permissionTarget'
+  >,
   permissionTarget: AtomicResolvedReadPermissionTarget,
   primaryDecision: PermissionDecision,
 ): Effect.Effect<PermissionDecision> => {
+  const { entrypoint } = descriptor;
   const { authorization } = entrypoint;
   if (authorization.kind !== 'context_permission') {
     return Effect.succeed('allowed');
@@ -773,7 +777,15 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
   ) {
     return Effect.succeed(primaryDecision);
   }
-  if (authorization.permission === 'module.access') {
+  // Optional tenant-owned Reads keep their module gate at tenant scope. A real
+  // context permission is required; absent Legal Entity never implies a grant.
+  const tenantModulePermission =
+    entrypoint.scope === 'tenant' &&
+    descriptor.legalEntityScope === 'optional' &&
+    descriptor.permissionTarget === 'tenant' &&
+    permissionTarget.kind === 'tenant' &&
+    scope.legalEntityId === undefined;
+  if (authorization.permission === 'module.access' && !tenantModulePermission) {
     return checkAtomicPermissionTarget(
       contextAccess,
       scope,
@@ -841,6 +853,62 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
     value: cause,
     writable: false,
   });
+
+const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
+  preserveFailureCause(
+    Schema.is(ConnectionError)(failure.reason)
+      ? new ReadHandlerUnavailable({
+          code: 'read_handler_unavailable',
+          reason: 'The governed read database connection is temporarily unavailable',
+        })
+      : new ReadHandlerExecutionError({
+          code: 'read_handler_execution_failed',
+          reason: 'The governed read transaction failed',
+        }),
+    failure,
+  );
+
+/**
+ * Effect promotes a transaction body's typed failure to a defect when SQL settlement also defects.
+ * Recover the settlement SqlError only when every other defect is one of this body's own captured
+ * failures, so an outage keeps its connection classification. Other defects and interruption stay.
+ */
+const makeReadSettlementRecovery = () => {
+  const bodyFailures = new Set<unknown>();
+  return {
+    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      body.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            for (const reason of cause.reasons) {
+              if (Cause.isFailReason(reason)) {
+                bodyFailures.add(reason.error);
+              }
+            }
+          }),
+        ),
+      ),
+    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+      transaction.pipe(
+        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+          let settlement: SqlError | undefined;
+          for (const reason of cause.reasons) {
+            if (Cause.isInterruptReason(reason)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.isDieReason(reason)) {
+              if (isSqlError(reason.defect)) {
+                settlement = reason.defect;
+              } else if (!bodyFailures.has(reason.defect)) {
+                return Effect.failCause(cause);
+              }
+            }
+          }
+          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
+        }),
+      ),
+  };
+};
 
 type ReadEvidenceCaptureMode = ReadRegistration<
   Schema.ConstraintDecoder<unknown>,
@@ -1277,7 +1345,7 @@ const readRuntimeFromDependencies = <
       const entrypointPermissionDecision = yield* checkEntrypointContextPermission(
         contextAccess,
         scope,
-        input.registration.descriptor.entrypoint,
+        input.registration.descriptor,
         canonicalPermissionTarget(permissionTarget),
         permissionDecision,
       );
@@ -1399,6 +1467,7 @@ const readRuntimeFromDependencies = <
       );
       stage('policies_checked');
 
+      const trustedSettlement = makeReadSettlementRecovery();
       const transactionResult = executor
         .transaction(
           Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
@@ -1507,10 +1576,10 @@ const readRuntimeFromDependencies = <
             );
             stage('evidence_persisted');
             return result;
-          }),
+          }, trustedSettlement.capture),
         )
         .pipe(
-          Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+          trustedSettlement.recover,
           Effect.tapError((failure) =>
             Schema.is(SqlError)(failure)
               ? Effect.logError('Unexpected governed read transaction failure', failure)
@@ -1518,13 +1587,7 @@ const readRuntimeFromDependencies = <
           ),
           Effect.mapError((transactionFailure) =>
             Schema.is(SqlError)(transactionFailure)
-              ? preserveFailureCause(
-                  new ReadHandlerExecutionError({
-                    code: 'read_handler_execution_failed',
-                    reason: 'The governed read transaction failed',
-                  }),
-                  transactionFailure,
-                )
+              ? mapReadTransactionSqlFailure(transactionFailure)
               : transactionFailure,
           ),
         );
@@ -1568,6 +1631,7 @@ const readRuntimeFromDependencies = <
     if (compositionRevision === undefined) {
       return yield* executeTrustedRead(database.executor);
     }
+    const governedSettlement = makeReadSettlementRecovery();
     const governedExit = yield* database.executor
       .transaction(
         Effect.fn('ReadRuntime.governedReadTransaction')(function* governedReadTransaction(
@@ -1596,22 +1660,16 @@ const readRuntimeFromDependencies = <
             return yield* Effect.failCause(executionExit.cause);
           }
           return executionExit;
-        }),
+        }, governedSettlement.capture),
       )
       .pipe(
-        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+        governedSettlement.recover,
         Effect.catchCause((cause) =>
           Effect.failCause(
             cause.pipe(
               Cause.map((transactionFailure) =>
                 Schema.is(SqlError)(transactionFailure)
-                  ? preserveFailureCause(
-                      new ReadHandlerExecutionError({
-                        code: 'read_handler_execution_failed',
-                        reason: 'The governed read transaction failed',
-                      }),
-                      transactionFailure,
-                    )
+                  ? mapReadTransactionSqlFailure(transactionFailure)
                   : transactionFailure,
               ),
             ),

@@ -42,11 +42,11 @@ import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/p
 import {
   commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
   commercePortalAuthRealmLive,
+  configuredGatewayAssertionRedemptionLive,
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
-import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion-redemption.ts';
 import {
   CommercePortalAuthEnrollmentAttemptProjectionSchema,
   CommercePortalAuthEnrollmentStartInputSchema,
@@ -206,7 +206,7 @@ const configuredRuntime = Effect.acquireRelease(
     return makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive,
       productionActionRuntimeLive,
-      GatewayAssertionRedemptionLive,
+      configuredGatewayAssertionRedemptionLive,
       realmLive,
       Layer.empty,
       DatabaseConfigLive,

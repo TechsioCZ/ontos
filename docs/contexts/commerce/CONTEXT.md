@@ -706,14 +706,30 @@ Permission, Price, Availability or an Order.
 
 ## Purchasing limits and approval
 
-**Purchase Payable Amount** — Commerce-owned derived Monetary Amount for one exact purchase,
-composed from authoritative owner-issued monetary outputs needed to pay for that purchase. For Launch
-it combines the complete Pricing pre-Tax total, separately owner-issued commercial components not
-already included there (such as Delivery/Shipping), and the authoritative Tax Result exactly once in
-one explicit currency. It does not transfer ownership of Pricing, Delivery/Shipping or Tax, is not
-Purchase Value, and is not a Payment authorization/settlement fact.
-_Avoid_: Purchase Value including VAT, Pricing owning Tax, TAX owning the commercial total, Payment
-recalculating Price/Tax, Storefront adding Price + Shipping + Tax locally.
+**Purchase Payable Amount** — Commerce-owned derived Monetary Amount for one exact purchase in one
+explicit currency. Checkout composes each authoritative owner-issued monetary amount once in its
+actual NET/GROSS basis: the complete Pricing NET/pre-Tax total and separately owner-issued commercial
+components not already included there, such as Delivery's customer-charged Shipping amount and basis.
+It adds only the VAT attributable to NET-basis amounts; VAT already included in a GROSS amount is
+never added again. Source amounts and their bases, derived taxable bases, exact Tax components,
+published Purchase Tax Total and final payable are distinct values with retained owner provenance.
+TAX owns the Tax calculation and exact components; Checkout owns payable composition and its final
+cent rounding under [ADR-0029](../../adr/0029-tax-launch-seller-regime-and-shipping-basis.md).
+When no amount is GROSS, add the published Purchase Tax Total. When a GROSS amount is present, use
+exact VAT components for NET-basis amounts and apply the accepted Checkout rounding boundary. TAX
+rounds line and Shipping VAT together per Taxable Supply Unit; it publishes no separate rounded line
+VAT to add or subtract as a shortcut.
+
+The accepted examples use two NET lines, 100.00 @ 21% and 100.00 @ 12%: Shipping 99.00 NET gives
+`200.00 + 99.00 + 49.51 = 348.51`, using published Tax rather than exact `49.507…`; Shipping 99.00
+GROSS gives `200.00 + 99.00 + 33.00 = 332.00`, never `346.02` with Shipping VAT counted twice.
+For a NON_PAYER, `1,000.00 + 99.00 + 0.00 = 1,099.00`; zero Tax does not remove the Shipping charge.
+Purchase Payable Amount does not transfer Pricing, Delivery/Shipping or TAX ownership, is not Purchase
+Value, and is not a Payment authorization/settlement fact.
+_Avoid_: adding a component already included in Pricing's total, using carrier cost as the Shipping
+charge, adding the entire Purchase Tax Total to GROSS Shipping, Purchase Value including VAT, Pricing
+owning Tax, TAX owning the commercial total, Payment recalculating Price/Tax, Storefront locally
+adding Price + Shipping + Tax.
 
 **Purchase Value** — Non-negative Monetary Amount used only for purchasing-limit assessment. Pricing
 contributes its authoritative `pricing_net_commercial_total`, which already includes Pricing-owned
@@ -899,12 +915,28 @@ preauthorization, collection, settlement, refund, Principal authorization, and O
 Payment/evidence correlation, idempotency, Current status, and validity; secrets or payment instruments
 never enter Commerce business payloads.
 
-**Order Commitment Time** — Trusted server-side business instant captured once when the final
-Checkout submission freezes one exact purchase candidate for commitment. Every commitment-time
-decision for that candidate uses the same instant; if commitment succeeds, it is preserved as the
-Accepted Order's acceptance time.
+**Order Commitment Time** — Trusted server-side business instant T captured once when the final
+Checkout submission freezes one exact purchase candidate for commitment. T identifies that frozen
+purchase and its final TAX business instant. If commitment succeeds, T is preserved as the Accepted Order's business acceptance time. The same candidate/Bundle
+retains that T and immutable final Tax Decision/Tax Result through retry and recovery; actual-time
+checks do not refresh TAX or introduce a TAX TTL.
+
+Current Permissions, profile/request lifecycle, proof issuance/expiry/use, Payment and Inventory
+protection follow each owner's actual trusted operation/use boundary. Actual issuance, check, use
+and Order recording/commit times remain separate from T. A proof issued at 10:00:02 after T=10:00:00
+may be valid at its actual use at 10:00:03; a later retry cannot revive an expired proof or revoked
+Permission by checking against T. For a simple expiring proof, `issued_at <= actual_use < expires_at`
+illustrates the boundary; it does not replace stronger owner guarantees through commit, Inventory
+Attempt-bound Commitment Protection, the non-renewable Launch Reservation Confirmation or
+unknown-commit recovery. See the owner handoffs
+[#329](https://github.com/TechsioCZ/ontos/issues/329),
+[#330](https://github.com/TechsioCZ/ontos/issues/330) and
+[#331](https://github.com/TechsioCZ/ontos/issues/331), constrained by
+[ADR-0027](../../adr/0027-launch-order-tax-fixed-at-commitment-time.md) and
+[ADR-0026](../../adr/0026-single-inventory-backend-and-reservation.md).
 _Avoid_: browser/client click timestamp as authority, database commit timestamp as the business
-acceptance time, different commitment times for different owners in one purchase commitment.
+acceptance time, backdating owner checks or rewriting actual recorded instants to T, inferring a
+universal proof renewal permission.
 
 **Order Acceptance Decision Bundle** — Immutable, versioned, canonical-hashable **pre-attempt**
 representation of one exact final purchase candidate and the owner-issued decisions/evidence that

@@ -1,7 +1,14 @@
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/sql/SqlError';
+import {
+  ConnectionError,
+  ConstraintError,
+  SqlError,
+  SqlSyntaxError,
+  UniqueViolation,
+  UnknownError,
+} from 'effect/sql/SqlError';
 
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -114,6 +121,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly sqlEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
+    readonly transactionSettlementFailure?: SqlError;
   } = {},
 ) {
   let businessPermissionChecks = 0;
@@ -195,7 +203,15 @@ const makeHarness = Effect.fn(function* makeHarness(
           ]
         : [];
     });
-  const database = { executor: yield* makeTestDatabase(query) };
+  const database = {
+    executor: yield* makeTestDatabase((text, values) => {
+      if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
+        options.sqlEvents?.push(text);
+        return Effect.fail(options.transactionSettlementFailure);
+      }
+      return query(text, values);
+    }),
+  };
   const transact = database.executor.transaction.bind(database.executor);
   const transaction: typeof database.executor.transaction = (body) =>
     transact(body).pipe(
@@ -2341,6 +2357,43 @@ it.effect('preserves declared owner read availability and not-found failures but
   }),
 );
 for (const mode of ['local', 'governed'] as const) {
+  for (const Reason of [ConnectionError, ConstraintError, UniqueViolation, SqlSyntaxError, UnknownError] as const) {
+    it.effect(`classifies ${mode} Read transaction ${Reason.name} without leaking driver details`, () =>
+      Effect.gen(function* readTransactionSqlFailure() {
+        const sqlEvents: string[] = [];
+        const failure = new SqlError({
+          reason: new Reason({ cause: new Error('private transaction detail'), constraint: 'test_unique_constraint' }),
+        });
+        const harness = yield* makeHarness({ sqlEvents, transactionSettlementFailure: failure });
+        const error = yield* Effect.flip(
+          harness.runtime.runRead({
+            input: {},
+            principal:
+              mode === 'governed' ? trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision) : scope,
+            registration: registration(['unreleased result']),
+            transport: { correlationId: scope.correlationId },
+          }),
+        );
+        expect(sqlEvents).toContain('COMMIT');
+        expect(
+          Predicate.isTagged(
+            error,
+            Reason === ConnectionError ? 'ReadHandlerUnavailable' : 'ReadHandlerExecutionError',
+          ),
+        ).toBe(true);
+        expect(error.reason).not.toContain('private transaction detail');
+        expect(error).toHaveProperty('cause', failure);
+        expect(Object.getOwnPropertyDescriptor(error, 'cause')?.enumerable).toBe(false);
+        expect(harness.authorityCounts()).toEqual({
+          authorityLocks: mode === 'governed' ? 1 : 0,
+          authorityReads: mode === 'governed' ? 1 : 0,
+          scopeInstalls: 1,
+        });
+      }),
+    );
+  }
+}
+for (const mode of ['local', 'governed'] as const) {
   it.effect(`keeps ${mode} Read interruption and waits for transaction settlement`, () =>
     Effect.gen(function* migratedTest25() {
       const events: string[] = [];
@@ -2431,6 +2484,110 @@ for (const mode of ['local', 'governed'] as const) {
     }),
   );
 }
+
+it.effect('authorizes optional tenant Party Reads with a genuine tenant module permission without Legal Entity', () =>
+  Effect.gen(function* authorizesTenantPartyRead() {
+    let handlerCalls = 0;
+    const targets: unknown[] = [];
+    const read = defineRead(
+      {
+        ...registration().descriptor,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'context_permission', permission: 'module.access' },
+          entrypointKey: 'party.registry.api.party-detail',
+          moduleKey: 'party.registry',
+          role: 'api',
+        }),
+        legalEntityScope: 'optional',
+        owningModuleKey: 'party.registry',
+        permissionTarget: 'tenant',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 1 }, result: ['party'] });
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+    );
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      onContextPermissionTarget: (target) => targets.push(target),
+      tenantPermissionDecision: 'allowed',
+    });
+    expect(
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toEqual(['party']);
+    expect(targets).toEqual([{ moduleId: 'party.registry', permission: 'module.access' }]);
+    expect(handlerCalls).toBe(1);
+    for (const [tenantPermissionDecision, contextPermissionDecision, tag] of [
+      ['denied', 'allowed', 'ReadPermissionDenied'],
+      ['allowed', 'denied', 'ReadPermissionDenied'],
+      ['unavailable', 'allowed', 'ReadPermissionUnavailable'],
+      ['allowed', 'unavailable', 'ReadPermissionUnavailable'],
+    ] as const) {
+      const rejected = yield* makeHarness({ contextPermissionDecision, tenantPermissionDecision });
+      const failure = yield* Effect.flip(
+        rejected.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: read,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, tag)).toBe(true);
+    }
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const selectedLegalEntity = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      modulePermissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+      tenantPermissionDecision: 'allowed',
+    });
+    const failure = yield* Effect.flip(
+      selectedLegalEntity.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+    expect(selectedLegalEntity.permissionChecks().contextPermissionChecks).toBe(0);
+    for (const legalEntityScope of ['required', 'forbidden'] as const) {
+      const strict = defineRead(
+        { ...read.descriptor, legalEntityScope },
+        () => Effect.die('A strict-scope Read must not reach the handler'),
+        () => Effect.succeed({}),
+        () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+      );
+      const strictScope = yield* makeHarness({
+        contextPermissionDecision: 'allowed',
+        tenantPermissionDecision: 'allowed',
+      });
+      expect(
+        Predicate.isTagged(
+          yield* Effect.flip(
+            strictScope.runtime.runRead({
+              input: {},
+              principal: scope,
+              registration: strict,
+              transport: { correlationId: scope.correlationId },
+            }),
+          ),
+          'ReadPermissionUnavailable',
+        ),
+      ).toBe(true);
+      expect(strictScope.permissionChecks().contextPermissionChecks).toBe(0);
+    }
+    expect(handlerCalls).toBe(1);
+  }),
+);
 
 it.effect('enforces named entrypoint context permission before services and handler', () =>
   Effect.gen(function* enforcesNamedContextPermission() {
@@ -2679,5 +2836,78 @@ it.effect('preserves only schema-declared owner Read failures', () =>
     );
     expect(Predicate.isTagged(failure, 'DeclaredReadFailure')).toBe(true);
     expect((yield* Schema.decodeUnknownEffect(DeclaredReadFailure)(failure)).reasonCode).toBe('PURPOSE_NOT_ALLOWED');
+  }),
+);
+
+it.effect('keeps exact count and order for a three-position conditional plan', () =>
+  Effect.gen(function* validatesRepeatedResourcePositions() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const InputSchema = Schema.Struct({ kind: Schema.Literals(['PROFILE', 'GUEST']) });
+    const moduleRequirement = { kind: 'module', moduleId: 'core.shell' } as const;
+    const profileRequirement = {
+      kind: 'resource_read',
+      permission: 'read',
+      resource: { moduleId: 'core.shell', resourceId: 'profile-1', resourceType: 'profile' },
+    } as const;
+    const addressRequirement = {
+      kind: 'resource_read',
+      permission: 'read',
+      resource: { moduleId: 'core.shell', resourceId: 'address-1', resourceType: 'address' },
+    } as const;
+    for (const resolvedPlan of ['exact', 'short', 'long', 'reordered'] as const) {
+      let handlerCalls = 0;
+      const targets: string[] = [];
+      const read = defineRead(
+        { ...registration().descriptor, inputSchema: InputSchema, permissionTarget: 'conditional' },
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] });
+        },
+        () => Effect.succeed({}),
+        defineReadConditionalPermission<typeof InputSchema.Type, typeof InputSchema.Type>({
+          branches: {
+            GUEST: { requiredKinds: ['module'], resolve: () => [moduleRequirement] },
+            PROFILE: {
+              requiredKinds: ['module', 'resource_read', 'resource_read'],
+              resolve: () => {
+                if (resolvedPlan === 'short') {
+                  return [moduleRequirement, profileRequirement];
+                }
+                if (resolvedPlan === 'long') {
+                  return [moduleRequirement, profileRequirement, addressRequirement, addressRequirement];
+                }
+                if (resolvedPlan === 'reordered') {
+                  return [profileRequirement, moduleRequirement, addressRequirement];
+                }
+                return [moduleRequirement, profileRequirement, addressRequirement];
+              },
+            },
+          },
+          permissionKey: 'module.access',
+          select: (input) => input,
+        }),
+      );
+      const harness = yield* makeHarness({
+        modulePermissionDecision: 'allowed',
+        onResourceTarget: ({ resourceId }) => targets.push(resourceId),
+        resolvedScope: { ...scope, legalEntityId },
+        resourcePermissionDecision: 'allowed',
+      });
+      const result = harness.runtime.runRead({
+        input: { kind: 'PROFILE' },
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+      if (resolvedPlan === 'exact') {
+        expect(yield* result).toEqual(['visible']);
+        expect(targets).toEqual(['profile-1', 'address-1']);
+        expect(handlerCalls).toBe(1);
+      } else {
+        expect(Predicate.isTagged(yield* Effect.flip(result), 'ReadHandlerExecutionError')).toBe(true);
+        expect(targets).toEqual([]);
+        expect(handlerCalls).toBe(0);
+      }
+    }
   }),
 );

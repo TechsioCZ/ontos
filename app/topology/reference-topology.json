@@ -5449,6 +5449,623 @@
         "federation": true,
         "rsc": true
       }
+    },
+    {
+      "id": "commerce-cart",
+      "kind": "vertical",
+      "renderer": "none",
+      "surfaceProfile": "api-only",
+      "domain": "commerce-cart",
+      "package": "@app/commerce-cart",
+      "path": "verticals/commerce-cart",
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalCommerceCartBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/commerce-cart",
+          "packageName": "@app/commerce-cart",
+          "version": "0.1.0",
+          "buildMarker": "e6215fce3998f57e",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/commerce-cart/shared/api.ts",
+            "runtime": "verticals/commerce-cart/api/index.ts",
+            "client": "verticals/commerce-cart/shared/commerce-cart-client.ts",
+            "openapi": "/commerce-cart-api/openapi.json",
+            "readiness": "/commerce-cart-api/commerce-cart/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/commerce-cart",
+          "api": {
+            "readiness": "/commerce-cart-api/commerce-cart/readiness",
+            "buildMarker": "verticals/commerce-cart/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CART"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-commerce-cart",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CART",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_COMMERCE_CART_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_COMMERCE_CART_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_COMMERCE_CART_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_COMMERCE_CART_WORKER",
+              "serviceBindingEnv": "VERTICAL_COMMERCE_CART_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_COMMERCE_CART_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_CART_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalCommerceCartBackend",
+            "manifestEnv": "VERTICAL_COMMERCE_CART_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4115/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4115/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/commerce-cart",
+              "buildMarker": "e6215fce3998f57e"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/commerce-cart",
+          "effectVersion": "4.0.0",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/commerce-cart",
+        "packageName": "@app/commerce-cart",
+        "version": "0.1.0",
+        "buildMarker": "e6215fce3998f57e",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/commerce-cart-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/commerce-cart/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/commerce-cart/shared/commerce-cart-client.ts"
+        },
+        "serverEntry": "verticals/commerce-cart/api/index.ts",
+        "basePath": "/commerce-cart-api/commerce-cart",
+        "consumedBy": [
+          "shell-super-app",
+          "commerce-cart"
+        ],
+        "readiness": {
+          "endpoint": "/commerce-cart/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-commerce-cart",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CART",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public",
+          "enable_request_signal"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "apiReadiness": "/commerce-cart-api/commerce-cart/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "commerce-cart-readiness-smoke",
+            "route": "/commerce-cart-api/commerce-cart/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-cart.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-cart",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-cart"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-order",
+      "kind": "vertical",
+      "renderer": "none",
+      "surfaceProfile": "api-only",
+      "domain": "commerce-order",
+      "package": "@app/commerce-order",
+      "path": "verticals/commerce-order",
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalCommerceOrderBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/commerce-order",
+          "packageName": "@app/commerce-order",
+          "version": "0.1.0",
+          "buildMarker": "3cb1b0536553a70f",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/commerce-order/shared/api.ts",
+            "runtime": "verticals/commerce-order/api/index.ts",
+            "client": "verticals/commerce-order/shared/commerce-order-client.ts",
+            "openapi": "/commerce-order-api/openapi.json",
+            "readiness": "/commerce-order-api/commerce-order/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/commerce-order",
+          "api": {
+            "readiness": "/commerce-order-api/commerce-order/readiness",
+            "buildMarker": "verticals/commerce-order/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-commerce-order",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_COMMERCE_ORDER_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_COMMERCE_ORDER_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_COMMERCE_ORDER_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_COMMERCE_ORDER_WORKER",
+              "serviceBindingEnv": "VERTICAL_COMMERCE_ORDER_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_COMMERCE_ORDER_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_ORDER_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalCommerceOrderBackend",
+            "manifestEnv": "VERTICAL_COMMERCE_ORDER_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4116/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4116/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/commerce-order",
+              "buildMarker": "3cb1b0536553a70f"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/commerce-order",
+          "effectVersion": "4.0.0",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/commerce-order",
+        "packageName": "@app/commerce-order",
+        "version": "0.1.0",
+        "buildMarker": "3cb1b0536553a70f",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/commerce-order-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/commerce-order/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/commerce-order/shared/commerce-order-client.ts"
+        },
+        "serverEntry": "verticals/commerce-order/api/index.ts",
+        "basePath": "/commerce-order-api/commerce-order",
+        "consumedBy": [
+          "shell-super-app",
+          "commerce-order"
+        ],
+        "readiness": {
+          "endpoint": "/commerce-order/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {}
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-commerce-order",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public",
+          "enable_request_signal"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "apiReadiness": "/commerce-order-api/commerce-order/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "commerce-order-readiness-smoke",
+            "route": "/commerce-order-api/commerce-order/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-order.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-order",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-order"
+          ]
+        }
+      }
     }
   ],
   "sharedPackages": [
@@ -5523,6 +6140,30 @@
       "package": "@app/storefront-registry-contracts",
       "path": "packages/storefront-registry-contracts",
       "description": "Storefront Registry-owned public Current Storefront Application contract and generated Effect client."
+    },
+    {
+      "id": "catalog-selection-contracts",
+      "package": "@app/catalog-selection-contracts",
+      "path": "packages/catalog-selection-contracts",
+      "description": "Catalog-owned schema-only requested Selection and ResourceRef value kernel."
+    },
+    {
+      "id": "commerce-cart-contracts",
+      "package": "@app/commerce-cart-contracts",
+      "path": "packages/commerce-cart-contracts",
+      "description": "Commerce Cart-owned public Cart resource and open-selection population contracts and generated client."
+    },
+    {
+      "id": "commerce-order-contracts",
+      "package": "@app/commerce-order-contracts",
+      "path": "packages/commerce-order-contracts",
+      "description": "Commerce Order-owned exact Bundle/Attempt and durable commit verification contracts."
+    },
+    {
+      "id": "commerce-cart-finalization-contracts",
+      "package": "@app/commerce-cart-finalization-contracts",
+      "path": "packages/commerce-cart-finalization-contracts",
+      "description": "Cart-owned immutable final candidate contracts and generated client."
     }
   ],
   "validation": {

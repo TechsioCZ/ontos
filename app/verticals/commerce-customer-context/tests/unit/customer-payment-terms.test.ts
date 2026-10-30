@@ -600,3 +600,258 @@ it('does not remap retained legacy entitlements to a replacement or policy fallb
   expect(state.entitlements[0]?.semanticRevisionId).toEqual(legacy.semanticRevisionId);
   expect(state.revision).toBe(1);
 });
+
+const finiteGrantState = (): CustomerPaymentTermsState => {
+  const term = immediate('44444444-4444-4444-8444-444444444444');
+  const grant = changeCustomerPaymentTerms({
+    catalogDefinitions: [term],
+    changes: [
+      {
+        _tag: 'GRANT_ENTITLEMENT',
+        effectiveFrom: '2027-01-01T00:00:00.000Z',
+        effectiveTo: '2027-06-01T00:00:00.000Z',
+        entitlementRef,
+        paymentTermRef: term.paymentTermRef,
+        semanticRevisionId: term.semanticRevisionId,
+      },
+    ],
+    expectedRevision: 1,
+    state: emptyState(),
+  });
+  expectTag(grant, 'CHANGED');
+  return Predicate.isTagged(grant, 'CHANGED') ? grant.state : emptyState();
+};
+
+it('cancels an ordinarily granted finite future period while retaining its original schedule', () => {
+  const state = finiteGrantState();
+  const result = removeCustomerPaymentTerm({
+    effectiveAt: '2026-10-18T00:00:00.000Z',
+    entitlementRef,
+    expectedRevision: state.revision,
+    state,
+  });
+  expectTag(result, 'REMOVED');
+  if (!Predicate.isTagged(result, 'REMOVED')) {
+    return;
+  }
+  expect(result.removalKind).toBe('CANCELLED');
+  expect(result.state.entitlements[0]).toMatchObject({
+    cancelledAt: '2026-10-18T00:00:00.000Z',
+    effectiveFrom: '2027-01-01T00:00:00.000Z',
+    effectiveTo: '2027-06-01T00:00:00.000Z',
+    originalEffectiveTo: '2027-06-01T00:00:00.000Z',
+    status: 'CANCELLED',
+  });
+  for (const asOf of ['2027-01-01T00:00:00.000Z', '2027-03-01T00:00:00.000Z', '2027-06-01T00:00:00.000Z']) {
+    expect(projectCustomerPaymentTermsAt(result.state, asOf, true).state.entitlements).toHaveLength(0);
+  }
+});
+
+it('shortens a current finite grant while keeping the immutable original end and exact explicit End', () => {
+  const state = finiteGrantState();
+  const result = removeCustomerPaymentTerm({
+    effectiveAt: '2027-03-01T00:00:00.000Z',
+    entitlementRef,
+    expectedRevision: state.revision,
+    state,
+  });
+  expectTag(result, 'REMOVED');
+  if (!Predicate.isTagged(result, 'REMOVED')) {
+    return;
+  }
+  expect(result.state.entitlements[0]).toMatchObject({
+    effectiveTo: '2027-03-01T00:00:00.000Z',
+    endedAt: '2027-03-01T00:00:00.000Z',
+    originalEffectiveTo: '2027-06-01T00:00:00.000Z',
+    status: 'ACTIVE',
+  });
+});
+
+it('preserves exact cancellation replay, rejects conflicting schedules and stale revisions', () => {
+  const state = finiteGrantState();
+  const effectiveAt = '2026-10-18T00:00:00.000Z';
+  const cancelled = removeCustomerPaymentTerm({ effectiveAt, entitlementRef, expectedRevision: state.revision, state });
+  expectTag(cancelled, 'REMOVED');
+  if (!Predicate.isTagged(cancelled, 'REMOVED')) {
+    return;
+  }
+  const replay = removeCustomerPaymentTerm({
+    effectiveAt,
+    entitlementRef,
+    expectedRevision: cancelled.state.revision,
+    state: cancelled.state,
+  });
+  expectTag(replay, 'REMOVED');
+  if (Predicate.isTagged(replay, 'REMOVED')) {
+    expect(replay.changed).toBe(false);
+    expect(replay.state).toEqual(cancelled.state);
+  }
+  expectTag(
+    removeCustomerPaymentTerm({
+      effectiveAt: '2026-10-19T00:00:00.000Z',
+      entitlementRef,
+      expectedRevision: cancelled.state.revision,
+      state: cancelled.state,
+    }),
+    'REMOVAL_CONFLICT',
+  );
+  expectTag(
+    removeCustomerPaymentTerm({
+      effectiveAt,
+      entitlementRef,
+      expectedRevision: state.revision,
+      state: cancelled.state,
+    }),
+    'REVISION_CONFLICT',
+  );
+  expectTag(
+    removeCustomerPaymentTerm({
+      effectiveAt,
+      entitlementRef: { ...entitlementRef, resourceId: '99999999-9999-4999-8999-999999999999' },
+      expectedRevision: state.revision,
+      state,
+    }),
+    'ENTITLEMENT_NOT_FOUND',
+  );
+});
+
+it('retains explicit End replay and refuses changing its actual removal time', () => {
+  const state = finiteGrantState();
+  const effectiveAt = '2027-03-01T00:00:00.000Z';
+  const ended = removeCustomerPaymentTerm({ effectiveAt, entitlementRef, expectedRevision: state.revision, state });
+  expectTag(ended, 'REMOVED');
+  if (!Predicate.isTagged(ended, 'REMOVED')) {
+    return;
+  }
+  const replay = removeCustomerPaymentTerm({
+    effectiveAt,
+    entitlementRef,
+    expectedRevision: ended.state.revision,
+    state: ended.state,
+  });
+  expectTag(replay, 'REMOVED');
+  if (Predicate.isTagged(replay, 'REMOVED')) {
+    expect(replay.changed).toBe(false);
+  }
+  for (const different of ['2026-10-18T00:00:00.000Z', '2027-04-01T00:00:00.000Z']) {
+    expectTag(
+      removeCustomerPaymentTerm({
+        effectiveAt: different,
+        entitlementRef,
+        expectedRevision: ended.state.revision,
+        state: ended.state,
+      }),
+      'REMOVAL_CONFLICT',
+    );
+  }
+  expect(projectCustomerPaymentTermsAt(ended.state, effectiveAt, false).currentEntitlements).toHaveLength(0);
+  expect(projectCustomerPaymentTermsAt(ended.state, effectiveAt, true).state.entitlements[0]).toMatchObject({
+    originalEffectiveTo: '2027-06-01T00:00:00.000Z',
+  });
+});
+
+it('distinguishes a finite grant from open grant plus explicit End within one Change batch', () => {
+  const term = immediate('44444444-4444-4444-8444-444444444444');
+  const ended = changeCustomerPaymentTerms({
+    catalogDefinitions: [term],
+    changes: [
+      {
+        _tag: 'GRANT_ENTITLEMENT',
+        effectiveFrom: '2027-01-01T00:00:00.000Z',
+        entitlementRef,
+        paymentTermRef: term.paymentTermRef,
+        semanticRevisionId: term.semanticRevisionId,
+      },
+      { _tag: 'END_ENTITLEMENT', effectiveAt: '2027-06-01T00:00:00.000Z', entitlementRef },
+    ],
+    expectedRevision: 1,
+    state: emptyState(),
+  });
+  expectTag(ended, 'CHANGED');
+  if (!Predicate.isTagged(ended, 'CHANGED')) {
+    return;
+  }
+  expect(ended.state.entitlements[0]).toMatchObject({ endedAt: '2027-06-01T00:00:00.000Z', originalEffectiveTo: null });
+  expect(finiteGrantState().entitlements[0]).toMatchObject({ originalEffectiveTo: '2027-06-01T00:00:00.000Z' });
+  expectTag(
+    removeCustomerPaymentTerm({
+      effectiveAt: '2026-10-18T00:00:00.000Z',
+      entitlementRef,
+      expectedRevision: ended.state.revision,
+      state: ended.state,
+    }),
+    'REMOVAL_CONFLICT',
+  );
+});
+
+it('keeps half-open boundaries without inventing explicit removal on natural expiry', () => {
+  const state = finiteGrantState();
+  expect(projectCustomerPaymentTermsAt(state, '2027-01-01T00:00:00.000Z', false).currentEntitlements).toHaveLength(1);
+  expect(projectCustomerPaymentTermsAt(state, '2027-06-01T00:00:00.000Z', false).currentEntitlements).toHaveLength(0);
+  const atEnd = removeCustomerPaymentTerm({
+    effectiveAt: '2027-06-01T00:00:00.000Z',
+    entitlementRef,
+    expectedRevision: state.revision,
+    state,
+  });
+  expectTag(atEnd, 'REMOVED');
+  if (Predicate.isTagged(atEnd, 'REMOVED')) {
+    expect(atEnd.changed).toBe(false);
+    expect(atEnd.state).toEqual(state);
+    expect(atEnd.state.entitlements[0]?.endedAt).toBeUndefined();
+  }
+  expectTag(
+    removeCustomerPaymentTerm({
+      effectiveAt: '2027-06-02T00:00:00.000Z',
+      entitlementRef,
+      expectedRevision: state.revision,
+      state,
+    }),
+    'REMOVAL_CONFLICT',
+  );
+  const atStart = removeCustomerPaymentTerm({
+    effectiveAt: '2027-01-01T00:00:00.000Z',
+    entitlementRef,
+    expectedRevision: state.revision,
+    state,
+  });
+  expectTag(atStart, 'REMOVED');
+  if (Predicate.isTagged(atStart, 'REMOVED')) {
+    expect(atStart.removalKind).toBe('CANCELLED');
+  }
+});
+
+it('keeps ambiguous finite legacy provenance unknown and immutable while preserving known cancelled replay', () => {
+  const state = finiteGrantState();
+  const legacy: CustomerPaymentTermsState = {
+    ...state,
+    entitlements: state.entitlements.map(({ originalEffectiveTo: _original, ...retained }) => retained),
+  };
+  for (const effectiveAt of ['2026-10-18T00:00:00.000Z', '2027-03-01T00:00:00.000Z', '2027-06-01T00:00:00.000Z']) {
+    expectTag(
+      removeCustomerPaymentTerm({ effectiveAt, entitlementRef, expectedRevision: legacy.revision, state: legacy }),
+      'REMOVAL_CONFLICT',
+    );
+  }
+  expect(legacy.entitlements[0]?.originalEffectiveTo).toBeUndefined();
+  expect(legacy.entitlements[0]?.endedAt).toBeUndefined();
+  const cancelled = {
+    ...legacy,
+    entitlements: legacy.entitlements.map((entitlement) => ({
+      ...entitlement,
+      cancelledAt: '2026-10-18T00:00:00.000Z',
+      status: 'CANCELLED' as const,
+    })),
+  };
+  const replay = removeCustomerPaymentTerm({
+    effectiveAt: '2026-10-18T00:00:00.000Z',
+    entitlementRef,
+    expectedRevision: cancelled.revision,
+    state: cancelled,
+  });
+  expectTag(replay, 'REMOVED');
+  if (Predicate.isTagged(replay, 'REMOVED')) {
+    expect(replay.changed).toBe(false);
+    expect(replay.state).toEqual(cancelled);
+  }
+});

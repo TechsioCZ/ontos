@@ -20,7 +20,11 @@ import type {
   ConsumePurchaseApprovalResult,
 } from '../../shared/actions/consume-purchase-approval.ts';
 import type { PurchaseApprovalOrderCommitmentPort } from '../../shared/domain/purchase-approval-order-commitment-port.ts';
-import { CommitmentCorrelationIdSchema, DecisionBundleVersionSchema } from '../../shared/domain/purchasing-approval.ts';
+import {
+  CommitmentCorrelationIdSchema,
+  DecisionBundleVersionSchema,
+  PurchaseApprovalFinalBindingSchema,
+} from '../../shared/domain/purchasing-approval.ts';
 import { purchasingApprovalOrderCommitmentForScope } from '../persistence/purchasing-approval-persistence.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
 import {
@@ -39,10 +43,12 @@ const PurchaseApprovalConsumedEventSchema = Schema.Struct({
   completionRule: Schema.Literal('ONE_APPROVER'),
   decisionBundleHash: Schema.String,
   decisionBundleVersion: DecisionBundleVersionSchema,
+  finalBinding: Schema.Union([PurchaseApprovalFinalBindingSchema, Schema.Null]),
   orderRef: Schema.String,
   outcome: PurchaseApprovalConsumptionOutcomeSchema,
   proposalRevisionRef: Schema.String,
   requestRef: Schema.String,
+  revalidationRef: Schema.Union([Schema.String, Schema.Null]),
 });
 
 /** Evidence names the exact Order commit target and the route rule used by the approval. */
@@ -52,10 +58,12 @@ const ConsumePurchaseApprovalAuditEvidenceSchema = Schema.Struct({
   completionRule: Schema.Literal('ONE_APPROVER'),
   decisionBundleHash: Schema.String,
   decisionBundleVersion: DecisionBundleVersionSchema,
+  finalBinding: Schema.Union([PurchaseApprovalFinalBindingSchema, Schema.Null]),
   orderRef: Schema.String,
   outcome: PurchaseApprovalConsumptionOutcomeSchema,
   proposalRevisionRef: Schema.String,
   requestRef: Schema.String,
+  revalidationRef: Schema.Union([Schema.String, Schema.Null]),
 });
 
 type DomainEvents = Readonly<{
@@ -81,10 +89,12 @@ const recordConsumePurchaseApprovalOutcome = Effect.fn('ConsumePurchaseApprovalA
       completionRule,
       decisionBundleHash: payload.decisionBundleHash,
       decisionBundleVersion: payload.decisionBundleVersion,
+      finalBinding: payload.finalBinding ?? null,
       orderRef: payload.orderRef.resourceId,
       outcome: result.outcome,
       proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
       requestRef: result.request.requestRef.resourceId,
+      revalidationRef: payload.revalidationRef?.resourceId ?? null,
     };
     yield* context.recordAuditEvidence(evidence);
     if (result.outcome !== 'CONSUMED') {

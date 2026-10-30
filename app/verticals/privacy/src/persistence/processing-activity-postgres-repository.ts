@@ -1,3 +1,4 @@
+import { loadPurposeVersions } from './processing-purpose-postgres-repository.ts';
 import { ProcessingActivityRepository } from './processing-activity-repository.ts';
 import type { ProcessingActivityRepositoryService } from './processing-activity-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
@@ -9,8 +10,6 @@ import { PrivacyApplicabilityDecisionSchema } from '../../shared/domain/privacy-
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
 import { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import { PrivacyRetentionRuleVersionSchema } from '../../shared/domain/privacy-retention-rule.ts';
-import { PrivacyMaterialChangeAssessmentSchema } from '../../shared/domain/privacy-material-change.ts';
-import { PurposeVersionMaterialScopeSchema } from '../../shared/domain/processing-purpose.ts';
 import {
   ProcessingActivitySchema,
   processingActivityInputForeignReferenceReason,
@@ -31,7 +30,6 @@ import {
   processingActivities,
   processingActivityLifecycleEvents,
   processingPurposes,
-  purposeVersions,
   responsibilityAssignments,
   retentionRules,
 } from '../database/schema.ts';
@@ -66,9 +64,6 @@ const decodePrerequisite = <A, I>(schema: Schema.Codec<A, I>, label: string) =>
     Schema.decodeUnknownEffect(schema),
     Effect.mapError((cause) => failure(`Stored ${label} could not be decoded`, cause)),
   );
-
-const decodeNullablePrerequisite = <A, I>(schema: Schema.Codec<A, I>, value: I | null, label: string) =>
-  value === null ? Effect.succeed(null) : decodePrerequisite(schema, label)(value);
 
 const decodePrerequisiteRows = <A, I>(
   schema: Schema.Codec<A, I>,
@@ -133,48 +128,14 @@ const makeRepository = Effect.fn('ProcessingActivityPostgresRepository.make')(fu
 
   const resolvePurposeVersion = Effect.fn('ProcessingActivityPostgresRepository.resolvePurposeVersion')(
     function* resolvePurposeVersionEffect(activity: ProcessingActivity) {
-      const versionRows = yield* transaction
-        .select()
-        .from(purposeVersions)
-        .where(
-          and(
-            eq(purposeVersions.tenantId, trustedScope.tenantId),
-            eq(purposeVersions.legalEntityId, trustedScope.legalEntityId),
-            eq(purposeVersions.processingPurposeId, activity.processingScope.purposeRef.resourceId),
-            eq(purposeVersions.purposeVersionId, activity.processingScope.purposeVersionId),
-          ),
-        )
-        .limit(1)
-        .pipe(Effect.mapError((cause) => failure('Purpose Version prerequisite could not be resolved', cause)));
-      const versionRow = versionRows.at(0);
-      if (versionRow === undefined) {
-        return yield* prerequisiteRejected('Processing Activity references a missing Purpose Version');
-      }
-      const [materialChangeAssessment, materialScope] = yield* Effect.all(
-        [
-          decodeNullablePrerequisite(
-            PrivacyMaterialChangeAssessmentSchema,
-            versionRow.materialChangeAssessment,
-            'Purpose Version materiality assessment',
-          ),
-          decodeNullablePrerequisite(
-            PurposeVersionMaterialScopeSchema,
-            versionRow.materialScope,
-            'Purpose Version material scope',
-          ),
-        ],
-        { concurrency: 1 },
-      );
-      return {
-        effectiveFrom: DateTime.formatIso(DateTime.fromDateUnsafe(versionRow.effectiveFrom)),
-        effectiveTo: isoOrNull(versionRow.effectiveTo),
-        materialChangeAssessment,
-        materialScope,
-        meaning: versionRow.meaning,
-        recordedAt: DateTime.formatIso(DateTime.fromDateUnsafe(versionRow.recordedAt)),
-        versionId: versionRow.purposeVersionId,
-        versionNumber: versionRow.versionNumber,
-      };
+      const versions = yield* loadPurposeVersions(
+        transaction,
+        trustedScope.tenantId,
+        trustedScope.legalEntityId,
+        activity.processingScope.purposeRef.resourceId,
+      ).pipe(Effect.mapError((cause) => failure('Purpose Version timeline could not be resolved', cause)));
+      const version = versions.find(({ versionId }) => versionId === activity.processingScope.purposeVersionId);
+      return version ?? (yield* prerequisiteRejected('Processing Activity requires an authoritative Purpose Version'));
     },
   );
 

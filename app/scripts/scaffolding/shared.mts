@@ -1042,6 +1042,8 @@ const topologyEntries = (topology: JsonObject): readonly JsonObject[] => {
   return candidates;
 };
 
+const isGeneratedVerticalRole = Schema.is(Schema.Literals(['module-federation-remote', 'api-only']));
+
 const assertUniqueGeneratedVerticalAppIdsEffect = (workspaceRoot: string) =>
   Effect.gen(function* assertUniqueGeneratedVerticalAppIdsProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1061,7 +1063,7 @@ const assertUniqueGeneratedVerticalAppIdsEffect = (workspaceRoot: string) =>
           }
           const { value } = yield* readJsonEffect(packagePath, `vertical ${entryName} package metadata`);
           const modernjs = asJsonObject(value['modernjs'], `vertical ${entryName} modernjs metadata`);
-          if (modernjs['role'] !== 'module-federation-remote') {
+          if (!isGeneratedVerticalRole(modernjs['role'])) {
             return null;
           }
           return {
@@ -1147,8 +1149,9 @@ export const discoverVerticalEffect = (
     );
     const packageName = requiredString(packageJson['name'], `vertical ${slug} package name`);
     const modernjs = asJsonObject(packageJson['modernjs'], `vertical ${slug} modernjs metadata`);
-    if (modernjs['role'] !== 'module-federation-remote') {
-      return yield* scaffoldFailure(`vertical ${slug} is not a generated Module Federation remote package`);
+    const { role } = modernjs;
+    if (!isGeneratedVerticalRole(role)) {
+      return yield* scaffoldFailure(`vertical ${slug} is not a generated Module Federation remote or API-only package`);
     }
     const appId = requiredString(modernjs['appId'], `vertical ${slug} appId`);
     if (!stableAppIdPattern.test(appId)) {
@@ -1168,6 +1171,19 @@ export const discoverVerticalEffect = (
       slug,
     };
     const topologyEntry = yield* resolveVerticalTopologyEntryEffect(workspaceRoot, vertical, modernjs);
+    if (role === 'api-only') {
+      if (
+        topologyEntry['renderer'] !== 'none' ||
+        topologyEntry['surfaceProfile'] !== 'api-only' ||
+        Object.hasOwn(topologyEntry, 'moduleFederation')
+      ) {
+        return yield* scaffoldFailure(
+          `vertical ${slug} API-only topology must be server-only without browser Module Federation metadata`,
+        );
+      }
+    } else if (topologyEntry['renderer'] === 'none' || topologyEntry['surfaceProfile'] === 'api-only') {
+      return yield* scaffoldFailure(`vertical ${slug} browser role contradicts its server-only topology`);
+    }
     return { ...vertical, topologyEntry };
   });
 

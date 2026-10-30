@@ -253,6 +253,7 @@ it('keeps official assertions historical while exclusive claims own exact matchi
     'party_official_identifiers_external_evidence_ck',
     'party_official_identifiers_interval_ck',
     'party_official_identifiers_normalized_value_ck',
+    'party_official_identifiers_original_input_digits_ck',
     'party_official_identifiers_state_ck',
     'party_official_identifiers_type_ck',
     'party_official_identifiers_verification_ck',
@@ -649,7 +650,7 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       expect(bootstrap).toMatch(/\['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u);
       expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
       expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'projects',\s*'storefront_registry',\s*'tax',\s*'trust',\s*\]/u,
+        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_cart',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'commerce_order',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'projects',\s*'storefront_registry',\s*'tax',\s*'trust',\s*\]/u,
       );
       expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
       expect(verifier).toMatch(/__drizzle_migrations_catalog/u);
@@ -693,4 +694,17 @@ it('narrows every Counterparty projection policy to the sealed entity without ex
       );
     }
   }
+});
+
+it('bounds retained ICO source digits while leaving historical unknown evidence nullable', () => {
+  const config = configOf(partyOfficialIdentifiers);
+  const original = config.columns.find((column) => column.name === 'original_input_digits');
+  expect(original?.notNull).toBe(false);
+  expect(original?.hasDefault).toBe(false);
+  const constraint = checksOf(partyOfficialIdentifiers);
+  const expression = checkSql(constraint, 'party_official_identifiers_original_input_digits_ck');
+  expect(expression).toMatch(/original_input_digits.*is null/u);
+  expect(expression).toMatch(/identifier_type_key.*ICO/u);
+  expect(expression).toContain('^[0-9]{1,8}$');
+  expect(expression).toMatch(/lpad.*original_input_digits.*8.*normalized_value/u);
 });

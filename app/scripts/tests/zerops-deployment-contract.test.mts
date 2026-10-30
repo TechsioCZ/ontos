@@ -10,6 +10,7 @@ import {
   SPICEDB_ENDPOINT_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+import { OWNER_RUNTIME_CONFIGURATIONS } from '../ops/owner-runtime-configuration.mts';
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
@@ -135,6 +136,125 @@ it('binds Commerce to the independently deployed Price Group Catalog API base', 
   );
   expect(priceGroupCatalog).toContain(`VERTICAL_PRICE_GROUP_CATALOG_PORT: '4108'`);
   expect(priceGroupCatalog).toContain(`path: '/price-group-catalog-api/price-group-catalog/readiness'`);
+});
+
+const ORDER_RUNTIME_SETUPS = ['commerce-order', 'commerce-order-worker', OUTBOX_WORKER_HOST.stageSetup];
+/** Operator-issued per-environment values every Order runtime references from the `migrator` service. */
+const ORDER_MIGRATOR_KEYS = [
+  'ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY',
+  'ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY',
+  'ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID',
+  'ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID',
+  'ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID',
+];
+
+it('binds Commerce Order, its worker and the host to every internal owner API base Order calls', () => {
+  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+
+  for (const setup of ORDER_RUNTIME_SETUPS) {
+    const block = serviceBlock(zeropsYaml, setup);
+    for (const binding of [
+      "ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'",
+      "ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'",
+      "ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'",
+      "ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL: 'http://paymenttermcatalog:4103/payment-term-catalog-api'",
+      "ONTOS_PRICING_API_BASE_URL: 'http://pricing:4106/pricing-api'",
+      "ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'",
+      "ONTOS_TAX_API_BASE_URL: 'http://tax:4112/tax-api'",
+    ]) {
+      expect(block).toContain(`        ${binding}\n`);
+    }
+  }
+});
+
+it('gives only the Order runtimes the Order gateway keys and admitted Principals, as migrator references', () => {
+  const environments = serviceEnvironments();
+  const staffNamespace = 'ontos.staff.better-auth.v1';
+
+  for (const setup of ORDER_RUNTIME_SETUPS) {
+    const environment = environments.get(setup) ?? {};
+    for (const key of ORDER_MIGRATOR_KEYS) {
+      expect(environment[key]).toBe(`\${migrator_${key}}`);
+    }
+    expect(environment).toMatchObject({
+      ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
+      ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
+      ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
+    });
+  }
+  for (const key of ORDER_MIGRATOR_KEYS) {
+    const holders = [...environments]
+      .filter(([, environment]) =>
+        Object.entries(environment).some(([name, value]) => name === key || value.includes(key)),
+      )
+      .map(([setup]) => setup);
+    expect(holders).toStrictEqual(ORDER_RUNTIME_SETUPS);
+  }
+});
+
+/** An owner's own service and, when it has an Outbox Worker, that worker and the host that also runs it. */
+const ownerRuntimeSetups = (unitId: string, setups: ReadonlySet<string>) =>
+  setups.has(`${unitId}-worker`) ? [unitId, `${unitId}-worker`, OUTBOX_WORKER_HOST.stageSetup] : [unitId];
+
+it('gives each Order-flow owner its own credentials and per-environment values only as migrator references', () => {
+  const environments = serviceEnvironments();
+  const setups = new Set(environments.keys());
+
+  expect(OWNER_RUNTIME_CONFIGURATIONS.map(({ unitId }) => unitId)).toStrictEqual([
+    'commerce-cart',
+    'commerce-customer-context',
+    'commerce-order',
+    'pricing',
+  ]);
+  for (const { callerNamespaces, credentialVariables, operatorValues, unitId } of OWNER_RUNTIME_CONFIGURATIONS) {
+    const expected = ownerRuntimeSetups(unitId, setups);
+    for (const key of [...credentialVariables, ...operatorValues.map(({ variable }) => variable)]) {
+      const holders = [...environments]
+        .filter(([, environment]) =>
+          Object.entries(environment).some(([name, value]) => name === key || value.includes(key)),
+        )
+        .map(([setup]) => setup);
+      expect(holders).toStrictEqual(expected);
+      for (const setup of expected) {
+        expect(environments.get(setup)?.[key]).toBe(`\${migrator_${key}}`);
+      }
+    }
+    for (const setup of expected) {
+      for (const namespace of callerNamespaces) {
+        expect(environments.get(setup)?.[namespace]).toBe('ontos.staff.better-auth.v1');
+      }
+    }
+  }
+});
+
+it('binds Customer Context, Cart and Pricing to the internal owner API bases they call', () => {
+  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const shellBase = "ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'";
+  const cartBase = "ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'";
+  const bindings: readonly (readonly [readonly string[], readonly string[]])[] = [
+    [
+      [commerceCustomerContextSetup, `${commerceCustomerContextSetup}-worker`, OUTBOX_WORKER_HOST.stageSetup],
+      [cartBase, "ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'", shellBase],
+    ],
+    [
+      ['commerce-cart'],
+      [
+        "ONTOS_CATALOG_API_BASE_URL: 'http://catalog:4105/catalog-api'",
+        "ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'",
+        shellBase,
+      ],
+    ],
+    [['pricing'], [shellBase]],
+  ];
+
+  for (const [setups, lines] of bindings) {
+    for (const setup of setups) {
+      const block = serviceBlock(zeropsYaml, setup);
+      for (const line of lines) {
+        expect(block).toContain(`        ${line}\n`);
+      }
+    }
+  }
 });
 
 it('declares Price Group Cloudflare proof variables and resolves every provider service id by topology name', () => {

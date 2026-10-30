@@ -1,4 +1,5 @@
-import { Effect } from 'effect';
+import { PricingCommitmentConfirmationIssuedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
+import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -14,9 +15,10 @@ import {
 
 const row = <Payload>(payload: Payload): readonly [{ readonly payload: Payload }] => [{ payload }];
 
+const encodeConfirmation = Schema.encodeSync(Schema.toCodecJson(PricingCommitmentConfirmationIssuedSchema));
 const recoveryEnvelope = (confirmation: ReturnType<typeof makeIssue788IssuedConfirmation>) => ({
   attemptRef: confirmation.binding.attemptRef,
-  confirmation,
+  confirmation: encodeConfirmation(confirmation),
   confirmationRef: confirmation.confirmationRef,
   decisionBundleHash: confirmation.binding.decisionBundleHash,
   decisionBundleRef: confirmation.binding.decisionBundleRef,
@@ -34,6 +36,28 @@ const recoveryEnvelope = (confirmation: ReturnType<typeof makeIssue788IssuedConf
 });
 
 describe('Pricing Commitment Confirmation durable persistence (#788)', () => {
+  it.effect('decodes native JSON store, replay and recovery without losing retained Tier instants #1257', () =>
+    Effect.gen(function* nativeJsonConfirmation() {
+      const total = yield* makeIssue788CommercialTotal('900');
+      const confirmation = makeIssue788IssuedConfirmation(total);
+      const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(PricingCommitmentConfirmationIssuedSchema))(
+        confirmation,
+      );
+      for (const outcome of ['STORED', 'REUSED'] as const) {
+        expect(yield* decodeCommitmentConfirmationStoreOutcome(row({ confirmation: encoded, outcome }))).toEqual({
+          confirmation,
+          outcome,
+        });
+      }
+      expect(
+        decodeCommitmentConfirmationRecoveryOutcome(
+          confirmation.confirmationRef,
+          row({ ...recoveryEnvelope(confirmation), confirmation: encoded }),
+        ),
+      ).toEqual({ confirmation, outcome: 'FOUND' });
+    }),
+  );
+
   it('binds the production provider to owner-scoped insert and recovery routines', () => {
     expect(persistPricingCommitmentConfirmationRoutine).toMatchObject({
       name: 'persist_pricing_commitment_confirmation_v1',
@@ -106,11 +130,19 @@ describe('Pricing Commitment Confirmation durable persistence (#788)', () => {
       const total = yield* makeIssue788CommercialTotal('900');
       const confirmation = makeIssue788IssuedConfirmation(total);
 
-      expect(yield* decodeCommitmentConfirmationStoreOutcome(row({ confirmation, outcome: 'STORED' }))).toEqual({
+      expect(
+        yield* decodeCommitmentConfirmationStoreOutcome(
+          row({ confirmation: encodeConfirmation(confirmation), outcome: 'STORED' }),
+        ),
+      ).toEqual({
         confirmation,
         outcome: 'STORED',
       });
-      expect(yield* decodeCommitmentConfirmationStoreOutcome(row({ confirmation, outcome: 'REUSED' }))).toEqual({
+      expect(
+        yield* decodeCommitmentConfirmationStoreOutcome(
+          row({ confirmation: encodeConfirmation(confirmation), outcome: 'REUSED' }),
+        ),
+      ).toEqual({
         confirmation,
         outcome: 'REUSED',
       });

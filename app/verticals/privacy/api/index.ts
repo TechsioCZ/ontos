@@ -1,3 +1,4 @@
+import { PrivacySubjectPartyOwnerUnavailableLive } from '../src/persistence/privacy-subject-party-owner.ts';
 import {
   makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
@@ -32,6 +33,7 @@ import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLiv
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { acknowledgePrivacyNoticeActionApiLive } from './acknowledge-privacy-notice-action-server.ts';
 import { addProcessingPurposeVersionActionApiLive } from './add-processing-purpose-version-action-server.ts';
 import { applicabilityDecisionsReadApiLive } from './applicability-decisions-read-server.ts';
 import { assignDsrResolverActionApiLive } from './assign-dsr-resolver-action-server.ts';
@@ -50,6 +52,7 @@ import { enqueueRetentionEvaluationActionApiLive } from './enqueue-retention-eva
 import { evaluateProcessingEligibilityActionApiLive } from './evaluate-processing-eligibility-action-server.ts';
 import { issueDsrDeliveryAccessActionApiLive } from './issue-dsr-delivery-access-action-server.ts';
 import { legalBasisAssignmentsReadApiLive } from './legal-basis-assignments-read-server.ts';
+import { noticePresentationReadApiLive } from './notice-presentation-read-server.ts';
 import { noticeVersionsReadApiLive } from './notice-versions-read-server.ts';
 import { ownerInventoryReadApiLive } from './owner-inventory-read-server.ts';
 import { privacySubjectsReadApiLive } from './privacy-subjects-read-server.ts';
@@ -100,6 +103,8 @@ import { DsrDeadlineAuthorityUnavailableLive } from '../src/actions/record-dsr-d
 import { DsrDeliveryAuthorityUnavailableLive } from '../src/actions/record-dsr-delivery-evidence.action.ts';
 import { DsrVerificationAuthorityUnavailableLive } from '../src/actions/record-dsr-verification.action.ts';
 import { NoticeChannelDeliveryAuthorityUnavailableLive } from '../src/actions/record-notice-provision.action.ts';
+import { PrivacyNoticePresentationUnavailableLive } from '../src/services/privacy-notice-presentation.service.ts';
+import { CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive } from '../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
 import { ProcessingInterventionAuthorityUnavailableLive } from '../src/actions/processing-intervention-authority.ts';
 
@@ -176,14 +181,23 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   RetentionRuleGovernanceAuthorityUnavailableLive,
   DsrVerificationAuthorityUnavailableLive,
   NoticeChannelDeliveryAuthorityUnavailableLive,
+  PrivacyNoticePresentationUnavailableLive,
+  CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
   ProcessingInterventionAuthorityUnavailableLive,
+  PrivacySubjectPartyOwnerUnavailableLive,
 );
 const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
-  Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
+      PrivacyNoticePresentationUnavailableLive,
+      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+    ),
+  ),
 );
 const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(
@@ -212,13 +226,16 @@ type PrivacyApiRuntimeArguments = readonly [
 export const makePrivacyApiRuntime = (
   ...args: PrivacyApiRuntimeArguments
 ): EffectBffDefinition<typeof privacyApi> & EffectBffRuntime<typeof privacyApi> => {
-  const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption] = args;
+  const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;
+  const governedReadRuntimeLive = Layer.merge(nodeCryptoLayer, readRuntimeLive);
+  const governedActionRuntimeLive = Layer.merge(nodeCryptoLayer, actionRuntimeLive);
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
   );
   const apiHandlersLive = Layer.mergeAll(
     privacyReadinessLayer,
     // <generated-governed-http-handler-layers>
+    acknowledgePrivacyNoticeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     addProcessingPurposeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     applicabilityDecisionsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assignDsrResolverActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -237,6 +254,7 @@ export const makePrivacyApiRuntime = (
     evaluateProcessingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     issueDsrDeliveryAccessActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     legalBasisAssignmentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    noticePresentationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     noticeVersionsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     ownerInventoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacySubjectsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

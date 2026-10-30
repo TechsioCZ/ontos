@@ -122,3 +122,33 @@ it.effect('installs the live factory as the production-injectable owner seam', (
     expect(Predicate.isFunction(factory.make)).toBe(true);
   }).pipe(Effect.provide(partyRegistryGuestResolverFactoryLive)),
 );
+
+it.effect('preserves insufficient Guest identity evidence without synthesizing Party attribution', () =>
+  resolveWith({
+    outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE',
+    reason: 'Contact evidence is not owner identity proof',
+  }).pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        expect(result).toEqual({
+          outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE',
+          reason: 'Contact evidence is not owner identity proof',
+        });
+      }),
+    ),
+  ),
+);
+
+it.effect('forwards the exact purchase correlation, evidence, trusted LE and requested instant to the owner', () =>
+  makePartyRegistryGuestResolver(scope, (ownerRequest) => {
+    expect(ownerRequest.correlationRoot).toBe(request.correlationRoot);
+    expect(ownerRequest.guestEvidenceRef).toBe(request.guestEvidenceRef);
+    expect(ownerRequest.legalEntityRef).toEqual({
+      moduleId: 'core.identity',
+      resourceId: legalEntityId,
+      resourceType: 'core.identity.legal-entity',
+      tenantId,
+    });
+    return Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE', reason: 'No owner-accepted bound decision' });
+  })(request).pipe(Effect.asVoid),
+);

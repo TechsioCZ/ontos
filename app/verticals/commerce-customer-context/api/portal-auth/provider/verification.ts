@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -17,6 +17,7 @@ import type { CommercePortalAuthVerificationCallerRejected } from './verificatio
 import type { CommercePortalAuthVerificationCallerUnavailable } from './verification-caller-unavailable.ts';
 import { CommercePortalAuthVerificationInvalidRequest } from './verification-invalid-request.ts';
 import { CommercePortalAuthVerificationCaller } from './verification-caller-service.ts';
+import { CommercePortalAuthSessionReaderService } from './session-reader-service.ts';
 import type { CommercePortalAuthSessionReader } from './session-reader-service.ts';
 
 export { CommercePortalAuthVerificationCallerRejected } from './verification-caller-rejected.ts';
@@ -256,4 +257,13 @@ export const makeCommercePortalAuthVerificationService = Effect.fn('CommercePort
 
     return { verifyExternalAuthentication };
   },
+);
+
+/** Dependencies remain explicit for owner-root composition. */
+export const CommercePortalAuthVerificationLive = Layer.effect(
+  CommercePortalAuthVerificationService,
+  Effect.gen(function* commercePortalAuthVerificationProvider() {
+    const reader = yield* CommercePortalAuthSessionReaderService;
+    return yield* makeCommercePortalAuthVerificationService(reader);
+  }),
 );

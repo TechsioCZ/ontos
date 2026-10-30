@@ -489,7 +489,6 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
       {
         audience: 'pricing',
         compositionRevision: 'a'.repeat(64),
-        legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-pricing',
       },
     ]);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { ConfigProvider, DateTime, Effect, Fiber, Layer, Schema } from 'effect';
+import { Array as EffectArray, ConfigProvider, DateTime, Effect, Fiber, Layer, Option, Order, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { HttpClient, HttpClientResponse } from 'effect/http';
@@ -15,6 +15,7 @@ import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-r
 import { ActiveApplicationCompositionUnavailableError } from '../../packages/core-runtime/src/index.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
+import { LegacyCompletionPublicationError } from '../../packages/core-runtime/src/modules/legacy-completion-publication.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -30,6 +31,8 @@ import {
 import { verifyInitialCutoverProviderInventory } from '../initial-composition-cutover-provider.mts';
 import { assertPublishedShellIngressSnapshot } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import { legacyCompletionPublicationFixture } from './support/legacy-completion-publication.mts';
+import type { LegacyPublicationControl } from './support/legacy-completion-publication.mts';
 
 const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'b'.repeat(32)}/values/active`;
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
@@ -47,6 +50,9 @@ const MIGRATION_EVENT = 'MIGRATION';
 const COMMITTED_DRAINING = 'COMMITTED draining';
 const DURABLE_COMPLETE = 'DURABLE COMPLETE';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
+const LEGACY_TRANSACTION_CHECK = 'LEGACY TRANSACTION CHECK';
+const OWNER_RELEASE = 'OWNER RELEASE';
+const OWNER_ACQUIRE = 'OWNER ACQUIRE';
 const AUTHORITY_FROM = 'from "core"."application_composition_authority"';
 const initialProviderProof = verifyInitialCutoverProviderInventory({
   cloudflare: {
@@ -325,6 +331,7 @@ interface MigrationFixtureOptions {
   readonly durableBlocks?: readonly boolean[];
   readonly initialPhase?: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly leaseRemainingMillis?: number;
+  readonly legacyControl?: LegacyPublicationControl;
   readonly legacyTransactionsActive?: boolean;
   readonly missingAuthority?: boolean;
   readonly ownerWorkPending?: boolean;
@@ -345,7 +352,10 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   const pendingAdmissions: (string | undefined)[] = [];
   const statements: string[] = [];
   const events: string[] = [];
+  const authorityLockPositions: number[] = [];
   const proofRequests: string[] = [];
+  const proofCredentials: { readonly authorization: string | undefined; readonly url: string }[] = [];
+  const legacy = legacyCompletionPublicationFixture(events, options.legacyControl);
   const recordTransaction = (sql: string) => {
     if (sql === 'BEGIN') {
       pendingPhases.push(undefined);
@@ -369,7 +379,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
   const blockedWork = (sql: string) => {
     if (sql.includes('pg_stat_activity')) {
-      events.push('LEGACY TRANSACTION CHECK');
+      events.push(LEGACY_TRANSACTION_CHECK);
       return [{ blocked: options.legacyTransactionsActive ?? false }];
     }
     const durableWork = sql.includes('application_composition_durable_work');
@@ -409,6 +419,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
   const client = HttpClient.make((request, destination) => {
     proofRequests.push(`${request.method} ${destination.href}`);
+    proofCredentials.push({ authorization: request.headers.authorization, url: destination.href });
     events.push(`PROOF ${destination.href}`);
     if (destination.pathname.startsWith(INITIAL_NAMESPACE_PATH)) {
       const pointerResponse =
@@ -424,6 +435,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
     return Effect.succeed(HttpClientResponse.fromWeb(request, response));
   });
   const layer = Layer.mergeAll(
+    legacy.layer,
     Layer.succeed(HttpClient.HttpClient, client),
     ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
     ConfigProvider.layer(
@@ -438,6 +450,13 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
         Effect.sync(() => {
           statements.push(sql);
           recordTransaction(sql);
+          if (sql.includes('pg_advisory_xact_lock(')) {
+            authorityLockPositions.push(events.length);
+          }
+          const legacyRows = legacy.sqlResponse(sql, params);
+          if (legacyRows !== null) {
+            return legacyRows;
+          }
           if (sql.includes('pg_advisory_unlock(')) {
             events.push(SESSION_UNLOCK);
             return [{ unlocked: true }];
@@ -456,6 +475,10 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             if (options.missingAuthority === true) {
               return [];
             }
+            // executeValues maps Object.values in projection order; revision-only reads cannot return phase first.
+            if (sql.startsWith('select "revision" from')) {
+              return [{ revision: OLD_REVISION }];
+            }
             if (sql.includes('"durable_work_admission"')) {
               durablePoll = true;
               return [{ durableWorkAdmission: admission, phase, revision: OLD_REVISION }];
@@ -473,8 +496,46 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
       ).pipe(Effect.map((executor) => ({ executor }))),
     ),
   );
-  return { admission: () => admission, events, layer, phase: () => phase, proofRequests, statements };
+  return {
+    admission: () => admission,
+    authorityLockPositions,
+    events,
+    layer,
+    legacy,
+    phase: () => phase,
+    proofCredentials,
+    proofRequests,
+    statements,
+  };
 };
+
+it.effect('fences concurrent public writers before acquiring owner leases for both drain and seal', () =>
+  Effect.gen(function* authorityBeforeOwnerEvidence() {
+    const fixture = migrationFixture();
+    yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(Effect.provide(fixture.layer));
+    const acquisitions = fixture.events.flatMap((event, index) => (event === OWNER_ACQUIRE ? [index] : []));
+    expect(acquisitions).toHaveLength(2);
+    for (const acquisition of acquisitions) {
+      const observation = fixture.events.slice(0, acquisition).lastIndexOf(LEGACY_TRANSACTION_CHECK);
+      expect(observation).toBeGreaterThanOrEqual(0);
+      expect(fixture.authorityLockPositions.some((position) => position > observation && position <= acquisition)).toBe(
+        true,
+      );
+      const release = fixture.events.indexOf(OWNER_RELEASE, acquisition);
+      expect(release).toBeGreaterThan(acquisition);
+      expect(fixture.events.slice(acquisition, release).some((event) => event.startsWith('COMMITTED '))).toBe(true);
+    }
+    expect(fixture.phase()).toBe('migrated');
+  }),
+);
+
+const expectedRetirementRequests = [
+  `GET https://api.app-prg1.zerops.io/api/rest/public/service-stack/${INITIAL_NODE_ID}`,
+  `GET https://api.cloudflare.com/client/v4/accounts/${INITIAL_ACCOUNT_ID}/workers/scripts/${INITIAL_WORKER_NAME}`,
+  `GET https://api.cloudflare.com${INITIAL_NAMESPACE_PATH}`,
+  `GET ${KV_URL}`,
+];
+const ownerObservationEvents = [OWNER_ACQUIRE, 'OWNER EMPTY TOPIC', 'OWNER VERIFY', 'OWNER RETAIN'];
 
 it.effect('commits draining and sealing before migration, then records completion under the same session lock', () =>
   Effect.gen(function* migratesOnlyAfterCommittedSeal() {
@@ -488,23 +549,61 @@ it.effect('commits draining and sealing before migration, then records completio
       Effect.provide(fixture.layer),
       Effect.forkChild,
     );
+    yield* TestClock.adjust('0 seconds');
     yield* TestClock.adjust('3 seconds');
     expect(yield* Fiber.join(fiber)).toBe('native-migration-complete');
 
+    const retirementEvents = fixture.proofRequests.map((request) => `PROOF ${request.slice(4)}`);
     expect(fixture.events).toEqual([
       'SESSION LOCK',
       'COMMITTED admission closed',
       DURABLE_COMPLETE,
+      ...retirementEvents.slice(0, 4),
+      LEGACY_TRANSACTION_CHECK,
+      ...ownerObservationEvents,
       COMMITTED_DRAINING,
+      OWNER_RELEASE,
       'DRAIN BLOCKED',
       'DRAIN COMPLETE',
+      ...retirementEvents.slice(4, 8),
+      LEGACY_TRANSACTION_CHECK,
+      ...ownerObservationEvents,
       'COMMITTED sealed',
+      OWNER_RELEASE,
       MIGRATION_EVENT,
       'COMMITTED migrated',
       SESSION_UNLOCK,
     ]);
     expect(fixture.phase()).toBe('migrated');
-    expect(fixture.proofRequests).toEqual([]);
+    // Node and Worker absence probes run concurrently; each round must still be exactly the four native requests.
+    expect(fixture.proofRequests).toHaveLength(8);
+    expect(EffectArray.sort(fixture.proofRequests.slice(0, 4), Order.String)).toEqual(
+      EffectArray.sort(expectedRetirementRequests, Order.String),
+    );
+    expect(EffectArray.sort(fixture.proofRequests.slice(4), Order.String)).toEqual(
+      EffectArray.sort(expectedRetirementRequests, Order.String),
+    );
+    expect(fixture.proofCredentials).toEqual(
+      fixture.proofRequests.map((request) => ({
+        authorization: request.includes('api.app-prg1.zerops.io')
+          ? 'Bearer cutover-node-token'
+          : 'Bearer cutover-provider-token',
+        url: request.slice(4),
+      })),
+    );
+    expect(fixture.legacy.observations).toHaveLength(2);
+    expect(fixture.legacy.retained).toHaveLength(2);
+    expect(fixture.legacy.freshnessChecks()).toBe(2);
+    for (const [index, observation] of fixture.legacy.observations.entries()) {
+      expect(observation.complete).toBe(true);
+      expect(observation.messages).toEqual([]);
+      expect(observation.binding.expectedRevision).toEqual(Option.some(OLD_REVISION));
+      expect(fixture.legacy.retained[index]?.binding).toBe(observation.binding);
+      expect(fixture.legacy.retained[index]?.evidenceReference).toBe(observation.evidenceReference);
+    }
+    expect(fixture.legacy.observations[0]?.evidenceReference).not.toBe(
+      fixture.legacy.observations[1]?.evidenceReference,
+    );
     expect(fixture.statements.some((statement) => statement.startsWith('SAVEPOINT'))).toBe(false);
   }),
 );
@@ -591,7 +690,7 @@ it.effect('requires native provider absence and quiescent database transactions 
         initialProviderProof,
       ).pipe(Effect.provide(fixture.layer));
       expect(fixture.proofRequests).toHaveLength(4);
-      expect(fixture.events.indexOf('LEGACY TRANSACTION CHECK')).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
+      expect(fixture.events.indexOf(LEGACY_TRANSACTION_CHECK)).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
       expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
       expect(fixture.statements).not.toContain('BEGIN');
       if (options.schemaInitialized === false) {
@@ -600,13 +699,17 @@ it.effect('requires native provider absence and quiescent database transactions 
     }
 
     const blocked = migrationFixture({ legacyTransactionsActive: true, missingAuthority: true });
-    const failure = yield* runApplicationCompositionMigration(
+    const blockedFiber = yield* runApplicationCompositionMigration(
       Effect.sync(() => {
         blocked.events.push(MIGRATION_EVENT);
       }),
       initialProviderProof,
-    ).pipe(Effect.provide(blocked.layer), Effect.flip);
+    ).pipe(Effect.provide(blocked.layer), Effect.flip, Effect.forkChild);
+    // A runtime that never goes quiet is re-observed for its bounded window, then refused.
+    yield* TestClock.adjust('10 seconds');
+    const failure = yield* Fiber.join(blockedFiber);
     expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+    expect(blocked.events.filter((event) => event === LEGACY_TRANSACTION_CHECK).length).toBeGreaterThan(1);
     expect(blocked.proofRequests).toHaveLength(4);
     expect(blocked.events).not.toContain(MIGRATION_EVENT);
     expect(blocked.events.at(-1)).toBe(SESSION_UNLOCK);
@@ -658,4 +761,61 @@ it.effect('refuses operator resumption for an expired, different, or already ret
       expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
     }
   }),
+);
+
+it.effect(
+  'refuses missing, empty, unresolved, replayed, mismatched, unretained, or expired legacy owner evidence',
+  () =>
+    Effect.gen(function* rejectsUnverifiedOwnerTransitions() {
+      const controls: readonly LegacyPublicationControl[] = [
+        'missing',
+        'empty',
+        'unknown',
+        'unresolved',
+        'nonempty',
+        'wrong-database',
+        'replayed-binding',
+        'replayed-reference',
+        'empty-reference',
+        'retention-failed',
+        'expired',
+      ];
+      for (const legacyControl of controls) {
+        const fixture = migrationFixture({ legacyControl });
+        const failure = yield* runApplicationCompositionMigration(
+          Effect.sync(() => {
+            fixture.events.push(MIGRATION_EVENT);
+          }),
+          initialProviderProof,
+        ).pipe(Effect.provide(fixture.layer), Effect.flip);
+        expect({ control: legacyControl, refused: Schema.is(LegacyCompletionPublicationError)(failure) }).toEqual({
+          control: legacyControl,
+          refused: true,
+        });
+        expect(fixture.phase()).toBe('active');
+        expect(fixture.admission()).toBe('closed');
+        expect(fixture.events).not.toContain(COMMITTED_DRAINING);
+        expect(fixture.events).not.toContain(MIGRATION_EVENT);
+        expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
+        expect(EffectArray.sort(fixture.proofRequests, Order.String)).toEqual(
+          EffectArray.sort(expectedRetirementRequests, Order.String),
+        );
+        if (legacyControl === 'missing' || legacyControl === 'empty') {
+          expect(fixture.legacy.observations).toEqual([]);
+          expect(fixture.events).not.toContain(OWNER_ACQUIRE);
+        } else {
+          expect(fixture.events).toContain(ROLLBACK_EVENT);
+          expect(fixture.events.lastIndexOf(OWNER_RELEASE)).toBeGreaterThan(fixture.events.lastIndexOf(ROLLBACK_EVENT));
+          expect(fixture.legacy.observations).toHaveLength(1);
+        }
+        if (legacyControl === 'expired') {
+          expect(fixture.legacy.freshnessChecks()).toBe(1);
+          expect(fixture.legacy.retained).toHaveLength(1);
+        }
+        if (legacyControl === 'retention-failed') {
+          expect(fixture.legacy.retained).toEqual([]);
+        }
+        expect(fixture.statements.some((statement) => statement.startsWith('SAVEPOINT'))).toBe(false);
+      }
+    }),
 );

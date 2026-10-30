@@ -1,11 +1,27 @@
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Clock, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import {
+  Clock,
+  ConfigProvider,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpServerRequest } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
-import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionReplayError,
+} from '@app/core-runtime/auth/gateway-assertion-redemption';
+import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { ActiveApplicationCompositionService, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
@@ -16,6 +32,7 @@ import {
 } from '../../api/portal-auth/provider/verification.ts';
 import {
   commercePortalAuthVerificationApiLive,
+  CommercePortalAuthVerificationHttpExecutor,
   CommercePortalAuthVerificationWorkloadAuthorization,
   CommercePortalAuthVerificationWorkloadRejected,
   CommercePortalAuthVerificationWorkloadUnavailable,
@@ -45,6 +62,17 @@ import {
   VerifyExternalAuthenticationRequestSchema,
   VerifyExternalAuthenticationResultSchema,
 } from '../../shared/portal-auth-contracts.ts';
+import { CommercePortalAuthSessionReaderService } from '../../api/portal-auth/provider/session-reader-service.ts';
+import {
+  CommerceEnrollmentProofService,
+  CommerceEnrollmentProofRejected,
+} from '../../api/portal-auth/enrollment-proof-port.ts';
+import type { CommercePortalAuthVerificationInput } from '../../api/portal-auth/provider/verification.ts';
+import apiRuntime, {
+  commercePortalAuthVerificationProviderLive,
+  commercePortalAuthVerificationHttpExecutorLive,
+} from '../../api/index.ts';
+import { commerceCustomerContextApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const now = DateTime.makeUnsafe('2026-09-17T09:00:00.000Z');
@@ -114,11 +142,21 @@ const makeApp = (
             CommercePortalAuthVerificationWorkloadUnavailable.make({ reason: 'authority is unavailable' }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(
+          Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+            authBindingId: '10000000-0000-4000-8000-000000000011',
+            authContextRef: 'gateway-api-key:transport-double',
+            authenticationNamespaceId: 'ontos.staff.gateway-api-key.v1',
+            authMethod: 'api_key',
+            principalId: '10000000-0000-4000-8000-000000000010',
+            tenantId: request.tenantId,
+          }),
+        );
       },
     };
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthVerificationApi).pipe(
       Layer.provide(commercePortalAuthVerificationApiLive),
+      Layer.provide(commercePortalAuthVerificationHttpExecutorLive),
       Layer.provide(Layer.succeed(CommercePortalAuthVerificationWorkloadAuthorization, authority)),
       Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, verification)),
       Layer.provide(HttpServer.layerServices),
@@ -150,36 +188,38 @@ const makeSignedWorkloadFixture = () =>
       use: 'sig',
     };
     const issuedAt = Math.floor(signedWorkloadEpochMillis / 1000) - 30;
-    const token = yield* Effect.promise(() =>
-      new SignJWT({
-        compositionRevision: snapshot.composition.revision,
-        principal: {
-          authBindingId: workloadAuthBindingId,
-          authContextRef: workloadAuthContextRef,
-          authenticationNamespaceId: workloadAuthenticationNamespaceId,
-          authMethod: 'api_key',
-          principalId: workloadPrincipalId,
-          tenantId: request.tenantId,
-        },
-        targetBuildMarker: ultramodernApiMarker.buildMarker,
-        ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
-      })
-        .setProtectedHeader({ alg: 'EdDSA', kid: 'commerce-workload-test', typ: 'JWT' })
-        .setIssuer(workloadIssuer)
-        .setAudience(workloadProviderEndpointAudience)
-        .setSubject(workloadPrincipalId)
-        .setIssuedAt(issuedAt)
-        .setExpirationTime(issuedAt + 300)
-        .setJti('10000000-0000-4000-8000-000000000013')
-        .sign(privateKey),
-    );
+    const tokenFor = (jti: string) =>
+      Effect.promise(() =>
+        new SignJWT({
+          compositionRevision: snapshot.composition.revision,
+          principal: {
+            authBindingId: workloadAuthBindingId,
+            authContextRef: workloadAuthContextRef,
+            authenticationNamespaceId: workloadAuthenticationNamespaceId,
+            authMethod: 'api_key',
+            principalId: workloadPrincipalId,
+            tenantId: request.tenantId,
+          },
+          targetBuildMarker: ultramodernApiMarker.buildMarker,
+          ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+        })
+          .setProtectedHeader({ alg: 'EdDSA', kid: 'commerce-workload-test', typ: 'JWT' })
+          .setIssuer(workloadIssuer)
+          .setAudience(workloadProviderEndpointAudience)
+          .setSubject(workloadPrincipalId)
+          .setIssuedAt(issuedAt)
+          .setExpirationTime(issuedAt + 300)
+          .setJti(jti)
+          .sign(privateKey),
+      );
     const environment = {
       ONTOS_GATEWAY_ISSUER: workloadIssuer,
       ONTOS_GATEWAY_PUBLIC_JWKS: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         keys: [publicJwk],
       }),
     };
-    return { environment, snapshot, token };
+    const token = yield* tokenFor('10000000-0000-4000-8000-000000000013');
+    return { environment, snapshot, token, tokenFor };
   });
 
 const makeSignedWorkloadAuthority = (
@@ -188,6 +228,7 @@ const makeSignedWorkloadAuthority = (
     readonly ONTOS_GATEWAY_PUBLIC_JWKS: string;
   },
   snapshot: ActiveApplicationCompositionSnapshot,
+  redemption?: GatewayAssertionRedemption,
 ) => {
   const grantConfiguration = Schema.decodeUnknownSync(CommercePortalAuthVerificationWorkloadGrantsSchema)({
     grants: [
@@ -205,7 +246,7 @@ const makeSignedWorkloadAuthority = (
   return Layer.mergeAll(
     commercePortalAuthVerificationWorkloadAuthorizationLive,
     Layer.succeed(CommercePortalAuthVerificationWorkloadGrantConfiguration, grantConfiguration),
-    Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
+    Layer.succeed(GatewayAssertionRedemptionService, redemption ?? { consume: () => Effect.void }),
     Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
     makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(environment)),
   );
@@ -222,6 +263,7 @@ const makeSignedWorkloadApp = (
     const authority = makeSignedWorkloadAuthority(environment, snapshot);
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthVerificationApi).pipe(
       Layer.provide(commercePortalAuthVerificationApiLive),
+      Layer.provide(commercePortalAuthVerificationHttpExecutorLive),
       Layer.provideMerge(authority),
       Layer.provideMerge(Layer.succeed(Clock.Clock, signedWorkloadClock)),
       Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, verification)),
@@ -362,4 +404,222 @@ it.effect('accepts a signed workload assertion through the real authority and HT
 
     expect(result.outcome).toBe('ALLOWED');
   }),
+);
+
+const canonicalRequest = Schema.decodeUnknownSync(VerifyExternalAuthenticationRequestSchema)(request);
+const incrementBridgeCounter = (value: number): number => value + 1;
+const bridgeSession = {
+  banExpiresAt: null,
+  banned: false,
+  createdAt: new Date(signedWorkloadEpochMillis - 1000),
+  emailVerified: true,
+  expiresAt: new Date(signedWorkloadEpochMillis + 60_000),
+  providerSubjectId: request.providerSubjectId,
+  sessionId: 'session-01',
+};
+type ProviderVerify = CommercePortalAuthVerificationService['Service']['verifyExternalAuthentication'];
+type SignedFixture = Effect.Success<ReturnType<typeof makeSignedWorkloadFixture>>;
+
+// Source-contract doubles only: actual account/session/Attempt persistence remains the native gate.
+const makeBridgeProvider = (reads: Ref.Ref<number>) =>
+  commercePortalAuthVerificationProviderLive.pipe(
+    Layer.provide(
+      Layer.succeed(CommercePortalAuthSessionReaderService, {
+        findBySessionId: () => Ref.update(reads, (count) => count + 1).pipe(Effect.as(Option.some(bridgeSession))),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(CommerceEnrollmentProofService, {
+        authorizeAccountCreation: () => Effect.fail(new CommerceEnrollmentProofRejected({})),
+        verify: () => Effect.fail(new CommerceEnrollmentProofRejected({})),
+      }),
+    ),
+  );
+
+const mountBridge = (
+  fixture: SignedFixture,
+  observe: (actual: ProviderVerify) => ProviderVerify,
+  reads: Ref.Ref<number>,
+  redemption?: GatewayAssertionRedemption,
+) =>
+  Effect.gen(function* mountRealBridge() {
+    const provider = Context.get(yield* Layer.build(makeBridgeProvider(reads)), CommercePortalAuthVerificationService);
+    const observed = { verifyExternalAuthentication: observe(provider.verifyExternalAuthentication) };
+    const api = HttpApiBuilder.layer(CommercePortalAuthVerificationApi).pipe(
+      Layer.provide(commercePortalAuthVerificationApiLive),
+      Layer.provide(commercePortalAuthVerificationHttpExecutorLive),
+      Layer.provideMerge(makeSignedWorkloadAuthority(fixture.environment, fixture.snapshot, redemption)),
+      Layer.provideMerge(Layer.succeed(Clock.Clock, signedWorkloadClock)),
+      Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, observed)),
+      Layer.provide(HttpServer.layerServices),
+    );
+    const handler = yield* Effect.acquireRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(api, { disableLogger: true })),
+      (value) => Effect.promise(value.dispose.bind(value)),
+    );
+    return { handler, provider };
+  });
+const callBridge = (
+  handler: Effect.Success<ReturnType<typeof mountBridge>>['handler'],
+  token: string,
+  body: typeof request = request,
+) =>
+  Effect.tryPromise(() =>
+    handler.handler(
+      new Request('https://commerce.ontos.test/portal-auth/internal/verify', {
+        body: JSON.stringify(body),
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+      requestContext,
+    ),
+  );
+const bridgeOutcome = (response: Response) =>
+  Effect.tryPromise(() => response.json()).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(VerifyExternalAuthenticationResultSchema))),
+  );
+
+it.effect('resolves real provider caller authority at request time and refuses missing scope', () =>
+  Effect.gen(function* exactPrivateCaller() {
+    const fixture = yield* makeSignedWorkloadFixture();
+    const reads = yield* Ref.make(0);
+    const { handler, provider } = yield* mountBridge(fixture, (actual) => actual, reads);
+    const outside = yield* provider.verifyExternalAuthentication(canonicalRequest);
+    expect(outside.outcome).toBe('UNAVAILABLE');
+    expect(yield* Ref.get(reads)).toBe(0);
+    const response = yield* callBridge(handler, fixture.token);
+    expect(response.status).toBe(200);
+    expect((yield* bridgeOutcome(response)).outcome).toBe('ALLOWED');
+    expect(yield* Ref.get(reads)).toBe(1);
+    expect((yield* provider.verifyExternalAuthentication(canonicalRequest)).outcome).toBe('UNAVAILABLE');
+    expect(yield* Ref.get(reads)).toBe(1);
+  }).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock)),
+);
+
+it.effect('binds every canonical provider request field before accessing owner state', () =>
+  Effect.gen(function* rejectProjectionSubstitution() {
+    const fixture = yield* makeSignedWorkloadFixture();
+    const reads = yield* Ref.make(0);
+    const changes: readonly Partial<CommercePortalAuthVerificationInput>[] = [
+      { nonce: '50000000-0000-4000-8000-000000000012' },
+      { providerSubjectId: 'different-provider' },
+      { sessionRef: 'better-auth-session:ontos.commerce.portal.better-auth.v1:different-session' },
+      { tenantId: '10000000-0000-4000-8000-000000000099' },
+      { enrollmentAttemptId: '10000000-0000-4000-8000-000000000090' },
+    ];
+    for (const change of changes) {
+      const { handler } = yield* mountBridge(fixture, (actual) => (input) => actual({ ...input, ...change }), reads);
+      const response = yield* callBridge(handler, fixture.token);
+      expect(response.status).toBe(200);
+      expect((yield* bridgeOutcome(response)).outcome).toBe('REJECTED');
+    }
+    expect(yield* Ref.get(reads)).toBe(0);
+  }).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock)),
+);
+
+it.effect('isolates overlapping request proofs and does not leak them after completion', () =>
+  Effect.gen(function* concurrentRequestProofs() {
+    const fixture = yield* makeSignedWorkloadFixture();
+    const reads = yield* Ref.make(0);
+    const entered = yield* Ref.make(0);
+    const both = yield* Deferred.make<number>();
+    const other = {
+      ...request,
+      nonce: Schema.decodeUnknownSync(VerifyExternalAuthenticationRequestSchema)({
+        ...request,
+        nonce: '50000000-0000-4000-8000-000000000012',
+      }).nonce,
+    };
+    const { handler, provider } = yield* mountBridge(
+      fixture,
+      (actual) => (input) =>
+        Effect.gen(function* overlap() {
+          const count = yield* Ref.updateAndGet(entered, incrementBridgeCounter);
+          if (count === 2) {
+            yield* Deferred.succeed(both, count);
+          }
+          yield* Deferred.await(both);
+          const good = yield* actual(input);
+          const swapped = yield* actual({
+            ...input,
+            nonce: input.nonce === request.nonce ? other.nonce : request.nonce,
+          });
+          expect(swapped.outcome).toBe('REJECTED');
+          return good;
+        }),
+      reads,
+    );
+    const otherToken = yield* fixture.tokenFor('10000000-0000-4000-8000-000000000014');
+    const responses = yield* Effect.all([callBridge(handler, fixture.token), callBridge(handler, otherToken, other)], {
+      concurrency: 2,
+    });
+    for (const response of responses) {
+      expect((yield* bridgeOutcome(response)).outcome).toBe('ALLOWED');
+    }
+    expect(yield* Ref.get(reads)).toBe(2);
+    expect((yield* provider.verifyExternalAuthentication(canonicalRequest)).outcome).toBe('UNAVAILABLE');
+  }).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock)),
+);
+
+it.effect('redeems once before provider access and refuses replay or invalid credentials', () =>
+  Effect.gen(function* singleRedemption() {
+    const fixture = yield* makeSignedWorkloadFixture();
+    const reads = yield* Ref.make(0);
+    const consumed = yield* Ref.make<readonly string[]>([]);
+    const redemption: GatewayAssertionRedemption = {
+      consume: (input) =>
+        Ref.modify(consumed, (values) => [values.includes(input.jti), [...values, input.jti]]).pipe(
+          Effect.flatMap((replayed) =>
+            replayed
+              ? Effect.fail(new GatewayAssertionReplayError({ reason: 'Source-test replay refused' }))
+              : Effect.void,
+          ),
+        ),
+    };
+    const { handler } = yield* mountBridge(fixture, (actual) => actual, reads, redemption);
+    expect((yield* callBridge(handler, 'invalid-token')).status).toBe(403);
+    expect(yield* Ref.get(reads)).toBe(0);
+    const accepted = yield* callBridge(handler, fixture.token);
+    expect(accepted.status).toBe(200);
+    expect((yield* bridgeOutcome(accepted)).outcome).toBe('ALLOWED');
+    expect(yield* Ref.get(reads)).toBe(1);
+    expect(yield* Ref.get(consumed)).toHaveLength(1);
+    expect((yield* callBridge(handler, fixture.token)).status).toBe(403);
+    expect(yield* Ref.get(reads)).toBe(1);
+  }).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock)),
+);
+
+it.effect('keeps optional construction lazy and authenticates direct executor calls', () =>
+  Effect.gen(function* optionalRootBoundary() {
+    expect(Object.hasOwn(commerceCustomerContextApi.groups, 'externalAuthenticationVerification')).toBe(false);
+    expect(apiRuntime).toBeDefined();
+    // No workload, provider, database or request proof is required to describe/build this executor.
+    const executor = Context.get(
+      yield* Layer.build(commercePortalAuthVerificationHttpExecutorLive),
+      CommercePortalAuthVerificationHttpExecutor,
+    );
+    const fixture = yield* makeSignedWorkloadFixture();
+    const reads = yield* Ref.make(0);
+    const provider = yield* Layer.build(makeBridgeProvider(reads));
+    const dependencies = makeSignedWorkloadAuthority(fixture.environment, fixture.snapshot);
+    const missing = yield* executor
+      .execute(
+        request,
+        HttpServerRequest.fromWeb(new Request('https://commerce.ontos.test/portal-auth/internal/verify')),
+      )
+      .pipe(Effect.provide(dependencies), Effect.provideContext(provider), Effect.flip);
+    expect(missing.status).toBe(401);
+    const invalid = yield* executor
+      .execute(
+        request,
+        HttpServerRequest.fromWeb(
+          new Request('https://commerce.ontos.test/portal-auth/internal/verify', {
+            headers: { authorization: 'Bearer invalid-token' },
+          }),
+        ),
+      )
+      .pipe(Effect.provide(dependencies), Effect.provideContext(provider), Effect.flip);
+    expect(invalid.status).toBe(403);
+    expect(yield* Ref.get(reads)).toBe(0);
+  }).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock)),
 );

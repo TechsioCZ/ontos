@@ -92,7 +92,9 @@
     "effect": "4.0.7",
     "i18next": "26.4.2",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "@app/catalog-selection-contracts": "workspace:*",
+    "@app/commerce-cart-contracts": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.63.0",

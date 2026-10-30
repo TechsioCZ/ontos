@@ -1,3 +1,4 @@
+import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
 import {
@@ -9,7 +10,12 @@ import {
   GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
   PLATFORM_NODE_DEPENDENCY,
+  asJsonObject,
   createOrUpdateOwnedGeneratedMutationEffect,
   deduplicateGeneratedSlotEntries,
   discoverOntosModuleEffect,
@@ -17,6 +23,7 @@ import {
   generatedSlotContainsExactEntry,
   insertSortedSlot,
   readGeneratedSlotEntries,
+  replaceGeneratedSlotEntry,
   requireCanonicalSlug,
   raiseScaffoldFailure,
   resolveContainedPath,
@@ -801,8 +808,160 @@ const insertIdempotently = (
   return insertSortedSlot(content, start, end, [entry], validate);
 };
 
-const patchClientRoot = (content: string, action: string): string => {
-  const entry = `export * from './${action}-action-client.ts';`;
+const resolvePublishedClientRoot = (vertical: OntosVerticalMetadata) => {
+  const packageExports = asJsonObject(vertical.packageJson['exports'], `vertical ${vertical.slug} package exports`);
+  const { './api/client': published } = packageExports;
+  const browserTarget = `./src/api/${vertical.slug}-client.ts`;
+  const sharedTarget = `./shared/${vertical.slug}-client.ts`;
+  if (!Schema.is(Schema.Literals([browserTarget, sharedTarget]))(published)) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} must publish ./api/client as one canonical owner client file`,
+    );
+  }
+  return {
+    path: resolveContainedPath(vertical.directory, published),
+    published,
+    shared: published === sharedTarget,
+  };
+};
+
+interface CanonicalClientExport {
+  readonly action: string;
+  readonly kind: 'star' | 'value' | 'type';
+}
+interface ClientExportToken {
+  readonly kind: SyntaxKind;
+  readonly text: string;
+  readonly value: string;
+}
+const scanClientExport = (source: string): readonly ClientExportToken[] => {
+  const scanner = createScanner(true, LanguageVariant.Standard, source);
+  const tokens: ClientExportToken[] = [];
+  for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+    tokens.push({ kind, text: scanner.getTokenText(), value: scanner.getTokenValue() });
+  }
+  return tokens;
+};
+const clientTokenKind = (tokens: readonly ClientExportToken[], index: number): SyntaxKind | undefined =>
+  tokens.at(index)?.kind;
+const canonicalClientMembers = (tokens: readonly ClientExportToken[], type: string, typeOnly: boolean): boolean => {
+  if (
+    clientTokenKind(tokens, 0) !== SyntaxKind.OpenBraceToken ||
+    clientTokenKind(tokens, -1) !== SyntaxKind.CloseBraceToken
+  ) {
+    return false;
+  }
+  const inner = tokens.slice(1, -1);
+  const members = clientTokenKind(inner, -1) === SyntaxKind.CommaToken ? inner.slice(0, -1) : inner;
+  const names = members.filter((_token, index) => index % 2 === 0).map((token) => token.text);
+  const expected = typeOnly ? [`${type}ActionClientOptions`] : [`execute${type}`, `execute${type}WithAuthorization`];
+  if (
+    names.length !== expected.length ||
+    !members.every((token, index) => token.kind === (index % 2 === 0 ? SyntaxKind.Identifier : SyntaxKind.CommaToken))
+  ) {
+    return false;
+  }
+  return new Set(names).size === names.length && expected.every((name) => names.includes(name));
+};
+const decodeCanonicalClientExport = (entry: string, shared: boolean): Option.Option<CanonicalClientExport> => {
+  const tokens = scanClientExport(entry);
+  const target = tokens.at(-2);
+  if (
+    clientTokenKind(tokens, 0) !== SyntaxKind.ExportKeyword ||
+    clientTokenKind(tokens, -1) !== SyntaxKind.SemicolonToken ||
+    clientTokenKind(tokens, -3) !== SyntaxKind.FromKeyword ||
+    target === undefined ||
+    target.kind !== SyntaxKind.StringLiteral ||
+    target.text.slice(1, -1) !== target.value
+  ) {
+    return Option.none();
+  }
+  const action = (
+    shared
+      ? /^\.\.\/src\/api\/(?<action>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-action-client\.ts$/u
+      : /^\.\/(?<action>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-action-client\.ts$/u
+  ).exec(target.value)?.groups?.['action'];
+  if (action === undefined) {
+    return Option.none();
+  }
+  if (tokens.length === 5 && clientTokenKind(tokens, 1) === SyntaxKind.AsteriskToken) {
+    return Option.some({ action, kind: 'star' });
+  }
+  const typeOnly = clientTokenKind(tokens, 1) === SyntaxKind.TypeKeyword;
+  if (!canonicalClientMembers(tokens.slice(typeOnly ? 2 : 1, -3), toPascalCase(action), typeOnly)) {
+    return Option.none();
+  }
+  return Option.some({ action, kind: typeOnly ? 'type' : 'value' });
+};
+const validateCanonicalClientGroups = (entries: readonly CanonicalClientExport[]): void => {
+  const groups = new Map<string, Set<CanonicalClientExport['kind']>>();
+  for (const entry of entries) {
+    const kinds = groups.get(entry.action) ?? new Set<CanonicalClientExport['kind']>();
+    if (kinds.has(entry.kind) || (kinds.size > 0 && (entry.kind === 'star' || kinds.has('star')))) {
+      raiseScaffoldFailure('generated client slot contains duplicate or mixed Action exports');
+    }
+    kinds.add(entry.kind);
+    groups.set(entry.action, kinds);
+  }
+  for (const kinds of groups.values()) {
+    if (kinds.has('value') !== kinds.has('type')) {
+      raiseScaffoldFailure('generated client slot contains incomplete named Action exports');
+    }
+  }
+};
+const inspectPublishedClientExports = Effect.fn('ActionHttpScaffold.inspectPublishedClientExports')(function* inspect(
+  content: string,
+  root: ReturnType<typeof resolvePublishedClientRoot>,
+  vertical: OntosVerticalMetadata,
+  ownerRealPath: string,
+) {
+  if (!content.includes(CLIENT_SLOT_START) && !content.includes(CLIENT_SLOT_END)) {
+    return [];
+  }
+  const entries = yield* tryScaffold('published client exports are not canonical', () => {
+    const parsed = readGeneratedSlotEntries(content, CLIENT_SLOT_START, CLIENT_SLOT_END).map((entry) => {
+      const decoded = decodeCanonicalClientExport(entry, root.shared);
+      if (Option.isNone(decoded)) {
+        return raiseScaffoldFailure('generated client slot contains unsupported export syntax');
+      }
+      return decoded.value;
+    });
+    validateCanonicalClientGroups(parsed);
+    return parsed;
+  });
+  const fileSystem = yield* FileSystem.FileSystem;
+  for (const action of new Set(entries.map((entry) => entry.action))) {
+    const target = resolveContainedPath(vertical.directory, 'src', 'api', `${action}-action-client.ts`);
+    const [actual, info] = yield* Effect.all([fileSystem.realPath(target), fileSystem.stat(target)]).pipe(
+      Effect.mapError((cause) => scaffoldFailure('failed to inspect the existing owner Action client', cause)),
+    );
+    if (
+      info.type !== 'File' ||
+      actual !== resolveContainedPath(ownerRealPath, 'src', 'api', `${action}-action-client.ts`)
+    ) {
+      yield* scaffoldFailure('existing Action client export must target its canonical generated owner file');
+    }
+    const source = yield* fileSystem
+      .readFileString(target)
+      .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read the existing owner Action client', cause)));
+    if (
+      !source.startsWith(
+        `${HEADER}\n// @ontos-action-http-owner ${vertical.moduleId}\n// @ontos-action-http-slug ${action}\n`,
+      )
+    ) {
+      yield* scaffoldFailure('existing Action client export has a foreign owner or Action identity');
+    }
+  }
+  return entries;
+});
+
+const patchClientRoot = (
+  content: string,
+  action: string,
+  root: ReturnType<typeof resolvePublishedClientRoot>,
+  exports: readonly CanonicalClientExport[],
+): string => {
+  const entry = `export * from '${root.shared ? '../src/api/' : './'}${action}-action-client.ts';`;
   let nextContent = content;
   if (!nextContent.includes(CLIENT_SLOT_START)) {
     const anchor = "export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';";
@@ -811,8 +970,16 @@ const patchClientRoot = (content: string, action: string): string => {
     }
     nextContent = nextContent.replace(anchor, `${anchor}\n${CLIENT_SLOT_START}\n${CLIENT_SLOT_END}`);
   }
+  if (exports.some((existing) => existing.action === action)) {
+    return nextContent;
+  }
+  if (exports.some((existing) => existing.kind !== 'star')) {
+    // Canonical named exports are an existing public surface: preserve their exact bytes and order.
+    const end = nextContent.indexOf(CLIENT_SLOT_END);
+    return `${nextContent.slice(0, end)}${entry}\n${nextContent.slice(end)}`;
+  }
   return insertIdempotently(nextContent, CLIENT_SLOT_START, CLIENT_SLOT_END, entry, (candidate) =>
-    /^export \* from '\.\/[a-z][a-z0-9-]*-action-client\.ts';$/u.test(candidate),
+    Option.isSome(decodeCanonicalClientExport(candidate, root.shared)),
   );
 };
 
@@ -830,12 +997,149 @@ const withNodeCryptoImport = (content: string, vertical: OntosVerticalMetadata):
   return content.replace(ASSEMBLER_IMPORT, `${NODE_CRYPTO_IMPORT}\n${ASSEMBLER_IMPORT}`);
 };
 
+const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetadata): string => {
+  let nextContent = content;
+  // module-contract roots assemble governed Reads directly, rather than exposing the legacy runtime argument tuple.
+  if (nextContent.includes('const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(')) {
+    const supportImports = [
+      "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';",
+      "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';",
+    ];
+    const oldSupport =
+      'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),';
+    const actionSupport =
+      'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)), GovernedGatewayAssertionRedemptionLive)),';
+    const importEntries = readGeneratedSlotEntries(
+      nextContent,
+      GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+      GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+    );
+    const recognizedImports = supportImports.filter((entry) =>
+      generatedSlotContainsExactEntry(
+        nextContent,
+        GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+        GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+        entry,
+      ),
+    );
+    const layerEntries = readGeneratedSlotEntries(
+      nextContent,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+    );
+    const hasOldSupport = generatedSlotContainsExactEntry(
+      nextContent,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+      oldSupport,
+    );
+    const hasActionSupport = generatedSlotContainsExactEntry(
+      nextContent,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+      actionSupport,
+    );
+    if (
+      importEntries.length !== recognizedImports.length ||
+      (layerEntries.length > 0 && (layerEntries.length !== 1 || (!hasOldSupport && !hasActionSupport)))
+    ) {
+      return raiseScaffoldFailure(`vertical ${vertical.slug} API root has unsupported Action runtime support content`);
+    }
+    if (!nextContent.includes('const governedActionRuntimeLive =')) {
+      const readRuntimeImport = '  ReadRuntimeLive as GovernedReadRuntimeLive,';
+      const gatewayImport = '  ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,';
+      const compositionSourceImport =
+        "import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';";
+      const handlersDefinition = 'export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(';
+      for (const required of [readRuntimeImport, gatewayImport, compositionSourceImport, handlersDefinition]) {
+        if (nextContent.split(required).length !== 2) {
+          return raiseScaffoldFailure(
+            `vertical ${vertical.slug} API root lacks the canonical Action runtime composition anchor`,
+          );
+        }
+      }
+      const markerImport = "import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';";
+      const deliveryImport =
+        "import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';";
+      if (nextContent.includes(markerImport)) {
+        nextContent = nextContent.replace(
+          markerImport,
+          "import { ultramodernApiMarker, ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';",
+        );
+      } else if (nextContent.includes("from '../shared/ultramodern-build.ts'")) {
+        return raiseScaffoldFailure(
+          `vertical ${vertical.slug} API root lacks the canonical deployment identity import`,
+        );
+      } else {
+        nextContent = `${deliveryImport}\n${nextContent}`;
+      }
+      nextContent = nextContent
+        .replace(readRuntimeImport, `${readRuntimeImport}\n  makeActionRuntimeLive as GovernedMakeActionRuntimeLive,`)
+        .replace(
+          gatewayImport,
+          `  ActionPermissionLive as GovernedActionPermissionLive,\n  ActionRepositoryLive as GovernedActionRepositoryLive,\n${gatewayImport}`,
+        )
+        .replace(
+          compositionSourceImport,
+          `import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';\n${compositionSourceImport}`,
+        )
+        .replace(
+          handlersDefinition,
+          `const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit).pipe(
+    GovernedReadLayer.provide(
+      GovernedReadLayer.mergeAll(
+        governedReadRuntimeDependenciesLive,
+        governedModuleStateGateLive,
+        GovernedActionRepositoryLive,
+        GovernedActionPermissionLive,
+        GovernedApplicationCompositionConfigLive,
+      ),
+    ),
+  );
+
+  ${handlersDefinition}`,
+        );
+    }
+    // The complete parsed slots were validated above; every addition below is a fixed canonical owner entry.
+    for (const supportImport of supportImports) {
+      if (!recognizedImports.includes(supportImport)) {
+        nextContent = insertSortedSlot(
+          nextContent,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+          [supportImport],
+          () => true,
+        );
+      }
+    }
+    if (hasOldSupport && layerEntries[0] !== undefined) {
+      nextContent = replaceGeneratedSlotEntry(
+        nextContent,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+        layerEntries[0],
+        actionSupport,
+      );
+    } else if (layerEntries.length === 0) {
+      nextContent = insertSortedSlot(
+        nextContent,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+        [actionSupport],
+        () => true,
+      );
+    }
+  }
+  return nextContent;
+};
+
 export const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, layerValue: string): string => {
   let nextContent = deduplicateGeneratedSlotEntries(
     content,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
   );
+  nextContent = patchCanonicalActionRuntime(nextContent, vertical);
   const appType = toPascalCase(vertical.slug);
   const appValue = toCamelCase(vertical.slug);
   const readLive = `${appValue}ReadRuntimeLive`;
@@ -986,15 +1290,31 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   const clientPath = resolveContainedPath(vertical.directory, 'src', 'api', `${action}-action-client.ts`);
   const sharedApiPath = resolveContainedPath(vertical.directory, 'shared', 'api.ts');
   const runtimeRootPath = resolveContainedPath(vertical.directory, 'api', 'index.ts');
-  const clientRootPath = resolveContainedPath(vertical.directory, 'src', 'api', `${vertical.slug}-client.ts`);
+  const clientRoot = yield* tryScaffold('failed to resolve published Action HTTP client root', () =>
+    resolvePublishedClientRoot(vertical),
+  );
+  const { path: clientRootPath } = clientRoot;
   const fileSystem = yield* FileSystem.FileSystem;
-  const [actionSource, publicActionSource, sharedApi, runtimeRoot, clientRoot] = yield* Effect.all([
+  const [ownerRealPath, clientRealPath] = yield* Effect.all([
+    fileSystem.realPath(vertical.directory),
+    fileSystem.realPath(clientRootPath),
+  ]).pipe(Effect.mapError((cause) => scaffoldFailure('failed to locate the published owner client root', cause)));
+  if (clientRealPath !== resolveContainedPath(ownerRealPath, clientRoot.published)) {
+    return yield* scaffoldFailure('published Action HTTP client root must be the canonical owner file');
+  }
+  const [actionSource, publicActionSource, sharedApi, runtimeRoot, clientRootContent] = yield* Effect.all([
     fileSystem.readFileString(actionPath),
     fileSystem.readFileString(publicActionPath),
     fileSystem.readFileString(sharedApiPath),
     fileSystem.readFileString(runtimeRootPath),
     fileSystem.readFileString(clientRootPath),
   ]).pipe(Effect.mapError((cause) => scaffoldFailure('failed to read Action HTTP owner sources', cause)));
+  const existingClientExports = yield* inspectPublishedClientExports(
+    clientRootContent,
+    clientRoot,
+    vertical,
+    ownerRealPath,
+  );
   yield* validateActionSources(vertical, action, type, value, actionSource, publicActionSource);
   const inspected = yield* loadAction(actionPath, value);
   yield* validateActionRuntimeIdentity(inspected, vertical.moduleId, action);
@@ -1063,7 +1383,7 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
     ),
   );
   const nextClientRoot = yield* tryScaffold('failed to patch Action HTTP client root', () =>
-    patchClientRoot(clientRoot, action),
+    patchClientRoot(clientRootContent, action, clientRoot, existingClientExports),
   );
   const platformDependency = nextRuntimeRoot.includes(NODE_CRYPTO_IMPORT)
     ? yield* tryScaffold('failed to ensure the Node platform dependency', () =>
@@ -1074,7 +1394,7 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   appendDefinedMutations(mutations, [
     updateMutation(sharedApiPath, sharedApi, nextSharedApi),
     updateMutation(runtimeRootPath, runtimeRoot, nextRuntimeRoot),
-    updateMutation(clientRootPath, clientRoot, nextClientRoot),
+    updateMutation(clientRootPath, clientRootContent, nextClientRoot),
     platformDependency,
   ]);
   yield* tryScaffold('Action HTTP mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));

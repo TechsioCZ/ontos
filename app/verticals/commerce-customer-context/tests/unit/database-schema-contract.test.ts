@@ -6,6 +6,7 @@ import {
   COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME,
   COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY,
   COMMERCE_CUSTOMER_CONTEXT_TABLES,
+  gatewayAssertionRedemptions,
   counterpartyPurchasingProfiles,
   counterpartyPurchaseLimitDefaults,
   customerGroupMemberships,
@@ -48,7 +49,7 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(50);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(52);
   expect(actual).toEqual(expected);
 });
 
@@ -252,6 +253,11 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
   ]);
   for (const table of COMMERCE_CUSTOMER_CONTEXT_TABLES) {
     const config = getTableConfig(table);
+    if (config.name === 'gateway_assertion_redemptions') {
+      expect(config.enableRLS).toBe(false);
+      expect(config.policies).toEqual([]);
+      continue;
+    }
     const tenantOnly = tenantOnlyTables.has(config.name);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
@@ -412,4 +418,27 @@ it('stores every Purchasing Approval aggregate as forced-RLS, idempotent, attrib
     expect(config.columns.some(({ name }) => name === 'action_invocation_id')).toBe(true);
     expect(config.columns.some(({ name }) => name === 'actor_principal_id')).toBe(true);
   }
+});
+
+it('keeps ingress replay evidence global with an exact durable identity and expiry index', () => {
+  const config = getTableConfig(gatewayAssertionRedemptions);
+  expect(config.columns.map(({ name }) => name)).toEqual(['audience', 'expires_at', 'issuer', 'jti', 'redeemed_at']);
+  expect(config.uniqueConstraints.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
+    ['issuer', 'audience', 'jti'],
+  ]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual([
+    'ccc_gateway_assertion_redemptions_expiry_idx',
+  ]);
+});
+
+it('keeps original entitlement schedules distinct from explicit removal and legacy unknown provenance', () => {
+  const table = getTableConfig(customerPaymentTermEntitlements);
+  const columns = new Map(table.columns.map((column) => [column.name, column]));
+  expect(columns.get('grant_schedule_known')?.notNull).toBe(true);
+  expect(columns.get('grant_schedule_known')?.default).toBe(false);
+  for (const name of ['original_effective_to', 'ended_at', 'cancelled_at']) {
+    expect(columns.has(name)).toBe(true);
+    expect(columns.get(name)?.notNull).toBe(false);
+  }
+  expect(table.checks.some(({ name }) => name === 'ccc_payment_entitlements_removal_provenance_ck')).toBe(true);
 });

@@ -13,6 +13,7 @@ export * from './finalize-order-tax-action-client.ts';
 export * from './import-seller-vat-regime-declarations-action-client.ts';
 // </generated-action-http-client-exports>
 export * from './tax-correction-preview-client.ts';
+export * from './final-order-tax-client.ts';
 
 const foundationClient = makeEffectHttpApiClient(taxApi, {
   baseUrl: taxApiContract.apiPrefix,

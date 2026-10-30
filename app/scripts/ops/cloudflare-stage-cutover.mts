@@ -37,6 +37,14 @@ import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from 
 import { costGuardChecks, ensureCostGuards, setKillSwitch } from './cloudflare-stage-cost-guard.mts';
 import type { CostGuardPlan } from './cloudflare-stage-cost-guard.mts';
 import {
+  CALLER_NAMESPACE_ID,
+  OWNER_RUNTIME_CONFIGURATIONS,
+  SHELL_GATEWAY_BASE_URL_VARIABLE,
+  ownerRuntimeConfiguration,
+  unitApiBaseUrl,
+} from './owner-runtime-configuration.mts';
+import type { OperatorValueFormat } from './owner-runtime-configuration.mts';
+import {
   DatabaseLoginRolesLive,
   databaseIdentitySecretsState,
   ensureDatabaseIdentities,
@@ -99,9 +107,9 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE (default false),
  * plus ZEROPS_TOKEN for the SpiceDB TLS and database identity secrets, DATABASE_ADMIN_URL for the
  * `database-identities` login roles (from a host on the Zerops VPN), and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
- * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK, plus the caller credentials
- * ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY, ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY,
- * and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
+ * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK, plus ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY and
+ * every credential and per-environment value `owner-runtime-configuration.mts` names for the Order
+ * flow's owners, under the variable names the owners read. Other secret values are read from Zerops with the
  * locally authenticated `zcli`. No secret value is ever printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
@@ -276,13 +284,27 @@ const DEPLOYMENT_ENVIRONMENT_BINDING = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 
 export interface WorkerSecretSources {
   readonly betterAuthSecret: Redacted.Redacted;
-  readonly commerceCustomerContextGatewayApiKey: Redacted.Redacted;
-  readonly commerceMarketCatalogGatewayApiKey: Redacted.Redacted;
   readonly gatewayPrivateJwk: Redacted.Redacted;
   readonly gatewayPublicJwks: Redacted.Redacted;
-  readonly pricingGatewayApiKey: Redacted.Redacted;
+  /** Each owner credential and per-environment value from the settings, keyed by the variable its owner reads. */
+  readonly ownerSettings: Readonly<Record<string, Redacted.Redacted>>;
   readonly spicedbPresharedKey: Redacted.Redacted;
 }
+
+/** Market Catalog's caller key predates the shared owner configuration and is set on its Worker only. */
+const MARKET_CATALOG_GATEWAY_API_KEY = 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY';
+
+/** Every settings value a Worker receives besides the Shell's own secrets, with the check it must pass. */
+export const OWNER_SETTINGS: readonly {
+  readonly format: OperatorValueFormat | 'nonEmpty';
+  readonly variable: string;
+}[] = [
+  { format: 'nonEmpty', variable: MARKET_CATALOG_GATEWAY_API_KEY },
+  ...OWNER_RUNTIME_CONFIGURATIONS.flatMap(({ credentialVariables, operatorValues }) => [
+    ...credentialVariables.map((variable) => ({ format: 'nonEmpty' as const, variable })),
+    ...operatorValues,
+  ]),
+];
 
 const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
   new Map([
@@ -292,23 +314,50 @@ const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
     ['ONTOS_GATEWAY_PRIVATE_JWK', sources.gatewayPrivateJwk],
   ]);
 
-const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerSecretSources) => {
+const ownerSetting = (sources: WorkerSecretSources, variable: string): [string, Redacted.Redacted][] => {
+  const value = sources.ownerSettings[variable];
+  return value === undefined ? [] : [[variable, value]];
+};
+
+/**
+ * An owner's credentials, per-environment values and caller namespaces, and the owner API bases its
+ * API-key calls reach by URL on their routable custom domains, because those calls carry no service
+ * binding. A base the Worker reaches by binding, or only the owner's Outbox Worker on Zerops reads, is not set.
+ */
+const verticalSecrets = (
+  unit: EdgeUnit,
+  units: readonly EdgeUnit[],
+  origins: StageOrigins,
+  sources: WorkerSecretSources,
+) => {
   const secrets = new Map([['ONTOS_GATEWAY_PUBLIC_JWKS', sources.gatewayPublicJwks]]);
-  const gatewayApiKeys = new Map<string, readonly [string, Redacted.Redacted]>([
-    [
-      'commerce-customer-context',
-      ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', sources.commerceCustomerContextGatewayApiKey] as const,
-    ],
-    [
-      'commerce-market-catalog',
-      ['ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', sources.commerceMarketCatalogGatewayApiKey] as const,
-    ],
-    ['pricing', ['ONTOS_PRICING_GATEWAY_API_KEY', sources.pricingGatewayApiKey] as const],
-  ]);
-  const gatewayApiKey = gatewayApiKeys.get(unit.id);
-  if (gatewayApiKey !== undefined) {
-    secrets.set(gatewayApiKey[0], gatewayApiKey[1]);
-    secrets.set('ONTOS_SHELL_GATEWAY_BASE_URL', Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
+  const shell = units.find((candidate) => candidate.kind === 'shell');
+  const origin = (unitId: string) => (unitId === shell?.id ? shellOrigin(origins) : verticalOrigin(unitId, origins));
+  if (unit.id === 'commerce-market-catalog') {
+    for (const [variable, value] of ownerSetting(sources, MARKET_CATALOG_GATEWAY_API_KEY)) {
+      secrets.set(variable, value);
+    }
+    secrets.set(
+      SHELL_GATEWAY_BASE_URL_VARIABLE,
+      Redacted.make(unitApiBaseUrl(shellOrigin(origins), 'shell-super-app')),
+    );
+  }
+  const configuration = ownerRuntimeConfiguration(unit.id);
+  if (configuration !== undefined) {
+    for (const [variable, value] of [
+      ...configuration.credentialVariables.flatMap((key) => ownerSetting(sources, key)),
+      ...configuration.operatorValues.flatMap(({ variable: key }) => ownerSetting(sources, key)),
+    ]) {
+      secrets.set(variable, value);
+    }
+    for (const variable of configuration.callerNamespaces) {
+      secrets.set(variable, Redacted.make(CALLER_NAMESPACE_ID));
+    }
+    for (const { edge, unitId, variable } of configuration.apiDependencies) {
+      if (edge === 'custom-domain') {
+        secrets.set(variable, Redacted.make(unitApiBaseUrl(origin(unitId), unitId)));
+      }
+    }
   }
   return secrets;
 };
@@ -338,7 +387,8 @@ export const workerSecretPlan = (
         // names its deployment environment itself.
         [DEPLOYMENT_ENVIRONMENT_BINDING, Redacted.make('stage')],
       ]);
-      const own = unit.kind === 'shell' ? shellSecrets(origins, sources) : verticalSecrets(unit, origins, sources);
+      const own =
+        unit.kind === 'shell' ? shellSecrets(origins, sources) : verticalSecrets(unit, units, origins, sources);
       return [unit.workerName, Object.fromEntries([...common, ...own])];
     }),
   );
@@ -410,26 +460,43 @@ const shellSecretSetting = (name: string) =>
     ),
   );
 
+const settingSchemas = {
+  json: Schema.String.check(
+    Schema.makeFilter((value) =>
+      Option.isSome(Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))(value))
+        ? undefined
+        : 'a JSON document is required',
+    ),
+  ),
+  nonEmpty: Schema.String.check(Schema.isMinLength(1)),
+  reference: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100), Schema.isTrimmed()),
+  uuid: Schema.String.check(Schema.isUUID()),
+} satisfies Record<OperatorValueFormat | 'nonEmpty', Schema.Codec<string, string>>;
+
+/** Every owner setting, each checked before any Worker secret is written; a failure names only the setting. */
+const readOwnerSettings = Effect.all(
+  OWNER_SETTINGS.map(({ format, variable }) =>
+    Config.schema(settingSchemas[format], variable).pipe(
+      Effect.map((value): [string, Redacted.Redacted] => [variable, Redacted.make(value)]),
+      Effect.mapError(
+        (cause) =>
+          new StageOperationError({
+            cause,
+            message: `the Worker setting ${variable} is missing or invalid; set it in the settings file (see DEPLOYMENT.md, Stage cut-over)`,
+          }),
+      ),
+    ),
+  ),
+).pipe(Effect.map((entries) => Object.fromEntries(entries)));
+
 const readWorkerSecretSources = Effect.gen(function* readWorkerSecretSourcesEffect() {
   const { projectId } = yield* CutoverConfiguration;
   const gatewayPrivateJwk = yield* shellSecretSetting(SHELL_GATEWAY_PRIVATE_JWK_SETTING);
   return {
     betterAuthSecret: yield* shellSecretSetting(SHELL_AUTH_SECRET_SETTING),
-    ...(yield* Config.all({
-      commerceCustomerContextGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
-      commerceMarketCatalogGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
-      pricingGatewayApiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StageOperationError({
-            cause,
-            message: 'the workload gateway API keys are missing; provide all three caller keys in the settings',
-          }),
-      ),
-    )),
     gatewayPrivateJwk,
     gatewayPublicJwks: yield* gatewayPublicJwksFor(gatewayPrivateJwk),
+    ownerSettings: yield* readOwnerSettings,
     spicedbPresharedKey: yield* readZeropsValue(projectId, 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'),
   } satisfies WorkerSecretSources;
 });

@@ -166,6 +166,7 @@ export const RecordDsrDeadlinePayloadSchema = Schema.Struct({
   caseRef: Ref,
   controllerRef: Ref,
   deadline: Schema.optional(Schema.Never),
+  obligationRef: Ref,
 });
 export type RecordDsrDeadlinePayload = typeof RecordDsrDeadlinePayloadSchema.Type;
 export { DsrDeadlineSchema as RecordDsrDeadlineResultSchema } from '../domain/privacy-dsr.ts';

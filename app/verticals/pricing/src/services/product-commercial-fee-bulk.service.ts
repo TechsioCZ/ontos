@@ -41,6 +41,7 @@ import { commercialFeePersistenceForScope } from './commercial-fee-persistence.s
 import type {
   CommercialFeeActionResultLookupOutcome,
   CommercialFeeActionResultLookupPersistence,
+  CommercialFeeOriginalResultLookupPersistence,
   CommercialFeePersistence,
   ReviseCommercialFeePersistenceOutcome,
 } from './commercial-fee-persistence.service.ts';
@@ -265,7 +266,9 @@ export const makeProductCommercialFeeBulkService = <Operation extends ManageProd
     }),
   }) satisfies ProductCommercialFeeBulkService<Operation>;
 
-type TransactionScopedCommercialFeePersistence = CommercialFeePersistence & CommercialFeeActionResultLookupPersistence;
+type TransactionScopedCommercialFeePersistence = CommercialFeePersistence &
+  CommercialFeeActionResultLookupPersistence &
+  CommercialFeeOriginalResultLookupPersistence;
 
 interface ProductCommercialFeeBulkCommandOptions {
   readonly defineServices: DefineCommercialFeeActionServices;
@@ -435,11 +438,13 @@ const reconcileCommercialFeeTarget = (
   command: ProductCommercialFeeBulkCommand<ManageProductCommercialFeeOperation>,
   actionInvocationId: string,
 ) =>
-  persistence.lookupResult({ actionInvocationId }).pipe(
+  persistence.lookupOriginalResult({ actionInvocationId, operation: command.operation }).pipe(
     Effect.map((lookup) =>
       lookup.outcome === 'COMMERCIAL_FEE_ACTION_RESULT_FOUND'
         ? ({
-            outcome: ownerOutcomeFromCommercialFeeResult(command, lookup.result),
+            outcome: lookup.originalIntentMatches
+              ? ownerOutcomeFromCommercialFeeResult(command, lookup.result)
+              : { outcome: 'CONFLICT' as const, reasonCode: 'IDEMPOTENCY_CONFLICT' },
             status: 'RESOLVED' as const,
           } as const)
         : ({ status: 'RETRY_ALLOWED' as const } as const),
@@ -596,7 +601,7 @@ export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<Produ
         },
         persistence,
         reviseServices: {
-          loadCurrencySupport: currencySupport.loadCurrent,
+          loadCurrencySupport: currencySupport.loadForCanonicalAdmission,
           revise: persistence.revise,
           validateCatalogTarget: catalogTarget.validate,
         },

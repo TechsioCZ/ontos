@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Option, Schema } from 'effect';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
@@ -545,6 +545,7 @@ describe('DSR authority-bound Actions', () => {
       const request = Schema.decodeUnknownSync(RecordDsrDeadlinePayloadSchema)({
         caseRef: 'dsr:1',
         controllerRef: 'controller:acme',
+        obligationRef: 'obligation:1',
       });
       const { context } = deadlineContext({
         authority: {
@@ -562,6 +563,130 @@ describe('DSR authority-bound Actions', () => {
       expect(result.receiptBasisRef).toBe('receipt:1');
     }),
   );
+
+  it.effect('selects each exact obligation independently of same-Controller receipt order', () =>
+    Effect.gen(function* selectExactDeadline() {
+      const receivedAt = Schema.decodeUnknownSync(PrivacyIsoTimestampSchema)('2026-01-31T10:00:00Z');
+      const policy = Schema.decodeUnknownSync(DsrDeadlinePolicySchema)({
+        calendar: 'UTC_CALENDAR_MONTH',
+        months: 1,
+        policyRef: 'policy:gdpr',
+        policyVersion: '2026-01',
+      });
+      const obligations = ['1', '2'].map((suffix) => ({
+        caseRef: 'dsr:1',
+        controllerRef: 'controller:acme',
+        obligationRef: `obligation:${suffix}`,
+        receiptBasisRef: `receipt:${suffix}`,
+        receivedAt,
+        requestedRights: ['ACCESS' as const],
+        status: 'OPEN' as const,
+      }));
+      for (const ordered of [obligations, EffectArray.reverse(obligations)]) {
+        const caseRecord = createDsrCase({
+          caseRef: 'dsr:1',
+          controllerObligations: ordered,
+          receivedAt,
+          requestedRights: ['ACCESS'],
+          requester: { kind: 'RESOLVED', subjectRef: 'subject:1' },
+        });
+        for (const expected of EffectArray.reverse(obligations)) {
+          const request = Schema.decodeUnknownSync(RecordDsrDeadlinePayloadSchema)({
+            caseRef: 'dsr:1',
+            controllerRef: 'controller:acme',
+            obligationRef: expected.obligationRef,
+          });
+          const { context } = deadlineContext({
+            authority: {
+              resolve: (receipt) => {
+                expect(receipt.obligationRef).toBe(expected.obligationRef);
+                expect(receipt.receiptBasisRef).toBe(expected.receiptBasisRef);
+                return Effect.succeed({ ...receipt, policy });
+              },
+            },
+            getDsrCase: () => Effect.succeed(Option.some(caseRecord)),
+            recordDsrDeadline: (_tenant, _legalEntity, _invocation, deadline) => Effect.succeed(deadline),
+          });
+          const result = yield* handleRecordDsrDeadline(request, context);
+          expect(result).toMatchObject({
+            obligationRef: expected.obligationRef,
+            receiptBasisRef: expected.receiptBasisRef,
+            version: 2,
+          });
+        }
+      }
+    }),
+  );
+
+  it.effect('rejects foreign obligation selectors and mismatched authoritative receipt facts before persistence', () =>
+    Effect.gen(function* rejectForeignDeadline() {
+      const receivedAt = Schema.decodeUnknownSync(PrivacyIsoTimestampSchema)('2026-01-31T10:00:00Z');
+      const obligation = {
+        caseRef: 'dsr:1',
+        controllerRef: 'controller:acme',
+        obligationRef: 'obligation:1',
+        receiptBasisRef: 'receipt:1',
+        receivedAt,
+        requestedRights: ['ACCESS' as const],
+        status: 'OPEN' as const,
+      };
+      const caseRecord = createDsrCase({
+        caseRef: 'dsr:1',
+        controllerObligations: [obligation],
+        receivedAt,
+        requestedRights: ['ACCESS'],
+        requester: { kind: 'RESOLVED', subjectRef: 'subject:1' },
+      });
+      const policy = Schema.decodeUnknownSync(DsrDeadlinePolicySchema)({
+        calendar: 'UTC_CALENDAR_MONTH',
+        months: 1,
+        policyRef: 'policy:gdpr',
+        policyVersion: '2026-01',
+      });
+      for (const selector of [
+        { controllerRef: 'controller:acme', obligationRef: 'foreign' },
+        { controllerRef: 'controller:foreign', obligationRef: 'obligation:1' },
+      ]) {
+        const { context } = deadlineContext({
+          authority: { resolve: () => Effect.die('foreign selector must not reach authority') },
+          getDsrCase: () => Effect.succeed(Option.some(caseRecord)),
+          recordDsrDeadline: () => Effect.die('foreign selector must not persist'),
+        });
+        const error = yield* Effect.flip(handleRecordDsrDeadline({ caseRef: 'dsr:1', ...selector }, context));
+        expect(Schema.is(PrivacyActionRejected)(error)).toBe(true);
+      }
+      for (const mismatch of [
+        { caseRef: 'foreign' },
+        { controllerRef: 'foreign' },
+        { obligationRef: 'foreign' },
+        { receiptBasisRef: 'foreign' },
+        { receivedAt: '2026-02-01T10:00:00Z' },
+      ]) {
+        const { context } = deadlineContext({
+          authority: { resolve: (receipt) => Effect.succeed({ ...receipt, policy, ...mismatch }) },
+          getDsrCase: () => Effect.succeed(Option.some(caseRecord)),
+          recordDsrDeadline: () => Effect.die('mismatched authority must not persist'),
+        });
+        const error = yield* Effect.flip(
+          handleRecordDsrDeadline(
+            {
+              caseRef: 'dsr:1',
+              controllerRef: obligation.controllerRef,
+              obligationRef: obligation.obligationRef,
+            },
+            context,
+          ),
+        );
+        expect(Schema.is(PrivacyActionRejected)(error)).toBe(true);
+      }
+    }),
+  );
+
+  it('requires an exact obligation in the public deadline request', () => {
+    expect(Schema.is(RecordDsrDeadlinePayloadSchema)({ caseRef: 'dsr:1', controllerRef: 'controller:acme' })).toBe(
+      false,
+    );
+  });
 
   it.effect('fails closed when the versioned DSR deadline authority is unavailable', () =>
     Effect.gen(function* rejectUnavailableDeadlineAuthority() {
@@ -586,6 +711,7 @@ describe('DSR authority-bound Actions', () => {
       const request = Schema.decodeUnknownSync(RecordDsrDeadlinePayloadSchema)({
         caseRef: 'dsr:1',
         controllerRef: 'controller:acme',
+        obligationRef: 'obligation:1',
       });
       const { context } = deadlineContext({
         authority: dsrDeadlineAuthorityUnavailable,

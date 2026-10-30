@@ -1,5 +1,7 @@
 import {
   AuthorizationMutationReconciliationUnavailable,
+  BusinessPermissionCodeSchema,
+  toBusinessPermissionAccessKey,
   AuthorizationMutationSagaError,
   ContextAccess,
   defineScopedRoutine,
@@ -21,7 +23,7 @@ import type {
   ScopedRoutineParameter,
 } from '@app/core-runtime';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
 
 import type {
   CounterpartyAccessDecision,
@@ -380,6 +382,20 @@ const readInvitationClaimReconciliationRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+const readEnrollmentInvitationClaimRoutine = defineScopedRoutine({
+  name: 'read_enrollment_invitation_claim',
+  ownerModuleKey: customerContextModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: InvitationClaimReconciliationRowSchema,
+  routineKey: 'counterparty-access.read-enrollment-invitation-claim',
+  schema: 'commerce_customer_context',
+});
+
 const InvitationClaimPermissionMutationRowSchema = Schema.Struct({
   ...ReconciliationRowSchema.fields,
   mutation_staged: Schema.Boolean,
@@ -399,9 +415,14 @@ const stageInvitationClaimGrantsRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+// The finalizer's SQL projection does not republish the immutable root-only claim subject.
 const FinalizedInvitationClaimRowSchema = Schema.Struct({
-  ...InvitationClaimReconciliationRowSchema.fields,
+  ...InvitationRowSchema.fields,
+  attestation_reference: Schema.String,
+  claim_mutation_id: Schema.String,
   operation_outcome: Schema.Literals(['ALREADY_CLAIMED', 'CLAIMED', 'PENDING_AUTHORIZATION']),
+  source_action_invocation_id: Schema.String,
+  verified_at: timestampSchema,
 });
 
 const finalizeInvitationClaimRoutine = defineScopedRoutine({
@@ -1168,6 +1189,87 @@ export const readCounterpartyInvitationClaimability = (
     Effect.mapError(accessUnavailable),
     Effect.map(([row]) => claimabilityFromRow(row)),
   );
+
+/** Original accepted claim plus current owner/Core access; this read never repeats the recipient proof. */
+export const readEnrollmentInvitationClaimCurrent = Effect.fn('AccessPersistence.readEnrollmentInvitationClaimCurrent')(
+  function* readEnrollmentInvitationClaimCurrentEffect(
+    transaction: CounterpartyAccessScopedRoutineInvoker,
+    scope: { readonly legalEntityId: string; readonly tenantId: string },
+    input: { readonly expectedAttestation?: string; readonly invitationId: string; readonly principalId: string },
+    contextAccess: ContextAccessService | undefined,
+  ) {
+    const rows = yield* transaction
+      .invoke(readEnrollmentInvitationClaimRoutine, [input.invitationId, input.principalId])
+      .pipe(Effect.mapError(accessUnavailable));
+    if (rows.length > 1) {
+      return yield* accessUnavailable();
+    }
+    const [row] = rows;
+    if (row === undefined) {
+      return Option.none();
+    }
+    const invitation = invitationFromRow(scope.tenantId, row);
+    const accepted = {
+      attestationReference: row.attestation_reference,
+      invitation,
+      mutationId: row.claim_mutation_id,
+      sourceActionInvocationId: row.source_action_invocation_id,
+    };
+    if (
+      row.invitation_id !== input.invitationId ||
+      row.claim_subject_principal_id !== input.principalId ||
+      row.claimed_by_principal_id !== input.principalId ||
+      row.state !== 'CLAIMED' ||
+      (input.expectedAttestation !== undefined && input.expectedAttestation !== row.attestation_reference) ||
+      contextAccess?.businessPermissions === undefined
+    ) {
+      return Option.some({ ...accepted, current: false });
+    }
+    const principal = { principalId: input.principalId, tenantId: scope.tenantId };
+    const owner = currentOwnerAccessForTransaction(transaction, scope);
+    const ownerDecisions = yield* Effect.forEach(
+      invitation.intendedPermissions,
+      (permission) =>
+        owner({
+          counterpartyRef: invitation.counterpartyRef,
+          legalEntityId: scope.legalEntityId,
+          permission,
+          principal,
+          scope: invitation.scope,
+        }),
+      { concurrency: 1 },
+    );
+    if (ownerDecisions.some((decision) => decision !== 'ALLOWED')) {
+      return Option.some({ ...accepted, current: false });
+    }
+    const targets = yield* Effect.forEach(
+      invitation.intendedPermissions,
+      (permission) =>
+        Schema.decodeEffect(BusinessPermissionCodeSchema)(permission).pipe(
+          Effect.map((code) => ({
+            permission: code,
+            target: businessTarget(scope, row.counterparty_resource_id, invitation.scope),
+          })),
+          Effect.mapError((failure) => Object.defineProperty(accessUnavailable(), 'cause', { value: failure })),
+        ),
+      { concurrency: 1 },
+    );
+    const expectedKeys = targets.map(toBusinessPermissionAccessKey);
+    const decisions = yield* contextAccess.businessPermissions({
+      principal,
+      targets,
+      // This owner recovery read is bounded by the original accepted invitation scope, like its worker.
+      ...(invitation.scope.kind === 'storefront' ? { trustedStorefrontId: invitation.scope.storefrontKey } : {}),
+    });
+    const byKey = new Map(decisions.map((decision) => [decision.key, decision]));
+    const current =
+      expectedKeys.length > 0 &&
+      decisions.length === expectedKeys.length &&
+      byKey.size === expectedKeys.length &&
+      expectedKeys.every((key) => byKey.get(key)?.decision === 'allowed');
+    return Option.some({ ...accepted, current });
+  },
+);
 
 const mutateInvitation = (
   dependencies: CounterpartyAccessPersistenceContext,
@@ -1987,7 +2089,7 @@ const claimInviterAuthorityDecision = (
 
 const invitationClaimAttestation = (
   scope: OutboxWorkerLegalEntityScope,
-  row: Omit<typeof InvitationClaimReconciliationRowSchema.Type, 'operation_outcome'>,
+  row: Omit<typeof FinalizedInvitationClaimRowSchema.Type, 'operation_outcome'>,
   claimantPrincipalId: string,
 ): VerifiedInvitationClaimAttestation => {
   const permissionScope: CounterpartyPermissionScope =

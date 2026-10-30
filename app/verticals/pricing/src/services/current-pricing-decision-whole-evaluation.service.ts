@@ -1,3 +1,5 @@
+import { QuantityTierDefinitionSchema } from '@app/pricing-contracts/domain/quantity-tier';
+import { PRICING_CZK_PUBLICATION_PROFILE_VERSION } from '@app/pricing-contracts/domain/exact-decimal';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
 import type {
   PricingCommercialFeeCalculationInput,
@@ -37,6 +39,7 @@ import { PricingCommercialScopeSchema } from '@app/pricing-contracts/domain/pric
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import type {
   ExactPriceResolution,
+  ExactPriceFoundResolution,
   ExactPriceResolutionInput,
 } from '@app/pricing-contracts/domain/exact-price-resolution';
 import {
@@ -45,7 +48,10 @@ import {
   ExactPriceResolutionSchema,
 } from '@app/pricing-contracts/domain/exact-price-resolution';
 import type { PricingUnitPriceCalculationSuccess } from '@app/pricing-contracts/domain/unit-price-calculation';
-import type { PricingQuantityBasisAssessment } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
+import type {
+  PricingQuantityBasisAttempt,
+  PricingQuantityBasisAssessment,
+} from '@app/pricing-contracts/domain/quantity-unit-package-basis';
 import type {
   QuantityTierNormalizedQuantity,
   QuantityTierSelectionResult,
@@ -163,6 +169,12 @@ export interface CurrentPricingDecisionAttemptSourcePort {
     trustedScope: CurrentPricingDecisionTrustedScope,
     ordinal: 1 | 2,
   ) => Effect.Effect<CurrentPricingDecisionAttemptSourceResult, CurrentPricingDecisionOwnerReadFailure>;
+
+  /** Rebinds an applied Tier through a new genuine Catalog compatibility receipt. */
+  readonly reassessForTier?: (
+    attempt: PricingQuantityBasisAttempt,
+    tier: typeof QuantityTierDefinitionSchema.Type,
+  ) => Effect.Effect<PricingQuantityBasisAssessment, CurrentPricingDecisionOwnerReadFailure>;
 }
 
 export class CurrentPricingDecisionAttemptSource extends Context.Service<
@@ -623,7 +635,7 @@ const unavailableAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.unav
       request.decision.purchasingContext.contextRef,
       request.decision.purchasingContext.contextRevision,
     ].join(':');
-    const runId = `${candidateRef}:run`;
+    const runId = `${candidateRef}:run:${request.decision.operationTime}`;
     const attemptId = `${runId}:attempt:${ordinal}`;
     const snapshotId = `${attemptId}:snapshot`;
     const [ownerRef] = ownerRefs;
@@ -787,6 +799,55 @@ const exactPriceObservationBoundary = (
   return latest;
 };
 
+// Observation instants identify distinct reads, not distinct material Price groups.
+// Only comparison copies omit that distinction; every retained owner receipt stays unchanged.
+const comparisonPrice = (value: ExactPriceFoundResolution) => {
+  const originalPath = value.path;
+  const path = Match.value(originalPath).pipe(
+    Match.tag('GROUP_PRICE', 'NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE', (assignedPath) => ({
+      ...assignedPath,
+      resolutionInput: {
+        ...assignedPath.resolutionInput,
+        interpretation: {
+          ...assignedPath.resolutionInput.interpretation,
+          assignmentResolution: {
+            ...assignedPath.resolutionInput.interpretation.assignmentResolution,
+            compatibility: {
+              ...assignedPath.resolutionInput.interpretation.assignmentResolution.compatibility,
+              verifiedAt: assignedPath.resolutionInput.effectiveAt,
+            },
+          },
+          compatibilityEvidence: {
+            ...assignedPath.resolutionInput.interpretation.compatibilityEvidence,
+            verifiedAt: assignedPath.resolutionInput.effectiveAt,
+          },
+        },
+      },
+    })),
+    Match.orElse((otherPath) => otherPath),
+  );
+  if (!('usedPrice' in path)) {
+    return value;
+  }
+  const usedPrice = {
+    ...path.usedPrice,
+    evidence: { ...path.usedPrice.evidence, observedAt: path.usedPrice.evidence.effectiveAt },
+  };
+  return 'groupAbsence' in path
+    ? {
+        ...value,
+        path: {
+          ...path,
+          groupAbsence: {
+            ...path.groupAbsence,
+            evidence: { ...path.groupAbsence.evidence, observedAt: path.groupAbsence.evidence.effectiveAt },
+          },
+          usedPrice,
+        },
+      }
+    : { ...value, path: { ...path, usedPrice } };
+};
+
 const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.loadFresh')(
   function* evaluateWholeAttemptProgram(
     dependencies: {
@@ -929,7 +990,8 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
             ? []
             : readyExactPriceLines.flatMap((candidateLine, candidateIndex) => {
                 const candidatePrice = exactFoundPrices[candidateIndex];
-                return candidatePrice !== undefined && sameFoundPrice(candidatePrice, exactPrice)
+                return candidatePrice !== undefined &&
+                  sameFoundPrice(comparisonPrice(candidatePrice), comparisonPrice(exactPrice))
                   ? [{ exactPrice: candidatePrice, line: candidateLine }]
                   : [];
               });
@@ -954,28 +1016,42 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
         const tierSelection = tierSelections[index];
         return exactPrice === undefined || tierSelection === undefined
           ? Effect.die('Tier selection lost an original stable line')
-          : calculatePricingUnitPrice(
-              line.lineQuantity === undefined
-                ? {
-                    exactPrice,
-                    line: line.line,
-                    quantityBasis: line.quantityBasis,
-                    tierSelection,
+          : Effect.gen(function* bindActualTierQuantity() {
+              let quantityBasis: PricingQuantityBasisAssessment = line.quantityBasis;
+              if (tierSelection.outcome === 'QUANTITY_TIER_APPLIED') {
+                const { decision: tierDecision } = tierSelection.evidence;
+                if (tierDecision.kind !== 'HIGHEST_REACHED_THRESHOLD') {
+                  return yield* malformed(requiredOwnerRefs, 'Applied Tier omitted its exact winning definition');
+                }
+                const winningTier = tierDecision.winningTier.definition;
+                const retainedTier = quantityBasis.attempt.tier;
+                if (retainedTier === undefined) {
+                  if (dependencies.attemptSource.reassessForTier === undefined) {
+                    return yield* new CurrentPricingDecisionOwnerReadFailure({
+                      kind: 'UNAVAILABLE',
+                      ownerRefs: requiredOwnerRefs,
+                      reason: 'Applied Tier requires a fresh owner Quantity compatibility proof',
+                    });
                   }
-                : {
-                    exactPrice,
-                    line: line.line,
-                    lineQuantity: line.lineQuantity,
-                    quantityBasis: line.quantityBasis,
-                    tierSelection,
-                  },
-            );
+                  quantityBasis = yield* dependencies.attemptSource.reassessForTier(quantityBasis.attempt, winningTier);
+                } else if (!Schema.toEquivalence(QuantityTierDefinitionSchema)(retainedTier, winningTier)) {
+                  return yield* malformed(requiredOwnerRefs, 'Quantity proof binds a different Tier definition');
+                }
+              }
+              return yield* calculatePricingUnitPrice(
+                line.lineQuantity === undefined
+                  ? { exactPrice, line: line.line, quantityBasis, tierSelection }
+                  : { exactPrice, line: line.line, lineQuantity: line.lineQuantity, quantityBasis, tierSelection },
+              );
+            });
       },
       { concurrency: 16 },
     ).pipe(effectEither);
     if (unitPrices.failed) {
       return yield* closeFailure(
-        malformed(requiredOwnerRefs, 'Unit Price could not bind exact Price, Quantity, and Tier evidence'),
+        Schema.is(CurrentPricingDecisionOwnerReadFailure)(unitPrices.failure)
+          ? unitPrices.failure
+          : malformed(requiredOwnerRefs, 'Unit Price could not bind exact Price, Quantity, and Tier evidence'),
       );
     }
     const readyUnitPrices = unitPrices.success;
@@ -1113,7 +1189,7 @@ const evaluateWholeAttempt = Effect.fn('CurrentPricingDecisionWholeEvaluation.lo
       candidateRef: attempt.candidateRef,
       decision: request.decision,
       preRound,
-      publicationProfileVersion: 'pricing-czk-publication:v1',
+      publicationProfileVersion: PRICING_CZK_PUBLICATION_PROFILE_VERSION,
     });
     if (linePublication.outcome !== 'LINE_VALUES_PUBLISHED') {
       return yield* closeFailure(malformed(requiredOwnerRefs, linePublication.failure.message));

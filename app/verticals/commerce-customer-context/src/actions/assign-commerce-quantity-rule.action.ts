@@ -48,6 +48,13 @@ const handleAssignCommerceQuantityRule = Effect.fn('AssignCommerceQuantityRuleAc
   if (sellingLegalEntityId === undefined) {
     return yield* failScope('Commerce Quantity assignment requires trusted Legal Entity scope');
   }
+  if (
+    payload._tag === 'ASSIGN' &&
+    (payload.assignment.profile.profileRef.tenantId !== context.scope.tenantId ||
+      payload.assignment.ruleRevisionRef.tenantId !== context.scope.tenantId)
+  ) {
+    return yield* failScope('Assignment references do not match the trusted scope');
+  }
   const observedAt = DateTime.formatIso(yield* DateTime.now);
   const assignmentId = payload._tag === 'ASSIGN' ? payload.assignment.assignmentId : payload.assignmentId;
   const reasonText = payload._tag === 'ASSIGN' ? payload.assignment.reason : payload.reason;

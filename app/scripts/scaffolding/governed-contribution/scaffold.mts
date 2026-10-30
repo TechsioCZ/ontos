@@ -39,6 +39,7 @@ import {
   MODULE_REGISTRATION_SEARCH_SLOT_START,
   createOrAcceptGeneratedMutationEffect,
   createMutationEffect,
+  asJsonObject,
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
@@ -159,6 +160,19 @@ const directTokenStringProperty = (tokens: readonly GovernedToken[], property: s
 };
 
 const identityTokenKinds = new Set([SyntaxKind.Identifier, SyntaxKind.StringLiteral]);
+
+const governedPrincipalImport =
+  "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';";
+const governedRedemptionImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+const governedRedemptionDatabaseImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
+const normalizeSupportImport = (candidate: string) => candidate.replaceAll(/\s+/gu, ' ').replaceAll(/,\s*\}/gu, ' }');
+const supportedGovernedImports = new Set([
+  governedPrincipalImport,
+  governedRedemptionImport,
+  governedRedemptionDatabaseImport,
+]);
 
 const compositionIdentity = (source: string): string | undefined => {
   for (const pattern of [
@@ -882,16 +896,35 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         isGovernedHttpHandlerLayerSlotEntry,
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
-        for (const supportImport of [
-          "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';",
-          "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';",
-        ]) {
+        const supportEntries = readGeneratedSlotEntries(
+          next,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+        ).map(normalizeSupportImport);
+        if (
+          supportEntries.some((entry) => !supportedGovernedImports.has(entry)) ||
+          supportEntries.filter((entry) => entry === governedPrincipalImport).length > 1 ||
+          supportEntries.filter(
+            (entry) => entry === governedRedemptionImport || entry === governedRedemptionDatabaseImport,
+          ).length > 1
+        ) {
+          return raiseScaffoldFailure(
+            `generated owner slot contains unsupported developer content: ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}`,
+          );
+        }
+        for (const supportImport of [governedPrincipalImport, governedRedemptionImport]) {
+          if (
+            supportEntries.includes(supportImport) ||
+            (supportImport === governedRedemptionImport && supportEntries.includes(governedRedemptionDatabaseImport))
+          ) {
+            continue;
+          }
           next = insertSortedSlotIdempotently(
             next,
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
             supportImport,
-            (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+            (candidate) => supportedGovernedImports.has(normalizeSupportImport(candidate)),
           );
         }
       }
@@ -1508,6 +1541,15 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
           );
     const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
     const isComponent = kind === PUBLIC_COMPONENT_KIND;
+    if (
+      isComponent &&
+      asJsonObject(vertical.packageJson['modernjs'], `vertical ${vertical.slug} modernjs metadata`)['role'] !==
+        'module-federation-remote'
+    ) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} public components require a browser Module Federation remote`,
+      );
+    }
     const isApi = kind === MODULE_API_KIND;
     const publicContractPackage = isApi
       ? yield* discoverPublicContractPackage(workspaceRoot, vertical, name)

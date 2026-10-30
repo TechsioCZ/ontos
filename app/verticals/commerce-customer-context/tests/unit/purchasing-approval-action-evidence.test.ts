@@ -1,11 +1,19 @@
-import { Effect, Exit, Predicate, Schema } from 'effect';
+import { Effect, Exit, Layer, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import {
+  ActionPermissionCheckError,
+  ContextAccess,
   CoreSearchResourceRefSchema,
   PrincipalRefSchema,
   trustVerifiedGatewayPrincipalContext,
+  isVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
+import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import {
+  purchasingApprovalCurrentnessServicesForScope,
+  purchasingApprovalPermissionTarget,
+} from '../../src/actions/purchasing-approval-action-support.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -47,9 +55,15 @@ import {
   PurchaseProposalRevisionSchema,
   OrderResourceRefSchema,
   PurchasingApprovalRejected,
+  PurchaseApprovalFinalBindingSchema,
 } from '../../shared/domain/purchasing-approval.ts';
+import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
+import {
+  PurchaseLimitEvaluationCurrentnessPort,
+  PurchaseLimitEvaluationCurrentFactsSchema,
+} from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
+import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
-import { PurchaseLimitEvaluationCurrentFactsSchema } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
 import {
   PurchaseApprovalProfileEvidenceSchema,
   PurchaseApprovalProposalEvidenceSchema,
@@ -64,6 +78,7 @@ import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-p
 import { submitPurchaseApprovalRequestAction } from '../../src/actions/submit-purchase-approval-request.action.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
 import type { PurchaseApprovalTriggerEvidenceSource } from '../../src/actions/trigger-purchase-approval.action.ts';
+import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../../src/actions/trigger-purchase-approval.action.ts';
 import { purchasingApprovalCommercialFixture } from './purchasing-approval-fixtures.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -377,7 +392,29 @@ const currentness: TestCurrentness = {
   // These two methods model the transaction-bound owner adapter used by submit/revalidate.
   // The action evidence test intentionally supplies already validated fixtures; production
   // composition never installs this test adapter.
-  resolveRevalidation: ({ claimed }) => Effect.succeed(claimed),
+  resolveRevalidation: ({ claimed }) => {
+    const binding = Schema.decodeUnknownSync(PurchaseApprovalFinalBindingSchema)({
+      attemptRef: {
+        moduleId: 'test.final-owner',
+        resourceId: 'attempt',
+        resourceType: 'test.final-owner.attempt',
+        tenantId,
+      },
+      bundleHash: 'b'.repeat(64),
+      bundleRef: {
+        moduleId: 'test.final-owner',
+        resourceId: 'bundle',
+        resourceType: 'test.final-owner.bundle',
+        tenantId,
+      },
+      bundleVersion: 'TEST_FINAL.v1',
+    });
+    return Effect.succeed({
+      ...claimed,
+      finalBinding: binding,
+      finalBindingEvidence: { binding, observedAt: at, provenance: 'TEST_ACTION_EVIDENCE_ONLY', validUntil: expiresAt },
+    });
+  },
   resolveSubmission: ({ claimed }) => Effect.succeed(claimed),
 };
 
@@ -939,4 +976,375 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
     });
     expect(untrustedCollector.snapshot().dataAccessEvents).toHaveLength(0);
   }),
+);
+
+it.effect(
+  'all seven registered Approval targets retain trusted Storefront identity and fail closed on missing or mismatched scope',
+  () =>
+    Effect.gen(function* verifyRegisteredApprovalTargets() {
+      const common = { counterpartyRef, idempotencyKey: 'target-boundary', storefrontId };
+      const sourceRevisions = [
+        'counterparty-policy',
+        'customer-commerce-policy',
+        'principal-override',
+        'purchase-proposal',
+        'purchasing-profile',
+        'storefront-context',
+      ].map((source) => ({ revision: '1', source }));
+      const cases = [
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(
+              createPurchaseProposalRevisionAction.descriptor.payloadSchema,
+            )({
+              idempotencyKey: 'target-boundary',
+              proposal,
+              verifiedEvidence: {
+                buyerPermission: 'ALLOWED',
+                profileState: 'ACTIVE',
+                proposalCurrent: true,
+                sourceRevisions,
+              },
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: createPurchaseProposalRevisionAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(createApprovalHierarchyAction.descriptor.payloadSchema)({
+              hierarchy,
+              idempotencyKey: 'target-boundary',
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: createApprovalHierarchyAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(
+              submitPurchaseApprovalRequestAction.descriptor.payloadSchema,
+            )({
+              ...common,
+              proposalRevision: proposal.revision,
+              proposalRevisionRef: proposal.proposalRevisionRef,
+              requestExpiresAt: expiresAt,
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: submitPurchaseApprovalRequestAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(
+              decidePurchaseApprovalRequestAction.descriptor.payloadSchema,
+            )({
+              ...common,
+              actor: principal(approverId),
+              decidedAt: at,
+              decision: 'APPROVE',
+              expectedRequestRevision: 1,
+              proposalRevisionRef: proposal.proposalRevisionRef,
+              reason: null,
+              requestRef: request.requestRef,
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: decidePurchaseApprovalRequestAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(
+              reroutePurchaseApprovalRequestAction.descriptor.payloadSchema,
+            )({
+              ...common,
+              expectedRequestRevision: 1,
+              reason: 'Policy changed',
+              requestRef: request.requestRef,
+              reroutedAt: at,
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: reroutePurchaseApprovalRequestAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(
+              revalidatePurchaseApprovalAction.descriptor.payloadSchema,
+            )({
+              ...common,
+              buyerPermission: 'ALLOWED',
+              checkedAt: at,
+              commitmentCorrelationId: 'commitment-1',
+              decisionBundleHash: decision.decisionBundleHash,
+              decisionBundleVersion: decision.decisionBundleVersion,
+              decisionRef: decision.decisionRef,
+              expectedProposalHash: proposal.canonicalHash,
+              hierarchyRef: hierarchy.hierarchyRef,
+              profileState: 'ACTIVE',
+              proposalRevisionRef: proposal.proposalRevisionRef,
+              requestRef: request.requestRef,
+              routeCurrent: true,
+              routeRef: route.routeRef,
+              sourceRevisions: [{ revision: '1', source: 'purchase-proposal' }],
+              validUntil: expiresAt,
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: revalidatePurchaseApprovalAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+        (
+          runtime: Effect.Success<ReturnType<typeof makeActionTestHarness>>['runtime'],
+          principalContext: ReturnType<typeof trustVerifiedGatewayPrincipalContext>,
+        ) =>
+          Effect.gen(function* runRegisteredTarget() {
+            const payload = yield* Schema.encodeUnknownEffect(consumePurchaseApprovalAction.descriptor.payloadSchema)({
+              ...common,
+              commitmentCorrelationId: 'commitment-1',
+              committedAt: at,
+              decisionBundleHash: 'b'.repeat(64),
+              decisionBundleVersion: 'approval-decision-bundle.v1',
+              orderRef: {
+                moduleId: 'commerce.order',
+                resourceId: 'order-1',
+                resourceType: 'commerce.order.order',
+                tenantId,
+              },
+              proposalRevisionRef: proposal.proposalRevisionRef,
+              requestRef: request.requestRef,
+            });
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: principalContext,
+                registration: consumePurchaseApprovalAction,
+                transport: {
+                  correlationId: 'target-boundary',
+                  idempotencyKey: 'target-boundary',
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(Effect.asVoid, Effect.result);
+          }),
+      ];
+      const { trustedStorefrontId: ignoredStorefront, ...withoutStorefront } = scope;
+      expect(ignoredStorefront).toBe(storefrontId);
+      for (const candidate of cases) {
+        for (const trusted of [storefrontId, undefined, 'foreign-storefront']) {
+          const authenticated = trustVerifiedGatewayPrincipalContext(
+            trusted === undefined ? withoutStorefront : { ...withoutStorefront, trustedStorefrontId: trusted },
+            compositionRevision,
+          );
+          const harness = yield* makeActionTestHarness();
+          const outcome = yield* candidate(harness.runtime, authenticated);
+          expect(Result.isFailure(outcome)).toBe(true);
+          if (Result.isFailure(outcome)) {
+            expect(Schema.is(ActionPermissionCheckError)(outcome.failure)).toBe(true);
+            if (Schema.is(ActionPermissionCheckError)(outcome.failure)) {
+              // The scripted harness has no business-permission backend. Reaching its explicit
+              // unavailable boundary proves the real trusted-target guard accepted this target.
+              expect(outcome.failure.reason).toBe(
+                trusted === storefrontId
+                  ? 'The authorization service could not determine permission safely'
+                  : 'The declared business permission target does not match trusted scope',
+              );
+            }
+          }
+          expect(harness.snapshot().transactionCount).toBe(0);
+        }
+      }
+      for (const trusted of [storefrontId, undefined]) {
+        const harness = yield* makeActionTestHarness();
+        const authenticated = trustVerifiedGatewayPrincipalContext(
+          trusted === undefined ? withoutStorefront : { ...withoutStorefront, trustedStorefrontId: trusted },
+          compositionRevision,
+        );
+        const payload = yield* Schema.encodeEffect(createApprovalHierarchyAction.descriptor.payloadSchema)({
+          hierarchy: { ...hierarchy, selector: { ...hierarchy.selector, storefrontId: null } },
+          idempotencyKey: 'null-storefront-target',
+        });
+        const outcome = yield* Effect.result(
+          harness.runtime.runAction({
+            payload,
+            principal: authenticated,
+            registration: createApprovalHierarchyAction,
+            transport: {
+              correlationId: 'target-boundary',
+              idempotencyKey: 'null-storefront-target',
+              targetModuleKey: 'commerce.customer-context',
+            },
+          }),
+        );
+        expect(Result.isFailure(outcome)).toBe(true);
+        if (Result.isFailure(outcome)) {
+          expect(Schema.is(ActionPermissionCheckError)(outcome.failure)).toBe(true);
+          if (Schema.is(ActionPermissionCheckError)(outcome.failure)) {
+            expect(outcome.failure.reason).toBe('The authorization service could not determine permission safely');
+          }
+        }
+        expect(harness.snapshot().transactionCount).toBe(0);
+      }
+      const nullTarget = purchasingApprovalPermissionTarget({
+        counterpartyRef,
+        permission: 'counterparty.purchase.submit',
+        scope,
+        storefrontId: null,
+      });
+      expect(nullTarget).toEqual({
+        permission: 'counterparty.purchase.submit',
+        target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty', legalEntityId, tenantId },
+      });
+      const matching = purchasingApprovalPermissionTarget({
+        counterpartyRef,
+        permission: 'counterparty.purchase.submit',
+        scope,
+        storefrontId,
+      });
+      expect(matching.trustedStorefrontId).toBe(storefrontId);
+      const mismatchedScope = { ...scope, trustedStorefrontId: 'foreign-storefront' };
+      expect(
+        purchasingApprovalPermissionTarget({
+          counterpartyRef,
+          permission: 'counterparty.purchase.submit',
+          scope: mismatchedScope,
+          storefrontId,
+        }).trustedStorefrontId,
+      ).toBe('foreign-storefront');
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(PurchaseApprovalTriggerEvidenceSourceFactory, {
+            make: () => Effect.die('Approval target unit must not resolve owner services'),
+          }),
+          Layer.succeed(PurchaseApprovalCurrentnessFactory, {
+            make: () => ({ resolveRevalidation: () => Effect.die('Approval target unit must not read currentness') }),
+          }),
+          Layer.succeed(PurchaseLimitEvaluationSourceFactory, {
+            make: () => Effect.die('Approval target unit must not resolve evaluation'),
+          }),
+          Layer.succeed(PurchaseLimitEvaluationCurrentnessPort, {
+            resolveCandidate: () => Effect.die('Approval target unit must not read candidate'),
+            resolveCurrent: () => Effect.die('Approval target unit must not read Current'),
+          }),
+          Layer.succeed(ContextAccess, {
+            legalEntities: () => Effect.die('Approval target unit must not resolve owner access'),
+            modules: () => Effect.die('Approval target unit must not resolve owner access'),
+            resources: () => Effect.die('Approval target unit must not resolve owner access'),
+            tenants: () => Effect.die('Approval target unit must not resolve owner access'),
+          }),
+        ),
+      ),
+    ),
+);
+
+it.effect('preserves verified scope identity when constructing approval Current services', () =>
+  Effect.gen(function* preserveVerifiedScope() {
+    expect(isVerifiedGatewayPrincipalContext(scope)).toBe(true);
+    expect(isVerifiedGatewayPrincipalContext({ ...scope })).toBe(false);
+    const result = yield* purchasingApprovalCurrentnessServicesForScope(
+      { invoke: () => Effect.die('Scope construction must not execute owner routines') },
+      scope,
+    );
+    expect(result.currentness).toBe(currentness);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(PurchaseApprovalCurrentnessFactory, {
+          make: (_transaction, receivedScope) => {
+            expect(receivedScope).toBe(scope);
+            expect(isVerifiedGatewayPrincipalContext(receivedScope)).toBe(true);
+            return currentness;
+          },
+        }),
+        Layer.succeed(PurchaseLimitEvaluationSourceFactory, {
+          make: (_transaction, receivedScope) => {
+            expect(receivedScope).toBe(scope);
+            return Effect.succeed({ loadCurrent: () => Effect.die('Scope construction must not evaluate') });
+          },
+        }),
+        Layer.succeed(PurchaseLimitEvaluationCurrentnessPort, {
+          resolveCandidate: () => Effect.die('Scope construction must not resolve candidate'),
+          resolveCurrent: () => Effect.die('Scope construction must not resolve Current'),
+        }),
+        Layer.succeed(ContextAccess, {
+          legalEntities: () => Effect.die('Scope construction must not resolve access'),
+          modules: () => Effect.die('Scope construction must not resolve access'),
+          resources: () => Effect.die('Scope construction must not resolve access'),
+          tenants: () => Effect.die('Scope construction must not resolve access'),
+        }),
+      ),
+    ),
+  ),
 );

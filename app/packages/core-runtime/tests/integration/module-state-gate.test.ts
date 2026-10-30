@@ -1,18 +1,30 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Exit, Option, Predicate } from 'effect';
+import { Cause, Crypto, Deferred, Effect, Exit, Fiber, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
-import { tenantModuleStates, tenants } from '../../src/db/schema.ts';
+import {
+  actionInvocations,
+  dataAccessEvents,
+  principals,
+  tenantModuleStateChanges,
+  tenantModuleStates,
+  tenants,
+} from '../../src/db/schema.ts';
+import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { decideModuleStateAccess, makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
 import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
-import { TENANT_MODULE_STATES, makeTenantModuleStateService } from '../../src/modules/tenant-module-state-service.ts';
+import {
+  TENANT_MODULE_STATES,
+  makeTenantModuleStateService,
+  persistTenantModuleStateChange,
+} from '../../src/modules/tenant-module-state-service.ts';
 
 type DatabaseService = (typeof CoreDatabase)['Service'];
 
@@ -186,5 +198,278 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('module state gate', (
         expect(Predicate.isTagged(malformed, 'ModuleStateCheckUnavailableError')).toBe(true);
         expect(malformed.reason).not.toMatch(/corrupt|storage/u);
       }),
+  );
+});
+
+const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect() {
+  const crypto = yield* Crypto.Crypto;
+  const tenantId = yield* crypto.randomUUIDv4();
+  const principalId = yield* crypto.randomUUIDv4();
+  const actionInvocationId = yield* crypto.randomUUIDv4();
+  const moduleKey = `gate.concurrent-${tenantId}`;
+  const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
+  // Distinct one-connection pools make each transaction's physical connection explicit.
+  const observer = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
+  const writer = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
+  const transition = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
+  const evidence = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* cleanupConcurrentGateFixture() {
+      for (const table of [
+        dataAccessEvents,
+        tenantModuleStateChanges,
+        tenantModuleStates,
+        actionInvocations,
+        principals,
+        tenants,
+      ]) {
+        yield* observer.executor.delete(table).where(eq(table.tenantId, tenantId));
+      }
+    }).pipe(Effect.orDie),
+  );
+  yield* observer.executor
+    .insert(tenants)
+    .values({ defaultLocale: 'en', name: 'Concurrent gate', slug: `gate-${tenantId}`, status: 'active', tenantId });
+  yield* observer.executor
+    .insert(principals)
+    .values({ displayName: 'Gate principal', kind: 'human', principalId, status: 'active', tenantId });
+  yield* observer.executor.insert(actionInvocations).values({
+    actionInvocationId,
+    actionKey: 'core.change-tenant-module-state',
+    principalId,
+    requestHash: 'gate-concurrency',
+    status: 'received',
+    tenantId,
+  });
+  yield* observer.executor.insert(tenantModuleStates).values({ moduleKey, state: 'active', tenantId });
+  const gate = makeModuleStateGate(makeTenantModuleStateService(observer));
+  const write = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: `${moduleKey}.write`,
+    moduleKey,
+    role: 'action',
+  });
+  const disable = (transaction: Parameters<Parameters<DatabaseService['executor']['transaction']>[0]>[0]) =>
+    installOperationalScope(transaction, {
+      authContextRef: 'better-auth-session:gate',
+      authMethod: 'session',
+      correlationId: 'gate-concurrency',
+      principalId,
+      tenantId,
+    }).pipe(
+      Effect.flatMap((scoped) =>
+        persistTenantModuleStateChange(scoped, {
+          actionInvocationId,
+          authMethod: 'session',
+          expectedState: 'active',
+          moduleKey,
+          newState: 'read_only',
+          principalId,
+          tenantId,
+        }),
+      ),
+    );
+  const insertEvidence = (targetResourceId: string, started?: Deferred.Deferred<number>) =>
+    evidence.executor.transaction((transaction) =>
+      Effect.gen(function* evidenceTransaction() {
+        if (started !== undefined) {
+          const [connection] = yield* transaction.execute<{ pid: number }>(
+            sql`select pg_backend_pid() as pid`,
+            'objects',
+          );
+          yield* Deferred.succeed(started, Option.getOrThrow(Option.fromUndefinedOr(connection)).pid);
+        }
+        yield* transaction.insert(dataAccessEvents).values({
+          accessKind: 'read',
+          authMethod: 'session',
+          evidenceCaptureMode: 'metadata_only',
+          evidencePolicyKey: 'gate-test',
+          outcome: 'allowed',
+          outcomeCode: 'allowed',
+          outcomeStage: 'evidence',
+          principalId,
+          resultCount: 1,
+          servingModuleKey: moduleKey,
+          targetResourceId,
+          tenantId,
+        });
+      }),
+    );
+  const waitForBlock = (blocker: number, waiter: number) =>
+    Effect.gen(function* observeBlockedConnection() {
+      for (let attempt = 0; attempt < 1000; attempt += 1) {
+        const rows = yield* observer.executor.execute<{ blocked: boolean }>(
+          sql`select ${blocker}::integer = any(pg_blocking_pids(${waiter}::integer)) as blocked`,
+          'objects',
+        );
+        if (rows[0]?.blocked === true) {
+          return;
+        }
+        yield* Effect.yieldNow;
+      }
+      expect.fail('The competing transaction never waited on the expected tenant-lock holder');
+    });
+  return {
+    disable,
+    evidence,
+    gate,
+    insertEvidence,
+    moduleKey,
+    observer,
+    tenantId,
+    transition,
+    waitForBlock,
+    write,
+    writer,
+  };
+});
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('module state gate concurrency', (suite) => {
+  suite.effect('admits independent tenant-FK evidence while retaining the disabling fence through commit', () =>
+    Effect.scoped(
+      Effect.gen(function* writeWinsTenantLock() {
+        const fixture = yield* concurrentGateFixture;
+        const admitted = yield* Deferred.make<number>();
+        const releaseWrite = yield* Deferred.make<boolean>();
+        const transitionStarted = yield* Deferred.make<number>();
+        const writer = yield* fixture.writer.executor
+          .transaction((transaction) =>
+            Effect.gen(function* admittedTransaction() {
+              const [connection] = yield* transaction.execute<{ pid: number }>(
+                sql`select pg_backend_pid() as pid`,
+                'objects',
+              );
+              yield* fixture.gate.recheckWrite(transaction, fixture.tenantId, fixture.write);
+              yield* Deferred.succeed(admitted, Option.getOrThrow(Option.fromUndefinedOr(connection)).pid);
+              yield* Deferred.await(releaseWrite);
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseWrite, true));
+        const writerPid = yield* Deferred.await(admitted);
+        const evidenceStarted = yield* Deferred.make<number>();
+        // Observe either its actual FK wait or its durable commit, without timing guesses.
+        const evidence = yield* fixture.insertEvidence('nested-read', evidenceStarted).pipe(Effect.forkScoped);
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseWrite, true));
+        const evidencePid = yield* Deferred.await(evidenceStarted);
+        expect(evidencePid).not.toBe(writerPid);
+        let observed = false;
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+          const [progress] = yield* fixture.observer.executor.execute<{ blocked: boolean; committed: boolean }>(
+            sql`select ${writerPid}::integer = any(pg_blocking_pids(${evidencePid}::integer)) as blocked, exists(select 1 from core.data_access_events where tenant_id = ${fixture.tenantId}::uuid) as committed`,
+            'objects',
+          );
+          if (progress?.blocked === true || progress?.committed === true) {
+            observed = true;
+            expect(progress.blocked).toBe(false);
+            expect(progress.committed).toBe(true);
+            break;
+          }
+          yield* Effect.yieldNow;
+        }
+        expect(observed).toBe(true);
+        yield* Fiber.join(evidence);
+        const transition = yield* fixture.transition.executor
+          .transaction((transaction) =>
+            Effect.gen(function* disablingTransaction() {
+              const [connection] = yield* transaction.execute<{ pid: number }>(
+                sql`select pg_backend_pid() as pid`,
+                'objects',
+              );
+              yield* Deferred.succeed(transitionStarted, Option.getOrThrow(Option.fromUndefinedOr(connection)).pid);
+              return yield* fixture.disable(transaction);
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseWrite, true));
+        const transitionPid = yield* Deferred.await(transitionStarted);
+        expect(transitionPid).not.toBe(writerPid);
+        yield* fixture.waitForBlock(writerPid, transitionPid);
+        const [before] = yield* fixture.observer.executor
+          .select()
+          .from(tenantModuleStates)
+          .where(eq(tenantModuleStates.tenantId, fixture.tenantId));
+        expect(before?.state).toBe('active');
+        yield* Deferred.succeed(releaseWrite, true);
+        yield* Fiber.join(writer);
+        const changed = yield* Fiber.join(transition);
+        expect(changed).toMatchObject({ newState: 'read_only', previousState: 'active' });
+        const rows = yield* fixture.observer.executor
+          .select()
+          .from(dataAccessEvents)
+          .where(eq(dataAccessEvents.tenantId, fixture.tenantId));
+        expect(rows.map((row) => row.targetResourceId)).toEqual(['nested-read']);
+        const [state] = yield* fixture.observer.executor
+          .select()
+          .from(tenantModuleStates)
+          .where(eq(tenantModuleStates.tenantId, fixture.tenantId));
+        const [history] = yield* fixture.observer.executor
+          .select()
+          .from(tenantModuleStateChanges)
+          .where(eq(tenantModuleStateChanges.tenantId, fixture.tenantId));
+        expect(state?.state).toBe('read_only');
+        expect(state?.lastChangeId).toBe(history?.moduleStateChangeId);
+      }),
+    ),
+  );
+  suite.effect('denies a waiting write after disabling wins, despite an active preflight snapshot', () =>
+    Effect.scoped(
+      Effect.gen(function* disableWinsTenantLock() {
+        const fixture = yield* concurrentGateFixture;
+        const snapshot = yield* fixture.gate.prepareSnapshot(fixture.tenantId, [fixture.write]);
+        yield* fixture.gate.check(snapshot, fixture.write);
+        const disabled = yield* Deferred.make<number>();
+        const releaseDisable = yield* Deferred.make<boolean>();
+        const writerStarted = yield* Deferred.make<number>();
+        const transition = yield* fixture.transition.executor
+          .transaction((transaction) =>
+            Effect.gen(function* heldDisablingTransaction() {
+              const [connection] = yield* transaction.execute<{ pid: number }>(
+                sql`select pg_backend_pid() as pid`,
+                'objects',
+              );
+              yield* fixture.disable(transaction);
+              yield* Deferred.succeed(disabled, Option.getOrThrow(Option.fromUndefinedOr(connection)).pid);
+              yield* Deferred.await(releaseDisable);
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseDisable, true));
+        const transitionPid = yield* Deferred.await(disabled);
+        let handlerCalls = 0;
+        const writer = yield* fixture.writer.executor
+          .transaction((transaction) =>
+            Effect.gen(function* waitingWriteTransaction() {
+              const [connection] = yield* transaction.execute<{ pid: number }>(
+                sql`select pg_backend_pid() as pid`,
+                'objects',
+              );
+              yield* Deferred.succeed(writerStarted, Option.getOrThrow(Option.fromUndefinedOr(connection)).pid);
+              yield* fixture.gate.recheckWrite(transaction, fixture.tenantId, fixture.write);
+              handlerCalls += 1;
+              yield* fixture.insertEvidence('forbidden-handler');
+            }),
+          )
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseDisable, true));
+        const writerPid = yield* Deferred.await(writerStarted);
+        expect(writerPid).not.toBe(transitionPid);
+        yield* fixture.waitForBlock(transitionPid, writerPid);
+        expect(handlerCalls).toBe(0);
+        yield* Deferred.succeed(releaseDisable, true);
+        yield* Fiber.join(transition);
+        const result = yield* Fiber.join(writer);
+        expect(Exit.isFailure(result)).toBe(true);
+        const failure = Exit.isFailure(result) ? Option.getOrThrow(Cause.findErrorOption(result.cause)) : undefined;
+        expect(Predicate.isTagged(failure, 'ModuleStateDeniedError')).toBe(true);
+        expect(handlerCalls).toBe(0);
+        const rows = yield* fixture.observer.executor
+          .select()
+          .from(dataAccessEvents)
+          .where(eq(dataAccessEvents.tenantId, fixture.tenantId));
+        expect(rows).toEqual([]);
+      }),
+    ),
   );
 });

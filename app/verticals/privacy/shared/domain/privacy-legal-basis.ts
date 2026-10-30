@@ -153,8 +153,21 @@ const validateApplicabilityFacts = (assignment: PrivacyLegalBasisAssignment): re
   for (const fact of assignment.applicabilityDecision.evaluatedScope.facts) {
     facts.set(fact.dimension, [...(facts.get(fact.dimension) ?? []), fact.value]);
   }
+  const controllerValues = facts.get('CONTROLLER_SCOPE');
+  const { authority } = assignment.applicabilityDecision;
+  const controllerSuppliedByAuthority =
+    authority !== undefined &&
+    validateAuthorityBinding(assignment).length === 0 &&
+    authority.controllerRef.tenantId === assignment.assignmentRef.tenantId &&
+    authority.purposeVersionRef.tenantId === assignment.assignmentRef.tenantId;
+  if (
+    controllerValues === undefined
+      ? !controllerSuppliedByAuthority
+      : controllerValues.length !== 1 || controllerValues[0] !== assignment.scope.controllerRef
+  ) {
+    errors.push('Legal Basis Assignment CONTROLLER_SCOPE fact must match its exact scope');
+  }
   const requiredFacts = [
-    ['CONTROLLER_SCOPE', assignment.scope.controllerRef],
     ['PROCESSING_PURPOSE', assignment.scope.purposeRef.resourceId],
     ['PROCESSING_PURPOSE_VERSION', assignment.scope.purposeVersionId],
   ] as const;

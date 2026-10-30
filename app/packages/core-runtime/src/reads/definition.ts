@@ -223,7 +223,9 @@ const hasValidConditionalBranch = (branch: {
   branch.requiredKinds.length > 0 &&
   branch.requiredKinds.length <= 3 &&
   branch.requiredKinds[0] !== 'resource_read' &&
-  new Set(branch.requiredKinds).size === branch.requiredKinds.length &&
+  branch.requiredKinds.every(
+    (kind, index) => kind === 'resource_read' || branch.requiredKinds.indexOf(kind) === index,
+  ) &&
   branch.requiredKinds.every((kind) => READ_CONDITIONAL_PERMISSION_REQUIREMENTS.includes(kind)) &&
   Predicate.isFunction(branch.resolve);
 

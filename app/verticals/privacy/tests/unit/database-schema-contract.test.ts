@@ -16,6 +16,7 @@ import {
   externalObligations,
   legalBasisAssignments,
   legalHolds,
+  noticeAcknowledgements,
   noticeProvisions,
   processingActivities,
   purposeVersions,
@@ -31,11 +32,19 @@ const migrationSql = (): string => {
     .join('\n');
 };
 
+it('retains one immutable, scoped Consent Subject binding and guards native decision inserts', () => {
+  expect(PRIVACY_TABLE_INVENTORY).toContain('consent_scope_bindings');
+  const sql = migrationSql();
+  expect(sql).toContain('privacy_consent_scope_bindings_immutable');
+  expect(sql).toContain('privacy_consent_subject_binding_guard');
+});
+
 const IMMUTABLE_TRIGGER_NAMES = [
   'privacy_anti_resurrection_immutable',
   'privacy_applicability_decisions_immutable',
   'privacy_applicability_policies_immutable',
   'privacy_consent_decisions_immutable',
+  'privacy_consent_scope_bindings_immutable',
   'privacy_disposition_decisions_immutable',
   'privacy_dsr_deadlines_immutable',
   'privacy_dsr_delivery_evidence_immutable',
@@ -46,6 +55,7 @@ const IMMUTABLE_TRIGGER_NAMES = [
   'privacy_eligibility_evidence_immutable',
   'privacy_legal_basis_assignments_immutable',
   'privacy_legal_holds_immutable',
+  'privacy_notice_acknowledgements_immutable',
   'privacy_notice_provisions_immutable',
   'privacy_notice_versions_immutable',
   'privacy_owner_contributions_immutable',
@@ -64,6 +74,7 @@ const IMMUTABLE_TABLES = [
   'applicability_decisions',
   'applicability_policies',
   'consent_decisions',
+  'consent_scope_bindings',
   'disposition_decisions',
   'dsr_deadlines',
   'dsr_delivery_evidence',
@@ -74,6 +85,7 @@ const IMMUTABLE_TABLES = [
   'eligibility_evidence',
   'legal_basis_assignments',
   'legal_holds',
+  'notice_acknowledgements',
   'notice_provisions',
   'notice_versions',
   'owner_contributions',
@@ -106,7 +118,7 @@ it('owns the complete Privacy persistence inventory in one schema', () => {
   );
 
   expect(PRIVACY_SCHEMA_NAME).toBe('privacy');
-  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(35);
+  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(37);
   expect(qualifiedNames).toEqual(PRIVACY_TABLE_INVENTORY.map((name) => `privacy.${name}`));
 });
 
@@ -301,6 +313,12 @@ it('preserves only meaningful owner-local foreign keys', () => {
       name: 'privacy_activity_lifecycle_activity_fk',
     },
     {
+      columns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignTable: 'privacy_subjects',
+      name: 'privacy_consent_scope_bindings_subject_fk',
+    },
+    {
       columns: ['tenant_id', 'legal_entity_id', 'rule_ref', 'rule_version'],
       foreignColumns: ['tenant_id', 'legal_entity_id', 'rule_ref', 'rule_version'],
       foreignTable: 'retention_rules',
@@ -353,6 +371,18 @@ it('preserves only meaningful owner-local foreign keys', () => {
       foreignColumns: ['tenant_id', 'legal_entity_id', 'measure_id'],
       foreignTable: 'privacy_measure_dispatches',
       name: 'privacy_external_obligations_measure_fk',
+    },
+    {
+      columns: ['tenant_id', 'legal_entity_id', 'notice_version_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'notice_version_id'],
+      foreignTable: 'notice_versions',
+      name: 'privacy_notice_ack_notice_fk',
+    },
+    {
+      columns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignTable: 'privacy_subjects',
+      name: 'privacy_notice_ack_subject_fk',
     },
     {
       columns: ['tenant_id', 'legal_entity_id', 'measure_id'],
@@ -453,4 +483,29 @@ it('checks in non-destructive generated migrations with forced RLS and exact imm
     expect(sql).toMatch(new RegExp(`REVOKE UPDATE, DELETE ON TABLE[\\s\\S]*?"privacy"\\."${table}"`, 'u'));
   }
   expect(sql).toContain('ALTER COLUMN "processing_activity_id" SET DATA TYPE text');
+});
+
+it('retains one immutable acknowledgement per scoped presentation and invocation with opaque owner profile IDs', () => {
+  const config = getTableConfig(noticeAcknowledgements);
+  expect(
+    EffectArray.sort(
+      config.uniqueConstraints.map(({ name }) => name ?? ''),
+      Order.String,
+    ),
+  ).toEqual([
+    'privacy_notice_ack_invocation_uk',
+    'privacy_notice_ack_presentation_uk',
+    'privacy_notice_ack_scope_id_uk',
+  ]);
+  expect(config.columns.find(({ name }) => name === 'retail_profile_id')?.getSQLType()).toBe('text');
+  expect(
+    EffectArray.sort(
+      config.checks.map(({ name }) => name),
+      Order.String,
+    ),
+  ).toEqual([
+    'privacy_notice_ack_period_ck',
+    'privacy_notice_ack_record_binding_ck',
+    'privacy_notice_ack_session_digest_ck',
+  ]);
 });

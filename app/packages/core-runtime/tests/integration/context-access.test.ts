@@ -136,6 +136,8 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     permission: 'customer.group.history.read',
   } as const;
   const contextPermissionObjectId = toContextPermissionAccessObjectId(tenantId, legalEntityId, contextPermissionTarget);
+  const tenantModuleTarget = { moduleId: 'party.registry', permission: 'module.access' } as const;
+  const tenantModuleObjectId = toContextPermissionAccessObjectId(tenantId, undefined, tenantModuleTarget);
   if (
     legalObjectId === undefined ||
     moduleObjectId === undefined ||
@@ -144,7 +146,8 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     pricingCatalogObjectId === undefined ||
     priceGroupObjectId === undefined ||
     crossTenantPriceGroupObjectId === undefined ||
-    contextPermissionObjectId === undefined
+    contextPermissionObjectId === undefined ||
+    tenantModuleObjectId === undefined
   ) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
@@ -202,6 +205,8 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       'business_permission',
       pricingCatalogObjectId,
     ),
+    relationship('context_permission', tenantModuleObjectId, 'tenant', 'tenant', tenantId),
+    relationship('context_permission', tenantModuleObjectId, 'grantee', 'principal', principalId),
     relationship('context_permission', contextPermissionObjectId, 'tenant', 'tenant', tenantId),
     relationship('context_permission', contextPermissionObjectId, 'grantee', 'principal', principalId),
   ];
@@ -322,6 +327,19 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       if (checkContextPermissions === undefined) {
         throw new Error('Expected context permission access');
       }
+      expect(yield* checkContextPermissions({ principalId, targets: [tenantModuleTarget], tenantId })).toEqual([
+        { decision: 'allowed', key: 'party.registry:module.access' },
+      ]);
+      expect(
+        yield* checkContextPermissions({ principalId, targets: [tenantModuleTarget], tenantId: otherTenantId }),
+      ).toEqual([{ decision: 'denied', key: 'party.registry:module.access' }]);
+      expect(
+        yield* checkContextPermissions({ legalEntityId, principalId, targets: [tenantModuleTarget], tenantId }),
+      ).toEqual([{ decision: 'denied', key: 'party.registry:module.access' }]);
+      // Existing LE-bound module access is no authority for a tenant module permission.
+      expect(
+        yield* checkContextPermissions({ principalId, targets: [{ moduleId, permission: 'module.access' }], tenantId }),
+      ).toEqual([{ decision: 'denied', key: `${moduleId}:module.access` }]);
       expect(
         yield* checkContextPermissions({
           legalEntityId,
@@ -344,6 +362,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     Effect.ensuring(
       Effect.forEach(
         [
+          ['context_permission', tenantModuleObjectId],
           ['context_permission', contextPermissionObjectId],
           ['business_permission', crossTenantPriceGroupObjectId],
           ['business_permission', priceGroupObjectId],

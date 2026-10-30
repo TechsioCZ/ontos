@@ -1,6 +1,18 @@
+import { Predicate } from 'effect';
+import { parseSync, Visitor } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  BindingIdentifier,
+  CallExpression,
+  Expression,
+  Span,
+  SpreadElement,
+  Statement,
+  Program,
+  ObjectExpression,
+} from 'oxc-parser';
+
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
-import { parseSync } from 'oxc-parser';
-import type { Program } from 'oxc-parser';
 
 import { DelimiterDepth, toCamelCase } from './boundary-source-structure.mts';
 
@@ -1052,10 +1064,608 @@ const operationParametersShadowBindings = (
   return authorizedShadowsBindings || operationShadowsBindings;
 };
 
+const isClientPath = (expression: Expression | null | undefined, names: readonly string[]): boolean => {
+  const [head, ...tail] = names;
+  if (head === undefined || expression === null || expression === undefined) {
+    return false;
+  }
+  if (tail.length === 0) {
+    return expression.type === 'Identifier' && expression.name === head;
+  }
+  return (
+    expression.type === 'MemberExpression' &&
+    !expression.computed &&
+    expression.property.type === 'Identifier' &&
+    expression.property.name === names.at(-1) &&
+    isClientPath(expression.object, names.slice(0, -1))
+  );
+};
+
+interface NativeActionContractExpectation {
+  readonly apiValue: string;
+  readonly endpoint: string;
+  readonly group: string;
+  readonly invalidProblem: string;
+  readonly middleware: string;
+  readonly middlewareKey: string;
+}
+
+const nativeCall = (expression: Expression | undefined, method: string): CallExpression | undefined =>
+  expression?.type === 'CallExpression' &&
+  expression.callee.type === 'MemberExpression' &&
+  !expression.callee.computed &&
+  expression.callee.property.type === 'Identifier' &&
+  expression.callee.property.name === method
+    ? expression
+    : undefined;
+const nativeArgument = (argument: Expression | SpreadElement | undefined): Expression | undefined =>
+  argument?.type === 'SpreadElement' ? undefined : argument;
+const nativeStringArgument = (call: CallExpression, index: number, expected: string): boolean => {
+  const value = call.arguments[index];
+  return value?.type === 'Literal' && value.value === expected;
+};
+
+/** Follow only immutable declaration operands from the actual exported API to its native endpoint. */
+const hasEndpointOptions = (endpoint: CallExpression): boolean => {
+  const options = endpoint.arguments.at(2);
+  if (
+    options?.type !== 'ObjectExpression' ||
+    options.properties.some(
+      (property) =>
+        property.type !== 'Property' ||
+        property.computed ||
+        property.key.type !== 'Identifier' ||
+        !['error', 'headers', 'payload', 'success'].includes(property.key.name),
+    )
+  ) {
+    return false;
+  }
+  const keys = options.properties.flatMap((property) =>
+    property.type === 'Property' && property.key.type === 'Identifier' ? [property.key.name] : [],
+  );
+  return new Set(keys).size === keys.length && ['error', 'payload', 'success'].every((key) => keys.includes(key));
+};
+
+export const hasConnectedGeneratedActionContract = (
+  source: string,
+  expected: NativeActionContractExpectation,
+): boolean => {
+  const parsed = parseSync('action-contract.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (parsed.errors.length > 0) {
+    return false;
+  }
+  const declarations = parsed.program.body.map((statement) =>
+    statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement,
+  );
+  const bindings = new Map<
+    string,
+    { readonly exported: boolean; readonly expression: Expression; readonly id: BindingIdentifier }[]
+  >();
+  const blocked = new Set<string>();
+  const collect = () => {
+    for (const statement of parsed.program.body) {
+      const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+      if (declaration?.type !== 'VariableDeclaration') {
+        continue;
+      }
+      for (const entry of declaration.declarations) {
+        if (entry.id.type === 'Identifier') {
+          if (declaration.kind !== 'const' || entry.init === null) {
+            blocked.add(entry.id.name);
+          } else {
+            bindings.set(entry.id.name, [
+              ...(bindings.get(entry.id.name) ?? []),
+              { exported: statement.type === 'ExportNamedDeclaration', expression: entry.init, id: entry.id },
+            ]);
+          }
+        }
+      }
+    }
+  };
+  collect();
+  const roots = bindings.get(expected.apiValue) ?? [];
+  const [root] = roots;
+  if (roots.length !== 1 || root === undefined || !root.exported) {
+    return false;
+  }
+  const spans: Span[] = [root.id];
+  const protectedBindings = new Set<string>([expected.apiValue]);
+  const resolve = (expression: Expression | undefined, visiting = new Set<string>()): Expression | undefined => {
+    if (expression?.type !== 'Identifier') {
+      return expression;
+    }
+    const entries = bindings.get(expression.name);
+    const binding = entries?.length === 1 ? entries[0] : undefined;
+    if (binding === undefined || blocked.has(expression.name) || visiting.has(expression.name)) {
+      return undefined;
+    }
+    protectedBindings.add(expression.name);
+    spans.push(expression, binding.id);
+    return resolve(binding.expression, new Set([...visiting, expression.name]));
+  };
+  const apiGroup = (): Expression | undefined => {
+    const api = nativeCall(resolve(root.expression, new Set([expected.apiValue])), 'add');
+    if (api === undefined || api.arguments.length !== 1 || api.callee.type !== 'MemberExpression') {
+      return undefined;
+    }
+    const makeApi = nativeCall(api.callee.object, 'make');
+    if (
+      makeApi === undefined ||
+      !isClientPath(makeApi.callee, ['HttpApi', 'make']) ||
+      makeApi.arguments.length !== 1 ||
+      !nativeStringArgument(makeApi, 0, expected.apiValue)
+    ) {
+      return undefined;
+    }
+    return resolve(nativeArgument(api.arguments[0]));
+  };
+  const validMiddlewareOptions = (call: CallExpression): boolean => {
+    const [, options] = call.arguments;
+    const error =
+      options?.type === 'ObjectExpression' && options.properties.length === 1 ? options.properties[0] : undefined;
+    return (
+      call.arguments.length === 2 &&
+      nativeStringArgument(call, 0, expected.middlewareKey) &&
+      error?.type === 'Property' &&
+      !error.computed &&
+      !error.method &&
+      error.kind === 'init' &&
+      error.key.type === 'Identifier' &&
+      error.key.name === 'error' &&
+      isClientPath(error.value, [expected.invalidProblem])
+    );
+  };
+  const validMiddlewareClass = (): boolean => {
+    const classes = declarations.filter(
+      (entry) => entry?.type === 'ClassDeclaration' && entry.id?.name === expected.middleware,
+    );
+    const [declaration] = classes;
+    if (
+      classes.length !== 1 ||
+      declaration?.type !== 'ClassDeclaration' ||
+      declaration.body.body.length !== 0 ||
+      declaration.decorators.length !== 0
+    ) {
+      return false;
+    }
+    const superCall = declaration.superClass;
+    if (superCall?.type !== 'CallExpression' || superCall.callee.type !== 'CallExpression') {
+      return false;
+    }
+    const nativeService = superCall.callee;
+    const nativeImport = parsed.program.body.some(
+      (entry) =>
+        entry.type === 'ImportDeclaration' &&
+        entry.importKind !== 'type' &&
+        entry.source.value === 'effect/http-api' &&
+        entry.specifiers.some(
+          (specifier) =>
+            specifier.type === 'ImportSpecifier' &&
+            specifier.imported.type === 'Identifier' &&
+            specifier.imported.name === 'HttpApiMiddleware' &&
+            specifier.local.name === 'HttpApiMiddleware' &&
+            specifier.importKind !== 'type',
+        ),
+    );
+    if (
+      !isClientPath(nativeService.callee, ['HttpApiMiddleware', 'Service']) ||
+      nativeService.arguments.length !== 0 ||
+      !validMiddlewareOptions(superCall) ||
+      !nativeImport
+    ) {
+      return false;
+    }
+    protectedBindings.add(expected.middleware);
+    if (declaration.id !== null) {
+      spans.push(declaration.id);
+    }
+    return true;
+  };
+  const nativeGroup = (group: Expression | undefined): Expression | undefined => {
+    const middleware = nativeCall(group, 'middleware');
+    if (middleware === undefined) {
+      return group;
+    }
+    if (
+      middleware.arguments.length !== 1 ||
+      !isClientPath(nativeArgument(middleware.arguments[0]), [expected.middleware]) ||
+      middleware.callee.type !== 'MemberExpression' ||
+      !validMiddlewareClass()
+    ) {
+      return undefined;
+    }
+    const middlewareReference = nativeArgument(middleware.arguments[0]);
+    if (middlewareReference !== undefined) {
+      spans.push(middlewareReference);
+    }
+    return resolve(middleware.callee.object);
+  };
+  const hasGroupEndpoint = (group: Expression | undefined): boolean => {
+    const addEndpoint = nativeCall(group, 'add');
+    if (
+      addEndpoint === undefined ||
+      addEndpoint.arguments.length !== 1 ||
+      addEndpoint.callee.type !== 'MemberExpression'
+    ) {
+      return false;
+    }
+    const makeGroup = nativeCall(resolve(addEndpoint.callee.object), 'make');
+    const endpoint = nativeCall(resolve(nativeArgument(addEndpoint.arguments[0])), 'post');
+    const validGroup =
+      makeGroup !== undefined &&
+      isClientPath(makeGroup.callee, ['HttpApiGroup', 'make']) &&
+      makeGroup.arguments.length === 1 &&
+      nativeStringArgument(makeGroup, 0, expected.group);
+    const validEndpoint =
+      endpoint !== undefined &&
+      isClientPath(endpoint.callee, ['HttpApiEndpoint', 'post']) &&
+      endpoint.arguments.length === 3 &&
+      nativeStringArgument(endpoint, 0, 'execute') &&
+      nativeStringArgument(endpoint, 1, expected.endpoint) &&
+      hasEndpointOptions(endpoint);
+    return validGroup && validEndpoint;
+  };
+  if (!hasGroupEndpoint(nativeGroup(apiGroup()))) {
+    return false;
+  }
+  const typeSpans = declarations.flatMap((declaration) =>
+    declaration?.type === 'TSTypeAliasDeclaration' || declaration?.type === 'TSInterfaceDeclaration'
+      ? [declaration]
+      : [],
+  );
+  let escaped = false;
+  new Visitor({
+    Identifier: (identifier) => {
+      if (
+        protectedBindings.has(identifier.name) &&
+        ![...spans, ...typeSpans].some((span) => span.start <= identifier.start && identifier.end <= span.end)
+      ) {
+        escaped = true;
+      }
+    },
+    TSTypeReference: (reference) => {
+      spans.push(reference);
+    },
+  }).visit(parsed.program);
+  return !escaped;
+};
+
+const isProjectedClientEnvelope = (envelope: Expression | undefined): boolean => {
+  if (envelope?.type !== 'ObjectExpression' || envelope.properties.length !== 1) {
+    return false;
+  }
+  const [property] = envelope.properties;
+  if (
+    property?.type !== 'Property' ||
+    property.computed ||
+    property.method ||
+    property.kind !== 'init' ||
+    property.key.type !== 'Identifier' ||
+    property.key.name !== 'payload'
+  ) {
+    return false;
+  }
+  const payload = property.value;
+  return (
+    isClientPath(payload, ['payload']) ||
+    (payload.type === 'ObjectExpression' &&
+      payload.properties.length > 0 &&
+      payload.properties.every(
+        (field) =>
+          field.type === 'Property' &&
+          !field.computed &&
+          !field.method &&
+          field.kind === 'init' &&
+          field.key.type === 'Identifier' &&
+          isClientPath(field.value, ['payload', field.key.name]),
+      ))
+  );
+};
+
+const clientDispatchCallback = (operation: Expression | null | undefined): ArrowFunctionExpression | undefined => {
+  if (
+    operation?.type !== 'ArrowFunctionExpression' ||
+    operation.body.type !== 'CallExpression' ||
+    operation.body.callee.type !== 'MemberExpression' ||
+    operation.body.callee.computed ||
+    operation.body.callee.property.type !== 'Identifier' ||
+    operation.body.callee.property.name !== 'pipe' ||
+    operation.body.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const [flatMap] = operation.body.arguments;
+  if (
+    flatMap?.type !== 'CallExpression' ||
+    !isClientPath(flatMap.callee, ['Effect', 'flatMap']) ||
+    flatMap.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const [callback] = flatMap.arguments;
+  if (
+    callback?.type !== 'ArrowFunctionExpression' ||
+    callback.params.length !== 1 ||
+    callback.params[0]?.type !== 'Identifier' ||
+    callback.params[0].name !== 'client'
+  ) {
+    return undefined;
+  }
+  return callback;
+};
+
+/** Only request-discriminator branches which return the same authorized client call are inert dispatch. */
+const hasClosedRequestDispatch = (source: string, expectation: GovernedClientExpectation): boolean => {
+  const parsed = parseSync('governed-client.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (parsed.errors.length > 0) {
+    return false;
+  }
+  const declarations = parsed.program.body.flatMap((statement) =>
+    statement.type === 'ExportNamedDeclaration' && statement.declaration?.type === 'VariableDeclaration'
+      ? statement.declaration.declarations
+      : [],
+  );
+  const declaration = declarations.find(
+    (entry) => entry.id.type === 'Identifier' && entry.id.name === expectation.authorizedOperation,
+  );
+  const operation = declaration?.init;
+  const callback = clientDispatchCallback(operation);
+  if (callback === undefined) {
+    return false;
+  }
+  const isSchemaMemberGuard = (expression: Expression): boolean => {
+    if (
+      expression.type !== 'CallExpression' ||
+      expression.arguments.length !== 1 ||
+      !isClientPath(expression.arguments[0]?.type === 'SpreadElement' ? undefined : expression.arguments[0], [
+        'payload',
+      ]) ||
+      expression.callee.type !== 'CallExpression' ||
+      !isClientPath(expression.callee.callee, ['Schema', 'is']) ||
+      expression.callee.arguments.length !== 1
+    ) {
+      return false;
+    }
+    const [member] = expression.callee.arguments;
+    return (
+      member?.type === 'MemberExpression' &&
+      member.computed &&
+      member.property.type === 'Literal' &&
+      Predicate.isNumber(member.property.value) &&
+      Number.isInteger(member.property.value) &&
+      member.property.value >= 0 &&
+      isClientPath(member.object, [expectation.ownerApiValue.replace(/Api$/u, 'RequestSchema'), 'members'])
+    );
+  };
+  // A literal-key membership test on the payload selects one union member without changing the call.
+  const isMembershipGuard = (expression: Expression): boolean =>
+    expression.type === 'BinaryExpression' &&
+    expression.operator === 'in' &&
+    expression.left.type === 'Literal' &&
+    Predicate.isString(expression.left.value) &&
+    isClientPath(expression.right, ['payload']);
+  const isGuard = (expression: Expression): boolean => {
+    if (isMembershipGuard(expression)) {
+      return true;
+    }
+    if (expression.type === 'BinaryExpression') {
+      return (
+        expression.operator === '===' &&
+        ['operation', 'mode'].some((field) => isClientPath(expression.left, ['payload', field])) &&
+        expression.right.type === 'Literal' &&
+        Predicate.isString(expression.right.value)
+      );
+    }
+    return isSchemaMemberGuard(expression);
+  };
+  const sendsPayload = (expression: Expression | null): boolean => {
+    if (expression?.type === 'ConditionalExpression') {
+      return isGuard(expression.test) && sendsPayload(expression.consequent) && sendsPayload(expression.alternate);
+    }
+    if (
+      expression?.type !== 'CallExpression' ||
+      !isClientPath(expression.callee, ['client', expectation.endpointGroup, 'execute']) ||
+      expression.arguments.length !== 1
+    ) {
+      return false;
+    }
+    const [envelope] = expression.arguments;
+    return envelope?.type !== 'SpreadElement' && isProjectedClientEnvelope(envelope);
+  };
+  const isMatchedPayload = (expression: Expression | undefined, binding: string): boolean => {
+    if (
+      expression?.type !== 'CallExpression' ||
+      !isClientPath(expression.callee, ['client', expectation.endpointGroup, 'execute']) ||
+      expression.arguments.length !== 1
+    ) {
+      return false;
+    }
+    const [envelope] = expression.arguments;
+    const property =
+      envelope?.type === 'ObjectExpression' && envelope.properties.length === 1 ? envelope.properties[0] : undefined;
+    return (
+      property?.type === 'Property' &&
+      !property.computed &&
+      !property.method &&
+      property.kind === 'init' &&
+      property.key.type === 'Identifier' &&
+      property.key.name === 'payload' &&
+      isClientPath(property.value, [binding])
+    );
+  };
+  const matchedPayloadCallback = (expression: Expression | undefined): boolean =>
+    expression?.type === 'ArrowFunctionExpression' &&
+    !expression.async &&
+    expression.params.length === 1 &&
+    expression.params[0]?.type === 'Identifier' &&
+    expression.body.type !== 'BlockStatement' &&
+    isMatchedPayload(expression.body, expression.params[0].name);
+  const isSchemaMemberPredicate = (expression: Expression | undefined): boolean => {
+    if (
+      expression?.type !== 'CallExpression' ||
+      !isClientPath(expression.callee, ['Schema', 'is']) ||
+      expression.arguments.length !== 1
+    ) {
+      return false;
+    }
+    const [member] = expression.arguments;
+    return (
+      member?.type === 'MemberExpression' &&
+      member.computed &&
+      member.property.type === 'Literal' &&
+      Predicate.isNumber(member.property.value) &&
+      Number.isInteger(member.property.value) &&
+      member.property.value >= 0 &&
+      isClientPath(member.object, [expectation.ownerApiValue.replace(/Api$/u, 'RequestSchema'), 'members'])
+    );
+  };
+  const isClosedMatch = (expression: Expression): boolean => {
+    if (
+      expression.type !== 'CallExpression' ||
+      expression.callee.type !== 'MemberExpression' ||
+      expression.callee.computed ||
+      expression.callee.property.type !== 'Identifier' ||
+      expression.callee.property.name !== 'pipe' ||
+      expression.arguments.length < 2
+    ) {
+      return false;
+    }
+    const start = expression.callee.object;
+    if (
+      start.type !== 'CallExpression' ||
+      !isClientPath(start.callee, ['Match', 'value']) ||
+      start.arguments.length !== 1 ||
+      !isClientPath(start.arguments[0]?.type === 'SpreadElement' ? undefined : start.arguments[0], ['payload'])
+    ) {
+      return false;
+    }
+    return expression.arguments.every((branch, index) => {
+      if (branch.type !== 'CallExpression') {
+        return false;
+      }
+      if (index === expression.arguments.length - 1) {
+        return (
+          isClientPath(branch.callee, ['Match', 'orElse']) &&
+          branch.arguments.length === 1 &&
+          matchedPayloadCallback(branch.arguments[0]?.type === 'SpreadElement' ? undefined : branch.arguments[0])
+        );
+      }
+      return (
+        isClientPath(branch.callee, ['Match', 'when']) &&
+        branch.arguments.length === 2 &&
+        isSchemaMemberPredicate(branch.arguments[0]?.type === 'SpreadElement' ? undefined : branch.arguments[0]) &&
+        matchedPayloadCallback(branch.arguments[1]?.type === 'SpreadElement' ? undefined : branch.arguments[1])
+      );
+    });
+  };
+  // A case body is exactly one dispatched return, optionally wrapped in a single braced block.
+  const isSingleDispatchReturn = (statements: readonly Statement[]): boolean => {
+    const [only] = statements;
+    const inner = only?.type === 'BlockStatement' ? only.body : statements;
+    const [statement] = inner;
+    return inner.length === 1 && statement?.type === 'ReturnStatement' && sendsPayload(statement.argument);
+  };
+  const isDispatchStatement = (statement: Statement): boolean => {
+    if (statement.type === 'ReturnStatement') {
+      return sendsPayload(statement.argument);
+    }
+    if (statement.type === 'BlockStatement') {
+      return statement.body.length > 0 && statement.body.every(isDispatchStatement);
+    }
+    if (statement.type === 'IfStatement') {
+      return (
+        isGuard(statement.test) &&
+        isDispatchStatement(statement.consequent) &&
+        (statement.alternate === null || isDispatchStatement(statement.alternate))
+      );
+    }
+    return (
+      statement.type === 'SwitchStatement' &&
+      isClientPath(statement.discriminant, ['payload', 'operation']) &&
+      statement.cases.length > 0 &&
+      statement.cases.every(
+        (branch) =>
+          branch.test?.type === 'Literal' &&
+          Predicate.isString(branch.test.value) &&
+          isSingleDispatchReturn(branch.consequent),
+      )
+    );
+  };
+  if (callback.body.type === 'ConditionalExpression') {
+    return sendsPayload(callback.body);
+  }
+  if (callback.body.type === 'CallExpression') {
+    return isClosedMatch(callback.body);
+  }
+  if (callback.body.type !== 'BlockStatement') {
+    return false;
+  }
+  const terminal = callback.body.body.at(-1);
+  return (
+    terminal !== undefined &&
+    (terminal.type === 'ReturnStatement' || terminal.type === 'SwitchStatement') &&
+    callback.body.body.every(isDispatchStatement)
+  );
+};
+
+const withoutDispatchSchemaImports = (
+  tokens: readonly GovernedClientToken[],
+  expectation: GovernedClientExpectation,
+): readonly GovernedClientToken[] => {
+  const requestSchema = expectation.ownerApiValue.replace(/Api$/u, 'RequestSchema');
+  // The formatter wraps long named imports and then adds a trailing comma before the closing brace.
+  const isDispatchSchemaImport = (commaIndex: number, name: string, trailingComma: boolean) =>
+    matchesSequence(tokens, commaIndex, [
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, name],
+      ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseBraceToken],
+      [SyntaxKind.FromKeyword],
+      [SyntaxKind.StringLiteral, name === 'Schema' ? 'effect' : expectation.ownerContractImport],
+      [SyntaxKind.SemicolonToken],
+    ]);
+  const isDispatchSchemaName = (name: string | undefined): boolean => name === 'Schema' || name === requestSchema;
+  return tokens.filter((token, index) => {
+    if (
+      identifierOccurrences(tokens, 'Match') > 1 &&
+      ((token.kind === SyntaxKind.CommaToken &&
+        tokenValue(tokens, index + 1) === 'Match' &&
+        tokenKind(tokens, index + 2) === SyntaxKind.CommaToken) ||
+        (token.kind === SyntaxKind.Identifier &&
+          token.value === 'Match' &&
+          tokenKind(tokens, index - 1) === SyntaxKind.CommaToken &&
+          tokenKind(tokens, index + 1) === SyntaxKind.CommaToken))
+    ) {
+      return false;
+    }
+
+    const optionalName = token.kind === SyntaxKind.Identifier ? token.value : tokenValue(tokens, index + 1);
+    if (optionalName !== undefined && isDispatchSchemaName(optionalName)) {
+      const nameIndex = token.kind === SyntaxKind.CommaToken ? index + 1 : index;
+      if (
+        isDispatchSchemaImport(nameIndex - 1, optionalName, false) ||
+        isDispatchSchemaImport(nameIndex - 1, optionalName, true)
+      ) {
+        return false;
+      }
+    }
+    // The trailing comma that followed the removed name must leave with it.
+    const previousName = tokenValue(tokens, index - 1);
+    return !(
+      token.kind === SyntaxKind.CommaToken &&
+      tokenKind(tokens, index - 1) === SyntaxKind.Identifier &&
+      previousName !== undefined &&
+      isDispatchSchemaName(previousName) &&
+      isDispatchSchemaImport(index - 2, previousName, true)
+    );
+  });
+};
+
 const exportedOperationsUseClientHelperAndGateway = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
   expectation: GovernedClientExpectation,
+  source: string,
 ): boolean => {
   const declarations = generatedOperationDeclarations(tokens, expectation);
   if (declarations === undefined) {
@@ -1101,9 +1711,11 @@ const exportedOperationsUseClientHelperAndGateway = (
   ] satisfies readonly ExpectedToken[];
   const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
   const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, generatedInvocationPayloads);
+  const dispatchPrefix = authorizedInvocation.slice(0, -6);
   const authorizedUsesHelper =
-    matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
-    hasInvocationClosure(tokens, authorizedInvocationTail);
+    (matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
+      hasInvocationClosure(tokens, authorizedInvocationTail)) ||
+    (matchesSequence(tokens, authorizedArrow + 1, dispatchPrefix) && hasClosedRequestDispatch(source, expectation));
   const gatewayInvocation = [
     [SyntaxKind.Identifier, 'operationGateway'],
     [SyntaxKind.DotToken],
@@ -1474,7 +2086,7 @@ const sourceTokensMatch = (
       (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) || actualTokens[index]?.value === token.value),
   );
 
-const hasExactSourceTokens = (tokens: readonly GovernedClientToken[], expected: string): boolean =>
+export const hasExactSourceTokens = (tokens: readonly GovernedClientToken[], expected: string): boolean =>
   sourceTokensMatch(withoutTrailingCommas(tokens), withoutTrailingCommas(tokenizeGovernedClient(expected)));
 
 const hasExactSourceTokensAllowingEngagementLifecycleUnionPipe = (
@@ -2045,9 +2657,10 @@ const hasGeneratedModuleApiReadDefinition = (
   entrypointName: string,
   moduleId: string,
   name: string,
+  connectedShorthand = false,
 ): boolean =>
   directObjectHasNoSpread(tokens, read[0], read[1]) &&
-  objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) &&
+  (objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) || connectedShorthand) &&
   ['legalEntityScope', 'permissionTarget', 'policies'].every(
     (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
   ) &&
@@ -2057,23 +2670,180 @@ const hasGeneratedModuleApiReadDefinition = (
     schemaVersion: '1',
   });
 
+const hasDirectCoreReadImport = (program: Program, name: string): boolean => {
+  const imports = program.body.flatMap((statement) =>
+    statement.type === 'ImportDeclaration'
+      ? statement.specifiers.filter((entry) => entry.local.name === name).map((entry) => ({ entry, statement }))
+      : [],
+  );
+  const [binding] = imports;
+  return (
+    imports.length === 1 &&
+    binding?.statement.importKind !== 'type' &&
+    binding?.statement.source.value === '@app/core-runtime' &&
+    binding.entry.type === 'ImportSpecifier' &&
+    binding.entry.importKind !== 'type' &&
+    binding.entry.imported.type === 'Identifier' &&
+    binding.entry.imported.name === name
+  );
+};
+
+const directReadBinding = (program: Program, name: string) => {
+  const bindings = program.body.flatMap((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return declaration?.type === 'VariableDeclaration'
+      ? declaration.declarations
+          .filter((entry) => entry.id.type === 'Identifier' && entry.id.name === name)
+          .map((entry) => ({ expression: entry.init, id: entry.id, kind: declaration.kind }))
+      : [];
+  });
+  const [binding] = bindings;
+  return bindings.length === 1 && binding?.kind === 'const' ? binding : undefined;
+};
+
+const readDescriptorReference = (
+  descriptor: ObjectExpression,
+): Extract<ObjectExpression['properties'][number], { readonly type: 'Property' }> | undefined => {
+  if (
+    descriptor.properties.some(
+      (property) => property.type !== 'Property' || property.computed || property.method || property.kind !== 'init',
+    )
+  ) {
+    return undefined;
+  }
+  const properties = descriptor.properties.filter(
+    (property) =>
+      property.type === 'Property' &&
+      ((property.key.type === 'Identifier' && property.key.name === 'entrypoint') ||
+        (property.key.type === 'Literal' && property.key.value === 'entrypoint')),
+  );
+  const [property] = properties;
+  return properties.length === 1 &&
+    property?.type === 'Property' &&
+    (property.value.type === 'Identifier' || property.value.type === 'CallExpression')
+    ? property
+    : undefined;
+};
+
+const hasOnlyConnectedReadReferences = (program: Program, name: string, permitted: Span[]): boolean => {
+  let escaped = false;
+  new Visitor({
+    Identifier: (identifier) => {
+      if (
+        identifier.name === name &&
+        !permitted.some((span) => span.start <= identifier.start && identifier.end <= span.end)
+      ) {
+        escaped = true;
+      }
+    },
+    TSTypeAliasDeclaration: (declaration) => {
+      permitted.push(declaration);
+    },
+    TSTypeQuery: (query) => {
+      permitted.push(query);
+    },
+    TSTypeReference: (reference) => {
+      permitted.push(reference);
+    },
+  }).visit(program);
+  return !escaped;
+};
+
+const isDirectTenantEntrypointInitializer = (expression: Expression | null | undefined): boolean =>
+  expression?.type === 'CallExpression' &&
+  expression.callee.type === 'Identifier' &&
+  expression.callee.name === 'defineTenantModuleEntrypoint' &&
+  expression.arguments.length === 1 &&
+  expression.arguments[0]?.type === 'ObjectExpression';
+
+/** The descriptor's actual direct immutable Core entrypoint binding, without evaluating values. */
+export const generatedModuleApiEntrypointReference = (
+  source: string,
+  readName: string,
+): { readonly initializer?: string; readonly name: string; readonly shorthand: boolean } | undefined => {
+  const parsed = parseSync('module-read.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (
+    parsed.errors.length > 0 ||
+    !hasDirectCoreReadImport(parsed.program, 'defineRead') ||
+    !hasDirectCoreReadImport(parsed.program, 'defineTenantModuleEntrypoint')
+  ) {
+    return undefined;
+  }
+  const read = directReadBinding(parsed.program, readName);
+  if (
+    read?.expression?.type !== 'CallExpression' ||
+    read.expression.callee.type !== 'Identifier' ||
+    read.expression.callee.name !== 'defineRead'
+  ) {
+    return undefined;
+  }
+  const [descriptor] = read.expression.arguments;
+  if (descriptor?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const property = readDescriptorReference(descriptor);
+  if (property === undefined) {
+    return undefined;
+  }
+  if (isDirectTenantEntrypointInitializer(property.value)) {
+    return {
+      initializer: source.slice(property.value.start, property.value.end),
+      name: `${readName.replace(/Read$/u, '')}Entrypoint`,
+      shorthand: false,
+    };
+  }
+  if (property.value.type !== 'Identifier') {
+    return undefined;
+  }
+  const { name } = property.value;
+  const binding = directReadBinding(parsed.program, name);
+  if (binding === undefined || !isDirectTenantEntrypointInitializer(binding.expression)) {
+    return undefined;
+  }
+  return hasOnlyConnectedReadReferences(parsed.program, name, [binding.id, property.key, property.value])
+    ? { name, shorthand: property.shorthand }
+    : undefined;
+};
+
 export const hasGeneratedModuleApiReadContract = (
   source: string,
   moduleId: string,
   name: string,
   authorization?: GeneratedReadAuthorization,
+  entrypointName = `${toCamelCase(name)}Entrypoint`,
 ): boolean => {
+  const connected = generatedModuleApiEntrypointReference(source, `${toCamelCase(name)}Read`);
+  if (connected?.name !== entrypointName) {
+    return false;
+  }
   const tokens = tokenizeGovernedClient(normalizedModuleApiReadContractSource(source, moduleId));
   const camel = toCamelCase(name);
-  const entrypointName = `${camel}Entrypoint`;
-  const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
+  const entrypointTokens = connected.initializer === undefined ? tokens : tokenizeGovernedClient(connected.initializer);
+  const inlineClose = connected.initializer === undefined ? undefined : findClosingBrace(entrypointTokens, 2);
+  const entrypoint =
+    inlineClose === undefined
+      ? topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false)
+      : ([2, inlineClose] as const);
   const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
   if (entrypoint === undefined || read === undefined) {
     return false;
   }
   return (
-    hasGeneratedModuleApiEntrypointContract(tokens, [entrypoint[0], entrypoint[1]], moduleId, name, authorization) &&
-    hasGeneratedModuleApiReadDefinition(tokens, [read[0], read[1]], entrypointName, moduleId, name)
+    hasGeneratedModuleApiEntrypointContract(
+      entrypointTokens,
+      [entrypoint[0], entrypoint[1]],
+      moduleId,
+      name,
+      authorization,
+    ) &&
+    hasGeneratedModuleApiReadDefinition(
+      tokens,
+      [read[0], read[1]],
+      entrypointName,
+      moduleId,
+      name,
+      connected.shorthand || connected.initializer !== undefined,
+    )
   );
 };
 
@@ -2162,13 +2932,17 @@ export const hasGeneratedGovernedClientContract = (source: string, expectation: 
   const checks = {
     forbidden: !tokens.some(({ value }) => value === 'makeEffectHttpApiClient' || value === 'HttpClientRequest'),
     helper: helper !== undefined,
-    imports: hasExactGeneratedImports(tokens, expectation),
+    imports:
+      hasExactGeneratedImports(tokens, expectation) ||
+      (hasClosedRequestDispatch(source, expectation) &&
+        hasExactGeneratedImports(withoutDispatchSchemaImports(tokens, expectation), expectation)),
     occurrences:
       helper !== undefined &&
       ['makeGovernedEffectBffClient', 'operationGateway', expectation.ownerApiValue, 'Effect', helper.name].every(
         (name) => identifierOccurrences(tokens, name) === 2,
       ),
-    operations: helper !== undefined && exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation),
+    operations:
+      helper !== undefined && exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation, source),
     statements: helper !== undefined && hasOnlyAllowedModuleStatements(tokens, helper, expectation),
     transport:
       helper !== undefined &&

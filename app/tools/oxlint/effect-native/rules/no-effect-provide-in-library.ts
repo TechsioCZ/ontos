@@ -54,13 +54,16 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { unwrapNode as unwrap, memberName as staticMemberName, FUNCTION_TYPES } from '../shared/ast.ts';
-import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { unwrapNode as unwrap, memberName as staticMemberName, FUNCTION_TYPES, walk } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport, isUnshadowedGlobal } from '../shared/bindings.ts';
 import { bindingsFor } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 import { isTestFile, matchesAny } from '../shared/paths.ts';
-import { isInsideCoreReadTestHarnessCallback } from '../shared/native-service-factory.ts';
+import {
+  isInsideCoreReadTestHarnessCallback,
+  isNativeServiceFactoryAcquisition,
+} from '../shared/native-service-factory.ts';
 import {
   isInTypePosition as inTypePosition,
   isNonReferencePosition as nonReferencePosition,
@@ -248,8 +251,83 @@ function isPipeCall(context: Context, call: ESTree.CallExpression, bindings: Pro
   return resolvesToImport(context, callee);
 }
 
+const REFERENCE_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
+
+const closedNodeRuntimeOrigins = (context: Context): boolean => {
+  let imports = 0;
+  for (const statement of context.sourceCode.ast.body) {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
+    const source = statement.source.value;
+    if (['node:module', 'module', 'node:vm', 'vm'].includes(source) || source.startsWith('@effect/platform-node/'))
+      return false;
+    if (source !== '@effect/platform-node') continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
+      if (specifier.type !== 'ImportSpecifier' || specifier.imported.type !== 'Identifier') return false;
+      if (specifier.imported.name === 'NodeRuntime') imports += 1;
+      if (specifier.imported.name === 'default') return false;
+    }
+  }
+  if (imports !== 1) return false;
+  let closed = true;
+  walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (value) => {
+    if (value.type === 'ImportExpression') closed = false;
+    if (
+      value.type === 'Identifier' &&
+      ['require', 'module', 'eval', 'Function', 'globalThis', 'global', 'Reflect'].includes(value.name) &&
+      !nonReferencePosition(value, { keyParents: REFERENCE_KEYS }) &&
+      !isInTypePosition(value) &&
+      isUnshadowedGlobal(context, value, value.name)
+    )
+      closed = false;
+    if (
+      value.type === 'MemberExpression' &&
+      ['constructor', 'prototype', '__proto__'].includes(memberName(value) ?? '')
+    )
+      closed = false;
+  });
+  return closed;
+};
+
+const ownsNodeRuntimeImport = (
+  definition: NonNullable<ReturnType<typeof lookupVariable>>['defs'][number] | undefined,
+): boolean =>
+  definition?.type === 'ImportBinding' &&
+  definition.parent?.type === 'ImportDeclaration' &&
+  definition.parent.source.value === '@effect/platform-node' &&
+  definition.parent.importKind !== 'type' &&
+  definition.node.type === 'ImportSpecifier' &&
+  definition.node.importKind !== 'type' &&
+  definition.node.imported.type === 'Identifier' &&
+  definition.node.imported.name === 'NodeRuntime';
+
+/** A process adapter is a run seam only at its genuine sole immutable imported call. */
+const isNodeRuntimeRunReference = (context: Context, node: ESTree.Node): boolean => {
+  const member = unwrap(node);
+  if (member.type !== 'MemberExpression' || member.computed || member.optional || memberName(member) !== 'runMain')
+    return false;
+  const invocation = member.parent;
+  if (
+    invocation?.type !== 'CallExpression' ||
+    invocation.optional ||
+    invocation.callee !== member ||
+    !isModuleEvaluation(invocation)
+  )
+    return false;
+  const object = unwrap(member.object);
+  if (object.type !== 'Identifier') return false;
+  const variable = lookupVariable(context, object);
+  if (variable?.defs.length !== 1) return false;
+  const [definition] = variable.defs;
+  if (!ownsNodeRuntimeImport(definition)) return false;
+  const references = variable.references.filter((reference) => !isInTypePosition(reference.identifier));
+  if (references.length !== 1 || references[0]?.identifier !== object) return false;
+  return closedNodeRuntimeOrigins(context);
+};
+
 function isRunReference(context: Context, node: ESTree.Node, bindings: ProvideBindings): boolean {
   const callee = unwrap(node);
+  if (isNodeRuntimeRunReference(context, callee)) return true;
   if (callee.type === 'Identifier') return bindings.directRuns.has(callee.name) && resolvesToImport(context, callee);
   if (callee.type !== 'MemberExpression') return false;
   const member = resolveProvideMember(context, callee, bindings);
@@ -392,7 +470,6 @@ function isOuterRunSeam(context: Context, node: ESTree.Node, bindings: ProvideBi
   return state.sawRunSeam;
 }
 
-const REFERENCE_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 function isRuntimeImportReference(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   return (
     !nonReferencePosition(node, { keyParents: REFERENCE_KEYS }) &&
@@ -439,7 +516,10 @@ export const rule = defineRule({
     let bindings: ProvideBindings | null = null;
 
     const report = (node: ESTree.Node, member: string): void => {
-      if (isInsideCoreReadTestHarnessCallback(context, node)) {
+      if (
+        isInsideCoreReadTestHarnessCallback(context, node) ||
+        (member === 'provideService' && isNativeServiceFactoryAcquisition(context, node))
+      ) {
         return;
       }
       context.report({ node, messageId: 'provideInLibrary', data: { member } });

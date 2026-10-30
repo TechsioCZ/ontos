@@ -61,6 +61,18 @@
     },
     {
       "path": "../../packages/email-delivery"
+    },
+    {
+      "path": "../../packages/commerce-order-contracts"
+    },
+    {
+      "path": "../../packages/commerce-cart-contracts"
+    },
+    {
+      "path": "../../packages/commerce-cart-finalization-contracts"
+    },
+    {
+      "path": "../../packages/storefront-registry-contracts"
     }
   ]
 }

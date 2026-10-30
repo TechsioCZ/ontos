@@ -49,7 +49,12 @@ export const executeCreateProductWithAuthorization = (
   Schema.encodeUnknownEffect(CreateProductPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) => client.createProductAction.execute({ payload: encoded })),
+        Effect.flatMap((client) => {
+          if (Schema.is(Schema.toEncoded(CreateProductPayloadSchema.members[1]))(encoded)) {
+            return client.createProductAction.execute({ payload: encoded });
+          }
+          return client.createProductAction.execute({ payload: encoded });
+        }),
       ),
     ),
   );

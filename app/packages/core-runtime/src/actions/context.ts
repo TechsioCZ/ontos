@@ -9,6 +9,7 @@ import type {
   DomainEventContractMap,
   DomainEventReference,
   OutboxMessage,
+  OutboxCompletionDeclaration,
 } from './events.ts';
 import {
   decodedStringBrand,
@@ -80,6 +81,7 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
   readonly addOutboxMessage: (
     domainEvent: DomainEventReference,
     message: OutboxMessage,
+    completion?: OutboxCompletionDeclaration,
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,

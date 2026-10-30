@@ -348,6 +348,63 @@ it.effect('does not fall back when an explicit delivery choice is invalid', () =
   }),
 );
 
+const invalidInvoiceAddresses = {
+  removed: { ...saved, lifecycle: 'REMOVED' },
+  wrongPurpose: { ...saved, purposes: ['DELIVERY'] },
+} as const;
+for (const [name, address] of Object.entries(invalidInvoiceAddresses)) {
+  it.effect(`rejects an explicit ${name} invoice address without reading a valid default`, () =>
+    Effect.gen(function* invalidStoredInvoiceAddress() {
+      let defaultReads = 0;
+      const resolution = yield* resolveInvoiceRecipient(
+        {
+          explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef: ref },
+          purchasingContext,
+          subject: { kind: 'PROFILE', profile },
+        },
+        trustedScope,
+        invoicePorts({
+          loadDefaultBillingAddress: () => {
+            defaultReads += 1;
+            return Effect.succeed({ kind: 'FOUND' as const, value: saved });
+          },
+          loadSavedAddress: () => Effect.succeed(found(address)),
+        }),
+      );
+      expect(resolution.kind).toBe('EXPLICIT_CHOICE_INVALID');
+      expect(defaultReads).toBe(0);
+    }),
+  );
+}
+const invalidDeliveryAddresses = {
+  removed: { ...saved, lifecycle: 'REMOVED', purposes: ['DELIVERY'] },
+  wrongPurpose: saved,
+} as const;
+for (const [name, address] of Object.entries(invalidDeliveryAddresses)) {
+  it.effect(`rejects an explicit ${name} delivery address without reading a valid default`, () =>
+    Effect.gen(function* invalidStoredDeliveryAddress() {
+      let defaultReads = 0;
+      const resolution = yield* resolveDeliveryDestination(
+        {
+          explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef: ref },
+          purchasingContext,
+          subject: { kind: 'PROFILE', profile },
+        },
+        trustedScope,
+        deliveryPorts({
+          loadDefaultDeliveryAddress: () => {
+            defaultReads += 1;
+            return Effect.succeed({ kind: 'FOUND' as const, value: { ...saved, purposes: ['DELIVERY'] as const } });
+          },
+          loadSavedAddress: () => Effect.succeed(found(address)),
+        }),
+      );
+      expect(resolution.kind).toBe('EXPLICIT_CHOICE_INVALID');
+      expect(defaultReads).toBe(0);
+    }),
+  );
+}
+
 it.effect('fails closed with a typed retryable error when tax policy is unavailable', () =>
   Effect.gen(function* unavailableTaxPolicy() {
     const failure = yield* resolveInvoiceRecipient(

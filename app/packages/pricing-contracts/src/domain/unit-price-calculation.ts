@@ -37,7 +37,15 @@ import {
 import type { PricingQuantityBasisAssessment } from './quantity-unit-package-basis.ts';
 
 const sameCatalogHandoff = Schema.toEquivalence(PricingLineSchema.fields.catalog);
-const samePriceIdentityKey = Schema.toEquivalence(PriceIdentityKeySchema);
+const samePriceIdentityKeyFields = Schema.toEquivalence(PriceIdentityKeySchema);
+// The owner stores the Price unit quantity in normalized decimal form while requests carry the caller's form,
+// so the quantity compares by value and every other identity field compares exactly.
+const samePriceIdentityKey = (
+  left: typeof PriceIdentityKeySchema.Type,
+  right: typeof PriceIdentityKeySchema.Type,
+): boolean =>
+  priceDecimalValuesEqual(left.unitBasis.quantity, right.unitBasis.quantity) &&
+  samePriceIdentityKeyFields(left, { ...right, unitBasis: { ...right.unitBasis, quantity: left.unitBasis.quantity } });
 const samePriceRevision = Schema.toEquivalence(PriceRevisionSchema);
 const sameQuantityBasis = Schema.toEquivalence(QuantityTierQuantityBasisSchema);
 

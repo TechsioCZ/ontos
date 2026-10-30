@@ -48,6 +48,8 @@ const HOSTNAMES = [
   'ontos-stage-availability.stage.example.com',
   'ontos-stage-assortment.stage.example.com',
   'ontos-stage-party-registry.stage.example.com',
+  'ontos-stage-commerce-cart.stage.example.com',
+  'ontos-stage-commerce-order.stage.example.com',
   'ontos-stage-commerce-customer-context.stage.example.com',
   'ontos-stage-payment-term-catalog.stage.example.com',
   'ontos-stage-commerce-market-catalog.stage.example.com',

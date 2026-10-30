@@ -162,6 +162,7 @@ It has CONNECT, USAGE on `trust`, and EXECUTE on `trust.register_gateway_scope_g
 - It loses every privilege and default privilege on `party` and `contacts`.
 - It gets no access to `trust`.
 - Its Core Search policies exclude `source_module_key = 'party.registry'`.
+- It can only read `core.outbox_delivery_resolutions`, the operator ledger of dead-delivery redrives and releases. The migration administrator writes it.
 - `TEMPORARY` is revoked from PUBLIC on the application database and granted back to `ontos_runtime` only.
 - The new Core RLS gives it one `FOR ALL ... USING (true) WITH CHECK (true)` policy per table, so its behaviour does not change.
 

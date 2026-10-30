@@ -214,6 +214,69 @@ const ownerEvidence = {
 };
 
 describe('Pricing Promotion contribution composition', () => {
+  it.effect(
+    'preserves a later genuine Currency observation while independently rejecting stale and mismatched inputs',
+    () =>
+      Effect.gen(function* preservesCurrencyObservation() {
+        for (const observedAt of [operationTime, '2026-09-28T08:00:00.001Z']) {
+          let ownerCalls = 0;
+          let capturedRequest: PromotionContributionRequest | undefined;
+          const source: PromotionContributionSourcePort = {
+            evaluate: (request) => {
+              ownerCalls += 1;
+              capturedRequest = request;
+              return Effect.succeed({
+                _tag: 'PROMOTION_CONTRIBUTION_NOT_APPLICABLE',
+                ownerEvidence,
+                reason: 'NO_APPLICABLE_APPLICATION',
+                request,
+              });
+            },
+          };
+          const result = yield* makePricingPromotionCompositionService(source).compose({
+            ...input,
+            currencyCompatibility: { ...input.currencyCompatibility, observedAt },
+          });
+          expect(ownerCalls).toBe(1);
+          expect(capturedRequest?.currencyCompatibility).toEqual({ ...input.currencyCompatibility, observedAt });
+          expect(result.request.candidate.decision.operationTime).toBe(operationTime);
+          expect(result.lines.map(({ rawPreTaxValue }) => rawPreTaxValue.amount)).toEqual(['800', '200']);
+        }
+        const invalidInputs: readonly PricingPromotionCompositionInput[] = [
+          {
+            ...input,
+            currencyCompatibility: { ...input.currencyCompatibility, observedAt: '2026-09-28T07:59:59.999Z' },
+          },
+          { ...input, currencyCompatibility: { ...input.currencyCompatibility, currencyCode: 'EUR' } },
+          {
+            ...input,
+            currencyCompatibility: { ...input.currencyCompatibility, tenantId: '99999999-9999-4999-8999-999999999999' },
+          },
+          { ...input, subjectEvidence: { ...input.subjectEvidence, revalidatedAt: '2026-09-28T07:59:59.999Z' } },
+          { ...input, subjectEvidence: { ...input.subjectEvidence, revalidatedAt: '2026-09-28T08:00:00.001Z' } },
+          {
+            ...input,
+            subjectEvidence: {
+              ...input.subjectEvidence,
+              subject: { ...input.subjectEvidence.subject, tenantId: '99999999-9999-4999-8999-999999999999' },
+            },
+          },
+        ];
+        for (const invalidInput of invalidInputs) {
+          let ownerCalls = 0;
+          const source: PromotionContributionSourcePort = {
+            evaluate: () => {
+              ownerCalls += 1;
+              return Effect.die('Invalid Currency or subject must not reach Promotion');
+            },
+          };
+          const failure = yield* Effect.flip(makePricingPromotionCompositionService(source).compose(invalidInput));
+          expect(Schema.is(PricingPromotionUnverifiable)(failure)).toBe(true);
+          expect(ownerCalls).toBe(0);
+        }
+      }),
+  );
+
   it.effect('uses the exact post-#774 basis and applies owner allocations exactly once', () =>
     Effect.gen(function* appliesExactOwnerAllocations() {
       let capturedRequest: PromotionContributionRequest | undefined;

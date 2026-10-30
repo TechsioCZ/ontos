@@ -14,7 +14,8 @@ export interface CatalogSelectionGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'catalog';
     readonly compositionRevision: string;
-    readonly legalEntityId: string;
+    // Catalog reads that forbid a Legal Entity (selection evidence) are called Tenant-wide.
+    readonly legalEntityId?: string;
     readonly requestCorrelation: string;
   }) => Effect.Effect<CatalogSelectionGatewayConnection, PricingCatalogSelectionUnavailable>;
 }

@@ -1,11 +1,15 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
 import { planGovernedContributionScaffold } from '../governed-contribution/scaffold.mts';
+
+const paymentVertical = 'payment-term-catalog';
+const moduleApiKind = 'module-api';
+const paymentReadPermission = 'payment.term_catalog.read';
 
 const appRoot = path.resolve(import.meta.dirname, '../../..');
 const paymentVerticalPath = 'verticals/payment-term-catalog';
@@ -132,17 +136,17 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
 };
 
 const expectsCompletePaymentSeam = (sources: ReadonlyMap<string, string>): boolean =>
-  hasCompleteGeneratedModuleApiSeam(sources, sharedApiFile, 'payment-term-catalog');
+  hasCompleteGeneratedModuleApiSeam(sources, sharedApiFile, paymentVertical);
 
 it.effect(
   'accepts the Payment-owned companion contract package as an idempotent module API scaffold',
   Effect.fn(function* publicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadPaymentContractSources);
-    const plan = yield* planGovernedContributionScaffold(appRoot, 'module-api', {
+    const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
       authorization: 'context_permission',
       name: 'current-payment-terms',
-      permission: 'payment.term_catalog.read',
-      vertical: 'payment-term-catalog',
+      permission: paymentReadPermission,
+      vertical: paymentVertical,
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadPaymentContractSources);
 
@@ -157,6 +161,43 @@ it.effect(
     });
     expect(expectsCompletePaymentSeam(after)).toBe(true);
   }),
+);
+
+it.effect(
+  'rejects unknown, renamed and duplicate governed support imports without writing owner files',
+  Effect.fn(function* rejectsSupportImportDrift() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const handlerPath = path.join(appRoot, paymentVerticalPath, 'api/index.ts');
+    const original = yield* filesystem.readFileString(handlerPath);
+    for (const changed of [
+      original.replace('GatewayAssertionRedemptionDatabaseLive,', 'UnknownDatabaseLive,'),
+      original.replace(
+        'GatewayAssertionRedemptionDatabaseLive,',
+        'GatewayAssertionRedemptionDatabaseLive as OtherDatabase,',
+      ),
+      original.replace(
+        '// </generated-governed-http-handler-support-imports>',
+        "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';\n// </generated-governed-http-handler-support-imports>",
+      ),
+    ]) {
+      expect(changed).not.toBe(original);
+      const error = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
+        authorization: 'context_permission',
+        name: 'current-payment-terms',
+        permission: paymentReadPermission,
+        vertical: paymentVertical,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...filesystem,
+          readFileString: (file, encoding) =>
+            file === handlerPath ? Effect.succeed(changed) : filesystem.readFileString(file, encoding),
+        }),
+        Effect.flip,
+      );
+      expect(String(error)).toMatch(/unsupported developer content/u);
+      expect(yield* filesystem.readFileString(handlerPath)).toBe(original);
+    }
+  }, Effect.provide(NodeServices.layer)),
 );
 
 it.live(
@@ -196,10 +237,10 @@ it.effect(
   'accepts the Customer-owned affected-use companion package as an idempotent module API scaffold',
   Effect.fn(function* customerPublicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadCustomerContractSources);
-    const plan = yield* planGovernedContributionScaffold(appRoot, 'module-api', {
+    const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
       authorization: 'context_permission',
       name: 'payment-term-affected-use-assessment',
-      permission: 'payment.term_catalog.read',
+      permission: paymentReadPermission,
       vertical: 'commerce-customer-context',
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadCustomerContractSources);

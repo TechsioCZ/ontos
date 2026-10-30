@@ -1,5 +1,6 @@
 import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { PurchaseApprovalFinalBindingAuthority } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
 
 import {
@@ -8,6 +9,9 @@ import {
 } from '../../src/persistence/purchasing-approval-persistence.ts';
 import {
   ConsumePurchaseApprovalInputSchema,
+  ApprovalRevalidationSchema,
+  PurchaseApprovalFinalBindingSchema,
+  PurchaseApprovalFinalBindingEvidenceSchema,
   SubmitPurchaseApprovalRequestInputSchema,
 } from '../../shared/domain/purchasing-approval.ts';
 import type { OperationalScope } from '@app/core-runtime';
@@ -103,47 +107,114 @@ it.effect('keeps Order reconciliation bound to the exact approval commitment', (
     };
     const workflow = yield* purchasingApprovalWorkflowForScope(invoker, scope);
     const invocationId = '50000000-0000-4000-8000-000000000002';
+    const input = Schema.decodeUnknownSync(ConsumePurchaseApprovalInputSchema)({
+      commitmentCorrelationId: 'order-attempt-1',
+      committedAt: '2026-09-09T13:00:00.000Z',
+      counterpartyRef: {
+        moduleId: 'party.registry',
+        resourceId: 'counterparty-1',
+        resourceType: 'party.registry.counterparty',
+        tenantId: scope.tenantId,
+      },
+      decisionBundleHash: 'a'.repeat(64),
+      decisionBundleVersion: 'approval-decision-bundle.v1',
+      finalBinding: {
+        attemptRef: {
+          moduleId: 'test.final-owner',
+          resourceId: 'attempt-1',
+          resourceType: 'test.final-owner.attempt',
+          tenantId: scope.tenantId,
+        },
+        bundleHash: 'f'.repeat(64),
+        bundleRef: {
+          moduleId: 'test.final-owner',
+          resourceId: 'bundle-1',
+          resourceType: 'test.final-owner.bundle',
+          tenantId: scope.tenantId,
+        },
+        bundleVersion: 'TEST.v1',
+      },
+      idempotencyKey: 'order-attempt-1',
+      orderRef: {
+        moduleId: 'commerce.order',
+        resourceId: 'order-1',
+        resourceType: 'commerce.order.order',
+        tenantId: scope.tenantId,
+      },
+      proposalRevisionRef: {
+        moduleId: 'commerce.customer-context',
+        resourceId: 'proposal-1',
+        resourceType: 'commerce.customer-context.purchase-proposal-revision',
+        tenantId: scope.tenantId,
+      },
+      requestRef: {
+        moduleId: 'commerce.customer-context',
+        resourceId: 'request-1',
+        resourceType: 'commerce.customer-context.purchase-approval-request',
+        tenantId: scope.tenantId,
+      },
+      revalidationRef: {
+        moduleId: 'commerce.customer-context',
+        resourceId: 'proof-1',
+        resourceType: 'commerce.customer-context.approval-revalidation',
+        tenantId: scope.tenantId,
+      },
+      storefrontId: 'storefront-1',
+    });
+    const unavailable = yield* Effect.flip(workflow.forActionInvocation(invocationId).consume(input));
+    expect(unavailable.code).toBe('CURRENT_STATE_INDETERMINATE');
+    expect(invokedValues).toBeUndefined();
+    const legacyInput = Schema.decodeUnknownSync(ConsumePurchaseApprovalInputSchema)({
+      commitmentCorrelationId: input.commitmentCorrelationId,
+      committedAt: '2026-09-09T13:00:00.000Z',
+      counterpartyRef: input.counterpartyRef,
+      decisionBundleHash: input.decisionBundleHash,
+      decisionBundleVersion: input.decisionBundleVersion,
+      idempotencyKey: input.idempotencyKey,
+      orderRef: input.orderRef,
+      proposalRevisionRef: input.proposalRevisionRef,
+      requestRef: input.requestRef,
+      storefrontId: input.storefrontId,
+    });
+    // Only the native locked already-CONSUMED branch may accept this historical shape.
+    // The new-consumption branch rejects it; no authority evidence is synthesized.
+    yield* Effect.exit(workflow.forActionInvocation(invocationId).consume(legacyInput));
+    expect(invokedValues?.[0]).toMatchObject({ commitmentCorrelationId: input.commitmentCorrelationId });
+    expect(invokedValues?.[0]).not.toHaveProperty('finalCommitmentEvidence');
+    expect(invokedValues?.[0]).not.toHaveProperty('finalBinding');
+    const binding = Schema.decodeUnknownSync(PurchaseApprovalFinalBindingSchema)(input.finalBinding);
+    const finalEvidence = Schema.decodeUnknownSync(PurchaseApprovalFinalBindingEvidenceSchema)({
+      binding,
+      observedAt: '2026-09-09T12:59:59.000Z',
+      provenance: 'TEST_EXACT_COMMITTED_ORDER',
+      validUntil: '2026-09-09T13:00:01.000Z',
+    });
     const exit = yield* Effect.exit(
-      workflow.forActionInvocation(invocationId).consume(
-        Schema.decodeUnknownSync(ConsumePurchaseApprovalInputSchema)({
-          commitmentCorrelationId: 'order-attempt-1',
-          committedAt: '2026-09-09T13:00:00.000Z',
-          counterpartyRef: {
-            moduleId: 'party.registry',
-            resourceId: 'counterparty-1',
-            resourceType: 'party.registry.counterparty',
-            tenantId: scope.tenantId,
-          },
-          decisionBundleHash: 'a'.repeat(64),
-          decisionBundleVersion: 'approval-decision-bundle.v1',
-          idempotencyKey: 'order-attempt-1',
-          orderRef: {
-            moduleId: 'commerce.order',
-            resourceId: 'order-1',
-            resourceType: 'commerce.order.order',
-            tenantId: scope.tenantId,
-          },
-          proposalRevisionRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: 'proposal-1',
-            resourceType: 'commerce.customer-context.purchase-proposal-revision',
-            tenantId: scope.tenantId,
-          },
-          requestRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: 'request-1',
-            resourceType: 'commerce.customer-context.purchase-approval-request',
-            tenantId: scope.tenantId,
-          },
-          storefrontId: 'storefront-1',
-        }),
-      ),
+      workflow
+        .forActionInvocation(invocationId)
+        .consume(input)
+        .pipe(
+          Effect.provideService(PurchaseApprovalFinalBindingAuthority, {
+            verifyConsumption: () =>
+              Effect.succeed({
+                bindingEvidence: finalEvidence,
+                orderRef: input.orderRef,
+                revalidationRef: Schema.decodeUnknownSync(
+                  Schema.toType(ApprovalRevalidationSchema.fields.revalidationRef),
+                )(input.revalidationRef),
+              }),
+            verifyRevalidation: () => Effect.die('Commit-only TEST authority cannot issue proofs'),
+          }),
+        ),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(invokedValues?.[0]).toMatchObject({
       actionInvocationId: invocationId,
       commitmentCorrelationId: 'order-attempt-1',
+      finalBinding: binding,
+      finalCommitmentEvidence: { bindingEvidence: { provenance: 'TEST_EXACT_COMMITTED_ORDER' } },
       orderRef: { resourceId: 'order-1' },
+      revalidationRef: input.revalidationRef,
     });
   }),
 );
@@ -250,7 +321,7 @@ it.effect('maps stable owner constraints without inspecting sanitized SQL reason
       ['pa_route_empty', 'NO_ELIGIBLE_ROUTE'],
       ['pa_reroute_required', 'NO_ELIGIBLE_ROUTE'],
       ['pa_decision_reason_required', 'PERMISSION_DENIED'],
-      ['pa_revalidation_expired', 'REQUEST_EXPIRED'],
+      ['pa_revalidation_expired', 'OWNER_CONFIRMATION_EXPIRED'],
     ] as const;
     for (const [constraint, code] of cases) {
       const invoker: PurchasingApprovalScopedRoutineInvoker = {

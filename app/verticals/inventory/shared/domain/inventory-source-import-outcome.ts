@@ -101,6 +101,10 @@ export interface InventorySourceImportLedgerPersistence {
     actionInvocationId: InventorySourceImportActionInvocationId,
     itemIndex: number,
   ) => EffectType.Effect<Option.Option<InventorySourceImportLedgerEntry>, InventorySourceImportUnavailable>;
+  /** Existing immutable evidence only; never an authoritative ordering head. Call after the Position lock. */
+  readonly findPersistedSourceHistory: (
+    proposal: InventorySourceAssertionProposal,
+  ) => EffectType.Effect<readonly InventorySourceImportLedgerEntry[], InventorySourceImportUnavailable>;
   readonly lockAndReadAcceptedHistory: (
     proposal: InventorySourceAssertionProposal,
   ) => EffectType.Effect<readonly InventorySourceImportLedgerEntry[], InventorySourceImportUnavailable>;

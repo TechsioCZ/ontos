@@ -151,6 +151,47 @@ export const isNativeServiceFactoryCallback = (context: Context, node: ESTree.No
   return variable !== null && !variable.references.some((reference) => reference.isWrite() && !reference.init);
 };
 
+/** A const service acquisition in the native transaction factory is owner composition.
+ * Only the directly yielded pipeline qualifies; nested handlers and escaped effects do not.
+ */
+export const isNativeServiceFactoryAcquisition = (context: Context, node: ESTree.Node): boolean => {
+  let ancestor: ESTree.Node | null = parentOf(node);
+  while (ancestor !== null && ancestor.type !== 'YieldExpression') {
+    if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(ancestor.type)) return false;
+    ancestor = parentOf(ancestor);
+  }
+  if (
+    ancestor?.type !== 'YieldExpression' ||
+    !ancestor.delegate ||
+    ancestor.parent?.type !== 'VariableDeclarator' ||
+    ancestor.parent.parent?.type !== 'VariableDeclaration' ||
+    ancestor.parent.parent.kind !== 'const'
+  )
+    return false;
+  const acquired = ancestor.argument;
+  if (
+    acquired?.type !== 'CallExpression' ||
+    acquired.callee.type !== 'MemberExpression' ||
+    memberName(acquired.callee) !== 'pipe' ||
+    acquired.callee.object.type !== 'Identifier'
+  )
+    return false;
+  const provision = node.parent;
+  if (
+    acquired.callee.object !== node &&
+    !(provision?.type === 'CallExpression' && provision.callee === node && acquired.arguments.includes(provision))
+  )
+    return false;
+  let owner: ESTree.Node | null = parentOf(ancestor.parent.parent);
+  while (owner !== null) {
+    if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(owner.type)) {
+      return isNativeServiceFactoryCallback(context, owner);
+    }
+    owner = parentOf(owner);
+  }
+  return false;
+};
+
 /** Construction must occur under a proven callback, rather than elsewhere in the importing file. */
 export const isInsideNativeServiceFactoryCallback = (context: Context, node: ESTree.Node): boolean => {
   let ancestor = parentOf(node);

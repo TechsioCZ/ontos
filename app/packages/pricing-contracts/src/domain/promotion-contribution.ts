@@ -319,9 +319,6 @@ export const PromotionContributionAppliedSchema = Schema.TaggedStruct('PROMOTION
     ) {
       return 'Promotion allocations must preserve distinct merchandise and Shipping recipients';
     }
-    if (decimalSumCoefficient(request.prePromotionBasis.lines.map(({ amount }) => amount.amount)) <= 0n) {
-      return 'A zero or non-positive eligible pre-Promotion basis requires the parked owner outcome';
-    }
     if (
       merchandise.some(
         (allocation) =>
@@ -337,6 +334,13 @@ export const PromotionContributionAppliedSchema = Schema.TaggedStruct('PROMOTION
     const occurrenceIds = merchandise.map(({ occurrenceId }) => occurrenceId);
     if (!sameReferences(target.occurrenceIds, occurrenceIds)) {
       return 'Promotion target and merchandise allocation recipients must match exactly';
+    }
+    const eligibleIds = new Set(target.occurrenceIds);
+    const eligibleAmounts = request.prePromotionBasis.lines.flatMap(({ amount, occurrenceId }) =>
+      eligibleIds.has(occurrenceId) ? [amount.amount] : [],
+    );
+    if (decimalSumCoefficient(eligibleAmounts) <= 0n) {
+      return 'A zero or non-positive eligible pre-Promotion basis requires the parked owner outcome';
     }
     if (target.kind === 'MERCHANDISE_ONLY') {
       return shipping.length === 0 ? undefined : 'Shipping requires an explicit basket-with-Shipping target';
@@ -372,16 +376,28 @@ export const PromotionContributionParkedSchema = Schema.TaggedStruct(
     ownerEvidence: PromotionContributionOwnerEvidenceSchema,
     reason: Schema.Literal('NON_POSITIVE_ELIGIBLE_PRE_PROMOTION_BASIS_REQUIRES_OWNER_DECISION'),
     request: PromotionContributionRequestSchema,
+    target: PromotionContributionTargetSchema,
   },
 ).check(
-  Schema.makeFilter(({ applicationIdentity, ownerEvidence, request }) => {
+  Schema.makeFilter(({ applicationIdentity, ownerEvidence, request, target }) => {
     if (
       applicationIdentity.originalApplicationRef !== request.applicationRequestRef ||
       !ownerEvidenceMatchesRequest(ownerEvidence, request)
     ) {
       return 'Parked Promotion outcome must bind the original application and exact request evidence';
     }
-    return decimalSumCoefficient(request.prePromotionBasis.lines.map(({ amount }) => amount.amount)) <= 0n
+    if (
+      target.occurrenceIds.some(
+        (occurrenceId) => !request.prePromotionBasis.lines.some((line) => line.occurrenceId === occurrenceId),
+      )
+    ) {
+      return 'Parked Promotion targets must preserve original Pricing occurrences';
+    }
+    const eligibleIds = new Set(target.occurrenceIds);
+    const eligibleAmounts = request.prePromotionBasis.lines.flatMap(({ amount, occurrenceId }) =>
+      eligibleIds.has(occurrenceId) ? [amount.amount] : [],
+    );
+    return decimalSumCoefficient(eligibleAmounts) <= 0n
       ? undefined
       : 'The parked Promotion outcome is only valid for a zero or non-positive eligible basis';
   }),

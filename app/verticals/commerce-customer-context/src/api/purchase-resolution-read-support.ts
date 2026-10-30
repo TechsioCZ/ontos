@@ -1,11 +1,8 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied, defineReadConditionalPermission } from '@app/core-runtime';
-import type {
-  ReadConditionalPermissionDeclaration,
-  ReadHandlerContext,
-  ReadHandlerResult,
-  ResolvedReadConditionalPermissionRequirement,
-} from '@app/core-runtime';
+import type { ReadConditionalPermissionDeclaration, ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect } from 'effect';
+import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
+import { profileTarget } from './address-read-support.ts';
 import type {
   PurchaseResolutionContextClaim,
   PurchaseResolutionSubject,
@@ -24,10 +21,18 @@ type ResourceReference = Readonly<{
   readonly resourceType: string;
 }>;
 
+type PurchaseResolutionPermissionSubject =
+  | PurchaseResolutionSubject
+  | Readonly<{
+      readonly kind: 'PROFILE_SAVED_ADDRESS';
+      readonly profile: AddressBookProfile;
+      readonly savedAddressRef: ResourceReference;
+    }>;
+
 export const makePurchaseResolutionPermission = <Input extends PurchaseResolutionReadInput>(
   savedAddressRefFor: (input: Input) => ResourceReference | undefined,
 ): ReadConditionalPermissionDeclaration<Input> =>
-  defineReadConditionalPermission<Input, PurchaseResolutionSubject>({
+  defineReadConditionalPermission<Input, PurchaseResolutionPermissionSubject>({
     branches: {
       GUEST: {
         requiredKinds: ['module'],
@@ -35,53 +40,31 @@ export const makePurchaseResolutionPermission = <Input extends PurchaseResolutio
       },
       PROFILE: {
         requiredKinds: ['business_permission', 'resource_read'],
-        resolve: (input, subject, scope) => {
-          const { profile } = subject;
-          const resources: ResolvedReadConditionalPermissionRequirement[] = [
-            {
-              kind: 'resource_read',
-              permission: 'read',
-              resource: {
-                moduleId: profile.profileRef.moduleId,
-                resourceId: profile.profileRef.resourceId,
-                resourceType: profile.profileRef.resourceType,
-              },
-            },
-          ];
-          const savedAddressRef = savedAddressRefFor(input);
-          if (savedAddressRef !== undefined) {
-            resources.push({
-              kind: 'resource_read',
-              permission: 'read',
-              resource: savedAddressRef,
-            });
-          }
-          const businessPermission =
-            profile.kind === 'COUNTERPARTY'
-              ? {
-                  permission: 'counterparty.address_book.use' as const,
-                  target: {
-                    counterpartyId: profile.counterpartyRef.resourceId,
-                    kind: 'counterparty' as const,
-                    legalEntityId: scope.legalEntityId ?? '',
-                    tenantId: scope.tenantId,
-                  },
-                }
-              : {
-                  permission: 'retail.address_book.use' as const,
-                  target: {
-                    kind: 'retail_profile' as const,
-                    legalEntityId: scope.legalEntityId ?? '',
-                    profileId: profile.profileRef.resourceId,
-                    tenantId: scope.tenantId,
-                  },
-                };
-          return [{ businessPermission, kind: 'business_permission' as const }, ...resources];
-        },
+        resolve: (_input, { profile }, scope) => [
+          profileTarget({ profile }, scope),
+          { kind: 'resource_read', permission: 'read', resource: profile.profileRef },
+        ],
+      },
+      PROFILE_SAVED_ADDRESS: {
+        requiredKinds: ['business_permission', 'resource_read', 'resource_read'],
+        resolve: (_input, { profile, savedAddressRef }, scope) => [
+          profileTarget({ profile }, scope),
+          { kind: 'resource_read', permission: 'read', resource: profile.profileRef },
+          { kind: 'resource_read', permission: 'read', resource: savedAddressRef },
+        ],
       },
     },
     permissionKey: 'module.access',
-    select: ({ subject }) => subject,
+    select: (input) => {
+      const { subject } = input;
+      if (subject.kind === 'GUEST') {
+        return subject;
+      }
+      const savedAddressRef = savedAddressRefFor(input);
+      return savedAddressRef === undefined
+        ? subject
+        : { kind: 'PROFILE_SAVED_ADDRESS', profile: subject.profile, savedAddressRef };
+    },
   });
 
 type PurchaseResolutionReadHandlerConfig<Input extends PurchaseResolutionReadInput, Resolution, Services> = Readonly<{

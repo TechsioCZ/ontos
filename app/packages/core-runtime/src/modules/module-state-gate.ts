@@ -261,7 +261,7 @@ export const makeModuleStateGate = (stateService: TenantModuleStateServiceContra
         .select({ tenantId: tenants.tenantId })
         .from(tenants)
         .where(eq(tenants.tenantId, tenantId))
-        .for('update')
+        .for('no key update')
         .pipe(Effect.mapError(unavailable));
       if (tenantRows[0] === undefined) {
         return yield* unavailable();

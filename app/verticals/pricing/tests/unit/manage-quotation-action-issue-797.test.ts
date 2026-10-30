@@ -276,6 +276,48 @@ describe('Quotation management Action', () => {
     }),
   );
 
+  it.effect('evaluates a retained request at the trusted issuance instant, never at its retained operation time', () =>
+    Effect.gen(function* evaluatesAtTrustedInstant() {
+      const issuanceRequest = yield* freshIssuanceRequest();
+      const { decision } = issuanceRequest.currentResult.commercialTotal;
+      // Producers retain the instant captured before their per-line Catalog requests, so it can predate
+      // every Catalog assessment. Pricing must replace it before any quantity-basis temporal binding runs.
+      const retainedOperationTime = DateTime.formatIso(
+        DateTime.subtract(DateTime.makeUnsafe(decision.operationTime), { minutes: 1 }),
+      );
+      const actionPayload = yield* Schema.decodeEffect(ManageQuotationPayloadSchema)({
+        candidateRef: issuanceRequest.binding.candidateRef,
+        currentDecision: {
+          decision: { ...decision, operationTime: retainedOperationTime },
+          subject: decision.purchasingContext.subject,
+        },
+        reason: 'Issue a retained preproposal request',
+      });
+      const evaluatedAt: string[] = [];
+      const quotation = yield* applyQuotationManagement(
+        actionPayload,
+        {
+          actionInvocationId: '79700000-0000-4000-8000-000000000030',
+          legalEntityId: decision.commercialScope.sellingLegalEntityId,
+          principalId: '79700000-0000-4000-8000-000000000031',
+          tenantId: decision.tenantId,
+          trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(decision.operationTime)),
+        },
+        {
+          lookupInvocation: () => Effect.succeedNone,
+          resolveFresh: ({ currentDecision }) => {
+            evaluatedAt.push(currentDecision.decision.operationTime);
+            return Effect.succeed(issuanceRequest);
+          },
+          store: (command) => Effect.succeed(command.quotation),
+        },
+      );
+      expect(evaluatedAt).toEqual([decision.operationTime]);
+      expect(quotation.quotation.quotedResult.decision.operationTime).toBe(decision.operationTime);
+      expect(quotation.quotation.quotedResult.decision.operationTime).not.toBe(retainedOperationTime);
+    }),
+  );
+
   it.effect(
     'rejects a fresh authority response bound to another authenticated subject before issuance or storage',
     () =>

@@ -530,7 +530,7 @@ it.live('exposes only the six governed mutations and four governed reads over fo
         readonly executable_routines: readonly string[];
         readonly forced_tables: number;
         readonly private_routines_executable: boolean;
-        readonly runtime_table_grants: number;
+        readonly runtime_table_grants: readonly string[];
       }>(
         sql`select
           (select array_agg(
@@ -545,7 +545,8 @@ it.live('exposes only the six governed mutations and four governed reads over fo
           has_function_privilege('ontos_runtime', 'commerce_market_catalog.assert_operation_scope(uuid,uuid)', 'EXECUTE')
             or has_function_privilege('ontos_runtime', 'commerce_market_catalog.advance_completeness_generation(uuid,uuid)', 'EXECUTE')
             as private_routines_executable,
-          (select count(*)::integer from information_schema.role_table_grants
+          (select array_agg(format('%s:%s', table_name, privilege_type) order by table_name, privilege_type)
+            from information_schema.role_table_grants
             where grantee = 'ontos_runtime' and table_schema = 'commerce_market_catalog') as runtime_table_grants`,
         'objects',
       );
@@ -564,7 +565,11 @@ it.live('exposes only the six governed mutations and four governed reads over fo
         ],
         forced_tables: 6,
         private_routines_executable: false,
-        runtime_table_grants: 0,
+        runtime_table_grants: [
+          'gateway_assertion_redemptions:DELETE',
+          'gateway_assertion_redemptions:INSERT',
+          'gateway_assertion_redemptions:SELECT',
+        ],
       });
     }),
   ),

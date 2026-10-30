@@ -185,6 +185,7 @@ const handleCreatePurchaseProposalRevision = Effect.fn('CreatePurchaseProposalRe
     });
   }
   const ownerEvidence = yield* loadCandidateCurrent({
+    candidateProposal: proposal,
     payload: {
       counterpartyRef,
       expectedSourceRevisions: payload.verifiedEvidence.sourceRevisions,

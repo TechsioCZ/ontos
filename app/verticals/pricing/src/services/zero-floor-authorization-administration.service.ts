@@ -579,7 +579,9 @@ export interface ZeroFloorAuthorizationAdministrationService {
   readonly create: ZeroFloorAuthorizationPersistence['create'];
   readonly lookupResult: ZeroFloorAuthorizationPersistence['lookupResult'];
   readonly manage: ZeroFloorAuthorizationPersistence['manage'];
-  readonly readCurrentSet: ZeroFloorAuthorizationPersistence['readCurrentSet'];
+  readonly readCurrentSet: (
+    query: ReadCurrentZeroFloorAuthorizationSetPersistenceQuery,
+  ) => ReturnType<ZeroFloorAuthorizationPersistence['readCurrentSet']>;
   readonly readGovernanceProof: ZeroFloorAuthorizationPersistence['readGovernanceProof'];
   readonly readSchedule: ZeroFloorAuthorizationPersistence['readSchedule'];
   readonly verifyGeneration: ZeroFloorAuthorizationPersistence['verifyGeneration'];

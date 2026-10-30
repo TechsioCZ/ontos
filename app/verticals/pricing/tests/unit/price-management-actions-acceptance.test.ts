@@ -341,6 +341,7 @@ const actionPrincipal = {
 const priceActionPrincipal = { ...actionPrincipal, legalEntityId };
 const supportServices = (onSet?: () => void) => ({
   loadCurrent: () => Effect.die('The management Action does not use the read service'),
+  loadForCanonicalAdmission: () => Effect.die('The management Action does not use the read service'),
   setCurrent: () => {
     onSet?.();
     return Effect.succeed({ outcome: 'CREATED' as const, result: supportResult });

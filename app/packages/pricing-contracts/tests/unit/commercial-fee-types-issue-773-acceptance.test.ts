@@ -384,6 +384,59 @@ const decodeCalculationResult = Schema.decodeUnknownSync(PricingCommercialFeeCal
 });
 
 describe('Issue #773 Pricing Commercial Fee contract acceptance', () => {
+  it('accepts later actual observations while retaining requested-time effectivity (#1242)', () => {
+    const original = currentSetFor([current]);
+    const observedAt = '2026-09-27T10:00:00.250Z';
+    const feeSet = {
+      ...original,
+      completenessEvidence: { ...original.completenessEvidence, observedAt },
+      currentnessEvidence: { ...original.currentnessEvidence, observedAt },
+      observedAt,
+    };
+    const input = {
+      baseLineValue: { amount: '100', currencyCode: 'CZK' },
+      currencySupport,
+      decision,
+      feeSet,
+      occurrenceId,
+      pricePath: {
+        priceRef: {
+          moduleId: 'commerce.pricing',
+          resourceId: '15151515-1515-4151-8151-151515151515',
+          resourceType: 'commerce.pricing.price',
+          tenantId,
+        },
+        priceRevisionId: '16161616-1616-4161-8161-161616161616',
+        source: 'NO_GROUP_PRICE',
+      },
+    };
+    expect(decodeCalculationInput(input).feeSet.observedAt).toBe(observedAt);
+    expect(decodeCalculationInput({ ...input, feeSet: { ...feeSet, fees: [] } }).feeSet.fees).toEqual([]);
+    expect(() =>
+      decodeCalculationInput({
+        ...input,
+        feeSet: {
+          ...feeSet,
+          fees: [
+            { ...current, effectivePeriod: { ...current.effectivePeriod, effectiveFrom: '2026-09-27T10:00:00.100Z' } },
+          ],
+        },
+      }),
+    ).toThrow();
+    const beforeRequest = '2026-09-27T09:59:59.999Z';
+    expect(() =>
+      decodeCalculationInput({
+        ...input,
+        feeSet: {
+          ...feeSet,
+          completenessEvidence: { ...feeSet.completenessEvidence, observedAt: beforeRequest },
+          currentnessEvidence: { ...feeSet.currentnessEvidence, observedAt: beforeRequest },
+          observedAt: beforeRequest,
+        },
+      }),
+    ).toThrow();
+  });
+
   it('accepts only the two Launch families and fixed bases, with zero valid and negative amounts invalid', () => {
     expect(decodeFamily('RECYCLING_FEE')).toBe('RECYCLING_FEE');
     expect(decodeFamily('COPYRIGHT_FEE')).toBe('COPYRIGHT_FEE');

@@ -15,11 +15,46 @@ import {
   TenantModuleStateService,
   TrustedPrincipalContextSchema,
   loadDatabaseConnectionPair,
+  loadDatabaseIdentityConnections,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
   makePrincipalResolver,
   makeTenantModuleStateService,
+  ActiveApplicationCompositionSnapshotSchema,
+  bindSelfApiKeyAction,
+  changeTenantModuleStateAction,
+  InstalledModuleCatalogService,
+  CorePersistenceLive,
+  DatabaseConfig,
+  makeContextAccessLive,
+  makeContextPermissionRelationshipMutationLive,
+  PrincipalResolverLive,
+  runAction,
 } from '@app/core-runtime';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { PgClient } from '@effect/sql-pg';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { Effect, Layer, Predicate, Schema } from 'effect';
+import {
+  Config,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+  Stream,
+} from 'effect';
+import { HttpServer, HttpServerResponse } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
+import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -46,8 +81,9 @@ import {
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
+import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
-import { account, authRelations, session, user } from '../../api/auth/db/schema.ts';
+import { account, apikey, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
@@ -1398,6 +1434,7 @@ it.live(
     const secondPrincipalId = '41000000-0000-4000-8000-000000000002';
     const firstLegalEntityId = '36000000-0000-4000-8000-000000000001';
     const secondLegalEntityId = '36000000-0000-4000-8000-000000000002';
+    const fallbackLegalEntityId = '36000000-0000-4000-8000-000000000003';
     const firstAuthBindingId = '46000000-0000-4000-8000-000000000001';
     const secondAuthBindingId = '46000000-0000-4000-8000-000000000002';
     const legalEntityByTenant = new Map([
@@ -1478,7 +1515,9 @@ it.live(
         coreDatabase.delete(principals).where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
         coreDatabase
           .delete(legalEntities)
-          .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
+          .where(
+            inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId, fallbackLegalEntityId]),
+          ),
         coreDatabase.delete(tenants).where(inArray(tenants.tenantId, fixtureTenants)),
       ]);
     });
@@ -1776,6 +1815,71 @@ it.live(
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
     assertOptionalField(sessionsBeforeSwitch[0], 'activeLegalEntityId', firstLegalEntityId);
+    // Q01=A: retire saved A, then expose the sole active authorized B in the same Tenant.
+    // Only the candidate/permission services are fixture-controlled; AuthenticationService,
+    // Better Auth session persistence, the gateway route, signing and verification remain real.
+    yield* coreDatabase.insert(legalEntities).values({
+      legalEntityId: fallbackLegalEntityId,
+      legalName: 'Fallback legal entity',
+      registrationCountry: 'CZ',
+      registrationNumber: 'AUTH-MULTI-3',
+      status: 'active',
+      tenantId: firstTenantId,
+    });
+    yield* coreDatabase
+      .update(legalEntities)
+      .set({ status: 'suspended' })
+      .where(eq(legalEntities.legalEntityId, firstLegalEntityId));
+    legalEntityByTenant.set(firstTenantId, {
+      legalEntityId: fallbackLegalEntityId,
+      legalName: 'Fallback legal entity',
+    });
+    const issueForExpectedEntity = (legalEntityId?: string) =>
+      Effect.tryPromise(() =>
+        runtime.handler(
+          new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+            body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision, legalEntityId }),
+            headers: new Headers({
+              'content-type': 'application/json',
+              cookie: authenticatedCookie,
+              origin: configuration.baseUrl,
+            }),
+            method: 'POST',
+          }),
+        ),
+      );
+    const staleExpectedResponse = yield* issueForExpectedEntity(firstLegalEntityId);
+    expect(staleExpectedResponse.status).toBe(403);
+    const staleExpectedBody = yield* Effect.tryPromise(() => staleExpectedResponse.json());
+    expect(staleExpectedBody).not.toHaveProperty('token');
+    const persistedFallback = yield* authDatabase
+      .select({
+        activeLegalEntityId: session.activeLegalEntityId,
+        activeTenantId: session.activeTenantId,
+      })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assertOptionalField(persistedFallback[0], 'activeTenantId', firstTenantId);
+    assertOptionalField(persistedFallback[0], 'activeLegalEntityId', fallbackLegalEntityId);
+    const resolvedFallback = yield* authentication
+      .resolveShellContext(authenticatedHeaders)
+      .pipe(Effect.provide(multiAuthenticationContextLayer));
+    expect(resolvedFallback.state).toBe('authenticated');
+    if (resolvedFallback.state === 'authenticated') {
+      expect(resolvedFallback.principal.legalEntityId).toBe(fallbackLegalEntityId);
+      expect(resolvedFallback.principal.tenantId).toBe(firstTenantId);
+    }
+    for (const expectedEntity of [undefined, fallbackLegalEntityId]) {
+      const fallbackResponse = yield* issueForExpectedEntity(expectedEntity);
+      const { principal: fallbackPrincipal } = yield* verifiedGatewayAssertion(
+        fallbackResponse,
+        pair.publicKey,
+        testRevision,
+      );
+      expect(fallbackPrincipal.legalEntityId).toBe(fallbackLegalEntityId);
+      expect(fallbackPrincipal.tenantId).toBe(firstTenantId);
+      expect(fallbackPrincipal.principalId).toBe(firstPrincipalId);
+    }
     const switchResponse = yield* Effect.tryPromise(() => runtime.handler(tenantSwitchRequest(secondTenantId)));
     expect(switchResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => switchResponse.json())).toEqual({
@@ -1948,3 +2052,771 @@ it.live(
     );
   }),
 );
+
+class TenantPartyGatewayTestError extends Schema.TaggedError<TenantPartyGatewayTestError>()(
+  'TenantPartyGatewayTestError',
+  { reason: Schema.String },
+) {}
+
+const PartyOwnerMarkerSchema = Schema.Struct({
+  appId: Schema.Literal('party-registry'),
+  buildMarker: Schema.String.check(Schema.isMinLength(1)),
+});
+const PartyOwnerReadySchema = Schema.Struct({
+  marker: PartyOwnerMarkerSchema,
+  port: Schema.Number,
+  type: Schema.Literal('ready'),
+});
+const ShellOwnerReadySchema = Schema.Struct({
+  marker: Schema.Struct({ appId: Schema.Literal('shell-super-app'), buildMarker: Schema.String }),
+  port: Schema.Number,
+  type: Schema.Literal('ready'),
+});
+const PartyGatewayReferenceSchema = Schema.Struct({
+  moduleId: Schema.Literal('party.registry'),
+  resourceId: Schema.String.pipe(Schema.brand('ResourceId')),
+  resourceType: Schema.Literal('party.registry.party'),
+  tenantId: Schema.String.pipe(Schema.brand('TenantId')),
+});
+const PartyCreatedResponseSchema = Schema.Struct({
+  outcome: Schema.Literal('CREATED'),
+  partyRef: PartyGatewayReferenceSchema,
+});
+const PartyGatewayDetailResponseSchema = Schema.Struct({
+  factHistory: Schema.OptionFromNullOr(Schema.Array(Schema.Struct({ partyRef: PartyGatewayReferenceSchema }))),
+  party: Schema.Struct({
+    displayName: Schema.String,
+    partyRef: PartyGatewayReferenceSchema,
+    partyType: Schema.Literal('ORGANIZATION'),
+  }),
+});
+const tenantPartyServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(NodeServices.layer),
+);
+const tenantPartyArtifactServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+
+const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts')(
+  function* prepareTenantPartyArtifacts() {
+    const toolchainPaths: Record<string, string> = {};
+    for (const key of ['PATH', 'HOME', 'MISE_DATA_DIR', 'MISE_CACHE_DIR', 'MISE_CONFIG_DIR', 'MISE_INSTALL_PATH']) {
+      const value = yield* Config.option(Config.String(key));
+      if (Option.isSome(value)) {
+        toolchainPaths[key] = value.value;
+      }
+    }
+    const toolchainEnvironment = { ...toolchainPaths, APP_ENV_PATH: '/dev/null' };
+    const crypto = yield* Crypto.Crypto;
+    const suffix = yield* crypto.randomUUIDv4();
+    const artifact = path.join(appRoot, 'verticals/party-registry/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
+    yield* Effect.addFinalizer(() => Effect.promise(() => rm(artifact, { force: true })));
+    const bundle = yield* ChildProcess.make(
+      'mise',
+      [
+        'exec',
+        '--',
+        'pnpm',
+        'exec',
+        'esbuild',
+        'verticals/party-registry/tests/support/tenant-party-http.ts',
+        '--bundle',
+        '--platform=node',
+        '--format=esm',
+        '--packages=external',
+        `--outfile=${artifact}`,
+      ],
+      { cwd: appRoot, env: toolchainEnvironment, extendEnv: false, stderr: 'pipe', stdout: 'pipe' },
+    );
+    const [bundleExit] = yield* Effect.all(
+      [bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)],
+      { concurrency: 3 },
+    );
+    expect(bundleExit).toBe(0);
+    const description = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
+      cwd: appRoot,
+      env: toolchainEnvironment,
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    const [markerLines, descriptionExit] = yield* Effect.all(
+      [
+        description.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+        description.exitCode,
+        Stream.runDrain(description.stderr),
+      ],
+      { concurrency: 3 },
+    );
+    expect(descriptionExit).toBe(0);
+    const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PartyOwnerMarkerSchema))(markerLines[0]);
+    const shellArtifact = path.join(appRoot, 'apps/shell-super-app/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
+    yield* Effect.addFinalizer(() => Effect.promise(() => rm(shellArtifact, { force: true })));
+    const shellBundle = yield* ChildProcess.make(
+      'mise',
+      [
+        'exec',
+        '--',
+        'pnpm',
+        'exec',
+        'esbuild',
+        'apps/shell-super-app/tests/support/tenant-party-shell-http.ts',
+        '--bundle',
+        '--platform=node',
+        '--format=esm',
+        '--packages=external',
+        `--outfile=${shellArtifact}`,
+      ],
+      { cwd: appRoot, env: toolchainEnvironment, extendEnv: false, stderr: 'pipe', stdout: 'pipe' },
+    );
+    const [shellBundleExit] = yield* Effect.all(
+      [shellBundle.exitCode, Stream.runDrain(shellBundle.stderr), Stream.runDrain(shellBundle.stdout)],
+      { concurrency: 3 },
+    );
+    expect(shellBundleExit).toBe(0);
+    return { artifact, marker, shellArtifact, toolchainEnvironment };
+  },
+);
+const TenantPartyArtifacts = Context.Service<Effect.Success<ReturnType<typeof prepareTenantPartyArtifacts>>>(
+  'TenantPartyGatewayTest.artifacts',
+);
+const tenantPartyArtifactsLayer = Layer.effect(TenantPartyArtifacts, prepareTenantPartyArtifacts()).pipe(
+  Layer.provideMerge(tenantPartyArtifactServices),
+);
+
+const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(function* prepareTenantPartyCase(
+  quotaOnly: boolean,
+) {
+  const { artifact, marker, shellArtifact, toolchainEnvironment } = yield* TenantPartyArtifacts;
+  const crypto = yield* Crypto.Crypto;
+  const suffix = yield* crypto.randomUUIDv4();
+  const snapshot = yield* makeCompositionSnapshot(
+    installedContracts(['party.registry']).map((contract) => ({ ...contract, deployment: marker })),
+    3_600_000,
+  );
+  const isolated = yield* makeIsolatedNativeDatabaseFixture({
+    compositionSnapshot: snapshot,
+    mode: 'schema-only',
+    purpose: 'stabilization-1267-party-gateway',
+  });
+  const snapshotDocument = yield* Schema.encodeEffect(
+    Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+  )(snapshot);
+  const source = yield* HttpServer.HttpServer;
+  yield* source.serve(
+    Effect.succeed(
+      HttpServerResponse.text(snapshotDocument, {
+        contentType: 'application/json',
+      }),
+    ),
+  );
+  if (!Schema.is(Schema.Struct({ port: Schema.Number }))(source.address)) {
+    return yield* new TenantPartyGatewayTestError({ reason: 'The composition source requires a TCP address' });
+  }
+  const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
+  const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
+  const publicJwk = yield* Effect.tryPromise(() => exportJWK(pair.publicKey));
+  const sourceIdentities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+  const partyUrl = new URL(sourceIdentities.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString);
+  const issuerUrl = new URL(sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString);
+  const sourceShared = sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id];
+  for (const identity of [PARTY_REGISTRY_REQUEST_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY]) {
+    const canonical = sourceIdentities.runtime[identity.id];
+    const address = new URL(canonical.connectionString);
+    const exactSourceAndOwnedTarget = [
+      canonical.database === sourceIdentities.admin.database,
+      canonical.database === sourceShared.database,
+      canonical.host === sourceIdentities.admin.host,
+      canonical.port === sourceIdentities.admin.port,
+      canonical.host === sourceShared.host,
+      canonical.port === sourceShared.port,
+      canonical.user === identity.role,
+      canonical.host === isolated.connections.admin.host,
+      canonical.port === isolated.connections.admin.port,
+      isolated.connections.runtime.host === isolated.connections.admin.host,
+      isolated.connections.runtime.port === isolated.connections.admin.port,
+      isolated.connections.runtime.database === isolated.connections.admin.database,
+      isolated.connections.admin.database !== sourceIdentities.admin.database,
+      isolated.connections.admin.database !== sourceShared.database,
+      ['localhost', '127.0.0.1'].includes(canonical.host),
+      address.search === '',
+      address.hash === '',
+    ].every(Boolean);
+    if (!exactSourceAndOwnedTarget) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'Dedicated identity target was refused' });
+    }
+  }
+  partyUrl.pathname = `/${isolated.connections.runtime.database}`;
+  issuerUrl.pathname = `/${isolated.connections.runtime.database}`;
+  const partyConnections = yield* loadDatabaseConnectionPair({
+    environment: {
+      DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+      PARTY_REGISTRY_DATABASE_URL: partyUrl.href,
+    },
+    envPath: '/dev/null',
+    identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+  });
+  const issuerConnections = yield* loadDatabaseConnectionPair({
+    environment: {
+      DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerUrl.href,
+    },
+    envPath: '/dev/null',
+    identity: SHELL_GATEWAY_ISSUER_IDENTITY,
+  });
+  expect(partyConnections.runtime.database).toBe(isolated.connections.runtime.database);
+  expect(issuerConnections.runtime.database).toBe(isolated.connections.runtime.database);
+  const issuer = 'https://shell.example.test';
+  const kid = `party-${suffix}`;
+  const environment = {
+    APP_ENV_PATH: '/dev/null',
+    DATABASE_URL: isolated.connections.runtime.connectionString,
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `http://127.0.0.1:${source.address.port}/active-composition`,
+    ONTOS_GATEWAY_ISSUER: issuer,
+    ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid, use: 'sig' }] }),
+  };
+  const sourceConfiguration = yield* loadAuthConfig({ envPath: '/dev/null' });
+  const configuration = { ...sourceConfiguration, connectionString: isolated.connections.runtime.connectionString };
+  expect(new URL(configuration.connectionString).pathname === `/${isolated.connections.runtime.database}`).toBe(true);
+  const authPersistence = yield* makeAuthDatabase(configuration);
+  const resolverContext = yield* Layer.build(
+    PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
+      Layer.provide(CorePersistenceLive),
+      Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
+    ),
+  );
+  const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+    Effect.provideService(AuthConfig, configuration),
+    Effect.provideService(AuthDatabase, authPersistence),
+    Effect.provideContext(resolverContext),
+  );
+  const fixtureEmail = `party-gateway-${suffix}@example.test`;
+  const providerSubjectId = yield* authentication.createFixtureUser(fixtureEmail, 'Party gateway fixture', password);
+  const fixture = yield* Effect.acquireRelease(
+    makeLiveOperationFixture({
+      actionKeys: [
+        bindSelfApiKeyAction.descriptor.actionKey,
+        changeTenantModuleStateAction.descriptor.actionKey,
+        'party.registry.create-party',
+      ],
+      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      compositionRevision: snapshot.composition.revision,
+      managerIdentityAdmin: !quotaOnly,
+      managerProviderSubjectId: providerSubjectId,
+      runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+    }),
+    (resource) => resource.close().pipe(Effect.orDie),
+  );
+  const permissionEnvironment = {
+    ...fixture.permissionEnvironment,
+    SPICEDB_PRESHARED_KEY: Redacted.value(fixture.permissionEnvironment.SPICEDB_PRESHARED_KEY),
+  };
+  const runtimeContext = yield* Layer.build(fixture.layer);
+  return {
+    artifact,
+    authentication,
+    authPersistence,
+    configuration,
+    crypto,
+    environment,
+    fixture,
+    fixtureEmail,
+    isolated,
+    issuer,
+    issuerConnections,
+    kid,
+    marker,
+    pair,
+    partyConnections,
+    permissionEnvironment,
+    privateJwk,
+    quotaOnly,
+    runtimeContext,
+    shellArtifact,
+    snapshot,
+    sourceIdentities,
+    suffix,
+    toolchainEnvironment,
+  };
+});
+const TenantPartyCase =
+  Context.Service<Effect.Success<ReturnType<typeof prepareTenantPartyCase>>>('TenantPartyGatewayTest.case');
+const tenantPartyCaseLayer = (quotaOnly: boolean) =>
+  Layer.effect(TenantPartyCase, prepareTenantPartyCase(quotaOnly)).pipe(Layer.provideMerge(tenantPartyServices));
+
+const prepareTenantPartyReceivers = Effect.fn('TenantPartyGatewayTest.receivers')(
+  function* prepareTenantPartyReceivers() {
+    const {
+      artifact,
+      configuration,
+      environment,
+      isolated,
+      issuerConnections,
+      kid,
+      marker,
+      partyConnections,
+      permissionEnvironment,
+      privateJwk,
+      quotaOnly,
+      shellArtifact,
+      snapshot,
+      sourceIdentities,
+      toolchainEnvironment,
+    } = yield* TenantPartyCase;
+    if (quotaOnly) {
+      return { receivers: Option.none() };
+    }
+    const ownerSchemaEnvironment = {
+      ...toolchainEnvironment,
+      DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+      DATABASE_URL: isolated.connections.runtime.connectionString,
+      ONTOS_FIXTURE_OWNED_DATABASE: isolated.connections.admin.database,
+      ONTOS_FIXTURE_SOURCE_DATABASE: sourceIdentities.admin.database,
+      PARTY_REGISTRY_DATABASE_URL: partyConnections.runtime.connectionString,
+      PATH: yield* Config.String('PATH'),
+    };
+    const runOwnerSchemaPhase = Effect.fn('TenantPartyGatewayTest.ownerSchemaPhase')(function* runOwnerSchemaPhase(
+      phase: 'rebuild' | 'verify',
+    ) {
+      const ownerSchema = yield* ChildProcess.make(
+        'mise',
+        [
+          'exec',
+          '--',
+          'pnpm',
+          '--filter',
+          '@app/party-registry',
+          'exec',
+          'node',
+          'tests/support/current-owner-schema.fixture.ts',
+          phase,
+        ],
+        {
+          cwd: appRoot,
+          env: ownerSchemaEnvironment,
+          extendEnv: false,
+          stderr: 'pipe',
+          stdout: 'pipe',
+        },
+      );
+      const [ownerSchemaExit] = yield* Effect.all(
+        [ownerSchema.exitCode, Stream.runDrain(ownerSchema.stdout), Stream.runDrain(ownerSchema.stderr)],
+        { concurrency: 3 },
+      );
+      expect(ownerSchemaExit).toBe(0);
+    });
+    yield* runOwnerSchemaPhase('rebuild');
+    const ownershipContext = yield* Layer.build(
+      PgClient.layer({ maxConnections: 1, url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
+        Layer.provideMerge(Reactivity.layer),
+      ),
+    );
+    const ownershipClient = Context.get(ownershipContext, PgClient.PgClient);
+    const [physicalIdentity] = yield* ownershipClient<{
+      readonly databaseName: string;
+      readonly databaseOid: string;
+      readonly owned: boolean;
+      readonly systemIdentifier: string;
+    }>`select current_database() as "databaseName", d.oid::text as "databaseOid",
+      (pg_control_system()).system_identifier::text as "systemIdentifier",
+      pg_get_userbyid(d.datdba)=current_user and current_user=session_user as owned
+      from pg_database d where d.datname=current_database()`;
+    const identity = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({
+        databaseName: Schema.Literal(isolated.connections.admin.database),
+        databaseOid: Schema.String.check(Schema.isPattern(/^\d+$/u)),
+        owned: Schema.Literal(true),
+        systemIdentifier: Schema.String.check(Schema.isPattern(/^\d+$/u)),
+      }),
+    )(physicalIdentity);
+    const identitySetupRequest = yield* Schema.encodeEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          creatorPid: Schema.Int,
+          databaseName: Schema.String,
+          databaseOid: Schema.String,
+          systemIdentifier: Schema.String,
+          type: Schema.Literal('prepare-privacy-native-identities'),
+        }),
+      ),
+    )({
+      creatorPid: process.pid,
+      databaseName: identity.databaseName,
+      databaseOid: identity.databaseOid,
+      systemIdentifier: identity.systemIdentifier,
+      type: 'prepare-privacy-native-identities',
+    });
+    // Fixed creator-bound CLI reapplies only the declared clone ACL/trust manifests; no login/password mutation.
+    const identityManifest = yield* ChildProcess.make(
+      process.execPath,
+      [path.join(appRoot, 'scripts/integration/support/privacy-native-database-identities.mts'), identitySetupRequest],
+      {
+        cwd: appRoot,
+        env: {
+          APP_ENV_PATH: '/dev/null',
+          DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+          DATABASE_URL: isolated.connections.runtime.connectionString,
+          PARTY_REGISTRY_DATABASE_URL: partyConnections.runtime.connectionString,
+          PATH: yield* Config.String('PATH'),
+          SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnections.runtime.connectionString,
+        },
+        extendEnv: false,
+        stderr: 'pipe',
+        stdout: 'pipe',
+      },
+    );
+    const [identityLines, identityManifestExit] = yield* Effect.all(
+      [
+        identityManifest.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+        identityManifest.exitCode,
+        Stream.runDrain(identityManifest.stderr),
+      ],
+      { concurrency: 3 },
+    );
+    expect(identityManifestExit).toBe(0);
+    expect(identityLines).toHaveLength(1);
+    yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          databaseName: Schema.Literal(identity.databaseName),
+          databaseOid: Schema.Literal(identity.databaseOid),
+          systemIdentifier: Schema.Literal(identity.systemIdentifier),
+          type: Schema.Literal('privacy-native-identities-prepared'),
+        }),
+      ),
+      { onExcessProperty: 'error' },
+    )(identityLines[0]);
+    yield* runOwnerSchemaPhase('verify');
+    const shellChild = yield* ChildProcess.make(process.execPath, [shellArtifact], {
+      cwd: appRoot,
+      env: {
+        ...toolchainEnvironment,
+        ...permissionEnvironment,
+        ...environment,
+        BETTER_AUTH_SECRET: configuration.secret,
+        BETTER_AUTH_TRUSTED_ORIGINS: configuration.trustedOrigins.join(','),
+        BETTER_AUTH_URL: configuration.baseUrl,
+        ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid, use: 'sig' }),
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnections.runtime.connectionString,
+      },
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    yield* Stream.runDrain(shellChild.stderr).pipe(Effect.forkScoped);
+    const shellFirstLine = yield* shellChild.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
+    if (Option.isNone(shellFirstLine)) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'The real Shell runtime did not start' });
+    }
+    const shellReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ShellOwnerReadySchema))(
+      shellFirstLine.value,
+    );
+    expect(shellReady.marker.buildMarker).toBe(snapshot.composition.shell.deployment.buildMarker);
+    const child = yield* ChildProcess.make(process.execPath, [artifact], {
+      cwd: appRoot,
+      env: {
+        ...toolchainEnvironment,
+        ...permissionEnvironment,
+        ...environment,
+        PARTY_REGISTRY_DATABASE_URL: partyConnections.runtime.connectionString,
+      },
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+    const firstLine = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
+    if (Option.isNone(firstLine)) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'The real Party runtime did not start' });
+    }
+    const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PartyOwnerReadySchema))(firstLine.value);
+    expect(ready.marker).toEqual(marker);
+    return { receivers: Option.some({ ready, shellReady }) };
+  },
+);
+const TenantPartyReceivers = Context.Service<Effect.Success<ReturnType<typeof prepareTenantPartyReceivers>>>(
+  'TenantPartyGatewayTest.receivers',
+);
+const tenantPartyReceiversLayer = () => Layer.effect(TenantPartyReceivers, prepareTenantPartyReceivers());
+
+const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway')(
+  function* tenantPartyPublicGateway() {
+    const {
+      authentication,
+      authPersistence,
+      configuration,
+      crypto,
+      fixture,
+      fixtureEmail,
+      issuer,
+      pair,
+      quotaOnly,
+      runtimeContext,
+      snapshot,
+      suffix,
+    } = yield* TenantPartyCase;
+    const { receivers } = yield* TenantPartyReceivers;
+    const signedIn = yield* authentication.signIn(
+      fixtureEmail,
+      password,
+      new Headers({ origin: configuration.baseUrl }),
+    );
+    const sessionHeaders = new Headers({
+      cookie: cookieHeader(signedIn.setCookieHeaders),
+      origin: configuration.baseUrl,
+    });
+    const contextAccess = yield* makeContextAccessLive();
+    const resolved = yield* authentication
+      .resolveTenantContext(sessionHeaders)
+      .pipe(Effect.provideService(ContextAccess, contextAccess));
+    expect(resolved.state).toBe('authenticated');
+    if (resolved.state !== 'authenticated') {
+      return yield* new TenantPartyGatewayTestError({ reason: 'The real staff session did not resolve' });
+    }
+    const keys = yield* makeApiKeyService().pipe(
+      Effect.provideService(AuthConfig, configuration),
+      Effect.provideService(AuthDatabase, authPersistence),
+    );
+    const pending = yield* keys.issue(sessionHeaders, {
+      issuerPrincipalId: resolved.principal.principalId,
+      lifecycleOperationId: yield* crypto.randomUUIDv4(),
+      name: 'Tenant Party gateway proof',
+      tenantId: fixture.tenantId,
+    });
+    yield* runAction({
+      payload: yield* Schema.decodeEffect(bindSelfApiKeyAction.descriptor.payloadSchema)({
+        providerSubjectId: pending.providerKeyId,
+      }),
+      principal: resolved.principal,
+      registration: bindSelfApiKeyAction,
+      transport: {
+        correlationId: yield* crypto.randomUUIDv4(),
+        idempotencyKey: yield* crypto.randomUUIDv4(),
+        targetModuleKey: 'core.identity',
+      },
+    }).pipe(Effect.provideContext(runtimeContext));
+    yield* keys.clearPendingCleanup(pending.providerKeyId);
+    if (quotaOnly) {
+      for (let verification = 0; verification < 12; verification += 1) {
+        const verified = yield* keys.verify(Redacted.value(pending.secret));
+        expect(verified.providerKeyId === pending.providerKeyId).toBe(true);
+      }
+      const invalid = yield* keys.verify(`invalid-${suffix}`).pipe(Effect.result);
+      expect(Result.isFailure(invalid) && invalid.failure.code === 'api_key_invalid').toBe(true);
+      yield* keys.setEnabled(pending.providerKeyId, false);
+      const disabled = yield* keys.verify(Redacted.value(pending.secret)).pipe(Effect.result);
+      expect(Result.isFailure(disabled) && disabled.failure.code === 'api_key_invalid').toBe(true);
+      yield* keys.setEnabled(pending.providerKeyId, true);
+      // Only this fixture's own key is expired; the real provider must still reject it.
+      yield* authPersistence.executor
+        .update(apikey)
+        .set({ expiresAt: yield* DateTime.nowAsDate })
+        .where(eq(apikey.id, pending.providerKeyId));
+      const expired = yield* keys.verify(Redacted.value(pending.secret)).pipe(Effect.result);
+      expect(Result.isFailure(expired) && expired.failure.code === 'api_key_invalid').toBe(true);
+      return undefined;
+    }
+    if (Option.isNone(receivers)) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'The default Party receivers were not prepared' });
+    }
+    const { ready, shellReady } = receivers.value;
+    const issue = (legalEntityId?: string) =>
+      Effect.tryPromise(() =>
+        fetch(`http://127.0.0.1:${shellReady.port}/shell-super-app-api/auth/api-key/gateway-context`, {
+          body: JSON.stringify({
+            audience: 'party-registry',
+            compositionRevision: snapshot.composition.revision,
+            legalEntityId,
+          }),
+          headers: {
+            'content-type': 'application/json',
+            origin: configuration.baseUrl,
+            'x-api-key': Redacted.value(pending.secret),
+          },
+          method: 'POST',
+        }),
+      );
+    const firstAssertion = yield* issue();
+    expect(firstAssertion.status).toBe(200);
+    const { token } = yield* Schema.decodeUnknownEffect(TokenResponseSchema)(
+      yield* Effect.tryPromise(() => firstAssertion.json()),
+    );
+    const verified = yield* Effect.tryPromise(() =>
+      jwtVerify(token, pair.publicKey, { audience: 'party-registry', issuer }),
+    );
+    const apiKeyPrincipal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
+      verified.payload['principal'],
+    );
+    expect(apiKeyPrincipal.authMethod).toBe('api_key');
+    expect(apiKeyPrincipal.legalEntityId).toBeUndefined();
+    const ownerUrl = `http://127.0.0.1:${ready.port}/party-registry-api`;
+    const request = Effect.fn('TenantPartyGatewayTest.request')(function* ownerRequest(
+      route: string,
+      body: string,
+      assertion?: string,
+    ) {
+      let fresh = assertion;
+      if (fresh === undefined) {
+        const assertionResponse = yield* issue();
+        expect(assertionResponse.status).toBe(200);
+        const decoded = yield* Schema.decodeUnknownEffect(TokenResponseSchema)(
+          yield* Effect.tryPromise(() => assertionResponse.json()),
+        );
+        fresh = decoded.token;
+      }
+      const requestToken = fresh;
+      return yield* Effect.tryPromise(() =>
+        fetch(`${ownerUrl}${route}`, {
+          body,
+          headers: {
+            authorization: `Bearer ${requestToken}`,
+            'content-type': 'application/json',
+            'idempotency-key': suffix,
+            'x-correlation-id': suffix,
+            'x-ontos-composition-revision': snapshot.composition.revision,
+          },
+          method: 'POST',
+        }),
+      );
+    });
+    const createdResponse = yield* request(
+      '/party-registry/actions/create-party',
+      JSON.stringify({
+        candidate: {
+          displayName: 'Public tenant gateway proof',
+          evidenceRefs: ['review/public-party-gateway'],
+          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+          partyType: 'ORGANIZATION',
+          provenance: { method: 'DOCUMENT', source: 'public-party-gateway' },
+          subjectEvidence: [
+            {
+              basis: 'REVIEWED_DOCUMENT',
+              evidenceRef: 'review/public-party-gateway',
+              kind: 'ACTOR_ATTESTATION',
+              observedSubject: 'ORGANIZATION',
+              statement: 'Reviewed the concrete external organization',
+              subjectKey: suffix,
+            },
+          ],
+          validFrom: '2020-01-01T00:00:00.000Z',
+        },
+      }),
+      token,
+    );
+    expect(createdResponse.status).toBe(200);
+    const created = yield* Schema.decodeUnknownEffect(PartyCreatedResponseSchema)(
+      yield* Effect.tryPromise(() => createdResponse.json()),
+    );
+    expect(created.partyRef.tenantId).toBe(fixture.tenantId);
+    const detailPayload = { partyRef: created.partyRef };
+    expect((yield* request('/reads/party-detail', JSON.stringify(detailPayload))).status).toBe(403);
+    const mutation = yield* makeContextPermissionRelationshipMutationLive();
+    const grant = {
+      principal: apiKeyPrincipal,
+      target: { moduleId: 'party.registry', permission: 'module.access' },
+      tenantId: fixture.tenantId,
+    };
+    yield* mutation.mutate({ ...grant, operation: 'grant' });
+    yield* Effect.addFinalizer(() => mutation.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+    const detailResponse = yield* request('/reads/party-detail', JSON.stringify(detailPayload));
+    expect(detailResponse.status).toBe(200);
+    const detail = yield* Schema.decodeUnknownEffect(PartyGatewayDetailResponseSchema)(
+      yield* Effect.tryPromise(() => detailResponse.json()),
+    );
+    expect(detail.party).toEqual({
+      displayName: 'Public tenant gateway proof',
+      partyRef: created.partyRef,
+      partyType: 'ORGANIZATION',
+    });
+    expect(Option.isNone(detail.factHistory)).toBe(true);
+    const historyResponse = yield* request(
+      '/reads/party-detail',
+      JSON.stringify({ ...detailPayload, includeFactHistory: true }),
+    );
+    expect(historyResponse.status).toBe(200);
+    const history = yield* Schema.decodeUnknownEffect(PartyGatewayDetailResponseSchema)(
+      yield* Effect.tryPromise(() => historyResponse.json()),
+    );
+    expect(history.party).toEqual(detail.party);
+    expect(Option.isSome(history.factHistory)).toBe(true);
+    if (Option.isNone(history.factHistory)) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'The authorized owner history was absent' });
+    }
+    expect(history.factHistory.value.length).toBeGreaterThan(0);
+    for (const fact of history.factHistory.value) {
+      expect(fact.partyRef).toEqual(created.partyRef);
+      expect(fact.partyRef.tenantId).toBe(fixture.tenantId);
+    }
+    const foreignReference = { ...created.partyRef, tenantId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' };
+    expect((yield* request('/reads/party-detail', JSON.stringify({ partyRef: foreignReference }))).status).toBe(404);
+    expect(
+      (yield* request(
+        '/reads/party-detail',
+        JSON.stringify({ partyRef: { ...created.partyRef, resourceId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' } }),
+      )).status,
+    ).toBe(404);
+    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+    const changeState = Effect.fn('TenantPartyGatewayTest.changeState')(function* changeState(
+      newState: 'active' | 'inactive',
+    ) {
+      return yield* runAction({
+        payload: yield* Schema.decodeEffect(changeTenantModuleStateAction.descriptor.payloadSchema)({
+          moduleKey: 'party.registry',
+          newState,
+        }),
+        principal: resolved.principal,
+        registration: changeTenantModuleStateAction,
+        transport: {
+          correlationId: yield* crypto.randomUUIDv4(),
+          idempotencyKey: yield* crypto.randomUUIDv4(),
+          targetModuleKey: 'core.modules',
+        },
+      }).pipe(
+        Effect.provideContext(runtimeContext),
+        Effect.provideService(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+      );
+    });
+    yield* changeState('inactive');
+    expect((yield* request('/reads/party-detail', JSON.stringify(detailPayload))).status).toBe(403);
+    yield* changeState('active');
+    expect((yield* request('/reads/party-detail', JSON.stringify(detailPayload))).status).toBe(200);
+    expect((yield* request('/reads/party-detail', JSON.stringify(detailPayload), token)).status).toBe(401);
+    expect((yield* issue('ffffffff-ffff-4fff-8fff-ffffffffffff')).status).toBe(403);
+    return undefined;
+  },
+);
+
+// The outer hook owns immutable bundles only; each selected case gets fresh native resources.
+const tenantPartyArtifactMemoMap = Layer.makeMemoMapUnsafe();
+it.layer(tenantPartyArtifactsLayer, {
+  excludeTestServices: true,
+  memoMap: tenantPartyArtifactMemoMap,
+  timeout: 30_000,
+})('tenant Party public gateway', () => {
+  for (const { name, quotaOnly } of [
+    {
+      name: 'verifies the same API key more than ten times while rejecting invalid disabled and expired keys',
+      quotaOnly: true,
+    },
+    {
+      name: 'issues a real API-key assertion and serves tenant detail through the default Party HTTP runtime',
+      quotaOnly: false,
+    },
+  ]) {
+    const caseMemoMap = Layer.forkMemoMapUnsafe(tenantPartyArtifactMemoMap);
+    const caseLayer = tenantPartyCaseLayer(quotaOnly).pipe(Layer.provideMerge(tenantPartyArtifactsLayer));
+    it.layer(caseLayer, {
+      excludeTestServices: true,
+      memoMap: caseMemoMap,
+      timeout: 30_000,
+    })(() => {
+      it.layer(tenantPartyReceiversLayer().pipe(Layer.provideMerge(caseLayer)), {
+        excludeTestServices: true,
+        memoMap: caseMemoMap,
+        timeout: 30_000,
+      })((caseIt) => {
+        caseIt.effect(name, tenantPartyPublicGateway);
+      });
+    });
+  }
+});

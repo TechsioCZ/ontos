@@ -74,12 +74,31 @@ import {
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
   ScaffoldFailure,
+  asJsonObject,
   createScaffoldErrorTools,
   insertSortedSlot,
   readGeneratedSlotEntries,
 } from '../shared.mts';
 import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies } from './fixture-ownership.mts';
+
+const DEFAULT_RUNTIME_EXPORT = 'export default apiRuntime;';
+const UNRELATED_RUNTIME_EXPORT = 'export default unrelatedRuntime;';
+const PRIVACY_CONTRACT_PATH = 'verticals/privacy/shared/api.ts';
+const PRIVACY_HANDLER_PATH = 'verticals/privacy/api/index.ts';
+const CRYPTO_LAYER_IMPORT = "import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';";
+const PRIVACY_CRYPTO_READ_MERGE = 'const governedReadRuntimeLive = Layer.merge(nodeCryptoLayer, readRuntimeLive);';
+const INJECTED_READ_MERGE_SUFFIX = 'readRuntimeLive);';
+const ASSEMBLED_HANDLER_PROPERTY = 'handlers: apiHandlersLive,';
+const ASSEMBLED_HANDLER_DECLARATION = 'const apiHandlersLive = Layer.mergeAll(';
+
+const MODULE_CONTRACT_COMMAND = 'module-contract';
+const PERMISSION_FLAG = '--permission';
+const STRIP_TYPES_FLAG = '--experimental-strip-types';
+const SCAFFOLD_CLI_PATH = 'scripts/scaffolding/cli.mts';
+const MISSING_OWNER = 'missing-owner';
+const MISSING_MODULE = 'missing.owner';
+const PLATFORM_NODE_PACKAGE = '@effect/platform-node';
 
 const expectFailure = <A, E, R>(self: Effect.Effect<A, E, R>, check: (cause: unknown) => void) =>
   Effect.matchCauseEffect(self, {
@@ -833,7 +852,7 @@ export const coreActionCatalog = [
       [inventoryVertical, billingVertical, hrVertical, contactsVertical].map(
         Effect.fn(function* scenario6(vertical) {
           return yield* runScaffoldEffect(
-            'module-contract',
+            MODULE_CONTRACT_COMMAND,
             [scaffoldFlag.vertical, vertical.slug, '--module', vertical.moduleId],
             {
               workspaceRoot: root,
@@ -894,7 +913,7 @@ const run = Effect.fn(function* scenario12(
         } else if (command === scaffoldCommand.outboxWorker) {
           flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
         } else if (contextPermissionCommands.has(command)) {
-          flags = [...flags, scaffoldFlag.authorization, 'context_permission', '--permission', 'module.access'];
+          flags = [...flags, scaffoldFlag.authorization, 'context_permission', PERMISSION_FLAG, 'module.access'];
         }
       }
       return flags;
@@ -959,7 +978,7 @@ it.live(
           scaffoldCommand.externalHttpAdapter,
           scaffoldCommand.microverticalActionBoundary,
           scaffoldCommand.microverticalPage,
-          'module-contract',
+          MODULE_CONTRACT_COMMAND,
           scaffoldCommand.moduleApi,
           scaffoldCommand.outboxMessage,
           scaffoldCommand.outboxWorker,
@@ -1181,7 +1200,7 @@ import { FetchHttpClient } from 'effect/http';
 import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
 import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
 import { loadStockLevelsClient, loadStockLevelsClientWithAuthorization } from './verticals/inventory-stock/src/api/stock-levels-report-client.ts';
-import { NodeRuntime } from '${pathToFileURL(require.resolve('@effect/platform-node')).href}';
+import { NodeRuntime } from '${pathToFileURL(require.resolve(PLATFORM_NODE_PACKAGE)).href}';
 Effect.gen(function* generatedHttpProof() {
 const calls = [];
 let gatewayAttempts = 0;
@@ -1734,7 +1753,7 @@ import { inventorySuppliersReadApiLive } from './verticals/inventory-stock/api/i
 import { stockLevelsReadApiLive } from './verticals/inventory-stock/api/stock-levels-report-server.ts';
 import generatedRuntime from './verticals/inventory-stock/api/index.ts';
 import { fixtureApi } from './verticals/inventory-stock/shared/api.ts';
-import { NodeRuntime } from '${pathToFileURL(require.resolve('@effect/platform-node')).href}';
+import { NodeRuntime } from '${pathToFileURL(require.resolve(PLATFORM_NODE_PACKAGE)).href}';
 Effect.gen(function* generatedHttpProof() {
 const calls = [];
 const readRuntime = {
@@ -1820,18 +1839,14 @@ console.log(
 }).pipe(Effect.scoped, NodeRuntime.runMain);
 `,
         );
-        const execution = spawnSync(
-          process.execPath,
-          ['--experimental-strip-types', 'execute-generated-governed-reads.mts'],
-          {
-            cwd: fixture.root,
-            encoding: 'utf-8',
-            env: {
-              DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
-              DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
-            },
+        const execution = spawnSync(process.execPath, [STRIP_TYPES_FLAG, 'execute-generated-governed-reads.mts'], {
+          cwd: fixture.root,
+          encoding: 'utf-8',
+          env: {
+            DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
+            DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
           },
-        );
+        });
         expect(execution.status, execution.stderr).toBe(0);
         const expectedGeneratedPrincipal = {
           authContextRef: 'job:generated-fixture:run:governed-read',
@@ -4408,7 +4423,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
           yield* readFixtureFile(fixture.root, 'verticals/billing/package.json'),
         );
         expect(consumerPackage.dependencies['@app/core-runtime']).toBe(workspaceVersion);
-        expect(consumerPackage.dependencies['@effect/platform-node']).toBe(effectReleaseVersion);
+        expect(consumerPackage.dependencies[PLATFORM_NODE_PACKAGE]).toBe(effectReleaseVersion);
         expect(consumerPackage.dependencies[inventoryPackageName]).toBe(workspaceVersion);
         expect(consumerPackage.exports['./workers']).toBe(undefined);
         expect(consumerPackage.exports['./outbox-worker-host']).toBe('./src/worker-host/entry.ts');
@@ -5909,7 +5924,7 @@ it.live(
               'orders',
               scaffoldFlag.authorization,
               'context_permission',
-              '--permission',
+              PERMISSION_FLAG,
               'module.access',
             ],
             {
@@ -6496,7 +6511,7 @@ it.live(
     expect(
       hasValidGovernedHttpCompositionRoot(
         shared,
-        typedHandler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
+        typedHandler.replace(DEFAULT_RUNTIME_EXPORT, UNRELATED_RUNTIME_EXPORT),
       ),
     ).toBe(false);
     expect(
@@ -6515,11 +6530,181 @@ it.live(
       hasValidGovernedHttpCompositionRoot(shared, handler.replace('api: partyRegistryApi,', 'api: unrelatedApi,')),
     ).toBe(false);
     expect(
-      hasValidGovernedHttpCompositionRoot(
-        shared,
-        handler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
-      ),
+      hasValidGovernedHttpCompositionRoot(shared, handler.replace(DEFAULT_RUNTIME_EXPORT, UNRELATED_RUNTIME_EXPORT)),
     ).toBe(false);
+  }),
+);
+
+it.live(
+  'canonical Crypto merge preserves the actual Privacy injected read capability',
+  Effect.fn(function* cryptoMergedPrivacyRuntime() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    expect(handler).toContain(PRIVACY_CRYPTO_READ_MERGE);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const quoted = handler.replace(
+      PRIVACY_CRYPTO_READ_MERGE,
+      `${PRIVACY_CRYPTO_READ_MERGE}\n  const displayLabel = 'Layer';`,
+    );
+    expect(quoted).not.toBe(handler);
+    expect(hasValidGovernedHttpCompositionRoot(shared, quoted)).toBe(true);
+    const renamed = handler.replaceAll(/\breadRuntimeLive\b/gu, 'injectedOwnerRead');
+    expect(renamed).not.toBe(handler);
+    expect(hasValidGovernedHttpCompositionRoot(shared, renamed)).toBe(true);
+  }),
+);
+
+it.live(
+  'canonical Crypto merge rejects counterfeit capability identities and escaped mutations',
+  Effect.fn(function* cryptoMergedPrivacyIdentityGuards() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const tuple = 'const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;';
+    const merge = PRIVACY_CRYPTO_READ_MERGE;
+    const mutations: readonly (readonly [string, string])[] = [
+      [
+        "import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';",
+        "import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from './counterfeit-core.ts';",
+      ],
+      [
+        "import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';",
+        "import type { ActionRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';",
+      ],
+      [
+        'type PrivacyApiRuntimeArguments = readonly [',
+        'type ReadRuntime = unknown;\ntype PrivacyApiRuntimeArguments = readonly [',
+      ],
+      ['readRuntime: Layer.Layer<ReadRuntime,', 'readRuntime: Layer.Layer<ActionRuntime,'],
+      [
+        'type PrivacyApiRuntimeArguments = readonly [',
+        'interface PrivacyApiRuntimeArguments {}\ntype PrivacyApiRuntimeArguments = readonly [',
+      ],
+      [tuple, `${tuple}\n  const [decoyRead] = args;`],
+      [tuple, `args[0] = Layer.empty;\n  ${tuple}`],
+      [tuple, `${tuple}\n  mutate(args);`],
+      [tuple, `${tuple}\n  readRuntimeLive = actionRuntimeLive;`],
+      [tuple, `${tuple}\n  mutate(readRuntimeLive);`],
+      [tuple, `${tuple}\n  const alias = readRuntimeLive; mutate(alias);`],
+      [merge, merge.replace(INJECTED_READ_MERGE_SUFFIX, 'actionRuntimeLive);')],
+      [merge, merge.replace(INJECTED_READ_MERGE_SUFFIX, 'unrelatedRead);')],
+      [merge, merge.replace(INJECTED_READ_MERGE_SUFFIX, 'readRuntimeLive, otherLayer);')],
+      [merge, 'const governedReadRuntimeLive = opaque(readRuntimeLive);'],
+      [merge, 'const governedReadRuntimeLive = Layer.empty.pipe(Layer.provide(readRuntimeLive));'],
+      [merge, merge.replace('Layer.merge(', "Layer['merge'](")],
+      [merge, merge.replace('Layer.merge(', 'Layer?.merge(')],
+      [merge, merge.replace('nodeCryptoLayer', "cryptoModule['layer']")],
+      [merge, merge.replace('nodeCryptoLayer', 'cryptoModule?.layer')],
+      [merge, `${merge}\n  ${merge}`],
+      [merge, `function decoy() { ${merge} }`],
+      [CRYPTO_LAYER_IMPORT, "import { layer as nodeCryptoLayer } from './counterfeit-crypto.ts';"],
+      [CRYPTO_LAYER_IMPORT, "import { other as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';"],
+      ["from '@modern-js/bff-effect/effect-edge';", "from './counterfeit-effect-edge.ts';"],
+      [tuple, `${tuple}\n  const Layer = counterfeitLayer;`],
+      [tuple, `${tuple}\n  const nodeCryptoLayer = counterfeitCrypto;`],
+      [tuple, `${tuple}\n  const shadow = (Layer) => Layer;`],
+      [tuple, `${tuple}\n  const shadow = (nodeCryptoLayer) => nodeCryptoLayer;`],
+      [tuple, `${tuple}\n  const shadow = (ReadRuntime) => ReadRuntime;`],
+      [merge, `${merge}\n  nodeCryptoLayer = evil;`],
+      [merge, `${merge}\n  const displayLabel = 'Layer';\n  nodeCryptoLayer = evil;`],
+      [merge, `${merge}\n  nodeCryptoLayer['service'] = evil;`],
+      [merge, `${merge}\n  delete nodeCryptoLayer.service;`],
+      [merge, `${merge}\n  nodeCryptoLayer.count++;`],
+      [merge, `${merge}\n  Object.assign(nodeCryptoLayer, evil);`],
+      [merge, `${merge}\n  Reflect.set(nodeCryptoLayer, 'service', evil);`],
+      [merge, `${merge}\n  mutate(nodeCryptoLayer);`],
+      [merge, `${merge}\n  const crypto = nodeCryptoLayer; mutate(crypto);`],
+      [merge, `${merge}\n  const cryptoOwner = { nodeCryptoLayer }; mutate(cryptoOwner);`],
+      [merge, `${merge}\n  Layer.merge = evil;`],
+      [merge, `${merge}\n  Reflect.set(Layer, 'merge', evil);`],
+      [merge, `${merge}\n  const merger = Layer.merge; mutate(merger);`],
+      [merge, `${merge}\n  mutate(Layer.merge);`],
+      [merge, `${merge}\n  foreign.Layer.merge(nodeCryptoLayer, other);`],
+      [merge, `${merge}\n  const alias = governedReadRuntimeLive; mutate(alias);`],
+      [merge, `${merge}\n  mutate(governedReadRuntimeLive);`],
+      ["'./auth/gateway-assertion-redemption.ts'", "'./auth/counterfeit-redemption.ts'"],
+      [
+        'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+        'CounterfeitRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+      ],
+      [tuple, `${tuple}\n  const GovernedGatewayAssertionRedemptionLive = counterfeit;`],
+      [tuple, `${tuple}\n  GovernedGatewayAssertionRedemptionLive = counterfeit;`],
+      [tuple, `${tuple}\n  mutate(GovernedGatewayAssertionRedemptionLive);`],
+      [tuple, `${tuple}\n  const alias = GovernedGatewayAssertionRedemptionLive; mutate(alias);`],
+      [
+        'ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime',
+        'ActionRuntime, CounterfeitRedemptionService as GatewayAssertionRedemptionService, ReadRuntime',
+      ],
+
+      [merge, `${merge}\n  governedReadRuntimeLive['service'] = evil;`],
+    ];
+    for (const [before, after] of mutations) {
+      expect(handler).toContain(before);
+      const changed = handler.replace(before, after);
+      expect(changed).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, changed), after).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'canonical Crypto merge requires the executed factory and dominant mounted output',
+  Effect.fn(function* cryptoMergedPrivacyRootGuards() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const tuple = 'const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;';
+    const merge = PRIVACY_CRYPTO_READ_MERGE;
+    const mutations: readonly (readonly [string, string])[] = [
+      [DEFAULT_RUNTIME_EXPORT, UNRELATED_RUNTIME_EXPORT],
+      ['const apiRuntime = makePrivacyApiRuntime(', 'const apiRuntime = makeOtherApiRuntime('],
+      ['  productionReadRuntimeLive,\n  productionActionRuntimeLive,', '  productionActionRuntimeLive,'],
+      [
+        '  productionReadRuntimeLive,\n  productionActionRuntimeLive,',
+        '  ...unknownArgs,\n  productionActionRuntimeLive,',
+      ],
+      ['const apiRuntime = makePrivacyApiRuntime(', 'const apiRuntime = choose ? makePrivacyApiRuntime('],
+      [
+        DEFAULT_RUNTIME_EXPORT,
+        'makePrivacyApiRuntime(productionReadRuntimeLive, productionActionRuntimeLive, GovernedGatewayAssertionRedemptionLive);\nexport default apiRuntime;',
+      ],
+      [tuple, `if (condition) return unrelatedRuntime;\n  ${tuple}`],
+      [tuple, `if (condition) { return unrelatedRuntime; }\n  ${tuple}`],
+      [merge, `if (condition) { ${merge} }`],
+      [merge, `${merge}\n  const [governedReadRuntimeLive] = otherArgs;`],
+      ['api: privacyApi,', 'api: unrelatedApi,'],
+      [ASSEMBLED_HANDLER_PROPERTY, 'handlers: Layer.empty,'],
+      [ASSEMBLED_HANDLER_PROPERTY, 'handlers: unrelatedHandlers,'],
+      [ASSEMBLED_HANDLER_PROPERTY, 'handlers: privacyReadinessLayer.pipe(Layer.provide(apiHandlersLive)),'],
+      ["'@modern-js/bff-effect/assembly'", "'./counterfeit-assembler.ts'"],
+      [
+        '// <generated-governed-http-handler-layers>',
+        '// <generated-governed-http-handler-layers>\n// <generated-governed-http-handler-layers>',
+      ],
+      [ASSEMBLED_HANDLER_DECLARATION, 'function dead() { const apiHandlersLive = Layer.mergeAll('],
+      [ASSEMBLED_HANDLER_DECLARATION, 'const apiHandlersLive = unrelatedLayer;\nconst unmounted = Layer.mergeAll('],
+    ];
+    for (const [before, after] of mutations) {
+      expect(handler).toContain(before);
+      const changed = handler.replace(before, after);
+      expect(changed).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, changed), after).toBe(false);
+    }
+    const legacyDecoy =
+      '\nconst readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));\nconst governedReadRuntimeLive = readRuntimeLive;\n';
+    for (const replacement of [tuple.replace('const [', 'let ['), '', 'let readRuntimeLive = unknownRead;']) {
+      expect(handler).toContain(tuple);
+      const changed = handler.replace(tuple, replacement) + legacyDecoy;
+      expect(changed).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, changed), replacement).toBe(false);
+    }
+    expect(shared).toContain('// <generated-governed-http-api-additions>');
+    const decoyShared = shared.replace(
+      '// <generated-governed-http-api-additions>',
+      "// const decoy = '// <generated-governed-http-api-additions>';\n// <generated-governed-http-api-additions>",
+    );
+    expect(decoyShared).not.toBe(shared);
+    expect(hasValidGovernedHttpCompositionRoot(decoyShared, handler)).toBe(false);
   }),
 );
 
@@ -6564,10 +6749,7 @@ it.live(
   Effect.fn(function* mergedScenario101() {
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedHandlerPath), 'utf-8'));
-    const renamed = handler.replace(
-      'const apiHandlersLive = Layer.mergeAll(',
-      'const apiHandlerGroupsLive = Layer.mergeAll(',
-    );
+    const renamed = handler.replace(ASSEMBLED_HANDLER_DECLARATION, 'const apiHandlerGroupsLive = Layer.mergeAll(');
     const resolution = 'const resolvedApiHandlersLive = apiHandlersLive.pipe(';
     const outputBearingMerge = `const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive.pipe(Layer.provide(apiHandlerGroupsLive)),
@@ -6581,5 +6763,263 @@ it.live(
     expect(outputBearing).not.toBe(handler);
     expect(hasValidGovernedHttpCompositionRoot(shared, outputBearing)).toBe(true);
     expect(hasValidGovernedHttpCompositionRoot(shared, dependencyOnly)).toBe(false);
+  }),
+);
+
+it.live(
+  'scaffold executable returns nonzero for a typed missing-owner failure',
+  Effect.fn(function* executableMissingOwnerFailure() {
+    yield* withFixture(
+      Effect.fn(function* executableMissingOwnerFixture(fixture) {
+        const before = yield* snapshotTree(fixture.root);
+        const result = spawnSync(
+          process.execPath,
+          [
+            STRIP_TYPES_FLAG,
+            path.join(appRoot, SCAFFOLD_CLI_PATH),
+            MODULE_CONTRACT_COMMAND,
+            scaffoldFlag.vertical,
+            MISSING_OWNER,
+            scaffoldFlag.module,
+            MISSING_MODULE,
+          ],
+          { cwd: fixture.root, encoding: 'utf-8', timeout: 20_000 },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status, result.stderr + result.stdout).not.toBe(0);
+        expect(result.stderr + result.stdout).toMatch(/missing-owner/u);
+        expect(yield* snapshotTree(fixture.root)).toEqual(before);
+      }),
+    );
+  }),
+);
+
+const configureApiOnlyInventory = Effect.fn(function* configureApiOnlyInventory(fixture: Fixture) {
+  const value = yield* Schema.decodeUnknownEffect(Schema.Json)(
+    JSON.parse(yield* readFixtureFile(fixture.root, inventoryPackageFile)),
+  );
+  const owner = asJsonObject(value, 'fixture package');
+  yield* write(
+    fixture.root,
+    inventoryPackageFile,
+    json({
+      ...owner,
+      modernjs: { ...asJsonObject(owner['modernjs'], 'modernjs'), role: 'api-only' },
+    }),
+  );
+  yield* write(
+    fixture.root,
+    topologyFile,
+    json({
+      schemaVersion: 1,
+      verticals: [
+        {
+          deliveryUnit: { buildMarker: fixtureBuildMarker },
+          domain: 'inventory',
+          id: inventorySlug,
+          kind: 'vertical',
+          package: '@app/inventory-stock',
+          path: 'verticals/inventory-stock',
+          renderer: 'none',
+          surfaceProfile: 'api-only',
+        },
+      ],
+    }),
+  );
+  yield* Effect.promise(() => rm(path.join(fixture.root, inventoryFederationConfigFile)));
+});
+
+it.live(
+  'API-only business generators preserve server ownership, permission grammar and rerun adaptations',
+  Effect.fn(function* apiOnlyBusinessGenerators() {
+    yield* withFixture(
+      Effect.fn(function* apiOnlyBusinessFixture(fixture) {
+        yield* configureApiOnlyInventory(fixture);
+        const before = yield* snapshotTree(fixture.root);
+        const commands: readonly (readonly [ScaffoldCommand, readonly string[]])[] = [
+          ['resource', [scaffoldFlag.vertical, inventorySlug, scaffoldFlag.resource, 'selection']],
+          [
+            'permission',
+            [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              PERMISSION_FLAG,
+              'commerce.cart.read.open_selection_population',
+              '--scope',
+              'module',
+            ],
+          ],
+          ['action', [scaffoldFlag.vertical, inventorySlug, '--action', 'register-selection']],
+          [scaffoldCommand.moduleApi, [scaffoldFlag.vertical, inventorySlug, '--name', 'open-selection-population']],
+        ];
+        yield* assertScaffoldRefused(
+          fixture,
+          'permission',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            PERMISSION_FLAG,
+            'commerce.cart.read.open-selection-population',
+            '--scope',
+            'module',
+          ],
+          /stable lowercase dotted/u,
+        );
+        for (const [command, args] of commands) {
+          expect((yield* run(fixture, command, args)).kind).toBe('generated');
+        }
+        const generated = yield* snapshotTree(fixture.root);
+        const added = Object.keys(generated).filter((file) => !Object.hasOwn(before, file));
+        expect(added.length).toBeGreaterThan(4);
+        expect(added.filter((file) => /module-federation|src\/components|src\/routes|^apps\//u.test(file))).toEqual([]);
+        expect(generated[shellSentinelFile]).toBe(before[shellSentinelFile]);
+        const permissionPath =
+          'verticals/inventory-stock/shared/permissions/commerce-cart-read-open-selection-population.ts';
+        expect(generated[permissionPath]).toContain("key: 'commerce.cart.read.open_selection_population'");
+        expect(generated[inventoryManifestFile]).toContain(
+          "import { commerceCartReadOpenSelectionPopulationPermission } from './shared/permissions/commerce-cart-read-open-selection-population.ts';",
+        );
+        expect(generated[inventoryManifestFile]).toContain('      commerceCartReadOpenSelectionPopulationPermission,');
+        expect(generated[inventoryManifestFile]).toContain(
+          "import { OpenSelectionPopulationApi } from './shared/apis/open-selection-population.ts';",
+        );
+        expect(generated[inventoryManifestFile]).toContain("'open-selection-population': OpenSelectionPopulationApi,");
+        const readPath = 'verticals/inventory-stock/src/api/open-selection-population.read.ts';
+        const originalRead = generated[readPath] ?? '';
+        expect(originalRead).toContain('defineRead(');
+        expect(originalRead).toContain("readKey: 'inventory.stock.api.open-selection-population'");
+        yield* write(fixture.root, readPath, `${originalRead}\n// owner adaptation preserved\n`);
+        const adapted = yield* snapshotTree(fixture.root);
+        for (const [command, args] of commands) {
+          yield* command === scaffoldCommand.moduleApi
+            ? run(fixture, command, args)
+            : assertScaffoldRefused(fixture, command, args, /refusing to overwrite/u);
+        }
+        expect(yield* snapshotTree(fixture.root)).toEqual(adapted);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'API-only browser contributions fail before mutation even with a rogue browser config',
+  Effect.fn(function* apiOnlyBrowserRefusal() {
+    yield* withFixture(
+      Effect.fn(function* apiOnlyBrowserFixture(fixture) {
+        yield* configureApiOnlyInventory(fixture);
+        for (const rogue of [false, true]) {
+          if (rogue) {
+            yield* write(fixture.root, inventoryFederationConfigFile, 'export default { exposes: {} };\n');
+          }
+          yield* assertScaffoldRefused(
+            fixture,
+            'public-component',
+            [scaffoldFlag.vertical, inventorySlug, '--name', 'selection-card'],
+            /public components require a browser/u,
+          );
+          yield* assertScaffoldRefused(
+            fixture,
+            'microvertical-page',
+            [scaffoldFlag.vertical, inventorySlug, '--page', 'selections'],
+            /Module Federation metadata/u,
+          );
+        }
+      }),
+    );
+  }),
+);
+
+it.live(
+  'scaffold executable preserves success and fails malformed requests and generator errors without writes',
+  Effect.fn(function* executableStatusControls() {
+    yield* withFixture(
+      Effect.fn(function* executableStatusFixture(fixture) {
+        yield* configureApiOnlyInventory(fixture);
+        const child = (args: readonly string[]) =>
+          spawnSync(process.execPath, [STRIP_TYPES_FLAG, path.join(appRoot, SCAFFOLD_CLI_PATH), ...args], {
+            cwd: fixture.root,
+            encoding: 'utf-8',
+            timeout: 20_000,
+          });
+        const failures = [
+          [MODULE_CONTRACT_COMMAND, '--unknown-flag', 'x'],
+          ['unknown-command'],
+          [
+            'permission',
+            scaffoldFlag.vertical,
+            inventorySlug,
+            PERMISSION_FLAG,
+            'commerce.cart.read.open-selection-population',
+            '--scope',
+            'module',
+          ],
+          [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE],
+          // Existing owner files make this a controlled generator overwrite failure.
+          [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, inventorySlug, scaffoldFlag.module, 'inventory.stock'],
+        ];
+        for (const args of failures) {
+          const before = yield* snapshotTree(fixture.root);
+          const result = child(args);
+          expect(result.error).toBeUndefined();
+          expect(result.signal).toBeNull();
+          expect(result.status, result.stderr + result.stdout).not.toBe(0);
+          expect(result.stderr + result.stdout).not.toBe('');
+          expect(yield* snapshotTree(fixture.root)).toEqual(before);
+        }
+        const beforeHelp = yield* snapshotTree(fixture.root);
+        const help = child(['resource', '--help']);
+        expect(help.error).toBeUndefined();
+        expect(help.status, help.stderr).toBe(0);
+        expect(help.stdout).toContain('scaffold:resource');
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeHelp);
+        const success = child(['resource', scaffoldFlag.vertical, inventorySlug, scaffoldFlag.resource, 'selection']);
+        expect(success.error).toBeUndefined();
+        expect(success.status, success.stderr).toBe(0);
+        expect(yield* readFixtureFile(fixture.root, inventoryManifestFile)).toContain('selection');
+        const beforeTyped = yield* snapshotTree(fixture.root);
+        yield* expectFailure(
+          runScaffoldEffect(
+            MODULE_CONTRACT_COMMAND,
+            [scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE],
+            {
+              workspaceRoot: fixture.root,
+            },
+          ).pipe(Effect.provide(NodeServices.layer)),
+          (error) => expect(error).toBeInstanceOf(ScaffoldingError),
+        );
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeTyped);
+      }),
+    );
+  }),
+  { timeout: 30_000 },
+);
+
+it.live(
+  'scaffold library failure reaches the Node CLI runtime after scoped finalizers complete',
+  Effect.fn(function* executableFinalizerControl() {
+    yield* withFixture(
+      Effect.fn(function* executableFinalizerFixture(fixture) {
+        const marker = path.join(fixture.root, 'failure-finalized.txt');
+        const program = `import { Effect } from ${JSON.stringify(pathToFileURL(require.resolve('effect')).href)};
+import { NodeRuntime, NodeServices } from ${JSON.stringify(pathToFileURL(require.resolve(PLATFORM_NODE_PACKAGE)).href)};
+import { writeFile } from 'node:fs/promises';
+import { runScaffoldEffect } from ${JSON.stringify(pathToFileURL(path.join(appRoot, SCAFFOLD_CLI_PATH)).href)};
+NodeRuntime.runMain(runScaffoldEffect(${JSON.stringify(MODULE_CONTRACT_COMMAND)}, ${JSON.stringify([scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE])}).pipe(
+  Effect.ensuring(Effect.promise(() => writeFile(${JSON.stringify(marker)}, 'finalized', 'utf-8'))),
+  Effect.provide(NodeServices.layer),
+), { disableErrorReporting: true });
+`;
+        const result = spawnSync(process.execPath, [STRIP_TYPES_FLAG, '--input-type=module', '--eval', program], {
+          cwd: fixture.root,
+          encoding: 'utf-8',
+          timeout: 20_000,
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status, result.stderr + result.stdout).not.toBe(0);
+        expect(yield* Effect.promise(() => readFile(marker, 'utf-8'))).toBe('finalized');
+      }),
+    );
   }),
 );

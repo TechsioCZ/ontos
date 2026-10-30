@@ -3,7 +3,7 @@ import {
   PricingQuantityBasisAssessmentSchema,
 } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
 import { Effect, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import { assessPricingQuantityBasis } from '../../src/services/quantity-unit-package-basis.service.ts';
 
@@ -730,3 +730,62 @@ describe('Pricing Quantity Unit and Package Basis #769 runtime acceptance', () =
     }),
   );
 });
+
+it.effect(
+  'retains a common later Pricing instant with genuine unchanged Catalog window and rejects stale or changed owner material',
+  () =>
+    Effect.gen(function* twoClockBinding() {
+      const original = noConversion('purchase-demand:later-pricing');
+      const pricingAt = '2026-09-27T12:01:00.000Z';
+      const freshAt = '2026-09-27T12:01:01.000Z';
+      const fresh = {
+        ...original.ownerDecision,
+        completeness: { ...original.ownerDecision.completeness, observedAt: freshAt },
+        currentness: { ...original.ownerDecision.currentness, observedAt: freshAt },
+        currentnessEvidence: {
+          ...original.ownerDecision.currentnessEvidence,
+          observedAt: freshAt,
+          revalidatedAt: freshAt,
+        },
+        observedAt: freshAt,
+        verificationReceipt: { ...original.ownerDecision.verificationReceipt, issuedAt: freshAt },
+      };
+      const input = decodeInput({ attempt: { ...original.attempt, effectiveAt: pricingAt }, ownerDecision: fresh });
+      const verifiedOwner = input.ownerDecision;
+      assert(verifiedOwner.outcome === 'NO_CONVERSION_REQUIRED');
+      const result = yield* assessPricingQuantityBasis(input);
+      expect(result).toMatchObject({
+        attempt: { catalog: { evidence: { assessedAt: observedAt, validUntil } }, effectiveAt: pricingAt },
+        outcome: 'NO_CONVERSION_REQUIRED',
+      });
+      expect(
+        yield* assessPricingQuantityBasis({ ...input, ownerDecision: { ...verifiedOwner, observedAt } }),
+      ).toMatchObject({
+        outcome: 'UNVERIFIABLE',
+      });
+      expect(
+        yield* assessPricingQuantityBasis({ ...input, attempt: { ...input.attempt, effectiveAt: validUntil } }),
+      ).toMatchObject({ outcome: 'UNVERIFIABLE' });
+      expect(
+        yield* assessPricingQuantityBasis({
+          ...input,
+          ownerDecision: { ...verifiedOwner, requestedOwnerRevision: 'changed-original-material' },
+        }),
+      ).toMatchObject({ outcome: 'UNVERIFIABLE' });
+      expect(
+        yield* assessPricingQuantityBasis({
+          ...input,
+          ownerDecision: {
+            ...verifiedOwner,
+            endpoints: {
+              ...verifiedOwner.endpoints,
+              price: {
+                ...verifiedOwner.endpoints.price,
+                quantityBasis: { ...verifiedOwner.endpoints.price.quantityBasis, unitRuleRevision: 99 },
+              },
+            },
+          },
+        }),
+      ).toMatchObject({ outcome: 'INCOMPATIBLE', reason: 'CATALOG_QUANTITY_BASIS_DOES_NOT_MATCH_EXACT_PRICE_OR_TIER' });
+    }),
+);

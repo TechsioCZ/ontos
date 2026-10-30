@@ -50,6 +50,8 @@ interface InfrastructureRow {
   readonly gateway_rls_enabled_count: number;
   readonly gateway_runtime_privilege_count: number;
   readonly gateway_scope_column_count: number;
+  readonly issuance_receipt_constraint_count: number;
+  readonly issuance_receipt_policy_count: number;
   readonly journal_count: number;
   readonly legacy_runtime_privilege_count: number;
   readonly policy_count: number;
@@ -128,6 +130,8 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.compatibility_role_privilege_count === 1,
     row.compatibility_role_table_grant_count === 7,
     row.compatibility_trigger_count === 1,
+    row.issuance_receipt_constraint_count === 2,
+    row.issuance_receipt_policy_count === 4,
     row.confirmation_constraint_count === 6,
     row.confirmation_policy_count === 4,
     row.confirmation_routine_count === 2,
@@ -149,7 +153,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.gateway_scope_column_count === 0,
     row.journal_count === 1,
     row.legacy_runtime_privilege_count === 0,
-    row.policy_count === 262,
+    row.policy_count === 266,
     row.price_exclusion_count === 1,
     row.price_function_count === 5,
     row.price_function_public_execute_count === 0,
@@ -166,7 +170,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.quantity_tier_routine_count === 5,
     row.quantity_tier_routine_public_execute_count === 0,
     row.quantity_tier_table_count === 9,
-    row.routine_count === 133,
+    row.routine_count === 134,
     row.runtime_compatibility_membership_count === 0,
     row.runtime_support_helper_count === 2,
     row.routine_public_execute_count === 0,
@@ -290,6 +294,31 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
               from pg_catalog.pg_constraint as constraint_record
               join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
               join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+             where namespace.nspname = $1 and relation.relname = 'pricing_commitment_confirmation_issuance_receipts'
+               and constraint_record.conname in (
+                 'pricing_confirmation_issuance_receipts_pk',
+                 'pricing_confirmation_issuance_receipts_confirmation_fk'
+               ) and constraint_record.contype in ('p', 'f')) as issuance_receipt_constraint_count,
+           (select count(*)::integer
+              from pg_catalog.pg_policy as policy
+              join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
+              join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+             where namespace.nspname = $1 and relation.relname = 'pricing_commitment_confirmation_issuance_receipts'
+               and policy.polroles = array[(select oid from pg_catalog.pg_roles where rolname = 'ontos_runtime')]::oid[]
+               and (
+                 (policy.polcmd in ('r', 'a') and policy.polname in (
+                   'pricing_confirmation_issuance_receipts_scope_select',
+                   'pricing_confirmation_issuance_receipts_scope_insert'))
+                 or (policy.polcmd = 'w' and policy.polname = 'pricing_confirmation_issuance_receipts_scope_update'
+                   and pg_catalog.pg_get_expr(policy.polqual, policy.polrelid) = 'false'
+                   and pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid) = 'false')
+                 or (policy.polcmd = 'd' and policy.polname = 'pricing_confirmation_issuance_receipts_scope_delete'
+                   and pg_catalog.pg_get_expr(policy.polqual, policy.polrelid) = 'false')
+               )) as issuance_receipt_policy_count,
+           (select count(*)::integer
+              from pg_catalog.pg_constraint as constraint_record
+              join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
+              join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
              where namespace.nspname = $1 and relation.relname = 'pricing_commitment_confirmations'
                and constraint_record.conname in (
                  'pricing_commitment_confirmations_scope_ref_uk',
@@ -361,7 +390,8 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                  'material_evidence_proof_receipts', 'currency_support_proof_receipts',
                  'currency_support_recovery_compensation_receipts'
                )
-               and policy.polroles = case
+               and array(select role_oid from unnest(policy.polroles) as role_oid order by role_oid)
+                 = array(select role_oid from unnest(case
                  when relation.relname in ('material_evidence_proof_receipts', 'currency_support_proof_receipts')
                    then array[0::oid]
                  when relation.relname = 'currency_support_recovery_compensation_receipts'
@@ -370,7 +400,7 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                      (select oid from pg_catalog.pg_roles where rolname = 'pricing_management_routine_writer')
                    ]::oid[]
                  else array[(select oid from pg_catalog.pg_roles where rolname = 'ontos_runtime')]::oid[]
-               end
+               end) as role_oid order by role_oid)
                and (
                  (policy.polcmd = 'w'
                   and policy.polname = case

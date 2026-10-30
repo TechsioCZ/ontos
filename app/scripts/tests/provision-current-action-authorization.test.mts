@@ -32,6 +32,7 @@ import {
   stageAccountsAuthorization,
 } from '../provision-current-action-authorization.mts';
 import type {
+  discoverCurrentActions as DiscoverCurrentActions,
   discoverCurrentActionKeys as DiscoverCurrentActionKeys,
   StageAccountsAuthorization,
 } from '../provision-current-action-authorization.mts';
@@ -303,9 +304,32 @@ const addedVerticalActionKeys = [
   'pricing.price-group-catalog.retire-price-group',
 ] as const;
 
+const addedExplicitActionKeys = [
+  'commerce.cart.close-cart-draft',
+  'commerce.cart.create-cart-draft',
+  'commerce.cart.finalize-cart-candidate',
+  'commerce.cart.initialize-population-authority',
+  'commerce.cart.revise-cart-draft',
+  'commerce.customer-context.complete-purchase-proposal-basis',
+  'commerce.customer-context.consume-order-purchase-approval',
+  'commerce.customer-context.prepare-purchase-proposal-basis',
+  'commerce.customer-context.revalidate-order-purchase-approval',
+  'commerce.order.cancel-order-commitment',
+  'commerce.order.commit-order',
+  'commerce.order.complete-order-approval-consumption',
+  'commerce.order.complete-order-preparation',
+  'commerce.order.prepare-order-commitment',
+  'commerce.order.reconcile-order-approval',
+  'commerce.order.record-order-proof-set',
+  'commerce.order.record-precommit-failure',
+  'commerce.order.revalidate-order-commitment',
+  'privacy.core.acknowledge-privacy-notice',
+] as const;
+
 // These Actions are provisioned as 'explicit' (not Tenant-membership default), so they are discovered
 // alongside currentActionKeys/addedVerticalActionKeys but excluded from the tenant-membership fixtures below.
 const explicitlyProvisionedActionKeys = [
+  ...addedExplicitActionKeys,
   'commerce.customer-context.claim-portal-enrollment-transition',
   'commerce.customer-context.record-portal-enrollment-outcome',
   'commerce.customer-context.start-portal-enrollment',
@@ -543,9 +567,10 @@ it.effect(
   'discovers exactly the current generated Action baseline',
   Effect.fn(function* testEffect7() {
     const workspaceRoot = path.resolve(import.meta.dirname, '../..');
-    const { discoverCurrentActionKeys } = yield* Effect.promise(
+    const { discoverCurrentActionKeys, discoverCurrentActions } = yield* Effect.promise(
       (): Promise<{
         readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys;
+        readonly discoverCurrentActions: typeof DiscoverCurrentActions;
       }> =>
         import(pathToFileURL(path.resolve(import.meta.dirname, '../provision-current-action-authorization.mts')).href),
     );
@@ -554,8 +579,12 @@ it.effect(
     );
     expect(discoveredActionKeys).toEqual(completeCurrentActionKeys);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
+    const discoveredActions = yield* discoverCurrentActions(workspaceRoot).pipe(Effect.provide(NodeServices.layer));
+    for (const actionKey of addedExplicitActionKeys) {
+      expect(discoveredActions).toContainEqual({ actionKey, provisioning: 'explicit' });
+    }
     expect(completeCurrentActionKeys).toContain('party.registry.counterparty-customer-onboard');
-    expect(completeCurrentActionKeys.filter((key) => key.startsWith('privacy.core.'))).toHaveLength(37);
+    expect(completeCurrentActionKeys.filter((key) => key.startsWith('privacy.core.'))).toHaveLength(38);
     expect(completeCurrentActionKeys.filter((key) => key.startsWith('commerce.pricing.'))).toHaveLength(13);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
     expect(completeCurrentActionKeys).toContain('commerce.catalog.publish-product-configuration');

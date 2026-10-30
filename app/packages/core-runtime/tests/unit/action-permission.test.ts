@@ -1,8 +1,10 @@
+import { NodeFileSystem, NodePath } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
+import { resolveAppWorkspaceRoot } from '../../src/environment/workspace-environment.ts';
 import type { SpiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import { SPICEDB_ROOT_ENV_PATH, loadSpiceDbConfig, parseSpiceDbConfig } from '../../src/permissions/config.ts';
@@ -46,28 +48,50 @@ const makeClient = (
   };
 };
 
-it.effect('loads the root SpiceDB environment independently of the invocation directory', () =>
-  Effect.gen(function* loadsTheRootSpiceDBEnvironmentIndependentlyOfThe() {
-    const originalDirectory = process.cwd();
-    const rootExamplePath = SPICEDB_ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
+it.effect('loads a root-anchored SpiceDB file fixture independently of the invocation directory', () =>
+  Layer.build(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)).pipe(
+    Effect.flatMap((services) =>
+      Effect.gen(function* loadsTheRootSpiceDBEnvironmentIndependentlyOfThe() {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nodePath = yield* Path.Path;
+        const originalDirectory = process.cwd();
+        const workspaceRoot = resolveAppWorkspaceRoot(originalDirectory);
+        expect(SPICEDB_ROOT_ENV_PATH).toBe(
+          workspaceRoot === undefined ? undefined : nodePath.join(workspaceRoot, '.env'),
+        );
+        expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        process.chdir(originalDirectory);
-      }),
-    );
-    process.chdir('/');
-    const configuration = yield* loadSpiceDbConfig({
-      environment: {},
-      envPath: rootExamplePath,
-    });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            process.chdir(originalDirectory);
+          }),
+        );
+        const fixtureDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          directory: nodePath.dirname(SPICEDB_ROOT_ENV_PATH),
+          prefix: '.unit-spicedb-',
+        });
+        const fixturePath = nodePath.join(fixtureDirectory, 'spicedb.fixture');
+        yield* fileSystem.writeFileString(
+          fixturePath,
+          'SPICEDB_ENDPOINT=localhost:50051\nSPICEDB_PRESHARED_KEY=ontos-local-development-key\n',
+          { mode: 0o600 },
+        );
+        process.chdir('/');
+        expect(SPICEDB_ROOT_ENV_PATH).toBe(
+          workspaceRoot === undefined ? undefined : nodePath.join(workspaceRoot, '.env'),
+        );
+        const configuration = yield* loadSpiceDbConfig({
+          environment: {},
+          envPath: fixturePath,
+        });
 
-    expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-    expect(configuration).toEqual({
-      endpoint: 'localhost:50051',
-      preSharedKey: 'ontos-local-development-key',
-    });
-  }),
+        expect(configuration).toEqual({
+          endpoint: 'localhost:50051',
+          preSharedKey: 'ontos-local-development-key',
+        });
+      }).pipe(Effect.provide(services)),
+    ),
+  ),
 );
 
 it.effect('requires a complete configuration and accepts only a PEM certificate as SPICEDB_CA_CERT', () =>

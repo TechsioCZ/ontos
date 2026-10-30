@@ -214,6 +214,14 @@ export const grantSharedRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
+    // Restore the Catalog redemption ledger's owner migration grants after broad shared-schema grants.
+    if (yield* exists(client, tableExistsQuery, 'catalog.gateway_assertion_redemptions')) {
+      yield* query(client, 'revoke all on table catalog.gateway_assertion_redemptions from public, ontos_runtime');
+      yield* query(
+        client,
+        'grant select, insert, delete on table catalog.gateway_assertion_redemptions to ontos_runtime',
+      );
+    }
     // Privacy's immutable ledgers must retain the restrictions installed by their owner migrations.
     const privacyLedgers = yield* query<{ table_name: string }>(
       client,
@@ -239,6 +247,11 @@ export const grantSharedRuntimeRole = (
     if (yield* exists(client, tableExistsQuery, 'core.application_composition_durable_work')) {
       yield* query(client, 'revoke all on table core.application_composition_durable_work from public, ontos_runtime');
       yield* query(client, 'grant select on table core.application_composition_durable_work to ontos_runtime');
+    }
+    // The operator-only dead-delivery resolution ledger stays readable but never writable by runtimes.
+    if (yield* exists(client, tableExistsQuery, 'core.outbox_delivery_resolutions')) {
+      yield* query(client, 'revoke all on table core.outbox_delivery_resolutions from public, ontos_runtime');
+      yield* query(client, 'grant select on table core.outbox_delivery_resolutions to ontos_runtime');
     }
     if (
       yield* exists(

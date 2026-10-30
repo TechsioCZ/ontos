@@ -162,6 +162,19 @@ const RemovalAppliedSchema = Schema.TaggedStruct('REMOVAL_APPLIED', {
 });
 type RemovalApplied = typeof RemovalAppliedSchema.Type;
 
+const preferenceCoveredByEntitlement = (
+  preference: CustomerPaymentTermPreference,
+  entitlements: readonly CustomerPaymentTermEntitlement[],
+): boolean =>
+  entitlements.some(
+    (entitlement) =>
+      entitlement.status === 'ACTIVE' &&
+      sameTerm(entitlement.paymentTermRef, preference.paymentTermRef) &&
+      entitlement.effectiveFrom <= preference.effectiveFrom &&
+      (entitlement.effectiveTo === undefined ||
+        (preference.effectiveTo !== undefined && preference.effectiveTo <= entitlement.effectiveTo)),
+  );
+
 const applyRemoval = (
   state: CustomerPaymentTermsState,
   entitlementRef: CustomerPaymentTermEntitlementRef,
@@ -189,26 +202,39 @@ const applyRemoval = (
       reason: 'The entitlement has a different cancellation schedule',
     };
   }
+  if (entitlement.endedAt !== undefined) {
+    return entitlement.endedAt === effectiveAt
+      ? { _tag: 'REMOVAL_APPLIED', changed: false, preferenceCleared: false, removalKind: 'ENDED', state }
+      : { _tag: 'REMOVAL_CONFLICT', reason: 'The entitlement has a different explicit effective end' };
+  }
   if (entitlement.effectiveTo !== undefined) {
-    if (entitlement.effectiveTo === effectiveAt) {
+    if (entitlement.originalEffectiveTo === undefined) {
       return {
-        _tag: 'REMOVAL_APPLIED',
-        changed: false,
-        preferenceCleared: false,
-        removalKind: 'ENDED',
-        state,
+        _tag: 'REMOVAL_CONFLICT',
+        reason: 'The legacy entitlement original schedule and removal intent are unknown',
       };
     }
-    return { _tag: 'REMOVAL_CONFLICT', reason: 'The entitlement has a different effective end' };
+    if (effectiveAt >= entitlement.effectiveTo) {
+      return effectiveAt === entitlement.effectiveTo
+        ? { _tag: 'REMOVAL_APPLIED', changed: false, preferenceCleared: false, removalKind: 'ENDED', state }
+        : { _tag: 'REMOVAL_CONFLICT', reason: 'The removal is after the entitlement effective end' };
+    }
   }
 
   const cancellation = effectiveAt <= entitlement.effectiveFrom;
+  // A legacy ACTIVE open row is unambiguously open under the supported writer's immutable-end guard.
+  const originalEffectiveTo = entitlement.originalEffectiveTo ?? null;
   const replacement: CustomerPaymentTermEntitlement = cancellation
-    ? { ...entitlement, cancelledAt: effectiveAt, status: 'CANCELLED' }
-    : { ...entitlement, effectiveTo: effectiveAt };
-  const preferences = clearPreferencesAt(state.preferences, effectiveAt, entitlement.paymentTermRef);
+    ? { ...entitlement, cancelledAt: effectiveAt, originalEffectiveTo, status: 'CANCELLED' }
+    : { ...entitlement, effectiveTo: effectiveAt, endedAt: effectiveAt, originalEffectiveTo };
   const nextEntitlements = [...state.entitlements];
   nextEntitlements[index] = replacement;
+  const preferences = state.preferences.flatMap((preference) =>
+    preferenceCoveredByEntitlement(preference, [entitlement]) &&
+    !preferenceCoveredByEntitlement(preference, nextEntitlements)
+      ? clearPreferencesAt([preference], effectiveAt)
+      : [preference],
+  );
   return {
     _tag: 'REMOVAL_APPLIED',
     changed: true,
@@ -221,19 +247,6 @@ const applyRemoval = (
     state: { ...state, entitlements: nextEntitlements, preferences },
   };
 };
-
-const preferenceCoveredByEntitlement = (
-  preference: CustomerPaymentTermPreference,
-  entitlements: readonly CustomerPaymentTermEntitlement[],
-): boolean =>
-  entitlements.some(
-    (entitlement) =>
-      entitlement.status === 'ACTIVE' &&
-      sameTerm(entitlement.paymentTermRef, preference.paymentTermRef) &&
-      entitlement.effectiveFrom <= preference.effectiveFrom &&
-      (entitlement.effectiveTo === undefined ||
-        (preference.effectiveTo !== undefined && preference.effectiveTo <= entitlement.effectiveTo)),
-  );
 
 type ChangeRejected = Exclude<ChangeCustomerPaymentTermsOutcome, { readonly _tag: 'CHANGED' }>;
 const ChangeAppliedSchema = Schema.TaggedStruct('CHANGE_APPLIED', {
@@ -345,6 +358,7 @@ const grantEntitlement = (
       ? {
           effectiveFrom: change.effectiveFrom,
           entitlementRef: change.entitlementRef,
+          originalEffectiveTo: null,
           paymentTermRef: change.paymentTermRef,
           semanticRevisionId: change.semanticRevisionId,
           status: 'ACTIVE',
@@ -353,6 +367,7 @@ const grantEntitlement = (
           effectiveFrom: change.effectiveFrom,
           effectiveTo: change.effectiveTo,
           entitlementRef: change.entitlementRef,
+          originalEffectiveTo: change.effectiveTo,
           paymentTermRef: change.paymentTermRef,
           semanticRevisionId: change.semanticRevisionId,
           status: 'ACTIVE',

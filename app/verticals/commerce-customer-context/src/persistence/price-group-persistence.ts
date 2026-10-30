@@ -536,6 +536,44 @@ const bindAssignmentCompatibility = (
     }),
   );
 
+const sameCompatibilityIdentity = (
+  accepted: PriceGroupCompatibilityEvidence,
+  current: PriceGroupCompatibilityEvidence,
+): boolean =>
+  accepted.priceGroupRef.moduleId === current.priceGroupRef.moduleId &&
+  accepted.priceGroupRef.resourceType === current.priceGroupRef.resourceType &&
+  accepted.priceGroupRef.resourceId === current.priceGroupRef.resourceId &&
+  accepted.priceGroupRef.tenantId === current.priceGroupRef.tenantId &&
+  accepted.catalogRevision === current.catalogRevision &&
+  accepted.requiredContract.contractId === current.requiredContract.contractId &&
+  accepted.requiredContract.version === current.requiredContract.version &&
+  accepted.definitionRevisionId === current.definitionRevisionId &&
+  accepted.definitionRevisionNumber === current.definitionRevisionNumber &&
+  accepted.meaningFingerprint === current.meaningFingerprint &&
+  accepted.definitionEffectivePeriod.effectiveFrom === current.definitionEffectivePeriod.effectiveFrom &&
+  accepted.definitionEffectivePeriod.effectiveTo === current.definitionEffectivePeriod.effectiveTo;
+
+const unchangedAssignmentCompatibility = (
+  transaction: PriceGroupRoutineInvoker,
+  assignment: CustomerPriceGroupAssignment,
+  current: PriceGroupCompatibilityEvidence,
+): Effect.Effect<CustomerPriceGroupAssignment, CustomerPriceGroupPersistenceUnavailable> =>
+  readAssignmentCompatibility(transaction, assignment).pipe(
+    Effect.flatMap((accepted) => {
+      if (accepted.compatibility === undefined) {
+        // Preserve the existing legacy hydration path: this operation supplies its first evidence.
+        return bindAssignmentCompatibility(transaction, assignment, current);
+      }
+      // The current owner lookup and native assignment lock already ran. Equivalent business
+      // state keeps its first accepted attribution; a later operation must not rebind its clocks.
+      return sameCompatibilityIdentity(accepted.compatibility, current)
+        ? Effect.succeed(accepted)
+        : Effect.fail(
+            persistenceUnavailable('The Price Group Assignment already has different compatibility evidence'),
+          );
+    }),
+  );
+
 const inspectCustomerPriceGroupProfile = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
@@ -648,7 +686,11 @@ const assign = (
           return Effect.fail(persistenceUnavailable('The assignment failed its atomic profile revision check'));
         }
         return assignmentFromRow(row, input.profile).pipe(
-          Effect.flatMap((assignment) => bindAssignmentCompatibility(transaction, assignment, input.compatibility)),
+          Effect.flatMap((assignment) =>
+            row.outcome === 'UNCHANGED'
+              ? unchangedAssignmentCompatibility(transaction, assignment, input.compatibility)
+              : bindAssignmentCompatibility(transaction, assignment, input.compatibility),
+          ),
           Effect.map((assignment) => ({
             _tag: 'assigned' as const,
             assignment,

@@ -38,11 +38,13 @@ const validateTrustedScope = (
   input: EligibleMarketTuplesRequest,
   context: ReadHandlerContext<EligibleMarketTuplesServices>,
 ) => {
-  if (
-    input.storefrontRef.tenantId !== context.scope.tenantId ||
-    context.scope.trustedStorefrontId === undefined ||
-    input.storefrontRef.appId !== context.scope.trustedStorefrontId
-  ) {
+  // Shell API-key service credentials cannot carry a signed Storefront; callers on that path prove Storefront
+  // currentness through the Storefront Registry themselves. Session callers must still match their trusted Storefront.
+  const storefrontTrusted =
+    context.scope.trustedStorefrontId === undefined
+      ? context.scope.authMethod === 'api_key'
+      : input.storefrontRef.appId === context.scope.trustedStorefrontId;
+  if (input.storefrontRef.tenantId !== context.scope.tenantId || !storefrontTrusted) {
     return Effect.fail(
       new ReadPermissionDenied({
         code: 'read_permission_denied',

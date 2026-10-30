@@ -6,8 +6,8 @@ import { manageCommitmentConfirmationAction } from '../../src/actions/manage-com
 import { pricingRegistration } from '../../vertical.registration.ts';
 
 describe('commitment confirmation publication boundary', () => {
-  it('keeps the Action registered without publishing its dormant HTTP group', () => {
-    expect(Object.keys(pricingApi.groups)).not.toContain('manageCommitmentConfirmationAction');
+  it('registers the Action and publishes its governed HTTP group', () => {
+    expect(Object.keys(pricingApi.groups)).toContain('manageCommitmentConfirmationAction');
     expect(getVerticalRuntimeActions(pricingRegistration)).toContain(manageCommitmentConfirmationAction);
   });
 });

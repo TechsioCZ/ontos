@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -9,12 +9,20 @@ import { expect, it } from 'effect-rstest';
 
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
 import {
+  hasCompleteGeneratedModuleApiSeam,
+  hasValidGovernedHttpCompositionRoot,
   hasGeneratedActionRegistrationBinding,
+  hasGeneratedActionClientPublication,
+  hasOwnerLocalReadServiceFactory,
+  hasNativeHttpActionMount,
+  ownerActionClientPublication,
+  hasPublishedGeneratedContractShim,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
 import {
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiReadContract,
+  generatedModuleApiEntrypointReference,
   hasGeneratedSourceHeader,
 } from '../generated-module-api-boundary.mts';
 import {
@@ -25,6 +33,30 @@ import {
   publishedResourceRefContractExports,
   resolvePublishedContractModuleId,
 } from '../published-outbox-contracts.mts';
+
+const INVENTORY_OWNER_PATH = 'verticals/inventory-stock';
+const STOCK_LIST_SERVER_CONTRACT_IMPORT = '../shared/apis/stock-list.ts';
+const INVENTORY_DEPLOYMENT_ID = 'inventory-stock';
+const STOCK_LIST_CLIENT_CONTRACT_IMPORT = '../../shared/apis/stock-list.ts';
+const SCHEMA_DISPATCH_IMPORTS = 'Effect, Redacted, Schema';
+const INVENTORY_AUDIENCE_OPTION = "audience: 'inventory-stock'";
+const RESERVE_CLIENT_RELATIVE_IMPORT = '../src/api/reserve-action-client.ts';
+
+const INVENTORY_PACKAGE_SPECIFIER = '@app/inventory-stock';
+const INVENTORY_MODULE_ID = 'inventory.stock';
+const RESERVE_PUBLISHED_SOURCE = 'packages/inventory-public-contracts/src/reserve-action.ts';
+
+const STOCK_LIST_PUBLISHED_SOURCE = 'packages/inventory-public-contracts/src/stock-list.ts';
+
+const UNUSED_NATIVE_API_DECLARATION = 'const unusedNativeContract =';
+const NATIVE_HTTP_SOURCE_IMPORT = "from 'effect/http-api'";
+const FAKE_HTTP_SOURCE_IMPORT = "from './fake-native.ts'";
+const MODULE_ACCESS_PERMISSION = 'module.access';
+const CONTEXT_PERMISSION_KIND = 'context_permission' as const;
+const CONNECTED_ENTRYPOINT_PROPERTY = 'entrypoint: selectedReadContext';
+const MODULE_ACCESS_PERMISSION_PROPERTY = "permission: 'module.access'";
+const CORE_RUNTIME_SOURCE_IMPORT = "from '@app/core-runtime'";
+const FAKE_CORE_SOURCE_IMPORT = "from './fake-core.ts'";
 
 const EXPECTED_EFFECT_FAILURE = 'Expected the Effect to fail';
 const GOVERNED_SEARCH_HEADER =
@@ -131,6 +163,7 @@ const CORRELATION_VALUE = '      requestCorrelation,';
 
 const CORRELATION_VALUE_TAIL = "      requestCorrelation: requestCorrelation || 'wrong',";
 
+const INVENTORY_API_PREFIX = '/inventory-stock-api';
 const DEFAULT_API_PREFIX = "defaultApiPrefix: '/inventory-stock-api'";
 
 const DEFAULT_API_PREFIX_TAIL = "defaultApiPrefix: '/inventory-stock-api' + '/wrong'";
@@ -177,7 +210,7 @@ const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created';
 
 const PARTY_PACKAGE_NAME = '@app/party-registry';
 
-const INVENTORY_VERTICAL_PATH = 'verticals/inventory-stock';
+const INVENTORY_VERTICAL_PATH = INVENTORY_OWNER_PATH;
 
 const INVENTORY_REGISTRATION_PATH = `${INVENTORY_VERTICAL_PATH}/vertical.registration.ts`;
 
@@ -268,7 +301,7 @@ it.effect('governed clients retain every boundary check across formatter trailin
   Effect.sync(() => {
     const expectation = {
       authorizedOperation: 'loadInventoryItemsClientWithAuthorization',
-      defaultApiPrefix: '/inventory-stock-api',
+      defaultApiPrefix: INVENTORY_API_PREFIX,
       endpointGroup: 'inventoryItemsSearch',
       generatedHeader: GOVERNED_SEARCH_HEADER,
       invocationKind: 'provider',
@@ -339,7 +372,7 @@ it.effect('governed client return contracts erase only types and retain every ex
   Effect.sync(() => {
     const expectation: Parameters<typeof hasGeneratedGovernedClientContract>[1] = {
       authorizedOperation: 'loadInventoryItemsClientWithAuthorization',
-      defaultApiPrefix: '/inventory-stock-api',
+      defaultApiPrefix: INVENTORY_API_PREFIX,
       endpointGroup: 'inventoryItemsSearch',
       generatedHeader: GOVERNED_SEARCH_HEADER,
       invocationKind: 'provider',
@@ -468,7 +501,7 @@ it('governed servers bind the trusted handler, authentication, registration, and
   const exportedName = 'stockListReadApiLive';
   const source = governedServerFixture({
     apiValue: 'StockListApi',
-    contractImport: '../shared/apis/stock-list.ts',
+    contractImport: STOCK_LIST_SERVER_CONTRACT_IMPORT,
     exportedName,
     generatedHeader: MODULE_API_HEADER,
     group: 'stockList',
@@ -565,12 +598,12 @@ const makeFixture = Effect.fn(function* mergedScenario1(
     JSON.stringify({
       shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
       verticals: [
-        { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
       ],
     }),
   );
-  yield* write(root, `${INVENTORY_VERTICAL_PATH}/package.json`, JSON.stringify({ name: '@app/inventory-stock' }));
+  yield* write(root, `${INVENTORY_VERTICAL_PATH}/package.json`, JSON.stringify({ name: INVENTORY_PACKAGE_SPECIFIER }));
   yield* write(
     root,
     'apps/shell-super-app/src/routes/home/route.meta.ts',
@@ -661,6 +694,36 @@ it.live('confines native Federation imports, including aliases and dynamic impor
     yield* write(root, 'apps/shell-super-app/src/routes/module-entrypoint-loader.ts', sources[0] ?? '');
     yield* write(root, 'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx', sources[1] ?? '');
     yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('admits exact Federation package metadata while preserving executable and computed runtime boundaries', () =>
+  Effect.gen(function* federationMetadataBoundary() {
+    const root = yield* makeFixture();
+    const config = 'verticals/inventory-stock/backend-federation.config.ts';
+    const metadataSource = `import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const federationRuntimeVersion = (require('@module-federation/runtime/package.json') as { version: string }).version;
+export default { shared: { '@module-federation/runtime': { requiredVersion: federationRuntimeVersion, singleton: true } } };`;
+    yield* write(root, config, metadataSource);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* assertRejectedSources(
+      root,
+      config,
+      [
+        "const runtime = require('@module-federation/runtime');",
+        "const runtime = import('@module-federation/runtime/package.json/runtime');",
+        "const runtime = import('@module-federation/runtime/package.json' + '/runtime');",
+        "const runtime = require('@module-federation/runtime/package.json' + '/runtime');",
+        "import * as runtime from '@module-federation/runtime';",
+        "import { loadRemote as resolveRemote } from '@module-federation/runtime'; resolveRemote('inventory/Widget');",
+        "const metadata = require('@module-federation/runtime/package.json'); loadRemote('inventory/Widget');",
+        "const metadata = require('@module-federation/runtime/package.json'); runtime.preloadRemote([]);",
+        "const metadata = require('@module-federation/runtime/package.json'); runtime.registerRemotes([]);",
+        "const runtime = require('@module-federation/runtime-core/package.json');",
+      ],
+      /native Federation runtime imports.*approved Shell module-entrypoint loader/u,
+    );
   }),
 );
 
@@ -909,7 +972,7 @@ it.live(
 );
 
 const writeGovernedModuleApi = Effect.fn(function* mergedScenario1(root: string) {
-  const vertical = 'verticals/inventory-stock';
+  const vertical = INVENTORY_OWNER_PATH;
   const header = MODULE_API_HEADER;
   yield* write(
     root,
@@ -943,7 +1006,7 @@ export const api = HttpApi.make('InventoryApi')
       apiValue: 'StockListApi',
       authorizedOperation: 'executeStockListWithAuthorization',
       clientHelper: 'stockListClient',
-      contractImport: '../../shared/apis/stock-list.ts',
+      contractImport: STOCK_LIST_CLIENT_CONTRACT_IMPORT,
       endpointGroup: 'stockList',
       generatedHeader: header,
       invocationKind: MODULE_API_KIND,
@@ -955,7 +1018,7 @@ export const api = HttpApi.make('InventoryApi')
     `${vertical}/api/stock-list-read-server.ts`,
     governedServerFixture({
       apiValue: 'StockListApi',
-      contractImport: '../shared/apis/stock-list.ts',
+      contractImport: STOCK_LIST_SERVER_CONTRACT_IMPORT,
       exportedName: 'stockListReadApiLive',
       generatedHeader: header,
       group: 'stockList',
@@ -1495,7 +1558,7 @@ export const executeStockList = (payload, requestCorrelation, options) =>
         `    ${OPTIONS_CALL_TAIL}`,
         "  };\n  clientConfig.transportHeaders.authorization = 'Bearer bypass';\n  clientConfig.transportHeaders['x-correlation-id'] = 'wrong';\n  return makeGovernedEffectBffClient(",
       ),
-      validClient.replace('../../shared/apis/stock-list.ts', '../../shared/api.ts'),
+      validClient.replace(STOCK_LIST_CLIENT_CONTRACT_IMPORT, '../../shared/api.ts'),
       validClient.replace('./action-gateway.ts', './cached-credential-gateway.ts'),
       validClient.replace('api: StockListApi', 'api: OtherApi'),
       validClient.replace(
@@ -2193,7 +2256,7 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
     );
     const routeMetadataPath = 'verticals/inventory-stock/src/routes/orders/route.meta.ts';
     const routeMetadata = yield* Effect.promise(() => readFile(path.join(root, routeMetadataPath), 'utf-8'));
-    yield* write(root, routeMetadataPath, routeMetadata.replace('inventory-stock', INVENTORY_RUNTIME_ID));
+    yield* write(root, routeMetadataPath, routeMetadata.replace(INVENTORY_DEPLOYMENT_ID, INVENTORY_RUNTIME_ID));
     yield* Effect.all(
       (
         [
@@ -2933,13 +2996,48 @@ for (const outcome of ['success', EARLY_FAILURE, PARTIAL_FAILURE, 'interruption'
   );
 }
 
+it('follows the actual immutable Core entrypoint reference while preserving owner and authorization identity', () => {
+  const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  const expectation = { kind: CONTEXT_PERMISSION_KIND, permission: MODULE_ACCESS_PERMISSION } as const;
+  const accepts = (source: string) => {
+    const connected = generatedModuleApiEntrypointReference(source, 'stockListRead');
+    return (
+      connected !== undefined &&
+      hasGeneratedModuleApiReadContract(source, INVENTORY_MODULE_ID, STOCK_LIST_STEM, expectation, connected.name)
+    );
+  };
+  expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, expectation)).toBe(true);
+  const renamed = base.replaceAll('stockListEntrypoint', 'selectedReadContext');
+  expect(accepts(renamed)).toBe(true);
+  const shorthand = base
+    .replaceAll('stockListEntrypoint', 'entrypoint')
+    .replace('entrypoint: entrypoint', 'entrypoint');
+  expect(accepts(shorthand)).toBe(true);
+  expect(accepts(renamed.replace(CONNECTED_ENTRYPOINT_PROPERTY, "'entrypoint': selectedReadContext"))).toBe(true);
+  for (const invalid of [
+    renamed.replace('export const selectedReadContext', 'export let selectedReadContext'),
+    `${renamed.replace(CONNECTED_ENTRYPOINT_PROPERTY, 'entrypoint: wrongContext')}\nconst wrongContext = fakeFactory();`,
+    renamed.replace("moduleKey: 'inventory.stock'", "moduleKey: 'other.owner'"),
+    renamed.replace(MODULE_ACCESS_PERMISSION_PROPERTY, "permission: 'other.permission'"),
+    renamed.replace("role: 'api'", "role: 'worker'"),
+    renamed.replace('= defineTenantModuleEntrypoint(', '= defineSystemModuleEntrypoint('),
+    renamed.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
+    `${renamed}\nconst escaped = selectedReadContext;`,
+    `${renamed}\nqueueMicrotask(() => Object.assign(selectedReadContext, { authorization: { kind: 'public' } }));`,
+    renamed.replace(CONNECTED_ENTRYPOINT_PROPERTY, "entrypoint: selectedReadContext, ['entrypoint']: wrongContext"),
+    shorthand.replace('accessKind:', '...untrusted, accessKind:'),
+  ]) {
+    expect(accepts(invalid)).toBe(false);
+  }
+});
+
 it('resolves only immutable literal permission aliases and preserves exact authorization comparison', () => {
   const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
   const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
-  const aliased = `${declaration}${base.replace("permission: 'module.access'", ALIASED_PERMISSION_PROPERTY)}`;
-  const expectation = { kind: 'context_permission', permission: 'module.access' } as const;
+  const aliased = `${declaration}${base.replace(MODULE_ACCESS_PERMISSION_PROPERTY, ALIASED_PERMISSION_PROPERTY)}`;
+  const expectation = { kind: CONTEXT_PERMISSION_KIND, permission: MODULE_ACCESS_PERMISSION } as const;
   const accepts = (source: string) =>
-    hasGeneratedModuleApiReadContract(source, 'inventory.stock', STOCK_LIST_STEM, expectation);
+    hasGeneratedModuleApiReadContract(source, INVENTORY_MODULE_ID, STOCK_LIST_STEM, expectation);
   expect(accepts(aliased)).toBe(true);
   expect(accepts(aliased.replace(' as const;', ';'))).toBe(true);
   expect(accepts(aliased.replace('const INVENTORY_READ_PERMISSION', 'let INVENTORY_READ_PERMISSION'))).toBe(false);
@@ -3057,7 +3155,7 @@ it.live(
     const root = yield* makeFixture();
     const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
     const source = `${declaration}${moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList').replace(
-      "permission: 'module.access'",
+      MODULE_ACCESS_PERMISSION_PROPERTY,
       ALIASED_PERMISSION_PROPERTY,
     )}`;
     const inventorySchema = Schema.fromJsonString(
@@ -3070,7 +3168,7 @@ it.live(
         ),
       }),
     );
-    for (const permission of ['module.access', 'module.other']) {
+    for (const permission of [MODULE_ACCESS_PERMISSION, 'module.other']) {
       yield* write(root, STOCK_LIST_READ_FILE, source.replace("'module.access' as const", `'${permission}' as const`));
       yield* checkModuleEntrypointBoundaries(root);
       const report = yield* Effect.promise(() =>
@@ -3079,7 +3177,7 @@ it.live(
       const inventory = yield* Schema.decodeUnknownEffect(inventorySchema)(report);
       expect(
         inventory.entries.find((entry) => entry.entrypointKey === 'inventory.stock.api.stock-list')?.authorization,
-      ).toEqual({ kind: 'context_permission', permission });
+      ).toEqual({ kind: CONTEXT_PERMISSION_KIND, permission });
     }
     const invalidSources = [
       source.replace(declaration, ''),
@@ -3139,5 +3237,614 @@ it.live(
       withCanonical.replace('StockListInvalidProblemSchema, ', ''),
     ];
     yield* assertRejectedSources(root, contractPath, invalidSources, /module APIs require/u);
+  }),
+);
+
+it('proves only closed schema and request-discriminator dispatch through the unchanged governed client', () => {
+  const options = {
+    apiValue: 'StockListApi',
+    authorizedOperation: 'executeStockListWithAuthorization',
+    clientHelper: 'stockListClient',
+    contractImport: STOCK_LIST_CLIENT_CONTRACT_IMPORT,
+    endpointGroup: 'stockList',
+    generatedHeader: MODULE_API_HEADER,
+    invocationKind: MODULE_API_KIND,
+    publicOperation: 'executeStockList',
+  } as const;
+  const expectation = {
+    ...options,
+    defaultApiPrefix: INVENTORY_API_PREFIX,
+    ownerApiValue: options.apiValue,
+    ownerContractImport: options.contractImport,
+  };
+  const direct = governedClientFixture(options);
+  const dispatch = 'Effect.flatMap((client) => client.stockList.execute({ payload }))';
+  const schema = direct
+    .replace('Effect, Redacted', SCHEMA_DISPATCH_IMPORTS)
+    .replace('import { StockListApi }', 'import { StockListApi, StockListRequestSchema }')
+    .replace(
+      dispatch,
+      `Effect.flatMap((client) => {
+      if (Schema.is(StockListRequestSchema.members[1])(payload)) { return client.stockList.execute({ payload }); }
+      return client.stockList.execute({ payload });
+    })`,
+    );
+  const projection = direct.replace(
+    dispatch,
+    `Effect.flatMap((client) => {
+    if (payload.operation === 'RECOVER') { return client.stockList.execute({ payload: { operation: payload.operation, requestRef: payload.requestRef } }); }
+    return payload.operation === 'LOAD' ? client.stockList.execute({ payload: { operation: payload.operation } }) : client.stockList.execute({ payload });
+  })`,
+  );
+  const switched = direct.replace(
+    dispatch,
+    `Effect.flatMap((client) => {
+    switch (payload.operation) {
+      case 'LOAD': return client.stockList.execute({ payload: { operation: payload.operation } });
+      case 'RECOVER': return client.stockList.execute({ payload });
+    }
+  })`,
+  );
+  const bracedSwitch = switched.replace(
+    "case 'LOAD': return client.stockList.execute({ payload: { operation: payload.operation } });",
+    "case 'LOAD': { return client.stockList.execute({ payload: { operation: payload.operation } }); }",
+  );
+  expect(hasGeneratedGovernedClientContract(bracedSwitch, expectation)).toBe(true);
+  for (const unsafeBraced of [
+    bracedSwitch.replace('{ return client.stockList', '{ untrusted(); return client.stockList'),
+    bracedSwitch.replace('{ return client.stockList', '{ { return client.stockList').replace('}); }', '}); } }'),
+    bracedSwitch.replace(
+      "case 'LOAD': { return client.stockList.execute({ payload: { operation: payload.operation } }); }",
+      "case 'LOAD': { break; }",
+    ),
+  ]) {
+    expect(hasGeneratedGovernedClientContract(unsafeBraced, expectation)).toBe(false);
+  }
+  const modeDispatch = direct.replace(
+    dispatch,
+    `Effect.flatMap((client) => payload.mode === 'REVALIDATION'
+    ? client.stockList.execute({ payload: { mode: payload.mode, binding: payload.binding } })
+    : client.stockList.execute({ payload }))`,
+  );
+  expect(hasGeneratedGovernedClientContract(modeDispatch, expectation)).toBe(true);
+  expect(
+    hasGeneratedGovernedClientContract(modeDispatch.replace('payload.mode ===', 'payload.untrusted ==='), expectation),
+  ).toBe(false);
+  const membership = direct.replace(
+    dispatch,
+    `Effect.flatMap((client) => 'requestRef' in payload
+    ? client.stockList.execute({ payload })
+    : client.stockList.execute({ payload }))`,
+  );
+  expect(hasGeneratedGovernedClientContract(membership, expectation)).toBe(true);
+  const membershipGuard = "'requestRef' in payload";
+  for (const unsafeMembership of [
+    membership.replace(membershipGuard, "'requestRef' in other"),
+    membership.replace(membershipGuard, 'untrustedKey in payload'),
+    membership.replace(membershipGuard, "'requestRef' in payload.nested"),
+    membership.replace(
+      'client.stockList.execute({ payload })\n    : client.stockList.execute({ payload })',
+      'client.other.execute({ payload })\n    : client.stockList.execute({ payload })',
+    ),
+  ]) {
+    expect(hasGeneratedGovernedClientContract(unsafeMembership, expectation)).toBe(false);
+  }
+  for (const variant of [schema, projection, switched]) {
+    expect(hasGeneratedGovernedClientContract(variant, expectation)).toBe(true);
+  }
+  const unsafe = [
+    schema.replace('Schema.is(StockListRequestSchema.members[1])(payload)', 'Math.random()'),
+    schema.replace(
+      'Schema.is(StockListRequestSchema.members[1])(payload)',
+      'FakeSchema.is(StockListRequestSchema.members[1])(payload)',
+    ),
+    schema.replace(SCHEMA_DISPATCH_IMPORTS, 'Effect, Redacted, Schema, Layer'),
+    schema.replace(SCHEMA_DISPATCH_IMPORTS, 'Effect, Redacted, Schema as FakeSchema'),
+    schema.replace("from '../../shared/apis/stock-list.ts'", "from '../../private/stock-list.ts'"),
+    schema.replace('client.stockList.execute({ payload });', 'client.other.execute({ payload });'),
+    schema.replace('client.stockList.execute({ payload });', 'Effect.succeed(payload);'),
+    schema.replace(AUTHORIZATION_VALUE, AUTHORIZATION_VALUE_TAIL),
+    schema.replace(DEFAULT_API_PREFIX, DEFAULT_API_PREFIX_TAIL),
+    projection.replace('requestRef: payload.requestRef', 'requestRef: payload.otherRef'),
+    switched.replace(
+      "case 'LOAD': return client.stockList.execute({ payload: { operation: payload.operation } });",
+      "case 'LOAD': break;",
+    ),
+  ];
+  for (const variant of unsafe) {
+    expect(hasGeneratedGovernedClientContract(variant, expectation)).toBe(false);
+  }
+});
+
+it('proves inferred native scoped factories and nested callback type parameters without accepting forged ownership', () => {
+  const owner = INVENTORY_OWNER_PATH;
+  const file = `${owner}/src/api/stock-list.read.ts`;
+  const service = `${owner}/src/services/stock-list.ts`;
+  const sources = new Map([
+    [file, "import { factory } from '../services/stock-list.ts';"],
+    [
+      service,
+      `import type { ScopedTransactionExecutor, OperationalScope } from '@app/core-runtime';
+import { Effect } from 'effect';
+export const factory = (transaction: ScopedTransactionExecutor, scope: OperationalScope) => Effect.succeed({ read: () => Effect.succeed(scope.tenantId) });`,
+    ],
+  ]);
+  expect(hasOwnerLocalReadServiceFactory(sources, file, owner, 'factory')).toBe(true);
+  const valid = sources.get(service) ?? '';
+  sources.set(service, valid.replace('(transaction:', "Effect.fn('factory')((transaction:").replace(' });', ' }));'));
+  expect(hasOwnerLocalReadServiceFactory(sources, file, owner, 'factory')).toBe(true);
+  for (const invalid of [
+    valid.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
+    valid.replace('transaction: ScopedTransactionExecutor', 'transaction: unknown'),
+    valid.replace('scope: OperationalScope', 'scope: unknown'),
+  ]) {
+    sources.set(service, invalid);
+    expect(hasOwnerLocalReadServiceFactory(sources, file, owner, 'factory')).toBe(false);
+  }
+  sources.set(service, valid);
+  sources.set(file, "import { factory } from '../../../other/src/services/stock-list.ts';");
+  expect(hasOwnerLocalReadServiceFactory(sources, file, owner, 'factory')).toBe(false);
+});
+
+it('recognizes native Effect.fn scoped generators only with the actual Core factory ABI', () => {
+  const owner = INVENTORY_OWNER_PATH;
+  const file = `${owner}/src/api/stock-list.read.ts`;
+  const service = `${owner}/src/services/stock-list.ts`;
+  const source = `import type { ScopedTransactionExecutor, OperationalScope } from '@app/core-runtime';
+import { Effect } from 'effect';
+export const factory = Effect.fn('factory')(function* services(transaction: ScopedTransactionExecutor, scope: OperationalScope, compositionRevision: string | undefined) { return { read: () => Effect.succeed(scope.tenantId) }; });`;
+  const accepts = (candidate: string) =>
+    hasOwnerLocalReadServiceFactory(
+      new Map([
+        [file, "import { factory } from '../services/stock-list.ts';"],
+        [service, candidate],
+      ]),
+      file,
+      owner,
+      'factory',
+    );
+  expect(accepts(source)).toBe(true);
+  for (const invalid of [
+    source.replace('compositionRevision: string | undefined', 'compositionRevision: string'),
+    source.replace('scope: OperationalScope', 'scope: unknown'),
+    source.replace('transaction: ScopedTransactionExecutor', 'transaction: unknown'),
+    source.replace("from 'effect'", "from './fake-effect.ts'"),
+    source.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
+    source.replace('function* services', 'async function* services'),
+    source.replace(
+      'compositionRevision: string | undefined',
+      'compositionRevision: string | undefined, injected: unknown',
+    ),
+  ]) {
+    expect(accepts(invalid)).toBe(false);
+  }
+});
+
+it('binds native handler audiences to the actual owner and preserves thin server options', () => {
+  const source = governedServerFixture({
+    apiValue: 'StockListApi',
+    contractImport: STOCK_LIST_SERVER_CONTRACT_IMPORT,
+    exportedName: 'stockListReadApiLive',
+    generatedHeader: MODULE_API_HEADER,
+    group: 'stockList',
+    readValue: 'stockListRead',
+  });
+  const api =
+    "export const api = HttpApi.make('InventoryApi') // <generated-governed-http-api-additions>\n// </generated-governed-http-api-additions>\n.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' }).pipe(identity);";
+  const withAudience = source.replace(
+    AUTHENTICATE_PRINCIPAL_BINDING,
+    `${AUTHENTICATE_PRINCIPAL_BINDING}, audience: 'inventory-stock'`,
+  );
+  expect(hasGeneratedGovernedServerContract(withAudience, 'stockListReadApiLive', api, INVENTORY_DEPLOYMENT_ID)).toBe(
+    true,
+  );
+  for (const invalid of [
+    withAudience.replace(INVENTORY_AUDIENCE_OPTION, "audience: 'other'"),
+    withAudience.replace(INVENTORY_AUDIENCE_OPTION, 'audience: configuredAudience'),
+    withAudience.replace(INVENTORY_AUDIENCE_OPTION, "audience: 'inventory-stock', unknown: unsafe"),
+    withAudience.replace(AUTHENTICATE_PRINCIPAL_BINDING, 'authenticatePrincipal: bypass'),
+  ]) {
+    expect(hasGeneratedGovernedServerContract(invalid, 'stockListReadApiLive', api, INVENTORY_DEPLOYMENT_ID)).toBe(
+      false,
+    );
+  }
+});
+
+it('resolves the published owner client once and requires exact relative Action exports', () => {
+  const owner = INVENTORY_OWNER_PATH;
+  const file = `${owner}/shared/inventory-stock-client.ts`;
+  const publication =
+    "// <generated-action-http-client-exports>\nexport * from '../src/api/reserve-action-client.ts';\n// </generated-action-http-client-exports>";
+  const sources = new Map([
+    [`${owner}/package.json`, JSON.stringify({ exports: { './api/client': './shared/inventory-stock-client.ts' } })],
+    [file, publication],
+  ]);
+  expect(ownerActionClientPublication(sources, owner, INVENTORY_DEPLOYMENT_ID)).toEqual({ file, source: publication });
+  expect(hasGeneratedActionClientPublication(publication, 'reserve', RESERVE_CLIENT_RELATIVE_IMPORT)).toBe(true);
+  for (const target of ['../private/reserve-action-client.ts', '../src/api/other-action-client.ts']) {
+    expect(
+      hasGeneratedActionClientPublication(
+        publication.replace(RESERVE_CLIENT_RELATIVE_IMPORT, target),
+        'reserve',
+        RESERVE_CLIENT_RELATIVE_IMPORT,
+      ),
+    ).toBe(false);
+  }
+  for (const exports of [
+    { './api/client': '../outside.ts' },
+    { './api/client': './shared/missing.ts' },
+    { './api/private-client': './shared/inventory-stock-client.ts' },
+  ]) {
+    sources.set(`${owner}/package.json`, JSON.stringify({ exports }));
+    expect(ownerActionClientPublication(sources, owner, INVENTORY_DEPLOYMENT_ID)).toBeUndefined();
+  }
+});
+
+it('admits only the scoped native HTTP RequestInit mount and retains the Action runtime boundary', () => {
+  const source = `import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
+const layers = GovernedReadLayer.mergeAll(
+// <generated-governed-http-handler-layers>
+exampleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive), GovernedReadLayer.provide(GovernedFetchHttpClient.layer.pipe(GovernedReadLayer.provide(GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }))))),
+// </generated-governed-http-handler-layers>
+);`;
+  expect(hasNativeHttpActionMount(source, 'exampleActionApiLive')).toBe(true);
+  for (const invalid of [
+    source.replace('governedActionRuntimeLive', 'otherRuntime'),
+    source.replace("from 'effect/http'", "from './fake-http.ts'"),
+    source.replace("redirect: 'manual'", "redirect: 'follow'"),
+    source.replace("cache: 'no-store'", "cache: 'no-store', headers: secretHeaders"),
+    source.replace('GovernedFetchHttpClient.layer.pipe(', 'otherLayer.pipe('),
+    source.replace('exampleActionApiLive.pipe(', 'exampleActionApiLive.pipe(unsafeOperator, '),
+  ]) {
+    expect(hasNativeHttpActionMount(invalid, 'exampleActionApiLive')).toBe(false);
+  }
+});
+
+it.live(
+  'resolves an exact published contract shim with its unchanged owner-native client and rejects provenance or executable escapes',
+  () =>
+    Effect.gen(function* publishedContractWithOwnerClient() {
+      const root = yield* makeFixture();
+      yield* writeGovernedModuleApi(root);
+      const contractFile = `${INVENTORY_OWNER_PATH}/shared/apis/stock-list.ts`;
+      const published = STOCK_LIST_PUBLISHED_SOURCE;
+      const packageFile = 'packages/inventory-public-contracts/package.json';
+      const contract = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));
+      const metadata = {
+        exports: { './stock-list': './src/stock-list.ts' },
+        name: '@app/inventory-public-contracts',
+        ontosContractOwner: {
+          appId: INVENTORY_DEPLOYMENT_ID,
+          moduleApis: [STOCK_LIST_STEM],
+          moduleId: INVENTORY_MODULE_ID,
+          packageName: INVENTORY_PACKAGE_SPECIFIER,
+        },
+      };
+      const shim = `${MODULE_API_HEADER}// An ordinary ownership comment does not carry executable capabilities.\nexport * from '@app/inventory-public-contracts/stock-list';\n`;
+      yield* write(root, published, contract);
+      yield* write(root, packageFile, JSON.stringify(metadata));
+      yield* write(root, contractFile, shim);
+      yield* checkModuleEntrypointBoundaries(root);
+      for (const invalid of [
+        `${shim}export const mutable = true;`,
+        shim.replace('export *', 'export let capability; export *'),
+        shim.replace('export *', "import { runtime } from './private.ts'; export *"),
+        shim.replace('@app/inventory-public-contracts/stock-list', '@app/private-implementation/stock-list'),
+        shim.replace(
+          '// An ordinary ownership comment does not carry executable capabilities.',
+          '// @ontos-public-contract @app/other/stock-list',
+        ),
+      ]) {
+        yield* write(root, contractFile, invalid);
+        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+        expect(Exit.isFailure(result)).toBe(true);
+      }
+      yield* write(root, contractFile, shim);
+      for (const invalid of [
+        { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleId: 'other.owner' } },
+        { ...metadata, exports: { './stock-list': '../outside.ts' } },
+        { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
+      ]) {
+        yield* write(root, packageFile, JSON.stringify(invalid));
+        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+        expect(Exit.isFailure(result)).toBe(true);
+      }
+    }),
+);
+
+it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
+  const owner = INVENTORY_OWNER_PATH;
+  const packageFile = 'packages/inventory-public-contracts/package.json';
+  const readContractFile = `${owner}/shared/apis/stock-list.ts`;
+  const actionFile = `${owner}/shared/apis/reserve-action.ts`;
+  const readShim = "export * from '@app/inventory-public-contracts/stock-list';";
+  const actionShim = "export * from '@app/inventory-public-contracts/reserve-action';";
+  const actionTarget = `// @generated by OntOS Codesmith Action HTTP v1
+// @ontos-action-http-owner inventory.stock
+// @ontos-action-http-slug reserve
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(HttpApiGroup.make('reserveAction').add(HttpApiEndpoint.post('execute', '/inventory-stock/actions/reserve', { error: [], payload: PayloadSchema, success: ResultSchema })));`;
+  const readTarget = moduleContractFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  const metadata = {
+    exports: { './reserve-action': './src/reserve-action.ts', './stock-list': './src/stock-list.ts' },
+    name: '@app/inventory-public-contracts',
+    ontosContractOwner: {
+      appId: INVENTORY_DEPLOYMENT_ID,
+      moduleApis: [STOCK_LIST_STEM],
+      moduleId: INVENTORY_MODULE_ID,
+      packageName: INVENTORY_PACKAGE_SPECIFIER,
+    },
+  };
+  const sources = new Map([
+    [`${owner}/package.json`, JSON.stringify({ name: INVENTORY_PACKAGE_SPECIFIER })],
+    [
+      `${owner}/vertical.manifest.ts`,
+      '// @ontos-module-id inventory.stock\n// @ontos-deployment-app-id inventory-stock\n',
+    ],
+    [`${owner}/vertical.registration.ts`, 'export const registration = {};'],
+    [`${owner}/api/index.ts`, 'export const handlers = {};'],
+    [`${owner}/shared/api.ts`, 'export const api = {};'],
+    [packageFile, JSON.stringify(metadata)],
+    [STOCK_LIST_PUBLISHED_SOURCE, readTarget],
+    [RESERVE_PUBLISHED_SOURCE, actionTarget],
+  ]);
+  const acceptsRead = (source = readShim) => hasPublishedGeneratedContractShim(sources, readContractFile, source);
+  const acceptsAction = (source = actionShim) => hasPublishedGeneratedContractShim(sources, actionFile, source);
+  expect(acceptsRead()).toBe(true);
+  expect(acceptsAction()).toBe(true);
+  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget.replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT));
+  expect(acceptsRead()).toBe(false);
+  sources.set(STOCK_LIST_PUBLISHED_SOURCE, `${readTarget}\nconst HttpApiGroup = fakeGroup;`);
+  expect(acceptsRead()).toBe(false);
+  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget);
+  const disconnected = `${actionTarget.replace(
+    'export const ReserveActionApi =',
+    UNUSED_NATIVE_API_DECLARATION,
+  )}\nexport const ReserveActionApi = { unsafe: true };`;
+  sources.set(RESERVE_PUBLISHED_SOURCE, disconnected);
+  expect(acceptsAction()).toBe(false);
+  const typedConnected = `// @generated by OntOS Codesmith Action HTTP v1
+// @ontos-action-http-owner inventory.stock
+// @ontos-action-http-slug reserve
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from 'effect/http-api';
+export class ReserveActionSchemaErrorMiddleware extends HttpApiMiddleware.Service<ReserveActionSchemaErrorMiddleware>()('inventory-stock/ReserveActionSchemaErrorMiddleware', { error: ReserveActionInvalidProblemSchema }) {}
+export const reserveActionGroupDefinition = HttpApiGroup.make('reserveAction').add(HttpApiEndpoint.post('execute', '/inventory-stock/actions/reserve', { error: [], payload: PayloadSchema, success: ResultSchema })).middleware(ReserveActionSchemaErrorMiddleware);
+type ReserveActionGroupContract = HttpApiGroup.HttpApiGroup<'reserveAction', HttpApiGroup.Endpoints<typeof reserveActionGroupDefinition>>;
+const ReserveActionGroup: ReserveActionGroupContract = reserveActionGroupDefinition;
+export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(ReserveActionGroup);`;
+  sources.set(RESERVE_PUBLISHED_SOURCE, typedConnected);
+  expect(acceptsAction()).toBe(true);
+  for (const invalid of [
+    typedConnected.replace('export const reserveActionGroupDefinition', 'export let reserveActionGroupDefinition'),
+    typedConnected.replace('.add(ReserveActionGroup);', '.add({ unsafe: true });'),
+    `${typedConnected.replace(
+      'export const ReserveActionApi =',
+      UNUSED_NATIVE_API_DECLARATION,
+    )}\nexport const ReserveActionApi = { unsafe: true };`,
+    `${typedConnected}\nObject.assign(ReserveActionApi, { unsafe: true });`,
+    typedConnected.replace('.middleware(ReserveActionSchemaErrorMiddleware)', '.pipe(replaceContract)'),
+    typedConnected.replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT),
+    typedConnected.replace('extends HttpApiMiddleware.Service', 'extends FakeMiddleware.Service'),
+  ]) {
+    sources.set(RESERVE_PUBLISHED_SOURCE, invalid);
+    expect(acceptsAction()).toBe(false);
+  }
+  sources.set(RESERVE_PUBLISHED_SOURCE, actionTarget);
+
+  expect(acceptsRead(actionShim)).toBe(false);
+  expect(acceptsAction(readShim)).toBe(false);
+  for (const invalid of [
+    `${readShim} export const mutable = true;`,
+    `${readShim} import { runtime } from './private.ts';`,
+    `${readShim} export * from '@app/other/contracts';`,
+    'export const DataSchema = Schema.Struct({});',
+  ]) {
+    expect(acceptsRead(invalid)).toBe(false);
+  }
+  for (const invalid of [
+    actionTarget.replace(INVENTORY_MODULE_ID, 'other.owner'),
+    actionTarget.replace('// @ontos-action-http-slug reserve', '// @ontos-action-http-slug other'),
+    actionTarget.replace('/inventory-stock/actions/reserve', '/other/actions/reserve'),
+    actionTarget.split('import')[0],
+  ]) {
+    sources.set(RESERVE_PUBLISHED_SOURCE, invalid);
+    expect(acceptsAction()).toBe(false);
+  }
+  sources.set(RESERVE_PUBLISHED_SOURCE, actionTarget);
+  for (const invalid of [
+    { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, packageName: '@app/other' } },
+    { ...metadata, exports: { ...metadata.exports, './stock-list': '../private.ts' } },
+    { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
+  ]) {
+    sources.set(packageFile, JSON.stringify(invalid));
+    expect(acceptsRead()).toBe(false);
+  }
+  sources.set(packageFile, JSON.stringify(metadata));
+  sources.set('packages/ambiguous/package.json', JSON.stringify(metadata));
+  expect(acceptsRead()).toBe(false);
+});
+
+it.live('rejects disconnected Action API constructor decoys from the actual generated producer', () =>
+  Effect.gen(function* actualActionRootConnectivity() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const paths = [
+      'verticals/pricing/package.json',
+      'verticals/pricing/vertical.manifest.ts',
+      'verticals/pricing/vertical.registration.ts',
+      'verticals/pricing/api/index.ts',
+      'verticals/pricing/shared/api.ts',
+      'packages/pricing-contracts/package.json',
+      'packages/pricing-contracts/src/apis/manage-quotation-action.ts',
+      'verticals/pricing/shared/apis/manage-quotation-action.ts',
+    ];
+    const entries = yield* Effect.all(
+      paths.map((file) =>
+        Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
+          Effect.map((source) => [file, source] as const),
+        ),
+      ),
+    );
+    const sources = new Map(entries);
+    const target = paths[6] ?? '';
+    const wrapper = paths[7] ?? '';
+    const original = sources.get(target) ?? '';
+    const bridge = sources.get(wrapper) ?? '';
+    expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(true);
+    const decoy = original.replace('export const ManageQuotationActionApi =', UNUSED_NATIVE_API_DECLARATION);
+    expect(decoy).not.toBe(original);
+    sources.set(target, `${decoy}\nexport const ManageQuotationActionApi = { unsafe: true };`);
+    expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+    for (const [binding, field] of [
+      ['ManageQuotationActionApi', 'groups'],
+      ['manageQuotationActionGroupDefinition', 'endpoints'],
+    ]) {
+      const capture = `queueMicrotask(() => Object.assign(${binding}, { ${field}: {} }))`;
+      const inside = original.replace(
+        'payload: Schema.toEncoded(ManageQuotationPayloadSchema),',
+        `payload: (${capture}, Schema.toEncoded(ManageQuotationPayloadSchema)),`,
+      );
+      expect(inside).not.toBe(original);
+      sources.set(target, inside);
+      expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+      sources.set(target, `${original}\n${capture};`);
+      expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+    }
+  }),
+);
+
+const readPricingSourceTree = (root: string, folder: string) => {
+  const excluded = new Set([
+    'node_modules',
+    '.git',
+    '.codex',
+    '.modern',
+    '.modernjs',
+    '.output',
+    'dist',
+    'coverage',
+    'repos',
+  ]);
+  const readSources = async (directory: string): Promise<readonly (readonly [string, string])[]> => {
+    const files = await readdir(directory, { withFileTypes: true });
+    const children = await Promise.all(
+      files.map(async (file): Promise<readonly (readonly [string, string])[]> => {
+        const absolute = path.join(directory, file.name);
+        if (file.isDirectory() && !excluded.has(file.name)) {
+          return await readSources(absolute);
+        }
+        return file.isFile() && /\.(?:ts|json)$/u.test(file.name)
+          ? [[path.relative(root, absolute).split(path.sep).join('/'), await readFile(absolute, 'utf-8')]]
+          : [];
+      }),
+    );
+    return children.flat();
+  };
+  return readSources(path.join(root, folder));
+};
+
+it.live('counts the actual published Pricing read shim in exact owner inventory and rejects nearby escapes', () =>
+  Effect.gen(function* actualPublishedPricingInventory() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const trees = yield* Effect.all(
+      ['verticals/pricing', 'packages/pricing-contracts'].map((folder) =>
+        Effect.promise(() => readPricingSourceTree(root, folder)),
+      ),
+    );
+    const sources = new Map(trees.flat());
+    const shared = 'verticals/pricing/shared/api.ts';
+    const shimFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
+    const manifestFile = 'verticals/pricing/vertical.manifest.ts';
+    const registrationFile = 'verticals/pricing/vertical.registration.ts';
+    const packageFile = 'packages/pricing-contracts/package.json';
+    const targetFile = 'packages/pricing-contracts/src/apis/quotation-verification.ts';
+    const shim = sources.get(shimFile) ?? '';
+    expect(shim.startsWith(MODULE_API_HEADER)).toBe(false);
+    expect(hasPublishedGeneratedContractShim(sources, shimFile, shim)).toBe(true);
+    const rootSource = sources.get(shared) ?? '';
+    const handler = sources.get('verticals/pricing/api/index.ts') ?? '';
+    const headerAnnotation = ".annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })";
+    expect(rootSource.includes(headerAnnotation)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(rootSource, handler)).toBe(true);
+    for (const invalid of [
+      rootSource.replace('HttpApi.HeadersParseOptions', 'HttpApi.UnknownParseOptions'),
+      rootSource.replace("from '@modern-js/bff-effect/effect-client'", "from './fake-http.ts'"),
+      rootSource.replace(headerAnnotation, ".annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'error' })"),
+      rootSource.replace(headerAnnotation, '.annotate(HttpApi.HeadersParseOptions, { ...untrusted })'),
+      rootSource.replace(headerAnnotation, '.annotate(HttpApi.HeadersParseOptions, { onExcessProperty: configured })'),
+      rootSource.replace(headerAnnotation, `${headerAnnotation}.pipe(unknownOperator)`),
+      rootSource.replace("import { identity } from 'effect'", "import { identity } from './fake-effect.ts'"),
+    ]) {
+      expect(hasValidGovernedHttpCompositionRoot(invalid, handler)).toBe(false);
+    }
+    const diagnostics: string[] = [];
+    expect(hasCompleteGeneratedModuleApiSeam(sources, shared, 'pricing', diagnostics), diagnostics.join('\n')).toBe(
+      true,
+    );
+    const invalidSources: readonly (readonly [string, string])[] = [
+      [shimFile, `${shim}\nexport const runtime = true;`],
+      [shimFile, shim.replace('@app/pricing-contracts/quotation-verification', '@app/pricing/src/private')],
+      [
+        manifestFile,
+        (sources.get(manifestFile) ?? '').replace("'quotation-verification': QuotationVerificationApi,", ''),
+      ],
+      [
+        registrationFile,
+        (sources.get(registrationFile) ?? '').replace(
+          "'quotation-verification': () => import('./src/api/quotation-verification-client.ts'),",
+          '',
+        ),
+      ],
+      [
+        manifestFile,
+        (sources.get(manifestFile) ?? '').replace(
+          "'quotation-verification': QuotationVerificationApi,",
+          "'quotation-verification': CurrentSupportedCurrenciesApi,",
+        ),
+      ],
+      [
+        packageFile,
+        (sources.get(packageFile) ?? '').replace('"packageName": "@app/pricing"', '"packageName": "@app/wrong-owner"'),
+      ],
+      [targetFile, (sources.get(targetFile) ?? '').replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT)],
+      [
+        targetFile,
+        (sources.get(targetFile) ?? '').replace('export const QuotationVerificationApi =', 'export const WrongApi ='),
+      ],
+    ];
+    for (const [file, invalid] of invalidSources) {
+      expect(invalid).not.toBe(sources.get(file));
+      const changed = new Map([...sources, [file, invalid]]);
+      expect(hasCompleteGeneratedModuleApiSeam(changed, shared, 'pricing')).toBe(false);
+    }
+  }),
+);
+
+it.live('accepts the reviewed Privacy notice-presentation GET companion only as its exact pinned text', () =>
+  Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const sources = new Map(yield* Effect.promise(() => readPricingSourceTree(root, 'verticals/privacy')));
+    const shared = 'verticals/privacy/shared/api.ts';
+    const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
+    const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';
+    const diagnostics: string[] = [];
+    expect(hasCompleteGeneratedModuleApiSeam(sources, shared, 'privacy', diagnostics), diagnostics.join('\n')).toBe(
+      true,
+    );
+    const contract = sources.get(contractFile) ?? '';
+    const server = sources.get(serverFile) ?? '';
+    expect(contract).toContain("HttpApiEndpoint.get('present'");
+    expect(server).toContain(".handle('present'");
+    const invalidSources: readonly (readonly [string, string])[] = [
+      [contractFile, contract.replace('/notices/:noticeVersionId/presentation', '/notices/:noticeVersionId/other')],
+      [contractFile, contract.replace("HttpApiEndpoint.get('present'", "HttpApiEndpoint.get('presentAny'")],
+      [serverFile, server.replace("x-correlation-id'", "x-other-id'")],
+      [serverFile, server.replace('authenticateOperationPrincipal(', 'authenticateUnverifiedPrincipal(')],
+      [serverFile, server.replace("'cache-control', 'no-store'", "'cache-control', 'public'")],
+      [serverFile, `${server}\nexport const extraPresentationSurface = true;`],
+    ];
+    for (const [file, invalid] of invalidSources) {
+      expect(invalid).not.toBe(sources.get(file));
+      expect(hasCompleteGeneratedModuleApiSeam(new Map([...sources, [file, invalid]]), shared, 'privacy')).toBe(false);
+    }
   }),
 );

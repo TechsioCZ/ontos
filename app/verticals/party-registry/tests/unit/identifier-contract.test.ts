@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  OfficialIdentifierAssertionSchema,
   OfficialIdentifierInputSchema,
   normalizeOfficialIdentifier,
   qualifyingClaimKey,
@@ -31,6 +32,10 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
     verification: 'VERIFIED',
   });
   expect(normalizeOfficialIdentifier(legacyShortIco).normalizedValue).toBe('01000004');
+  expect(
+    decode(OfficialIdentifierInputSchema)({ identifierType: 'ICO', value: ' 1000004 ', verification: 'UNVERIFIED' })
+      .value,
+  ).toBe('1000004');
 
   const dic = Schema.decodeSync(OfficialIdentifierInputSchema)({
     identifierType: 'CZ_DIC',
@@ -206,4 +211,38 @@ it('Identifier Update event retains before and after verification evidence', () 
   });
   expect(event.before).toEqual(before);
   expect(event.after).toEqual(after);
+});
+
+it('assertion wire accepts legacy unknown and bounded original ICO digits without changing canonical identity', () => {
+  const legacy = {
+    identifierType: 'ICO',
+    namespace: 'CZ:ICO',
+    normalizedValue: '01000004',
+    officialIdentifierRef: identifierRef,
+    partyRef: { ...identifierRef, resourceType: 'party.registry.party' },
+    recordedAt: '2026-01-01T00:00:00.000Z',
+    state: 'ACTIVE',
+    validFrom: '2026-01-01T00:00:00.000Z',
+    validTo: null,
+    verification: 'UNVERIFIED',
+  };
+  expect(decode(OfficialIdentifierAssertionSchema)(legacy).normalizedValue).toBe('01000004');
+  for (const originalInputDigits of [null, '1000004', '01000004']) {
+    expect(decode(OfficialIdentifierAssertionSchema)({ ...legacy, originalInputDigits }).originalInputDigits).toBe(
+      originalInputDigits,
+    );
+  }
+  expect(() => decode(OfficialIdentifierAssertionSchema)({ ...legacy, originalInputDigits: '1000005' })).toThrow();
+  expect(() =>
+    decode(OfficialIdentifierAssertionSchema)({
+      ...legacy,
+      identifierType: 'CZ_DIC',
+      namespace: 'CZ:DIC',
+      normalizedValue: 'CZ01000004',
+      originalInputDigits: '01000004',
+    }),
+  ).toThrow();
+  for (const originalInputDigits of ['', '1 000004', '1000004 ', 'x', '001000004', 1_000_004]) {
+    expect(() => decode(OfficialIdentifierAssertionSchema)({ ...legacy, originalInputDigits })).toThrow();
+  }
 });

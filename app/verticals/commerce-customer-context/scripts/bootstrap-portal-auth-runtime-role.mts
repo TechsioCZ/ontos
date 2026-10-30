@@ -5,6 +5,8 @@ import { Array as EffectArray, Console, Effect, Exit, Order, Redacted, Schema } 
 import { Reactivity } from 'effect/reactivity';
 import { getTableName } from 'drizzle-orm';
 
+import type { CommercePortalAuthDatabaseConnectionPair } from './portal-auth-database-config.mts';
+
 import { loadCommercePortalAuthDatabaseConfig } from './portal-auth-database-config.mts';
 import { COMMERCE_PORTAL_AUTH_TABLES } from '../src/portal-auth/persistence/portal-auth-tables.ts';
 
@@ -40,27 +42,85 @@ const runtimePassword = (connectionString: Redacted.Redacted) =>
 const query = <Row extends object>(client: PgClient.PgClient, sql: string, values: readonly string[] = []) =>
   client.unsafe<Row>(sql, values).pipe(Effect.mapError((cause) => failure('Provider privilege query failed', cause)));
 
+const expectedTables = EffectArray.sort(COMMERCE_PORTAL_AUTH_TABLES.map(getTableName), Order.String);
+const restrictedLoginRole = `select not rolsuper and not rolbypassrls and not rolcreatedb
+               and not rolcreaterole and rolcanlogin as safe from pg_catalog.pg_roles where rolname = $1`;
+
+const validateGrantTarget = Effect.fn('CommercePortalAuthRuntime.validateGrantTarget')(function* validateGrantTarget(
+  client: PgClient.PgClient,
+  configuration: CommercePortalAuthDatabaseConnectionPair,
+) {
+  const [identity] = yield* query<{ database: string; role: string; sessionRole: string }>(
+    client,
+    'select current_database() as database, current_user as role, session_user as "sessionRole"',
+  );
+  if (
+    configuration.admin.user === configuration.runtime.user ||
+    configuration.admin.database !== configuration.runtime.database ||
+    configuration.admin.host !== configuration.runtime.host ||
+    configuration.admin.port !== configuration.runtime.port ||
+    identity?.database !== configuration.admin.database ||
+    identity.role !== configuration.admin.user ||
+    identity.sessionRole !== configuration.admin.user
+  ) {
+    yield* failure('Provider administrator connection does not match the configured identity');
+  }
+  const tables = expectedTables;
+  const inventory = yield* query<{ name: string }>(
+    client,
+    `select tablename as name from pg_catalog.pg_tables where schemaname = 'commerce_auth' order by tablename`,
+  );
+  if (inventory.length !== tables.length || !inventory.every((row, index) => row.name === tables[index])) {
+    yield* failure('Provider schema must match its migrated table inventory before granting privileges');
+  }
+});
+
+const applyCanonicalRuntimeGrants = Effect.fn('CommercePortalAuthRuntime.applyGrants')(function* applyGrants(
+  client: PgClient.PgClient,
+  configuration: CommercePortalAuthDatabaseConnectionPair,
+) {
+  const role = quoteIdentifier(configuration.runtime.user);
+  const tables = expectedTables;
+  yield* query(client, `grant connect on database ${quoteIdentifier(configuration.runtime.database)} to ${role}`);
+  yield* query(client, `grant usage on schema commerce_auth to ${role}`);
+  for (const table of tables) {
+    yield* query(
+      client,
+      `grant select, insert, update, delete on table commerce_auth.${quoteIdentifier(table)} to ${role}`,
+    );
+  }
+});
+
+/** Grants only to an existing restricted login; never creates or alters a role or its password. */
+export const grantCommercePortalAuthRuntimePrivileges = Effect.fn('CommercePortalAuthRuntime.grantExisting')(
+  function* grantExistingRuntimePrivileges(
+    client: PgClient.PgClient,
+    configuration: CommercePortalAuthDatabaseConnectionPair,
+  ) {
+    yield* client
+      .withTransaction(
+        Effect.gen(function* grantExistingRuntimeTransaction() {
+          yield* validateGrantTarget(client, configuration);
+          const [existing] = yield* query<{ safe: boolean }>(client, restrictedLoginRole, [configuration.runtime.user]);
+          if (existing === undefined || !existing.safe) {
+            yield* failure('The provider runtime role must already be a restricted login role');
+          }
+          yield* applyCanonicalRuntimeGrants(client, configuration);
+        }),
+      )
+      .pipe(
+        Effect.catchTag('SqlError', (cause) => Effect.fail(failure('Provider runtime role transaction failed', cause))),
+      );
+  },
+);
+
 const main = Effect.scoped(
   Effect.gen(function* bootstrapPortalAuthRuntimeRole() {
     const configuration = yield* loadCommercePortalAuthDatabaseConfig();
     const client = yield* PgClient.makeClient({ url: configuration.admin.connectionString }).pipe(
       Effect.mapError((cause) => failure('Provider administrator connection failed', cause)),
     );
-    const [identity] = yield* query<{ database: string; role: string }>(
-      client,
-      'select current_database() as database, current_user as role',
-    );
-    if (identity?.database !== configuration.admin.database || identity.role !== configuration.admin.user) {
-      yield* failure('Provider administrator connection does not match the configured identity');
-    }
-    const tables = EffectArray.sort(COMMERCE_PORTAL_AUTH_TABLES.map(getTableName), Order.String);
-    const inventory = yield* query<{ name: string }>(
-      client,
-      `select tablename as name from pg_catalog.pg_tables where schemaname = 'commerce_auth' order by tablename`,
-    );
-    if (inventory.length !== tables.length || !inventory.every((row, index) => row.name === tables[index])) {
-      yield* failure('Provider schema must match its migrated table inventory before granting privileges');
-    }
+    yield* validateGrantTarget(client, configuration);
     const role = quoteIdentifier(configuration.runtime.user);
     const password = quoteLiteral(yield* runtimePassword(configuration.runtime.connectionString));
     yield* client
@@ -69,8 +129,6 @@ const main = Effect.scoped(
           // A fresh deployment gets the role; a redeployment re-asserts its restrictions and the
           // credential its runtime URL names. An existing role is inspected before any mutation, so a
           // runtime URL that names a privileged role fails without rewriting that role.
-          const restrictedLoginRole = `select not rolsuper and not rolbypassrls and not rolcreatedb
-               and not rolcreaterole and rolcanlogin as safe from pg_catalog.pg_roles where rolname = $1`;
           const [existing] = yield* query<{ safe: boolean }>(client, restrictedLoginRole, [configuration.runtime.user]);
           if (existing !== undefined && !existing.safe) {
             yield* failure('The configured provider runtime role exists but is not a restricted login role');
@@ -86,17 +144,7 @@ const main = Effect.scoped(
           if (provisioned === undefined || !provisioned.safe) {
             yield* failure('The provider runtime role must be a restricted login role');
           }
-          yield* query(
-            client,
-            `grant connect on database ${quoteIdentifier(configuration.runtime.database)} to ${role}`,
-          );
-          yield* query(client, `grant usage on schema commerce_auth to ${role}`);
-          for (const table of tables) {
-            yield* query(
-              client,
-              `grant select, insert, update, delete on table commerce_auth.${quoteIdentifier(table)} to ${role}`,
-            );
-          }
+          yield* applyCanonicalRuntimeGrants(client, configuration);
         }),
       )
       .pipe(
@@ -108,5 +156,7 @@ const main = Effect.scoped(
   }).pipe(Effect.tapError((failureValue) => Console.error(failureValue.reason))),
 );
 
-const exit = await Effect.runPromiseExit(main.pipe(Effect.provide(Reactivity.layer)));
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(main.pipe(Effect.provide(Reactivity.layer)));
+  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+}

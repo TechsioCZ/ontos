@@ -11,10 +11,6 @@ import {
 
 export { ImportSourceAssertionPayloadSchema } from '../actions/import-source-assertion.ts';
 
-const ImportSourceAssertionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ImportSourceAssertionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ImportSourceAssertionActionInvalidProblem',
   400,
@@ -142,7 +138,6 @@ export const importSourceAssertionActionGroupDefinition = HttpApiGroup.make('imp
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/import-source-assertion', {
       error: actionErrors,
-      headers: ImportSourceAssertionActionHeadersSchema,
       payload: Schema.toEncoded(ImportSourceAssertionPayloadSchema),
       success: ImportSourceAssertionResultSchema,
     }),

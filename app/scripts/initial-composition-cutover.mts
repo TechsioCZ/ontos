@@ -8,6 +8,7 @@ import {
   InitialCutoverProviderError,
   quiesceInitialCutoverProviderInventory,
   verifyInitialCutoverProviderInventory,
+  verifyRetiredCutoverProviderInventory,
 } from './initial-composition-cutover-provider.mts';
 
 const ExecutionRoleSchema = Schema.Literals(['ingress', 'producer', 'matcher', 'worker', 'hosted_job']);
@@ -188,12 +189,14 @@ export const quiesceInitialCompositionCutover = (input: {
   });
 
 /** A receipt is no approval checkbox: absence of every retired executable is rechecked immediately before first promotion. */
-export const verifyInitialCompositionCutover = (input: {
+interface InitialCompositionCutoverInput {
   readonly environment: string;
   readonly inventoryFile: string;
   readonly receiptFile: string;
-}) =>
-  Effect.gen(function* verifyLegacyExecutionQuiescence() {
+}
+
+const readBoundCutoverInventory = (input: InitialCompositionCutoverInput) =>
+  Effect.gen(function* readReceiptBoundInventory() {
     const { inventory, inventorySha256 } = yield* readInventory(input);
     const filesystem = yield* FileSystem.FileSystem;
     const file = yield* receiptPath(input.receiptFile, false);
@@ -217,5 +220,13 @@ export const verifyInitialCompositionCutover = (input: {
     ) {
       return yield* invalid('The initial quiescence receipt does not bind this reviewed execution inventory');
     }
-    return yield* verifyInitialCutoverProviderInventory(providerInventory(inventory));
+    return providerInventory(inventory);
   });
+
+/** First publication: retired executables and the obsolete pointer must both be absent. */
+export const verifyInitialCompositionCutover = (input: InitialCompositionCutoverInput) =>
+  readBoundCutoverInventory(input).pipe(Effect.flatMap(verifyInitialCutoverProviderInventory));
+
+/** Later publications re-observe the retired executables; the active pointer is the current release. */
+export const verifyRetiredCompositionCutover = (input: InitialCompositionCutoverInput) =>
+  readBoundCutoverInventory(input).pipe(Effect.flatMap(verifyRetiredCutoverProviderInventory));

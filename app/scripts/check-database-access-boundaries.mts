@@ -1,8 +1,29 @@
 import { NodeServices } from '@effect/platform-node';
-import { Array as EffectArray, Console, Effect, Exit, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  ManagedRuntime,
+  Match,
+  Order,
+  Path,
+  Schema,
+} from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { ImportDeclaration, ParamPattern, Span, TSTypeAnnotation, TSTypeReference } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  Expression,
+  Function as AstFunction,
+  ImportDeclaration,
+  ParamPattern,
+  Program,
+  Span,
+  TSTypeAnnotation,
+  TSTypeReference,
+} from 'oxc-parser';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
@@ -63,7 +84,9 @@ const forbiddenImport = new RegExp(forbiddenImportPattern, 'u');
 const multilineForbiddenImport = new RegExp(forbiddenImportPattern, 'gu');
 const importedSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'gu');
 const isTestSource = (relative: string): boolean =>
-  /(?:^|\/)(?:tests?|__tests__)\//u.test(relative) || relative.startsWith('packages/core-runtime/src/testing/');
+  /(?:^|\/)(?:tests?|__tests__)\//u.test(relative) ||
+  relative.startsWith('packages/core-runtime/src/testing/') ||
+  /\.(?:test|spec)\.[cm]?tsx?$/u.test(relative);
 const hiddenCapability =
   /\b(?:CoreDatabase|CoreDatabaseExecutor|CoreTransaction|ActionTransactionExecutor|coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
 const hiddenCoreSchema = /\b(?:coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
@@ -104,6 +127,7 @@ const resolveLocalSource = (
   root: string,
   importer: string,
   specifier: string,
+  packageExports: ReadonlyMap<string, string> = new Map(),
 ): string | undefined => {
   if (specifier.startsWith('.')) {
     return candidatesFor(path, path.resolve(path.dirname(importer), specifier)).find((candidate) =>
@@ -116,6 +140,14 @@ const resolveLocalSource = (
     return undefined;
   }
   const subpath = packageGroups?.subpath;
+  const unsupported = packageExports.get(`@app/${packageName}/`);
+  if (unsupported !== undefined) {
+    const exported = packageExports.get(specifier);
+    if (exported !== undefined && sourceFiles.has(exported)) {
+      return exported;
+    }
+    return unsupported;
+  }
   const candidates = ['apps', 'packages', 'verticals'].flatMap((ownerRoot) => {
     const packageRoot = path.join(root, ownerRoot, packageName);
     if (subpath === undefined) {
@@ -182,11 +214,117 @@ const executorImport = (
   };
 };
 
+type ImplementationFunction = ArrowFunctionExpression | AstFunction;
+
+// Scope is immutable metadata, whereas indexed query methods remain database capabilities.
+const isScopeProjection = (expression: Expression): boolean =>
+  expression.type === 'MemberExpression' &&
+  ((expression.computed && expression.property.type === 'Literal' && expression.property.value === 'scope') ||
+    (!expression.computed && expression.property.type === 'Identifier' && expression.property.name === 'scope'));
+
+/** Follow direct value escapes without confusing a method which closes over a transaction with the transaction. */
+const returnsExecutorValue = (
+  node: ImplementationFunction,
+  names: ReadonlySet<string>,
+  functions: ReadonlyMap<string, ImplementationFunction>,
+  program: Program,
+  visiting: ReadonlySet<ImplementationFunction> = new Set(),
+): boolean => {
+  if (visiting.has(node)) {
+    return true;
+  }
+  const nextVisiting = new Set([...visiting, node]);
+  const aliases = new Set(names);
+  const exposes = (expression: Expression | null | undefined): boolean => {
+    if (expression === null || expression === undefined) {
+      return false;
+    }
+    return Match.value(expression).pipe(
+      Match.when({ type: 'Identifier' }, (value) => aliases.has(value.name)),
+      Match.whenOr(
+        { type: 'ParenthesizedExpression' },
+        { type: 'TSAsExpression' },
+        { type: 'TSSatisfiesExpression' },
+        { type: 'TSNonNullExpression' },
+        (value) => exposes(value.expression),
+      ),
+      Match.when({ type: 'MemberExpression' }, (value) => !isScopeProjection(value) && exposes(value.object)),
+      Match.when({ type: 'ObjectExpression' }, (value) =>
+        value.properties.some((property) =>
+          exposes(property.type === 'SpreadElement' ? property.argument : property.value),
+        ),
+      ),
+      Match.when({ type: 'ArrayExpression' }, (value) =>
+        value.elements.some((element) => exposes(element?.type === 'SpreadElement' ? element.argument : element)),
+      ),
+      Match.when({ type: 'ConditionalExpression' }, (value) => exposes(value.consequent) || exposes(value.alternate)),
+      Match.when({ type: 'LogicalExpression' }, (value) => exposes(value.left) || exposes(value.right)),
+      Match.when({ type: 'SequenceExpression' }, (value) => exposes(value.expressions.at(-1))),
+      Match.when({ type: 'CallExpression' }, (value) => {
+        const exposedArguments = value.arguments.map((argument) =>
+          exposes(argument.type === 'SpreadElement' ? argument.argument : argument),
+        );
+        if (!exposedArguments.some(Boolean)) {
+          return false;
+        }
+        const local = value.callee.type === 'Identifier' ? functions.get(value.callee.name) : undefined;
+        if (local === undefined) {
+          return true;
+        }
+        const parameterNames = new Set(
+          local.params.flatMap((parameter, index) =>
+            exposedArguments[index] && parameter.type === 'Identifier' ? [parameter.name] : [],
+          ),
+        );
+        return returnsExecutorValue(local, parameterNames, functions, program, nextVisiting);
+      }),
+      Match.orElse(() => false),
+    );
+  };
+  let aliasAdded = true;
+  const aliasVisitor = new Visitor({
+    VariableDeclarator: (declaration) => {
+      if (
+        node.start <= declaration.start &&
+        declaration.end <= node.end &&
+        declaration.id.type === 'Identifier' &&
+        !aliases.has(declaration.id.name) &&
+        exposes(declaration.init)
+      ) {
+        aliases.add(declaration.id.name);
+        aliasAdded = true;
+      }
+    },
+  });
+  while (aliasAdded) {
+    aliasAdded = false;
+    aliasVisitor.visit(program);
+  }
+  let escaped = node.type === 'ArrowFunctionExpression' && node.body.type !== 'BlockStatement' && exposes(node.body);
+  new Visitor({
+    ArrowFunctionExpression: (expression) => {
+      if (node.start <= expression.start && expression.end <= node.end && expression.body.type !== 'BlockStatement') {
+        escaped ||= exposes(expression.body);
+      }
+    },
+    ReturnStatement: (statement) => {
+      if (node.start <= statement.start && statement.end <= node.end) {
+        escaped ||= exposes(statement.argument);
+      }
+    },
+  }).visit(program);
+  return escaped;
+};
+
 /**
  * Core passes the scoped executor only to a private owner service factory. The factory may name that
  * input in its `(transaction, scope)` signature, but the executor must never become handler services.
  */
-const scopedTransactionExposureIndexes = (file: string, source: string): readonly number[] => {
+const scopedTransactionExposureIndexes = (
+  file: string,
+  source: string,
+  privateImplementation = false,
+): readonly number[] => {
   if (!scopedTransactionExecutor.test(source)) {
     return [];
   }
@@ -221,11 +359,102 @@ const scopedTransactionExposureIndexes = (file: string, source: string): readonl
       allowedFactoryParameters.push(span);
     }
   };
+  const implementations: ImplementationFunction[] = [];
   new Visitor({
-    ArrowFunctionExpression: (node) => allowScopedFactoryParameter(node.params),
-    FunctionDeclaration: (node) => allowScopedFactoryParameter(node.params),
-    FunctionExpression: (node) => allowScopedFactoryParameter(node.params),
+    ArrowFunctionExpression: (node) => {
+      implementations.push(node);
+    },
+    FunctionDeclaration: (node) => {
+      implementations.push(node);
+    },
+    FunctionExpression: (node) => {
+      implementations.push(node);
+    },
     TSFunctionType: (node) => allowScopedFactoryParameter(node.params),
+  }).visit(parsed.program);
+  const functions = new Map<string, ImplementationFunction>();
+  new Visitor({
+    FunctionDeclaration: (node) => {
+      if (node.id !== null) {
+        functions.set(node.id.name, node);
+      }
+    },
+    VariableDeclarator: (node) => {
+      if (
+        node.id.type === 'Identifier' &&
+        (node.init?.type === 'ArrowFunctionExpression' || node.init?.type === 'FunctionExpression')
+      ) {
+        functions.set(node.id.name, node.init);
+      }
+    },
+  }).visit(parsed.program);
+  for (const implementation of implementations) {
+    const nested = implementations.some(
+      (parent) => parent !== implementation && parent.start <= implementation.start && implementation.end <= parent.end,
+    );
+    if (!privateImplementation || nested) {
+      if (!nested) {
+        allowScopedFactoryParameter(implementation.params);
+      }
+      continue;
+    }
+    // A private implementation consumes the executor. Its parameter spelling and the layout of
+    // its scope input do not turn that input into a handler dependency or a returned service field.
+    const executorParameters = implementation.params.filter(
+      (parameter) =>
+        parameter.type === 'Identifier' &&
+        [...executorNames].some((name) => typeReferenceNamed(parameter.typeAnnotation, name)),
+    );
+    const names = new Set(
+      executorParameters.flatMap((parameter) => (parameter.type === 'Identifier' ? [parameter.name] : [])),
+    );
+    if (!returnsExecutorValue(implementation, names, functions, parsed.program)) {
+      allowedFactoryParameters.push(
+        ...executorParameters.flatMap((parameter) =>
+          parameter.type === 'Identifier' && parameter.typeAnnotation !== null && parameter.typeAnnotation !== undefined
+            ? [parameter.typeAnnotation]
+            : [],
+        ),
+      );
+    }
+  }
+  if (privateImplementation) {
+    new Visitor({
+      TSAsExpression: (node) => {
+        if (
+          node.expression.type !== 'Identifier' ||
+          node.typeAnnotation.type !== 'TSTypeReference' ||
+          node.typeAnnotation.typeName.type !== 'Identifier' ||
+          !executorNames.has(node.typeAnnotation.typeName.name)
+        ) {
+          return;
+        }
+        const inputName = node.expression.name;
+        const [implementation] = EffectArray.sort(
+          implementations.filter((candidate) => candidate.start <= node.start && node.end <= candidate.end),
+          Order.mapInput(Order.Number, (candidate: ImplementationFunction) => candidate.end - candidate.start),
+        );
+        if (
+          implementation !== undefined &&
+          implementation.params.some((parameter) => parameter.type === 'Identifier' && parameter.name === inputName) &&
+          !returnsExecutorValue(implementation, new Set([inputName]), functions, parsed.program)
+        ) {
+          allowedFactoryParameters.push(node.typeAnnotation);
+        }
+      },
+    }).visit(parsed.program);
+  }
+  const scopeProjections: Span[] = [];
+  new Visitor({
+    TSIndexedAccessType: (node) => {
+      if (
+        node.indexType.type === 'TSLiteralType' &&
+        node.indexType.literal.type === 'Literal' &&
+        node.indexType.literal.value === 'scope'
+      ) {
+        scopeProjections.push(node.objectType);
+      }
+    },
   }).visit(parsed.program);
 
   const invalidReferences: number[] = invalidImportSpans.map((span) => span.start);
@@ -233,7 +462,9 @@ const scopedTransactionExposureIndexes = (file: string, source: string): readonl
     if (
       reference.typeName.type === 'Identifier' &&
       executorNames.has(reference.typeName.name) &&
-      !allowedFactoryParameters.some((span) => span.start <= reference.start && reference.end <= span.end)
+      ![...allowedFactoryParameters, ...scopeProjections].some(
+        (span) => span.start <= reference.start && reference.end <= span.end,
+      )
     ) {
       invalidReferences.push(reference.start);
     }
@@ -242,20 +473,22 @@ const scopedTransactionExposureIndexes = (file: string, source: string): readonl
   return EffectArray.sort([...new Set(invalidReferences)], Order.Number);
 };
 
-const containsGlobalDatabaseCapability = (file: string, source: string): boolean =>
+const containsGlobalDatabaseCapability = (file: string, source: string, privateImplementation: boolean): boolean =>
   globalDatabaseImplementationImport.test(source) ||
   hiddenCapability.test(source) ||
-  scopedTransactionExposureIndexes(file, source).length > 0;
+  scopedTransactionExposureIndexes(file, source, privateImplementation).length > 0;
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
   sourceFiles: ReadonlySet<string>,
   path: Path.Path,
   root: string,
+  packageExports: ReadonlyMap<string, string>,
 ): ReadonlySet<string> => {
   const importersByDependency = new Map<string, Set<string>>();
-  const closure = new Set<string>();
-  const pending: string[] = [];
+  const unsupported = path.join(root, '.unsupported-workspace-export');
+  const closure = new Set<string>([unsupported]);
+  const pending: string[] = [unsupported];
   for (const [file, source] of sources) {
     const relative = path.relative(root, file).split(path.sep).join('/');
     // Core's public runtime modules are the sanctioned governed-operation boundary.
@@ -263,14 +496,16 @@ const globalDatabaseCapabilityClosure = (
     // owning source line; recursively treating every safe Core type dependency as a
     // database leak makes generated Action and Read registrations impossible.
     if (!relative.startsWith(coreRuntimeSourcePrefix)) {
-      if (containsGlobalDatabaseCapability(file, source)) {
+      if (containsGlobalDatabaseCapability(file, source, !isGovernedAdapter(relative, source))) {
         closure.add(file);
         pending.push(file);
       }
       for (const match of source.matchAll(importedSpecifier)) {
         const specifier = match.groups?.specifier;
         const dependency =
-          specifier === undefined ? undefined : resolveLocalSource(sourceFiles, path, root, file, specifier);
+          specifier === undefined
+            ? undefined
+            : resolveLocalSource(sourceFiles, path, root, file, specifier, packageExports);
         if (dependency !== undefined) {
           const importers = importersByDependency.get(dependency) ?? new Set<string>();
           importers.add(file);
@@ -323,18 +558,20 @@ interface SourceCheckContext {
   readonly file: string;
   readonly globalDatabaseCapabilityFiles: ReadonlySet<string>;
   readonly governedAdapter: boolean;
+  readonly packageExports: ReadonlyMap<string, string>;
   readonly path: Path.Path;
   readonly record: (violation: DatabaseAccessViolation) => void;
   readonly relative: string;
   readonly root: string;
   readonly source: string;
   readonly sourceFiles: ReadonlySet<string>;
+  readonly testSourceFiles: ReadonlySet<string>;
 }
 
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
 
 const recordProductionTestingImports = (context: SourceCheckContext): void => {
-  if (isTestSource(context.relative)) {
+  if (context.testSourceFiles.has(context.file)) {
     return;
   }
   for (const match of context.source.matchAll(importedSpecifier)) {
@@ -342,14 +579,24 @@ const recordProductionTestingImports = (context: SourceCheckContext): void => {
     if (specifier === undefined) {
       continue;
     }
-    const dependency = resolveLocalSource(context.sourceFiles, context.path, context.root, context.file, specifier);
+    const dependency = resolveLocalSource(
+      context.sourceFiles,
+      context.path,
+      context.root,
+      context.file,
+      specifier,
+      context.packageExports,
+    );
     const dependencyRelative =
       dependency === undefined
         ? undefined
         : context.path.relative(context.root, dependency).split(context.path.sep).join('/');
     if (
       specifier.startsWith('@app/core-runtime/testing/') ||
-      dependencyRelative?.startsWith('packages/core-runtime/src/testing/') === true
+      dependencyRelative?.startsWith('packages/core-runtime/src/testing/') === true ||
+      (dependencyRelative?.startsWith('scripts/integration/support/') === true &&
+        dependency !== undefined &&
+        context.testSourceFiles.has(dependency))
     ) {
       context.record({
         file: context.relative,
@@ -369,7 +616,14 @@ const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void
     if (specifier === undefined) {
       continue;
     }
-    const dependency = resolveLocalSource(context.sourceFiles, context.path, context.root, context.file, specifier);
+    const dependency = resolveLocalSource(
+      context.sourceFiles,
+      context.path,
+      context.root,
+      context.file,
+      specifier,
+      context.packageExports,
+    );
     if (dependency !== undefined && context.globalDatabaseCapabilityFiles.has(dependency)) {
       context.record({
         file: context.relative,
@@ -442,7 +696,7 @@ const recordScopedTransactionExposure = (context: SourceCheckContext): void => {
 
 const recordSecondPostgresDriver = (context: SourceCheckContext): void => {
   // Governed handlers and adapters already reject every database import.
-  if (isTestSource(context.relative) || context.governedAdapter) {
+  if (context.testSourceFiles.has(context.file) || context.governedAdapter) {
     return;
   }
   for (const match of context.source.matchAll(secondPostgresDriverImport)) {
@@ -479,6 +733,89 @@ const compareViolations = (left: DatabaseAccessViolation, right: DatabaseAccessV
 
 const ViolationOrder = Order.make(compareViolations);
 
+// Resolve only declared exact public source exports; unsupported targets remain blocking graph leaves.
+const workspaceSourceExports = (root: string, files: readonly string[]) =>
+  Effect.gen(function* workspaceSourceExportsProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // Follow the package's declared public contract instead of guessing its server entrypoint.
+    const packageExports = new Map<string, string>();
+    const packageRoots = new Set(
+      files.flatMap((file) => {
+        const parts = path.relative(root, file).split(path.sep);
+        return ['apps', 'packages', 'verticals'].includes(parts[0] ?? '') && parts[1] !== undefined
+          ? [path.join(root, parts[0] ?? '', parts[1])]
+          : [];
+      }),
+    );
+    const decodePackage = Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          exports: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+          name: Schema.String,
+        }),
+      ),
+    );
+    for (const packageRoot of packageRoots) {
+      const manifest = path.join(packageRoot, 'package.json');
+      if (!(yield* fileSystem.exists(manifest))) {
+        continue;
+      }
+      const metadata = yield* fileSystem.readFileString(manifest).pipe(Effect.flatMap(decodePackage));
+      packageExports.set(`${metadata.name}/`, path.join(root, '.unsupported-workspace-export'));
+      if (metadata.exports !== undefined) {
+        for (const [key, target] of Object.entries(metadata.exports)) {
+          // Exact source exports only; unresolved/conditional targets stay fail closed.
+          if (!Schema.is(Schema.String)(target) || !target.startsWith('./') || key.includes('*')) {
+            continue;
+          }
+          const resolved = path.resolve(packageRoot, target);
+          const relative = path.relative(packageRoot, resolved);
+          if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+            packageExports.set(key === '.' ? metadata.name : `${metadata.name}/${key.slice(2)}`, resolved);
+          }
+        }
+      }
+    }
+    return packageExports;
+  });
+
+const nativeTestSourceFiles = (
+  root: string,
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+  packageExports: ReadonlyMap<string, string>,
+): ReadonlySet<string> => {
+  const files = [...sources.keys()];
+  const sourceFiles = new Set(files);
+  const testSourceFiles = new Set(
+    files.filter((file) => isTestSource(path.relative(root, file).split(path.sep).join('/'))),
+  );
+  const pendingTestFiles = [...testSourceFiles];
+  while (pendingTestFiles.length > 0) {
+    const file = pendingTestFiles.pop();
+    if (file === undefined) {
+      continue;
+    }
+    for (const match of (sources.get(file) ?? '').matchAll(importedSpecifier)) {
+      const specifier = match.groups?.specifier;
+      const dependency =
+        specifier === undefined
+          ? undefined
+          : resolveLocalSource(sourceFiles, path, root, file, specifier, packageExports);
+      if (
+        dependency !== undefined &&
+        path.relative(root, dependency).split(path.sep).join('/').startsWith('scripts/integration/support/') &&
+        !testSourceFiles.has(dependency)
+      ) {
+        testSourceFiles.add(dependency);
+        pendingTestFiles.push(dependency);
+      }
+    }
+  }
+  return testSourceFiles;
+};
+
 export const checkDatabaseAccessBoundaries = (root: string) =>
   Effect.gen(function* checkDatabaseAccessBoundariesProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -493,7 +830,15 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     );
     const sources = new Map(sourcePairs);
     const sourceFiles = new Set(files);
-    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(sources, sourceFiles, path, root);
+    const packageExports = yield* workspaceSourceExports(root, files);
+    const testSourceFiles = nativeTestSourceFiles(root, sources, path, packageExports);
+    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(
+      sources,
+      sourceFiles,
+      path,
+      root,
+      packageExports,
+    );
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
       const key = `${violation.file}:${violation.line}:${violation.reason}`;
@@ -509,12 +854,14 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         file,
         globalDatabaseCapabilityFiles,
         governedAdapter: isGovernedAdapter(relative, source),
+        packageExports,
         path,
         record,
         relative,
         root,
         source,
         sourceFiles,
+        testSourceFiles,
       };
       recordProductionTestingImports(context);
       recordTransitiveDatabaseCapabilities(context);

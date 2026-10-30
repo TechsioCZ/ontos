@@ -451,10 +451,10 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       // Retiring the ledger token and recording that the verification completed are one
       // transaction: consuming the token is what flips `user.emailVerified`, so a refused audit
       // write here must undo the flip along with it rather than leave a verified address behind an
-      // audit outage. A transaction failure surfaces as `CommercePortalAuthRecoveryUnavailable`
-      // straight through this call — unlike the reset, nothing external was already asked to act,
-      // so there is no completed side effect to reconcile and no reason to answer anything but
-      // unavailable.
+      // audit outage. Recognized native SQL settlement failures surface as the declared
+      // unavailable outcome. A missing COMMIT acknowledgement does not prove rollback or success:
+      // the flag, token and audit may already have committed together. Preserve that uncertainty;
+      // this call neither replays consumption nor invents a completed-verification response.
       const subject = yield* store.consumeEmailVerificationWithAudit({
         audit: {
           correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,

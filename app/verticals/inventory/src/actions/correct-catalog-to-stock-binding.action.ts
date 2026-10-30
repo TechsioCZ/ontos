@@ -6,20 +6,25 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import {
   CorrectCatalogToStockBindingErrorSchema,
   CorrectCatalogToStockBindingPayloadSchema,
   CorrectCatalogToStockBindingResultSchema,
+  StockItemReplacementCorrectionCandidateSchema,
 } from '../../shared/actions/correct-catalog-to-stock-binding.ts';
-import type { CorrectCatalogToStockBindingPayload } from '../../shared/actions/correct-catalog-to-stock-binding.ts';
+import type {
+  CorrectCatalogToStockBindingPayload,
+  StockItemReplacementCorrectionCandidate,
+} from '../../shared/actions/correct-catalog-to-stock-binding.ts';
 import {
   CatalogToStockBindingLifecycleEvidenceSchema,
   CatalogToStockBindingRejected,
   CatalogToStockBindingRevisionSchema,
   CatalogToStockBindingSchema,
+  CatalogToStockBindingCandidateSchema,
   // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- The Action composes the existing owner lifecycle inside Core's transaction-scoped service boundary; expires: 2027-03-31.
   makeCatalogToStockBindingLifecycle,
 } from '../../shared/domain/catalog-to-stock-binding.ts';
@@ -36,6 +41,8 @@ import { OutboxPayloadSchema as ReservationGuaranteeChangedOutboxPayloadSchema }
 import type { OutboxPayload as ReservationGuaranteeChangedOutboxPayload } from '../../shared/outbox/commerce-inventory-reservation-guarantee-changed-v1.ts';
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local repository constructor only inside the generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeDrizzleCatalogToStockBindingPersistence } from '../persistence/catalog-to-stock-binding-repository.ts';
+import { CatalogToStockBindingUnavailable } from '../../shared/domain/catalog-to-stock-binding-unavailable.ts';
+import { StockItemSchema } from '../../shared/domain/stock-item.ts';
 import { bindingCorrectionImpactPersistenceForScope } from '../persistence/binding-correction-impact-repository.ts';
 import { serializeCatalogToStockBindingPersistence } from '../persistence/binding-correction-serialization.ts';
 import type { BindingCorrectionImpactOperations } from '../services/binding-correction-impact.service.ts';
@@ -67,6 +74,11 @@ type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, n
 export interface CorrectCatalogToStockBindingServices {
   readonly bindings: CatalogToStockBindingPersistence;
   readonly impacts: BindingCorrectionImpactOperations;
+  readonly replaceStockItemAndCorrect: (
+    current: CatalogToStockBinding,
+    candidate: StockItemReplacementCorrectionCandidate,
+    evidence: typeof CatalogToStockBindingLifecycleEvidenceSchema.Type,
+  ) => Effect.Effect<CatalogToStockBinding, CatalogToStockBindingRejected | CatalogToStockBindingUnavailable>;
 }
 
 export const CorrectCatalogToStockBindingAuditEvidenceSchema = Schema.Struct({
@@ -75,6 +87,8 @@ export const CorrectCatalogToStockBindingAuditEvidenceSchema = Schema.Struct({
   exactSelectionMeaning: CatalogToStockBindingSchema.fields.exactSelectionMeaning,
   operation: Schema.Literal('CORRECTED'),
   ownerEvidenceRef: CatalogToStockBindingLifecycleEvidenceSchema.fields.ownerEvidenceRef,
+  replacedStockItemRef: Schema.optionalKey(StockItemSchema.fields.stockItemRef),
+  replacedStockItemRevision: Schema.optionalKey(StockItemSchema.fields.revision),
   revision: CatalogToStockBindingRevisionSchema,
   stockItemRef: CatalogToStockBindingSchema.fields.stockItemRef,
   unitRef: CatalogToStockBindingSchema.fields.unitRef,
@@ -88,6 +102,15 @@ const sameBindingRef = (left: CatalogToStockBindingRef, right: CatalogToStockBin
 
 const bindingCorrectionOccurrenceId = (...identity: readonly (number | string)[]): string =>
   Hex.encode(sha256(utf8ToBytes(identity.join('\u0000'))));
+
+const bindingReplacementUnavailable = <Failure>(cause: Failure) => {
+  const failure = new CatalogToStockBindingUnavailable({
+    code: 'catalog_to_stock_binding_unavailable',
+    reason: 'Catalog-to-Stock Binding replacement is temporarily unavailable',
+  });
+  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return failure;
+};
 
 const requireExactCurrentBinding = (
   persistence: CatalogToStockBindingPersistence,
@@ -138,10 +161,15 @@ export const handleCorrectCatalogToStockBinding = Effect.fn('CorrectCatalogToSto
     context: ActionHandlerContext<typeof domainEvents, CorrectCatalogToStockBindingServices>,
   ) {
     const previousBinding = yield* requireExactCurrentBinding(context.services.bindings, payload);
-    const binding = yield* makeCatalogToStockBindingLifecycle(context.services.bindings, {
-      makeBindingId: () => payload.bindingRef.resourceId,
-      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-    }).correct({ candidate: payload.candidate, evidence: payload.evidence });
+    const replacement = Schema.is(StockItemReplacementCorrectionCandidateSchema)(payload.candidate)
+      ? payload.candidate
+      : undefined;
+    const binding = yield* Schema.is(StockItemReplacementCorrectionCandidateSchema)(payload.candidate)
+      ? context.services.replaceStockItemAndCorrect(previousBinding, payload.candidate, payload.evidence)
+      : makeCatalogToStockBindingLifecycle(context.services.bindings, {
+          makeBindingId: () => payload.bindingRef.resourceId,
+          now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+        }).correct({ candidate: payload.candidate, evidence: payload.evidence });
     const impact = yield* context.services.impacts.apply({
       correctedBinding: binding,
       correctionEvidenceRef: payload.evidence.ownerEvidenceRef,
@@ -275,30 +303,86 @@ export const handleCorrectCatalogToStockBinding = Effect.fn('CorrectCatalogToSto
       targetResourceId: binding.bindingRef.resourceId,
       targetResourceType: binding.bindingRef.resourceType,
     });
-    yield* context.recordAuditEvidence({
+    const auditEvidence = {
       authority: payload.evidence.authority,
       bindingRef: binding.bindingRef,
       exactSelectionMeaning: binding.exactSelectionMeaning,
-      operation: 'CORRECTED',
+      operation: 'CORRECTED' as const,
       ownerEvidenceRef: payload.evidence.ownerEvidenceRef,
       revision: binding.revision,
       stockItemRef: binding.stockItemRef,
       unitRef: binding.unitRef,
-    });
+    };
+    yield* context.recordAuditEvidence(
+      replacement === undefined
+        ? auditEvidence
+        : {
+            ...auditEvidence,
+            replacedStockItemRef: replacement.expectedStockItemRef,
+            replacedStockItemRevision: replacement.expectedStockItemRevision,
+          },
+    );
     return binding;
   },
 );
 
-export const makeCorrectCatalogToStockBindingServices = (transaction: ScopedTransaction, scope: OperationalScope) => {
-  const bindings = serializeCatalogToStockBindingPersistence(
-    transaction,
-    makeDrizzleCatalogToStockBindingPersistence(transaction),
-  );
-  return Effect.succeed({
-    bindings,
-    impacts: makeBindingCorrectionImpactService(bindingCorrectionImpactPersistenceForScope(transaction, scope)),
-  });
-};
+export const makeCorrectCatalogToStockBindingServices = Effect.fn('CorrectCatalogToStockBinding.makeServices')(
+  function* makeServices(transaction: ScopedTransaction, scope: OperationalScope) {
+    const bindings = serializeCatalogToStockBindingPersistence(
+      transaction,
+      makeDrizzleCatalogToStockBindingPersistence(transaction),
+    );
+    const crypto = yield* Crypto.Crypto;
+    return {
+      bindings,
+      impacts: makeBindingCorrectionImpactService(bindingCorrectionImpactPersistenceForScope(transaction, scope)),
+      replaceStockItemAndCorrect: Effect.fn('CorrectCatalogToStockBinding.replaceStockItem')(function* replaceStockItem(
+        current: CatalogToStockBinding,
+        candidate: StockItemReplacementCorrectionCandidate,
+        evidence: typeof CatalogToStockBindingLifecycleEvidenceSchema.Type,
+      ) {
+        if (
+          current.bindingRef.tenantId !== scope.tenantId ||
+          candidate.expectedStockItemRef.tenantId !== scope.tenantId ||
+          current.stockItemRef.resourceId !== candidate.expectedStockItemRef.resourceId ||
+          current.revision !== candidate.expectedBindingRevision
+        ) {
+          return yield* new CatalogToStockBindingRejected({
+            code: 'catalog_to_stock_binding_rejected',
+            reason: 'REVISION_CONFLICT',
+          });
+        }
+        const now = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+        const stockItemId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(bindingReplacementUnavailable));
+        const replacement = yield* Schema.decodeEffect(StockItemSchema)({
+          createdAt: now,
+          exactSelectionMeaning: current.exactSelectionMeaning,
+          lifecycle: 'CURRENT',
+          retiredAt: null,
+          revision: 1,
+          stockItemRef: { ...current.stockItemRef, resourceId: stockItemId },
+          unitRef: current.unitRef,
+        }).pipe(Effect.mapError(bindingReplacementUnavailable));
+        const planned = yield* Schema.decodeEffect(CatalogToStockBindingCandidateSchema)({
+          catalogSelection: candidate.catalogSelection,
+          exactSelectionMeaning: candidate.exactSelectionMeaning,
+          stockItem: replacement,
+        }).pipe(Effect.mapError(bindingReplacementUnavailable));
+        const persistence = serializeCatalogToStockBindingPersistence(
+          transaction,
+          makeDrizzleCatalogToStockBindingPersistence(transaction, {
+            expectedStockItemRevision: candidate.expectedStockItemRevision,
+            replacement,
+          }),
+        );
+        return yield* makeCatalogToStockBindingLifecycle(persistence, {
+          makeBindingId: () => current.bindingRef.resourceId,
+          now: Effect.succeed(now),
+        }).correct({ candidate: planned, evidence });
+      }),
+    };
+  },
+);
 
 export const correctCatalogToStockBindingAction = defineAction(
   {

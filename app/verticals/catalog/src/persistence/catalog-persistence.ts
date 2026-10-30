@@ -8,6 +8,7 @@ import {
   catalogReadiness,
   productActivationBlockers,
   ProductSchema,
+  ProductRevisionRecordSchema,
   ProductVariantSchema,
   type Product,
   type ProductChangeKind,
@@ -49,7 +50,7 @@ interface CreateProductPersistenceInput {
   readonly description: string | undefined;
   readonly name: string | undefined;
   readonly principalId: string;
-  readonly reason: string;
+  readonly reason: string | undefined;
   readonly tenantId: string;
   readonly variantId: string | undefined;
 }
@@ -341,16 +342,17 @@ const insertRevision = (
   input: {
     readonly actionInvocationId: string;
     readonly actingPrincipalId: string;
-    readonly changeKind: ProductChangeKind;
     readonly description: string | undefined;
     readonly evidenceRefs: readonly string[];
     readonly lifecycle: ProductLifecycle;
     readonly name: string | undefined;
     readonly productId: string;
-    readonly reason: string;
     readonly revision: number;
     readonly tenantId: string;
-  },
+  } & (
+    | { readonly changeKind: 'CREATED'; readonly reason: string | undefined }
+    | { readonly changeKind: Exclude<ProductChangeKind, 'CREATED'>; readonly reason: string }
+  ),
 ) =>
   transaction
     .insert(productRevisions)
@@ -363,7 +365,7 @@ const insertRevision = (
       lifecycleState: input.lifecycle,
       name: input.name ?? null,
       productId: input.productId,
-      reason: input.reason,
+      reason: input.reason ?? null,
       revision: input.revision,
       tenantId: input.tenantId,
     })
@@ -596,7 +598,7 @@ export const catalogPersistenceForScope = (
         evidenceRefs: [],
         lifecycleState: 'WORK_IN_PROGRESS',
         productId,
-        reason: input.reason,
+        reason: input.reason ?? null,
         revision: 1,
         tenantId,
         variantId,
@@ -1000,24 +1002,26 @@ export const catalogPersistenceForScope = (
             revision: row.revision,
             revisionId: row.productRevisionId,
           }).pipe(
-            Effect.map((revisionReference): ProductRevisionRecord => ({
-              actionInvocationId: row.actionInvocationId,
-              changeKind:
-                row.changeKind === 'COSMETIC_CORRECTION' ||
-                row.changeKind === 'UPDATED' ||
-                row.changeKind === 'LIFECYCLE'
-                  ? row.changeKind
-                  : 'CREATED',
-              ...(row.description === null ? {} : { description: row.description }),
-              evidenceRefs: row.evidenceRefs,
-              lifecycle: toLifecycle(row.lifecycleState),
-              ...(row.name === null ? {} : { name: row.name }),
-              productRef: productRef(tenantId, row.productId),
-              reason: row.reason,
-              recordedAt: row.recordedAt.toISOString(),
-              revision: row.revision,
-              revisionReference,
-            })),
+            Effect.flatMap((revisionReference) =>
+              Schema.decodeUnknownEffect(ProductRevisionRecordSchema)({
+                actionInvocationId: row.actionInvocationId,
+                changeKind:
+                  row.changeKind === 'COSMETIC_CORRECTION' ||
+                  row.changeKind === 'UPDATED' ||
+                  row.changeKind === 'LIFECYCLE'
+                    ? row.changeKind
+                    : 'CREATED',
+                ...(row.description === null ? {} : { description: row.description }),
+                evidenceRefs: row.evidenceRefs,
+                lifecycle: toLifecycle(row.lifecycleState),
+                ...(row.name === null ? {} : { name: row.name }),
+                productRef: productRef(tenantId, row.productId),
+                ...(row.reason === null ? {} : { reason: row.reason }),
+                recordedAt: row.recordedAt.toISOString(),
+                revision: row.revision,
+                revisionReference,
+              }),
+            ),
             Effect.mapError(unavailable),
           ),
         { concurrency: 1 },

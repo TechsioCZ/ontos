@@ -238,12 +238,21 @@ const providerChecks = (inventory: InitialCutoverProviderInventory) => [
   ),
 ];
 
+/** Re-observation after the first publication: the active pointer is now this system's own write. */
+export const verifyRetiredCutoverProviderInventory = Effect.fn('InitialCutover.verifyRetiredProviderInventory')(
+  function* verifyRetiredCutoverProviderInventory(inventory: InitialCutoverProviderInventory) {
+    yield* Effect.all(providerChecks(snapshotInventory(inventory)), {
+      concurrency: PROVIDER_CONCURRENCY,
+      discard: true,
+    });
+  },
+);
+
 /** Observation only: the authority owner binds the complete inventory and proof to the first publication. */
 export const verifyInitialCutoverProviderInventory = Effect.fn('InitialCutover.verifyProviderInventory')(
   function* verifyInitialCutoverProviderInventory(inventory: InitialCutoverProviderInventory) {
-    const snapshot = snapshotInventory(inventory);
-    yield* Effect.all(providerChecks(snapshot), { concurrency: PROVIDER_CONCURRENCY, discard: true });
-    yield* verifyCompositionPointerAbsent(snapshot).pipe(bounded('cloudflare', 'verify'));
+    yield* verifyRetiredCutoverProviderInventory(inventory);
+    yield* verifyCompositionPointerAbsent(snapshotInventory(inventory)).pipe(bounded('cloudflare', 'verify'));
   },
 );
 

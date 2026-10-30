@@ -50,7 +50,12 @@ import {
   ApplicationCompositionBackendSchema,
   ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
 } from '../packages/core-runtime/src/modules/application-composition.ts';
-import { quiesceInitialCompositionCutover, verifyInitialCompositionCutover } from './initial-composition-cutover.mts';
+import {
+  quiesceInitialCompositionCutover,
+  verifyInitialCompositionCutover,
+  verifyRetiredCompositionCutover,
+} from './initial-composition-cutover.mts';
+import { ApplicationCompositionLegacyOwnersLive } from './application-composition-legacy-owners.mts';
 import { DeploymentEnvironmentSchema } from './materialize-zerops-environment.mts';
 import { observeApplicationCompositionBackend } from './observe-application-composition-backend.mts';
 import { moduleReleaseAssetWorkerName } from '../packages/core-runtime/src/http/module-release-identity.ts';
@@ -634,13 +639,27 @@ export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeC
   return snapshot;
 });
 
+// Before the first authority row the obsolete pointer must be gone; afterwards the active pointer is
+// this system's own release, so later publications re-observe only the retired executables.
 const configuredInitialCutover = (environment: string) =>
   Effect.gen(function* verifyConfiguredInitialCutover() {
     const [inventoryFile, receiptFile] = yield* Effect.all([
       Config.String('ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE'),
       Config.String('ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE'),
     ]);
-    yield* verifyInitialCompositionCutover({ environment, inventoryFile, receiptFile });
+    const database = yield* CoreDatabase;
+    const [schema] = yield* database.executor.execute<{ readonly initialized: boolean }>(
+      sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
+      'objects',
+    );
+    const published =
+      (schema?.initialized ?? false) &&
+      (yield* database.executor
+        .select({ revision: applicationCompositionAuthority.revision })
+        .from(applicationCompositionAuthority)
+        .where(eq(applicationCompositionAuthority.authorityKey, 'active'))).length > 0;
+    const input = { environment, inventoryFile, receiptFile };
+    yield* published ? verifyRetiredCompositionCutover(input) : verifyInitialCompositionCutover(input);
   });
 
 const quiesceInitialCutoverCommand = Command.make(
@@ -718,7 +737,11 @@ const migrateCommand = Command.make(
       );
       yield* runApplicationCompositionMigration(deployment, configuredInitialCutover(environment));
     }),
-).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+).pipe(
+  Command.provide(() =>
+    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+  ),
+);
 
 const resumeDurableWorkCommand = Command.make(
   'resume-durable-work',
@@ -770,7 +793,11 @@ const publishCommand = Command.make(
         ),
       ),
     ),
-).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+).pipe(
+  Command.provide(() =>
+    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+  ),
+);
 
 const refreshCommand = Command.make(
   'refresh',
@@ -809,7 +836,11 @@ const refreshCommand = Command.make(
       }
       return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment));
     }),
-).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+).pipe(
+  Command.provide(() =>
+    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+  ),
+);
 
 const configureSourceCommand = Command.make('configure-source', {}, () =>
   Effect.gen(function* configureSource() {

@@ -89,6 +89,14 @@ export const handleExecutePrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasure
     return yield* conflict('The owner outcome does not exactly partition the approved resource scope');
   }
   yield* gateway.report(outcome, legalEntityId, correlation, context.compositionRevision);
+  // A truthful report does not settle unresolved owner work or its delivery debt.
+  if (outcome.status !== 'SUCCEEDED' && outcome.status !== 'BUSINESS_REJECTED' && outcome.status !== 'NOT_APPLICABLE') {
+    return yield* new ExecutePrivacyMeasureWorkerRejected({
+      code: 'OWNER_COMMIT_INDETERMINATE',
+      reason: 'The reported owner outcome leaves work unresolved; reconcile its durable receipt before completion',
+      retryable: true,
+    });
+  }
   return yield* Effect.void;
 });
 

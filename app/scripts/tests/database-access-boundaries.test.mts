@@ -168,3 +168,182 @@ it.live('allows private scoped service factories but rejects executor exposure t
     ]);
   }),
 );
+
+it.live('distinguishes closed private executor inputs and scope metadata from handler capabilities', () =>
+  Effect.gen(function* closedOwnerInputs() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-inputs-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const files = {
+      'verticals/stock/api/metadata.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+export type Scope = Executor['scope'];
+export const decision = (scope: Executor['scope']) => scope.tenantId;
+`,
+      'verticals/stock/api/query-capability.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+export type Query = Executor['select'];
+export type Mixed = Executor['scope' | 'select'];
+`,
+      'verticals/stock/src/actions/closed.action.ts': "import { closed } from '../services/closed.ts';\n",
+      'verticals/stock/src/actions/nested.action.ts': "import { nested } from '../services/nested.ts';\n",
+      'verticals/stock/src/actions/raw-field.action.ts': "import type { Services } from '../services/raw-field.ts';\n",
+      'verticals/stock/src/actions/raw-input.action.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+const handle = (_transaction: Executor) => undefined;
+`,
+      'verticals/stock/src/actions/requirement.action.ts': "import type { Load } from '../services/requirement.ts';\n",
+      'verticals/stock/src/actions/returned.action.ts': "import { returned } from '../services/returned.ts';\n",
+      'verticals/stock/src/services/closed.ts': `import type { ScopedTransactionExecutor as Executor, OperationalScope } from '@app/core-runtime';
+const authorize = (_transaction: Executor, input: { readonly scope: OperationalScope }) => input.scope.tenantId;
+const persistence = (transaction: Executor, context: { readonly scope: OperationalScope }) => ({ load: () => transaction.select() });
+export const closed = (transaction: Executor, actualScope: OperationalScope) => persistence(transaction, { scope: actualScope });
+`,
+      'verticals/stock/src/services/nested.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+export const nested = () => ({ load: (transaction: Executor) => transaction.select() });
+`,
+      'verticals/stock/src/services/raw-field.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+export interface Services { readonly transaction: Executor; }
+`,
+      'verticals/stock/src/services/requirement.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+export type Load = Effect.Effect<void, never, Executor>;
+`,
+      'verticals/stock/src/services/returned.ts': `import type { ScopedTransactionExecutor as Executor } from '@app/core-runtime';
+export const returned = (transaction: Executor) => ({ transaction });
+`,
+    };
+    yield* Effect.all(
+      Object.entries(files).map(([relative, source]) =>
+        Effect.gen(function* writeBoundarySource() {
+          const file = path.join(root, relative);
+          yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+          yield* Effect.tryPromise(() => writeFile(file, source));
+        }),
+      ),
+    );
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.map(({ file, line }) => `${file}:${line}`)).toEqual([
+      'verticals/stock/api/query-capability.ts:2',
+      'verticals/stock/api/query-capability.ts:3',
+      'verticals/stock/src/actions/nested.action.ts:1',
+      'verticals/stock/src/actions/raw-field.action.ts:1',
+      'verticals/stock/src/actions/raw-input.action.ts:2',
+      'verticals/stock/src/actions/requirement.action.ts:1',
+      'verticals/stock/src/actions/returned.action.ts:1',
+    ]);
+  }),
+);
+
+it.live(
+  'resolves declared public workspace exports instead of private server lookalikes and rejects unsafe or unsupported targets',
+  () =>
+    Effect.gen(function* declaredSourceExports() {
+      const root = yield* Effect.acquireRelease(
+        Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-exports-'))),
+        (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+      );
+      const files = {
+        'verticals/customer/api/index.ts': "export { Database } from '../src/runtime.ts';\n",
+        'verticals/customer/package.json': JSON.stringify({
+          exports: {
+            './api': './shared/api.ts',
+            './conditional': { workerd: './shared/api.ts' },
+            './escape': '../outside.ts',
+            './guessed': './shared/lookalike',
+            './guessed-js': './shared/javascript.js',
+            './missing': './shared/missing.ts',
+            './unsafe': './src/runtime.ts',
+          },
+          name: '@app/customer',
+        }),
+        'verticals/customer/shared/api.ts': 'export const ResponseSchema = { type: "response" };\n',
+        'verticals/customer/shared/javascript.ts': 'export const guessed = true;\n',
+        'verticals/customer/shared/lookalike.ts': 'export const guessed = true;\n',
+        'verticals/customer/src/db/client.ts': 'export class Database {}\n',
+        'verticals/customer/src/runtime.ts': "import { Database } from './db/client.ts';\nexport { Database };\n",
+        'verticals/customer/src/unexported.ts': 'export const fake = true;\n',
+        'verticals/noexports/package.json': JSON.stringify({ name: '@app/noexports' }),
+        'verticals/noexports/src/index.ts': 'export const fake = true;\n',
+        'verticals/stock/src/actions/conditional.action.ts': "import { fake } from '@app/customer/conditional';\n",
+        'verticals/stock/src/actions/escape.action.ts': "import { fake } from '@app/customer/escape';\n",
+        'verticals/stock/src/actions/guessed-js.action.ts': "import { fake } from '@app/customer/guessed-js';\n",
+        'verticals/stock/src/actions/guessed.action.ts': "import { fake } from '@app/customer/guessed';\n",
+        'verticals/stock/src/actions/missing.action.ts': "import { fake } from '@app/customer/missing';\n",
+        'verticals/stock/src/actions/noexports.action.ts': "import { fake } from '@app/noexports';\n",
+        'verticals/stock/src/actions/private.action.ts': "import { Database } from '../../../customer/api/index.ts';\n",
+        'verticals/stock/src/actions/safe.action.ts': "import { ResponseSchema } from '@app/customer/api';\n",
+        'verticals/stock/src/actions/unexported.action.ts': "import { fake } from '@app/customer/unexported';\n",
+        'verticals/stock/src/actions/unsafe.action.ts': "import { Database } from '@app/customer/unsafe';\n",
+      };
+      yield* Effect.all(
+        Object.entries(files).map(([relative, source]) =>
+          Effect.gen(function* writeExportFixture() {
+            const file = path.join(root, relative);
+            yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+            yield* Effect.tryPromise(() => writeFile(file, source));
+          }),
+        ),
+      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      expect(violations.map(({ file, reason }) => ({ file, reason }))).toEqual(
+        [
+          'conditional',
+          'escape',
+          'guessed-js',
+          'guessed',
+          'missing',
+          'noexports',
+          'private',
+          'unexported',
+          'unsafe',
+        ].map((name) => ({
+          file: `verticals/stock/src/actions/${name}.action.ts`,
+          reason: 'transitive global database capability in governed handler requirements',
+        })),
+      );
+    }),
+);
+
+it.live(
+  'admits closed native test support while rejecting production Core testing imports and production entry into the support closure',
+  () =>
+    Effect.gen(function* nativeTestSourceClosure() {
+      const root = yield* Effect.acquireRelease(
+        Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-native-tests-'))),
+        (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+      );
+      const testingImport = "import { makeFixture } from '@app/core-runtime/testing/fixture';\n";
+      const files = {
+        'packages/core-runtime/src/testing/fixture.ts': 'export const makeFixture = () => undefined;\n',
+        'scripts/integration/privacy.test.mts':
+          "import { makeFixture } from '@app/core-runtime/testing/fixture';\nimport './support/session.mts';\n",
+        'scripts/integration/production.mts': testingImport,
+        'scripts/integration/support-lookalike/session.mts':
+          "import { makeFixture } from '@app/core-runtime/testing/fixture';\n",
+        'scripts/integration/support/nested.mts': testingImport,
+        'scripts/integration/support/orphan.mts': testingImport,
+        'scripts/integration/support/session.mts':
+          "import { makeFixture } from '@app/core-runtime/testing/fixture';\nimport './nested.mts';\n",
+        'scripts/production.mts': "import './integration/support/session.mts';\n",
+      };
+      yield* Effect.all(
+        Object.entries(files).map(([relative, source]) =>
+          Effect.gen(function* writeNativeFixture() {
+            const file = path.join(root, relative);
+            yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+            yield* Effect.tryPromise(() => writeFile(file, source));
+          }),
+        ),
+      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      expect(violations.map(({ file, reason }) => ({ file, reason }))).toEqual(
+        [
+          'scripts/integration/production.mts',
+          'scripts/integration/support-lookalike/session.mts',
+          'scripts/integration/support/orphan.mts',
+          'scripts/production.mts',
+        ].map((file) => ({
+          file,
+          reason: 'test-only Core runtime imported by production source',
+        })),
+      );
+    }),
+);

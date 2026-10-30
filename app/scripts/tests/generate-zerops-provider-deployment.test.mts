@@ -221,6 +221,10 @@ it.effect('ships missing migration owners without changing other deployment file
   }),
 );
 
+const CART = 'commerce-cart';
+const SHELL = { id: 'shell-super-app', port: 3020 };
+const provider = (id: string, port: number) => ({ id, package: `@app/${id}`, path: `verticals/${id}`, port });
+
 const databaseUrls = (section: string) => section.match(/^ {8}[A-Z_]*DATABASE_URL: .*$/gmu) ?? [];
 
 it.effect('binds Party Registry to its dedicated request identity and every other provider to the shared role', () =>
@@ -249,5 +253,74 @@ it.effect('binds Party Registry to its dedicated request identity and every othe
     ]);
     // Zerops environment keys stay sorted, so the dedicated URL sits between NODE_ENV and PORT.
     expect(partySection).toMatch(/NODE_ENV: production\n {8}PARTY_REGISTRY_DATABASE_URL: [^\n]+\n {8}PORT: '4102'/u);
+  }),
+);
+
+it.effect('binds Commerce Order to the internal API base of each owner it calls and its caller identities', () =>
+  Effect.gen(function* commerceOrderEnvironment() {
+    const generated = yield* generateZeropsProviderDeployment(
+      "zerops:\n  - setup: 'commerce-order'\n\n  - setup: 'shellsuperapp'\n",
+      {
+        shell: SHELL,
+        verticals: [provider('commerce-order', 4116), provider(CART, 4115), ledger],
+      },
+      toolchain,
+    );
+    const sections = generated.split(/(?=^ {2}- setup: )/mu);
+    const order = sections.find((section) => section.startsWith("  - setup: 'commerce-order'")) ?? '';
+    const ledgerSection = sections.find((section) => section.startsWith("  - setup: 'ledger'")) ?? '';
+
+    expect(order).toContain("        ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'\n");
+    expect(order).toContain("        ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'\n");
+    expect(order).toContain("        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'\n");
+    expect(order).toContain(
+      `        ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: \${migrator_ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY}\n`,
+    );
+    expect(order).toContain(
+      `        ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: \${migrator_ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY}\n`,
+    );
+    expect(order).toContain(
+      `        ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID: \${migrator_ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID}\n`,
+    );
+    expect(order).toContain(
+      "        ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'\n",
+    );
+    // An owner the topology does not deploy gets no base, rather than an address nothing serves.
+    expect(order).not.toContain('ONTOS_TAX_API_BASE_URL');
+    expect(ledgerSection).not.toContain('ONTOS_ORDER_');
+    expect(ledgerSection).not.toContain('_API_BASE_URL');
+    expect(ledgerSection).not.toContain('ONTOS_SHELL_GATEWAY_BASE_URL');
+  }),
+);
+
+it.effect('binds each Order-flow owner to its own credentials, per-environment values and owner API bases', () =>
+  Effect.gen(function* orderFlowOwnerEnvironment() {
+    const generated = yield* generateZeropsProviderDeployment(
+      "zerops:\n  - setup: 'pricing'\n\n  - setup: 'shellsuperapp'\n",
+      {
+        shell: SHELL,
+        verticals: [provider('pricing', 4106), provider(CART, 4115), provider('catalog', 4105)],
+      },
+      toolchain,
+    );
+    const sections = generated.split(/(?=^ {2}- setup: )/mu);
+    const section = (setup: string) =>
+      sections.find((candidate) => candidate.startsWith(`  - setup: '${setup}'`)) ?? '';
+
+    expect(section('pricing')).toContain(
+      `        ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: \${migrator_ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET}\n`,
+    );
+    expect(section('pricing')).toContain(
+      `        ONTOS_PRICING_ORDER_PRINCIPAL_ID: \${migrator_ONTOS_PRICING_ORDER_PRINCIPAL_ID}\n`,
+    );
+    expect(section('pricing')).toContain("        ONTOS_PRICING_ORDER_NAMESPACE_ID: 'ontos.staff.better-auth.v1'\n");
+    expect(section(CART)).toContain("        ONTOS_CATALOG_API_BASE_URL: 'http://catalog:4105/catalog-api'\n");
+    expect(section(CART)).toContain(
+      `        ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS: \${migrator_ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS}\n`,
+    );
+    // Neither owner carries another owner's credentials, and Catalog reads none of them.
+    expect(section('pricing')).not.toContain('ONTOS_CART_');
+    expect(section(CART)).not.toContain('ONTOS_PRICING_');
+    expect(section('catalog')).not.toContain('migrator_');
   }),
 );

@@ -6,6 +6,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
+  CustomerPriceGroupAssignedAuditEvidenceSchema,
   CounterpartyPriceGroupAssignedEventSchema,
   isPriceGroupInstantBefore,
   samePriceGroupRef,
@@ -320,6 +321,20 @@ const handleAssignCounterpartyPriceGroup = Effect.fn(
     payload,
     context.services.profileValidation,
   );
+  let auditEvidence: typeof CustomerPriceGroupAssignedAuditEvidenceSchema.Type = {
+    assignmentId: result.assignment.assignmentRef.resourceId,
+    assignmentRevision: result.assignment.revision,
+    changed: result.changed,
+    operation: 'ASSIGN',
+    requestedEffectiveFrom: payload.effectiveFrom,
+  };
+  if (result.replacedAssignmentRef !== null) {
+    auditEvidence = { ...auditEvidence, replacedAssignmentId: result.replacedAssignmentRef.resourceId };
+  }
+  if (payload.effectiveTo !== undefined) {
+    auditEvidence = { ...auditEvidence, requestedEffectiveTo: payload.effectiveTo };
+  }
+  yield* context.recordAuditEvidence(auditEvidence);
   yield* recordAssignCounterpartyPriceGroupDataAccess(payload, catalogOutcome, context);
   yield* emitAssignCounterpartyPriceGroupEvent(payload, result, context);
 
@@ -337,6 +352,7 @@ export const assignCounterpartyPriceGroupAction = defineAction(
       policyKey: 'commerce.customer-context.assign-counterparty-price-group.access.v1',
     },
     actionKey: 'commerce.customer-context.assign-counterparty-price-group',
+    auditEvidenceSchema: CustomerPriceGroupAssignedAuditEvidenceSchema,
     auditProfile: 'sensitive',
     businessPermission: defineActionBusinessPermission<AssignCounterpartyPriceGroupPayload>((payload, scope) => ({
       permission: 'counterparty.settings.price_group.manage',

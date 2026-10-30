@@ -27,6 +27,12 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../../packages/catalog-selection-contracts"
+    },
+    {
+      "path": "../../packages/commerce-cart-contracts"
     }
   ]
 }
