@@ -1,8 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Cause } from 'effect';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Cause, Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { isSqlError } from 'effect/sql/SqlError';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -19,16 +19,21 @@ import {
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import type { ActionAuditProfile } from './definition.ts';
-import type { ActionInvocationPersistenceError, ActionTransactionError } from './errors.ts';
 import {
   ActionInvocationNotFound,
+  ActionInvocationPersistenceError,
   ActionInvocationStateError,
   createActionInvocationPersistenceErrorWithCause,
   getActionInvocationPersistenceErrorCause,
 } from './errors.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
-import type { OperationContextUnavailable } from '../operations/errors.ts';
-import { createActionTransactionErrorWithCause, getActionTransactionErrorCause } from './transaction-error.ts';
+import { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
+import { ReadEvidencePersistenceError } from '../reads/read-evidence-persistence-error.ts';
+import {
+  ActionTransactionError,
+  createActionTransactionErrorWithCause,
+  getActionTransactionErrorCause,
+} from './transaction-error.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -411,14 +416,43 @@ const resolveIdempotentInvocation = (
     .limit(1)
     .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
-/**
- * Native SQL settlement reports COMMIT, rollback and savepoint failures as defects. Recover only
- * SqlError at this reviewed persistence boundary; owners then map it to their declared error.
- * Unrelated defects retain their defect channel.
- */
-export const recoverSqlTransactionError = Effect.catchDefect((defect) =>
-  isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+const isPromotedSqlFailure = Schema.is(
+  Schema.Union([
+    EffectDrizzleQueryError,
+    ActionInvocationPersistenceError,
+    ActionTransactionError,
+    OperationContextUnavailable,
+    ReadEvidencePersistenceError,
+  ]),
 );
+
+/**
+ * Effect promotes the body's typed failure to a defect when SQL settlement also defects. Recover
+ * the settlement SqlError only when every defect is SQL or a structurally verified owner-mapped
+ * persistence failure from a transaction body (including installation of its operational scope).
+ * An unrelated defect or interruption keeps the complete cause in its original channel.
+ */
+export const recoverSqlTransactionError = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | SqlError, R> =>
+  effect.pipe(
+    Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+      let settlementError: SqlError | undefined;
+      for (const reason of cause.reasons) {
+        if (Cause.isInterruptReason(reason)) {
+          return Effect.failCause(cause);
+        }
+        if (Cause.isDieReason(reason)) {
+          if (isSqlError(reason.defect)) {
+            settlementError = reason.defect;
+          } else if (!isPromotedSqlFailure(reason.defect)) {
+            return Effect.failCause(cause);
+          }
+        }
+      }
+      return settlementError === undefined ? Effect.failCause(cause) : Effect.fail(settlementError);
+    }),
+  );
 
 export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(
@@ -971,6 +1005,8 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
               );
             }
             return Effect.succeed({
+              completionConsumerModuleKey: collected.completion?.consumerModuleKey ?? null,
+              completionOriginalRevision: collected.completion?.originalRevision ?? null,
               domainEventId: persistedDomainEvent.domainEventId,
               payloadJson: collected.message.payloadJson,
               producerModuleKey: collected.message.producerModuleKey,

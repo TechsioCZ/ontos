@@ -13,7 +13,7 @@ import type {
 import type { OrderStatus, ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';

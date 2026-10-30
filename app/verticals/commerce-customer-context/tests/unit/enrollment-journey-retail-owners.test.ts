@@ -27,7 +27,6 @@ import {
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
-  RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
   retailSelfEnrollmentRequestDigest,
   retailSelfEnrollmentStepPlan,
@@ -519,6 +518,10 @@ const bindingResult = (staged: boolean, complete = true): RetailPortalBindingRes
   };
 };
 
+/** A terminal grant the owner already finalized; success also needs the exact Current access observation. */
+const activeBindingResult = (): RetailPortalBindingResult => ({ ...bindingResult(true), authorizationState: 'ACTIVE' });
+const confirmCurrentBinding: RetailPortalBindingOwnerExecutors['confirmCurrentBinding'] = () => Effect.succeed(true);
+
 const bindingOwnerInput: RetailPortalBindingOwnerInput = {
   compositionRevision: 'a'.repeat(64),
   effectiveAt,
@@ -538,12 +541,12 @@ const bindingExecutors = (
   ...overrides,
 });
 
-it.effect('binds the Retail Portal profile when the reviewed grant baseline is staged in full', () =>
+it.effect('keeps Retail enrollment reconciling while its complete baseline is only staged', () =>
   Effect.gen(function* boundWithGrants() {
     const outcome = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).dispatch(transition);
-    expect(outcome.status).toBe('SUCCEEDED');
-    expect(outcome.outcomeCode).toBe(RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE);
-    expect(outcome.resultReference).toBe(bindingRef.resourceId);
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
+    expect(outcome.nextState).toBe('RECONCILIATION_REQUIRED');
   }),
 );
 
@@ -562,18 +565,18 @@ it.effect('treats a partially completed grant as a reconciliation halt, not port
       bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult(false)) }),
     ).dispatch(transition);
     expect(unstaged.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
-    expect(retailPortalGrantsAreComplete(bindingResult(true))).toBe(true);
+    expect(retailPortalGrantsAreComplete(bindingResult(true))).toBe(false);
     expect(retailPortalGrantsAreComplete(bindingResult(true, false))).toBe(false);
   }),
 );
 
-it.effect('reconciles an indeterminate binding through its committed invocation', () =>
+it.effect('keeps a committed pending binding reconciling after its Action answer was lost', () =>
   Effect.gen(function* reconcileBinding() {
     const resolution = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).reconcile(
       reconciliationInput,
     );
-    expect(resolution.status).toBe('SUCCEEDED');
-    expect(resolution.resultReference).toBe(bindingRef.resourceId);
+    expect(resolution.status).toBe('FAILED');
+    expect(resolution.nextState).toBe('RECONCILIATION_REQUIRED');
   }),
 );
 
@@ -725,9 +728,10 @@ for (const state of ['NOT_STARTED', 'RETRYABLE'] as const) {
           bindProfile: (payload, correlation, options) =>
             Effect.sync(() => {
               bindingRequests.push({ correlation, options, payload });
-              return bindingResult(true);
+              return activeBindingResult();
             }),
           commitResolution: () => Effect.succeed({ state }),
+          confirmCurrentBinding,
         }),
       );
       yield* profile.dispatch(transition);
@@ -758,7 +762,8 @@ for (const state of ['COMMITTED', 'RUNNING', 'REJECTED'] as const) {
         bindingExecutors({
           bindProfile: () => Effect.die('A nonretryable binding was dispatched'),
           commitResolution: () =>
-            Effect.succeed(state === 'COMMITTED' ? { result: bindingResult(true), state } : { state }),
+            Effect.succeed(state === 'COMMITTED' ? { result: activeBindingResult(), state } : { state }),
+          confirmCurrentBinding,
         }),
       );
       if (state === 'RUNNING') {

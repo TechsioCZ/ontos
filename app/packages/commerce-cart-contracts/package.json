@@ -1,0 +1,25 @@
+{
+  "name": "@app/commerce-cart-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./open-selection-population": "./src/apis/open-selection-population.ts",
+    "./open-selection-population/client": "./src/api/open-selection-population-client.ts",
+    "./resources/cart": "./src/resources/cart.ts",
+    "./resources/final-cart-candidate": "./src/resources/final-cart-candidate.ts"
+  },
+  "dependencies": {
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.7",
+    "@app/catalog-selection-contracts": "workspace:*"
+  },
+  "ontosContractOwner": {
+    "appId": "commerce-cart",
+    "moduleId": "commerce.cart",
+    "packageName": "@app/commerce-cart",
+    "moduleApis": [
+      "open-selection-population"
+    ]
+  }
+}

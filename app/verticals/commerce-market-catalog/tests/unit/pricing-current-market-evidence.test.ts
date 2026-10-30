@@ -260,10 +260,14 @@ describe('Pricing Current Market evidence owner boundary', () => {
         () =>
           Effect.succeed([
             {
-              // PostgreSQL JSONB carries encoded timestamps, not already-decoded DateTime values.
               payload: {
                 ...presentSnapshot,
-                effectivePeriod: { endsAt: boundary, startsAt: '2026-01-01T00:00:00.000Z' },
+                effectivePeriod: Schema.encodeSync(EffectivePeriodSchema)(
+                  Schema.decodeUnknownSync(EffectivePeriodSchema)({
+                    endsAt: boundary,
+                    startsAt: '2026-01-01T00:00:00.000Z',
+                  }),
+                ),
                 market: Schema.encodeSync(MarketDefinitionSchema)(market),
                 nextApplicabilityBoundary: boundary,
                 observedAt,

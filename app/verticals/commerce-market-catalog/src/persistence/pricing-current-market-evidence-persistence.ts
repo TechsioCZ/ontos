@@ -20,7 +20,7 @@ const PricingCurrentMarketSnapshotSchema = Schema.Struct({
 });
 export type PricingCurrentMarketSnapshot = typeof PricingCurrentMarketSnapshotSchema.Type;
 
-const SnapshotRowSchema = Schema.Struct({ payload: PricingCurrentMarketSnapshotSchema });
+const SnapshotRowSchema = Schema.Struct({ payload: Schema.Unknown });
 
 const readPricingCurrentMarketEvidenceRoutine = defineScopedRoutine({
   name: 'read_pricing_current_market_evidence',
@@ -70,7 +70,9 @@ const persistenceForTransaction = (
       Effect.flatMap(([row]) =>
         row === undefined
           ? Effect.fail(unavailable('The owner current-source routine returned no snapshot'))
-          : Effect.succeed(row.payload),
+          : Schema.decodeUnknownEffect(PricingCurrentMarketSnapshotSchema)(row.payload).pipe(
+              Effect.mapError(unavailable),
+            ),
       ),
     ),
 });

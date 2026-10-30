@@ -16,7 +16,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import { executeRecords } from '../../../api/records-client.ts';
+import { executeRecords } from '../../../api/records-consumer.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import { BulkWorkCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import type {

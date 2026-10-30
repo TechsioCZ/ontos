@@ -189,6 +189,64 @@ const consentDecision = (decision: ConsentDecision['decision']): ConsentDecision
 });
 
 describe('privacy processing eligibility input resolution', () => {
+  it('allows the exact Subject Current grant when every mandatory input is current', () => {
+    const result = evaluatePrivacyEligibility({
+      applicability,
+      applicabilityCurrentness: currentness,
+      applicabilityScope,
+      asOf: '2026-01-02T00:00:00Z',
+      consent: consentDecision('GRANTED'),
+      consentCurrentness: currentness,
+      intendedScope: scope,
+      legalBasis: { basisRef: 'legal-basis:consent', basisVersion: 'v1', currentness, scope },
+      objection: noObjection,
+      restriction: noRestriction,
+    });
+    expect(result.outcome).toBe('ALLOWED');
+  });
+
+  it('preserves unavailable consent history instead of declaring that no Consent exists', () => {
+    const result = evaluatePrivacyEligibility({
+      applicability,
+      applicabilityCurrentness: currentness,
+      applicabilityScope,
+      asOf: '2026-01-02T00:00:00Z',
+      consent: null,
+      consentCurrentness: { ...currentness, authoritative: false, revision: 'subject-binding-conflict' },
+      intendedScope: scope,
+      legalBasis: { basisRef: 'legal-basis:consent', basisVersion: 'v1', currentness, scope },
+      objection: noObjection,
+      restriction: noRestriction,
+    });
+    expect(result.outcome).toBe('INDETERMINATE');
+    expect(result.inputResolutions.consent.state).toBe('UNAVAILABLE');
+  });
+
+  it('never uses another typed Subject grant or withdrawal as evidence for the intended Subject', () => {
+    for (const decision of ['GRANTED', 'WITHDRAWN'] as const) {
+      const consent = consentDecision(decision);
+      for (const subjectRef of [
+        { ...consent.scope.privacySubjectRef, resourceId: 'subject:other' },
+        { ...consent.scope.privacySubjectRef, tenantId: '00000000-0000-4000-8000-000000000099' },
+      ]) {
+        const result = evaluatePrivacyEligibility({
+          applicability,
+          applicabilityCurrentness: currentness,
+          applicabilityScope,
+          asOf: '2026-01-02T00:00:00Z',
+          consent: { ...consent, scope: { ...consent.scope, privacySubjectRef: subjectRef } },
+          consentCurrentness: currentness,
+          intendedScope: scope,
+          legalBasis: { basisRef: 'legal-basis:consent', basisVersion: 'v1', currentness, scope },
+          objection: noObjection,
+          restriction: noRestriction,
+        });
+        expect(result.outcome).toBe('INDETERMINATE');
+        expect(result.inputResolutions.consent).toMatchObject({ reason: 'consent_scope_mismatch', state: 'STALE' });
+      }
+    }
+  });
+
   it('rejects changed trusted facts even when an older APPLICABLE decision exists', () => {
     const changedFactsAuthority = {
       ...eligibilityAuthorityResult,

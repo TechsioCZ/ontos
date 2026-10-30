@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  pricingQuantityBasisTemporalBindingIsValid,
   PricingCatalogQuantityBasisDecisionSchema,
   PricingQuantityBasisAssessmentInputSchema,
   PricingQuantityBasisAssessmentSchema,
@@ -35,11 +36,6 @@ const selection = {
 };
 const observedAt = '2026-09-27T10:00:00.000Z';
 const currentObservedAt = '2026-09-27T10:00:01.000Z';
-const leanFailureOutcomeNoun = {
-  INVALID: 'invalidity',
-  UNAVAILABLE: 'unavailability',
-  UNVERIFIABLE: 'unverifiability',
-} as const;
 const quantityBasis = {
   targetDivisibilityRevision: 3,
   targetRef: packageRef,
@@ -388,7 +384,7 @@ describe('Pricing Quantity/Unit/package-basis contract', () => {
           ownerDecision: { ...ownerDecision, effectiveAt: currentObservedAt },
         }),
       ).toThrow(
-        `Quantity-basis ${leanFailureOutcomeNoun[ownerDecision.outcome]} must bind the exact requested effective time`,
+        'Quantity-basis must retain the Catalog assessment and prove its finite Current window at the Pricing instant',
       );
     }
   });
@@ -430,4 +426,45 @@ describe('Pricing Quantity/Unit/package-basis contract', () => {
       }),
     ).toThrow();
   });
+});
+
+it('binds later common Pricing time to original finite Catalog material and an actual fresh owner window', () => {
+  const decoded = Schema.decodeUnknownSync(PricingQuantityBasisAssessmentInputSchema)({
+    attempt,
+    ownerDecision: noConversion,
+  });
+  const validUntil = '2026-09-27T10:05:00.000Z';
+  const pricingAt = '2026-09-27T10:00:00.500Z';
+  const rich = Schema.decodeUnknownSync(PricingCatalogQuantityBasisDecisionSchema)({
+    ...noConversion,
+    completeness: { ...noConversion.completeness, nextApplicabilityBoundary: validUntil },
+    currentness: { ...noConversion.currentness, validUntil },
+    currentnessEvidence: { ...noConversion.currentnessEvidence, validUntil },
+  });
+  const finite = {
+    ...decoded.attempt,
+    catalog: {
+      ...decoded.attempt.catalog,
+      completeness: { ...decoded.attempt.catalog.completeness, nextApplicabilityBoundary: validUntil },
+      evidence: { ...decoded.attempt.catalog.evidence, validUntil },
+    },
+    effectiveAt: pricingAt,
+  };
+  expect(pricingQuantityBasisTemporalBindingIsValid(finite, rich)).toBe(true);
+  expect(pricingQuantityBasisTemporalBindingIsValid({ ...finite, effectiveAt: '2026-09-27T09:59:59.000Z' }, rich)).toBe(
+    false,
+  );
+  expect(pricingQuantityBasisTemporalBindingIsValid({ ...finite, effectiveAt: validUntil }, rich)).toBe(false);
+  expect(pricingQuantityBasisTemporalBindingIsValid({ ...finite, catalog: decoded.attempt.catalog }, rich)).toBe(false);
+  expect(pricingQuantityBasisTemporalBindingIsValid(finite, decoded.ownerDecision)).toBe(false);
+  if (!('selection' in rich)) {
+    throw new Error('Expected actual rich owner fixture');
+  }
+  expect(pricingQuantityBasisTemporalBindingIsValid(finite, { ...rich, observedAt })).toBe(false);
+  expect(
+    pricingQuantityBasisTemporalBindingIsValid(finite, {
+      ...rich,
+      currentness: { ...rich.currentness, validUntil: '2026-09-27T10:04:00.000Z' },
+    }),
+  ).toBe(false);
 });

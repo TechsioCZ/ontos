@@ -9,6 +9,7 @@ import { outboxWorkerEntry as priceGroupCatalogOutboxWorkerEntry } from '@app/pr
 import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/outbox-worker-host';
 import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
 import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finance-billing/outbox-worker-host';
+import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
 
 startOutboxWorkerHost({
   artifactDigest: outboxHostArtifactDigest,
@@ -20,6 +21,7 @@ startOutboxWorkerHost({
     inventoryOutboxWorkerEntry,
     privacyOutboxWorkerEntry,
     financeBillingOutboxWorkerEntry,
+    commerceOrderOutboxWorkerEntry,
   ],
   health: true,
   startup: startEmailDispatchTrigger,

@@ -242,6 +242,22 @@ New connections can fail after the migrator changes PostgreSQL's password until 
 
 `zerops.yaml` is shared with production. Production stays blocked until the same `migrator` secrets exist there.
 
+### Order-flow owner credentials
+
+Commerce Order, Customer Context, Commerce Cart and Pricing call each other and the Shell gateway with Shell-issued API keys, and admit each other's API-key Principals by ID or by grant list. `scripts/ops/owner-runtime-configuration.mts` names every value each owner reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues the keys in Shell and records the per-environment values:
+
+| Owner                       | Credentials (sensitive)                                                                                                       | Per-environment values (not secret)                                                                                                                                                                                                                                                                        |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commerce-order`            | `ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY`, `ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY`                                            | `ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID` (the finalization key's Principal), `ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID` (Customer Context's `ONTOS_CCC_ORDER_GATEWAY_API_KEY` Principal), `ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID` (Pricing's key Principal)                                         |
+| `commerce-customer-context` | `ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY`, `ONTOS_CCC_ORDER_GATEWAY_API_KEY`, `ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY` | `ONTOS_CCC_ORDER_CONSUMER_{PRINCIPAL,LEGAL_ENTITY,TENANT}_ID` (Order's approval key), `ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID`, and the JSON grant lists `ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS`, `ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS`, `ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS` |
+| `commerce-cart`             | `ONTOS_CART_FINALIZATION_SERVICE_API_KEY`                                                                                     | the JSON grant lists `ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS`, `ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS`                                                                                                                                                                                                  |
+| `pricing`                   | `ONTOS_PRICING_GATEWAY_API_KEY`, `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET`                                                  | `ONTOS_PRICING_ORDER_PRINCIPAL_ID`, `ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID`, `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}`                                                                                                                                                                   |
+
+1. Store the credentials as sensitive `migrator` service secrets and the per-environment values as `migrator` service variables, under those names.
+2. Add all of them to the cut-over settings file for the Cloudflare Workers (see [Stage cut-over](#stage-cut-over-and-zerops-service-retirement)).
+
+Each owner's service references only its own values as `${migrator_<KEY>}`; an owner with an Outbox Worker (Order, Customer Context) also hands them to that worker and `outbox-worker-host`. `scripts/tests/zerops-deployment-contract.test.mts` enforces that no other service references them. Caller namespaces (`*_NAMESPACE_ID`) are the Shell's staff namespace `ontos.staff.better-auth.v1`, the code constant every Shell-issued API key is bound in, and every owner base is the owner's internal address `http://<hostname>:<port>/<unit>-api`; both are generated from topology. Create the values before the deploy that first references them, because `outbox-worker-host` references Order's and Customer Context's. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in `outbox-worker-host`. Production stays blocked until the same `migrator` values exist there.
+
 ### SpiceDB
 
 Distinguish Authzed datastore migrations from the OntOS authorization schema. A datastore migration does not publish a changed permission model.
@@ -957,3 +973,39 @@ Authorization changes deploy schema and data expansion first: the Contacts asser
 Pass `--authorization-environment <environment>` to `pnpm deployment-impact:plan --` for a promotion plan. `report_only` is valid only before its declared expiry and never in production. `enforced` has no expiry; `expiresAt` bounds only a report-only window. In production, `enforced` requires matching zero-impact, readiness, and negative-smoke artifacts from the exact build. Development and stage may enforce without those artifacts only while the compatibility baseline is empty, because enforcing then withdraws no allowance; the plan records status `enforced` instead of `ready`. Any present artifact must still match, and a non-empty baseline needs the full evidence. Stage enforces since 2026-10-01. Abort on an expired window, mixed build evidence, unresolved impact, missing policy/module/worker/issuer/replay data, or a failed negative smoke.
 
 Production remains blocked while no approved source-controlled production context exists; the development/stage provisioner must continue rejecting production and arbitrary tenant or Action arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate production-promotion approval gate. Issue #169 is broader review context, not approval. Their current records—not this playbook—determine whether the gates are satisfied. An implementation override never records Petr/Jiří approval or permits production enforcement. The checked-in stage context remains `pending`; code-only override is not approval. Rollback restores the prior application mode only after preserving the exact evidence and must not remove the expanded schema or durable redemption rows while old/new consumers overlap.
+
+## Operator-only legacy completion gate
+
+Before first authority publication, the first active-to-draining fence, a recovered migration, and a replacement pointer publication, the administrative publisher rechecks the configured retired-provider inventory and requires the published owner legacy-completion verifier. Missing verifier, incomplete observation, unknown owner database, unresolved legacy work, or failed evidence retention refuses publication. Closing new durable admission does not itself establish legacy absence.
+
+The operator sets `ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY` to an absolute private directory. Deployment and refresh jobs create that mode-0700 directory under `runner.temp` and upload its sanitized evidence with `always()` retention for 30 days, including failed attempts. The publisher retains each sanitized native identity/result observation as an exclusive mode-0600 JSON artifact there. A retained observation cannot authorize a later attempt: its live callback, exact database/system/runtime identity, native transaction and revision must match the current transition. Provider credentials and database URLs remain the existing distinct operator/runtime configuration; evidence contains no handoff payload or credentials.
+
+Privacy observes all tenants through its deployment-only administrative verifier, with native full-visibility and READ COMMITTED checks. It holds its own dispatch/outcome table locks while Core verifies its immutable message evidence and commits the fence in a separate transaction. No raw executor crosses the published interface. Unmarked legacy obligations remain unresolved; the gateway never invents an original release, adopts work, marks delivery done, or treats a fresh environment as evidence about another environment. Current marked completion requires the exact owner handoff and immutable successful outcome.
+
+An existing base-schema authority first receives the additive opt-in Core completion and dead-delivery resolution migrations through the normal Drizzle journal. Only that compatible expansion runs before drain verification; the full owner migrator remains deferred until the old authority is verified and sealed. Repeated migration skips the already journaled expansion.
+
+Core acquires its exclusive authority fence before requesting owner leases, matching the authority-before-owner order of public Actions. The owner lock remains held through the actual Core commit. A later owner connection/finalizer failure does not undo an already committed Core transition: retain the exact failure and independently inspect native authority before recovery, as for provider settlement failures.
+
+## Dead Outbox deliveries during a composition drain
+
+A dead delivery never finishes by itself. While publication drains the old release, a dead delivery that carries completion debt blocks the durable-work phase, and any dead delivery blocks the final Outbox phase. The publisher keeps waiting so an operator can act. It logs a warning that names each blocking delivery as the exact command arguments, for example `--tenant-id <uuid> --message-id <uuid> --worker-key commerce.order.finalize-order-work (attempts 60)`. If the drain does not finish within its freshness lease (at most 20 minutes), the publisher fails, and the timeout error names the same deliveries. Durable admission stays closed, and the old release keeps running.
+
+Resolve each named delivery with the administrative database identity the publisher uses (`DATABASE_ADMIN_URL` and `DATABASE_URL`). A waiting drain then continues by itself; after a timeout, rerun the same publication:
+
+```sh
+mise exec -- pnpm outbox:dead-delivery list [--tracked-revision <old revision>] [--tenant-id <uuid>]
+mise exec -- pnpm outbox:dead-delivery redrive --tenant-id <uuid> --message-id <uuid> --worker-key <key> \
+  --operator <who> --reason <why>
+mise exec -- pnpm outbox:dead-delivery release --tenant-id <uuid> --message-id <uuid> --worker-key <key> \
+  --operator <who> --reason <why>
+```
+
+- `list` shows each dead delivery with its attempt count and last sanitized error.
+- `redrive` is the default once the owner is healthy again. It returns the delivery to `pending` with a fresh attempt budget, and the normal Worker runs it. Its real acknowledgement then clears the debt.
+- `release` resolves the delivery without delivery and clears its completion debt. Use it only when no automatic outcome is safe and the owner's business effect has been settled by hand.
+- Only a `dead` delivery is eligible. A `released` delivery is terminal and cannot be redriven or released again.
+- Every redrive and release appends a row to `core.outbox_delivery_resolutions`. The row holds the operator, the reason, the database session user and the time. No runtime role can write it, so a release is always distinguishable from a Worker acknowledgement.
+
+Order finalization retries for about 24.5 hours, so a dead finalization delivery means a lasting owner refusal. When Customer Context refused PROOF revalidation while the approval request was still valid, redrive the delivery once the owner is available. When CONSUME died after commit because the approval was cancelled or revised, the Order already exists and no automatic terminal outcome is safe. First reconcile the buyer-facing Order by hand, then release the delivery with a reason that records that reconciliation.
+
+Privacy still verifies its own successful measure outcome before publication, so a released Privacy delivery does not satisfy the Privacy legacy-completion gate. Redrive Privacy work instead.

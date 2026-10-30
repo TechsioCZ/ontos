@@ -2,7 +2,7 @@ import { definePageData } from '@app/shared-contracts/page-data';
 import { recordsOfKind } from '@app/tagging/clients/records';
 import type { Assignment, SubjectId, Tag } from '@app/tagging/contracts/records';
 import { Data, Effect, Match, Schema } from 'effect';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { AiActivityEntry } from '../../../../../shared/apis/records.ts';
 import { newRequestToken } from './employee-model.ts';

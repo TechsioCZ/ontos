@@ -1,18 +1,6 @@
 import { tenantRlsPolicies } from '@app/core-runtime';
-import { defineRelations, sql } from 'drizzle-orm';
-import {
-  check,
-  foreignKey,
-  index,
-  integer,
-  jsonb,
-  pgSchema,
-  primaryKey,
-  text,
-  timestamp,
-  unique,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
 export const STOREFRONT_REGISTRY_SCHEMA_NAME = 'storefront_registry';
 export const STOREFRONT_REGISTRY_TABLE_INVENTORY = [
@@ -24,18 +12,19 @@ export const STOREFRONT_REGISTRY_TABLE_INVENTORY = [
 
 export const storefrontRegistrySchema = pgSchema(STOREFRONT_REGISTRY_SCHEMA_NAME);
 
-// Replay evidence is consumed before tenant/business scope is installed.
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
 export const gatewayAssertionRedemptions = storefrontRegistrySchema.table(
   'gateway_assertion_redemptions',
   {
     audience: text('audience').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     issuer: text('issuer').notNull(),
-    jti: text('jti').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
-    index('storefront_registry_redemption_expiry').on(table.expiresAt),
+    unique('storefront_registry_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('storefront_registry_gateway_redemptions_expiry_idx').on(table.expiresAt),
   ],
 );
 
@@ -132,5 +121,3 @@ export const STOREFRONT_REGISTRY_TABLES = [
   storefrontApplications,
   storefrontRegistryGenerations,
 ] as const;
-
-export const storefrontRegistryRelations = defineRelations({ gatewayAssertionRedemptions });

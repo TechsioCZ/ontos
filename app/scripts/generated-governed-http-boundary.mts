@@ -1,9 +1,8 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
-import { parseSync } from 'oxc-parser';
-import type { Declaration, ExportNamedDeclaration } from 'oxc-parser';
 
 import {
   DelimiterDepth,
@@ -13,9 +12,12 @@ import {
 } from './boundary-source-structure.mts';
 import {
   hasGeneratedGovernedClientContract,
+  hasConnectedGeneratedActionContract,
+  hasExactSourceTokens,
   hasGeneratedSourceHeader,
   hasGeneratedModuleApiContract,
   hasGeneratedModuleApiReadContract,
+  generatedModuleApiEntrypointReference,
   hasGeneratedOperationGatewayContract,
   hasGeneratedOperationPrincipalContract,
   tokenizeGovernedClient,
@@ -23,7 +25,6 @@ import {
 import {
   GOVERNED_HTTP_API_CLOSING_ANNOTATION,
   isCodePosition,
-  isGovernedHttpHandlerLayerSlotEntry,
   maskNonCode,
   toCamelCase,
   toPascalCase,
@@ -31,6 +32,7 @@ import {
 
 const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
 const GOVERNED_API_SLOT_START = '// <generated-governed-http-api-additions>';
+const EFFECT_EDGE_MODULE = '@modern-js/bff-effect/effect-edge';
 const BFF_ASSEMBLY_MODULE = '@modern-js/bff-effect/assembly';
 const GOVERNED_HTTP_RUNTIME_MODULE = '@app/shared-contracts/server/effect-bff-runtime';
 const GOVERNED_READ_HTTP_MODULE = '@app/core-runtime/http/governed-read';
@@ -329,12 +331,31 @@ const effectFnCallback = (source: string): string | undefined => {
 
 const isEffectFnCallback = (source: string): boolean => effectFnCallback(source) !== undefined;
 
+const hasBalancedArrowCallback = (source: string): boolean => {
+  const candidate = maskComments(source)
+    .replace(/^async\s+/u, '')
+    .trim();
+  if (!candidate.startsWith('(')) {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*\s*=>/u.test(candidate);
+  }
+  const closing = matchingDelimiterEnd(candidate, 0, '(', ')');
+  if (closing === undefined) {
+    return false;
+  }
+  const suffix = candidate.slice(closing + 1).trim();
+  if (suffix.startsWith('=>')) {
+    return true;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(suffix), '=', 0, suffix.length, true);
+  return suffix.startsWith(':') && arrow !== undefined && suffix.slice(arrow, arrow + 2) === '=>';
+};
+
 const isExecutableCallback = (candidate: string | undefined, ownerSource?: string): boolean => {
   if (candidate === undefined || /^(?:null|undefined)(?:\s+as\b[\s\S]*)?$/u.test(candidate)) {
     return false;
   }
   if (
-    matches(candidate, /^(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*[^=]+)?\s*=>/u) ||
+    hasBalancedArrowCallback(candidate) ||
     isEffectFnCallback(candidate) ||
     matches(candidate, /^(?:async\s+)?function\*?(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(/u)
   ) {
@@ -643,20 +664,13 @@ const outputCompositionIncludes = (
     return (
       piped.transforms.length > 0 &&
       piped.transforms.every(isOutputSafeLayerTransform) &&
-      (outputCompositionIncludes(source, piped.base, expectedLayer, new Set(seen), depth + 1) ||
-        piped.transforms.some((transform) => {
-          const provided = wholeCallArguments(transform, /^(?:GovernedReadLayer|Layer)\.provideMerge\(/u);
-          return (
-            provided?.length === 1 &&
-            outputCompositionIncludes(source, provided[0] ?? '', expectedLayer, new Set(seen), depth + 1)
-          );
-        }))
+      outputCompositionIncludes(source, piped.base, expectedLayer, seen, depth + 1)
     );
   }
   const merged = wholeCallArguments(candidate, /^(?:GovernedReadLayer|Layer)\.mergeAll\(/u);
   return (
     merged !== undefined &&
-    merged.some((operand) => outputCompositionIncludes(source, operand, expectedLayer, new Set(seen), depth + 1))
+    merged.some((operand) => outputCompositionIncludes(source, operand, expectedLayer, seen, depth + 1))
   );
 };
 
@@ -678,6 +692,45 @@ const slotIsMountedByAssembler = (
   }
   const handlers = objectPropertyValue(definition, 'handlers');
   return handlers !== undefined && outputCompositionIncludes(runtimeSource, handlers, layerName);
+};
+
+const definesExpectedRuntime = (definition: string | undefined, expectedApi: string, runtimeName: string): boolean =>
+  definition !== undefined &&
+  !definition.includes('...') &&
+  objectPropertyValue(definition, 'api') === expectedApi &&
+  hasExactlyOne(
+    definition,
+    runtimeName === 'layer'
+      ? /(?:\{|,)\s*layer(?:\s*:\s*layer)?\s*(?:,|\})/gu
+      : new RegExp(`(?:\\{|,)\\s*layer\\s*:\\s*${escapeRegExp(runtimeName)}\\s*(?:,|\\})`, 'gu'),
+  );
+
+const legacyRuntimeMount = (
+  source: string,
+  code: string,
+  runtimeSource: string,
+  closing: number,
+  layerName: string,
+  expectedApi: string,
+): boolean => {
+  const runtimeDeclaration = /const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApiBuilder\.layer\(/u.exec(runtimeSource);
+  const runtimeName = runtimeDeclaration?.groups?.name;
+  if (runtimeDeclaration === null || runtimeName === undefined) {
+    return false;
+  }
+  const runtimeStart = closing + 1 + runtimeDeclaration.index;
+  const runtimeEnd = code.indexOf('satisfies EffectRuntimeLayer', runtimeStart);
+  if (runtimeEnd <= runtimeStart) {
+    return false;
+  }
+  const runtimeSlice = code.slice(runtimeStart, runtimeEnd);
+  const definition = effectBffDefinition(source);
+  return (
+    callArgument(runtimeSlice, /HttpApiBuilder\.layer\(/u) === expectedApi &&
+    matches(runtimeSlice, new RegExp(`(?:GovernedReadLayer|Layer)\\.provide\\(${escapeRegExp(layerName)}\\)`, 'u')) &&
+    hasExactlyOne(code, /\bdefineEffectBff\(/gu) &&
+    definesExpectedRuntime(definition, expectedApi, runtimeName)
+  );
 };
 
 const slotIsInsideMountedLayer = (
@@ -713,7 +766,10 @@ const slotIsInsideMountedLayer = (
     return false;
   }
   const runtimeSource = code.slice(closing + 1);
-  return slotIsMountedByAssembler(source, runtimeSource, layerName, expectedApi);
+  if (slotIsMountedByAssembler(source, runtimeSource, layerName, expectedApi)) {
+    return true;
+  }
+  return legacyRuntimeMount(source, code, runtimeSource, closing, layerName, expectedApi);
 };
 
 // A trailing slot comment may precede an ASI-terminated root. Stop at the next
@@ -761,6 +817,16 @@ export const governedApiBinding = (source: string): string | undefined => {
   return candidates.length === 1 ? candidates[0] : undefined;
 };
 
+const hasClosedHeaderParseTail = (source: string, tail: string, closing: string): boolean =>
+  ['@modern-js/bff-effect/effect-client', HTTP_API_CONTRACT_MODULE].some((module) =>
+    hasExactValueImport(source, 'HttpApi', module, true),
+  ) &&
+  ['identity', GOVERNED_HTTP_API_IDENTITY_ALIAS].some(
+    (identity) =>
+      tail === `${closing} .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' }) .pipe(${identity})` &&
+      hasExactValueImport(source, identity === 'identity' ? identity : `identity as ${identity}`, 'effect', true),
+  );
+
 const governedSharedApiRoot = (source: string): SourceRange | undefined => {
   const binding = governedApiBinding(source);
   const apiRoot =
@@ -786,7 +852,9 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
     closedTail === `${closing} .pipe(${GOVERNED_HTTP_API_IDENTITY_ALIAS})` &&
     hasExactValueImport(source, `identity as ${GOVERNED_HTTP_API_IDENTITY_ALIAS}`, 'effect', true);
   return /^(?:\.addHttpApi\([A-Za-z][A-Za-z0-9]*\)\s*)*$/u.test(additions) &&
-    (closedTail === `${closing} .pipe(identity)` || hasStableIdentityTail)
+    (closedTail === `${closing} .pipe(identity)` ||
+      hasStableIdentityTail ||
+      hasClosedHeaderParseTail(source, closedTail, closing))
     ? apiRoot
     : undefined;
 };
@@ -816,31 +884,510 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   return (
     type !== undefined &&
     new RegExp(
-      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<\\s*(?:ReadRuntime\\s*[,>]|Layer\\.Success<\\s*typeof\\s+productionReadRuntimeLive\\s*>)`,
+      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<\\s*ReadRuntime\\s*[,>]`,
       'u',
     ).test(maskNonCode(source)) &&
     effectBffDefinition(source) !== undefined
   );
 };
 
+interface NamedSourceImport {
+  readonly imported: string;
+  readonly modulePath: string;
+  readonly typeOnly: boolean;
+}
+
+const topLevelBindingDeclarations = (source: string, binding: string): readonly RegExpMatchArray[] =>
+  [
+    ...maskNonCode(source).matchAll(
+      new RegExp(
+        `\\b(?:class|const|enum|function|interface|let|namespace|type|var)\\s+${escapeRegExp(binding)}\\b`,
+        'gu',
+      ),
+    ),
+  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+
+const namedSourceImport = (source: string, binding: string, allowTypeOnly = false): NamedSourceImport | undefined => {
+  const imports = [
+    ...maskComments(source).matchAll(
+      /^\s*import\s+(?:(?<typeOnly>type)\s+)?(?:[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*)?\{(?<values>[^}]*)\}\s*from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;?/gmu,
+    ),
+  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+  const candidates = imports.flatMap((match) =>
+    (match.groups?.values ?? '').split(',').flatMap((entry) => {
+      const imported =
+        /^(?:(?<typeOnly>type)\s+)?(?<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?<local>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
+          entry.trim(),
+        );
+      const name = imported?.groups?.imported;
+      const local = imported?.groups?.local ?? name;
+      const modulePath = match.groups?.modulePath;
+      return name === undefined || local !== binding || modulePath === undefined
+        ? []
+        : [
+            {
+              imported: name,
+              modulePath,
+              typeOnly: match.groups?.typeOnly !== undefined || imported?.groups?.typeOnly !== undefined,
+            },
+          ];
+    }),
+  );
+  const candidate = candidates.length === 1 ? candidates[0] : undefined;
+  return candidate === undefined ||
+    (!allowTypeOnly && candidate.typeOnly) ||
+    topLevelBindingDeclarations(source, binding).length > 0
+    ? undefined
+    : candidate;
+};
+
+// This branch proves only a typed owner injection merged with the canonical Crypto layer.
+// Every protected occurrence must have a known immutable role; unknown argument escapes fail closed.
+const cryptoReadTuple = (source: string, factory: SourceRange) => {
+  const factorySource = source.slice(factory.start, factory.end);
+  const signature = /^\(\s*\.\.\.(?<args>[A-Za-z][A-Za-z0-9]*):\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*\)/u.exec(
+    factorySource,
+  );
+  const args = signature?.groups?.args;
+  const tupleType = signature?.groups?.type;
+  if (args === undefined || tupleType === undefined || signature === null) {
+    return null;
+  }
+  const code = maskNonCode(source);
+  const tuplePattern = new RegExp(`type ${escapeRegExp(tupleType)}\\s*=\\s*readonly\\s*\\[`, 'gu');
+  const tuples = [...code.matchAll(tuplePattern)];
+  const tuple = tuples.length === 1 ? tuples[0] : undefined;
+  const opening = tuple?.index === undefined ? undefined : code.indexOf('[', tuple.index);
+  const closing = opening === undefined ? undefined : matchingDelimiter(code, opening, '[', ']');
+  if (
+    tuple?.index === undefined ||
+    opening === undefined ||
+    closing === undefined ||
+    !isTopLevelCodePosition(source, tuple.index)
+  ) {
+    return null;
+  }
+  const tupleBody = code.slice(opening + 1, closing);
+  const elements = separatedSource(
+    tupleBody,
+    topLevelSeparators(tupleBody, ',', 0, tupleBody.length, true),
+    0,
+    tupleBody.length,
+  ).filter(Boolean);
+  if (!/^readRuntime:\s*Layer\.Layer<\s*ReadRuntime\s*[,>]/u.test(elements[0] ?? '')) {
+    return null;
+  }
+  return { args, closing, elements, factorySource, signature, tupleIndex: tuple.index, tupleType };
+};
+
+const hasCryptoReadDominance = (
+  factorySource: string,
+  injection: number,
+  merge: number,
+  slot: GeneratedSlotRange,
+  returned: number,
+): boolean =>
+  codeDepthBeforePosition(factorySource, injection) === 1 &&
+  codeDepthBeforePosition(factorySource, merge) === 1 &&
+  injection < merge &&
+  merge < slot.markerStart &&
+  slot.depth === 2 &&
+  codeDepthBeforePosition(factorySource, returned) === 1 &&
+  returned > slot.markerEnd;
+
+const cryptoReadBinding = (factorySource: string, args: string) => {
+  const factoryCode = maskNonCode(factorySource);
+  const destructures = [
+    ...factoryCode.matchAll(/const\s*\[(?<bindings>[A-Za-z0-9_,\s]+)\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/gu),
+  ];
+  const injection = destructures.length === 1 ? destructures[0] : undefined;
+  const local = injection?.groups?.bindings?.split(',')[0]?.trim();
+  const mergePattern = new RegExp(
+    `const governedReadRuntimeLive\\s*=\\s*Layer\\.merge\\(nodeCryptoLayer,\\s*${escapeRegExp(local ?? '')}\\s*\\)\\s*;`,
+    'gu',
+  );
+  const merges = [...factoryCode.matchAll(mergePattern)];
+  const merge = merges.length === 1 ? merges[0] : undefined;
+  const slot = generatedSlotRange(factorySource, GOVERNED_HANDLER_LAYER_SLOT_START, GOVERNED_HANDLER_LAYER_SLOT_END);
+  const returns = [...factoryCode.matchAll(/\breturn\b/gu)];
+  const returned = returns.length === 1 ? returns[0] : undefined;
+  if (
+    local === undefined ||
+    injection?.index === undefined ||
+    merge?.index === undefined ||
+    slot === undefined ||
+    returned?.index === undefined
+  ) {
+    return null;
+  }
+  if (
+    injection.groups?.args !== args ||
+    !hasCryptoReadDominance(factorySource, injection.index, merge.index, slot, returned.index)
+  ) {
+    return null;
+  }
+  return { injection: injection[0], local, merge: merge[0] };
+};
+
+const cryptoReadInvocation = (source: string, elements: readonly string[]) => {
+  const exported = defaultExportExpression(source);
+  const invocation = exported === undefined ? undefined : constInitializer(source, exported);
+  const maker = /^(?<name>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(invocation ?? '')?.groups?.name;
+  const actualArguments =
+    maker === undefined || invocation === undefined
+      ? undefined
+      : wholeCallArguments(invocation, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'));
+  if (
+    exported === undefined ||
+    maker === undefined ||
+    actualArguments === undefined ||
+    actualArguments.length !== elements.length ||
+    actualArguments.some((argument) => !/^[A-Za-z][A-Za-z0-9]*$/u.test(argument)) ||
+    constInitializer(source, actualArguments[0] ?? '') === undefined
+  ) {
+    return null;
+  }
+  return { actualArguments, exported, invocation, maker };
+};
+
+const REDEMPTION_BOUNDARY_MODULE = './auth/gateway-assertion-redemption.ts';
+
+const cryptoReadImportedArguments = (
+  source: string,
+  elements: readonly string[],
+  actualArguments: readonly string[],
+) => {
+  const importedArguments = new Set<string>();
+  for (const [index, argument] of actualArguments.entries()) {
+    if (index === 0 || constInitializer(source, argument) !== undefined) {
+      continue;
+    }
+    const imported = namedSourceImport(source, argument);
+    if (
+      !/^[A-Za-z][A-Za-z0-9]*:\s*Layer\.Layer<\s*GatewayAssertionRedemptionService\s*>$/u.test(elements[index] ?? '') ||
+      imported?.imported !== 'GatewayAssertionRedemptionLive' ||
+      imported.modulePath !== REDEMPTION_BOUNDARY_MODULE
+    ) {
+      return null;
+    }
+    importedArguments.add(argument);
+  }
+  return importedArguments;
+};
+
+/**
+ * Local names of the owner's imported `GatewayAssertionRedemptionLive` which the root passes only through the
+ * canonical database enrollment `const x = Live.pipe(Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+ * Layer.provide(DatabaseConfigLive))`, as a non-first runtime argument.
+ */
+const cryptoReadEnrolledRedemptionAliases = (
+  source: string,
+  actualArguments: readonly string[],
+): ReadonlySet<string> => {
+  const aliases = new Set<string>();
+  const database = namedSourceImport(source, 'GatewayAssertionRedemptionDatabaseLive');
+  if (
+    database?.imported !== 'GatewayAssertionRedemptionDatabaseLive' ||
+    database.modulePath !== REDEMPTION_BOUNDARY_MODULE
+  ) {
+    return aliases;
+  }
+  for (const [index, argument] of actualArguments.entries()) {
+    const initializer = index === 0 ? undefined : constInitializer(source, argument);
+    const alias =
+      initializer === undefined
+        ? undefined
+        : /^(?<alias>[A-Za-z_$][A-Za-z0-9_$]*)\.pipe\(\s*Layer\.provide\(GatewayAssertionRedemptionDatabaseLive\),\s*Layer\.provide\(DatabaseConfigLive\),?\s*\)$/u.exec(
+            maskComments(initializer).trim(),
+          )?.groups?.alias;
+    const imported = alias === undefined ? undefined : namedSourceImport(source, alias);
+    if (
+      alias !== undefined &&
+      imported?.imported === 'GatewayAssertionRedemptionLive' &&
+      imported.modulePath === REDEMPTION_BOUNDARY_MODULE
+    ) {
+      aliases.add(alias);
+    }
+  }
+  return aliases;
+};
+
+const cryptoReadProtectedNames = (
+  args: string,
+  local: string,
+  tupleType: string,
+  maker: string,
+  exported: string,
+  importedArguments: ReadonlySet<string>,
+) => {
+  const protectedNames = new Set([
+    args,
+    local,
+    'governedReadRuntimeLive',
+    'Layer',
+    'GovernedReadLayer',
+    'nodeCryptoLayer',
+    'ReadRuntime',
+    tupleType,
+    maker,
+    exported,
+  ]);
+  if (protectedNames.size !== 10) {
+    return null;
+  }
+  for (const argument of importedArguments) {
+    if (protectedNames.has(argument)) {
+      return null;
+    }
+    protectedNames.add(argument);
+  }
+  if (importedArguments.size > 0) {
+    protectedNames.add('GatewayAssertionRedemptionService');
+  }
+  return protectedNames;
+};
+
+const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<string>): boolean => {
+  // Local binding -> [module, exported name].
+  const expectedImports = new Map([
+    ['Layer', [EFFECT_EDGE_MODULE, 'Layer']],
+    ['GovernedReadLayer', ['effect', 'Layer']],
+    ['nodeCryptoLayer', ['@effect/platform-node/NodeCrypto', 'layer']],
+    ['ReadRuntime', [CORE_RUNTIME_MODULE, 'ReadRuntime']],
+  ]);
+  if (importedArguments.size > 0) {
+    expectedImports.set('GatewayAssertionRedemptionService', [
+      CORE_RUNTIME_MODULE,
+      'GatewayAssertionRedemptionService',
+    ]);
+  }
+  for (const [binding, [modulePath, original]] of expectedImports) {
+    const typeOnly = binding === 'ReadRuntime' || binding === 'GatewayAssertionRedemptionService';
+    const imported = namedSourceImport(source, binding, typeOnly);
+    if (imported?.modulePath !== modulePath || imported.imported !== original || (typeOnly && !imported.typeOnly)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const cryptoReadRemainingSource = (
+  source: string,
+  factorySource: string,
+  signature: string,
+  injection: string,
+  merge: string,
+  tupleIndex: number,
+  closing: number,
+  importedArguments: ReadonlySet<string>,
+  maker: string,
+  invocation: string | undefined,
+  exported: string,
+  enrolledRedemptionAliases: ReadonlySet<string> = new Set(),
+) => {
+  // Remove only the declarations and imports whose identities and exact roles were proved.
+  let remaining = source.replace(
+    factorySource,
+    factorySource.replace(signature, '()').replace(injection, '').replace(merge, ''),
+  );
+  remaining = remaining.slice(0, tupleIndex) + ' '.repeat(closing + 1 - tupleIndex) + remaining.slice(closing + 1);
+  let invalidImport = false;
+  remaining = remaining.replaceAll(/^\s*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gmu, (declaration) => {
+    const values = /\{(?<values>[^}]*)\}/u.exec(declaration)?.groups?.values ?? '';
+    for (const entry of values.split(',').map((value) => value.trim())) {
+      if (
+        /^GatewayAssertionRedemptionLive\b/u.test(entry) &&
+        ![...enrolledRedemptionAliases].some((alias) => entry === `GatewayAssertionRedemptionLive as ${alias}`) &&
+        ![...importedArguments].some(
+          (argument) =>
+            entry ===
+            (argument === 'GatewayAssertionRedemptionLive'
+              ? argument
+              : `GatewayAssertionRedemptionLive as ${argument}`),
+        )
+      ) {
+        invalidImport = true;
+      }
+      if (
+        /^(?:type\s+)?(?:Layer|layer|ReadRuntime)\b/u.test(entry) &&
+        !/^(?:Layer|Layer as GovernedReadLayer|layer as nodeCryptoLayer|(?:type )?ReadRuntime)$/u.test(entry)
+      ) {
+        invalidImport = true;
+      }
+    }
+    return ' '.repeat(declaration.length);
+  });
+  if (invalidImport) {
+    return null;
+  }
+  remaining = remaining.replace(
+    new RegExp(`export const ${escapeRegExp(maker)}\\s*=`, 'u'),
+    'export const ignoredFactory =',
+  );
+  remaining = remaining.replace(invocation ?? '', 'ignoredFactory()');
+  remaining = remaining.replace(new RegExp(`const ${escapeRegExp(exported)}\\s*=`, 'u'), 'const ignoredRuntime =');
+  remaining = remaining.replace(new RegExp(`export default ${escapeRegExp(exported)}\\s*;`, 'u'), '');
+  return remaining;
+};
+
+const isCryptoReadLayerReference = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  token: ReadFactoryToken,
+  member: string | undefined,
+  call: boolean,
+): boolean => {
+  const typeMember =
+    token.value === 'Layer' &&
+    (member === 'Layer' || member === 'Error') &&
+    tokens[index + 3]?.kind === SyntaxKind.LessThanToken;
+  const immutableCall =
+    tokens[index + 1]?.kind === SyntaxKind.DotToken &&
+    call &&
+    (token.value === 'Layer'
+      ? ['merge', 'mergeAll', 'provide', 'provideMerge', 'succeed'].includes(member ?? '')
+      : member === 'provide');
+  const pipeTransform =
+    member === 'orDie' &&
+    tokens[index + 1]?.kind === SyntaxKind.DotToken &&
+    tokens[index - 1]?.kind === SyntaxKind.CommaToken &&
+    tokens[index + 3]?.kind === SyntaxKind.CommaToken;
+  return typeMember || immutableCall || pipeTransform;
+};
+
+const isCryptoReadLayerConsumer = (tokens: readonly ReadFactoryToken[], parent: number | undefined): boolean => {
+  if (parent === undefined) {
+    return false;
+  }
+  return (
+    ['Layer', 'GovernedReadLayer'].includes(tokens[parent - 3]?.value ?? '') &&
+    tokens[parent - 2]?.kind === SyntaxKind.DotToken &&
+    ['merge', 'mergeAll', 'provide', 'provideMerge'].includes(tokens[parent - 1]?.value ?? '')
+  );
+};
+
+const isCryptoReadLayerArgument = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  parent: number | undefined,
+): boolean => {
+  const end = index + 1;
+  return (
+    isCryptoReadLayerConsumer(tokens, parent) &&
+    [SyntaxKind.OpenParenToken, SyntaxKind.CommaToken].includes(tokens[index - 1]?.kind ?? SyntaxKind.Unknown) &&
+    [SyntaxKind.CommaToken, SyntaxKind.CloseParenToken].includes(tokens[end]?.kind ?? SyntaxKind.Unknown)
+  );
+};
+
+const isCryptoReadProtectedReference = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  parent: number | undefined,
+): boolean => {
+  const token = tokens[index];
+  if (token === undefined) {
+    return false;
+  }
+  if (
+    tokens[index - 1]?.kind === SyntaxKind.DotToken ||
+    tokens[index - 1]?.kind === SyntaxKind.QuestionDotToken ||
+    tokens[index - 1]?.kind === SyntaxKind.NewKeyword
+  ) {
+    return false;
+  }
+  const member = tokens[index + 2]?.value;
+  const call = tokens[index + 3]?.kind === SyntaxKind.OpenParenToken;
+  if (token.value === 'Layer' || token.value === 'GovernedReadLayer') {
+    return isCryptoReadLayerReference(tokens, index, token, member, call);
+  }
+  if (token.value === 'nodeCryptoLayer' || token.value === 'governedReadRuntimeLive') {
+    return isCryptoReadLayerArgument(tokens, index, parent);
+  }
+  return false;
+};
+
+const hasClosedCryptoReadReferences = (remaining: string, protectedNames: ReadonlySet<string>): boolean => {
+  const tokens = tokenizeGovernedClient(remaining);
+  const stack: number[] = [];
+  for (const [index, token] of tokens.entries()) {
+    if (token.kind === SyntaxKind.CloseParenToken) {
+      stack.pop();
+    }
+    if (
+      token.kind === SyntaxKind.Identifier &&
+      protectedNames.has(token.value) &&
+      !isCryptoReadProtectedReference(tokens, index, stack.at(-1))
+    ) {
+      return false;
+    }
+    if (token.kind === SyntaxKind.OpenParenToken) {
+      stack.push(index);
+    }
+  }
+  return true;
+};
+
+const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boolean => {
+  const tuple = cryptoReadTuple(source, factory);
+  if (tuple === null) {
+    return false;
+  }
+  const binding = cryptoReadBinding(tuple.factorySource, tuple.args);
+  if (binding === null) {
+    return false;
+  }
+  const invocation = cryptoReadInvocation(source, tuple.elements);
+  if (invocation === null) {
+    return false;
+  }
+  const importedArguments = cryptoReadImportedArguments(source, tuple.elements, invocation.actualArguments);
+  if (importedArguments === null) {
+    return false;
+  }
+  const protectedNames = cryptoReadProtectedNames(
+    tuple.args,
+    binding.local,
+    tuple.tupleType,
+    invocation.maker,
+    invocation.exported,
+    importedArguments,
+  );
+  if (protectedNames === null || !hasCryptoReadImports(source, importedArguments)) {
+    return false;
+  }
+  const remaining = cryptoReadRemainingSource(
+    source,
+    tuple.factorySource,
+    tuple.signature[0],
+    binding.injection,
+    binding.merge,
+    tuple.tupleIndex,
+    tuple.closing,
+    importedArguments,
+    invocation.maker,
+    invocation.invocation,
+    invocation.exported,
+    cryptoReadEnrolledRedemptionAliases(source, invocation.actualArguments),
+  );
+  return remaining !== null && hasClosedCryptoReadReferences(remaining, protectedNames);
+};
+
 const wholeCall = (expression: string | undefined, callee: RegExp): boolean =>
   expression !== undefined && isWholeCallExpression(expression, callee);
 
-const servicesCompositionIncludes = (source: string, layerName: string): boolean => {
-  const definition = effectBffDefinition(source);
-  const services = definition === undefined ? undefined : objectPropertyValue(definition, 'services');
-  if (services === undefined) {
-    return false;
-  }
-  const factory = exportedRuntimeFactory(source)?.value;
-  const body = factory?.slice(factory.indexOf('=>') + 2).trim();
-  const runtimeSource = body?.startsWith('{') === true ? `${body.slice(1, -1)}\n${source}` : source;
-  return outputCompositionIncludes(maskComments(runtimeSource), services, layerName);
-};
-
 const hasGovernedHandlerRoot = (source: string): boolean => {
-  if (!servicesCompositionIncludes(source, 'governedReadRuntimeLive')) {
-    return false;
+  const factory = exportedRuntimeFactory(source);
+  const factoryCode = factory === undefined ? '' : maskNonCode(factory.value);
+  const typedRest = /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)/u.test(factoryCode);
+  const localMergeBinding = /\b(?:const|let|var)\s+governedReadRuntimeLive\s*=/u.test(factoryCode);
+  if (factory !== undefined && (typedRest || localMergeBinding)) {
+    const tuples = [...factoryCode.matchAll(/\b(?:const|let|var)\s*\[/gu)];
+    const direct = /const\s*\[\s*governedReadRuntimeLive\s*,/u.test(factoryCode);
+    if (tuples.length !== 1 || !direct || localMergeBinding) {
+      return hasCryptoMergedReadInjection(source, factory);
+    }
+    // This is a typed executed factory: failed direct injection cannot borrow a legacy module root.
+    return hasInjectedGovernedReadRuntime(source);
   }
   if (hasInjectedGovernedReadRuntime(source)) {
     return true;
@@ -848,9 +1395,7 @@ const hasGovernedHandlerRoot = (source: string): boolean => {
   const runtime = assignedExpression(source, /const governedReadRuntimeLive\s*=\s*/u);
   if (
     runtime === undefined ||
-    (!/^readRuntimeLive$/u.test(runtime) &&
-      runtime !== 'GovernedReadRuntimeLive' &&
-      !runtime.startsWith('GovernedReadRuntimeLive.pipe('))
+    (!/^readRuntimeLive$/u.test(runtime) && !runtime.startsWith('GovernedReadRuntimeLive.pipe('))
   ) {
     return false;
   }
@@ -863,20 +1408,14 @@ const hasGovernedHandlerRoot = (source: string): boolean => {
       return false;
     }
   } else if (
-    runtime !== 'GovernedReadRuntimeLive' &&
-    (!isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
-      callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !==
-        'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)')
+    !isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
+    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !==
+      'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)'
   ) {
     return false;
   }
   return effectBffDefinition(source) !== undefined;
 };
-
-const hasBareGovernedHandlerEntries = (source: string): boolean =>
-  generatedSlotEntries(source, GOVERNED_HANDLER_LAYER_SLOT_START, GOVERNED_HANDLER_LAYER_SLOT_END)?.every((entry) =>
-    isGovernedHttpHandlerLayerSlotEntry(`${entry},`),
-  ) === true;
 
 const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   const supportImportStart = '// <generated-governed-http-handler-support-imports>';
@@ -887,43 +1426,15 @@ const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   const supportLayers = handlerRoot.includes(supportLayerStart)
     ? generatedSlotRange(handlerRoot, supportLayerStart, '// </generated-governed-http-handler-support-layers>')
     : null;
-  if ((supportImports !== null && supportImports?.depth !== 0) || supportLayers === undefined) {
-    return false;
-  }
-  if (supportLayers === null) {
-    return true;
-  }
-  const entries = generatedSlotEntries(
-    handlerRoot,
-    supportLayerStart,
-    '// </generated-governed-http-handler-support-layers>',
+  const generatedHandlers = assignedExpressionRange(handlerRoot, /export const governedReadApiHandlersLive\s*=\s*/u);
+  return (
+    (supportImports === null || supportImports?.depth === 0) &&
+    (supportLayers === null ||
+      (generatedHandlers !== undefined &&
+        supportLayers !== undefined &&
+        supportLayers.markerStart > generatedHandlers.start &&
+        supportLayers.markerEnd < generatedHandlers.end))
   );
-  if (
-    entries === undefined ||
-    !entries.every((entry) => isWholeCallExpression(entry, /^GovernedReadLayer\.provideMerge\(/u))
-  ) {
-    return false;
-  }
-  return [
-    ...maskNonCode(handlerRoot).matchAll(/(?<exported>export\s+)?const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*/gu),
-  ].some((declaration) => {
-    const name = declaration.groups?.name;
-    if (name === undefined || declaration.groups?.exported !== undefined) {
-      return false;
-    }
-    const initializer = assignedExpressionRange(handlerRoot, new RegExp(`const ${escapeRegExp(name)}\\s*=\\s*`, 'u'));
-    const piped = initializer === undefined ? undefined : outputPipeExpression(initializer.value);
-    return (
-      initializer !== undefined &&
-      piped !== undefined &&
-      wholeCallArguments(piped.base, /^(?:GovernedReadLayer|Layer)\.mergeAll\(/u) !== undefined &&
-      outputCompositionIncludes(handlerRoot, piped.base, 'governedReadRuntimeLive') &&
-      supportLayers.depth === codeDepthBeforePosition(handlerRoot, initializer.start) + 1 &&
-      supportLayers.markerStart > initializer.start + piped.base.length &&
-      supportLayers.markerEnd < initializer.end &&
-      servicesCompositionIncludes(handlerRoot, name)
-    );
-  });
 };
 
 export const hasValidGovernedHttpCompositionRoot = (sharedApi: string, handlerRoot: string): boolean => {
@@ -950,7 +1461,6 @@ export const hasValidGovernedHttpCompositionRoot = (sharedApi: string, handlerRo
   return (
     sharedRoot !== undefined &&
     hasGovernedHandlerRoot(handlerRoot) &&
-    hasBareGovernedHandlerEntries(handlerRoot) &&
     sharedImports?.depth === 0 &&
     handlerImports?.depth === 0 &&
     hasGovernedSupportSlots(handlerRoot) &&
@@ -1034,7 +1544,7 @@ const hasObjectProperties = (source: string, expected: Readonly<Record<string, s
   Object.entries(expected).every(([property, value]) => objectProperty(source, property) === value);
 
 const hasContractImports = (source: string, expected: Readonly<Record<string, string>>): boolean =>
-  Object.entries(expected).every(([name, specifier]) => hasExactValueImport(source, name, specifier));
+  Object.entries(expected).every(([name, specifier]) => hasExactValueImport(source, name, specifier, true));
 
 const isWholeObjectCall = (expression: string | undefined, value: string | undefined, callee: RegExp): boolean =>
   expression !== undefined &&
@@ -1060,54 +1570,69 @@ const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<s
   );
 };
 
-interface NamedSourceImport {
-  readonly imported: string;
-  readonly modulePath: string;
-  readonly typeOnly: boolean;
-}
+const hasScopedFactoryInputTypes = (source: string, parameters: readonly string[]): boolean =>
+  parameters.length >= 2 &&
+  parameters.length <= 3 &&
+  parameters[0] === 'transaction: ScopedTransactionExecutor' &&
+  parameters[1] === 'scope: OperationalScope' &&
+  (parameters.length === 2 ||
+    parameters[2] === 'compositionRevision?: string' ||
+    parameters[2] === 'compositionRevision: string | undefined') &&
+  ['ScopedTransactionExecutor', 'OperationalScope'].every((name) => {
+    const imported = namedSourceImport(source, name, true);
+    return imported?.imported === name && imported.modulePath === CORE_RUNTIME_MODULE;
+  });
 
-const topLevelBindingDeclarations = (source: string, binding: string): readonly RegExpMatchArray[] =>
-  [
-    ...maskNonCode(source).matchAll(
-      new RegExp(
-        `\\b(?:class|const|enum|function|interface|let|namespace|type|var)\\s+${escapeRegExp(binding)}\\b`,
-        'gu',
-      ),
-    ),
-  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+const scopedNativeGeneratorOpening = (initializer: string, generatorSource: string): number | undefined => {
+  const generator = /^function\*(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(/u.exec(generatorSource);
+  return generator !== null &&
+    isEffectFnCallback(initializer) &&
+    /^(?<quote>['"])[A-Za-z][A-Za-z0-9._-]*\k<quote>$/u.test(callArgument(initializer, /^Effect\.fn\(/u) ?? '') &&
+    callArgument(initializer, /^Effect\.fn\(/u, 1) === undefined
+    ? generator[0].length - 1
+    : undefined;
+};
 
-const namedSourceImport = (source: string, binding: string, allowTypeOnly = false): NamedSourceImport | undefined => {
-  const imports = [
-    ...maskComments(source).matchAll(
-      /^\s*import\s+(?:(?<typeOnly>type)\s+)?(?:[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*)?\{(?<values>[^}]*)\}\s*from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;?/gmu,
-    ),
-  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
-  const candidates = imports.flatMap((match) =>
-    (match.groups?.values ?? '').split(',').flatMap((entry) => {
-      const imported =
-        /^(?:(?<typeOnly>type)\s+)?(?<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?<local>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
-          entry.trim(),
-        );
-      const name = imported?.groups?.imported;
-      const local = imported?.groups?.local ?? name;
-      const modulePath = match.groups?.modulePath;
-      return name === undefined || local !== binding || modulePath === undefined
-        ? []
-        : [
-            {
-              imported: name,
-              modulePath,
-              typeOnly: match.groups?.typeOnly !== undefined || imported?.groups?.typeOnly !== undefined,
-            },
-          ];
-    }),
+const hasScopedReadFactoryExport = (source: string, binding: string): boolean => {
+  if (
+    topLevelBindingDeclarations(source, binding).length !== 1 ||
+    !new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*=`, 'u').test(maskComments(source))
+  ) {
+    return false;
+  }
+  const initializer = constInitializer(source, binding);
+  if (initializer === undefined) {
+    return false;
+  }
+  const effectOpening = initializer.startsWith('Effect.fn(') ? initializer.indexOf('(') : undefined;
+  const effectClosing =
+    effectOpening === undefined ? undefined : matchingDelimiterEnd(initializer, effectOpening, '(', ')');
+  const wrapped = effectClosing === undefined ? undefined : initializer.slice(effectClosing + 1).trim();
+  const callback =
+    wrapped !== undefined && wrapped.startsWith('(') ? callArgument(`invoke${wrapped}`, /^invoke\(/u) : initializer;
+  if (callback === undefined) {
+    return false;
+  }
+  const generatorOpening =
+    effectOpening === undefined ? undefined : scopedNativeGeneratorOpening(initializer, callback);
+  if (!hasBalancedArrowCallback(callback) && generatorOpening === undefined) {
+    return false;
+  }
+  const opening = generatorOpening ?? 0;
+  const closing = matchingDelimiterEnd(callback, opening, '(', ')');
+  if (closing === undefined) {
+    return false;
+  }
+  const parameters = separatedSource(
+    maskComments(callback),
+    topLevelSeparators(maskNonCode(callback), ',', opening + 1, closing, true),
+    opening + 1,
+    closing,
+  ).filter((value) => value !== '');
+  return (
+    hasScopedFactoryInputTypes(source, parameters) &&
+    (effectOpening === undefined || hasExactValueImport(source, 'Effect', 'effect'))
   );
-  const candidate = candidates.length === 1 ? candidates[0] : undefined;
-  return candidate === undefined ||
-    (!allowTypeOnly && candidate.typeOnly) ||
-    topLevelBindingDeclarations(source, binding).length > 0
-    ? undefined
-    : candidate;
 };
 
 const hasNativeReadServiceFactoryExport = (source: string, binding: string): boolean => {
@@ -1714,6 +2239,7 @@ export const hasOwnerLocalReadServiceFactory = (
   return (
     factorySource !== undefined &&
     (hasNativeReadServiceFactoryExport(factorySource, imported.imported) ||
+      hasScopedReadFactoryExport(factorySource, imported.imported) ||
       hasNativeScopedReadServiceFactoryExport(factorySource, imported.imported))
   );
 };
@@ -2004,14 +2530,15 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
-  // The owner pipeline: an executable `load` step, plus optional executable `prepare` and `finish` steps.
-  const load = pipeline === undefined ? undefined : objectPropertyValue(pipeline, 'load');
+  // A single owner handler, or an owner pipeline: an executable `load` step plus optional executable
+  // `prepare` and `finish` steps.
+  const isPipeline = pipeline?.trimStart().startsWith('{') === true;
+  const load = isPipeline && pipeline !== undefined ? objectPropertyValue(pipeline, 'load') : pipeline;
   const optionalSteps = ['prepare', 'finish'].flatMap((step) => {
-    const callback = pipeline === undefined ? undefined : objectPropertyValue(pipeline, step);
+    const callback = isPipeline && pipeline !== undefined ? objectPropertyValue(pipeline, step) : undefined;
     return callback === undefined ? [] : [{ callback, step }];
   });
   return (
-    pipeline?.trimStart().startsWith('{') === true &&
     (isReadHandlerCallback(load, source) || isOwnerLocalImportedFactoryResult(load)) &&
     optionalSteps.every(
       ({ callback, step }) =>
@@ -2078,10 +2605,9 @@ const hasReadContract = (
   const role = contributionRole(contribution.kind);
   const allowedAccessKinds = contributionProfiles[contribution.kind].accessKinds;
   const contributionKey = `${moduleId}.${role}.${contribution.name}`;
-  const entrypointExpression = assignedExpression(
-    source,
-    new RegExp(`(?:export )?const ${escapedCamel}Entrypoint\\s*=\\s*`, 'u'),
-  );
+  const connected = generatedModuleApiEntrypointReference(source, `${camel}Read`);
+  const entrypointExpression =
+    connected?.initializer ?? (connected === undefined ? undefined : constInitializer(source, connected.name));
   const readExpression = assignedExpression(source, new RegExp(`export const ${escapedCamel}Read\\s*=\\s*`, 'u'));
   const entrypoint = objectArgument(entrypointExpression, /^defineTenantModuleEntrypoint\(/u);
   const read = objectArgument(readExpression, /^defineRead\(/u);
@@ -2092,11 +2618,14 @@ const hasReadContract = (
   }
   const checks = {
     callbacks: hasReadCallbacks(source, readExpression, contribution.kind, sources, readFile, ownerPath),
-    descriptorReferences: hasObjectProperties(read, {
-      entrypoint: `${camel}Entrypoint`,
-      inputSchema,
-      resultSchema,
-    }),
+    descriptorReferences:
+      connected !== undefined &&
+      (objectPropertyValue(read, 'entrypoint') === connected.name ||
+        objectPropertyValue(read, 'entrypoint') === connected.initializer) &&
+      hasObjectProperties(read, {
+        inputSchema,
+        resultSchema,
+      }),
     descriptorStrings: (
       [
         ['owningModuleKey', moduleId],
@@ -2313,14 +2842,17 @@ const hasServerProblemsOption = (options: string): boolean => objectPropertyValu
 const hasValidServerDomainMapperOption = (options: string, count: number | undefined): boolean =>
   count === 3 || /^[A-Za-z][A-Za-z0-9]*$/u.test(objectPropertyValue(options, 'mapDomainError') ?? '');
 
-const hasServerOptions = (options: string, readName: string): boolean => {
+const hasServerOptions = (options: string, readName: string, audience?: string): boolean => {
   const count = topLevelObjectEntries(options)?.length;
+  const actualAudience = objectPropertyValue(options, 'audience');
+  const baseCount = actualAudience === undefined ? count : (count ?? 0) - 1;
   return (
     hasNoServerOptionSpread(options) &&
-    hasExpectedServerOptionCount(count) &&
+    hasExpectedServerOptionCount(baseCount) &&
+    (actualAudience === undefined || (audience !== undefined && actualAudience === `'${audience}'`)) &&
     hasServerAuthenticationOptions(options, readName) &&
     hasServerProblemsOption(options) &&
-    hasValidServerDomainMapperOption(options, count)
+    hasValidServerDomainMapperOption(options, baseCount)
   );
 };
 
@@ -2363,6 +2895,7 @@ const hasServerContract = (
   schemaStem: string,
   contractImport: string,
   apiBinding: string,
+  audience?: string,
 ): boolean => {
   const code = maskComments(source);
   const layerExpression = assignedExpression(code, new RegExp(`export const ${escapedCamel}ReadApiLive\\s*=\\s*`, 'u'));
@@ -2370,7 +2903,7 @@ const hasServerContract = (
   const domainMapperName = options === undefined ? undefined : objectPropertyValue(options, 'mapDomainError');
   return (
     options !== undefined &&
-    hasServerOptions(options, `${escapedCamel}Read`) &&
+    hasServerOptions(options, `${escapedCamel}Read`, audience) &&
     hasDomainMapperContract(source, domainMapperName, schemaStem, contractImport) &&
     hasOnlyThinServerStatements(
       source,
@@ -2378,7 +2911,7 @@ const hasServerContract = (
       new Set([
         GOVERNED_READ_HTTP_MODULE,
         GOVERNED_HTTP_RUNTIME_MODULE,
-        '@modern-js/bff-effect/effect-edge',
+        EFFECT_EDGE_MODULE,
         './auth/action-principal.ts',
         '../shared/api.ts',
         readImport,
@@ -2390,7 +2923,7 @@ const hasServerContract = (
       [`${escapedCamel}Read`]: readImport,
       [apiBinding]: '../shared/api.ts',
       authenticateOperationPrincipal: './auth/action-principal.ts',
-      HttpApiBuilder: '@modern-js/bff-effect/effect-edge',
+      HttpApiBuilder: EFFECT_EDGE_MODULE,
       makeGovernedReadHttpHandler: GOVERNED_READ_HTTP_MODULE,
     }) &&
     hasProblemSet(source, schemaStem, contractImport) &&
@@ -2677,20 +3210,40 @@ const hasPublishedContract = (
   const apiValue = contributionApiValue(contribution.kind, contribution.name);
   const camel = toCamelCase(contribution.name);
   const serverStem = contributionServerStem(contribution);
+  const escapedCamel = escapeRegExp(camel);
   const handlerLayers = generatedSlotEntries(
     handlerRoot,
     GOVERNED_HANDLER_LAYER_SLOT_START,
     GOVERNED_HANDLER_LAYER_SLOT_END,
   );
   const expectedLayer = `${camel}ReadApiLive`;
+  const isExpectedHandlerLayer = (entry: string): boolean => {
+    if (!isWholeCallExpression(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'))) {
+      return false;
+    }
+    const first = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'));
+    if (first !== 'GovernedReadLayer.provide(governedReadRuntimeLive)') {
+      return false;
+    }
+    let index = 1;
+    let argument = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index);
+    while (argument !== undefined) {
+      if (argument === '') {
+        return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
+      }
+      if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
+        return false;
+      }
+      index += 1;
+      argument = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index);
+    }
+    return entry.startsWith(`${expectedLayer}.pipe(`);
+  };
   const publicationChecks = {
     apiBinding: expectedApi !== undefined,
     handlerImport: hasExactValueImport(handlerRoot, `${camel}ReadApiLive`, `./${serverStem}-server.ts`),
-    handlerLayer: handlerLayers?.filter((entry) => entry === expectedLayer).length === 1,
-    handlerRoot:
-      hasGovernedHandlerRoot(handlerRoot) &&
-      hasBareGovernedHandlerEntries(handlerRoot) &&
-      hasGovernedSupportSlots(handlerRoot),
+    handlerLayer: handlerLayers?.filter(isExpectedHandlerLayer).length === 1,
+    handlerRoot: hasGovernedHandlerRoot(handlerRoot),
     manifest: hasManifestContract(manifest, contribution, moduleId),
     mountedLayer:
       expectedApi !== undefined &&
@@ -2757,25 +3310,6 @@ const hasMatchingModuleApiSlots = (
   return manifestApis?.length === moduleApiCount && registrationApis?.length === moduleApiCount;
 };
 
-const generatedReadContributions = (
-  sources: ReadonlyMap<string, string>,
-  verticalPath: string,
-): readonly GeneratedContribution[] => {
-  const contractPrefix = `${verticalPath}/shared/apis/`;
-  const generatedContracts = [...sources.entries()].filter(
-    ([candidate, source]) =>
-      candidate.startsWith(contractPrefix) &&
-      candidate.endsWith('.ts') &&
-      !candidate.slice(contractPrefix.length).includes('/') &&
-      (hasGeneratedSourceHeader(source, MODULE_API_HEADER) ||
-        hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER)),
-  );
-  return generatedContracts.map(
-    ([candidate, source]) =>
-      [candidate, source, governedReadContribution(path.posix.basename(candidate, '.ts'), source)] as const,
-  );
-};
-
 const governedOwnerModuleId = (manifest: string | undefined): string | undefined =>
   /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(manifest ?? '')?.groups?.moduleId;
 
@@ -2832,14 +3366,18 @@ export const hasGeneratedActionKeyIdentity = (source: string, expectedKey: strin
   });
 };
 
-export const hasGeneratedActionClientPublication = (source: string, slug: string): boolean => {
+export const hasGeneratedActionClientPublication = (
+  source: string,
+  slug: string,
+  clientImport = `./${slug}-action-client.ts`,
+): boolean => {
   const type = escapeRegExp(toPascalCase(slug));
   return slotHasExactlyOneCodeMatch(
     source,
     '// <generated-action-http-client-exports>',
     '// </generated-action-http-client-exports>',
     new RegExp(
-      `export\\s+(?:\\*|\\{\\s*(?:execute${type}WithAuthorization,\\s*execute${type}|execute${type},\\s*execute${type}WithAuthorization),?\\s*\\})\\s+from './${escapeRegExp(slug)}-action-client\\.ts';`,
+      `export\\s+(?:\\*|\\{\\s*(?:execute${type}WithAuthorization,\\s*execute${type}|execute${type},\\s*execute${type}WithAuthorization),?\\s*\\})\\s+from '${escapeRegExp(clientImport)}';`,
       'gu',
     ),
   );
@@ -2865,6 +3403,71 @@ export const hasGeneratedActionHttpClientExports = (source: string, slug: string
   );
 };
 
+const publicContractSourceLocation = (
+  packagePath: string,
+  exportedPath: string | undefined,
+): PublicContractSourceLocation | undefined => {
+  if (exportedPath === undefined || !exportedPath.startsWith('./') || !exportedPath.endsWith('.ts')) {
+    return undefined;
+  }
+  const packageDirectory = path.posix.dirname(packagePath);
+  const sourcePath = path.posix.normalize(path.posix.join(packageDirectory, exportedPath));
+  return sourcePath.startsWith(`${packageDirectory}/`) ? { packageDirectory, sourcePath } : undefined;
+};
+
+export const ownerActionClientPublication = (
+  sources: ReadonlyMap<string, string>,
+  ownerPath: string,
+  appId: string,
+): { readonly file: string; readonly source: string } | undefined => {
+  const raw = sources.get(`${ownerPath}/package.json`);
+  const schema = Schema.Struct({ exports: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)) });
+  const metadata =
+    raw === undefined
+      ? undefined
+      : Option.getOrUndefined(Schema.decodeUnknownOption(Schema.fromJsonString(schema))(raw));
+  if (raw !== undefined && metadata === undefined) {
+    return undefined;
+  }
+  const target = metadata?.exports === undefined ? `./src/api/${appId}-client.ts` : metadata.exports['./api/client'];
+  const location = publicContractSourceLocation(`${ownerPath}/package.json`, target);
+  const source = location === undefined ? undefined : sources.get(location.sourcePath);
+  return location === undefined || source === undefined ? undefined : { file: location.sourcePath, source };
+};
+
+export const hasNativeHttpActionMount = (source: string, layer: string): boolean => {
+  const slot = generatedSlotRange(source, GOVERNED_HANDLER_LAYER_SLOT_START, GOVERNED_HANDLER_LAYER_SLOT_END);
+  const transport = namedSourceImport(source, 'GovernedFetchHttpClient');
+  if (slot === undefined || transport?.imported !== 'FetchHttpClient' || transport.modulePath !== 'effect/http') {
+    return false;
+  }
+  const body = source.slice(slot.bodyStart, slot.bodyEnd);
+  const entries = separatedSource(
+    body,
+    topLevelSeparators(maskNonCode(body), ',', 0, body.length, true),
+    0,
+    body.length,
+  );
+  const mounts = entries.filter((entry) => entry.trim().startsWith(`${layer}.pipe(`));
+  const mount = mounts.length === 1 ? mounts[0] : undefined;
+  const args =
+    mount === undefined ? undefined : wholeCallArguments(mount, new RegExp(`^${escapeRegExp(layer)}\\.pipe\\(`, 'u'));
+  return (
+    args?.length === 2 &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(args[0] ?? ''),
+      'GovernedReadLayer.provide(governedActionRuntimeLive)',
+    ) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(args[1] ?? ''),
+      `GovernedReadLayer.provide(
+      GovernedFetchHttpClient.layer.pipe(GovernedReadLayer.provide(
+        GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })
+      )))`,
+    )
+  );
+};
+
 const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly deploymentAppId: string;
   readonly diagnostics: string[] | undefined;
@@ -2884,6 +3487,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       !candidate.slice(contractPrefix.length).includes('/') &&
       source.startsWith(ACTION_HTTP_HEADER),
   );
+  const publication = ownerActionClientPublication(input.sources, input.verticalPath, input.deploymentAppId);
   return actionContracts.every(([contractPath, contract]) => {
     const stem = path.posix.basename(contractPath, '.ts');
     const slug = stem.slice(0, -'-action'.length);
@@ -2896,7 +3500,16 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
     const problems = input.sources.get(`${input.verticalPath}/api/${slug}-action-problems.ts`) ?? '';
     const server = input.sources.get(`${input.verticalPath}/api/${slug}-action-server.ts`) ?? '';
     const client = input.sources.get(`${input.verticalPath}/src/api/${slug}-action-client.ts`) ?? '';
-    const clientRoot = input.sources.get(`${input.verticalPath}/src/api/${input.deploymentAppId}-client.ts`) ?? '';
+    const clientRoot = publication?.source ?? '';
+    const clientRelativeImport =
+      publication === undefined
+        ? undefined
+        : path.posix.relative(
+            path.posix.dirname(publication.file),
+            `${input.verticalPath}/src/api/${slug}-action-client.ts`,
+          );
+    const clientImport =
+      clientRelativeImport?.startsWith('.') === true ? clientRelativeImport : `./${clientRelativeImport ?? ''}`;
     if (![contract, problems, server, client].every((source) => source.startsWith(expectedHeader))) {
       return false;
     }
@@ -2937,13 +3550,16 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         '// </generated-governed-http-handler-imports>',
         new RegExp(`import \\{ ${escapedLayerValue} \\} from './${escapedSlug}-action-server\\.ts';`, 'gu'),
       ),
-      generatedSlotEntries(
+      slotHasExactlyOneCodeMatch(
         input.handlerRoot,
         GOVERNED_HANDLER_LAYER_SLOT_START,
         GOVERNED_HANDLER_LAYER_SLOT_END,
-      )?.filter((entry) => entry === layerValue).length === 1,
-      servicesCompositionIncludes(input.handlerRoot, 'governedActionRuntimeLive'),
-      hasGeneratedActionClientPublication(clientRoot, slug) ||
+        new RegExp(
+          `\\b${escapedLayerValue}\\.pipe\\(\\s*GovernedReadLayer\\.provide\\(governedActionRuntimeLive\\),?\\s*\\),`,
+          'gu',
+        ),
+      ) || hasNativeHttpActionMount(input.handlerRoot, layerValue),
+      hasGeneratedActionClientPublication(clientRoot, slug, clientImport) ||
         hasGeneratedActionHttpClientExports(clientRoot, slug, type),
       slotHasExactlyOneCodeMatch(
         input.manifest,
@@ -2975,8 +3591,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       'client fresh assertion',
       'shared API contribution',
       'handler import',
-      'handler layer',
-      'Action request runtime',
+      'handler runtime',
       'client exports',
       'manifest Action',
       'runtime Action',
@@ -3011,12 +3626,11 @@ interface ResolvedPublicContract {
   readonly specifier: string;
 }
 
-interface ExpectedPublicContractOwner {
+type ExpectedPublicContractOwner = {
   readonly appId: string;
-  readonly moduleApi: string;
   readonly moduleId: string;
   readonly packageName: string;
-}
+} & ({ readonly moduleApi: string } | { readonly actionSlug: string });
 
 interface PublicContractSpecifierParts {
   readonly exportName: string;
@@ -3030,9 +3644,24 @@ interface PublicContractSourceLocation {
 
 type PublicContractPackageManifest = typeof PublicContractPackageManifestSchema.Type;
 
-const publicContractSpecifier = (source: string): string | undefined =>
-  /^\/\/ @ontos-public-contract (?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)$/mu.exec(source)?.groups
-    ?.specifier;
+const publicContractSpecifier = (source: string): string | undefined => {
+  const annotated = /^\/\/ @ontos-public-contract (?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)$/mu.exec(
+    source,
+  )?.groups?.specifier;
+  return (
+    annotated ??
+    /^\s*export\s+\*\s+from\s+(?<quote>['"])(?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)\k<quote>;\s*$/u.exec(
+      maskComments(source),
+    )?.groups?.specifier
+  );
+};
+
+const isClosedPublicContractExport = (source: string, specifier: string): boolean =>
+  publicContractSpecifier(source) === specifier &&
+  hasExactSourceTokens(tokenizeGovernedClient(source), `export * from '${specifier}';`);
+
+const isExactPublicContractShim = (source: string, header: string, specifier: string): boolean =>
+  hasGeneratedSourceHeader(source, header) && isClosedPublicContractExport(source, specifier);
 
 const publicContractSpecifierParts = (specifier: string): PublicContractSpecifierParts | undefined => {
   const [scope, packageStem, ...subpathSegments] = specifier.split('/');
@@ -3065,213 +3694,29 @@ const hasExpectedPublicContractOwner = (
   manifest.ontosContractOwner.appId === expected.appId &&
   manifest.ontosContractOwner.moduleId === expected.moduleId &&
   manifest.ontosContractOwner.packageName === expected.packageName &&
-  manifest.ontosContractOwner.moduleApis.includes(expected.moduleApi);
+  (!('moduleApi' in expected) || manifest.ontosContractOwner.moduleApis.includes(expected.moduleApi));
 
-const publicContractSourceLocation = (
-  packagePath: string,
-  exportedPath: string | undefined,
-): PublicContractSourceLocation | undefined => {
-  if (exportedPath === undefined || !exportedPath.startsWith('./') || !exportedPath.endsWith('.ts')) {
-    return undefined;
-  }
-  const packageDirectory = path.posix.dirname(packagePath);
-  const sourcePath = path.posix.normalize(path.posix.join(packageDirectory, exportedPath));
-  return sourcePath.startsWith(`${packageDirectory}/`) ? { packageDirectory, sourcePath } : undefined;
-};
-
-const resolvePublicContractReexport = (
-  sources: ReadonlyMap<string, string>,
-  specifier: string,
-): ResolvedPublicContract | undefined => {
-  const parts = publicContractSpecifierParts(specifier);
-  if (parts === undefined) {
-    return undefined;
-  }
-  const manifests = publicContractPackageManifests(sources, parts.packageName);
-  const entry = manifests.length === 1 ? manifests[0] : undefined;
-  const location =
-    entry === undefined ? undefined : publicContractSourceLocation(entry[0], entry[1].exports[parts.exportName]);
-  const source = location === undefined ? undefined : sources.get(location.sourcePath);
-  return location === undefined || source === undefined
-    ? undefined
-    : { packagePath: location.packageDirectory, source, sourcePath: location.sourcePath, specifier };
-};
-
-const collectPublicContractDeclaration = (declaration: Declaration | null, exports: Map<string, boolean>): boolean => {
-  if (declaration === null) {
-    return false;
-  }
-  if (declaration.type === 'VariableDeclaration') {
-    for (const binding of declaration.declarations) {
-      if (binding.id.type !== 'Identifier' || exports.has(binding.id.name)) {
-        return false;
-      }
-      exports.set(binding.id.name, false);
-    }
-    return true;
-  }
-  if (
-    declaration.type !== 'FunctionDeclaration' &&
-    declaration.type !== 'ClassDeclaration' &&
-    declaration.type !== 'TSTypeAliasDeclaration' &&
-    declaration.type !== 'TSInterfaceDeclaration'
-  ) {
-    return false;
-  }
-  if (declaration.id === null || exports.has(declaration.id.name)) {
-    return false;
-  }
-  exports.set(
-    declaration.id.name,
-    declaration.type === 'TSTypeAliasDeclaration' || declaration.type === 'TSInterfaceDeclaration',
+const hasGeneratedActionContractTarget = (
+  source: string,
+  expected: ExpectedPublicContractOwner & { readonly actionSlug: string },
+): boolean => {
+  const type = toPascalCase(expected.actionSlug);
+  return (
+    hasGeneratedSourceHeader(
+      source,
+      `${ACTION_HTTP_HEADER}// @ontos-action-http-owner ${expected.moduleId}\n// @ontos-action-http-slug ${expected.actionSlug}\n`,
+    ) &&
+    hasHttpContractImports(source) &&
+    hasConnectedGeneratedActionContract(source, {
+      apiValue: `${type}ActionApi`,
+      endpoint: `/${expected.appId}/actions/${expected.actionSlug}`,
+      group: `${toCamelCase(expected.actionSlug)}Action`,
+      invalidProblem: `${type}ActionInvalidProblemSchema`,
+      middleware: `${type}ActionSchemaErrorMiddleware`,
+      middlewareKey: `${expected.appId}/${type}ActionSchemaErrorMiddleware`,
+    })
   );
-  return true;
 };
-
-const collectPublicContractReexports = (
-  statement: ExportNamedDeclaration,
-  expected: ReadonlyMap<string, boolean>,
-  exports: Map<string, boolean>,
-  unchangedNames: boolean,
-): boolean => {
-  if (statement.attributes.length !== 0) {
-    return false;
-  }
-  for (const binding of statement.specifiers) {
-    const typeOnly = statement.exportKind === 'type' || binding.exportKind === 'type';
-    if (
-      binding.local.type !== 'Identifier' ||
-      binding.exported.type !== 'Identifier' ||
-      (unchangedNames && binding.local.name !== binding.exported.name) ||
-      expected.get(binding.local.name) !== typeOnly ||
-      exports.has(binding.exported.name)
-    ) {
-      return false;
-    }
-    exports.set(binding.exported.name, typeOnly);
-  }
-  return true;
-};
-
-const publicContractExports = (
-  contract: ResolvedPublicContract,
-  sources: ReadonlyMap<string, string>,
-  visited: ReadonlySet<string> = new Set(),
-): ReadonlyMap<string, boolean> | undefined => {
-  if (visited.has(contract.sourcePath)) {
-    return undefined;
-  }
-  const parsed = parseSync(contract.sourcePath, contract.source);
-  if (parsed.errors.length !== 0) {
-    return undefined;
-  }
-  const exports = new Map<string, boolean>();
-  for (const statement of parsed.program.body) {
-    if (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportDefaultDeclaration') {
-      return undefined;
-    }
-    if (statement.type !== 'ExportNamedDeclaration') {
-      continue;
-    }
-    if (statement.source !== null) {
-      const target = resolvePublicContractReexport(sources, statement.source.value);
-      const targetExports =
-        target === undefined
-          ? undefined
-          : publicContractExports(target, sources, new Set([...visited, contract.sourcePath]));
-      if (targetExports === undefined || !collectPublicContractReexports(statement, targetExports, exports, false)) {
-        return undefined;
-      }
-    } else if (!collectPublicContractDeclaration(statement.declaration, exports)) {
-      return undefined;
-    }
-  }
-  return exports.size === 0 ? undefined : exports;
-};
-
-const declaredPublicContractExports = (source: string): ReadonlyMap<string, boolean> | undefined => {
-  const parsed = parseSync('public-contract-producer.ts', source);
-  if (parsed.errors.length !== 0) {
-    return undefined;
-  }
-  const exports = new Map<string, boolean>();
-  for (const statement of parsed.program.body) {
-    if (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportDefaultDeclaration') {
-      return undefined;
-    }
-    if (statement.type === 'ExportNamedDeclaration') {
-      if (statement.source === null) {
-        if (!collectPublicContractDeclaration(statement.declaration, exports)) {
-          return undefined;
-        }
-      } else {
-        if (statement.attributes.length !== 0) {
-          return undefined;
-        }
-        for (const binding of statement.specifiers) {
-          if (
-            binding.local.type !== 'Identifier' ||
-            binding.exported.type !== 'Identifier' ||
-            exports.has(binding.exported.name)
-          ) {
-            return undefined;
-          }
-          exports.set(binding.exported.name, statement.exportKind === 'type' || binding.exportKind === 'type');
-        }
-      }
-    }
-  }
-  return exports.size === 0 ? undefined : exports;
-};
-
-/** Owner facades must forward the producer's exports without adding executable code or changing bindings. */
-const forwardsPublicContractExports = (
-  source: string,
-  specifier: string,
-  expected: ReadonlyMap<string, boolean> | undefined,
-): boolean => {
-  const parsed = parseSync('public-contract-facade.ts', source);
-  if (parsed.errors.length !== 0) {
-    return false;
-  }
-  const statements = parsed.program.body;
-  const onlyStatement = statements.length === 1 ? statements[0] : undefined;
-  if (onlyStatement?.type === 'ExportAllDeclaration') {
-    return (
-      onlyStatement.exported === null &&
-      onlyStatement.exportKind === 'value' &&
-      onlyStatement.attributes.length === 0 &&
-      onlyStatement.source.value === specifier
-    );
-  }
-  if (expected === undefined) {
-    return false;
-  }
-  const forwarded = new Map<string, boolean>();
-  for (const statement of statements) {
-    if (
-      statement.type !== 'ExportNamedDeclaration' ||
-      statement.declaration !== null ||
-      statement.source?.value !== specifier ||
-      !collectPublicContractReexports(statement, expected, forwarded, true)
-    ) {
-      return false;
-    }
-  }
-  return forwarded.size === expected.size;
-};
-
-const hasPublicContractForwarding = (
-  source: string,
-  contract: ResolvedPublicContract,
-  sources: ReadonlyMap<string, string>,
-): boolean => forwardsPublicContractExports(source, contract.specifier, publicContractExports(contract, sources));
-
-/** Scaffold reruns compare the facade with its producer's declared exports; the complete seam also resolves upstream exports. */
-export const hasGeneratedPublicContractFacade = (source: string, specifier: string, producerSource: string): boolean =>
-  source.startsWith(MODULE_API_HEADER) &&
-  publicContractSpecifier(source) === specifier &&
-  forwardsPublicContractExports(source, specifier, declaredPublicContractExports(producerSource));
 
 const resolvePublicContract = (
   sources: ReadonlyMap<string, string>,
@@ -3295,9 +3740,10 @@ const resolvePublicContract = (
     return undefined;
   }
   const source = sources.get(location.sourcePath);
-  return source === undefined
-    ? undefined
-    : { packagePath: location.packageDirectory, source, sourcePath: location.sourcePath, specifier };
+  if (source === undefined || ('actionSlug' in expected && !hasGeneratedActionContractTarget(source, expected))) {
+    return undefined;
+  }
+  return { packagePath: location.packageDirectory, source, sourcePath: location.sourcePath, specifier };
 };
 
 interface ContributionSourceCandidates {
@@ -3369,12 +3815,8 @@ const hasDefinedContributionSources = (
   candidates.ownerClientSource !== undefined &&
   candidates.serverSource !== undefined;
 
-const hasGeneratedContributionHeaders = (
-  candidates: DefinedContributionSourceCandidates,
-  ownerContractSource: string,
-  header: string,
-): boolean =>
-  [ownerContractSource, candidates.readSource, candidates.ownerClientSource, candidates.serverSource].every((source) =>
+const hasGeneratedContributionHeaders = (candidates: DefinedContributionSourceCandidates, header: string): boolean =>
+  [candidates.readSource, candidates.ownerClientSource, candidates.serverSource].every((source) =>
     hasGeneratedSourceHeader(source, header),
   );
 
@@ -3397,7 +3839,9 @@ const hasValidPublicContributionSourcePaths = (
 ): input is ValidPublicContributionSourceInput =>
   input.contribution.kind === MODULE_API_KIND &&
   input.contractSpecifier !== undefined &&
-  input.clientSpecifier === `${input.contractSpecifier}/client`;
+  input.clientSpecifier === `${input.contractSpecifier}/client` &&
+  isExactPublicContractShim(input.ownerContractSource, input.header, input.contractSpecifier) &&
+  isExactPublicContractShim(input.candidates.ownerClientSource, input.header, input.clientSpecifier);
 
 const resolvePublicContributionSources = (
   input: ValidPublicContributionSourceInput,
@@ -3410,8 +3854,6 @@ const resolvePublicContributionSources = (
     contract.packagePath === client.packagePath &&
     contract.source.startsWith(input.header) &&
     client.source.startsWith(input.header) &&
-    hasPublicContractForwarding(input.ownerContractSource, contract, input.sources) &&
-    hasPublicContractForwarding(input.candidates.ownerClientSource, client, input.sources) &&
     hasActionBoundaryGateway(
       input.sources.get(`${contract.packagePath}/src/api/action-gateway.ts`),
       input.deploymentAppId,
@@ -3445,41 +3887,6 @@ const publicContributionSources = (input: PublicContributionSourceInput): Loaded
     readSource: candidates.readSource,
     serverSource: candidates.serverSource,
   };
-};
-
-const loadContributionSources = (
-  sources: ReadonlyMap<string, string>,
-  verticalPath: string,
-  contribution: GovernedReadContribution,
-  ownerContractSource: string,
-  deploymentAppId: string,
-  moduleId: string,
-  ownerPackageName: string,
-): LoadedContributionSources | undefined => {
-  const candidates = contributionSourceCandidates(sources, verticalPath, contribution);
-  const header = generatedHeader(contribution.kind);
-  if (
-    !hasDefinedContributionSources(candidates) ||
-    !hasGeneratedContributionHeaders(candidates, ownerContractSource, header)
-  ) {
-    return undefined;
-  }
-  const contractSpecifier = publicContractSpecifier(ownerContractSource);
-  const clientSpecifier = publicContractSpecifier(candidates.ownerClientSource);
-  return contractSpecifier === undefined && clientSpecifier === undefined
-    ? ownerLocalContributionSources(candidates, contribution, ownerContractSource)
-    : publicContributionSources({
-        candidates,
-        clientSpecifier,
-        contractSpecifier,
-        contribution,
-        deploymentAppId,
-        header,
-        moduleId,
-        ownerContractSource,
-        ownerPackageName,
-        sources,
-      });
 };
 
 type OwnerPackageManifest = typeof OwnerPackageManifestSchema.Type;
@@ -3586,7 +3993,239 @@ const hasCompleteContributionRead = (
   diagnostics?: string[],
 ): boolean =>
   hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath, diagnostics) &&
-  (contribution.kind !== MODULE_API_KIND || hasGeneratedModuleApiReadContract(readSource, moduleId, contribution.name));
+  (contribution.kind !== MODULE_API_KIND ||
+    hasGeneratedModuleApiReadContract(
+      readSource,
+      moduleId,
+      contribution.name,
+      undefined,
+      generatedModuleApiEntrypointReference(readSource, `${toCamelCase(contribution.name)}Read`)?.name,
+    ));
+
+export const hasPublishedGeneratedContractShim = (
+  sources: ReadonlyMap<string, string>,
+  file: string,
+  source: string,
+): boolean => {
+  const specifier = publicContractSpecifier(source);
+  if (
+    specifier === undefined ||
+    !isClosedPublicContractExport(source, specifier) ||
+    !/^(?:apps|verticals)\/[^/]+\/shared\/apis\/[a-z][a-z0-9-]*\.ts$/u.test(file)
+  ) {
+    return false;
+  }
+  const ownerPath = file.slice(0, file.indexOf('/shared/apis/'));
+  const inputs = generatedModuleApiSeamInputs(sources, `${ownerPath}/shared/api.ts`);
+  if (!hasCompleteGeneratedModuleApiSeamInputs(inputs)) {
+    return false;
+  }
+  const appId = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(inputs.manifest)?.groups?.appId;
+  if (appId === undefined) {
+    return false;
+  }
+  const name = path.posix.basename(file, '.ts');
+  const owner = { appId, moduleId: inputs.moduleId, packageName: inputs.ownerPackage.name };
+  if (name.endsWith('-action')) {
+    return (
+      resolvePublicContract(sources, specifier, { ...owner, actionSlug: name.slice(0, -'-action'.length) }) !==
+      undefined
+    );
+  }
+  const contract = resolvePublicContract(sources, specifier, { ...owner, moduleApi: name });
+  return (
+    contract !== undefined &&
+    hasGeneratedSourceHeader(contract.source, MODULE_API_HEADER) &&
+    hasHttpContractImports(contract.source) &&
+    hasGeneratedModuleApiContract(contract.source, `${toPascalCase(name)}Api`, toCamelCase(name), name)
+  );
+};
+
+const publishedModuleReadContribution = (
+  sources: ReadonlyMap<string, string>,
+  candidate: string,
+  source: string,
+): GovernedReadContribution | undefined => {
+  const name = path.posix.basename(candidate, '.ts');
+  return !name.endsWith('-action') && hasPublishedGeneratedContractShim(sources, candidate, source)
+    ? { contractStem: name, kind: MODULE_API_KIND, name }
+    : undefined;
+};
+
+const generatedReadContributions = (
+  sources: ReadonlyMap<string, string>,
+  verticalPath: string,
+): readonly GeneratedContribution[] => {
+  const contractPrefix = `${verticalPath}/shared/apis/`;
+  return [...sources.entries()].flatMap(([candidate, source]): readonly GeneratedContribution[] => {
+    if (
+      !candidate.startsWith(contractPrefix) ||
+      !candidate.endsWith('.ts') ||
+      candidate.slice(contractPrefix.length).includes('/')
+    ) {
+      return [];
+    }
+    const published = publishedModuleReadContribution(sources, candidate, source);
+    const generated =
+      hasGeneratedSourceHeader(source, MODULE_API_HEADER) ||
+      hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER);
+    return generated || published !== undefined
+      ? [[candidate, source, governedReadContribution(path.posix.basename(candidate, '.ts'), source) ?? published]]
+      : [];
+  });
+};
+
+const loadContributionSources = (
+  sources: ReadonlyMap<string, string>,
+  verticalPath: string,
+  contribution: GovernedReadContribution,
+  ownerContractSource: string,
+  deploymentAppId: string,
+  moduleId: string,
+  ownerPackageName: string,
+): LoadedContributionSources | undefined => {
+  const candidates = contributionSourceCandidates(sources, verticalPath, contribution);
+  const header = generatedHeader(contribution.kind);
+  const published = publishedModuleReadContribution(
+    sources,
+    `${verticalPath}/shared/apis/${contribution.contractStem}.ts`,
+    ownerContractSource,
+  );
+  if (
+    !hasDefinedContributionSources(candidates) ||
+    !hasGeneratedContributionHeaders(candidates, header) ||
+    !(
+      hasGeneratedSourceHeader(ownerContractSource, header) ||
+      (published?.kind === contribution.kind && published.name === contribution.name)
+    )
+  ) {
+    return undefined;
+  }
+  const contractSpecifier = publicContractSpecifier(ownerContractSource);
+  const clientSpecifier = publicContractSpecifier(candidates.ownerClientSource);
+  if (
+    contractSpecifier !== undefined &&
+    clientSpecifier === undefined &&
+    isClosedPublicContractExport(ownerContractSource, contractSpecifier)
+  ) {
+    const contract = resolvePublicContract(sources, contractSpecifier, {
+      appId: deploymentAppId,
+      moduleApi: contribution.name,
+      moduleId,
+      packageName: ownerPackageName,
+    });
+    if (contract === undefined || !hasGeneratedSourceHeader(contract.source, header)) {
+      return undefined;
+    }
+    return {
+      ...ownerLocalContributionSources(candidates, contribution, ownerContractSource),
+      contractSource: contract.source,
+    };
+  }
+  return contractSpecifier === undefined && clientSpecifier === undefined
+    ? ownerLocalContributionSources(candidates, contribution, ownerContractSource)
+    : publicContributionSources({
+        candidates,
+        clientSpecifier,
+        contractSpecifier,
+        contribution,
+        deploymentAppId,
+        header,
+        moduleId,
+        ownerContractSource,
+        ownerPackageName,
+        sources,
+      });
+};
+
+/**
+ * A module-API read may publish one reviewed GET companion beside its governed POST `execute` endpoint:
+ * the companion adapts a path/query request into the same governed read registration, so the closed
+ * generated POST seam still carries all authority. The companion's contract endpoint, the server's extra
+ * imports and its handler tail are bespoke source, therefore they are accepted only as exact pinned text
+ * (whitespace-normalized SHA-256). The pinned text is replaced by the canonical generated form and the
+ * ordinary closed checks run over the result, so anything else in the files still has to be generated.
+ * Changing a pinned block requires a new review and a new pin here.
+ */
+interface ReviewedReadCompanion {
+  readonly contractEndpoint: RegExp;
+  readonly contractEndpointSha256: string;
+  readonly serverImports: string;
+  readonly serverImportsSha256: string;
+  readonly serverTailMarker: string;
+  readonly serverTailSha256: string;
+}
+
+const reviewedReadCompanions = new Map<string, ReviewedReadCompanion>([
+  [
+    'privacy/notice-presentation',
+    {
+      contractEndpoint: /\n {4}HttpApiEndpoint\.get\('present'[\s\S]*?\n {4}\}\),\n(?= {2}\),\n\);)/u,
+      contractEndpointSha256: '4190871d8f82fd57de69441e5fd769e863c53a6fe6dfa15c94cff4999b14aa6c',
+      serverImports:
+        "import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';\nimport { HttpEffect, HttpServerResponse } from 'effect/http';\nimport { Redacted } from 'effect';\n",
+      serverImportsSha256: '009c7d9d80198ebde19922ce6ba727cc0d1377af72035453c35a4aa63aab1e82',
+      serverTailMarker: 'const execute = makeGovernedReadHttpHandler',
+      serverTailSha256: '62d9c2829a517650c1bd178fc0246216bb01993be764e8e8bccb2c158b6b4f96',
+    },
+  ],
+]);
+
+const sha256OfNormalizedSource = (source: string): string =>
+  createHash('sha256').update(source.replaceAll(/\s+/gu, ' ').trim()).digest('hex');
+
+const canonicalReadApiLiveTail = (camel: string, group: string, apiBinding: string): string =>
+  [
+    `export const ${camel}ReadApiLive = HttpApiBuilder.group(${apiBinding}, '${group}', (handlers) =>`,
+    '  handlers.handle(',
+    "    'execute',",
+    '    makeGovernedReadHttpHandler({',
+    '      authenticatePrincipal: authenticateOperationPrincipal,',
+    '      problems,',
+    `      registration: ${camel}Read,`,
+    '    }),',
+    '  ),',
+    ');',
+    '',
+  ].join('\n');
+
+const canonicalReviewedCompanionSources = (
+  verticalPath: string,
+  contribution: GovernedReadContribution,
+  sharedApi: string,
+  loaded: LoadedContributionSources,
+): LoadedContributionSources => {
+  const companion = reviewedReadCompanions.get(`${path.posix.basename(verticalPath)}/${contribution.name}`);
+  if (companion === undefined || contribution.kind !== MODULE_API_KIND) {
+    return loaded;
+  }
+  const endpoint = companion.contractEndpoint.exec(loaded.contractSource)?.[0];
+  const tailStart = loaded.serverSource.indexOf(companion.serverTailMarker);
+  const serverTail = tailStart === -1 ? undefined : loaded.serverSource.slice(tailStart);
+  if (
+    endpoint === undefined ||
+    serverTail === undefined ||
+    !loaded.serverSource.includes(companion.serverImports) ||
+    sha256OfNormalizedSource(endpoint) !== companion.contractEndpointSha256 ||
+    sha256OfNormalizedSource(companion.serverImports) !== companion.serverImportsSha256 ||
+    sha256OfNormalizedSource(serverTail) !== companion.serverTailSha256
+  ) {
+    return loaded;
+  }
+  const importsReplaced = loaded.serverSource.replace(
+    companion.serverImports,
+    "import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';\n",
+  );
+  return {
+    ...loaded,
+    contractSource: loaded.contractSource.replace(endpoint, '\n'),
+    serverSource: `${importsReplaced.slice(0, importsReplaced.indexOf(companion.serverTailMarker))}${canonicalReadApiLiveTail(
+      toCamelCase(contribution.name),
+      contributionGroup(contribution.kind, contribution.name),
+      governedApiBinding(sharedApi) ?? '',
+    )}`,
+  };
+};
 
 const hasCompleteGeneratedContribution = (
   sources: ReadonlyMap<string, string>,
@@ -3614,7 +4253,8 @@ const hasCompleteGeneratedContribution = (
     context.diagnostics?.push(`${contribution.name}: missing source or provenance marker`);
     return false;
   }
-  const { clientSource, contractImport, contractSource, readImport, readSource, serverSource } = loaded;
+  const { clientSource, contractImport, contractSource, readImport, readSource, serverSource } =
+    canonicalReviewedCompanionSources(verticalPath, contribution, context.sharedApi, loaded);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
   const checks = {
     client: hasClientContract(clientSource, contribution, group, apiValue, context.deploymentAppId, contractImport),
@@ -3652,6 +4292,7 @@ const hasCompleteGeneratedContribution = (
       schemaStem,
       `../shared/apis/${contribution.contractStem}.ts`,
       governedApiBinding(context.sharedApi) ?? '',
+      context.deploymentAppId,
     ),
   };
   const failed = Object.entries(checks)
@@ -3731,6 +4372,7 @@ export const hasGeneratedGovernedServerContract = (
   source: string,
   exportedName: string,
   sharedApi: string,
+  audience?: string,
 ): boolean => {
   const camel = exportedName.replace(/ReadApiLive$/u, '');
   const readImport =
@@ -3757,6 +4399,7 @@ export const hasGeneratedGovernedServerContract = (
       schemaStem,
       `../shared/apis/${stem}.ts`,
       governedApiBinding(sharedApi) ?? '',
+      audience,
     )
   );
 };

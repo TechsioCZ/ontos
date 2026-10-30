@@ -29,70 +29,75 @@ const scope = {
 };
 
 describe('Product create initial Variant history', () => {
-  it.effect('appends exactly one matching WIP Variant revision in the scoped transaction', () =>
-    Effect.gen(function* createInitialVariantRevisionCase() {
-      const writes: [unknown, Record<string, unknown>][] = [];
-      const now = new Date('2026-09-17T10:00:00.000Z');
-      const transaction = {
-        insert: (table: unknown) => ({
-          values: (value: Record<string, unknown>) => {
-            writes.push([table, value]);
-            return Effect.succeed([]);
-          },
-        }),
-        select: () => ({
-          from: (table: unknown) => ({
-            where: () =>
-              table === productLocalizedFacts
-                ? Effect.succeed([])
-                : {
-                    limit: () => {
-                      expect(table).toBe(products);
-                      return Effect.succeed([
-                        { ...writes[0]?.[1], createdAt: now, currentRevision: 1, updatedAt: now },
-                      ]);
-                    },
-                    orderBy: () => {
-                      expect(table).toBe(productVariants);
-                      return Effect.succeed([{ ...writes[1]?.[1], createdAt: now }]);
-                    },
-                  },
-          }),
-        }),
-      };
-      // @ts-expect-error Only the Product create query chains are exercised.
-      const persistence = yield* catalogPersistenceForScope(transaction, scope);
-      const outcome = yield* persistence.create({
-        actionInvocationId,
-        // oxlint-disable-next-line sonarjs/no-undefined-assignment -- Create input explicitly models the absent optional description.
-        description: undefined,
-        name: 'New product',
-        principalId,
-        reason: 'Initial catalog record',
-        tenantId,
-        variantId,
-      });
-      expect(outcome).toHaveProperty('variantId', variantId);
-      expect(writes.map(([table]) => table)).toEqual([
-        products,
-        productVariants,
-        productVariantRevisions,
-        productRevisions,
-      ]);
-      expect(writes[2]?.[1]).toMatchObject({
-        actingPrincipalId: principalId,
-        actionInvocationId,
-        changeKind: 'CREATED',
-        combinationAxisRevision: null,
-        combinationKey: null,
-        evidenceRefs: [],
-        lifecycleState: 'WORK_IN_PROGRESS',
-        productId: writes[0]?.[1].productId,
-        reason: 'Initial catalog record',
-        revision: 1,
-        tenantId,
-        variantId,
-      });
-    }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
+  for (const reason of [undefined, 'Initial catalog record']) {
+    it.effect(
+      `appends matching Product and WIP Variant history with ${reason === undefined ? 'absent' : 'real'} reason`,
+      () =>
+        Effect.gen(function* createInitialVariantRevisionCase() {
+          const writes: [unknown, Record<string, unknown>][] = [];
+          const now = new Date('2026-09-17T10:00:00.000Z');
+          const transaction = {
+            insert: (table: unknown) => ({
+              values: (value: Record<string, unknown>) => {
+                writes.push([table, value]);
+                return Effect.succeed([]);
+              },
+            }),
+            select: () => ({
+              from: (table: unknown) => ({
+                where: () =>
+                  table === productLocalizedFacts
+                    ? Effect.succeed([])
+                    : {
+                        limit: () => {
+                          expect(table).toBe(products);
+                          return Effect.succeed([
+                            { ...writes[0]?.[1], createdAt: now, currentRevision: 1, updatedAt: now },
+                          ]);
+                        },
+                        orderBy: () => {
+                          expect(table).toBe(productVariants);
+                          return Effect.succeed([{ ...writes[1]?.[1], createdAt: now }]);
+                        },
+                      },
+              }),
+            }),
+          };
+          // @ts-expect-error Only the Product create query chains are exercised.
+          const persistence = yield* catalogPersistenceForScope(transaction, scope);
+          const outcome = yield* persistence.create({
+            actionInvocationId,
+            // oxlint-disable-next-line sonarjs/no-undefined-assignment -- Create input explicitly models the absent optional description.
+            description: undefined,
+            name: 'New product',
+            principalId,
+            reason,
+            tenantId,
+            variantId,
+          });
+          expect(outcome).toHaveProperty('variantId', variantId);
+          expect(writes.map(([table]) => table)).toEqual([
+            products,
+            productVariants,
+            productVariantRevisions,
+            productRevisions,
+          ]);
+          expect(writes[3]?.[1]).toMatchObject({ changeKind: 'CREATED', reason: reason ?? null });
+          expect(writes[2]?.[1]).toMatchObject({
+            actingPrincipalId: principalId,
+            actionInvocationId,
+            changeKind: 'CREATED',
+            combinationAxisRevision: null,
+            combinationKey: null,
+            evidenceRefs: [],
+            lifecycleState: 'WORK_IN_PROGRESS',
+            productId: writes[0]?.[1].productId,
+            reason: reason ?? null,
+            revision: 1,
+            tenantId,
+            variantId,
+          });
+        }).pipe(Effect.provide(NodeCrypto.layer)),
+    );
+  }
 });

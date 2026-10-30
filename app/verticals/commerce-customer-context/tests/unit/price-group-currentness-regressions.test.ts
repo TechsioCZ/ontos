@@ -242,13 +242,19 @@ const scheduleServices = () => {
 };
 
 const contextFor = <Events extends DomainEventContractMap>(
-  descriptor: { readonly accessEvidencePolicy: ActionAccessEvidencePolicy; readonly domainEvents: Events },
+  descriptor: {
+    readonly accessEvidencePolicy: ActionAccessEvidencePolicy;
+    readonly auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>;
+    readonly domainEvents: Events;
+  },
   services: AssignCounterpartyPriceGroupServices,
 ) => {
   const collector = createActionCollector(
     descriptor.domainEvents,
     'commerce.customer-context',
     descriptor.accessEvidencePolicy,
+    descriptor.auditEvidenceSchema,
+    originalCompositionRevision,
   );
   return {
     actionInvocationId: crypto.randomUUID(),

@@ -28,6 +28,7 @@ import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
 import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
 import { StaffRoutePreloadContext, useIdleRoutePreload } from './use-idle-route-preload.ts';
+import { useHydratedMarker } from './use-hydrated.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -854,6 +855,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const guide = demoGuideFor(props.currentLegalEntityId);
   const guideOpen = useDemoGuideOpen();
   const guideWidth = useDemoGuideWidth();
+  const hydrated = useHydratedMarker();
   const guideVisible = guide !== undefined && guideOpen && !props.logoutPending;
   // The saved width is re-fitted to the current screen by CSS, next to the expanded or icon-only sidebar.
   const sidebarStyle: SidebarOffsetStyle = {
@@ -905,7 +907,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                   <DemoGuideToggleButton open={guideOpen} />
                 </Header.ActionItem>
               )}
-              <Header.ActionItem>
+              <Header.ActionItem data-hydrated={hydrated}>
                 <DashboardAccountMenu
                   identity={props.identity}
                   logoutPending={props.logoutPending}

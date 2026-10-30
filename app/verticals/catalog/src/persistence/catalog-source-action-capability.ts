@@ -1,4 +1,4 @@
-import type { OperationalScope } from '@app/core-runtime';
+import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import { Context } from 'effect';
 import type { Schema } from 'effect';
 
@@ -14,9 +14,13 @@ export interface CatalogSourceActionOperationContext {
   readonly principalId: string;
 }
 
+export interface CatalogLocalOverrideOperationContext extends CatalogSourceActionOperationContext {
+  readonly recordDataAccess: ActionHandlerContext<Readonly<Record<string, never>>>['recordDataAccess'];
+}
+
 export interface CatalogLocalOverrideActionPersistence {
   readonly localOverrideAt: (
-    context: CatalogSourceActionOperationContext,
+    context: CatalogLocalOverrideOperationContext,
   ) => CatalogLocalOverrideOperations<Schema.Json>;
 }
 

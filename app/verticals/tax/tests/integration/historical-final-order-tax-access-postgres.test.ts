@@ -8,6 +8,7 @@ import {
   DatabaseConfig,
   ModuleStateDeniedError,
   ReadHandlerNotFound,
+  ReadHandlerUnavailable,
   ReadPermissionDenied,
   ReadRuntime,
   ReadRuntimeLive,
@@ -421,6 +422,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   const grant = relationship('context_permission', permissionId, 'grantee', 'principal', principalId);
   return {
     changeRelationships,
+    compositionRevision: snapshot.composition.revision,
     evaluate,
     final,
     grant,
@@ -445,6 +447,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('historical final Orde
           const active = yield* test.readFinal();
           expect(active.handoff).toEqual(test.final.handoff);
           yield* test.evaluate();
+          for (const state of ['read_only', 'deprecated']) {
+            yield* test.setState(state);
+            expect(yield* test.readFinal()).toEqual(active);
+          }
           for (const state of ['inactive', 'suspended', 'archived']) {
             yield* test.setState(state);
             expect(yield* test.readFinal()).toEqual(active);
@@ -453,6 +459,24 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('historical final Orde
           }
           yield* test.setState('quarantined');
           expect(Schema.is(ModuleStateDeniedError)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
+          yield* Effect.scoped(
+            Effect.gen(function* missingModuleState() {
+              yield* Effect.acquireRelease(
+                test.query('DELETE FROM core.tenant_module_states WHERE tenant_id=$1 AND module_key=$2', [
+                  test.tenantId,
+                  MODULE,
+                ]),
+                () =>
+                  test
+                    .query(
+                      "INSERT INTO core.tenant_module_states (tenant_id,module_key,state) VALUES ($1,$2,'quarantined')",
+                      [test.tenantId, MODULE],
+                    )
+                    .pipe(Effect.orDie),
+              );
+              expect(Schema.is(ModuleStateDeniedError)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
+            }),
+          );
         }),
       ),
   );
@@ -475,6 +499,43 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('historical final Orde
           [test.tenantId, test.sellerId, test.payload.submissionRef],
         );
         expect(rows.rows).toEqual([{ count: 1 }]);
+      }),
+    ),
+  );
+
+  suite.effect('E31: invalid Composition denies the registered historical final before owner lookup', () =>
+    Effect.scoped(
+      Effect.gen(function* historicalCompositionAuthority() {
+        const test = yield* fixture();
+        const active = yield* test.readFinal();
+        const saved = yield* test.query('SELECT phase FROM core.application_composition_authority WHERE revision=$1', [
+          test.compositionRevision,
+        ]);
+        const [authority] = yield* Schema.decodeUnknownEffect(
+          Schema.NonEmptyArray(Schema.Struct({ phase: Schema.String })),
+        )(saved.rows);
+        yield* Effect.scoped(
+          Effect.gen(function* drainingComposition() {
+            yield* Effect.acquireRelease(
+              test.query("UPDATE core.application_composition_authority SET phase='draining' WHERE revision=$1", [
+                test.compositionRevision,
+              ]),
+              () =>
+                test
+                  .query('UPDATE core.application_composition_authority SET phase=$1 WHERE revision=$2', [
+                    authority.phase,
+                    test.compositionRevision,
+                  ])
+                  .pipe(Effect.orDie),
+            );
+            const failure = yield* test.readFinal().pipe(Effect.flip);
+            expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+            expect(failure).toMatchObject({
+              reason: 'The approved Application Composition no longer admits this Read',
+            });
+          }),
+        );
+        expect(yield* test.readFinal()).toEqual(active);
       }),
     ),
   );

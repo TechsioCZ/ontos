@@ -19,19 +19,19 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
-import { Logger, References, Tracer } from 'effect';
+import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
@@ -71,6 +71,7 @@ import { stockSharingEligibilityResolutionReadApiLive } from './stock-sharing-el
 
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { inventoryApi, inventoryOperationContexts } from '../shared/api.ts';
+import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../src/persistence/import-source-assertion-owner-authorization.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
@@ -123,6 +124,7 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
+      importSourceAssertionOwnerAuthorizationOverlayLive,
       ContextAccessLive,
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
@@ -131,7 +133,7 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
+  Layer.provide(nodeCryptoLayer),
 );
 const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
@@ -139,7 +141,7 @@ const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
+  Layer.provide(nodeCryptoLayer),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -168,50 +170,41 @@ export const makeInventoryApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     inventoryReadinessLayer,
     // <generated-governed-http-handler-layers>
-    catalogToStockBindingResolutionReadApiLive,
-    changeStockSharingEligibilityActionApiLive,
-    commitmentProtectionVerificationReadApiLive,
-    compensateInventoryPreCommitActionApiLive,
-    correctCatalogToStockBindingActionApiLive,
-    correctExternalStockCorrelationActionApiLive,
-    correctStockPositionActionApiLive,
-    createInventoryReservationActionApiLive,
-    currentRelevantStockPositionSetReadApiLive,
-    currentStockEvidenceForAvailabilityReadApiLive,
-    endCatalogToStockBindingActionApiLive,
-    endExternalStockCorrelationActionApiLive,
-    endStockSharingEligibilityActionApiLive,
-    establishCatalogToStockBindingActionApiLive,
-    establishCommitmentProtectionActionApiLive,
-    establishExternalStockCorrelationActionApiLive,
-    establishStockSharingEligibilityActionApiLive,
-    importSourceAssertionActionApiLive,
-    inventoryBackendConfigurationCurrentReadApiLive,
-    inventoryEffectOutcomeReadApiLive,
-    inventoryReconciliationEvidenceReadApiLive,
-    inventoryReservationDetailReadApiLive,
-    inventorySourceConflictDetailReadApiLive,
-    recoverInventoryEffectActionApiLive,
-    releaseInventoryReservationActionApiLive,
-    reservationConfirmationVerificationReadApiLive,
-    resolveInventorySourceConflictActionApiLive,
-    selectInventoryBackendActionApiLive,
-    stockIssueActionApiLive,
-    stockReceiptActionApiLive,
-    stockSharingEligibilityResolutionReadApiLive,
+    catalogToStockBindingResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    changeStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    commitmentProtectionVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    compensateInventoryPreCommitActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    correctCatalogToStockBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    correctExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    correctStockPositionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    createInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    currentRelevantStockPositionSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    currentStockEvidenceForAvailabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    endCatalogToStockBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    endExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    endStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    establishCatalogToStockBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    establishCommitmentProtectionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    establishExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    establishStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    importSourceAssertionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    inventoryBackendConfigurationCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    inventoryEffectOutcomeReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    inventoryReconciliationEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    inventoryReservationDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    inventorySourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    recoverInventoryEffectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    releaseInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    reservationConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    resolveInventorySourceConflictActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    selectInventoryBackendActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    stockIssueActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    stockReceiptActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    stockSharingEligibilityResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  );
-  const requestServicesLive = Layer.mergeAll(
-    governedReadRuntimeLive,
-    governedActionRuntimeLive,
-    actionPrincipalVerifierLive,
-    gatewayAssertionRedemption,
   ).pipe(
-    Layer.provideMerge(compositionSourceLive),
-    Layer.provideMerge(runtimeObservabilityLive),
-    Layer.provideMerge(databaseIdentitiesLive),
-    Layer.provideMerge(NodeCrypto.layer),
-    Layer.orDie,
+    Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
+    Layer.provide(compositionSourceLive),
   );
   type InventoryHandlerRequirements =
     | (typeof apiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
@@ -221,14 +214,17 @@ export const makeInventoryApiRuntime = (
   const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
     'InventoryApi',
     InventoryApiGroups,
-    InventoryHandlerRequirements,
-    Layer.Success<typeof requestServicesLive>
-  >['handlers'] = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
+    InventoryHandlerRequirements
+  >['handlers'] = apiHandlersLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),
+    ),
+    Layer.orDie,
+  );
 
   return assembleEffectBffRuntime({
     api: inventoryApi,
     handlers: resolvedApiHandlersLive,
-    services: requestServicesLive,
   });
 };
 

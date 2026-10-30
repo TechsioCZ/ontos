@@ -20,11 +20,11 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Logger, References, Result, Schema, Tracer } from 'effect';
+import { Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
@@ -34,8 +34,8 @@ import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/owner-a
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
@@ -115,9 +115,8 @@ export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentO
 
 const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRuntimeLive).pipe(
   Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
 );
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
@@ -143,9 +142,8 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
   ),
 );
 const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -177,40 +175,32 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
   const apiHandlersLive = Layer.mergeAll(
     assortmentReadinessLayer,
     // <generated-governed-http-handler-layers>
-    configurationReadApiLive,
-    createApplicabilityBindingActionApiLive,
-    createClosedAssortmentBoundaryActionApiLive,
-    createRuleActionApiLive,
-    createRuleRevisionActionApiLive,
-    decisionExplanationReadApiLive,
-    endApplicabilityBindingActionApiLive,
-    endClosedAssortmentBoundaryActionApiLive,
-    issueAssortmentCommitmentConfirmationActionApiLive,
-    purchaseReadApiLive,
-    replaceApplicabilityBindingActionApiLive,
-    replaceClosedAssortmentBoundaryActionApiLive,
-    retireRuleActionApiLive,
-    visibilityReadApiLive,
+    configurationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    createApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    createClosedAssortmentBoundaryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    createRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    createRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    decisionExplanationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    endApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    endClosedAssortmentBoundaryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    issueAssortmentCommitmentConfirmationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    purchaseReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    replaceApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    replaceClosedAssortmentBoundaryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    retireRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    visibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  );
-  const requestServicesLive = Layer.mergeAll(
-    governedReadRuntimeLive,
-    governedActionRuntimeLive,
-    actionPrincipalVerifierLive,
-    gatewayAssertionRedemption,
-  ).pipe(
-    Layer.provideMerge(runtimeObservabilityLive),
-    Layer.provideMerge(compositionSourceLive),
-    Layer.provideMerge(databaseIdentitiesLive),
-    Layer.provideMerge(NodeCrypto.layer),
+  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive, databaseIdentitiesLive),
+    ),
     Layer.orDie,
   );
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
 
   return assembleEffectBffRuntime({
     api: assortmentApi,
     handlers: resolvedApiHandlersLive,
-    services: requestServicesLive,
   });
 };
 

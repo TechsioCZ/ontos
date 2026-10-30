@@ -1,4 +1,4 @@
-import { Predicate, Schema } from 'effect';
+import { Predicate, Schema, SchemaAST } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -126,11 +126,13 @@ for (const fixture of fixtures) {
     expect(Schema.encodeUnknownSync(actual)(actualDecoded)).toEqual(
       Schema.encodeUnknownSync(expected)(expectedDecoded),
     );
-    expect(actual.ast.annotations?.['httpApiStatus']).toBe(fixture.status);
-    expect(actual.ast.annotations?.['httpApiStatus']).toBe(expected.ast.annotations?.['httpApiStatus']);
-    const encoding = actual.ast.annotations?.['~httpApiEncoding'];
+    expect(Schema.resolveAnnotationsKey(actual)?.httpApiStatus).toBe(fixture.status);
+    expect(Schema.resolveAnnotationsKey(actual)?.httpApiStatus).toBe(
+      Schema.resolveAnnotationsKey(expected)?.httpApiStatus,
+    );
+    const encoding = SchemaAST.resolveAt<unknown>('~httpApiEncoding')(actual.ast);
     expect(Predicate.isTagged(encoding, 'Json')).toBe(true);
-    expect(encoding).toEqual(expected.ast.annotations?.['~httpApiEncoding']);
+    expect(encoding).toEqual(SchemaAST.resolveAt<unknown>('~httpApiEncoding')(expected.ast));
     expect(encoding).toMatchObject({ contentType: problemDetailsContentType });
     expect(() => Schema.decodeUnknownSync(actual)({ ...problem, status: 418 })).toThrow();
     expect(() =>

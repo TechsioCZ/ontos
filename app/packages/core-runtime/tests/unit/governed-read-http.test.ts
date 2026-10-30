@@ -1,4 +1,5 @@
-import { Cause, Effect, Exit, Logger, Option, Redacted, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Cause, DateTime, Effect, Exit, Logger, Option, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -29,6 +30,7 @@ import { ReadPolicyEvaluationError } from '../../src/reads/read-policy-evaluatio
 import { ReadResultValidationError } from '../../src/reads/read-result-validation-error.ts';
 import { ReadRuntime } from '../../src/reads/runtime.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
+import { makeReadTestHarness } from '../../src/testing/reads.ts';
 
 const problem = <const Kind extends string, const Status extends number>(kind: Kind, status: Status) => ({
   kind,
@@ -187,8 +189,7 @@ const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
 
 interface ObservedReadInput {
   readonly audience?: string;
-  readonly decodedInput?: unknown;
-  readonly input?: unknown;
+  readonly input: unknown;
 }
 const observed: ObservedReadInput[] = [];
 const readRuntime: ReadRuntimeService = {
@@ -295,6 +296,114 @@ it.effect('reports authentication and response encoding separately without expos
     expect(entries.join('\n')).not.toMatch(/private-|better-auth|00000000/u);
   }),
 );
+
+const timestampInputSchema = Schema.Struct({ requestedAt: Schema.DateTimeUtcFromString });
+const timestampRegistration = defineRead(
+  {
+    accessKind: 'detail',
+    entrypoint: registration.descriptor.entrypoint,
+    evidencePolicy: registration.descriptor.evidencePolicy,
+    inputSchema: timestampInputSchema,
+    legalEntityScope: 'forbidden',
+    owningModuleKey: 'core.shell',
+    permissionTarget: 'tenant',
+    policies: [],
+    readKey: 'core.shell.governed-http-timestamp-test',
+    resultSchema: Schema.Struct({ requestedAt: Schema.DateTimeUtc }),
+    schemaVersion: '1',
+  },
+  (input) =>
+    Effect.succeed({
+      evidence: { resultCount: 1 },
+      result: { requestedAt: input.requestedAt },
+    }),
+  () => Effect.succeed({}),
+  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+);
+const timestampText = '2026-10-05T12:00:00.000Z';
+const timestampRequest = {
+  headers: Headers.fromInput({ authorization: 'Bearer private', 'x-correlation-id': 'timestamp-read' }),
+};
+const timestampReadHarness = (permissionDecision: 'allowed' | 'denied' = 'allowed') =>
+  makeReadTestHarness({
+    executeOwnerQuery: () => Effect.die('Unexpected owner SQL in timestamp HTTP test'),
+    operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(timestampText)),
+    ownerAuthorizationDecision: 'allowed',
+    permissionDecision,
+    scope: { ...principal, correlationId: 'timestamp-read' },
+  });
+
+it.layer(NodeCrypto.layer)('transformed governed-read HTTP payload', (suite) => {
+  suite.effect('re-encodes the decoded timestamp before the real Core Read lifecycle validates it', () =>
+    Effect.gen(function* transformedReadLifecycle() {
+      const harness = yield* timestampReadHarness();
+      const payload = yield* Schema.decodeUnknownEffect(timestampInputSchema)({ requestedAt: timestampText });
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration: timestampRegistration,
+      });
+      const result = yield* handler({ payload, request: timestampRequest }).pipe(
+        Effect.provideService(ReadRuntime, harness.runtime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+      );
+      expect(result).toEqual(payload);
+      expect(DateTime.formatIso(result.requestedAt)).toBe(timestampText);
+      expect(harness.snapshot().stages).toEqual([
+        'input_decoded',
+        'scope_validated',
+        'module_state_checked',
+        'permission_checked',
+        'policies_checked',
+        'scope_installed',
+        'handler_executed',
+        'result_decoded',
+        'evidence_persisted',
+      ]);
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+    }),
+  );
+
+  suite.effect('keeps malformed encoded timestamps rejected by the original Core input validator', () =>
+    Effect.gen(function* invalidTimestampReadLifecycle() {
+      const harness = yield* timestampReadHarness();
+      const failure = yield* harness.runtime
+        .runRead({
+          input: { requestedAt: 'not-a-timestamp' },
+          principal,
+          registration: timestampRegistration,
+          transport: { correlationId: 'timestamp-read' },
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
+      expect(harness.snapshot().stages).toEqual([]);
+      expect(harness.snapshot().statements).toEqual([]);
+      expect(harness.snapshot().evidenceWrites).toBe(0);
+    }),
+  );
+
+  suite.effect('keeps real Core permission denial after transformed input validation and before the handler', () =>
+    Effect.gen(function* deniedTimestampReadLifecycle() {
+      const harness = yield* timestampReadHarness('denied');
+      const payload = yield* Schema.decodeUnknownEffect(timestampInputSchema)({ requestedAt: timestampText });
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration: timestampRegistration,
+      });
+      const failure = yield* handler({ payload, request: timestampRequest }).pipe(
+        Effect.provideService(ReadRuntime, harness.runtime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        Effect.flip,
+      );
+      expect(failure).toEqual(problems.forbidden());
+      expect(harness.snapshot().stages).toContain('input_decoded');
+      expect(harness.snapshot().stages).not.toContain('handler_executed');
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+    }),
+  );
+});
 
 it.effect('validates correlation before authentication or ReadRuntime acquisition', () =>
   Effect.gen(function* validateCorrelationFirst() {
@@ -416,8 +525,7 @@ it.effect('passes only payload, trusted principal, registration, and correlation
     expect(result).toEqual({ ok: true });
     expect(observed).toEqual([
       {
-        decodedInput: payload,
-        inputFormat: 'decoded',
+        input: payload,
         principal,
         registration,
         timings: expect.any(Object),
@@ -666,7 +774,7 @@ it.effect('uses the configured receiver audience instead of an HTTP audience hea
   }),
 );
 
-it.effect('passes transformed framework payloads through the explicit decoded runtime entry', () =>
+it.effect('re-encodes transformed framework payloads before the runtime validates them', () =>
   Effect.gen(function* transformedHttpPayload() {
     const inputSchema = Schema.Struct({
       at: Schema.DateTimeUtcFromString,
@@ -709,8 +817,7 @@ it.effect('passes transformed framework payloads through the explicit decoded ru
     );
     expect(result).toEqual({ ok: true });
     expect(observed).toHaveLength(1);
-    expect(observed[0]?.input).toBeUndefined();
-    expect(observed[0]?.decodedInput).toEqual(payload);
-    expect(yield* Schema.decodeUnknownEffect(Schema.toType(inputSchema))(observed[0]?.decodedInput)).toEqual(payload);
+    expect(observed[0]?.input).toEqual(wireInput);
+    expect(yield* Schema.decodeUnknownEffect(inputSchema)(observed[0]?.input)).toEqual(payload);
   }),
 );

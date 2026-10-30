@@ -41,6 +41,10 @@ export const CurrentPricingDecisionRequestSchema = Schema.Struct({
 );
 export type CurrentPricingDecisionRequest = typeof CurrentPricingDecisionRequestSchema.Type;
 
+/** Pricing's whole-evaluation identity. Authority still requires the exact owner-verified input. */
+export const currentPricingDecisionCandidateRef = ({ decision }: CurrentPricingDecisionRequest): string =>
+  `pricing-current:${decision.tenantId}:${decision.purchasingContext.contextRef}:${decision.purchasingContext.contextRevision}`;
+
 export const CurrentPricingDecisionProjectionVersionSchema = Schema.Literal('CURRENT_PRICING_DECISION_CUSTOMER_V1');
 export type CurrentPricingDecisionProjectionVersion = typeof CurrentPricingDecisionProjectionVersionSchema.Type;
 

@@ -320,3 +320,39 @@ it.layer(NodeFileSystem.layer)('read package boundary', (suite) => {
     }),
   );
 });
+
+it('declares two independent resource reads while rejecting duplicate canonical and oversized plans', () => {
+  interface Input {
+    readonly kind: 'GUEST' | 'PROFILE';
+  }
+  const declaration = () =>
+    defineReadConditionalPermission<Input, Input>({
+      branches: {
+        GUEST: { requiredKinds: ['module'], resolve: () => [{ kind: 'module', moduleId: 'core.shell' }] },
+        PROFILE: {
+          requiredKinds: ['business_permission', 'resource_read', 'resource_read'],
+          resolve: () => [],
+        },
+      },
+      permissionKey: 'module.access',
+      select: (input) => input,
+    });
+  expect(declaration).not.toThrow();
+  for (const requiredKinds of [
+    ['module', 'module'],
+    ['business_permission', 'business_permission'],
+    ['resource_read'],
+    ['module', 'resource_read', 'resource_read', 'resource_read'],
+  ] as const) {
+    expect(() =>
+      defineReadConditionalPermission<Input, Input>({
+        branches: {
+          GUEST: { requiredKinds: ['module'], resolve: () => [] },
+          PROFILE: { requiredKinds, resolve: () => [] },
+        },
+        permissionKey: 'module.access',
+        select: (input) => input,
+      }),
+    ).toThrow();
+  }
+});

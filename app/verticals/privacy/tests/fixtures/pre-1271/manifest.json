@@ -1,0 +1,33 @@
+{
+  "commit": "ed7ecb1fcf395ccfbffab7c2bff3edf0c0c15a2f",
+  "files": [
+    {
+      "path": "app/verticals/privacy/shared/actions/privacy-operations.ts",
+      "sha256": "085519988bd64e4ca194fc59976adc2e7f3e4ac6075575189ea29375a99f2d32"
+    },
+    {
+      "path": "app/verticals/privacy/shared/domain/privacy-dsr.ts",
+      "sha256": "f5e33695f4188c89ba992ae8647a9e5940d3344c6ee1777a22d41b5ecbd25eab"
+    },
+    {
+      "path": "app/verticals/privacy/shared/privacy-queries.ts",
+      "sha256": "27c4817da2a5295f75a74a2b3f5c760c0440608da0882aa2e242a5587e9392ed"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/record-dsr-deadline.action.ts",
+      "sha256": "5a86fd946efc33e03df40ba728cbbf183603d08b382784c566dae39032a3b85f"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/dispatch-privacy-measure.action.ts",
+      "sha256": "dc8a3848294951d5f54ce8758e506ca556ce37c42911c2a693c406a02a5c8132"
+    },
+    {
+      "path": "app/verticals/privacy/src/persistence/privacy-operation-postgres-repository.ts",
+      "sha256": "05e3e1c2bc274fac0194157d96e297df8393e202030c5be78a8ff9e4ea2c8bb4"
+    },
+    {
+      "path": "app/verticals/privacy/src/persistence/privacy-operation-repository.ts",
+      "sha256": "7e186e6fb0d4fafcad863c5a889b82e110a55835986fca342b137d7f733bd008"
+    }
+  ]
+}

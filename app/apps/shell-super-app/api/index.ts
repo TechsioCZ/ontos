@@ -89,12 +89,13 @@ import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest 
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
+import { dispatchModuleApiRequest } from '../src/module-api/transport.ts';
+import { ShellTransportLive } from './shell-transport.ts';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import { listDeliveries } from '@app/email-delivery/deliveries';
 import { PgClient } from '@effect/sql-pg';
 
-import { EmailDeliveryRequests, ShellEmailReceiptHandlersLive, EmailTransportLive } from './email/transport.ts';
+import { EmailDeliveryRequests, ShellEmailReceiptHandlersLive } from './email/transport.ts';
 import type { EmailDeliveryQuery } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
 
@@ -177,8 +178,6 @@ import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-
 import { AuthConfigLive } from './auth/config.ts';
 import { OAuthFlowLive } from './auth/db/oauth-flow-live.ts';
 import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
-import { McpEndpointTransportLive, McpMetadataTransportLive } from './mcp/transport.ts';
-import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   ExternalIdentityProviderContextAccessLive,
   ExternalIdentityProviderDeploymentLive,
@@ -211,7 +210,6 @@ import {
 import type { SupportImpersonationError } from './auth/impersonation-service.ts';
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { canSelectTenantContext, validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
-import { InvitationTransportLive } from './auth/invitation/transport.ts';
 import {
   AuthPersistenceLive,
   BetterAuthNativeAdapterLive,
@@ -1004,7 +1002,7 @@ const forgetSessionGatewayAssertions = Effect.fn('shell.authentication.forgetGat
   function* forgetSessionGatewayAssertionsEffect(headers: Headers) {
     const authentication = yield* AuthenticationService;
     const gatewayIssuer = yield* GatewayIssuer;
-    const session = yield* authentication.resolveShellContext(headers).pipe(Effect.option);
+    const session = yield* Effect.option(authentication.resolveShellContext(headers));
     if (Option.isSome(session) && session.value.state !== 'anonymous') {
       const { authContextRef } = session.value.principal;
       if (authContextRef !== undefined) {
@@ -1417,14 +1415,15 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             return base;
           }
           const assertions = yield* Effect.forkChild(
-            issueDocumentGatewayAssertions(
-              context.principal,
-              documentComposition.compositionRevision,
-              documentComposition.gatewayAudiences,
-            ).pipe(
-              observeGatewayPhase('document-assertions'),
-              Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
-              Effect.option,
+            Effect.option(
+              issueDocumentGatewayAssertions(
+                context.principal,
+                documentComposition.compositionRevision,
+                documentComposition.gatewayAudiences,
+              ).pipe(
+                observeGatewayPhase('document-assertions'),
+                Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
+              ),
             ),
             { startImmediately: true },
           );
@@ -3005,7 +3004,7 @@ const coreReadLegalEntityDetailGroupLive = HttpApiBuilder.group(
 // @ontos-codesmith-core-read-server-groups:end
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
-  Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
+  Layer.effect(Tracer.Tracer, Tracer.Tracer),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
@@ -3051,40 +3050,46 @@ const mcpRequestHeadersSchema = Schema.Struct({
 
 // Own each HTTP request's correlation before SDK callbacks capture services; standard MCP clients need no custom header.
 // Invalid supplied metadata stays unbound. Only the caller can supply an Action's durable idempotency key.
+const bindMcpRequestIdentity = Effect.fn('Mcp.bindRequestIdentity')(function* bindMcpRequestIdentity(
+  handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
+  generatedCorrelationId: Effect.Effect<Option.Option<string>>,
+): Effect.fn.Return<HttpServerResponse.HttpServerResponse, Types.unhandled, HttpServerRequest.HttpServerRequest> {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const headers = yield* Effect.option(Schema.decodeUnknownEffect(mcpRequestHeadersSchema)(request.headers));
+  if (Option.isNone(headers)) {
+    return yield* handler;
+  }
+  const correlationId =
+    headers.value['x-correlation-id'] === undefined
+      ? yield* generatedCorrelationId
+      : Option.some(headers.value['x-correlation-id']);
+  if (Option.isNone(correlationId)) {
+    return yield* handler;
+  }
+  let identity: OperationalScopeRequest = { correlationId: correlationId.value };
+  if (headers.value['x-trace-id'] !== undefined) {
+    identity = { ...identity, traceId: headers.value['x-trace-id'] };
+  }
+  const forwarded = request.modify({
+    headers: HttpHeaders.set(request.headers, 'x-correlation-id', correlationId.value),
+  });
+  const readHandler = handler.pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, forwarded),
+    Effect.provideService(AgentReadRequestIdentity, identity),
+  );
+  const idempotencyKey = headers.value['idempotency-key'];
+  return yield* idempotencyKey === undefined
+    ? readHandler
+    : readHandler.pipe(Effect.provideService(AgentActionRequestIdentity, { ...identity, idempotencyKey }));
+});
+
 export const mcpRequestIdentityMiddleware = HttpRouter.middleware()(
   Effect.gen(function* makeMcpRequestIdentityMiddleware() {
     const crypto = yield* Crypto.Crypto;
-    return Effect.fn('Mcp.bindRequestIdentity')(function* bindMcpRequestIdentity(
-      handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
-    ) {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const headers = yield* Schema.decodeUnknownEffect(mcpRequestHeadersSchema)(request.headers).pipe(Effect.option);
-      if (Option.isNone(headers)) {
-        return yield* handler;
-      }
-      const correlationId =
-        headers.value['x-correlation-id'] === undefined
-          ? yield* crypto.randomUUIDv4().pipe(Effect.option)
-          : Option.some(headers.value['x-correlation-id']);
-      if (Option.isNone(correlationId)) {
-        return yield* handler;
-      }
-      let identity: OperationalScopeRequest = { correlationId: correlationId.value };
-      if (headers.value['x-trace-id'] !== undefined) {
-        identity = { ...identity, traceId: headers.value['x-trace-id'] };
-      }
-      const forwarded = request.modify({
-        headers: HttpHeaders.set(request.headers, 'x-correlation-id', correlationId.value),
-      });
-      const readHandler = handler.pipe(
-        Effect.provideService(HttpServerRequest.HttpServerRequest, forwarded),
-        Effect.provideService(AgentReadRequestIdentity, identity),
-      );
-      const idempotencyKey = headers.value['idempotency-key'];
-      return yield* idempotencyKey === undefined
-        ? readHandler
-        : readHandler.pipe(Effect.provideService(AgentActionRequestIdentity, { ...identity, idempotencyKey }));
-    });
+    // The router infers its error and requirement channels from this plain handler signature.
+    const generatedCorrelationId = Effect.option(crypto.randomUUIDv4());
+    return (handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>) =>
+      bindMcpRequestIdentity(handler, generatedCorrelationId);
   }),
 );
 
@@ -3274,14 +3279,19 @@ export const makeShellAuthenticationApiRuntime = (
     }),
   ).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)));
   const emailDeliveryRequestsLive = Layer.succeed(EmailDeliveryRequests, {
-    dispatch: Effect.gen(function* dispatchRequestEmailBatch() {
-      const database = yield* Layer.build(emailDatabaseLive);
-      return yield* dispatchEmailBatch.pipe(Effect.provideContext(database));
-    }).pipe(Effect.scoped),
-    list: Effect.fn('Shell.emailDeliveries')(function* listEmailDeliveries(query: EmailDeliveryQuery) {
-      const database = yield* Layer.build(emailDatabaseLive);
-      return yield* listDeliveries(query).pipe(Effect.provideContext(database));
-    }, Effect.scoped),
+    dispatch: Effect.scoped(
+      Effect.gen(function* dispatchRequestEmailBatch() {
+        const database = yield* Layer.build(emailDatabaseLive);
+        return yield* dispatchEmailBatch.pipe(Effect.provideContext(database));
+      }),
+    ),
+    list: (query: EmailDeliveryQuery) =>
+      Effect.scoped(
+        Effect.gen(function* listEmailDeliveries() {
+          const database = yield* Layer.build(emailDatabaseLive);
+          return yield* listDeliveries(query).pipe(Effect.provideContext(database));
+        }),
+      ).pipe(Effect.withSpan('Shell.emailDeliveries')),
   });
   const handlerDependenciesLive = Layer.mergeAll(
     emailDeliveryRequestsLive,
@@ -3317,6 +3327,21 @@ export const makeShellAuthenticationApiRuntime = (
     externalIdentityDeploymentLayer,
     OAuthFlowLive.pipe(Layer.provide(authPersistenceLive)),
   ).pipe(Layer.provideMerge(ShellCryptoLive));
+  // Built once with the API: the handlers and the Shell-owned transport routes build in one Layer and share these
+  // memoized service instances. A service that cannot be built is logged, and the runtime dies with it.
+  // The installed Outbox matcher (or no layer) is built from the same handler dependencies.
+  const apiServicesLive = Layer.mergeAll(outboxMatcherLayer).pipe(
+    Layer.provideMerge(handlerDependenciesLive),
+    Layer.provideMerge(activeApplicationCompositionLive),
+    Layer.provideMerge(compositionSourceLive),
+    Layer.provideMerge(ActionAuthorityLive),
+    Layer.provideMerge(Reactivity.layer),
+    Layer.provideMerge(databaseIdentitiesLive),
+    Layer.tapCause(logRequestServicesFailure),
+    Layer.orDie,
+  );
+
+  const mcpRequestIdentityLive = mcpRequestIdentityMiddleware.layer.pipe(Layer.provide(ShellCryptoLive));
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
     authenticationGroupLive,
@@ -3338,35 +3363,12 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  );
-  // Workers build these services for each request; handlers and transport routes share that request context.
-  const requestServicesLive = outboxMatcherLayer.pipe(
-    Layer.provideMerge(handlerDependenciesLive),
-    Layer.provideMerge(activeApplicationCompositionLive),
-    Layer.provideMerge(compositionSourceLive),
-    Layer.provideMerge(ActionAuthorityLive),
-    Layer.provideMerge(Reactivity.layer),
-    Layer.provideMerge(databaseIdentitiesLive),
-    Layer.tapCause(logRequestServicesFailure),
-    Layer.orDie,
-  );
+  ).pipe(Layer.provide(apiServicesLive));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    services: requestServicesLive,
-    transport: Layer.mergeAll(
-      ModuleApiTransportLive,
-      EmailTransportLive,
-      // Resolves the same per-request authentication service as the handlers, backed by the isolate's Better Auth instance.
-      OAuthServerTransportLive,
-      InvitationTransportLive,
-      // The MCP endpoint runs tools as the connection's principal, with the agent platform's request services.
-      McpEndpointTransportLive.pipe(
-        Layer.provide(mcpRequestIdentityMiddleware.layer.pipe(Layer.provide(ShellCryptoLive))),
-      ),
-      McpMetadataTransportLive,
-    ),
+    transport: ShellTransportLive.pipe(Layer.provide(mcpRequestIdentityLive), Layer.provide(apiServicesLive)),
   });
 };
 
@@ -3393,30 +3395,31 @@ const rootRouteHandler = Ref.makeUnsafe<Option.Option<ReturnType<typeof apiRunti
  * in-process (the request path is already rewritten to the BFF route without its prefix).
  */
 export const handleRootRoute = Effect.fn('Shell.handleRootRoute')(
-  function* handleRootRoute(request: Request) {
+  function* serveRootRoute(request: Request) {
     const resolved = yield* Ref.modify(rootRouteHandler, (handler) => {
       const instance = Option.getOrElse(handler, () => apiRuntime.createHandler());
       return [instance, Option.some(instance)] as const;
     });
     // The BFF owns the request scope; the Node edge forwards cancellation and never retries a request.
-    const signal = yield* Effect.abortSignal;
-    const forwarded = new Request(request, { signal: AbortSignal.any([request.signal, signal]) });
-    return yield* Effect.promise(resolved.handler.bind(resolved, forwarded, undefined));
+    return yield* Effect.promise((signal): PromiseLike<Response> =>
+      resolved.handler(new Request(request, { signal: AbortSignal.any([request.signal, signal]) })),
+    );
   },
-  Effect.scoped,
   Effect.timeout('30 seconds'),
   runEffectRequest,
 );
 
 /** The Node root aliases use the same scoped Better Auth service as the canonical BFF route. */
-export const handleOAuthMetadata = Effect.fn('Shell.handleOAuthMetadata')(
-  function* handleOAuthMetadata(request: Request) {
-    const services = yield* Layer.build(authenticationServiceLive);
-    const service = Context.get(services, AuthenticationService);
-    return yield* service.oauth === undefined
-      ? Effect.succeed(oauthNotFoundResponse())
-      : forwardOAuthRequest(service.oauth)(request);
-  },
-  Effect.scoped,
-  runEffectRequest,
-);
+export const handleOAuthMetadata = Effect.fn('Shell.handleOAuthMetadata')(function* serveOAuthMetadata(
+  request: Request,
+) {
+  return yield* Effect.scoped(
+    Effect.gen(function* forwardOAuthMetadata() {
+      const services = yield* Layer.build(authenticationServiceLive);
+      const service = Context.get(services, AuthenticationService);
+      return yield* service.oauth === undefined
+        ? Effect.succeed(oauthNotFoundResponse())
+        : forwardOAuthRequest(service.oauth)(request);
+    }),
+  );
+}, runEffectRequest);

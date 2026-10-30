@@ -141,13 +141,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-            legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-            tenantManagerRelations: [
-              'party_identity_manager',
-              'party_identity_reader',
-              'party_identity_reviewer',
-              'party_relationship_manager',
-            ],
             actionKeys: [
               addContactPointAction,
               addPartyOfficialIdentifierAction,
@@ -158,10 +151,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             ].map(({ descriptor }) => descriptor.actionKey),
             // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
             adminConnectionString: Redacted.make(connections.admin.connectionString),
-            audience: 'party-registry',
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: compositionSnapshot.composition.revision,
-            moduleKey: 'party.registry',
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),

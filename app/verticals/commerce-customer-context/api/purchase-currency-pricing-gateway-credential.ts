@@ -26,7 +26,7 @@ const configuration = Config.all({
 });
 
 type GatewayContextIssue = (
-  payload: { readonly audience: 'pricing'; readonly compositionRevision: string; readonly legalEntityId: string },
+  payload: { readonly audience: 'pricing'; readonly compositionRevision: string; readonly legalEntityId?: string },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 
@@ -44,14 +44,19 @@ export const makePurchaseCurrencyPricingGatewayCredentialIssuer = (
   issue: GatewayContextIssue = issueApiKeyGatewayContext,
 ): PurchaseCurrencyPricingGatewayCredentialIssuer => ({
   issue: Effect.fn('PurchaseCurrencyPricingGatewayCredentialIssuer.issue')(function* issueCredential(input) {
-    const response = yield* issue(
-      { audience: input.audience, compositionRevision: input.compositionRevision, legalEntityId: input.legalEntityId },
-      {
-        apiKey: configured.apiKey,
-        baseUrl: configured.shellBaseUrl,
-        requestCorrelation: input.requestCorrelation,
-      },
-    ).pipe(Effect.mapError((cause) => unavailable('The Pricing gateway credential could not be issued', cause)));
+    const gatewayContext =
+      input.legalEntityId === undefined
+        ? { audience: input.audience, compositionRevision: input.compositionRevision }
+        : {
+            audience: input.audience,
+            compositionRevision: input.compositionRevision,
+            legalEntityId: input.legalEntityId,
+          };
+    const response = yield* issue(gatewayContext, {
+      apiKey: configured.apiKey,
+      baseUrl: configured.shellBaseUrl,
+      requestCorrelation: input.requestCorrelation,
+    }).pipe(Effect.mapError((cause) => unavailable('The Pricing gateway credential could not be issued', cause)));
     if (response.compositionRevision !== input.compositionRevision) {
       return yield* unavailable(
         'The issued credential does not match the captured composition revision',

@@ -12,6 +12,7 @@ export {
 } from '../permissions/action-authorization-preflight.ts';
 export { ActionPermissionCheckError } from '../actions/errors.ts';
 export { ActiveApplicationCompositionConfigLive } from '../modules/active-application-composition.ts';
+export { OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine, scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
 export { findPostgresFailure } from '../database/postgres-failure.ts';
@@ -26,7 +27,12 @@ export {
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationLive,
 } from '../permissions/business-permission-mutation.ts';
-export { ContextAccess, ContextAccessLive, toBusinessPermissionAccessObjectId } from '../permissions/context-access.ts';
+export {
+  ContextAccess,
+  ContextAccessLive,
+  toBusinessPermissionAccessKey,
+  toBusinessPermissionAccessObjectId,
+} from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
 export { ReadHandlerNotFound, ReadHandlerUnavailable } from '../reads/errors.ts';
 export {
@@ -51,9 +57,14 @@ export {
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionMutationSchema,
   CoreSearchProjectionStore,
+  CoreSearchResourceRefSchema,
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
-export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './definition.ts';
+export {
+  defineOutboxWorker,
+  extractOutboxWorkerSubscriptions,
+  isVerifiedOutboxWorkerHandlerContext,
+} from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
 export {
   ResourceContainmentMutationUnavailable,

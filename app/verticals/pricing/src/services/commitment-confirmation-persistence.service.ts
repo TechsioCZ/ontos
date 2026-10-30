@@ -3,7 +3,9 @@ import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError
 import { PricingCommitmentConfirmationIssuedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import type { PricingCommitmentConfirmationIssued } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
+import { and, eq } from 'drizzle-orm';
+import { pricingCommitmentConfirmationIssuanceReceipts } from '../database/schema.ts';
 
 const ownerModuleKey = 'commerce.pricing';
 const schema = 'pricing';
@@ -31,13 +33,16 @@ export const readPricingCommitmentConfirmationRoutine = defineScopedRoutine({
   schema,
 });
 
+// SQL jsonb carries retained owner instants as ISO text, not DateTime.Utc instances.
+const confirmationJsonCodec = Schema.toCodecJson(PricingCommitmentConfirmationIssuedSchema);
+const encodeConfirmationJson = Schema.encodeEffect(confirmationJsonCodec);
 const StoredOutcomeSchema = Schema.Union([
   Schema.Struct({
-    confirmation: Schema.toType(PricingCommitmentConfirmationIssuedSchema),
+    confirmation: confirmationJsonCodec,
     outcome: Schema.Literal('STORED'),
   }),
   Schema.Struct({
-    confirmation: Schema.toType(PricingCommitmentConfirmationIssuedSchema),
+    confirmation: confirmationJsonCodec,
     outcome: Schema.Literal('REUSED'),
   }),
   Schema.Struct({
@@ -94,8 +99,12 @@ export interface CommitmentConfirmationPersistence {
   readonly recover: (
     confirmationRef: string,
   ) => Effect.Effect<CommitmentConfirmationRecoveryOutcome, CommitmentConfirmationPersistenceUnavailable>;
+  readonly recoverIssuance: (
+    actionInvocationId: string,
+  ) => Effect.Effect<Option.Option<PricingCommitmentConfirmationIssued>, CommitmentConfirmationPersistenceUnavailable>;
   readonly store: (
     confirmation: PricingCommitmentConfirmationIssued,
+    issuanceInvocationId?: string,
   ) => Effect.Effect<CommitmentConfirmationStoreOutcome, CommitmentConfirmationPersistenceUnavailable>;
 }
 
@@ -152,9 +161,7 @@ export const decodeCommitmentConfirmationRecoveryOutcome = (
       ? envelope.value
       : { confirmationRef: requestedConfirmationRef, outcome: 'CORRUPT', reason: 'NORMALIZED_BINDING_MISMATCH' };
   }
-  const confirmation = Schema.decodeUnknownOption(PricingCommitmentConfirmationIssuedSchema)(
-    envelope.value.confirmation,
-  );
+  const confirmation = Schema.decodeUnknownOption(confirmationJsonCodec)(envelope.value.confirmation);
   if (Option.isNone(confirmation)) {
     return { confirmationRef: requestedConfirmationRef, outcome: 'CORRUPT', reason: 'PAYLOAD_INVALID' };
   }
@@ -164,21 +171,115 @@ export const decodeCommitmentConfirmationRecoveryOutcome = (
     : { confirmationRef: requestedConfirmationRef, outcome: 'CORRUPT', reason: 'NORMALIZED_BINDING_MISMATCH' };
 };
 
-type ScopedTransaction = Pick<Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0], 'invoke'>;
+type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
 export const commitmentConfirmationPersistenceForScope = (
   transaction: ScopedTransaction,
-  _scope: OperationalScope,
-): Effect.Effect<CommitmentConfirmationPersistence> =>
-  Effect.succeed({
+  scope: OperationalScope,
+): Effect.Effect<CommitmentConfirmationPersistence> => {
+  const recoverIssuance = Effect.fn('CommitmentConfirmationPersistence.recoverIssuance')(function* recoverIssuance(
+    actionInvocationId: string,
+  ) {
+    const invocationId = yield* Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(
+      actionInvocationId,
+    ).pipe(Effect.mapError(unavailable));
+    if (scope.legalEntityId === undefined) {
+      return yield* unavailable('Issuance recovery requires a Selling Legal Entity');
+    }
+    const [receipt] = yield* transaction
+      .select({ confirmationRef: pricingCommitmentConfirmationIssuanceReceipts.confirmationRef })
+      .from(pricingCommitmentConfirmationIssuanceReceipts)
+      .where(
+        and(
+          eq(pricingCommitmentConfirmationIssuanceReceipts.tenantId, scope.tenantId),
+          eq(pricingCommitmentConfirmationIssuanceReceipts.legalEntityId, scope.legalEntityId),
+          eq(pricingCommitmentConfirmationIssuanceReceipts.principalId, scope.principalId),
+          eq(pricingCommitmentConfirmationIssuanceReceipts.actionInvocationId, invocationId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (receipt === undefined) {
+      return Option.none();
+    }
+    const rows = yield* transaction
+      .invoke(readPricingCommitmentConfirmationRoutine, [receipt.confirmationRef])
+      .pipe(Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)));
+    const recovered = decodeCommitmentConfirmationRecoveryOutcome(receipt.confirmationRef, rows);
+    if (recovered.outcome !== 'FOUND' || recovered.confirmation.source.kind !== 'QUOTATION_BACKED') {
+      return yield* unavailable('The original issuance receipt no longer binds its immutable Quotation proof');
+    }
+    return Option.some(recovered.confirmation);
+  });
+  const retainOriginalQuotationIssuance = Effect.fn('CommitmentConfirmationPersistence.retainIssuance')(
+    function* retainOriginalQuotationIssuance(
+      confirmation: PricingCommitmentConfirmationIssued,
+      issuanceInvocationId: string,
+    ) {
+      if (scope.legalEntityId === undefined || confirmation.source.kind !== 'QUOTATION_BACKED') {
+        return yield* unavailable('An issuance receipt requires the exact Quotation-backed owner scope');
+      }
+      const actionInvocationId = yield* Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(
+        issuanceInvocationId,
+      ).pipe(Effect.mapError(unavailable));
+      yield* transaction
+        .insert(pricingCommitmentConfirmationIssuanceReceipts)
+        .values({
+          actionInvocationId,
+          confirmationRef: confirmation.confirmationRef,
+          legalEntityId: scope.legalEntityId,
+          principalId: scope.principalId,
+          tenantId: scope.tenantId,
+        })
+        .onConflictDoNothing()
+        .pipe(Effect.mapError(unavailable));
+      const [receipt] = yield* transaction
+        .select({
+          confirmationRef: pricingCommitmentConfirmationIssuanceReceipts.confirmationRef,
+          principalId: pricingCommitmentConfirmationIssuanceReceipts.principalId,
+        })
+        .from(pricingCommitmentConfirmationIssuanceReceipts)
+        .where(
+          and(
+            eq(pricingCommitmentConfirmationIssuanceReceipts.tenantId, scope.tenantId),
+            eq(pricingCommitmentConfirmationIssuanceReceipts.legalEntityId, scope.legalEntityId),
+            eq(pricingCommitmentConfirmationIssuanceReceipts.actionInvocationId, actionInvocationId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+      return yield* receipt !== undefined &&
+      receipt.confirmationRef === confirmation.confirmationRef &&
+      receipt.principalId === scope.principalId
+        ? Effect.void
+        : unavailable('The immutable issuance invocation is already bound to another proof or actor');
+    },
+  );
+  const store: CommitmentConfirmationPersistence['store'] = (confirmation, issuanceInvocationId) =>
+    encodeConfirmationJson(confirmation).pipe(
+      Effect.mapError(unavailable),
+      Effect.flatMap((encoded) =>
+        Predicate.isObject(encoded) ? Effect.succeed(encoded) : Effect.fail(unavailable('Invalid confirmation JSON')),
+      ),
+      Effect.flatMap((encoded) =>
+        transaction
+          .invoke(persistPricingCommitmentConfirmationRoutine, [encoded])
+          .pipe(Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause))),
+      ),
+      Effect.flatMap(decodeCommitmentConfirmationStoreOutcome),
+      Effect.tap((outcome) =>
+        issuanceInvocationId === undefined || outcome.outcome === 'IDENTITY_CONFLICT'
+          ? Effect.void
+          : retainOriginalQuotationIssuance(confirmation, issuanceInvocationId),
+      ),
+    );
+  return Effect.succeed({
     recover: (confirmationRef) =>
       transaction.invoke(readPricingCommitmentConfirmationRoutine, [confirmationRef]).pipe(
         Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
         Effect.map((rows) => decodeCommitmentConfirmationRecoveryOutcome(confirmationRef, rows)),
       ),
-    store: (confirmation) =>
-      transaction.invoke(persistPricingCommitmentConfirmationRoutine, [confirmation]).pipe(
-        Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
-        Effect.flatMap(decodeCommitmentConfirmationStoreOutcome),
-      ),
+    recoverIssuance,
+    store,
   });
+};

@@ -35,7 +35,8 @@
  * - Files matching `rootFiles` (the process/browser composition roots) — audit "Existing patterns to
  *   preserve": the single outer process or framework adapter seam.
  * - The outer process seam itself: a provide that is a *direct argument pipeline* of a module
- *   top-level `Effect.run*` or imported `NodeRuntime.runMain` call (e.g. `await Effect.runPromise(Effect.provide(program, RuntimeLive))`
+ *   top-level `Effect.run*` call, or the sole immutable imported `NodeRuntime.runMain` call
+ *   (e.g. `await Effect.runPromise(Effect.provide(program, RuntimeLive))`
  *   or `Effect.runFork(program.pipe(Effect.provide(L)))` at the end of a `verify-db-schema.mts`
  *   entrypoint). Only `pipe`/`.pipe` links may sit between the provide and the run call, and the whole
  *   chain must be at the executable edge (including a singly invoked module main or IIFE): callbacks, class bodies or
@@ -59,19 +60,22 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { unwrapNode as unwrap, memberName as staticMemberName, FUNCTION_TYPES, walk } from '../shared/ast.ts';
-import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { lookupVariable, resolvesToImport, isUnshadowedGlobal } from '../shared/bindings.ts';
 import { bindingsFor } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 import { isTestFile, matchesAny } from '../shared/paths.ts';
-import { isInsideCoreReadTestHarnessCallback } from '../shared/native-service-factory.ts';
+import {
+  isInsideCoreReadTestHarnessCallback,
+  isNativeServiceFactoryAcquisition,
+} from '../shared/native-service-factory.ts';
 import {
   isInTypePosition as inTypePosition,
   isNonReferencePosition as nonReferencePosition,
 } from '../shared/reference-positions.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
-/** `effect/Effect`, and the same module reached through a deeper path (`effect/.../Effect`). */
+/** `effect/Effect`, and the same module reached through a deeper path (`effect/unstable/.../Effect`). */
 const EFFECT_EFFECT_MODULE = /^effect\/(?:.*\/)?Effect$/u;
 const EFFECT_NAMESPACE = 'Effect';
 const PIPE_NAMESPACE = 'pipe';
@@ -100,18 +104,16 @@ interface ResolvedOptions {
 
 /** Locals that can name `Effect.provide*` in this module. */
 interface ProvideBindings {
-  readonly any: boolean;
+  /** `Effect` / `Fx` / `import * as Effect from "effect/Effect"` → the Effect namespace. */
+  readonly namespaces: ReadonlySet<string>;
   /** `import * as EffectNs from "effect"` → `EffectNs.Effect.provide`. */
   readonly barrels: ReadonlySet<string>;
   /** `import { provide as supply } from "effect/Effect"` → local `supply` → member `provide`. */
   readonly directMembers: ReadonlyMap<string, string>;
-  readonly directRuns: ReadonlySet<string>;
-  /** `Effect` / `Fx` / `import * as Effect from "effect/Effect"` → the Effect namespace. */
-  readonly namespaces: ReadonlySet<string>;
-  readonly nodeRuntimeBarrels: ReadonlySet<string>;
-  readonly nodeRuntimeNamespaces: ReadonlySet<string>;
   /** Locals bound to Effect's standalone `pipe` (used to recognise the run seam pipeline). */
   readonly pipes: ReadonlySet<string>;
+  readonly directRuns: ReadonlySet<string>;
+  readonly any: boolean;
 }
 
 function readStringArray(value: unknown, fallback: readonly string[]): readonly string[] {
@@ -133,8 +135,6 @@ function resolveOptions(context: Context): ResolvedOptions {
 }
 
 const RUN_MEMBER = /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u;
-const isNodeRoot = (source: string): boolean => source === '@effect/platform-node';
-const isNodeRuntime = (source: string): boolean => source === '@effect/platform-node/NodeRuntime';
 
 /** Preserve root/submodule filtering and run-before-provide-before-pipe priority. */
 function collectProvideBindings(
@@ -161,22 +161,13 @@ function collectProvideBindings(
   for (const [local, name] of direct) {
     if (name === PIPE_NAMESPACE && !members.has(name)) pipes.add(local);
   }
-  const nodeRuntimeNamespaces = collectRootNamespaces(program, isNodeRuntime, policy);
-  for (const local of collectNamedImports(program, isNodeRoot, new Set(['NodeRuntime']), policy).keys()) {
-    nodeRuntimeNamespaces.add(local);
-  }
-  for (const local of collectNamedImports(program, isNodeRuntime, new Set(['runMain']), policy).keys()) {
-    directRuns.add(local);
-  }
   return {
-    any: namespaces.size > 0 || barrels.size > 0 || directMembers.size > 0,
+    namespaces,
     barrels,
     directMembers,
-    directRuns,
-    namespaces,
-    nodeRuntimeBarrels: collectRootNamespaces(program, isNodeRoot, policy),
-    nodeRuntimeNamespaces,
     pipes,
+    directRuns,
+    any: namespaces.size > 0 || barrels.size > 0 || directMembers.size > 0,
   };
 }
 
@@ -265,30 +256,85 @@ function isPipeCall(context: Context, call: ESTree.CallExpression, bindings: Pro
   return resolvesToImport(context, callee);
 }
 
-const isNodeRunReference = (context: Context, callee: ESTree.MemberExpression, bindings: ProvideBindings): boolean => {
-  if (memberName(callee) !== 'runMain') {
+const REFERENCE_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
+
+const closedNodeRuntimeOrigins = (context: Context): boolean => {
+  let imports = 0;
+  for (const statement of context.sourceCode.ast.body) {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
+    const source = statement.source.value;
+    if (['node:module', 'module', 'node:vm', 'vm'].includes(source) || source.startsWith('@effect/platform-node/'))
+      return false;
+    if (source !== '@effect/platform-node') continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
+      if (specifier.type !== 'ImportSpecifier' || specifier.imported.type !== 'Identifier') return false;
+      if (specifier.imported.name === 'NodeRuntime') imports += 1;
+      if (specifier.imported.name === 'default') return false;
+    }
+  }
+  if (imports !== 1) return false;
+  let closed = true;
+  walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (value) => {
+    if (value.type === 'ImportExpression') closed = false;
+    if (
+      value.type === 'Identifier' &&
+      ['require', 'module', 'eval', 'Function', 'globalThis', 'global', 'Reflect'].includes(value.name) &&
+      !nonReferencePosition(value, { keyParents: REFERENCE_KEYS }) &&
+      !isInTypePosition(value) &&
+      isUnshadowedGlobal(context, value, value.name)
+    )
+      closed = false;
+    if (
+      value.type === 'MemberExpression' &&
+      ['constructor', 'prototype', '__proto__'].includes(memberName(value) ?? '')
+    )
+      closed = false;
+  });
+  return closed;
+};
+
+const ownsNodeRuntimeImport = (
+  definition: NonNullable<ReturnType<typeof lookupVariable>>['defs'][number] | undefined,
+): boolean =>
+  definition?.type === 'ImportBinding' &&
+  definition.parent?.type === 'ImportDeclaration' &&
+  definition.parent.source.value === '@effect/platform-node' &&
+  definition.parent.importKind !== 'type' &&
+  definition.node.type === 'ImportSpecifier' &&
+  definition.node.importKind !== 'type' &&
+  definition.node.imported.type === 'Identifier' &&
+  definition.node.imported.name === 'NodeRuntime';
+
+/** A process adapter is a run seam only at its genuine sole immutable imported call. */
+const isNodeRuntimeRunReference = (context: Context, node: ESTree.Node): boolean => {
+  const member = unwrap(node);
+  if (member.type !== 'MemberExpression' || member.computed || member.optional || memberName(member) !== 'runMain')
     return false;
-  }
-  const object = unwrap(callee.object);
-  if (object.type === 'Identifier') {
-    return bindings.nodeRuntimeNamespaces.has(object.name) && resolvesToImport(context, object, true);
-  }
-  if (object.type !== 'MemberExpression' || memberName(object) !== 'NodeRuntime') {
+  const invocation = member.parent;
+  if (
+    invocation?.type !== 'CallExpression' ||
+    invocation.optional ||
+    invocation.callee !== member ||
+    !isModuleEvaluation(invocation)
+  )
     return false;
-  }
-  const root = unwrap(object.object);
-  return (
-    root.type === 'Identifier' && bindings.nodeRuntimeBarrels.has(root.name) && resolvesToImport(context, root, true)
-  );
+  const object = unwrap(member.object);
+  if (object.type !== 'Identifier') return false;
+  const variable = lookupVariable(context, object);
+  if (variable?.defs.length !== 1) return false;
+  const [definition] = variable.defs;
+  if (!ownsNodeRuntimeImport(definition)) return false;
+  const references = variable.references.filter((reference) => !isInTypePosition(reference.identifier));
+  if (references.length !== 1 || references[0]?.identifier !== object) return false;
+  return closedNodeRuntimeOrigins(context);
 };
 
 function isRunReference(context: Context, node: ESTree.Node, bindings: ProvideBindings): boolean {
   const callee = unwrap(node);
+  if (isNodeRuntimeRunReference(context, callee)) return true;
   if (callee.type === 'Identifier') return bindings.directRuns.has(callee.name) && resolvesToImport(context, callee);
   if (callee.type !== 'MemberExpression') return false;
-  if (isNodeRunReference(context, callee, bindings)) {
-    return true;
-  }
   const member = resolveProvideMember(context, callee, bindings);
   return member !== null && /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u.test(member);
 }
@@ -341,7 +387,7 @@ function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
 
 /**
  * True when this reference sits at module top level and is a *direct argument pipeline* of an
- * `Effect.run*` or imported `NodeRuntime.runMain` call — the single outer process/framework adapter seam.
+ * `Effect.run*` call — the single outer process/framework adapter seam the audit blesses.
  *
  * Two independent conditions must hold, and both are needed:
  *  1. Only module evaluation or a singly invoked module main/IIFE may enclose the seam.
@@ -713,7 +759,6 @@ function isCapturedLayerDependency(context: Context, reference: ESTree.Node, mem
   );
 }
 
-const REFERENCE_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 function isRuntimeImportReference(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   return (
     !nonReferencePosition(node, { keyParents: REFERENCE_KEYS }) &&
@@ -760,10 +805,11 @@ export const rule = defineRule({
     let bindings: ProvideBindings | null = null;
 
     const report = (node: ESTree.Node, member: string): void => {
-      if (isCapturedLayerDependency(context, node, member)) {
-        return;
-      }
-      if (isInsideCoreReadTestHarnessCallback(context, node)) {
+      if (
+        isInsideCoreReadTestHarnessCallback(context, node) ||
+        (member === 'provideService' && isNativeServiceFactoryAcquisition(context, node)) ||
+        isCapturedLayerDependency(context, node, member)
+      ) {
         return;
       }
       context.report({ node, messageId: 'provideInLibrary', data: { member } });

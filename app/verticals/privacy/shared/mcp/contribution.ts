@@ -2,6 +2,7 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const privacyMcpContribution = defineOntosMcpContribution({
   actions: {
+    'acknowledge-privacy-notice': 'hidden',
     'add-processing-purpose-version': {
       title: { cs: 'Přidat verzi účelu zpracování', en: 'Add a processing purpose version' },
     },
@@ -132,6 +133,7 @@ export const privacyMcpContribution = defineOntosMcpContribution({
     'legal-basis-assignments': {
       title: { cs: 'Přiřazené právní základy zpracování', en: 'Processing legal basis assignments' },
     },
+    'notice-presentation': 'hidden',
     'notice-versions': { title: { cs: 'Verze informačních oznámení', en: 'Privacy notice versions' } },
     'owner-inventory': { title: { cs: 'Přehled vlastníků osobních údajů', en: 'Personal data owner inventory' } },
     'privacy-subjects': { title: { cs: 'Subjekty údajů', en: 'Data subjects' } },

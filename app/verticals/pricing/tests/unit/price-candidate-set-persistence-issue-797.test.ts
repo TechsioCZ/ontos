@@ -1,5 +1,6 @@
 import { scopedRoutineInvokerFromTransaction, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
+import { PricingExactPriceOwnerReadReceiptSchema } from '@app/pricing-contracts/domain/material-evidence';
 import { PgTypes } from '@effect/sql-pg';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -108,6 +109,34 @@ const firstClaimant = claimant('77777777-7777-4777-8777-777777777777', '88888888
 const secondClaimant = claimant('99999999-9999-4999-8999-999999999999', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 2);
 
 describe('Price exact candidate-set persistence authority (#797)', () => {
+  it('preserves legacy receipt decoding while validating additive native exact-lookup evidence (#1279)', () => {
+    const legacy = { authority, factProofs: [] };
+    const lookupEvidence = {
+      effectiveAt,
+      observedAt,
+      ownerRevision: 'pricing-exact-current-v1:native-material-digest',
+    };
+    const current = {
+      ...legacy,
+      candidateSet: { candidates: [], effectiveAt, exactKey },
+      lookupEvidence,
+      outcome: 'EXACT_PRICE_CANDIDATE_SET_CURRENT',
+    };
+    expect(Schema.is(PricingExactPriceOwnerReadReceiptSchema)(legacy)).toBe(true);
+    expect(Schema.is(PricingExactPriceOwnerReadReceiptSchema)({ ...legacy, lookupEvidence })).toBe(true);
+    expect(Schema.is(ReadExactPriceCandidateSetPersistenceOutcomeSchema)(current)).toBe(true);
+    for (const invalid of [
+      { ...lookupEvidence, ownerRevision: '' },
+      { ...lookupEvidence, observedAt: '2026-09-28T09:59:59.000Z' },
+      { ...lookupEvidence, nextApplicabilityBoundary: observedAt },
+    ]) {
+      expect(
+        Schema.is(ReadExactPriceCandidateSetPersistenceOutcomeSchema)({ ...current, lookupEvidence: invalid }),
+      ).toBe(false);
+      expect(Schema.is(PricingExactPriceOwnerReadReceiptSchema)({ ...legacy, lookupEvidence: invalid })).toBe(false);
+    }
+  });
+
   it('declares read-only scoped routines for the candidate set and its generation fence', () => {
     expect(readExactPriceCandidateSetRoutine).toMatchObject({
       name: 'read_exact_price_candidate_set_v1',

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { sql } from 'drizzle-orm';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Redacted, Schema } from 'effect';
 
 import {
   ActionInvocationPersistenceError,
@@ -30,10 +30,18 @@ import { PrincipalEligibility } from '../../../../packages/core-runtime/src/perm
 import type { PrincipalEligibilityService } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
 import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
-import { ClaimCounterpartyAccessInvitationResultSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
+import {
+  ClaimCounterpartyAccessInvitationResultSchema,
+  ClaimCounterpartyAccessInvitationPayloadSchema,
+} from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import { AccessInstantSchema, CounterpartyRefSchema, PrincipalRefSchema } from '../../shared/domain/access-contract.ts';
-import { counterpartyAccessPortForScopedTransaction } from '../../src/persistence/access-persistence.ts';
+import { counterpartyInvitationClaimRedemptionForTransaction } from '../../src/persistence/invitation-claim-authority-persistence.ts';
+import {
+  readCounterpartyAccessInvitationForScope,
+  counterpartyAccessPortForScopedTransaction,
+} from '../../src/persistence/access-persistence.ts';
 import type { CounterpartyAccessScopedRoutineInvoker } from '../../src/persistence/access-persistence.ts';
 import type { EnrollmentAcceptanceFixture } from './enrollment-acceptance-fixture.ts';
 import type { CapturingCounterpartyInvitationProofDelivery } from './counterparty-invitation-proof-capture.ts';
@@ -124,6 +132,33 @@ const seedSpiceDbRelationships = Effect.fnUntraced(function* seedSpiceDbRelation
   yield* write(v1.RelationshipUpdate_Operation.TOUCH);
   yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
 });
+
+/** Revoke only this fixture recipient's explicit invitation-claim executor relationship. */
+export const revokeCounterpartyInvitationClaimExecutor = Effect.fnUntraced(
+  function* revokeCounterpartyInvitationClaimExecutor(realm: CounterpartyInvitationRealm) {
+    const configuration = yield* loadSpiceDbConfig();
+    const client = newSpiceDbGrpcClient(configuration);
+    yield* Effect.addFinalizer(() => Effect.sync(() => client.close()));
+    const relationships = executorOf(
+      realm.recipientPrincipalId,
+      ['commerce.customer-context.claim-counterparty-access-invitation'],
+      realm,
+    ).map(relationshipFor);
+    yield* Effect.promise(
+      async () =>
+        await client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: relationships.map((relationship) =>
+              v1.RelationshipUpdate.create({
+                operation: v1.RelationshipUpdate_Operation.DELETE,
+                relationship,
+              }),
+            ),
+          }),
+        ),
+    );
+  },
+);
 
 /** The Commerce rows an invitation hangs off, written with the owner role under the scenario scope. */
 const seedCommerceCounterparty = (fixture: EnrollmentAcceptanceFixture, realm: CounterpartyInvitationRealm) =>
@@ -470,6 +505,71 @@ export const issueCounterpartyAccessInvitation = Effect.fnUntraced(function* iss
   };
   return issued;
 });
+
+/** Prepare the generated claim Action's input through the same owner redemption used by enrollment. */
+export const prepareCounterpartyInvitationClaimPayload = Effect.fnUntraced(
+  function* prepareCounterpartyInvitationClaimPayload(
+    fixture: EnrollmentAcceptanceFixture,
+    realm: CounterpartyInvitationRealm,
+    input: Pick<IssuedCounterpartyInvitation, 'claimProofReference' | 'invitationId' | 'secret'>,
+  ) {
+    const crypto = yield* Crypto.Crypto.pipe(Effect.provide(commercePortalAuthPlatformCryptoLive));
+    const trustedScope = {
+      ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+        authBindingId: realm.recipientAuthBindingId,
+        authContextRef: `portal-session:${realm.recipientPrincipalId}`,
+        authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        authMethod: 'session',
+        legalEntityId: realm.legalEntityId,
+        principalId: realm.recipientPrincipalId,
+        tenantId: realm.tenantId,
+      }),
+      correlationId: `counterparty-invitation-redemption-${randomUUID()}`,
+      legalEntityId: realm.legalEntityId,
+    };
+    const invitationRef = {
+      moduleId: 'commerce.customer-context' as const,
+      resourceId: input.invitationId,
+      resourceType: 'commerce.customer-context.counterparty-access-invitation' as const,
+      tenantId: realm.tenantId,
+    };
+    return yield* fixture
+      .run({ legalEntityId: realm.legalEntityId, tenantId: realm.tenantId }, (transaction) =>
+        counterpartyInvitationClaimRedemptionForTransaction(transaction, crypto, trustedScope)
+          .redeem({
+            invitationRef: Schema.decodeUnknownSync(
+              ClaimCounterpartyAccessInvitationPayloadSchema.fields.invitationRef,
+            )(invitationRef),
+            proofReference: Schema.decodeUnknownSync(
+              ClaimCounterpartyAccessInvitationPayloadSchema.fields.claimProofReference,
+            )(input.claimProofReference),
+            rawProof: Redacted.make(input.secret),
+          })
+          .pipe(
+            Effect.flatMap((redeemed) =>
+              readCounterpartyAccessInvitationForScope(transaction, realm.tenantId, {
+                counterpartyRef: redeemed.counterpartyRef,
+                invitationId: input.invitationId,
+                scope: redeemed.scope,
+              }).pipe(
+                Effect.flatMap((invitation) =>
+                  Schema.decodeUnknownEffect(ClaimCounterpartyAccessInvitationPayloadSchema)({
+                    claimant: { principalId: realm.recipientPrincipalId, tenantId: realm.tenantId },
+                    claimProofReference: redeemed.proofReference,
+                    counterpartyRef: redeemed.counterpartyRef,
+                    expectedRevision: invitation.revision,
+                    invitationRef,
+                    scope: redeemed.scope,
+                  }),
+                ),
+              ),
+            ),
+          )
+          .pipe(Effect.orDie),
+      )
+      .pipe(Effect.orDie);
+  },
+);
 
 interface InvitationRow extends Record<string, unknown> {
   readonly claim_proof_reference: string | null;

@@ -22,6 +22,7 @@ interface VerificationRow {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly raw_runtime_privilege_count: number;
+  readonly replay_infrastructure_safe: boolean;
   readonly routine_count: number;
   readonly runtime_bypass_rls: boolean;
   readonly runtime_create: boolean;
@@ -64,6 +65,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'finalize_reconciled_access_invitation',
   'finalize_retail_portal_binding_authorization',
   'finalize_retail_portal_profile_binding_permission_mutation',
+  'inspect_commerce_quantity_assignment_profile',
   'inspect_price_group_profile',
   'list_access_grants',
   'list_access_reconciliation',
@@ -87,6 +89,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'persist_market_bootstrap_policy_state',
   'persist_payment_term_policy_state',
   'persist_purchase_currency_policy_state',
+  'purchase_proposal_basis_state',
   'reactivate_customer_group',
   'read_access_invitation',
   'read_access_invitation_claim_reconciliation',
@@ -105,7 +108,10 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_customer_profile',
   'read_demo_newsletter_choice',
   'read_effective_customer_group_memberships',
+  'read_enrollment_invitation_claim',
   'read_guest_attribution',
+  'read_order_commitment_approval_evidence',
+  'read_order_service_approval_proof',
   'read_portal_enrollment_attempt',
   'read_portal_enrollment_owner_operation',
   'read_price_group_assignment_compatibility_evidence',
@@ -129,6 +135,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'record_portal_enrollment_outcome',
   'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
+  'recover_buyer_approval_revalidation',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',
   'remove_customer_group_membership',
@@ -137,6 +144,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'reroute_purchase_approval_request',
   'reserve_market_retirement',
   'reserve_payment_term_retirement',
+  'resolve_legacy_payment_term_grant_intent_v1',
   'resolve_price_group_assignments',
   'resolve_profile_reconciliation',
   'resolve_retail_principal',
@@ -266,10 +274,22 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                     from pg_catalog.pg_class as relation
                     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
                    where namespace.nspname = $1 and relation.relkind in ('r', 'p')
+                     and relation.relname <> 'gateway_assertion_redemptions'
                      and (has_table_privilege('ontos_runtime', relation.oid, 'SELECT')
                        or has_table_privilege('ontos_runtime', relation.oid, 'INSERT')
                        or has_table_privilege('ontos_runtime', relation.oid, 'UPDATE')
                        or has_table_privilege('ontos_runtime', relation.oid, 'DELETE'))) as raw_runtime_privilege_count,
+                 (select not relation.relrowsecurity and not relation.relforcerowsecurity
+                     and has_table_privilege('ontos_runtime', relation.oid, 'SELECT')
+                     and has_table_privilege('ontos_runtime', relation.oid, 'INSERT')
+                     and has_table_privilege('ontos_runtime', relation.oid, 'DELETE')
+                     and not has_table_privilege('ontos_runtime', relation.oid, 'UPDATE')
+                     and not has_table_privilege('ontos_runtime', relation.oid, 'TRUNCATE')
+                     and not has_table_privilege('ontos_runtime', relation.oid, 'REFERENCES')
+                     and not has_table_privilege('ontos_runtime', relation.oid, 'TRIGGER')
+                    from pg_catalog.pg_class as relation
+                    join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                   where namespace.nspname = $1 and relation.relname = 'gateway_assertion_redemptions') as replay_infrastructure_safe,
                  (select count(*)::integer
                     from pg_catalog.pg_constraint as constraint_record
                     join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
@@ -371,8 +391,9 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
     const unsafeInfrastructure = [
       row.applicability_projection_column_count !== 10,
       row.applicability_constraint_count !== 5,
-      row.forced_rls_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length,
-      row.policy_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2,
+      row.forced_rls_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length - 1,
+      row.policy_count !== (COMMERCE_CUSTOMER_CONTEXT_TABLES.length - 1) * 5 + 2,
+      !row.replay_infrastructure_safe,
       row.raw_runtime_privilege_count !== 0,
       row.exclusion_count !== 11,
       row.group_description_column_count !== 1,
@@ -400,9 +421,9 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
       const unexpectedTriggers = row.trigger_names.filter((trigger) => !expectedTriggers.has(trigger));
       return yield* failure(
         `Commerce Customer Context database infrastructure is unsafe; ` +
-          `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length}, ` +
-          `policies=${row.policy_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2}, ` +
-          `rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
+          `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length - 1}, ` +
+          `policies=${row.policy_count}/${(COMMERCE_CUSTOMER_CONTEXT_TABLES.length - 1) * 5 + 2}, ` +
+          `replayInfrastructureSafe=${row.replay_infrastructure_safe}, rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
           `groupDescriptionColumn=${row.group_description_column_count}/1, ` +
           `groupDescriptionConstraint=${row.group_description_constraint_count}/1, ` +
           `appendOnlyTriggers=${row.append_only_trigger_count}/11, ` +

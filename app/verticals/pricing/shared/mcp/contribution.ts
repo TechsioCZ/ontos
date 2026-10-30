@@ -99,6 +99,7 @@ export const pricingMcpContribution = defineOntosMcpContribution({
         en: 'Commercial fee schedule',
       },
     },
+    'commitment-confirmation-verification': 'hidden',
     'contractual-discount-result-lookup': 'hidden',
     'currency-support-result-lookup': 'hidden',
     'current-pricing-decision': {
@@ -129,6 +130,7 @@ export const pricingMcpContribution = defineOntosMcpContribution({
     },
     'quantity-tier-result-lookup': 'hidden',
     'quotation-result-lookup': 'hidden',
+    'quotation-verification': 'hidden',
     'zero-floor-authorization-result-lookup': 'hidden',
   },
 });

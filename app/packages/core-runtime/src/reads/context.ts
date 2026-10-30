@@ -64,6 +64,13 @@ export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext 
   readonly transaction: ReadOwnerTransaction;
 }
 
+/** What a single-handler Read receives: the Read, its Core-verified scope, and the scoped owner services. */
+export interface ReadHandlerContext<Services> {
+  readonly readKey: string;
+  readonly scope: OperationalScope;
+  readonly services: Services;
+}
+
 export interface ReadHandlerResult<Result> {
   readonly evidence: ReadEvidenceMetadata;
   readonly result: Result;

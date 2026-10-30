@@ -376,7 +376,14 @@ export const rule = defineRule({
         node.exprName.right.name === 'Type'
       )
         return dataSchema(node.exprName.left, seen, omitted, true);
-      if (node.type !== 'TSTypeReference' || node.typeName.type !== 'Identifier') return false;
+      if (node.type !== 'TSTypeReference') return false;
+      if (isRedactedDataReference(node.typeName)) {
+        const args = node.typeArguments?.params ?? [];
+        // Effect Redacted defaults its payload to string; wrapping a collaborator does not
+        // turn it into data. Keep unknown payloads subject to the existing data proof.
+        return args.length === 0 || (args.length === 1 && dataType(args[0], seen));
+      }
+      if (node.typeName.type !== 'Identifier') return false;
       const binding = lookupVariable(context, node.typeName);
       if (node.typeName.name === 'Omit' && (binding === null || binding.defs.length === 0)) {
         const args = node.typeArguments?.params;
@@ -393,6 +400,27 @@ export const rule = defineRule({
       const parts = node.types.map(omittedKeys);
       return parts.every((part: string[] | null) => part !== null) ? parts.flat() : null;
     };
+    const redactedTypeIdentity = (name: any): string | null => {
+      if (name.type === 'TSQualifiedName') {
+        const owner = redactedTypeIdentity(name.left);
+        return owner === null ? null : `${owner}.${name.right.name}`;
+      }
+      if (name.type !== 'Identifier') return null;
+      const defs = lookupVariable(context, name)?.defs;
+      if (defs?.length !== 1 || defs[0]?.type !== 'ImportBinding') return null;
+      const def = defs[0] as any;
+      const source = def.parent?.source?.value;
+      const imported = def.node.imported?.name ?? def.node.imported?.value;
+      if (source === 'effect') {
+        if (def.node.type === 'ImportNamespaceSpecifier') return 'effect';
+        return imported === 'Redacted' ? 'effect.Redacted' : null;
+      }
+      if (source !== 'effect/Redacted') return null;
+      if (def.node.type === 'ImportNamespaceSpecifier') return 'effect.Redacted';
+      return imported === 'Redacted' ? 'effect.Redacted.Redacted' : null;
+    };
+    const isRedactedDataReference = (name: AnyNode): boolean =>
+      redactedTypeIdentity(name) === 'effect.Redacted.Redacted';
     const dataMembers = (node: any, seen: Set<any>, omitted: Set<string>): boolean => {
       const members = node.members ?? node.body.body;
       return (

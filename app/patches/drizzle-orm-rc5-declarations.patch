@@ -818,3 +818,509 @@ index e8c1532..945f913 100644
  import { EffectLoggerShape } from "../../effect-core/logger.js";
  
  //#region src/sqlite-core/effect/session.d.ts
+diff --git a/pg-core/async/delete.d.cts b/pg-core/async/delete.d.cts
+--- a/pg-core/async/delete.d.cts
++++ b/pg-core/async/delete.d.cts
+@@ -7,7 +7,7 @@
+ import { QueryPromise } from "../../query-promise.cjs";
+ import { RunnableQuery } from "../../runnable-query.cjs";
+ import { PgTable } from "../table.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
+ 
+ //#region src/pg-core/async/delete.d.ts
+ type PgAsyncDelete<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> = PgAsyncDeleteBase<TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+@@ -18,8 +18,8 @@
+ interface PgAsyncDeleteHKT extends PgDeleteHKTBase {
+   _type: PgAsyncDeleteBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, this['dynamic'], this['excludedMethods']>;
+ }
+-interface PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]> {}
+-declare class PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgDeleteBase<PgAsyncDeleteHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'>, SQLWrapper {
++interface PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<PgReturningResult<TQueryResult, TReturning>> {}
++declare class PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgDeleteBase<PgAsyncDeleteHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'>, SQLWrapper {
+   static readonly [entityKind]: string;
+   protected session: PgAsyncSession;
+   prepare(name?: string): PgAsyncDeletePrepare<this>;
+diff --git a/pg-core/async/delete.d.ts b/pg-core/async/delete.d.ts
+--- a/pg-core/async/delete.d.ts
++++ b/pg-core/async/delete.d.ts
+@@ -7,7 +7,7 @@
+ import { QueryPromise } from "../../query-promise.js";
+ import { PgTable } from "../table.js";
+ import { RunnableQuery } from "../../runnable-query.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
+ 
+ //#region src/pg-core/async/delete.d.ts
+ type PgAsyncDelete<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> = PgAsyncDeleteBase<TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+@@ -18,8 +18,8 @@
+ interface PgAsyncDeleteHKT extends PgDeleteHKTBase {
+   _type: PgAsyncDeleteBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, this['dynamic'], this['excludedMethods']>;
+ }
+-interface PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]> {}
+-declare class PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgDeleteBase<PgAsyncDeleteHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'>, SQLWrapper {
++interface PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<PgReturningResult<TQueryResult, TReturning>> {}
++declare class PgAsyncDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgDeleteBase<PgAsyncDeleteHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'>, SQLWrapper {
+   static readonly [entityKind]: string;
+   protected session: PgAsyncSession;
+   prepare(name?: string): PgAsyncDeletePrepare<this>;
+diff --git a/pg-core/async/insert.d.cts b/pg-core/async/insert.d.cts
+--- a/pg-core/async/insert.d.cts
++++ b/pg-core/async/insert.d.cts
+@@ -6,7 +6,7 @@
+ import { QueryPromise } from "../../query-promise.cjs";
+ import { RunnableQuery } from "../../runnable-query.cjs";
+ import { PgTable } from "../table.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
+ 
+ //#region src/pg-core/async/insert.d.ts
+ interface PgAsyncInsertHKT extends PgInsertHKTBase {
+@@ -17,8 +17,8 @@
+   execute: T['_']['result'];
+ }>;
+ type PgAsyncInsert<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = ColumnsSelection | undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> = PgAsyncInsertBase<TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+-interface PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]> {}
+-declare class PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgInsertBase<PgAsyncInsertHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<PgReturningResult<TQueryResult, TReturning>> {}
++declare class PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgInsertBase<PgAsyncInsertHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgAsyncSession;
+   prepare(name?: string): PgInsertPrepare<this>;
+diff --git a/pg-core/async/insert.d.ts b/pg-core/async/insert.d.ts
+--- a/pg-core/async/insert.d.ts
++++ b/pg-core/async/insert.d.ts
+@@ -6,7 +6,7 @@
+ import { QueryPromise } from "../../query-promise.js";
+ import { PgTable } from "../table.js";
+ import { RunnableQuery } from "../../runnable-query.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
+ 
+ //#region src/pg-core/async/insert.d.ts
+ interface PgAsyncInsertHKT extends PgInsertHKTBase {
+@@ -17,8 +17,8 @@
+   execute: T['_']['result'];
+ }>;
+ type PgAsyncInsert<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = ColumnsSelection | undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> = PgAsyncInsertBase<TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+-interface PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]> {}
+-declare class PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgInsertBase<PgAsyncInsertHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<PgReturningResult<TQueryResult, TReturning>> {}
++declare class PgAsyncInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgInsertBase<PgAsyncInsertHKT, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgAsyncSession;
+   prepare(name?: string): PgInsertPrepare<this>;
+diff --git a/pg-core/async/update.d.cts b/pg-core/async/update.d.cts
+--- a/pg-core/async/update.d.cts
++++ b/pg-core/async/update.d.cts
+@@ -9,7 +9,7 @@
+ import { QueryPromise } from "../../query-promise.cjs";
+ import { RunnableQuery } from "../../runnable-query.cjs";
+ import { PgTable } from "../table.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
+ 
+ //#region src/pg-core/async/update.d.ts
+ type PgAsyncUpdatePrepare<T extends AnyPgAsyncUpdate> = PgAsyncPreparedQuery<PreparedQueryConfig & {
+@@ -20,8 +20,8 @@
+   _type: PgAsyncUpdateBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['from'], PgTable | Subquery | PgViewBase | SQL | undefined>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, Assume<this['joins'], Join[]>, this['dynamic'], this['excludedMethods']>;
+ }
+ type AnyPgAsyncUpdate = PgAsyncUpdateBase<any, any, any, any, any, any, any, any, any>;
+-interface PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]> {}
+-declare class PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgUpdateBase<PgAsyncUpdateHKT, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<PgReturningResult<TQueryResult, TReturning>> {}
++declare class PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgUpdateBase<PgAsyncUpdateHKT, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgAsyncSession;
+   prepare(name?: string): PgAsyncUpdatePrepare<this>;
+diff --git a/pg-core/async/update.d.ts b/pg-core/async/update.d.ts
+--- a/pg-core/async/update.d.ts
++++ b/pg-core/async/update.d.ts
+@@ -9,7 +9,7 @@
+ import { PgTable } from "../table.js";
+ import { JoinNullability } from "../../query-builders/select.types.js";
+ import { RunnableQuery } from "../../runnable-query.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
+ 
+ //#region src/pg-core/async/update.d.ts
+ type PgAsyncUpdatePrepare<T extends AnyPgAsyncUpdate> = PgAsyncPreparedQuery<PreparedQueryConfig & {
+@@ -20,8 +20,8 @@
+   _type: PgAsyncUpdateBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['from'], PgTable | Subquery | PgViewBase | SQL | undefined>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, Assume<this['joins'], Join[]>, this['dynamic'], this['excludedMethods']>;
+ }
+ type AnyPgAsyncUpdate = PgAsyncUpdateBase<any, any, any, any, any, any, any, any, any>;
+-interface PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]> {}
+-declare class PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgUpdateBase<PgAsyncUpdateHKT, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends QueryPromise<PgReturningResult<TQueryResult, TReturning>> {}
++declare class PgAsyncUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends PgUpdateBase<PgAsyncUpdateHKT, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgAsyncSession;
+   prepare(name?: string): PgAsyncUpdatePrepare<this>;
+diff --git a/pg-core/effect/delete.d.cts b/pg-core/effect/delete.d.cts
+--- a/pg-core/effect/delete.d.cts
++++ b/pg-core/effect/delete.d.cts
+@@ -6,7 +6,7 @@
+ import { Assume } from "../../utils.cjs";
+ import { RunnableQuery } from "../../runnable-query.cjs";
+ import { PgTable } from "../table.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
+ import * as Effect from "effect/Effect";
+ import { QueryEffectHKTBase } from "../../effect-core/query-effect.cjs";
+ 
+@@ -19,8 +19,8 @@
+ interface PgEffectDeleteHKT<TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgDeleteHKTBase {
+   _type: PgEffectDeleteBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, this['dynamic'], this['excludedMethods'], TEffectHKT>;
+ }
+-interface PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], TEffectHKT['error'], TEffectHKT['context']> {}
+-declare class PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgDeleteBase<PgEffectDeleteHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'>, SQLWrapper {
++interface PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<PgReturningResult<TQueryResult, TReturning>, TEffectHKT['error'], TEffectHKT['context']> {}
++declare class PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgDeleteBase<PgEffectDeleteHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'>, SQLWrapper {
+   static readonly [entityKind]: string;
+   protected session: PgEffectSession<TEffectHKT, any, any>;
+   prepare(name?: string): PgEffectDeletePrepare<this, TEffectHKT>;
+diff --git a/pg-core/effect/delete.d.ts b/pg-core/effect/delete.d.ts
+--- a/pg-core/effect/delete.d.ts
++++ b/pg-core/effect/delete.d.ts
+@@ -8,7 +8,7 @@
+ import { PgTable } from "../table.js";
+ import { QueryEffectHKTBase } from "../../effect-core/query-effect.js";
+ import { RunnableQuery } from "../../runnable-query.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
+ 
+ //#region src/pg-core/effect/delete.d.ts
+ type PgEffectDelete<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> = PgEffectDeleteBase<TTable, TQueryResult, TSelectedFields, TReturning, true, never, TEffectHKT>;
+@@ -19,8 +19,8 @@
+ interface PgEffectDeleteHKT<TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgDeleteHKTBase {
+   _type: PgEffectDeleteBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, this['dynamic'], this['excludedMethods'], TEffectHKT>;
+ }
+-interface PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], TEffectHKT['error'], TEffectHKT['context']> {}
+-declare class PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgDeleteBase<PgEffectDeleteHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'>, SQLWrapper {
++interface PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<PgReturningResult<TQueryResult, TReturning>, TEffectHKT['error'], TEffectHKT['context']> {}
++declare class PgEffectDeleteBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgDeleteBase<PgEffectDeleteHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'>, SQLWrapper {
+   static readonly [entityKind]: string;
+   protected session: PgEffectSession<TEffectHKT, any, any>;
+   prepare(name?: string): PgEffectDeletePrepare<this, TEffectHKT>;
+diff --git a/pg-core/effect/insert.d.cts b/pg-core/effect/insert.d.cts
+--- a/pg-core/effect/insert.d.cts
++++ b/pg-core/effect/insert.d.cts
+@@ -5,7 +5,7 @@
+ import { Assume } from "../../utils.cjs";
+ import { RunnableQuery } from "../../runnable-query.cjs";
+ import { PgTable } from "../table.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
+ import * as Effect from "effect/Effect";
+ import { QueryEffectHKTBase } from "../../effect-core/query-effect.cjs";
+ 
+@@ -18,8 +18,8 @@
+   execute: T['_']['result'];
+ }, TEffectHKT>;
+ type PgInsert<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = ColumnsSelection | undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> = PgInsertBase<PgEffectInsertHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+-interface PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], TEffectHKT['error'], TEffectHKT['context']> {}
+-declare class PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgInsertBase<PgEffectInsertHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<PgReturningResult<TQueryResult, TReturning>, TEffectHKT['error'], TEffectHKT['context']> {}
++declare class PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgInsertBase<PgEffectInsertHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgEffectSession<TEffectHKT, any, any>;
+   prepare(name?: string): PgInsertPrepare<this, TEffectHKT>;
+diff --git a/pg-core/effect/insert.d.ts b/pg-core/effect/insert.d.ts
+--- a/pg-core/effect/insert.d.ts
++++ b/pg-core/effect/insert.d.ts
+@@ -7,7 +7,7 @@
+ import { PgTable } from "../table.js";
+ import { QueryEffectHKTBase } from "../../effect-core/query-effect.js";
+ import { RunnableQuery } from "../../runnable-query.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
+ 
+ //#region src/pg-core/effect/insert.d.ts
+ interface PgEffectInsertHKT<TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgInsertHKTBase {
+@@ -18,8 +18,8 @@
+   execute: T['_']['result'];
+ }, TEffectHKT>;
+ type PgInsert<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = ColumnsSelection | undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> = PgInsertBase<PgEffectInsertHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+-interface PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], TEffectHKT['error'], TEffectHKT['context']> {}
+-declare class PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgInsertBase<PgEffectInsertHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<PgReturningResult<TQueryResult, TReturning>, TEffectHKT['error'], TEffectHKT['context']> {}
++declare class PgEffectInsertBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgInsertBase<PgEffectInsertHKT<TEffectHKT>, TTable, TQueryResult, TSelectedFields, TReturning, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgEffectSession<TEffectHKT, any, any>;
+   prepare(name?: string): PgInsertPrepare<this, TEffectHKT>;
+diff --git a/pg-core/effect/update.d.cts b/pg-core/effect/update.d.cts
+--- a/pg-core/effect/update.d.cts
++++ b/pg-core/effect/update.d.cts
+@@ -8,7 +8,7 @@
+ import { Assume } from "../../utils.cjs";
+ import { RunnableQuery } from "../../runnable-query.cjs";
+ import { PgTable } from "../table.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.cjs";
+ import * as Effect from "effect/Effect";
+ import { QueryEffectHKTBase } from "../../effect-core/query-effect.cjs";
+ 
+@@ -21,8 +21,8 @@
+   _type: PgEffectUpdateBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['from'], PgTable | Subquery | PgViewBase | SQL | undefined>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, Assume<this['joins'], Join[]>, this['dynamic'], this['excludedMethods'], TEffectHKT>;
+ }
+ type AnyPgEffectUpdate = PgEffectUpdateBase<any, any, any, any, any, any, any, any, any, any>;
+-interface PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], TEffectHKT['error'], TEffectHKT['context']> {}
+-declare class PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgUpdateBase<PgEffectUpdateHKT<TEffectHKT>, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<PgReturningResult<TQueryResult, TReturning>, TEffectHKT['error'], TEffectHKT['context']> {}
++declare class PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgUpdateBase<PgEffectUpdateHKT<TEffectHKT>, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgEffectSession<TEffectHKT, any, any>;
+   prepare(name?: string): PgEffectUpdatePrepare<this, TEffectHKT>;
+diff --git a/pg-core/effect/update.d.ts b/pg-core/effect/update.d.ts
+--- a/pg-core/effect/update.d.ts
++++ b/pg-core/effect/update.d.ts
+@@ -10,7 +10,7 @@
+ import { QueryEffectHKTBase } from "../../effect-core/query-effect.js";
+ import { JoinNullability } from "../../query-builders/select.types.js";
+ import { RunnableQuery } from "../../runnable-query.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PreparedQueryConfig } from "../session.js";
+ 
+ //#region src/pg-core/effect/update.d.ts
+ type PgEffectUpdatePrepare<T extends AnyPgEffectUpdate, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> = PgEffectPreparedQuery<PreparedQueryConfig & {
+@@ -21,8 +21,8 @@
+   _type: PgEffectUpdateBase<Assume<this['table'], PgTable>, Assume<this['queryResult'], PgQueryResultHKT>, Assume<this['from'], PgTable | Subquery | PgViewBase | SQL | undefined>, Assume<this['selectedFields'], ColumnsSelection | undefined>, Assume<this['returning'], Record<string, unknown> | undefined>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, Assume<this['joins'], Join[]>, this['dynamic'], this['excludedMethods'], TEffectHKT>;
+ }
+ type AnyPgEffectUpdate = PgEffectUpdateBase<any, any, any, any, any, any, any, any, any, any>;
+-interface PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], TEffectHKT['error'], TEffectHKT['context']> {}
+-declare class PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgUpdateBase<PgEffectUpdateHKT<TEffectHKT>, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[], 'pg'> {
++interface PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends Effect.Effect<PgReturningResult<TQueryResult, TReturning>, TEffectHKT['error'], TEffectHKT['context']> {}
++declare class PgEffectUpdateBase<TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends PgUpdateBase<PgEffectUpdateHKT<TEffectHKT>, TTable, TQueryResult, TFrom, TSelectedFields, TReturning, TNullabilityMap, TJoins, TDynamic, TExcludedMethods> implements RunnableQuery<PgReturningResult<TQueryResult, TReturning>, 'pg'> {
+   static readonly [entityKind]: string;
+   protected session: PgEffectSession<TEffectHKT, any, any>;
+   prepare(name?: string): PgEffectUpdatePrepare<this, TEffectHKT>;
+diff --git a/pg-core/query-builders/delete.d.cts b/pg-core/query-builders/delete.d.cts
+--- a/pg-core/query-builders/delete.d.cts
++++ b/pg-core/query-builders/delete.d.cts
+@@ -7,7 +7,7 @@
+ import { Assume } from "../../utils.cjs";
+ import { PgTable } from "../table.cjs";
+ import { PgDialect } from "../dialect.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.cjs";
+ 
+ //#region src/pg-core/query-builders/delete.d.ts
+ type PgDeleteWithout<T extends AnyPgDelete, TDynamic extends boolean, K extends keyof T & string> = TDynamic extends true ? T : Omit<PgDeleteKind<T['_']['hkt'], T['_']['table'], T['_']['queryResult'], T['_']['selectedFields'], T['_']['returning'], TDynamic, T['_']['excludedMethods'] | K>, T['_']['excludedMethods'] | K>;
+@@ -46,7 +46,7 @@
+   dynamic: TDynamic;
+   excludedMethods: TExcludedMethods;
+ })['_type'];
+-interface PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++interface PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   readonly _: {
+     readonly dialect: 'pg';
+     readonly hkt: THKT;
+@@ -56,10 +56,10 @@
+     readonly returning: TReturning;
+     readonly dynamic: TDynamic;
+     readonly excludedMethods: TExcludedMethods;
+-    readonly result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++    readonly result: PgReturningResult<TQueryResult, TReturning>;
+   };
+ }
+-declare class PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++declare class PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   protected session: PgSession;
+   protected dialect: PgDialect;
+   static readonly [entityKind]: string;
+diff --git a/pg-core/query-builders/delete.d.ts b/pg-core/query-builders/delete.d.ts
+--- a/pg-core/query-builders/delete.d.ts
++++ b/pg-core/query-builders/delete.d.ts
+@@ -7,7 +7,7 @@
+ import { TypedQueryBuilder } from "../../query-builders/query-builder.js";
+ import { PgTable } from "../table.js";
+ import { SelectResultFields } from "../../query-builders/select.types.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
+ 
+ //#region src/pg-core/query-builders/delete.d.ts
+ type PgDeleteWithout<T extends AnyPgDelete, TDynamic extends boolean, K extends keyof T & string> = TDynamic extends true ? T : Omit<PgDeleteKind<T['_']['hkt'], T['_']['table'], T['_']['queryResult'], T['_']['selectedFields'], T['_']['returning'], TDynamic, T['_']['excludedMethods'] | K>, T['_']['excludedMethods'] | K>;
+@@ -46,7 +46,7 @@
+   dynamic: TDynamic;
+   excludedMethods: TExcludedMethods;
+ })['_type'];
+-interface PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++interface PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   readonly _: {
+     readonly dialect: 'pg';
+     readonly hkt: THKT;
+@@ -56,10 +56,10 @@
+     readonly returning: TReturning;
+     readonly dynamic: TDynamic;
+     readonly excludedMethods: TExcludedMethods;
+-    readonly result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++    readonly result: PgReturningResult<TQueryResult, TReturning>;
+   };
+ }
+-declare class PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++declare class PgDeleteBase<THKT extends PgDeleteHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   protected session: PgSession;
+   protected dialect: PgDialect;
+   static readonly [entityKind]: string;
+diff --git a/pg-core/query-builders/insert.d.cts b/pg-core/query-builders/insert.d.cts
+--- a/pg-core/query-builders/insert.d.cts
++++ b/pg-core/query-builders/insert.d.cts
+@@ -11,7 +11,7 @@
+ import { Assume, DrizzleTypeError } from "../../utils.cjs";
+ import { PgTable, TableConfig as TableConfig$1 } from "../table.cjs";
+ import { PgDialect } from "../dialect.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.cjs";
+ import { IndexColumn } from "../indexes.cjs";
+ 
+ //#region src/pg-core/query-builders/insert.d.ts
+@@ -98,7 +98,7 @@
+ type PgInsertDynamic<T extends AnyPgInsert> = PgInsertKind<T['_']['hkt'], T['_']['table'], T['_']['queryResult'], T['_']['selectedFields'], T['_']['returning'], true, never>;
+ type AnyPgInsert = PgInsertBase<any, any, any, any, any, any, any>;
+ type PgInsert<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = ColumnsSelection | undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> = PgInsertBase<PgInsertHKT, TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+-interface PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++interface PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   readonly _: {
+     readonly dialect: 'pg';
+     readonly hkt: THKT;
+@@ -108,10 +108,10 @@
+     readonly returning: TReturning;
+     readonly dynamic: TDynamic;
+     readonly excludedMethods: TExcludedMethods;
+-    readonly result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++    readonly result: PgReturningResult<TQueryResult, TReturning>;
+   };
+ }
+-declare class PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++declare class PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   protected session: PgSession;
+   protected dialect: PgDialect;
+   static readonly [entityKind]: string;
+diff --git a/pg-core/query-builders/insert.d.ts b/pg-core/query-builders/insert.d.ts
+--- a/pg-core/query-builders/insert.d.ts
++++ b/pg-core/query-builders/insert.d.ts
+@@ -11,7 +11,7 @@
+ import { TypedQueryBuilder } from "../../query-builders/query-builder.js";
+ import { PgTable, TableConfig as TableConfig$1 } from "../table.js";
+ import { SelectResultFields } from "../../query-builders/select.types.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
+ import { IndexColumn } from "../indexes.js";
+ 
+ //#region src/pg-core/query-builders/insert.d.ts
+@@ -98,7 +98,7 @@
+ type PgInsertDynamic<T extends AnyPgInsert> = PgInsertKind<T['_']['hkt'], T['_']['table'], T['_']['queryResult'], T['_']['selectedFields'], T['_']['returning'], true, never>;
+ type AnyPgInsert = PgInsertBase<any, any, any, any, any, any, any>;
+ type PgInsert<TTable extends PgTable = PgTable, TQueryResult extends PgQueryResultHKT = PgQueryResultHKT, TSelectedFields extends ColumnsSelection | undefined = ColumnsSelection | undefined, TReturning extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> = PgInsertBase<PgInsertHKT, TTable, TQueryResult, TSelectedFields, TReturning, true, never>;
+-interface PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++interface PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   readonly _: {
+     readonly dialect: 'pg';
+     readonly hkt: THKT;
+@@ -108,10 +108,10 @@
+     readonly returning: TReturning;
+     readonly dynamic: TDynamic;
+     readonly excludedMethods: TExcludedMethods;
+-    readonly result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++    readonly result: PgReturningResult<TQueryResult, TReturning>;
+   };
+ }
+-declare class PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++declare class PgInsertBase<THKT extends PgInsertHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TSelectedFields = undefined, TReturning = undefined, TDynamic extends boolean = false, TExcludedMethods extends string = never> implements TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   protected session: PgSession;
+   protected dialect: PgDialect;
+   static readonly [entityKind]: string;
+diff --git a/pg-core/query-builders/update.d.cts b/pg-core/query-builders/update.d.cts
+--- a/pg-core/query-builders/update.d.cts
++++ b/pg-core/query-builders/update.d.cts
+@@ -11,7 +11,7 @@
+ import { GetColumnData } from "../../column.cjs";
+ import { PgTable } from "../table.cjs";
+ import { PgDialect } from "../dialect.cjs";
+-import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.cjs";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.cjs";
+ 
+ //#region src/pg-core/query-builders/update.d.ts
+ interface PgUpdateConfig {
+@@ -91,10 +91,10 @@
+   returning: TReturning;
+   dynamic: TDynamic;
+   excludedMethods: TExcludedMethods;
+-  result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++  result: PgReturningResult<TQueryResult, TReturning>;
+ })['_type'];
+ type AnyPgUpdate = PgUpdateBase<any, any, any, any, any, any, any, any, any, any>;
+-interface PgUpdateBase<THKT extends PgUpdateHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++interface PgUpdateBase<THKT extends PgUpdateHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   readonly _: {
+     readonly dialect: 'pg';
+     readonly hkt: THKT;
+@@ -107,7 +107,7 @@
+     readonly returning: TReturning;
+     readonly dynamic: TDynamic;
+     readonly excludedMethods: TExcludedMethods;
+-    readonly result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++    readonly result: PgReturningResult<TQueryResult, TReturning>;
+   };
+ }
+ declare class PgUpdateBase<THKT extends PgUpdateHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> implements SQLWrapper {
+diff --git a/pg-core/query-builders/update.d.ts b/pg-core/query-builders/update.d.ts
+--- a/pg-core/query-builders/update.d.ts
++++ b/pg-core/query-builders/update.d.ts
+@@ -11,7 +11,7 @@
+ import { TypedQueryBuilder } from "../../query-builders/query-builder.js";
+ import { PgTable } from "../table.js";
+ import { AppendToNullabilityMap, AppendToResult, GetSelectTableName, GetSelectTableSelection, JoinNullability, JoinType, SelectMode, SelectResult } from "../../query-builders/select.types.js";
+-import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
++import { PgReturningResult, PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
+ 
+ //#region src/pg-core/query-builders/update.d.ts
+ interface PgUpdateConfig {
+@@ -91,10 +91,10 @@
+   returning: TReturning;
+   dynamic: TDynamic;
+   excludedMethods: TExcludedMethods;
+-  result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++  result: PgReturningResult<TQueryResult, TReturning>;
+ })['_type'];
+ type AnyPgUpdate = PgUpdateBase<any, any, any, any, any, any, any, any, any, any>;
+-interface PgUpdateBase<THKT extends PgUpdateHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[]>, SQLWrapper {
++interface PgUpdateBase<THKT extends PgUpdateHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> extends TypedQueryBuilder<TSelectedFields, PgReturningResult<TQueryResult, TReturning>>, SQLWrapper {
+   readonly _: {
+     readonly dialect: 'pg';
+     readonly hkt: THKT;
+@@ -107,7 +107,7 @@
+     readonly returning: TReturning;
+     readonly dynamic: TDynamic;
+     readonly excludedMethods: TExcludedMethods;
+-    readonly result: TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
++    readonly result: PgReturningResult<TQueryResult, TReturning>;
+   };
+ }
+ declare class PgUpdateBase<THKT extends PgUpdateHKTBase, TTable extends PgTable, TQueryResult extends PgQueryResultHKT, TFrom extends PgTable | Subquery | PgViewBase | SQL | undefined = undefined, TSelectedFields extends ColumnsSelection | undefined = undefined, TReturning extends Record<string, unknown> | undefined = undefined, TNullabilityMap extends Record<string, JoinNullability> = Record<TTable['_']['name'], 'not-null'>, TJoins extends Join[] = [], TDynamic extends boolean = false, TExcludedMethods extends string = never> implements SQLWrapper {
+diff --git a/pg-core/session.d.cts b/pg-core/session.d.cts
+--- a/pg-core/session.d.cts
++++ b/pg-core/session.d.cts
+@@ -48,6 +48,7 @@
+ type PgQueryResultKind<TKind extends PgQueryResultHKT, TRow> = (TKind & {
+   readonly row: TRow;
+ })['type'];
++type PgReturningResult<TQueryResult extends PgQueryResultHKT, TReturning> = TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
+ //#endregion
+-export { PgBasePreparedQuery, PgQueryResultHKT, PgQueryResultKind, PgSession, PgTransactionConfig, PreparedQueryConfig };
++export { PgReturningResult, PgBasePreparedQuery, PgQueryResultHKT, PgQueryResultKind, PgSession, PgTransactionConfig, PreparedQueryConfig };
+ //# sourceMappingURL=session.d.cts.map
+\ No newline at end of file
+diff --git a/pg-core/session.d.ts b/pg-core/session.d.ts
+--- a/pg-core/session.d.ts
++++ b/pg-core/session.d.ts
+@@ -48,6 +48,7 @@
+ type PgQueryResultKind<TKind extends PgQueryResultHKT, TRow> = (TKind & {
+   readonly row: TRow;
+ })['type'];
++type PgReturningResult<TQueryResult extends PgQueryResultHKT, TReturning> = TReturning extends undefined ? PgQueryResultKind<TQueryResult, never> : TReturning[];
+ //#endregion
+-export { PgBasePreparedQuery, PgQueryResultHKT, PgQueryResultKind, PgSession, PgTransactionConfig, PreparedQueryConfig };
++export { PgReturningResult, PgBasePreparedQuery, PgQueryResultHKT, PgQueryResultKind, PgSession, PgTransactionConfig, PreparedQueryConfig };
+ //# sourceMappingURL=session.d.ts.map
+\ No newline at end of file

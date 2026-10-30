@@ -1,11 +1,29 @@
-import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
+import {
+  BusinessPermissionRelationshipMutationLive,
+  ContextAccessLive,
+  extractOutboxWorkerSubscriptions,
+  loadDatabaseConnectionPair,
+  matchOutboxMessages,
+  OutboxRepositoryLive,
+  runOutboxCycle,
+  scopedRoutineInvokerFromTransaction,
+} from '@app/core-runtime';
+import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import {
+  OutboxWorkerInfrastructureLive,
+  OutboxWorkerLegalEntityScopeFanoutLive,
+} from '@app/core-runtime/outbox/worker';
+import { NodeCrypto } from '@effect/platform-node';
+import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
-import { Context, Effect, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
+import { AccessAuthorizationMutationReconciliationLive } from '../../src/workers/access-authorization-mutation-reconciliation-live.ts';
+import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from '../../src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import {
   commerceCustomerContextRelations,
@@ -50,6 +68,8 @@ export interface EnrollmentAcceptanceFixture {
   readonly compositionRevision: string;
   /** The production generic owner store, backed by one real transaction per phase. */
   readonly ownerStore: CommerceEnrollmentOwnerAttemptStore;
+  /** One real claim-worker pass against this fixture's runtime client and TEST authority. */
+  readonly progressInvitationClaim: () => ReturnType<typeof progressEnrollmentAcceptanceInvitationClaim>;
   readonly run: CommerceEnrollmentOwnerTransactionRun;
   /**
    * The same runtime-role transaction as `runWorker`, with the fixture's verified Tenant installed
@@ -125,6 +145,128 @@ const acceptanceWorkerRun =
         ),
       );
 
+const progressEnrollmentAcceptanceInvitationClaim = Effect.fn('EnrollmentAcceptance.progressInvitationClaim')(
+  function* progressEnrollmentAcceptanceInvitationClaim(
+    admin: EnrollmentAcceptanceDatabase,
+    runtimeClient: PgClient.PgClient,
+    compositionRevision: string,
+    tenantId: string,
+  ) {
+    const { producerModuleKey, topic, workerKey } =
+      reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker.descriptor;
+    const streamKey = `${producerModuleKey}:${topic}`;
+    // This finalizer belongs to the caller fixture scope, registered after the realm's tenant
+    // cleanup. It runs first and removes only the checkpoint this bounded worker can create.
+    yield* Effect.addFinalizer(() =>
+      admin
+        .execute(
+          sql`delete from core.worker_checkpoints
+          where tenant_id = ${tenantId}::uuid
+            and consumer_name = ${workerKey}
+            and stream_key = ${streamKey}`,
+          'objects',
+        )
+        .pipe(Effect.asVoid, Effect.orDie),
+    );
+    return yield* Effect.scoped(
+      Effect.gen(function* runOwnedClaimWorker() {
+        const registrations = [reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker] as const;
+        const subscriptions = extractOutboxWorkerSubscriptions(registrations);
+        const document = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(subscriptions);
+        // The existing TEST authority owns its advisory scope. Install only the canonical claim
+        // subscription for this bounded pass, then restore it; this is not a production release proof.
+        yield* Effect.acquireRelease(
+          admin.transaction((transaction) =>
+            Effect.gen(function* installClaimSubscription() {
+              yield* transaction.execute(
+                sql`select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))`,
+                'objects',
+              );
+              const [current] = yield* transaction.execute<{ readonly subscriptions_json: unknown }>(
+                sql`select subscriptions_json from core.application_composition_authority
+                  where authority_key = 'active' and revision = ${compositionRevision}
+                    and phase = 'active' and durable_work_admission = 'open' for update`,
+                'objects',
+              );
+              if (current === undefined) {
+                return yield* Effect.die('The claim worker requires this fixture active TEST authority');
+              }
+              const previous = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+                current.subscriptions_json,
+              );
+              yield* transaction.execute(
+                sql`update core.application_composition_authority set subscriptions_json = ${document}::jsonb
+                  where authority_key = 'active' and revision = ${compositionRevision}`,
+                'objects',
+              );
+              return previous;
+            }),
+          ),
+          (previous) =>
+            admin
+              .transaction(
+                Effect.fn('EnrollmentAcceptance.restoreClaimSubscription')(
+                  function* restoreClaimSubscription(transaction) {
+                    yield* transaction.execute(
+                      sql`select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))`,
+                      'objects',
+                    );
+                    const restored = yield* transaction.execute<{ readonly revision: string }>(
+                      sql`update core.application_composition_authority set subscriptions_json = ${previous}::jsonb
+                    where authority_key = 'active' and revision = ${compositionRevision}
+                      and subscriptions_json = ${document}::jsonb returning revision`,
+                      'objects',
+                    );
+                    if (restored.length !== 1) {
+                      return yield* Effect.die('The claim worker TEST authority changed before restoration');
+                    }
+                    return yield* Effect.void;
+                  },
+                ),
+              )
+              .pipe(Effect.orDie),
+        );
+        const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtimeClient));
+        const persistence = Layer.succeed(CoreDatabase, { executor });
+        const services = Layer.mergeAll(
+          OutboxWorkerInfrastructureLive,
+          OutboxWorkerLegalEntityScopeFanoutLive,
+          AccessAuthorizationMutationReconciliationLive,
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              OutboxRepositoryLive.pipe(Layer.provide(persistence)),
+              ContextAccessLive,
+              BusinessPermissionRelationshipMutationLive,
+              persistence,
+            ),
+          ),
+          Layer.provide(NodeCrypto.layer),
+        );
+        const context = yield* Layer.build(services);
+        return yield* Effect.gen(function* matchAndRunClaimWorker() {
+          const matched = yield* matchOutboxMessages({ compositionRevision });
+          // Deliveries use the database clock for available_at; sample that same clock after matching.
+          const [row] = yield* admin.execute<{ readonly at: string }>(
+            sql`select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at`,
+            'objects',
+          );
+          const clock = yield* Schema.decodeUnknownEffect(Schema.Struct({ at: Schema.DateTimeUtcFromString }))(row);
+          const cycle = yield* runOutboxCycle({
+            claimOwner: `enrollment-acceptance-claim-${tenantId}`,
+            compositionRevision,
+            maxDeliveries: 100,
+            now: DateTime.toDateUtc(clock.at),
+            registrations,
+            subscriptions,
+          });
+          return { cycle, matched };
+        }).pipe(Effect.provideContext(context));
+      }),
+    );
+  },
+);
+
 /** Acquires the admin and runtime clients and builds the production owner store on the runtime role. */
 export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeEnrollmentAcceptanceFixture(
   scope: CommerceEnrollmentOwnerScope,
@@ -169,6 +311,8 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
     cleanup,
     compositionRevision,
     ownerStore: commerceEnrollmentOwnerAttemptStoreForRun(scope, run),
+    progressInvitationClaim: () =>
+      progressEnrollmentAcceptanceInvitationClaim(admin, runtimeClient, compositionRevision, scope.tenantId),
     run,
     runRequestScoped: acceptanceWorkerRun(runtime, scope),
     runWorker: acceptanceWorkerRun(runtime),

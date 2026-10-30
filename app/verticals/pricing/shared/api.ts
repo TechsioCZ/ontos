@@ -11,6 +11,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { CommercialFeeDefinitionApi } from './apis/commercial-fee-definition.ts';
 import { CommercialFeeResultLookupApi } from './apis/commercial-fee-result-lookup.ts';
 import { CommercialFeeScheduleApi } from './apis/commercial-fee-schedule.ts';
+import { CommitmentConfirmationVerificationApi } from './apis/commitment-confirmation-verification.ts';
 import { ContractualDiscountResultLookupApi } from './apis/contractual-discount-result-lookup.ts';
 import { CurrencySupportResultLookupApi } from './apis/currency-support-result-lookup.ts';
 import { CurrentPricingDecisionApi } from './apis/current-pricing-decision.ts';
@@ -18,6 +19,7 @@ import { CurrentSupportedCurrenciesApi } from './apis/current-supported-currenci
 import { DefineCommercialFeeActionApi } from './apis/define-commercial-fee-action.ts';
 import { DefinePriceActionApi } from './apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './apis/exact-price-resolution.ts';
+import { ManageCommitmentConfirmationActionApi } from './apis/manage-commitment-confirmation-action.ts';
 import { ManageContractualDiscountActionApi } from './apis/manage-contractual-discount-action.ts';
 import { ManageProductCommercialFeesBulkActionApi } from './apis/manage-product-commercial-fees-bulk-action.ts';
 import { ManageProductPricesBulkActionApi } from './apis/manage-product-prices-bulk-action.ts';
@@ -29,6 +31,7 @@ import { PriceResultLookupApi } from './apis/price-result-lookup.ts';
 import { PriceScheduleApi } from './apis/price-schedule.ts';
 import { QuantityTierResultLookupApi } from './apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './apis/quotation-result-lookup.ts';
+import { QuotationVerificationApi } from './apis/quotation-verification.ts';
 import { ReviseCommercialFeeActionApi } from './apis/revise-commercial-fee-action.ts';
 import { RevisePriceActionApi } from './apis/revise-price-action.ts';
 import { SetSupportedCurrenciesActionApi } from './apis/set-supported-currencies-action.ts';
@@ -100,6 +103,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(CommercialFeeDefinitionApi)
   .addHttpApi(CommercialFeeResultLookupApi)
   .addHttpApi(CommercialFeeScheduleApi)
+  .addHttpApi(CommitmentConfirmationVerificationApi)
   .addHttpApi(ContractualDiscountResultLookupApi)
   .addHttpApi(CurrencySupportResultLookupApi)
   .addHttpApi(CurrentPricingDecisionApi)
@@ -107,6 +111,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(DefineCommercialFeeActionApi)
   .addHttpApi(DefinePriceActionApi)
   .addHttpApi(ExactPriceResolutionApi)
+  .addHttpApi(ManageCommitmentConfirmationActionApi)
   .addHttpApi(ManageContractualDiscountActionApi)
   .addHttpApi(ManageProductCommercialFeesBulkActionApi)
   .addHttpApi(ManageProductPricesBulkActionApi)
@@ -118,12 +123,14 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(PriceScheduleApi)
   .addHttpApi(QuantityTierResultLookupApi)
   .addHttpApi(QuotationResultLookupApi)
+  .addHttpApi(QuotationVerificationApi)
   .addHttpApi(ReviseCommercialFeeActionApi)
   .addHttpApi(RevisePriceActionApi)
   .addHttpApi(SetSupportedCurrenciesActionApi)
   .addHttpApi(ZeroFloorAuthorizationResultLookupApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+  .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   .pipe(identity);
 
 export const pricingOperationContexts = {

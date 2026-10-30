@@ -43,6 +43,8 @@ import {
   ActionExecutionResolutionSchema,
   makeActionRuntime,
 } from '../../src/actions/runtime.ts';
+import { makeActionAuthorizationPreflightPermit } from '../../src/permissions/action-authorization-preflight.ts';
+import type { ActionAuthorizationPreflightService } from '../../src/permissions/action-authorization-preflight.ts';
 import {
   allowOwnerAuthorizationOverlay,
   transactionalOwnerAuthorization,
@@ -145,6 +147,7 @@ interface TestCompositionAuthority {
 interface HarnessOptions {
   readonly assortmentPermissionDecision?: PermissionDecision;
   readonly assortmentPermissionDecisions?: readonly PermissionDecision[];
+  readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
   readonly commitFailureCode?: string;
@@ -577,6 +580,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         options.resolveCompositionRevision ?? Effect.succeed(approvedCompositionRevision),
     };
   }
+  if (options.authorizationPreflight !== undefined) {
+    runtimeOptions = { ...runtimeOptions, authorizationPreflight: options.authorizationPreflight };
+  }
   const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
 
   return {
@@ -599,6 +605,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       moduleStateReadCount,
       moduleStateRecheckCount,
     }),
+    invocationState: () => currentInvocation,
     legalEntityChecks,
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
@@ -780,11 +787,15 @@ const registration = () =>
         subjectResourceId: 'primary',
         subjectResourceType: 'counter',
       });
-      yield* context.addOutboxMessage(domainEvent, {
-        payloadJson: { amount: payload.amount },
-        producerModuleKey: 'core.shell',
-        topic: 'counter.project',
-      });
+      yield* context.addOutboxMessage(
+        domainEvent,
+        {
+          payloadJson: { amount: payload.amount },
+          producerModuleKey: 'core.shell',
+          topic: 'counter.project',
+        },
+        { consumerModuleKey: 'party.registry' },
+      );
       return { total: payload.amount };
     }),
   );
@@ -948,6 +959,10 @@ it.effect(
     expect(harness.flushed[0]?.evidence.dataAccessEvents.length).toBe(1);
     expect(harness.flushed[0]?.evidence.domainEvents.length).toBe(1);
     expect(harness.flushed[0]?.evidence.outboxMessages.length).toBe(1);
+    expect(harness.flushed[0]?.evidence.outboxMessages[0]?.completion).toEqual({
+      consumerModuleKey: 'party.registry',
+      originalRevision: approvedCompositionRevision,
+    });
     expect(harness.flushed[0]?.allowedPolicies).toEqual([]);
     expect(harness.permissionChecks).toEqual([
       {
@@ -2926,6 +2941,185 @@ it.effect(
         transport: transport('denied'),
       },
     ]);
+  }),
+);
+
+it.effect('a valid owner preflight permit cannot override definitive executor denial', () =>
+  Effect.gen(function* executorDenialWithPreflight() {
+    const permit = makeActionAuthorizationPreflightPermit({
+      actionInvocationId: 'invocation-1',
+      actionKey: 'shell.counter.change',
+      principalId: principal.principalId,
+    });
+    const harness = yield* makeHarness({
+      authorizationPreflight: { prepare: () => Effect.succeed({ outcome: 'allowed', permit }) },
+      permissionDecision: 'denied',
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('preflight-executor-denied'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 1 });
+    expect(harness.counts()).toEqual({ createCount: 1, lockCount: 0, transactionCount: 0, transitionCount: 0 });
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.flushed).toEqual([]);
+    expect(harness.rejections[0]?.actionInvocationId).toBe('invocation-1');
+    // Definitive rejection must leave the independent owner permit unconsumed.
+    yield* permit.consume;
+    const repeated = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('preflight-executor-denied'),
+      }),
+    );
+    expect(Predicate.isTagged(repeated, 'ActionPermissionDenied')).toBe(true);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 1 });
+  }),
+);
+
+it.effect('requires executor permission and an independent owner preflight on the allowed path', () =>
+  Effect.gen(function* allowedExecutorWithPreflight() {
+    const permit = makeActionAuthorizationPreflightPermit({
+      actionInvocationId: 'invocation-1',
+      actionKey: 'shell.counter.change',
+      principalId: principal.principalId,
+    });
+    const harness = yield* makeHarness({
+      authorizationPreflight: { prepare: () => Effect.succeed({ outcome: 'allowed', permit }) },
+    });
+    expect(
+      yield* harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('preflight-executor-allowed'),
+      }),
+    ).toEqual({ total: 1 });
+    expect(harness.flushed).toHaveLength(1);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 0 });
+    expect(Predicate.isTagged(yield* Effect.flip(permit.consume), 'ActionPermissionCheckError')).toBe(true);
+  }),
+);
+
+it.effect('does not consume an owner permit when executor permission is unavailable', () =>
+  Effect.gen(function* unavailableExecutorWithPreflight() {
+    const permit = makeActionAuthorizationPreflightPermit({
+      actionInvocationId: 'invocation-1',
+      actionKey: 'shell.counter.change',
+      principalId: principal.principalId,
+    });
+    const harness = yield* makeHarness({
+      authorizationPreflight: { prepare: () => Effect.succeed({ outcome: 'allowed', permit }) },
+      permissionFailure: true,
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('preflight-executor-unavailable'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 0 });
+    expect(harness.counts().transitionCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    yield* permit.consume;
+  }),
+);
+
+it.effect('executor allow cannot override owner denial or unavailable owner authority', () =>
+  Effect.gen(function* ownerPreflightRemainsIndependent() {
+    const decisions: readonly {
+      readonly authorizationPreflight: ActionAuthorizationPreflightService;
+      readonly expectedTag: 'ActionPermissionDenied' | 'ActionPermissionCheckError';
+      readonly rejected: boolean;
+    }[] = [
+      {
+        authorizationPreflight: { prepare: () => Effect.succeed({ outcome: 'denied' }) },
+        expectedTag: 'ActionPermissionDenied',
+        rejected: true,
+      },
+      {
+        authorizationPreflight: {
+          prepare: () =>
+            Effect.fail(
+              new ActionPermissionCheckError({
+                code: 'action_permission_check_failed',
+                reason: 'Owner authority unavailable',
+              }),
+            ),
+        },
+        expectedTag: 'ActionPermissionCheckError',
+        rejected: false,
+      },
+    ];
+    yield* forEachSequential(
+      decisions,
+      Effect.fn(function* checkOwnerPreflight({ authorizationPreflight, expectedTag, rejected }) {
+        const harness = yield* makeHarness({ authorizationPreflight });
+        const failure = yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 1 },
+            principal,
+            registration: registration(),
+            transport: transport('preflight-owner-refusal'),
+          }),
+        );
+        expect(Predicate.isTagged(failure, expectedTag)).toBe(true);
+        expect(harness.permissionCounts().rejectionCount).toBe(rejected ? 1 : 0);
+        expect(harness.invocationState().status).toBe(rejected ? 'rejected' : 'received');
+        expect(harness.invocationState().completedAt).toEqual(rejected ? completionTime() : null);
+        expect(harness.counts().transitionCount).toBe(0);
+        expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+        expect(harness.flushed).toEqual([]);
+      }),
+    );
+  }),
+);
+
+it.effect('rejects mismatched and already consumed owner permits even when executor allows', () =>
+  Effect.gen(function* invalidOwnerPermit() {
+    const binding = {
+      actionInvocationId: 'invocation-1',
+      actionKey: 'shell.counter.change',
+      principalId: principal.principalId,
+    };
+    const consumed = makeActionAuthorizationPreflightPermit(binding);
+    yield* consumed.consume;
+    const permits = [
+      makeActionAuthorizationPreflightPermit({ ...binding, actionInvocationId: 'other-invocation' }),
+      makeActionAuthorizationPreflightPermit({ ...binding, actionKey: 'other.action' }),
+      makeActionAuthorizationPreflightPermit({ ...binding, principalId: 'other-principal' }),
+      consumed,
+    ];
+    yield* forEachSequential(
+      permits,
+      Effect.fn(function* checkInvalidPermit(permit) {
+        const harness = yield* makeHarness({
+          authorizationPreflight: { prepare: () => Effect.succeed({ outcome: 'allowed', permit }) },
+        });
+        const failure = yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 1 },
+            principal,
+            registration: registration(),
+            transport: transport('preflight-invalid-permit'),
+          }),
+        );
+        expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+        expect(harness.counts().transitionCount).toBe(0);
+        expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+        expect(harness.flushed).toEqual([]);
+      }),
+    );
   }),
 );
 

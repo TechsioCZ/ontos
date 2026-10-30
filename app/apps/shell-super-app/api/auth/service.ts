@@ -710,7 +710,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
               tenantId: resolved.identity.tenantId,
             }).pipe(
               Effect.map((choices) => choices.available),
-              Effect.orElseSucceed(() => []),
+              Effect.catchTag('LegalEntitySelectionUnavailableError', () => Effect.succeed([])),
             ),
             identity: resolved.identity,
             principal: resolved.principal,

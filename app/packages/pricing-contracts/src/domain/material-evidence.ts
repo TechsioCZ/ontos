@@ -1,3 +1,5 @@
+import { CatalogResourceRefSchema } from '@app/catalog/domain/catalog-revision-reference';
+import { CatalogSelectionBasisListSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   CatalogQuantityBasisSchema,
@@ -39,7 +41,7 @@ import {
 import { PricingAllocationResultSchema } from './discount-fee-allocation.ts';
 import { PricingCommercialTotalReadySchema } from './commercial-total.ts';
 import type { PricingCommercialTotalReady } from './commercial-total.ts';
-import { ExactPriceLookupRequestSchema } from './exact-price-lookup.ts';
+import { ExactPriceLookupCurrentEvidenceSchema, ExactPriceLookupRequestSchema } from './exact-price-lookup.ts';
 import {
   NonePriceGroupInterpretationSchema,
   PriceGroupAssignmentResolutionRequestSchema,
@@ -57,6 +59,7 @@ import {
   PricingPurchaseDemandOccurrenceIdSchema,
   PricingUnitBasisSchema,
 } from './pricing-decision.ts';
+import { priceDecimalValuesEqual } from './price-definition.ts';
 import type { PricingDecision } from './pricing-decision.ts';
 import {
   PricingPromotionApplicationSchema,
@@ -430,8 +433,10 @@ const PricingExactPriceOwnerSetAuthoritySchema = Schema.Struct({
 );
 
 export const PricingExactPriceOwnerReadReceiptSchema = Schema.Struct({
+  // Older retained receipts remain decodable; new Current assembly requires the native binding.
   authority: PricingExactPriceOwnerSetAuthoritySchema,
   factProofs: Schema.Array(PricingOwnerFactProofSchema).check(Schema.isMaxLength(500)),
+  lookupEvidence: Schema.optionalKey(ExactPriceLookupCurrentEvidenceSchema),
 });
 export type PricingExactPriceOwnerReadReceipt = typeof PricingExactPriceOwnerReadReceiptSchema.Type;
 
@@ -771,9 +776,86 @@ export type PricingMaterialEvidenceFenceSource = typeof PricingMaterialEvidenceF
 
 const sameCommercialScope = Schema.toEquivalence(PricingCommercialScopeSchema);
 const sameCatalogHandoff = Schema.toEquivalence(CatalogQuantityHandoffReadySchema);
+const sameSelection = Schema.toEquivalence(PricingCatalogSelectionSchema);
+type CatalogMaterialHandoff = typeof CatalogQuantityHandoffReadySchema.Type;
+const sameCatalogMaterialQuantityBasis = Schema.toEquivalence(CatalogQuantityBasisSchema);
+const sameCatalogMaterialSelectionBasis = Schema.toEquivalence(CatalogSelectionBasisListSchema);
+const sameCatalogMaterialResourceRef = Schema.toEquivalence(CatalogResourceRefSchema);
+const catalogMaterialResourceRefKey = (resourceRef: {
+  readonly moduleId: string;
+  readonly resourceId: string;
+  readonly resourceType: string;
+  readonly tenantId: string;
+}): string => [resourceRef.moduleId, resourceRef.resourceType, resourceRef.resourceId, resourceRef.tenantId].join('|');
+const catalogMaterialRevisionKey = (revision: {
+  readonly resourceRef: Parameters<typeof catalogMaterialResourceRefKey>[0];
+  readonly revision: number;
+  readonly revisionId?: string;
+}): string =>
+  `${catalogMaterialResourceRefKey(revision.resourceRef)}|${revision.revision}|${revision.revisionId ?? ''}`;
+const catalogMaterialPackageContentKey = (handoff: CatalogMaterialHandoff): string => {
+  const content = handoff.packageContent;
+  return content === undefined
+    ? 'none'
+    : `${content.amount}|${catalogMaterialResourceRefKey(content.unitRef)}|${content.path.map(catalogMaterialRevisionKey).join('/')}`;
+};
+const catalogMaterialPackageRevisionKey = (handoff: CatalogMaterialHandoff): string => {
+  const revision = handoff.packageRevision;
+  if (revision === undefined) {
+    return 'none';
+  }
+  return [
+    catalogMaterialRevisionKey(revision.reference),
+    revision.amount,
+    catalogMaterialResourceRefKey(revision.unitRef),
+    catalogMaterialResourceRefKey(revision.form.productRef),
+    catalogMaterialResourceRefKey(revision.form.variantRef),
+    revision.configurationKey ?? '',
+    revision.setComposition === undefined ? '' : catalogMaterialRevisionKey(revision.setComposition),
+    revision.lower === undefined
+      ? ''
+      : `${revision.lower.count}:${catalogMaterialRevisionKey(revision.lower.revision)}`,
+  ].join('|');
+};
+const catalogMaterialSameOwnerMetadata = (supplied: CatalogMaterialHandoff, current: CatalogMaterialHandoff): boolean =>
+  supplied.completeness.ownerRevision === supplied.ownerRevision &&
+  current.completeness.ownerRevision === current.ownerRevision &&
+  supplied.completeness.scope.kind === current.completeness.scope.kind &&
+  supplied.completeness.scope.predicateRef === current.completeness.scope.predicateRef;
+
+const sameCatalogMaterialQuantity = (supplied: CatalogMaterialHandoff, current: CatalogMaterialHandoff): boolean =>
+  supplied.quantity.requested === current.quantity.requested &&
+  supplied.quantity.resulting === current.quantity.resulting &&
+  supplied.quantity.changed === current.quantity.changed &&
+  supplied.quantity.notice === current.quantity.notice &&
+  supplied.quantity.rounding === current.quantity.rounding &&
+  supplied.quantity.step === current.quantity.step &&
+  supplied.quantity.targetId === current.quantity.targetId &&
+  supplied.quantity.unitId === current.quantity.unitId &&
+  supplied.quantity.unitRuleRevision === current.quantity.unitRuleRevision;
+
+const sameCatalogHandoffMeaning = (supplied: CatalogMaterialHandoff, current: CatalogMaterialHandoff): boolean =>
+  sameCatalogHandoff(supplied, current) ||
+  (supplied.evidence.assessedAt <= current.evidence.assessedAt &&
+    current.evidence.assessedAt === current.completeness.observedAt &&
+    current.completeness.scope.kind === 'EXACT_PREDICATE' &&
+    current.completeness.nextApplicabilityBoundary === current.evidence.validUntil &&
+    (current.evidence.validUntil === undefined || current.evidence.assessedAt < current.evidence.validUntil) &&
+    sameSelection(supplied.selection, current.selection) &&
+    sameSelection(supplied.evidence.selection, current.evidence.selection) &&
+    catalogMaterialSameOwnerMetadata(supplied, current) &&
+    supplied.equivalentSelectionKey === current.equivalentSelectionKey &&
+    supplied.hierarchyRevision === current.hierarchyRevision &&
+    supplied.divisible === current.divisible &&
+    sameCatalogMaterialQuantity(supplied, current) &&
+    sameCatalogMaterialResourceRef(supplied.unitRef, current.unitRef) &&
+    sameCatalogMaterialQuantityBasis(supplied.quantityBasis, current.quantityBasis) &&
+    sameCatalogMaterialSelectionBasis(supplied.evidence.basis, current.evidence.basis) &&
+    catalogMaterialPackageContentKey(supplied) === catalogMaterialPackageContentKey(current) &&
+    catalogMaterialPackageRevisionKey(supplied) === catalogMaterialPackageRevisionKey(current));
+
 const sameCatalogQuantityBasis = Schema.toEquivalence(CatalogQuantityBasisSchema);
 const sameLine = Schema.toEquivalence(PricingLineSchema);
-const sameSelection = Schema.toEquivalence(PricingCatalogSelectionSchema);
 const sameUnitBasis = Schema.toEquivalence(PricingUnitBasisSchema);
 const sameDiscountAudience = Schema.toEquivalence(PricingDiscountAudienceSchema);
 const sameDiscountBasis = Schema.toEquivalence(PricingDiscountIdentityBasisSchema);
@@ -834,7 +916,11 @@ const exactPriceBasisBelongsToDecision = (
   unitBasis: typeof PricingUnitBasisSchema.Type,
 ) =>
   decision.lines.some(
-    (line) => sameSelection(line.catalog.selection, selection) && sameUnitBasis(line.pricingBasis, unitBasis),
+    (line) =>
+      sameSelection(line.catalog.selection, selection) &&
+      // Stored Price identities carry the owner's normalized decimal form; the quantity compares by value.
+      priceDecimalValuesEqual(line.pricingBasis.quantity, unitBasis.quantity) &&
+      sameUnitBasis(line.pricingBasis, { ...unitBasis, quantity: line.pricingBasis.quantity }),
   );
 
 const sameCatalogResourceRef = (
@@ -979,16 +1065,26 @@ const catalogEquivalenceMaterialBindsDecision = (
   request: typeof PricingPurposeEquivalenceRequestSchema.Type,
   response: typeof PricingPurposeEquivalenceResponseSchema.Type,
 ): boolean => {
-  const exactMembers =
+  const wholeMembers =
     request.members.length === decision.lines.length &&
     request.members.every(({ handoff, occurrenceId }, index) => {
       const line = decision.lines[index];
       return line !== undefined && occurrenceId === line.occurrenceId && sameCatalogHandoff(handoff, line.catalog);
     });
+  const [singleMember] = request.members;
+  const singletonMember =
+    request.members.length === 1 &&
+    decision.lines.some(
+      (line) =>
+        singleMember !== undefined &&
+        singleMember.occurrenceId === line.occurrenceId &&
+        sameCatalogHandoff(singleMember.handoff, line.catalog) &&
+        sameSelection(request.anchorSelection, line.catalog.selection),
+    );
   if (
     request.effectiveAt !== effectiveAt ||
     !selectionBelongsToDecision(decision, request.anchorSelection) ||
-    !exactMembers
+    !(wholeMembers || singletonMember)
   ) {
     return false;
   }
@@ -998,6 +1094,16 @@ const catalogEquivalenceMaterialBindsDecision = (
       return (
         anchor?.role === 'ANCHOR' &&
         sameSelection(anchor.handoff.selection, request.anchorSelection) &&
+        sameSelection(evidence.anchorSelection, request.anchorSelection) &&
+        evidence.members.length === request.members.length &&
+        evidence.members.every((member, index) => {
+          const requested = request.members[index];
+          return (
+            requested !== undefined &&
+            member.occurrenceId === requested.occurrenceId &&
+            sameSelection(member.selection, requested.handoff.selection)
+          );
+        }) &&
         evidence.effectiveAt === effectiveAt &&
         evidence.observedAt <= evaluatedAt &&
         evaluatedAt < evidence.validThrough &&
@@ -1008,7 +1114,7 @@ const catalogEquivalenceMaterialBindsDecision = (
             assessment.role === 'MEMBER' &&
             requested !== undefined &&
             assessment.occurrenceId === requested.occurrenceId &&
-            sameCatalogHandoff(assessment.handoff, requested.handoff)
+            sameCatalogHandoffMeaning(requested.handoff, assessment.handoff)
           );
         })
       );
@@ -1114,7 +1220,7 @@ const materialBindsDecision = (
         return (
           line !== undefined &&
           sameLine(line, retainedLine) &&
-          sameCatalogHandoff(handoff, line.catalog) &&
+          sameCatalogHandoffMeaning(line.catalog, handoff) &&
           catalogCompatibilityBindsLine(line, handoff, evaluatedAt, compatibilityRequest, compatibilityResponse) &&
           request.amount === handoff.quantity.requested &&
           sameSelection(request.selection, handoff.selection)
@@ -1405,6 +1511,76 @@ const fenceSourceBindsRequest = (
   );
 };
 
+const catalogMaterialsCoverDecision = (
+  decision: PricingDecision,
+  sources: readonly PricingMaterialEvidenceFenceSource[],
+  requestedAt: string,
+  evaluatedAt: string,
+): boolean => {
+  const lines = sources.flatMap(({ verificationMaterial }) =>
+    verificationMaterial.kind === 'CATALOG_LINE_AUTHORITY' ? [verificationMaterial] : [],
+  );
+  if (
+    lines.length !== decision.lines.length ||
+    !lines.every((material, index) => {
+      const line = decision.lines[index];
+      return (
+        line !== undefined &&
+        sameLine(material.line, line) &&
+        sameCatalogHandoffMeaning(line.catalog, material.handoff) &&
+        requestedAt <= material.handoff.evidence.assessedAt &&
+        material.handoff.evidence.assessedAt <= evaluatedAt
+      );
+    })
+  ) {
+    return false;
+  }
+  const equivalences = sources.flatMap(({ verificationMaterial }) =>
+    verificationMaterial.kind === 'CATALOG_EQUIVALENCE_AUTHORITY' ? [verificationMaterial] : [],
+  );
+  const whole =
+    equivalences.length === 1 &&
+    equivalences[0]?.request.members.length === decision.lines.length &&
+    equivalences[0].request.members.every((member, index) => {
+      const line = decision.lines[index];
+      return (
+        line !== undefined &&
+        member.occurrenceId === line.occurrenceId &&
+        sameCatalogHandoff(member.handoff, line.catalog)
+      );
+    });
+  const singletons =
+    equivalences.length === decision.lines.length &&
+    equivalences.every(({ request }, index) => {
+      const line = decision.lines[index];
+      const [member] = request.members;
+      return (
+        line !== undefined &&
+        request.members.length === 1 &&
+        member?.occurrenceId === line.occurrenceId &&
+        sameCatalogHandoff(member.handoff, line.catalog) &&
+        sameSelection(request.anchorSelection, line.catalog.selection)
+      );
+    });
+  if (!(whole || singletons)) {
+    return false;
+  }
+  return lines.every((material, index) => {
+    const authority = whole ? equivalences[0] : equivalences[index];
+    const assessmentIndex = whole ? index + 1 : 1;
+    if (authority?.response.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED') {
+      return false;
+    }
+    const assessment = authority.response.assessments[assessmentIndex];
+    return (
+      assessment?.role === 'MEMBER' &&
+      assessment.occurrenceId === material.line.occurrenceId &&
+      sameCatalogHandoff(material.handoff, assessment.handoff) &&
+      sameCatalogHandoff(material.compatibilityRequest.handoff, assessment.handoff)
+    );
+  });
+};
+
 export interface PricingOwnerMaterialEvidenceFenceGatewayRequest {
   readonly candidateRef: string;
   readonly decision: PricingDecision;
@@ -1446,6 +1622,9 @@ export const PricingOwnerMaterialEvidenceFenceGatewayRequestSchema: Schema.Codec
     ).length;
     if (purchaseAuthorityCount !== 1 || groupAuthorityCount !== (subject.kind === 'PROFILE' ? 1 : 0)) {
       return 'Final fence requires one Purchase Context singleton proof and Price Group authority only for Profile subjects';
+    }
+    if (!catalogMaterialsCoverDecision(decision, sources, requestedAt, evaluatedAt)) {
+      return 'Final fence requires complete ordered Catalog line and equivalence authority for every original occurrence';
     }
     return sources.every((source) =>
       fenceSourceBindsRequest(candidateRef, decision, subject, effectiveAt, evaluatedAt, requestedAt, source),

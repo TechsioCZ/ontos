@@ -65,6 +65,8 @@ const MatchEvidenceExplanationSchema = Schema.Struct({
   officialIdentifierRef: Schema.optionalKey(PartyOfficialIdentifierRefSchema),
   outcome: Schema.optionalKey(MatchOutcomeSchema),
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  // Review lineage is independent of the outcome-specific result caseRef.
+  reviewedCaseRef: Schema.optionalKey(DuplicateCandidateCaseRefSchema),
   ruleKey: RuleKeySchema,
   verification: Schema.optionalKey(Schema.Literals(['REJECTED', 'UNVERIFIED', 'VERIFIED'])),
 });

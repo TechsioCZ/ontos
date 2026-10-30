@@ -1,0 +1,28 @@
+{
+  "name": "@app/commerce-cart-finalization-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cart-owned immutable final candidate public schemas and governed client.",
+  "exports": {
+    "./final-candidate": "./src/apis/final-cart-candidate.ts",
+    "./final-candidate/client": "./src/api/final-cart-candidate-client.ts",
+    "./final-cart-candidate": "./src/apis/final-cart-candidate.ts",
+    "./final-cart-candidate/client": "./src/api/final-cart-candidate-client.ts"
+  },
+  "dependencies": {
+    "@app/commerce-cart-contracts": "workspace:*",
+    "@app/core-runtime": "workspace:*",
+    "@app/pricing-contracts": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.7"
+  },
+  "ontosContractOwner": {
+    "appId": "commerce-cart",
+    "moduleId": "commerce.cart",
+    "packageName": "@app/commerce-cart",
+    "moduleApis": [
+      "final-cart-candidate"
+    ]
+  }
+}

@@ -190,6 +190,11 @@ export {
   executeUpsertTemporaryDsrExport,
 } from './upsert-temporary-dsr-export-action-client.ts';
 export type { UpsertTemporaryDsrExportActionClientOptions } from './upsert-temporary-dsr-export-action-client.ts';
+export {
+  executeAcknowledgePrivacyNotice,
+  executeAcknowledgePrivacyNoticeWithAuthorization,
+} from './acknowledge-privacy-notice-action-client.ts';
+export type { AcknowledgePrivacyNoticeActionClientOptions } from './acknowledge-privacy-notice-action-client.ts';
 // </generated-action-http-client-exports>
 
 type PrivacyApiGroups = typeof privacyApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;

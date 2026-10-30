@@ -9,6 +9,7 @@ import type {
 import { resolveCatalogSourceFact } from '../../src/domain/catalog-source-resolution.ts';
 import { catalogLocalOverridePermission } from '../../src/domain/catalog-local-override.ts';
 import { makeCatalogLocalOverrideService } from '../../src/persistence/catalog-local-override-service.ts';
+import { CatalogSourceResolutionUnavailable } from '../../src/persistence/catalog-source-resolution-ports.ts';
 import type { CatalogSourceResolutionPorts } from '../../src/persistence/catalog-source-resolution-ports.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -125,6 +126,7 @@ const makeService = (input: {
   readonly admission: ReturnType<typeof createAdmission>;
   readonly casConflict?: boolean;
   readonly events: ReturnType<typeof createEvents>;
+  readonly productExists?: () => Effect.Effect<boolean, CatalogSourceResolutionUnavailable>;
   readonly store: ReturnType<typeof createStore>;
 }) => {
   const store =
@@ -138,12 +140,108 @@ const makeService = (input: {
   return makeCatalogLocalOverrideService<string>({
     admission: input.admission.ports,
     events: input.events.ports,
+    productExists: input.productExists ?? (() => Effect.succeed(true)),
     store,
     valuesEqual: (left, right) => left === right,
   });
 };
 
 describe('Catalog Local Override service', () => {
+  it.effect('rejects a missing Product before any source write or event despite valid empty-base admission', () =>
+    Effect.gen(function* testMissingProduct() {
+      const store = createStore();
+      const events = createEvents();
+      const service = makeService({
+        admission: createAdmission(),
+        events,
+        productExists: () => Effect.succeed(false),
+        store,
+      });
+      const result = yield* service.activate({
+        at,
+        evidenceRef: 'missing-product',
+        principalId: 'principal-1',
+        reason: 'Exact target',
+        scope: { ...scope, factKey: 'catalog.name' },
+        value: 'Phantom',
+      });
+      expect(result.status).toBe('INVALID');
+      expect(store.overrides).toEqual([]);
+      expect(events.emitted).toEqual([]);
+    }),
+  );
+
+  it.effect('propagates an unavailable Product lookup instead of interpreting uncertainty as absence', () =>
+    Effect.gen(function* testUnavailableProduct() {
+      const store = createStore();
+      const events = createEvents();
+      const unavailable = new CatalogSourceResolutionUnavailable({
+        code: 'catalog_source_resolution_unavailable',
+        reason: 'Owner lookup unavailable',
+      });
+      const service = makeService({
+        admission: createAdmission(),
+        events,
+        productExists: () => Effect.fail(unavailable),
+        store,
+      });
+      const result = yield* service
+        .activate({
+          at,
+          evidenceRef: 'unavailable-product',
+          principalId: 'principal-1',
+          reason: 'Exact target',
+          scope,
+          value: 'Name',
+        })
+        .pipe(Effect.flip);
+      expect(result).toBe(unavailable);
+      expect(store.overrides).toEqual([]);
+      expect(events.emitted).toEqual([]);
+    }),
+  );
+
+  it.effect('does not look up Product identity before authorization or during legacy release', () =>
+    Effect.gen(function* testLookupOrdering() {
+      const store = createStore();
+      const events = createEvents();
+      let reads = 0;
+      const productExists = () =>
+        Effect.sync(() => {
+          reads += 1;
+          return true;
+        });
+      const denied = makeService({
+        admission: createAdmission({ allowedPermissions: [] }),
+        events,
+        productExists,
+        store,
+      });
+      const input = {
+        at,
+        evidenceRef: 'identity-order',
+        principalId: 'principal-1',
+        reason: 'Exact target',
+        scope,
+        value: 'Name',
+      };
+      expect((yield* denied.activate(input)).status).toBe('PERMISSION_REQUIRED');
+      expect(reads).toBe(0);
+      const service = makeService({ admission: createAdmission(), events, productExists, store });
+      expect((yield* service.activate(input)).status).toBe('APPLIED');
+      expect(reads).toBe(1);
+      const missing = makeService({
+        admission: createAdmission(),
+        events,
+        productExists: () => Effect.succeed(false),
+        store,
+      });
+      expect((yield* missing.change({ ...input, expectedRevision: 1n })).status).toBe('INVALID');
+      expect((yield* missing.release({ ...input, expectedRevision: 1n })).status).toBe('APPLIED');
+      expect(store.overrides).toHaveLength(2);
+    }),
+  );
+
   it.effect('activates one override and emits a resolved-Current change', () =>
     Effect.gen(function* testActivate() {
       const store = createStore({ bases: [base80] });

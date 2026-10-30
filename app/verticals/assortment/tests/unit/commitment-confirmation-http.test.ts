@@ -48,7 +48,9 @@ it('maps Confirmation domain failures to fail-closed generated HTTP statuses', (
 });
 
 it('declares and decodes the generated retryable Confirmation problem', () => {
-  expect(IssueAssortmentCommitmentConfirmationActionUnavailableProblemSchema.ast.annotations?.httpApiStatus).toBe(503);
+  expect(
+    Schema.resolveAnnotationsKey(IssueAssortmentCommitmentConfirmationActionUnavailableProblemSchema)?.httpApiStatus,
+  ).toBe(503);
   const problem = IssueAssortmentCommitmentConfirmationActionUnavailableProblemSchema.make({
     code: 'assortment_confirmation_unavailable',
     detail: 'The Confirmation capability is temporarily unavailable.',

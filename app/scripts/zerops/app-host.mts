@@ -29,6 +29,7 @@ import {
   Duration,
   Effect,
   Exit,
+  Layer,
   Option,
   Order,
   Redacted,
@@ -61,6 +62,12 @@ import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   publishApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
+import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
+import {
+  CALLER_NAMESPACE_ID,
+  OWNER_RUNTIME_CONFIGURATIONS,
+  unitApiBaseUrl,
+} from '../ops/owner-runtime-configuration.mts';
 import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
 
@@ -173,6 +180,22 @@ const PublicOriginSchema = Schema.URLFromString.check(
 const loopbackOrigin = (port: number) => `http://127.0.0.1:${String(port)}`;
 
 /**
+ * The owner API bases and caller namespaces the shared owner runtime configuration names. Each base is the serving
+ * unit's loopback origin; a unit this host does not serve leaves its base unset (undefined removes it from the child)
+ * rather than pointing at an address nothing serves.
+ */
+const ownerRuntimeEnvironment = (ports: ReadonlyMap<string, number>) =>
+  Object.fromEntries(
+    OWNER_RUNTIME_CONFIGURATIONS.flatMap(({ apiDependencies, callerNamespaces }) => [
+      ...apiDependencies.map(({ unitId, variable }) => {
+        const port = unitId === SHELL_ID ? SHELL_PORT : ports.get(unitId);
+        return [variable, port === undefined ? undefined : unitApiBaseUrl(loopbackOrigin(port), unitId)] as const;
+      }),
+      ...callerNamespaces.map((variable) => [variable, CALLER_NAMESPACE_ID] as const),
+    ]),
+  );
+
+/**
  * Settings every process derives from the public origins of this environment and the host's own ports. They win over
  * stored owner secrets, whose URL values name whatever hostnames the bundle was written for.
  */
@@ -182,9 +205,9 @@ export const derivedEnvironment = (
   hostPort: number,
   ports: ReadonlyMap<string, number>,
 ) => {
-  const shellGateway = `${loopbackOrigin(SHELL_PORT)}/shell-super-app-api`;
-  const priceGroupCatalog = ports.get('price-group-catalog');
+  const shellGateway = unitApiBaseUrl(loopbackOrigin(SHELL_PORT), SHELL_ID);
   return {
+    ...ownerRuntimeEnvironment(ports),
     AKROS_STOREFRONT_PUBLIC_URL: storefrontOrigin,
     BETTER_AUTH_TRUSTED_ORIGINS: `${origin},${storefrontOrigin}`,
     BETTER_AUTH_URL: origin,
@@ -198,9 +221,6 @@ export const derivedEnvironment = (
     ONTOS_GATEWAY_ISSUER: origin,
     ONTOS_OAUTH_ISSUER: `${origin}/shell-super-app-api/oauth`,
     ONTOS_PUBLIC_URL: origin,
-    // An environment without the owner leaves the variable unset (undefined removes it from the child).
-    ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
-      priceGroupCatalog === undefined ? undefined : `${loopbackOrigin(priceGroupCatalog)}/price-group-catalog-api`,
     ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway,
   };
 };
@@ -609,7 +629,10 @@ if (import.meta.main) {
         port: Config.Int('PORT').pipe(Config.withDefault(3000)),
       }),
     ),
-    Effect.provide(ApplicationCompositionAuthorityAdminDatabaseLive),
+    // Every authority transition re-observes legacy owner completion, as the operator publisher does.
+    Effect.provide(
+      Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+    ),
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
     Effect.tapCause((cause) => Console.error(`[app-host] stopped: ${String(cause)}`)),

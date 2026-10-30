@@ -11,7 +11,7 @@ import type { CrmCommand, CrmCommandInput } from '../../shared/actions/apply-com
 import { partyLinksOf } from '../../shared/commands/index.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
-import { executeRecords } from '../api/records-client.ts';
+import { executeRecords } from '../api/records-consumer.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { commandResultOutcome } from './client-party-sync-outcome.ts';
 import type { CrmCommandOutcome } from './client-party-sync-outcome.ts';

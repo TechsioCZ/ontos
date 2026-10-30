@@ -3,6 +3,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistry,
   TrustedAdmissionObservation,
+  ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS,
 } from '@app/core-runtime/auth/external-identity-admission';
 import type { TrustedAdmissionObservationService } from '@app/core-runtime/auth/external-identity-admission';
 import {
@@ -422,7 +423,8 @@ it.effect('rejects expired and future ALLOWED observations at the receiver clock
       verify: (request) =>
         Effect.succeed(
           makeAllowedProviderResult(request, {
-            observedAt: DateTime.add(now, { milliseconds: 1 }),
+            // Beyond the receiver's bounded early-reading tolerance.
+            observedAt: DateTime.add(now, { milliseconds: ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS + 1 }),
           }),
         ),
     };
@@ -583,7 +585,16 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     const allowed = yield* runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
       Effect.provide(verifierLayer),
     );
-    expect(allowed).toBeUndefined();
+    expect(allowed).toEqual(
+      Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+        authBindingId: workloadAuthBindingId,
+        authContextRef: 'gateway-api-key:commerce-workload-test',
+        authenticationNamespaceId: workloadAuthenticationNamespaceId,
+        authMethod: 'api_key',
+        principalId: workloadPrincipalId,
+        tenantId: workloadTenantId,
+      }),
+    );
 
     const nextRelease = yield* makeApplicationCompositionSnapshotFixture(
       [ultramodernApiMarker.appId],
@@ -622,7 +633,7 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
           ),
       },
     ).pipe(Effect.provide(verifierLayer));
-    expect(validReplay).toBeUndefined();
+    expect(validReplay).toEqual(allowed);
 
     const wrongAudience = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${fixture.token}`, {

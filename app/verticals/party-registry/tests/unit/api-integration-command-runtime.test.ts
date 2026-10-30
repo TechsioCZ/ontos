@@ -1727,7 +1727,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 if (!Predicate.isFunction(resolveTarget)) {
                   return yield* Effect.die('Expected an unconditional permission resolver');
                 }
-                const target = resolveTarget(input.decodedInput, {
+                const target = resolveTarget(input.input, {
                   ...actor,
                   correlationId: 'reviewer-recovery',
                 });
@@ -1906,9 +1906,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   ? {
                       actionInvocationId: (yield* Schema.decodeUnknownEffect(
                         Schema.Struct({ invocationId: Schema.String }),
-                      )(input.decodedInput)).invocationId,
+                      )(input.input)).invocationId,
                     }
-                  : input.decodedInput,
+                  : input.input,
               ).pipe(
                 Effect.mapError(
                   () =>

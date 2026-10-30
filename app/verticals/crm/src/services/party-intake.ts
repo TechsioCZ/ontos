@@ -48,7 +48,7 @@ import type { ClientSchema } from '../../shared/domain/clients.ts';
 import { EntityIdSchema, IcoSchema, RegistryCompanyIdSchema } from '../../shared/domain/common.ts';
 import type { ClientPartySync } from '../../shared/apis/apply-command-action.ts';
 import { executeApplyCommandWithAuthorization } from '../api/apply-command-action-client.ts';
-import { executeRecordsWithAuthorization } from '../api/records-client.ts';
+import { executeRecordsWithAuthorization } from '../api/records-consumer.ts';
 
 const REGISTRY = 'party-registry';
 const CRM = 'crm';

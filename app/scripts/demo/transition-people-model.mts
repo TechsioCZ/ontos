@@ -73,6 +73,7 @@ import {
   runApplicationCompositionMigration,
   withApplicationCompositionPublicationLock,
 } from '../application-composition-authority-publication.mts';
+import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
 import { peopleModelTransitionFixtureRelationships } from './people-model-transition-fixture.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { readReviewedAgentProfiles, reviewedProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
@@ -934,10 +935,12 @@ const composition = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(ActiveApplicationCompositionSourceLive),
   Layer.provide(FetchHttpClient.layer),
 );
+// The sealed cutover is an authority transition, so it re-observes legacy owner completion like every publisher.
 const live = Layer.mergeAll(
   AgentProfileOperatorLive,
   CoreAdminDatabaseLive,
   composition,
+  ApplicationCompositionLegacyOwnersLive.pipe(Layer.provide(NodeServices.layer)),
   NodeServices.layer,
   Reactivity.layer,
 );

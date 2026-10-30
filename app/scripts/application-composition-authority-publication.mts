@@ -1,8 +1,25 @@
 import { eq, sql } from 'drizzle-orm';
-import { Clock, Config, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import {
+  Clock,
+  Config,
+  Context,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Ref,
+  Schedule,
+  Schema,
+} from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
+import type { CoreTransaction } from '../packages/core-runtime/src/db/types.ts';
 import { DatabaseConfig, parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import {
   applicationCompositionAuthority,
@@ -11,6 +28,16 @@ import {
   outboxMessages,
 } from '../packages/core-runtime/src/db/schema.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
+import {
+  verifyLegacyCompletionPublication,
+  withLegacyCompletionOwnerLeases,
+} from '../packages/core-runtime/src/modules/legacy-completion-publication-runtime.ts';
+import type { LeasedLegacyCompletionOwner } from '../packages/core-runtime/src/modules/legacy-completion-publication-runtime.ts';
+import {
+  describeDeadOutboxDeliveries,
+  listDeadOutboxDeliveries,
+} from '../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
+import { installApplicationCompositionCompletionSchema } from './application-composition-schema-expansion.mts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
   ApplicationCompositionAuthorityError,
@@ -18,6 +45,7 @@ import {
   drainApplicationCompositionAuthority,
   isApplicationCompositionDurableWorkDrained,
   isApplicationCompositionWorkDrained,
+  lockApplicationCompositionPublication,
   markApplicationCompositionMigrationComplete,
   publishApplicationCompositionAuthority,
   resealMigratedApplicationCompositionAuthority,
@@ -362,19 +390,121 @@ export const withImmutableApplicationReleaseIdentityLock =
       upload,
     );
 
+// Live runtimes keep running short transactions, such as the Outbox matcher, so one snapshot can
+// catch one in flight. Waiting for a quiet snapshot is still only an observation; owner locks fence.
+const quiescenceSchedule = Schedule.spaced('100 millis').pipe(Schedule.upTo({ times: 100 }));
+
 const requireNoLegacyRuntimeTransactions = Effect.fn('ApplicationCompositionAuthority.requireQuiescentRuntime')(
   function* requireNoLegacyRuntimeTransactions() {
     const database = yield* CoreDatabase;
-    const [activity] = yield* database.executor.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from pg_stat_activity where datname = current_database() and usename <> current_user and pid <> pg_backend_pid() and (state is distinct from 'idle' or xact_start is not null)) as blocked`,
-      'objects',
-    );
-    if (activity === undefined || activity.blocked) {
-      return yield* unavailable(
-        'Initial Application Composition cutover requires all legacy runtime transactions to finish',
+    return yield* database.executor
+      .execute<{ readonly blocked: boolean }>(
+        sql`select exists(select 1 from pg_stat_activity where datname = current_database() and usename <> current_user and pid <> pg_backend_pid() and (state is distinct from 'idle' or xact_start is not null)) as blocked`,
+        'objects',
+      )
+      .pipe(
+        Effect.flatMap(([activity]) =>
+          activity === undefined || activity.blocked
+            ? Effect.fail(
+                unavailable(
+                  'Initial Application Composition cutover requires all legacy runtime transactions to finish',
+                ),
+              )
+            : Effect.void,
+        ),
+        Effect.retry({
+          schedule: quiescenceSchedule,
+          while: (error) => Predicate.isTagged(error, 'ApplicationCompositionAuthorityError'),
+        }),
       );
+  },
+);
+
+const withVerifiedLegacyTransition = Effect.fn('ApplicationCompositionAuthority.withLegacyOwners')(
+  function* withVerifiedLegacyTransition<Value, Failure, Requirements>(
+    expectedRevision: string | null,
+    transition: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    const database = yield* CoreDatabase;
+    return yield* Effect.scoped(
+      Effect.gen(function* authorityBeforeOwners() {
+        const authorityReady = yield* Deferred.make<boolean>();
+        const ownersReady = yield* Deferred.make<{
+          readonly context: Context.Context<never>;
+          readonly owners: readonly LeasedLegacyCompletionOwner[];
+        }>();
+        const core = yield* database.executor
+          .transaction((transaction) =>
+            Effect.gen(function* verifiedCoreTransition() {
+              // Runtime Actions acquire authority before touching owner tables. The publisher must
+              // follow the same order; an activity observation is not an admission fence.
+              yield* lockApplicationCompositionPublication(transaction);
+              yield* Deferred.succeed(authorityReady, true);
+              const leased = yield* Deferred.await(ownersReady);
+              // Native owner executors resolve their reserved transaction through Context. The
+              // Core fiber predates those leases, so merge their context with its own live Core
+              // transaction rather than accidentally borrowing from the owner's exhausted pool.
+              const context = Context.merge(leased.context, yield* Effect.context<Requirements>());
+              return yield* verifyLegacyCompletionPublication(transaction, expectedRevision, leased.owners).pipe(
+                Effect.andThen(transition(transaction)),
+                Effect.provideContext(context),
+              );
+            }),
+          )
+          .pipe(Effect.forkChild);
+        // A failed BEGIN/lock must also wake the waiting operator, preserving the original cause.
+        yield* Deferred.await(authorityReady).pipe(Effect.raceFirst(Fiber.join(core).pipe(Effect.asVoid)));
+        return yield* withLegacyCompletionOwnerLeases((owners) =>
+          Effect.gen(function* transferLeasedOwnerContext() {
+            const context = yield* Effect.context();
+            yield* Deferred.succeed(ownersReady, { context, owners });
+            return yield* Fiber.join(core);
+          }).pipe(
+            // Cancellation must settle Core before unwinding any owner lease. On success join
+            // includes COMMIT, not just the transaction callback's return.
+            Effect.ensuring(Fiber.interrupt(core)),
+          ),
+        );
+      }),
+    );
+  },
+);
+
+const DEAD_DELIVERY_REPORT_LIMIT = 20;
+
+/**
+ * A dead delivery never finishes by itself; only an operator redrive or release moves it. Describes
+ * each one blocking this drain phase exactly as the operator command expects it, or '' when none does.
+ * `trackedRevision` selects the durable-work phase; `null` the final phase, which every dead delivery blocks.
+ */
+const describeDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.describeDeadDrainDeliveries')(
+  function* describeDeadDrainDeliveries(trackedRevision: string | null) {
+    const database = yield* CoreDatabase;
+    const filter =
+      trackedRevision === null
+        ? { limit: DEAD_DELIVERY_REPORT_LIMIT }
+        : { limit: DEAD_DELIVERY_REPORT_LIMIT, trackedRevision };
+    const dead = yield* listDeadOutboxDeliveries(database.executor, filter);
+    if (dead.length === 0) {
+      return '';
     }
-    return yield* Effect.void;
+    const scope = trackedRevision === null ? 'Dead Outbox deliveries' : 'Dead tracked Outbox deliveries';
+    const more =
+      dead.length === DEAD_DELIVERY_REPORT_LIMIT
+        ? ` (first ${String(DEAD_DELIVERY_REPORT_LIMIT)}; \`pnpm outbox:dead-delivery list\` shows all)`
+        : '';
+    const commands = describeDeadOutboxDeliveries(dead);
+    return `${scope} block the drain${more}; redrive or release each with \`pnpm outbox:dead-delivery\`: ${commands}`;
+  },
+);
+
+/** Warns once per changed set of dead deliveries while the drain keeps waiting for an operator. */
+const reportDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.reportDeadDrainDeliveries')(
+  function* reportDeadDrainDeliveries(trackedRevision: string | null, reported: Ref.Ref<string>) {
+    const described = yield* describeDeadDrainDeliveries(trackedRevision).pipe(Effect.orElseSucceed(() => ''));
+    if (described !== '' && described !== (yield* Ref.getAndSet(reported, described))) {
+      yield* Effect.logWarning(described);
+    }
   },
 );
 
@@ -385,7 +515,7 @@ interface CurrentApplicationCompositionAuthority {
 }
 
 const waitForDurablePublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForDurableWork')(
-  function* waitForDurablePublicationWork(revision: string) {
+  function* waitForDurablePublicationWork(revision: string, reported: Ref.Ref<string>) {
     const database = yield* CoreDatabase;
     while (
       !(yield* database.executor.transaction((transaction) =>
@@ -395,27 +525,30 @@ const waitForDurablePublicationWork = Effect.fn('ApplicationCompositionAuthority
         ),
       ))
     ) {
+      yield* reportDeadDrainDeliveries(revision, reported);
       yield* Effect.sleep(Duration.seconds(3));
     }
   },
 );
 
 const waitForOutboxPublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForOutboxWork')(
-  function* waitForOutboxPublicationWork(revision: string) {
+  function* waitForOutboxPublicationWork(revision: string, reported: Ref.Ref<string>) {
     const database = yield* CoreDatabase;
     while (
       !(yield* database.executor.transaction((transaction) =>
         isApplicationCompositionWorkDrained(transaction, revision),
       ))
     ) {
+      yield* reportDeadDrainDeliveries(null, reported);
       yield* Effect.sleep(Duration.seconds(3));
     }
   },
 );
 
 const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuthority.prepareDrain')(
-  function* prepareApplicationCompositionDrain(
+  function* prepareApplicationCompositionDrain<Failure, Requirements>(
     current: CurrentApplicationCompositionAuthority,
+    verifyLegacyQuiescence: Effect.Effect<void, Failure, Requirements>,
     budgetMs: number = APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
     state?: PublicationState,
   ) {
@@ -425,14 +558,27 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
       migrationStarted: false,
       phase: DURABLE_DRAIN,
     };
-    const timeout = () =>
-      Effect.fail(
-        new ApplicationCompositionPublicationTimeout({
-          ...progressState,
-          budgetMs,
-          message:
-            'The bounded drain deadline expired; pending work is not proof of a dead owner. The migration did not start and admission was not reopened.',
-        }),
+    // The drain phase whose dead deliveries a timeout names: tracked debt first, then all Outbox work.
+    const drainScope = yield* Ref.make<string | null>(current.revision);
+    const reported = yield* Ref.make('');
+    const deadDeliveries = Ref.get(drainScope).pipe(
+      Effect.flatMap(describeDeadDrainDeliveries),
+      Effect.orElseSucceed(() => ''),
+    );
+    const budgetExpired = () =>
+      deadDeliveries.pipe(
+        Effect.flatMap((described) =>
+          Effect.fail(
+            new ApplicationCompositionPublicationTimeout({
+              ...progressState,
+              budgetMs,
+              message: [
+                'The bounded drain deadline expired; pending work is not proof of a dead owner. The migration did not start and admission was not reopened.',
+                ...(described === '' ? [] : [described]),
+              ].join(' '),
+            }),
+          ),
+        ),
       );
     return yield* Effect.gen(function* boundedDrain() {
       const database = yield* CoreDatabase;
@@ -456,32 +602,48 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           progressState.phase = DURABLE_DRAIN;
           yield* withApplicationCompositionPublicationProgress(
             'drain durable workflows',
-            waitForDurablePublicationWork(current.revision),
+            waitForDurablePublicationWork(current.revision, reported),
             logApplicationCompositionDrainBlockers,
           );
           progressState.phase = 'enter-draining';
+          // A provider receipt alone is insufficient: re-observe the actual retired executables.
+          yield* verifyLegacyQuiescence;
+          yield* requireNoLegacyRuntimeTransactions();
+          // Owner locks remain held until the nested Core transaction actually COMMITs.
           yield* withApplicationCompositionPublicationProgress(
             'enter draining (authority fence)',
-            database.executor.transaction((transaction) =>
+            withVerifiedLegacyTransition(current.revision, (transaction) =>
               drainApplicationCompositionAuthority(transaction, current.revision),
             ),
           );
         }
+        yield* Ref.set(drainScope, null);
         progressState.authorityPhase = 'draining';
         progressState.phase = 'outbox-drain';
         yield* withApplicationCompositionPublicationProgress(
           'drain unmatched messages and unfinished deliveries',
-          waitForOutboxPublicationWork(current.revision),
+          waitForOutboxPublicationWork(current.revision, reported),
           logApplicationCompositionDrainBlockers,
         );
       }).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(Math.max(1, lease.remaining - 30_000)),
-          orElse: timeout,
+          orElse: () =>
+            deadDeliveries.pipe(
+              Effect.flatMap((described) =>
+                Effect.fail(
+                  unavailable(
+                    described === ''
+                      ? 'Old Application Composition work did not finish within its freshness lease'
+                      : `Old Application Composition work did not finish within its freshness lease. ${described}`,
+                  ),
+                ),
+              ),
+            ),
         }),
       );
       return yield* Effect.void;
-    }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: timeout }));
+    }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }));
   },
 );
 
@@ -592,12 +754,20 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
               .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
           : undefined;
         state.authorityPhase = current?.phase ?? 'absent';
+        if (current !== undefined && current.phase !== 'migrated') {
+          // This opt-in additive Core expansion is safe for old writers. Install and journal it
+          // before the verifier selects its columns; incompatible owner DDL remains deferred.
+          yield* installApplicationCompositionCompletionSchema();
+        }
         if (resumeMigratedRevision !== undefined) {
           if (current?.phase !== 'migrated' || current.revision !== resumeMigratedRevision) {
             return yield* unavailable('The schema retry no longer identifies the exact migrated authority');
           }
           state.phase = 'seal';
-          yield* database.executor.transaction((transaction) =>
+          // Resealing is an authority transition too: it re-observes legacy owner absence under the owner locks.
+          yield* verifyInitialCutover;
+          yield* requireNoLegacyRuntimeTransactions();
+          yield* withVerifiedLegacyTransition(resumeMigratedRevision, (transaction) =>
             resealMigratedApplicationCompositionAuthority(transaction, resumeMigratedRevision),
           );
           state.authorityPhase = 'sealed';
@@ -611,12 +781,37 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
         } else if (current.phase !== 'sealed') {
           const remainingDrainMs = Math.max(1, Math.min(drainMs, deadline - (yield* Clock.currentTimeMillis)));
           state.phase = DURABLE_DRAIN;
-          yield* prepareApplicationCompositionDrain(current, remainingDrainMs, state);
+          yield* prepareApplicationCompositionDrain(current, verifyInitialCutover, remainingDrainMs, state);
           state.phase = 'seal';
-          yield* database.executor.transaction((transaction) =>
+          yield* verifyInitialCutover;
+          yield* requireNoLegacyRuntimeTransactions();
+          yield* withVerifiedLegacyTransition(current.revision, (transaction) =>
             sealApplicationCompositionAuthority(transaction, current.revision),
           );
           state.authorityPhase = 'sealed';
+        }
+        if (current?.phase === 'sealed') {
+          state.phase = 'seal';
+          // A recovered sealed row is not retained owner absence evidence. This transaction
+          // finishes and releases owner SHARE locks before incompatible owner DDL begins.
+          yield* verifyInitialCutover;
+          yield* requireNoLegacyRuntimeTransactions();
+          yield* withVerifiedLegacyTransition(current.revision, (transaction) =>
+            transaction
+              .select({
+                phase: applicationCompositionAuthority.phase,
+                revision: applicationCompositionAuthority.revision,
+              })
+              .from(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'))
+              .pipe(
+                Effect.flatMap((rows) =>
+                  rows[0]?.revision === current.revision && rows[0].phase === 'sealed'
+                    ? Effect.succeed(rows[0].revision)
+                    : Effect.fail(unavailable('The recovered migration authority changed')),
+                ),
+              ),
+          );
         }
         state.phase = 'migration';
         const remainingMs = Math.min(migrationMs, deadline - (yield* Clock.currentTimeMillis));
@@ -723,6 +918,7 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       // for the first row, before any new authority or public pointer can be published.
       yield* verifyInitialCutover;
       yield* requireNoLegacyRuntimeTransactions();
+      yield* installApplicationCompositionCompletionSchema();
     } else {
       if (DateTime.toEpochMillis(approved.validUntil) <= current.validUntil.getTime()) {
         return yield* unavailable('A replacement Application Composition needs newer freshness evidence');
@@ -731,17 +927,21 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
         return yield* unavailable('A sealed Application Composition requires a successfully completed migration');
       }
       if (current.phase !== 'migrated') {
-        yield* prepareApplicationCompositionDrain(current);
+        yield* installApplicationCompositionCompletionSchema();
+        yield* prepareApplicationCompositionDrain(current, verifyInitialCutover);
       }
     }
+    const promoteAndPublish = (transaction: CoreTransaction) =>
+      publishApplicationCompositionAuthority(transaction, approved).pipe(Effect.andThen(publishProviderPointer));
+    if (current !== undefined) {
+      // A recovered row is not proof that this deployment observed legacy absence.
+      yield* verifyInitialCutover;
+      yield* requireNoLegacyRuntimeTransactions();
+    }
+    // Absence of a Core authority row does not imply absence of retained owner history.
     return yield* withApplicationCompositionPublicationProgress(
       'promote native authority and publish provider pointer',
-      database.executor.transaction((transaction) =>
-        Effect.gen(function* promoteAndPublish() {
-          yield* publishApplicationCompositionAuthority(transaction, approved);
-          return yield* publishProviderPointer;
-        }),
-      ),
+      withVerifiedLegacyTransition(current?.revision ?? null, promoteAndPublish),
     );
   });
   return yield* withApplicationCompositionPublicationLock(publication);

@@ -20,6 +20,7 @@ import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
 import { openSignedInPage, signInReason, signInReturnPath } from '../../sign-in-return.ts';
 import type { SignInReason } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { useHydratedMarker } from '../../use-hydrated.ts';
 import { clientNameFrom, OAUTH_PRELOGIN_PATH, readOAuthLoginError, readOAuthLoginRequest } from './oauth-handoff.ts';
 import type { OAuthLoginRequest } from './oauth-handoff.ts';
 
@@ -143,6 +144,7 @@ const LoginPage = () => {
   const { clientName, href, oauthError, oauthRequest } = useOAuthLoginLocation();
   const reason = loginReason(href, language);
   const oauthBanner = oauthBannerText(oauthRequest, clientName, t);
+  const hydrated = useHydratedMarker();
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -281,7 +283,12 @@ const LoginPage = () => {
             <h1 className="shell:text-2xl shell:font-bold" hidden={attempt === 'opening'}>
               {t('shell.login.title')}
             </h1>
-            <form action={handleSubmit} className="shell:mt-4 shell:flex shell:flex-col shell:gap-4" noValidate>
+            <form
+              action={handleSubmit}
+              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+              data-hydrated={hydrated}
+              noValidate
+            >
               <div hidden={attempt === 'opening'}>
                 <FormInput
                   aria-invalid={validation.loginMissing || undefined}

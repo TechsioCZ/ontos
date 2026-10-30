@@ -6,6 +6,7 @@ import {
   COMMERCE_MARKET_CATALOG_SCHEMA_NAME,
   COMMERCE_MARKET_CATALOG_TABLE_INVENTORY,
   COMMERCE_MARKET_CATALOG_TABLES,
+  gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
@@ -15,7 +16,7 @@ import {
 } from '../../src/database/schema.ts';
 
 describe('Commerce Market Catalog database contract', () => {
-  it('owns the Market administration tables and pre-scope replay evidence', () => {
+  it('owns exactly the canonical Market administration tables', () => {
     const qualifiedNames = EffectArray.sort(
       COMMERCE_MARKET_CATALOG_TABLES.map((table) => {
         const config = getTableConfig(table);
@@ -29,17 +30,49 @@ describe('Commerce Market Catalog database contract', () => {
     );
   });
 
-  it('enables Tenant-scoped RLS on business tables so eligible sellers remain discoverable before seller selection', () => {
-    for (const table of COMMERCE_MARKET_CATALOG_TABLES) {
-      if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
-        continue;
-      }
+  it('preserves Tenant-scoped RLS on all six business tables so eligible sellers remain discoverable before seller selection', () => {
+    const businessTables = [
+      marketCatalogCompletenessGenerations,
+      marketDefinitionRevisions,
+      marketLifecyclePeriods,
+      markets,
+      storefrontAssociationRevisions,
+      storefrontAssociations,
+    ];
+    expect(businessTables.map((table) => getTableConfig(table).name)).toEqual([
+      'market_catalog_completeness_generations',
+      'market_definition_revisions',
+      'market_lifecycle_periods',
+      'markets',
+      'storefront_association_revisions',
+      'storefront_associations',
+    ]);
+    expect(COMMERCE_MARKET_CATALOG_TABLES).toEqual([gatewayAssertionRedemptions, ...businessTables]);
+    for (const table of businessTables) {
       const config = getTableConfig(table);
       expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
       expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
       expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
       expect(config.policies.every((policy) => policy.to === 'ontos_runtime')).toBe(true);
     }
+  });
+
+  it('keeps pre-authentication assertion replay identities global and separate from business RLS', () => {
+    const config = getTableConfig(gatewayAssertionRedemptions);
+    expect(config.schema).toBe(COMMERCE_MARKET_CATALOG_SCHEMA_NAME);
+    expect(config.name).toBe('gateway_assertion_redemptions');
+    expect(config.enableRLS).toBe(false);
+    expect(config.policies).toEqual([]);
+    expect(config.columns.map(({ name, notNull }) => ({ name, notNull }))).toEqual([
+      { name: 'audience', notNull: true },
+      { name: 'expires_at', notNull: true },
+      { name: 'issuer', notNull: true },
+      { name: 'jti', notNull: true },
+      { name: 'redeemed_at', notNull: true },
+    ]);
+    expect(
+      config.uniqueConstraints.map(({ columns, name }) => ({ columns: columns.map((column) => column.name), name })),
+    ).toEqual([{ columns: ['issuer', 'audience', 'jti'], name: 'market_catalog_gateway_redemptions_identity_uk' }]);
   });
 
   it('declares Tenant-wide business-code uniqueness and immutable revision/history keys', () => {
@@ -188,20 +221,4 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain('then v_retirement_impact else null end');
     expect(migration).not.toContain("v_retirement_impact->>'reservationToken'");
   });
-});
-
-it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
-  const table = COMMERCE_MARKET_CATALOG_TABLES.find(
-    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
-  );
-  expect(table).toBeDefined();
-  if (table === undefined) {
-    throw new Error('Missing gateway assertion redemption table');
-  }
-  const config = getTableConfig(table);
-  expect(config.schema).toBe('commerce_market_catalog');
-  expect(config.enableRLS).toBe(false);
-  expect(config.policies).toEqual([]);
-  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
-  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['commerce_market_catalog_redemption_expiry']);
 });

@@ -140,6 +140,14 @@ const effectNativeRules = {
       seamPaths: [
         '**/http-error-seam.ts',
         '**/http-error-seam.tsx',
+        // CCC ingress transaction settlement: only native SqlError becomes typed unavailability;
+        // every unrelated defect and caller interruption remains unchanged (#1231, approved boundary).
+        'verticals/commerce-customer-context/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/catalog/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/commerce-market-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/commerce-order/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/payment-term-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/storefront-registry/src/auth/gateway-assertion-redemption-runtime.ts',
         'packages/core-runtime/src/http/governed-read.ts',
         policyFiles.actionRepository,
         policyFiles.readRuntime,
@@ -461,6 +469,14 @@ export default defineConfig({
       files: [
         policyFiles.manageQuotationAction,
         'verticals/pricing/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/assortment/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/catalog/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/inventory/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/privacy/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/tax/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/commerce-market-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/payment-term-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/storefront-registry/src/auth/gateway-assertion-redemption-runtime.ts',
         policyFiles.pricingDecisionEvaluation,
       ],
       rules: {
@@ -498,7 +514,7 @@ export default defineConfig({
       },
     },
     {
-      // These exact external/database contracts preserve JSON null as the published open-interval or unknown-revision wire value.
+      // These exact external/database contracts preserve JSON null as the published open-interval, unknown-revision or absent-proof wire value.
       files: [
         'packages/pricing-contracts/src/domain/commercial-fee.ts',
         'packages/pricing-contracts/src/domain/currency-support.ts',
@@ -508,7 +524,9 @@ export default defineConfig({
         'packages/pricing-contracts/src/domain/price-schedule.ts',
         'packages/pricing-contracts/src/domain/quantity-tier.ts',
         'packages/pricing-contracts/src/domain/source-revision-evidence.ts',
+        'packages/commerce-order-contracts/src/apis/verify-order-commitment-binding.ts',
         'verticals/commerce-customer-context/shared/apis/pricing-purchase-context-verification.ts',
+        'verticals/commerce-order/shared/domain/order-commitment.ts',
         'verticals/pricing/src/persistence/currency-support-persistence.ts',
       ],
       rules: {
@@ -605,6 +623,13 @@ export default defineConfig({
       ],
       rules: {
         'eslint/max-classes-per-file': 'off',
+      },
+    },
+    {
+      // Opaque response variants name one oversized wire contract so declaration emit stays serializable.
+      files: ['verticals/commerce-customer-context/shared/apis/purchase-proposal-basis.ts'],
+      rules: {
+        'max-classes-per-file': 'off',
       },
     },
     {
@@ -922,6 +947,8 @@ export default defineConfig({
       // These generated/public roots are intentionally aggregate entrypoints for the complete
       // typed API surface; keep the barrel contract explicit until a registry replaces it.
       files: [
+        'verticals/commerce-cart/shared/commerce-cart-client.ts',
+        'verticals/commerce-order/shared/commerce-order-client.ts',
         'verticals/commerce-customer-context/shared/api.ts',
         'verticals/commerce-customer-context/src/api/commerce-customer-context-client.ts',
         'verticals/payment-term-catalog/shared/api.ts',
@@ -942,6 +969,20 @@ export default defineConfig({
       // Codesmith emits these exact owner shims as re-exports of canonical public contracts.
       // The module API boundary checker verifies their generated source and target specifier.
       files: [
+        'verticals/commerce-cart/shared/apis/final-cart-candidate.ts',
+        'verticals/commerce-cart/shared/apis/open-selection-population.ts',
+        'verticals/commerce-cart/src/api/final-cart-candidate-client.ts',
+        'verticals/commerce-cart/src/api/open-selection-population-client.ts',
+        'verticals/commerce-order/shared/apis/committed-order-approval-evidence.ts',
+        'verticals/commerce-order/shared/apis/prepared-order-approval-binding.ts',
+        'verticals/commerce-order/shared/apis/prepared-order-pricing-binding.ts',
+        'verticals/commerce-order/shared/apis/verify-order-commitment-binding.ts',
+        'verticals/pricing/shared/actions/manage-commitment-confirmation.ts',
+        'verticals/pricing/shared/actions/manage-quotation.ts',
+        'verticals/pricing/shared/apis/commitment-confirmation-verification.ts',
+        'verticals/pricing/shared/apis/manage-commitment-confirmation-action.ts',
+        'verticals/pricing/shared/apis/manage-quotation-action.ts',
+        'verticals/pricing/shared/apis/quotation-verification.ts',
         'verticals/commerce-customer-context/shared/apis/market-affected-use-assessment.ts',
         'verticals/commerce-customer-context/shared/apis/market-subject-restrictions-current.ts',
         'verticals/commerce-customer-context/shared/apis/payment-term-affected-use-assessment.ts',

@@ -3,7 +3,11 @@ import { OperationContextUnavailable } from '@app/core-runtime';
 import type { CurrentSupportedCurrenciesSuccess } from '@app/pricing-contracts/current-supported-currencies';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
-import { PricingDecisionSubjectSchema } from '@app/pricing-contracts/current-pricing-decision';
+import {
+  currentPricingDecisionCandidateRef,
+  PricingDecisionSubjectSchema,
+} from '@app/pricing-contracts/current-pricing-decision';
+import { PricingContractualDiscountSetPredicateSchema } from '@app/pricing-contracts/domain/contractual-discount-set';
 import type { PricingContractualDiscountCurrentSet } from '@app/pricing-contracts/domain/contractual-discount-set';
 import type {
   ExactPriceLookupRequest,
@@ -14,6 +18,7 @@ import {
   ExactPriceConflictDiagnosticSchema,
   ExactPriceLookupAbsentSchema,
   ExactPriceLookupFoundSchema,
+  ExactPriceLookupCurrentEvidenceSchema,
   ExactPriceLookupInvalidSchema,
   ExactPriceLookupResultSchema,
   ExactPriceLookupUnavailableSchema,
@@ -52,6 +57,7 @@ import {
 } from '@app/pricing-contracts/domain/price-group-interpretation';
 import type { QuantityTierSelectionAttempt } from '@app/pricing-contracts/domain/quantity-tier';
 import type { QuantityTierAggregationAttempt } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
+import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import type { PricingMaterialCurrentBinding, PricingNoApplicablePrice } from '@app/pricing-contracts/pricing-decision';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
@@ -207,12 +213,12 @@ const fallbackInput = Effect.fn('CurrentPricingDecisionAdapters.fallbackInput')(
 const supportEvidence = (
   support: CurrentSupportedCurrenciesSuccess,
   currencyCode: string,
+  requestedAt: string,
 ): Option.Option<PricingSourceEvidenceResult> => {
   const [factProof] = support.factProofs;
   if (factProof === undefined) {
     return Option.none();
   }
-  const requestedAt = support.effectiveAt;
   const ownerScope = {
     ownerModuleId: 'commerce.pricing',
     ownerRootRef: support.supportRootRef.resourceId,
@@ -275,15 +281,29 @@ const ownerLookupFromCandidateSet = (
   request: ExactPriceLookupRequest,
   outcome: Effect.Success<ReturnType<ExactPriceCandidateSetPersistence['readExactCandidateSet']>>,
 ): ExactPriceOwnerLookupResult => {
-  if (outcome.outcome === 'EXACT_PRICE_CANDIDATE_SET_UNVERIFIABLE') {
+  if (
+    outcome.outcome === 'EXACT_PRICE_CANDIDATE_SET_UNVERIFIABLE' ||
+    outcome.candidateSet.effectiveAt !== request.effectiveAt ||
+    !Schema.toEquivalence(PriceIdentityKeySchema)(outcome.candidateSet.exactKey, request.exactKey) ||
+    (outcome.outcome === 'EXACT_PRICE_CANDIDATE_SET_CURRENT' &&
+      (outcome.lookupEvidence === undefined ||
+        !Schema.is(ExactPriceLookupCurrentEvidenceSchema)(outcome.lookupEvidence) ||
+        outcome.lookupEvidence.observedAt !== outcome.authority.observedAt))
+  ) {
     return { _tag: 'UNVERIFIABLE', reason: 'SET_COMPLETENESS_UNVERIFIABLE', request };
   }
-  const evidence = {
-    effectiveAt: request.effectiveAt,
-    observedAt: outcome.authority.observedAt,
-    ownerRevision: outcome.authority.ownerRevision,
-  };
-  if (outcome.authority.nextApplicabilityBoundary !== undefined) {
+  const evidence =
+    outcome.outcome === 'EXACT_PRICE_CANDIDATE_SET_CURRENT' && outcome.lookupEvidence !== undefined
+      ? outcome.lookupEvidence
+      : {
+          effectiveAt: request.effectiveAt,
+          observedAt: outcome.authority.observedAt,
+          ownerRevision: outcome.authority.ownerRevision,
+        };
+  if (
+    outcome.outcome === 'EXACT_PRICE_CANDIDATE_SET_CONFLICT' &&
+    outcome.authority.nextApplicabilityBoundary !== undefined
+  ) {
     Object.assign(evidence, { nextApplicabilityBoundary: outcome.authority.nextApplicabilityBoundary });
   }
   if (outcome.outcome === 'EXACT_PRICE_CANDIDATE_SET_CONFLICT') {
@@ -326,9 +346,23 @@ const priceLookups = (resolution: ExactPriceResolution): readonly ExactPriceLook
 const publicLookup = (lookup: ExactPriceOwnerLookupResult): ExactPriceLookupResult =>
   Schema.is(ExactPriceConflictDiagnosticSchema)(lookup) ? redactExactPriceConflictDiagnostic(lookup) : lookup;
 
-const sameLookup = Schema.toEquivalence(ExactPriceLookupResultSchema);
 const MaterialExactPriceLookupSchema = Schema.Union([ExactPriceLookupAbsentSchema, ExactPriceLookupFoundSchema]);
 const isMaterialPriceLookup = Schema.is(MaterialExactPriceLookupSchema);
+const lookupEquivalence = Schema.toEquivalence(ExactPriceLookupResultSchema);
+// Independent native reads observe different statement times. Compare every material lookup
+// field, including the owner digest, while requiring the candidate observation to follow it.
+const sameLookup = (left: ExactPriceLookupResult, right: ExactPriceLookupResult): boolean => {
+  if (isMaterialPriceLookup(left) && isMaterialPriceLookup(right)) {
+    return (
+      left.evidence.observedAt <= right.evidence.observedAt &&
+      lookupEquivalence(left, {
+        ...right,
+        evidence: { ...right.evidence, observedAt: left.evidence.observedAt },
+      })
+    );
+  }
+  return lookupEquivalence(left, right);
+};
 const isAbsentPriceLookup = Schema.is(ExactPriceLookupAbsentSchema);
 const isFoundPriceLookup = Schema.is(ExactPriceLookupFoundSchema);
 
@@ -357,11 +391,15 @@ const priceCandidateSetAuthorities = (
               );
             }
             const reread = publicLookup(ownerLookupFromCandidateSet(lookup.request, outcome));
-            return sameLookup(reread, lookup)
-              ? Effect.succeedSome({
-                  authority: outcome.authority,
-                  factProofs: 'factProofs' in outcome ? outcome.factProofs : [],
-                })
+            const receipt: PricingExactPriceOwnerReadReceipt = {
+              authority: outcome.authority,
+              factProofs: 'factProofs' in outcome ? outcome.factProofs : [],
+            };
+            if ('lookupEvidence' in outcome && outcome.lookupEvidence !== undefined) {
+              Object.assign(receipt, { lookupEvidence: outcome.lookupEvidence });
+            }
+            return sameLookup(lookup, reread)
+              ? Effect.succeedSome(receipt)
               : Effect.fail(
                   failure(
                     'UNVERIFIABLE',
@@ -380,6 +418,7 @@ export const makeCurrentPricingDecisionAttemptSource = (
   ports: CurrentPricingDecisionAttemptSourcePorts,
 ): CurrentPricingDecisionAttemptSourcePort => ({
   loadFresh: Effect.fn('CurrentPricingDecisionAttemptSource.loadFresh')(function* loadFresh(request, trusted, ordinal) {
+    const startedAt = DateTime.formatIso(yield* DateTime.now);
     if (
       request.decision.tenantId !== trusted.tenantId ||
       request.decision.commercialScope.sellingLegalEntityId !== trusted.sellingLegalEntityId
@@ -402,7 +441,7 @@ export const makeCurrentPricingDecisionAttemptSource = (
         'reason' in support ? support.reason : support.outcome,
       );
     }
-    const currencyEvidence = Option.getOrUndefined(supportEvidence(support, request.decision.currencyCode));
+    const currencyEvidence = Option.getOrUndefined(supportEvidence(support, request.decision.currencyCode, startedAt));
     if (currencyEvidence === undefined) {
       return yield* failure(
         'UNVERIFIABLE',
@@ -441,7 +480,7 @@ export const makeCurrentPricingDecisionAttemptSource = (
         const targetRef = line.catalog.selection.packageOption?.optionRef ?? line.catalog.selection.variantRef;
         const ownerDecision = yield* ports.catalogQuantity
           .assess({
-            effectiveAt: request.decision.operationTime,
+            effectiveAt: line.catalog.evidence.assessedAt,
             handoff: line.catalog,
             price: {
               quantity: line.pricingBasis.quantity,
@@ -498,14 +537,15 @@ export const makeCurrentPricingDecisionAttemptSource = (
       },
     );
     const lines = yield* Effect.forEach(request.decision.lines, buildSourceLine, { concurrency: 16 });
-    const candidateRef = `pricing-current:${request.decision.tenantId}:${request.decision.purchasingContext.contextRef}:${request.decision.purchasingContext.contextRevision}`;
+    const candidateRef = currentPricingDecisionCandidateRef(request);
     const runId = `${candidateRef}:run:${request.decision.operationTime}`;
     const attemptId = `${runId}:attempt:${ordinal}`;
+    const completedAt = DateTime.formatIso(yield* DateTime.now);
     const attempt = yield* Schema.decodeEffect(PricingEvaluationAttemptSchema, { onExcessProperty: 'error' })({
       attemptId,
       attemptOrdinal: ordinal,
       candidateRef,
-      completedAt: support.observedAt,
+      completedAt,
       maxAttempts: 2,
       runId,
       snapshot: {
@@ -516,7 +556,7 @@ export const makeCurrentPricingDecisionAttemptSource = (
           publicationProfileVersions: ['pricing-publication:v1'],
         },
         candidateRef,
-        capturedAt: support.observedAt,
+        capturedAt: completedAt,
         decision: request.decision,
         materialBindings: [
           {
@@ -526,10 +566,10 @@ export const makeCurrentPricingDecisionAttemptSource = (
             sourceEvidence: currencyEvidence,
           },
         ],
-        requestedAt: request.decision.operationTime,
+        requestedAt: startedAt,
         snapshotId: `${attemptId}:snapshot`,
       },
-      startedAt: request.decision.operationTime,
+      startedAt,
     }).pipe(
       Effect.mapError((cause) =>
         failure('UNVERIFIABLE', 'pricing-current-decision:whole-attempt-source', 'Owner snapshot is invalid', cause),
@@ -557,6 +597,35 @@ export const makeCurrentPricingDecisionAttemptSource = (
       ],
     };
   }),
+
+  reassessForTier: Effect.fn('CurrentPricingDecisionAttemptSource.reassessForTier')(
+    function* reassessForTier(attempt, tier) {
+      const targetRef = attempt.catalog.selection.packageOption?.optionRef ?? attempt.catalog.selection.variantRef;
+      const ownerDecision = yield* ports.catalogQuantity
+        .assess({
+          effectiveAt: attempt.catalog.evidence.assessedAt,
+          handoff: attempt.catalog,
+          price: {
+            quantity: attempt.price.identityKey.unitBasis.quantity,
+            quantityBasis: {
+              ...attempt.catalog.quantityBasis,
+              targetRef,
+              unitRef: attempt.price.identityKey.unitBasis.unitRef,
+            },
+          },
+          tier: {
+            quantity: tier.identityKey.quantityBasis.priceUnitBasis.quantity,
+            quantityBasis: tier.identityKey.quantityBasis.catalogQuantityBasis,
+          },
+        })
+        .pipe(
+          Effect.mapError(
+            unavailable('catalog:quantity-basis', 'Catalog Tier Quantity-basis authority is unavailable'),
+          ),
+        );
+      return yield* assessPricingQuantityBasis({ attempt: { ...attempt, tier }, ownerDecision });
+    },
+  ),
 });
 
 const exactPredicate = (key: PriceIdentityKey): string => {
@@ -818,11 +887,61 @@ const makeDiscountReader = (
       return Effect.succeed({ applicabilityInputs: [], currentSets: [] });
     }
     if (request.subject.authorizationSubject.kind === 'COUNTERPARTY') {
-      return Effect.fail(
-        failure(
-          'UNVERIFIABLE',
-          'party.registry:counterparty-discount-audience',
-          'Counterparty Discount applicability requires retained Party owner Revision evidence',
+      const { counterpartyRef } = request.subject.authorizationSubject;
+      const unverifiable = failure(
+        'UNVERIFIABLE',
+        'party.registry:counterparty-discount-audience',
+        'Counterparty Discount applicability requires retained Party owner Revision evidence',
+      );
+      const bases = unitPrices.map(discountBasisFor);
+      // Applicability of a Counterparty Discount needs Party owner evidence, so any assigned Price Group or present
+      // Discount stays fail-closed. An exact-audience set that Pricing proves empty is still Discount evidence: its
+      // retained receipt carries the next applicability boundary that assembly, final validation and the owner fence
+      // enforce, so a Discount scheduled to start later cannot be silently omitted from a published result.
+      if (unitPrices.some((unitPrice) => assignedDiscountAudienceFor(unitPrice) !== undefined)) {
+        return Effect.fail(unverifiable);
+      }
+      const emptySetPredicates = [...bases, { kind: 'WHOLE_PURCHASE' as const }].map((basis) =>
+        basis === undefined
+          ? undefined
+          : {
+              audiences: [{ counterpartyRef, kind: 'COUNTERPARTY' as const }],
+              basis,
+              commercialScope: request.decision.commercialScope,
+              currencyCode: request.decision.currencyCode,
+              effectiveAt: request.decision.operationTime,
+              tenantId: request.decision.tenantId,
+            },
+      );
+      if (emptySetPredicates.some((predicate) => predicate === undefined)) {
+        return Effect.fail(unverifiable);
+      }
+      return Effect.forEach(
+        emptySetPredicates.flatMap((predicate) => (predicate === undefined ? [] : [predicate])),
+        (predicate) =>
+          Schema.decodeUnknownEffect(PricingContractualDiscountSetPredicateSchema)(predicate).pipe(
+            Effect.mapError((cause) =>
+              failure(
+                'UNVERIFIABLE',
+                'party.registry:counterparty-discount-audience',
+                'Counterparty Discount applicability requires retained Party owner Revision evidence',
+                cause,
+              ),
+            ),
+            Effect.flatMap((decodedPredicate) =>
+              persistence
+                .readCurrentSet(decodedPredicate)
+                .pipe(
+                  Effect.mapError(unavailable(DISCOUNT_OWNER_REF, 'Contractual Discount authority is unavailable')),
+                ),
+            ),
+          ),
+        { concurrency: 16 },
+      ).pipe(
+        Effect.flatMap((sets) =>
+          sets.every((set) => set.currentDiscounts.length === 0)
+            ? Effect.succeed({ applicabilityInputs: [], currentSets: sets })
+            : Effect.fail(unverifiable),
         ),
       );
     }
@@ -1100,7 +1219,6 @@ export const makeCurrentPricingDecisionZeroFloorSetReader = (
           commercialScope: request.decision.commercialScope,
           currencyCode: request.decision.currencyCode,
           effectiveAt: request.decision.operationTime,
-          exactPredicateRef: `pricing-zero-floor:${request.decision.tenantId}:${composition.candidateRef}:${composedLine.occurrenceId}`,
           materialRevisionRefs,
           pricingBasis: decisionLine.pricingBasis,
           tenantId: request.decision.tenantId,
@@ -1151,12 +1269,15 @@ const priceReceiptBindsLookup = (
   receipt: PricingExactPriceOwnerReadReceipt,
   lookup: Extract<ExactPriceLookupResult, { readonly _tag: 'ABSENT' | 'FOUND' }>,
 ): boolean => {
-  const { authority, factProofs } = receipt;
+  const { authority, factProofs, lookupEvidence } = receipt;
   if (
-    authority.observedAt !== lookup.evidence.observedAt ||
-    authority.ownerRevision !== lookup.evidence.ownerRevision ||
-    authority.nextApplicabilityBoundary !== lookup.evidence.nextApplicabilityBoundary ||
-    authority.predicateRef !== exactPredicate(lookup.request.exactKey)
+    lookupEvidence === undefined ||
+    !Schema.is(ExactPriceLookupCurrentEvidenceSchema)(lookupEvidence) ||
+    authority.observedAt !== lookupEvidence.observedAt ||
+    lookupEvidence.effectiveAt !== lookup.request.effectiveAt ||
+    lookup.evidence.observedAt > lookupEvidence.observedAt ||
+    lookupEvidence.ownerRevision !== lookup.evidence.ownerRevision ||
+    lookupEvidence.nextApplicabilityBoundary !== lookup.evidence.nextApplicabilityBoundary
   ) {
     return false;
   }
@@ -1226,6 +1347,8 @@ export interface BuildCurrentPricingDiscountNonSelectionInput {
 /**
  * Derives the explicit no-audience Discount decision from the exact CCC proof and retained Price
  * path. This records audience nonselection only; it never claims that Discount facts are absent.
+ * A Counterparty subject always selects its exact Counterparty Discount audience, whose owner
+ * Current sets are retained as Discount evidence instead of a nonselection.
  */
 export const buildCurrentPricingDiscountNonSelection = (
   input: BuildCurrentPricingDiscountNonSelectionInput,
@@ -1265,7 +1388,7 @@ export const buildCurrentPricingDiscountNonSelection = (
     }
     audienceDecision = { kind: 'GUEST' };
   } else {
-    if (pathTags.some((tag) => tag !== 'NO_GROUP_NONE')) {
+    if (subject.authorizationSubject.kind === 'COUNTERPARTY' || pathTags.some((tag) => tag !== 'NO_GROUP_NONE')) {
       return Effect.succeed({ kind: 'DISCOUNT_AUDIENCE_SELECTED' });
     }
     const interpretations = pricePaths.flatMap((path) =>
@@ -1502,11 +1625,24 @@ const discountOwnerReadReceipt = (currentSet: PricingContractualDiscountCurrentS
   predicate: currentSet.predicate,
 });
 
-const discountSourceEvidence = (
-  currentSet: PricingContractualDiscountCurrentSet,
-  attempt: Parameters<CurrentPricingDecisionWholeCompositionPort['buildMaterialEvidenceRequest']>[0]['attempt'],
-  request: CurrentPricingDecisionRequest,
-) => {
+export interface BuildCurrentPricingDiscountSourceEvidenceInput {
+  readonly attempt: Parameters<
+    CurrentPricingDecisionWholeCompositionPort['buildMaterialEvidenceRequest']
+  >[0]['attempt'];
+  readonly currentSet: PricingContractualDiscountCurrentSet;
+  readonly request: CurrentPricingDecisionRequest;
+}
+
+/**
+ * Converts one retained Discount owner Current set into DISCOUNT source evidence. An empty set
+ * becomes VERIFIED_ABSENT and keeps its next applicability boundary, which fails STALE once the
+ * whole attempt completes at or after that boundary.
+ */
+export const buildCurrentPricingDiscountSourceEvidence = ({
+  attempt,
+  currentSet,
+  request,
+}: BuildCurrentPricingDiscountSourceEvidenceInput) => {
   const authority = { ...currentSet.authority };
   if (currentSet.completenessEvidence.nextApplicabilityBoundary !== undefined) {
     Object.assign(authority, {
@@ -1636,9 +1772,18 @@ export const makeCurrentPricingDecisionWholeComposition = (): CurrentPricingDeci
     request,
     unitPrices,
   }) => {
-    const wholePurchaseAllocation = allocation.allocationResults.find(
-      (result) => result.outcome === 'ALLOCATION_APPLIED' || result.outcome === 'ALLOCATION_NOT_APPLICABLE',
+    const wholePurchaseAllocations = allocation.allocationResults.filter(
+      (result) =>
+        (result.outcome === 'ALLOCATION_APPLIED' && result.request.allocationKind === 'WHOLE_PURCHASE_CONTRACTUAL') ||
+        (result.outcome === 'ALLOCATION_NOT_APPLICABLE' &&
+          result.request.allocationKind === 'WHOLE_PURCHASE_CONTRACTUAL_NOT_APPLICABLE'),
     );
+    if (wholePurchaseAllocations.length > 1) {
+      return Effect.fail(
+        failure('CONFLICT', DISCOUNT_OWNER_REF, 'Whole-purchase Discount has ambiguous allocation evidence'),
+      );
+    }
+    const [wholePurchaseAllocation] = wholePurchaseAllocations;
     const compositionRequest = {
       candidateRef: attempt.candidateRef,
       decision: request.decision,
@@ -1722,7 +1867,9 @@ export const makeCurrentPricingDecisionWholeComposition = (): CurrentPricingDeci
           'Material evidence has no retained Currency Support receipt',
         );
       }
-      const currencySupport = Option.getOrUndefined(supportEvidence(firstSupport, request.decision.currencyCode));
+      const currencySupport = Option.getOrUndefined(
+        supportEvidence(firstSupport, request.decision.currencyCode, attempt.snapshot.requestedAt),
+      );
       if (currencySupport === undefined) {
         return yield* failure(
           'UNVERIFIABLE',
@@ -1987,7 +2134,7 @@ export const makeCurrentPricingDecisionWholeComposition = (): CurrentPricingDeci
                 'Line Discount material lost its exact ordered owner Current-set receipt',
               );
             }
-            const sourceEvidence = yield* discountSourceEvidence(currentSet, attempt, request);
+            const sourceEvidence = yield* buildCurrentPricingDiscountSourceEvidence({ attempt, currentSet, request });
             const discountFence = fenceSource(sourceEvidence, {
               applicabilityBindings: totalLine.composition.lineDiscountContributions.map(
                 ({ candidate }) => candidate.audienceBinding,
@@ -2132,7 +2279,7 @@ export const makeCurrentPricingDecisionWholeComposition = (): CurrentPricingDeci
             },
           };
         } else if (currentSet.predicate.basis.kind === 'WHOLE_PURCHASE') {
-          const sourceEvidence = yield* discountSourceEvidence(currentSet, attempt, request);
+          const sourceEvidence = yield* buildCurrentPricingDiscountSourceEvidence({ attempt, currentSet, request });
           const selectedIdentity =
             allocationAssessment === undefined
               ? undefined

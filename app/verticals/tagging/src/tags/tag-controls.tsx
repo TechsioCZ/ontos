@@ -38,7 +38,7 @@ import { definePageData, pageDataPending } from '@app/shared-contracts/page-data
 import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { assignTag, listTags, recordsFor, recordsOfKind, unassignTag } from '../api/records-client.ts';
+import { assignTag, listTags, recordsFor, recordsOfKind, unassignTag } from '../api/records-consumer.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { ApplyCommandActionForbiddenProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { isTagReadForbidden, tagsFailureStatus, tagsReadable } from './tag-access.ts';

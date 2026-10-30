@@ -1,10 +1,20 @@
+import {
+  CatalogQuantityBasisSchema,
+  CatalogQuantityHandoffReadySchema,
+} from '@app/catalog/domain/catalog-quantity-handoff';
+import { CatalogResourceRefSchema } from '@app/catalog/domain/catalog-revision-reference';
+import { CatalogSelectionBasisListSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import type { PricingPurchaseContextVerificationEvidence } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingSetBackedMaterialEvidenceFenceSourceSchema } from '@app/pricing-contracts/domain/material-evidence';
 import type { PricingEvaluationAttempt } from '@app/pricing-contracts/domain/material-change';
 import { PricingPromotionApplicationSchema } from '@app/pricing-contracts/domain/promotion-composition';
-import { PricingDecisionSchema, PricingLineSchema } from '@app/pricing-contracts/pricing-decision';
+import {
+  PricingDecisionSchema,
+  PricingLineSchema,
+  PricingCatalogSelectionSchema,
+} from '@app/pricing-contracts/pricing-decision';
 import { PricingSourceEvidenceResultSchema } from '@app/pricing-contracts/domain/source-revision-evidence';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
@@ -44,7 +54,7 @@ export interface CurrentPricingDecisionCatalogEvidenceMember {
 }
 
 export interface CurrentPricingDecisionCatalogEvidenceRead {
-  readonly equivalenceFenceSource: PricingSetBackedMaterialEvidenceFenceSource;
+  readonly equivalenceFenceSources: readonly PricingSetBackedMaterialEvidenceFenceSource[];
   readonly members: readonly CurrentPricingDecisionCatalogEvidenceMember[];
 }
 
@@ -90,6 +100,85 @@ export interface CurrentPricingDecisionExternalOwnerEvidenceDependencies {
   };
   readonly validation: PricingExternalOwnerEvidenceValidationService;
 }
+
+const sameCatalogHandoff = Schema.toEquivalence(CatalogQuantityHandoffReadySchema);
+const sameCatalogSelection = Schema.toEquivalence(PricingCatalogSelectionSchema);
+type CatalogMaterialHandoff = typeof CatalogQuantityHandoffReadySchema.Type;
+const sameCatalogMaterialQuantityBasis = Schema.toEquivalence(CatalogQuantityBasisSchema);
+const sameCatalogMaterialSelectionBasis = Schema.toEquivalence(CatalogSelectionBasisListSchema);
+const sameCatalogMaterialResourceRef = Schema.toEquivalence(CatalogResourceRefSchema);
+const catalogMaterialResourceRefKey = (resourceRef: {
+  readonly moduleId: string;
+  readonly resourceId: string;
+  readonly resourceType: string;
+  readonly tenantId: string;
+}): string => [resourceRef.moduleId, resourceRef.resourceType, resourceRef.resourceId, resourceRef.tenantId].join('|');
+const catalogMaterialRevisionKey = (revision: {
+  readonly resourceRef: Parameters<typeof catalogMaterialResourceRefKey>[0];
+  readonly revision: number;
+  readonly revisionId?: string;
+}): string =>
+  `${catalogMaterialResourceRefKey(revision.resourceRef)}|${revision.revision}|${revision.revisionId ?? ''}`;
+const catalogMaterialPackageContentKey = (handoff: CatalogMaterialHandoff): string => {
+  const content = handoff.packageContent;
+  return content === undefined
+    ? 'none'
+    : `${content.amount}|${catalogMaterialResourceRefKey(content.unitRef)}|${content.path.map(catalogMaterialRevisionKey).join('/')}`;
+};
+const catalogMaterialPackageRevisionKey = (handoff: CatalogMaterialHandoff): string => {
+  const revision = handoff.packageRevision;
+  if (revision === undefined) {
+    return 'none';
+  }
+  return [
+    catalogMaterialRevisionKey(revision.reference),
+    revision.amount,
+    catalogMaterialResourceRefKey(revision.unitRef),
+    catalogMaterialResourceRefKey(revision.form.productRef),
+    catalogMaterialResourceRefKey(revision.form.variantRef),
+    revision.configurationKey ?? '',
+    revision.setComposition === undefined ? '' : catalogMaterialRevisionKey(revision.setComposition),
+    revision.lower === undefined
+      ? ''
+      : `${revision.lower.count}:${catalogMaterialRevisionKey(revision.lower.revision)}`,
+  ].join('|');
+};
+const catalogMaterialSameOwnerMetadata = (supplied: CatalogMaterialHandoff, current: CatalogMaterialHandoff): boolean =>
+  supplied.completeness.ownerRevision === supplied.ownerRevision &&
+  current.completeness.ownerRevision === current.ownerRevision &&
+  supplied.completeness.scope.kind === current.completeness.scope.kind &&
+  supplied.completeness.scope.predicateRef === current.completeness.scope.predicateRef;
+
+const sameCatalogMaterialQuantity = (supplied: CatalogMaterialHandoff, current: CatalogMaterialHandoff): boolean =>
+  supplied.quantity.requested === current.quantity.requested &&
+  supplied.quantity.resulting === current.quantity.resulting &&
+  supplied.quantity.changed === current.quantity.changed &&
+  supplied.quantity.notice === current.quantity.notice &&
+  supplied.quantity.rounding === current.quantity.rounding &&
+  supplied.quantity.step === current.quantity.step &&
+  supplied.quantity.targetId === current.quantity.targetId &&
+  supplied.quantity.unitId === current.quantity.unitId &&
+  supplied.quantity.unitRuleRevision === current.quantity.unitRuleRevision;
+
+const sameCatalogHandoffMeaning = (supplied: CatalogMaterialHandoff, current: CatalogMaterialHandoff): boolean =>
+  sameCatalogHandoff(supplied, current) ||
+  (supplied.evidence.assessedAt <= current.evidence.assessedAt &&
+    current.evidence.assessedAt === current.completeness.observedAt &&
+    current.completeness.scope.kind === 'EXACT_PREDICATE' &&
+    current.completeness.nextApplicabilityBoundary === current.evidence.validUntil &&
+    (current.evidence.validUntil === undefined || current.evidence.assessedAt < current.evidence.validUntil) &&
+    sameCatalogSelection(supplied.selection, current.selection) &&
+    sameCatalogSelection(supplied.evidence.selection, current.evidence.selection) &&
+    catalogMaterialSameOwnerMetadata(supplied, current) &&
+    supplied.equivalentSelectionKey === current.equivalentSelectionKey &&
+    supplied.hierarchyRevision === current.hierarchyRevision &&
+    supplied.divisible === current.divisible &&
+    sameCatalogMaterialQuantity(supplied, current) &&
+    sameCatalogMaterialResourceRef(supplied.unitRef, current.unitRef) &&
+    sameCatalogMaterialQuantityBasis(supplied.quantityBasis, current.quantityBasis) &&
+    sameCatalogMaterialSelectionBasis(supplied.evidence.basis, current.evidence.basis) &&
+    catalogMaterialPackageContentKey(supplied) === catalogMaterialPackageContentKey(current) &&
+    catalogMaterialPackageRevisionKey(supplied) === catalogMaterialPackageRevisionKey(current));
 
 const sameDecision = Schema.toEquivalence(PricingDecisionSchema);
 const sameLine = Schema.toEquivalence(PricingLineSchema);
@@ -184,24 +273,52 @@ const validateCatalog = (
       );
     }
   }
-  if (!sourceIs(read.equivalenceFenceSource, context, validatedAt, CATALOG_OWNER, 'CATALOG_EQUIVALENCE_AUTHORITY')) {
-    return failed([CATALOG_OWNER], 'Catalog equivalence proof is unavailable or does not bind this attempt');
+  if (read.equivalenceFenceSources.length !== expectedLines.length) {
+    return failed([CATALOG_OWNER], 'Catalog requires one ordered singleton equivalence proof per original occurrence');
   }
-  if (read.equivalenceFenceSource.verificationMaterial.kind !== 'CATALOG_EQUIVALENCE_AUTHORITY') {
-    return failed([CATALOG_OWNER], 'Catalog equivalence proof has the wrong verification material');
-  }
-  const { request: equivalenceRequest, response: equivalenceResponse } =
-    read.equivalenceFenceSource.verificationMaterial;
-  if (
-    equivalenceRequest.effectiveAt !== context.effectiveAt ||
-    equivalenceResponse.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED' ||
-    equivalenceResponse.evidence.members.length !== expectedLines.length ||
-    !equivalenceResponse.evidence.members.every((member, index) => {
-      const line = expectedLines[index];
-      return line !== undefined && member.occurrenceId === line.occurrenceId;
-    })
-  ) {
-    return failed([CATALOG_OWNER], 'Catalog equivalence proof did not preserve every ordered Pricing line');
+  for (const [index, source] of read.equivalenceFenceSources.entries()) {
+    const line = expectedLines[index];
+    if (
+      line === undefined ||
+      !sourceIs(source, context, validatedAt, CATALOG_OWNER, 'CATALOG_EQUIVALENCE_AUTHORITY') ||
+      source.verificationMaterial.kind !== 'CATALOG_EQUIVALENCE_AUTHORITY'
+    ) {
+      return failed([CATALOG_OWNER], 'Catalog equivalence proof is unavailable or does not bind this attempt');
+    }
+    const { request, response } = source.verificationMaterial;
+    const [member] = request.members;
+    const { selection } = line.catalog;
+    const lineAuthority = read.members[index]?.fenceSource.verificationMaterial;
+    if (lineAuthority?.kind !== 'CATALOG_LINE_AUTHORITY') {
+      return failed([CATALOG_OWNER], 'Catalog singleton lacks its exact retained line authority');
+    }
+    const freshHandoff = lineAuthority.handoff;
+    const freshAt = freshHandoff.evidence.assessedAt;
+    if (
+      request.effectiveAt !== context.effectiveAt ||
+      request.members.length !== 1 ||
+      member?.occurrenceId !== line.occurrenceId ||
+      !sameCatalogHandoff(member.handoff, line.catalog) ||
+      !sameCatalogSelection(request.anchorSelection, selection) ||
+      response.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED' ||
+      response.evidence.members.length !== 1 ||
+      response.evidence.members[0]?.occurrenceId !== line.occurrenceId ||
+      !sameCatalogSelection(response.evidence.anchorSelection, selection) ||
+      response.evidence.members.some((responseMember) => !sameCatalogSelection(responseMember.selection, selection)) ||
+      response.assessments.length !== 2 ||
+      response.assessments[0]?.role !== 'ANCHOR' ||
+      !sameCatalogSelection(response.assessments[0].handoff.selection, selection) ||
+      response.assessments[1]?.role !== 'MEMBER' ||
+      response.assessments[1].occurrenceId !== line.occurrenceId ||
+      !sameCatalogHandoffMeaning(line.catalog, freshHandoff) ||
+      context.requestedAt > freshAt ||
+      freshAt > validatedAt ||
+      !sameCatalogHandoff(response.assessments[1].handoff, freshHandoff) ||
+      !sameCatalogHandoff(lineAuthority.compatibilityRequest.handoff, freshHandoff) ||
+      lineAuthority.compatibilityRequest.effectiveAt !== freshAt
+    ) {
+      return failed([CATALOG_OWNER], 'Catalog equivalence proof did not preserve its exact ordered Pricing occurrence');
+    }
   }
   return undefined;
 };
@@ -441,7 +558,7 @@ export const makeCurrentPricingDecisionExternalOwnerEvidencePort = (
 
     const fenceSources = [
       ...reads.catalog.members.map(({ fenceSource }) => fenceSource),
-      reads.catalog.equivalenceFenceSource,
+      ...reads.catalog.equivalenceFenceSources,
       reads.market.fenceSource,
       ...reads.customerContext.fenceSources,
       ...(reads.promotion.kind === 'PROMOTION_SELECTED' ? [reads.promotion.fenceSource] : []),

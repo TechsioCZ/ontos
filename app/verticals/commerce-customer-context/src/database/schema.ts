@@ -38,6 +38,8 @@ type DatabaseJsonValue =
 type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
 
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
+  'purchase_proposal_bases',
+  'gateway_assertion_redemptions',
   'access_mutation_journal',
   'customer_consent_receipts',
   'demo_newsletter_choices',
@@ -93,6 +95,22 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
 ] as const;
 
 export const commerceCustomerContextSchema = pgSchema(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME);
+
+/** Global ingress replay evidence, before tenant/LE scope can be trusted. Never stores credentials. */
+export const gatewayAssertionRedemptions = commerceCustomerContextSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('ccc_gateway_assertion_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('ccc_gateway_assertion_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
@@ -1461,10 +1479,14 @@ export const customerPaymentTermEntitlements = commerceCustomerContextSchema.tab
   {
     customerPaymentTermEntitlementId: uuid('customer_payment_term_entitlement_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     customerProfileId: uuid('customer_profile_id').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    grantScheduleKnown: boolean('grant_schedule_known').default(false).notNull(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    originalEffectiveTo: timestamp('original_effective_to', { withTimezone: true }),
     paymentTermResourceId: text('payment_term_resource_id').notNull(),
     paymentTermSemanticRevision: text('payment_term_semantic_revision').notNull(),
     revision: integer('revision').notNull(),
@@ -1483,6 +1505,25 @@ export const customerPaymentTermEntitlements = commerceCustomerContextSchema.tab
     check(
       'ccc_payment_entitlements_lifecycle_ck',
       sql`${table.lifecycle} in ('ACTIVE', 'ENDED', 'CANCELLED') and (${table.lifecycle} <> 'ENDED' or ${table.effectiveTo} is not null)`,
+    ),
+    check(
+      'ccc_payment_entitlements_removal_provenance_ck',
+      sql`(
+        (not ${table.grantScheduleKnown} and ${table.originalEffectiveTo} is null and ${table.endedAt} is null and ${table.cancelledAt} is null)
+        or (${table.grantScheduleKnown}
+          and (${table.originalEffectiveTo} is null or ${table.originalEffectiveTo} > ${table.effectiveFrom})
+          and (
+            (${table.lifecycle} = 'ACTIVE' and ${table.endedAt} is null and ${table.cancelledAt} is null
+              and ${table.effectiveTo} is not distinct from ${table.originalEffectiveTo})
+            or (${table.lifecycle} = 'ENDED' and ${table.endedAt} is not null and ${table.cancelledAt} is null
+              and ${table.endedAt} > ${table.effectiveFrom} and ${table.effectiveTo} = ${table.endedAt}
+              and (${table.originalEffectiveTo} is null or ${table.endedAt} <= ${table.originalEffectiveTo}))
+            or (${table.lifecycle} = 'CANCELLED' and ${table.cancelledAt} is not null and ${table.endedAt} is null
+              and ${table.cancelledAt} <= ${table.effectiveFrom}
+              and ${table.effectiveTo} is not distinct from ${table.originalEffectiveTo})
+          )
+        )
+      )`,
     ),
     positiveRevision('ccc_payment_entitlements_revision_ck', table.revision),
     optionalTrimmed('ccc_payment_entitlements_reason_ck', table.reason),
@@ -2709,6 +2750,29 @@ export const privacyMeasureExecutions = commerceCustomerContextSchema.table.with
   ],
 );
 
+export const purchaseProposalBases = commerceCustomerContextSchema.table.withRLS(
+  'purchase_proposal_bases',
+  {
+    ...scopeColumns(),
+    basisId: uuid('basis_id').notNull(),
+    buyerPrincipalId: uuid('buyer_principal_id').notNull(),
+    encodedBasis: jsonb('encoded_basis').notNull(),
+    inputHash: text('input_hash').notNull(),
+    intentKey: text('intent_key').notNull(),
+    ...operationAttribution(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.basisId], name: 'ccc_proposal_bases_pk' }),
+    unique('ccc_proposal_bases_intent_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.buyerPrincipalId,
+      table.intentKey,
+    ),
+    ...scopedPolicies('ccc_proposal_bases', table),
+  ],
+);
+
 const commerceCustomerContextDatabaseSchema = {
   accessMutationJournal,
   addressBookReconciliationReceipts,
@@ -2739,6 +2803,7 @@ const commerceCustomerContextDatabaseSchema = {
   customerProfiles,
   customerSettingRevisions,
   demoNewsletterChoices,
+  gatewayAssertionRedemptions,
   guestRetailAttributions,
   marketBootstrapPolicyCandidateGenerations,
   marketBootstrapPolicyCandidateRevisions,
@@ -2756,6 +2821,7 @@ const commerceCustomerContextDatabaseSchema = {
   profileReconciliationOwnerOutcomes,
   purchaseApprovalRequests,
   purchaseCurrencyPolicyRevisions,
+  purchaseProposalBases,
   purchaseProposalRevisions,
   retailCustomerProfiles,
   retailPortalProfileBindingHistory,
@@ -2765,6 +2831,8 @@ const commerceCustomerContextDatabaseSchema = {
 } as const;
 
 export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
+  purchaseProposalBases,
+  gatewayAssertionRedemptions,
   accessMutationJournal,
   addressBookReconciliationReceipts,
   customerConsentReceipts,
@@ -2821,9 +2889,3 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
 
 /** Relational Queries v2 entry point for the owner-local database. */
 export const commerceCustomerContextRelations = defineRelations(commerceCustomerContextDatabaseSchema);
-
-/**
- * Re-exported so drizzle-kit, which reads this entry file only, migrates the separate gateway
- * replay-evidence schema too. It is not part of the owner table catalog above.
- */
-export { commerceCustomerContextGatewaySchema, gatewayAssertionRedemptions } from './gateway-assertion-schema.ts';

@@ -39,13 +39,13 @@ import {
   MODULE_REGISTRATION_SEARCH_SLOT_START,
   createOrAcceptGeneratedMutationEffect,
   createMutationEffect,
+  asJsonObject,
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
   insertSortedSlot,
   insertModuleFederationExposure,
   isModuleManifestImport,
-  isGovernedHttpHandlerLayerSlotEntry,
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
   requireCanonicalSlug,
@@ -60,11 +60,7 @@ import {
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
-import {
-  governedApiBinding,
-  hasGeneratedPublicContractFacade,
-  hasValidGovernedHttpCompositionRoot,
-} from '../../generated-governed-http-boundary.mts';
+import { governedApiBinding, hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -165,6 +161,42 @@ const directTokenStringProperty = (tokens: readonly GovernedToken[], property: s
 
 const identityTokenKinds = new Set([SyntaxKind.Identifier, SyntaxKind.StringLiteral]);
 
+const governedPrincipalImport =
+  "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';";
+const governedRedemptionImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+const governedRedemptionDatabaseImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
+const governedSupportImports = [governedPrincipalImport, governedRedemptionImport] as const;
+type GovernedSupportImport = (typeof governedSupportImports)[number];
+/** Each supported entry and the generated owner import it satisfies. */
+const supportedGovernedImports = [
+  [governedPrincipalImport, governedPrincipalImport],
+  [governedRedemptionImport, governedRedemptionImport],
+  [governedRedemptionDatabaseImport, governedRedemptionImport],
+] as const;
+
+/** Formatter output may wrap or reorder bindings; the module and exact binding set stay fixed. */
+const supportImportIdentity = (candidate: string): string | undefined => {
+  const match = /^import\s*\{(?<bindings>[^}]+)\}\s*from\s*'(?<module>[^']+)'\s*;$/u.exec(candidate);
+  if (match?.groups === undefined) {
+    return undefined;
+  }
+  const bindings = (match.groups['bindings'] ?? '')
+    .split(',')
+    .map((binding) => binding.trim().replaceAll(/\s+/gu, ' '))
+    .filter(Boolean)
+    .toSorted();
+  return `${match.groups['module']}:${bindings.join(',')}`;
+};
+
+const governedSupportImportOwner = (candidate: string): GovernedSupportImport | undefined => {
+  const identity = supportImportIdentity(candidate);
+  return supportedGovernedImports.find(
+    ([entry]) => identity !== undefined && supportImportIdentity(entry) === identity,
+  )?.[1];
+};
+
 const compositionIdentity = (source: string): string | undefined => {
   for (const pattern of [
     /^import \{ (?<value>[^}]+) \}/u,
@@ -226,59 +258,14 @@ const insertSortedSlotIdempotently = (
   return insertSortedSlot(content, start, end, [entry], validateEntry);
 };
 
-const governedHttpSupportImports = [
-  {
-    binding: 'ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive',
-    module: './auth/action-principal.ts',
-  },
-  {
-    binding: 'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
-    module: './auth/gateway-assertion-redemption.ts',
-  },
-] as const;
-
-/** Formatter-merged imports retain the exact generated binding and its owning module. */
-const governedHttpSupportImport = (candidate: string): (typeof governedHttpSupportImports)[number] | undefined => {
-  const match = /^import\s*\{(?<bindings>[^}]+)\}\s*from\s*['"](?<module>[^'"]+)['"]\s*;$/u.exec(candidate);
-  if (match?.groups === undefined) {
-    return undefined;
-  }
-  const bindings = (match.groups['bindings'] ?? '')
-    .split(',')
-    .map((binding) => binding.trim().replaceAll(/\s+/gu, ' '))
-    .filter(Boolean);
-  if (bindings.some((binding) => !/^[A-Za-z_$][\w$]*(?: as [A-Za-z_$][\w$]*)?$/u.test(binding))) {
-    return undefined;
-  }
-  return governedHttpSupportImports.find(
-    (expected) => expected.module === match.groups?.['module'] && bindings.includes(expected.binding),
-  );
-};
-
-const insertGovernedHttpSupportImport = (
-  content: string,
-  expected: (typeof governedHttpSupportImports)[number],
-): string => {
-  const entries = readGeneratedSlotEntries(
-    content,
-    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
-    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-  );
-  if (entries.some((candidate) => governedHttpSupportImport(candidate) === undefined)) {
-    return raiseScaffoldFailure(
-      `generated owner slot contains unsupported developer content: ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}`,
-    );
-  }
-  if (entries.some((candidate) => governedHttpSupportImport(candidate) === expected)) {
-    return content;
-  }
-  return insertSortedSlotIdempotently(
-    content,
-    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
-    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-    `import { ${expected.binding} } from '${expected.module}';`,
-    (candidate) => governedHttpSupportImport(candidate) !== undefined,
-  );
+const isGovernedHttpHandlerLayerSlotEntry = (candidate: string): boolean => {
+  const isRead =
+    /^[A-Za-z][A-Za-z0-9]*ReadApiLive\.pipe\(/u.test(candidate) &&
+    candidate.includes('GovernedReadLayer.provide(governedReadRuntimeLive)');
+  const isAction =
+    /^[A-Za-z][A-Za-z0-9]*ActionApiLive\.pipe\(/u.test(candidate) &&
+    candidate.includes('GovernedReadLayer.provide(governedActionRuntimeLive)');
+  return (isRead || isAction) && candidate.endsWith('),');
 };
 
 const generatedHeader = (kind: GovernedContributionKind) =>
@@ -390,29 +377,6 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
 
 const renderPublicContractShim = (specifier: string): string =>
   `${generatedHeader(MODULE_API_KIND)}\n// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`;
-
-const createOrAcceptPublicContractShim = Effect.fn('GovernedContributionScaffold.publicContractShim')(
-  function* createOrAcceptPublicContractShim(
-    filePath: string,
-    specifier: string,
-    producerPath: string,
-    producerFallback: string,
-  ) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const producerSource = (yield* fileSystem.exists(producerPath))
-      ? yield* fileSystem
-          .readFileString(producerPath)
-          .pipe(
-            Effect.mapError((cause) =>
-              scaffoldFailure(`failed to read public contract producer ${producerPath}`, cause),
-            ),
-          )
-      : producerFallback;
-    return yield* createOrAcceptGeneratedMutationEffect(filePath, renderPublicContractShim(specifier), (current) =>
-      hasGeneratedPublicContractFacade(current, specifier, producerSource),
-    );
-  },
-);
 
 const renderApiContract = (name: string): string => {
   const type = toPascalCase(name);
@@ -953,12 +917,34 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         ),
         GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
         GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
-        `${layerValue},`,
+        `${layerValue}.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),`,
         isGovernedHttpHandlerLayerSlotEntry,
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
-        for (const supportImport of governedHttpSupportImports) {
-          next = insertGovernedHttpSupportImport(next, supportImport);
+        const supportOwners = readGeneratedSlotEntries(
+          next,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+        ).map(governedSupportImportOwner);
+        if (
+          supportOwners.includes(undefined) ||
+          governedSupportImports.some((expected) => supportOwners.filter((owner) => owner === expected).length > 1)
+        ) {
+          return raiseScaffoldFailure(
+            `generated owner slot contains unsupported developer content: ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}`,
+          );
+        }
+        for (const supportImport of governedSupportImports) {
+          if (supportOwners.includes(supportImport)) {
+            continue;
+          }
+          next = insertSortedSlotIdempotently(
+            next,
+            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+            supportImport,
+            (candidate) => governedSupportImportOwner(candidate) !== undefined,
+          );
         }
       }
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {
@@ -966,8 +952,8 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-          'GovernedReadLayer.provideMerge(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
-          (candidate) => candidate.startsWith('GovernedReadLayer.provideMerge(') && candidate.endsWith('),'),
+          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
+          (candidate) => candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
         );
       }
       return next;
@@ -1391,17 +1377,15 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
       resolveContainedPath(vertical.directory, 'src', 'api', `${name}-${suffix}.ts`),
     );
     if (isApi && publicContractPackage !== undefined) {
-      const client = renderApiClient(vertical, name, `../apis/${name}.ts`);
       const canonicalClientMutation = yield* createOrAcceptGeneratedMutationEffect(
         publicContractPackage.clientPath,
-        client,
+        renderApiClient(vertical, name, `../apis/${name}.ts`),
         acceptsGeneratedClient(kind, vertical, name, `../apis/${name}.ts`),
       );
-      const ownerClientMutation = yield* createOrAcceptPublicContractShim(
+      const ownerClientMutation = yield* createOrAcceptGeneratedMutationEffect(
         clientPath,
-        publicContractPackage.clientSpecifier,
-        publicContractPackage.clientPath,
-        client,
+        renderPublicContractShim(publicContractPackage.clientSpecifier),
+        (current) => current === renderPublicContractShim(publicContractPackage.clientSpecifier),
       );
       const packageGatewayPath = yield* tryScaffold('failed to resolve public contract operation gateway path', () =>
         resolveContainedPath(publicContractPackage.directory, 'src', 'api', 'action-gateway.ts'),
@@ -1509,11 +1493,10 @@ const planGovernedArtifactMutations = Effect.fn('GovernedContributionScaffold.ar
         artifact,
         acceptsGovernedArtifact(kind, vertical, name, config),
       );
-      const ownerArtifactMutation = yield* createOrAcceptPublicContractShim(
+      const ownerArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
         artifactPath,
-        publicContractPackage.contractSpecifier,
-        publicContractPackage.contractPath,
-        artifact,
+        renderPublicContractShim(publicContractPackage.contractSpecifier),
+        (current) => current === renderPublicContractShim(publicContractPackage.contractSpecifier),
       );
       const dependencyMutation = yield* tryScaffold('failed to ensure public contract package dependency', () =>
         withExactDependencies(vertical, {
@@ -1577,6 +1560,15 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
           );
     const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
     const isComponent = kind === PUBLIC_COMPONENT_KIND;
+    if (
+      isComponent &&
+      asJsonObject(vertical.packageJson['modernjs'], `vertical ${vertical.slug} modernjs metadata`)['role'] !==
+        'module-federation-remote'
+    ) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} public components require a browser Module Federation remote`,
+      );
+    }
     const isApi = kind === MODULE_API_KIND;
     const publicContractPackage = isApi
       ? yield* discoverPublicContractPackage(workspaceRoot, vertical, name)

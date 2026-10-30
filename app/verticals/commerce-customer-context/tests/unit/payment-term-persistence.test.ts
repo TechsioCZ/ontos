@@ -1,8 +1,8 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { paymentTermCatalogPort } from '../../src/integrations/payment-term-catalog.ts';
-import { ReadHandlerUnavailable } from '@app/core-runtime';
+import { ScopedRoutineInvocationError, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
@@ -15,6 +15,7 @@ import {
   makePaymentTermAffectedUseAssessmentServices,
   makePaymentTermsResolutionServices,
   paymentTermsRoutineAllowlist,
+  paymentTermsPersistenceForTransaction,
   verifyPaymentTermsReconciliationOwner,
 } from '../../src/persistence/payment-term-persistence.ts';
 
@@ -123,7 +124,7 @@ const transactionReturning = (
     invoke: (routine) => {
       const response = responses[index] ?? [];
       index += 1;
-      return Effect.forEach(response, (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item), {
+      return Effect.forEach(response, (item) => Schema.decodeUnknownEffect(Schema.toType(routine.resultSchema))(item), {
         concurrency: 1,
       }).pipe(Effect.orDie);
     },
@@ -153,6 +154,7 @@ it('declares only immutable scope-injected Customer Payment Terms routines', () 
     ['read_customer_payment_terms', 'payment-terms.read-state'],
     ['assess_payment_term_entitlement_use', 'payment-terms.assess-entitlement-use'],
     ['persist_customer_payment_terms', 'payment-terms.persist-state'],
+    ['resolve_legacy_payment_term_grant_intent_v1', 'payment-terms.resolve-legacy-grant-intent'],
     ['reserve_payment_term_retirement', 'payment-terms.reserve-retirement'],
     ['verify_payment_terms_reconciliation_owner', 'payment-terms.reconciliation-owner-verify'],
   ]);
@@ -184,7 +186,7 @@ it.effect('derives a PAYMENT_TERMS receipt from the owner routine, never caller 
               },
             },
           ],
-          (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item),
+          (item) => Schema.decodeUnknownEffect(Schema.toType(routine.resultSchema))(item),
           { concurrency: 1 },
         ).pipe(Effect.orDie);
       },
@@ -255,9 +257,13 @@ it.effect('counts canonical and alias Payment Terms atomically in one owner snap
     const invoker: CustomerPaymentTermsScopedRoutineInvoker = {
       invoke: (routine, values) => {
         invocations.push(values);
-        return Effect.forEach(response, (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item), {
-          concurrency: 1,
-        }).pipe(Effect.orDie);
+        return Effect.forEach(
+          response,
+          (item) => Schema.decodeUnknownEffect(Schema.toType(routine.resultSchema))(item),
+          {
+            concurrency: 1,
+          },
+        ).pipe(Effect.orDie);
       },
     };
     const services = makePaymentTermAffectedUseAssessmentServices(persistenceContext(invoker));
@@ -563,5 +569,249 @@ it.effect('maps explicit owner revision rejection to a nonretryable Action incom
       ),
     );
     expect(failure).toMatchObject({ code: 'PAYMENT_TERM_INCOMPATIBLE', retryable: false });
+  }),
+);
+
+it.effect(
+  'returns the original finite schedule after a persisted explicit End without rewriting unknown legacy facts',
+  () =>
+    Effect.gen(function* originalScheduleRead() {
+      const ended: CustomerPaymentTermsState = {
+        ...state(),
+        entitlements: [
+          {
+            effectiveFrom: '2026-10-01T00:00:00.000Z',
+            effectiveTo: '2026-11-01T00:00:00.000Z',
+            endedAt: '2026-11-01T00:00:00.000Z',
+            entitlementRef,
+            originalEffectiveTo: '2026-12-01T00:00:00.000Z',
+            paymentTermRef,
+            semanticRevisionId,
+            status: 'ACTIVE',
+          },
+        ],
+      };
+      const services = makeCustomerPaymentTermEntitlementReadServices(
+        persistenceContext(transactionReturning([row('PRESENT', ended, ended.revision)])),
+      );
+      const result = yield* services.read({
+        asOf: '2026-11-01T00:00:00.000Z',
+        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
+        includeHistorical: true,
+        profileRef,
+      });
+      expect(Predicate.isTagged(result, 'CUSTOMER_PAYMENT_TERMS')).toBe(true);
+      if (Predicate.isTagged(result, 'CUSTOMER_PAYMENT_TERMS')) {
+        expect(result.currentEntitlements).toHaveLength(0);
+        expect(result.state.entitlements[0]).toEqual(ended.entitlements[0]);
+      }
+    }),
+);
+
+it.effect('retains unknown legacy provenance during historical projection and known-open original null', () =>
+  Effect.gen(function* legacyScheduleRead() {
+    const old = {
+      effectiveFrom: '2026-10-01T00:00:00.000Z',
+      effectiveTo: '2026-11-01T00:00:00.000Z',
+      entitlementRef,
+      paymentTermRef,
+      semanticRevisionId,
+      status: 'ACTIVE' as const,
+    };
+    const legacy = { ...state(), entitlements: [old] };
+    const services = makeCustomerPaymentTermEntitlementReadServices(
+      persistenceContext(transactionReturning([row('PRESENT', legacy, legacy.revision)])),
+    );
+    const result = yield* services.read({
+      asOf: '2026-12-01T00:00:00.000Z',
+      authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
+      includeHistorical: true,
+      profileRef,
+    });
+    expect(Predicate.isTagged(result, 'CUSTOMER_PAYMENT_TERMS')).toBe(true);
+    if (Predicate.isTagged(result, 'CUSTOMER_PAYMENT_TERMS')) {
+      expect(result.state.entitlements[0]).toEqual(old);
+      expect(result.state.entitlements[0]?.originalEffectiveTo).toBeUndefined();
+      expect(result.state.entitlements[0]?.endedAt).toBeUndefined();
+    }
+  }),
+);
+
+const legacyFiniteState = (): CustomerPaymentTermsState => ({
+  ...state(2),
+  entitlements: [
+    {
+      effectiveFrom: '2030-01-01T00:00:00.000Z',
+      effectiveTo: '2030-06-01T00:00:00.000Z',
+      entitlementRef,
+      paymentTermRef,
+      semanticRevisionId,
+      status: 'ACTIVE',
+    },
+  ],
+});
+const legacyRemoval = {
+  counterpartyRef,
+  effectiveAt: '2029-01-01T00:00:00.000Z',
+  entitlementRef,
+  expectedRevision: 2,
+  profileRef,
+  reason: 'Authorized retained intent cancellation',
+} as const;
+const originalIntent = {
+  ...legacyFiniteState().entitlements[0],
+  originalEffectiveTo: '2030-06-01T00:00:00.000Z',
+  profileRef,
+  revision: 2,
+};
+
+it.effect('cancels only the selected legacy finite grant using a scope-bound owner proof', () =>
+  Effect.gen(function* provedLegacyIntent() {
+    const legacy = legacyFiniteState();
+    const cancelled: CustomerPaymentTermsState = {
+      ...legacy,
+      entitlements: legacy.entitlements.map((entry) => ({
+        ...entry,
+        cancelledAt: legacyRemoval.effectiveAt,
+        originalEffectiveTo: entry.effectiveTo ?? null,
+        status: 'CANCELLED' as const,
+      })),
+      revision: 3,
+    };
+    const invoked: unknown[] = [];
+    const responses = [
+      [row('PRESENT', legacy, 2)],
+      [{ current_revision: 2, outcome: 'PROVED', payload: originalIntent }],
+      [row('APPLIED', cancelled, 3)],
+    ];
+    let index = 0;
+    const invoker: CustomerPaymentTermsScopedRoutineInvoker = {
+      invoke: (routine, values) => {
+        invoked.push({ name: routine.name, values });
+        const response = responses[index] ?? [];
+        index += 1;
+        return Effect.forEach(
+          response,
+          (item) => Schema.decodeUnknownEffect(Schema.toType(routine.resultSchema))(item),
+          {
+            concurrency: 1,
+          },
+        ).pipe(Effect.orDie);
+      },
+    };
+    const result = yield* paymentTermsPersistenceForTransaction(persistenceContext(invoker)).remove.remove(
+      legacyRemoval,
+      { actionInvocationId, scope },
+    );
+    expect(result).toMatchObject({ changed: true, removalKind: 'CANCELLED', state: cancelled });
+    expect(invoked[1]).toEqual({
+      name: 'resolve_legacy_payment_term_grant_intent_v1',
+      values: [profileId, counterpartyId, entitlementId, 2],
+    });
+  }),
+);
+
+it.effect('keeps absent or ambiguous retained intent fail closed without persistence', () =>
+  Effect.gen(function* absentLegacyIntent() {
+    const services = paymentTermsPersistenceForTransaction(
+      persistenceContext(
+        transactionReturning(
+          [row('PRESENT', legacyFiniteState(), 2)],
+          [{ current_revision: 2, outcome: 'UNPROVED', payload: null }],
+        ),
+      ),
+    );
+    const failure = yield* services.remove.remove(legacyRemoval, { actionInvocationId, scope }).pipe(Effect.flip);
+    expect(failure).toMatchObject({ code: 'REMOVAL_CONFLICT', retryable: false });
+  }),
+);
+
+it.effect('rejects a mismatched historical grant projection instead of enriching the current row', () =>
+  Effect.gen(function* mismatchedLegacyIntent() {
+    for (const payload of [
+      { ...originalIntent, revision: 3 },
+      { ...originalIntent, profileRef: { ...profileRef, resourceId: counterpartyId } },
+      { ...originalIntent, semanticRevisionId: actionInvocationId },
+      { ...originalIntent, originalEffectiveTo: '2031-06-01T00:00:00.000Z' },
+      { ...originalIntent, unexpected: true },
+      { ...originalIntent, originalEffectiveTo: null },
+    ]) {
+      const services = paymentTermsPersistenceForTransaction(
+        persistenceContext(
+          transactionReturning(
+            [row('PRESENT', legacyFiniteState(), 2)],
+            [{ current_revision: 2, outcome: 'PROVED', payload }],
+          ),
+        ),
+      );
+      const failure = yield* services.remove.remove(legacyRemoval, { actionInvocationId, scope }).pipe(Effect.flip);
+      expect(failure).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE', retryable: true });
+    }
+  }),
+);
+
+it.effect('keeps known finite cancellation independent of historical availability', () =>
+  Effect.gen(function* knownLegacySkip() {
+    const legacy = legacyFiniteState();
+    const known: CustomerPaymentTermsState = {
+      ...legacy,
+      entitlements: legacy.entitlements.map((entry) => ({ ...entry, originalEffectiveTo: entry.effectiveTo ?? null })),
+    };
+    const cancelled: CustomerPaymentTermsState = {
+      ...known,
+      entitlements: known.entitlements.map((entry) => ({
+        ...entry,
+        cancelledAt: legacyRemoval.effectiveAt,
+        status: 'CANCELLED' as const,
+      })),
+      revision: 3,
+    };
+    const services = paymentTermsPersistenceForTransaction(
+      persistenceContext(transactionReturning([row('PRESENT', known, 2)], [row('APPLIED', cancelled, 3)])),
+    );
+    expect(yield* services.remove.remove(legacyRemoval, { actionInvocationId, scope })).toMatchObject({
+      changed: true,
+      state: cancelled,
+    });
+  }),
+);
+
+it.effect('retains lookup unavailability as retryable and native CAS changes as conflicts', () =>
+  Effect.gen(function* unavailableLegacyIntent() {
+    const failure = new ScopedRoutineInvocationError({
+      code: 'scoped_routine_invocation_failed',
+      constraint: Option.none(),
+      ownerModuleKey: 'commerce.customer-context',
+      postgresCode: Option.none(),
+      reason: 'Unavailable',
+      routineKey: 'payment-terms.resolve-legacy-grant-intent',
+    });
+    let calls = 0;
+    const invoker: CustomerPaymentTermsScopedRoutineInvoker = {
+      invoke: (routine) => {
+        calls += 1;
+        if (calls > 1) {
+          return Effect.fail(failure);
+        }
+        return Effect.forEach([row('PRESENT', legacyFiniteState(), 2)], (item) =>
+          Schema.decodeUnknownEffect(Schema.toType(routine.resultSchema))(item),
+        ).pipe(Effect.orDie);
+      },
+    };
+    const unavailable = yield* paymentTermsPersistenceForTransaction(persistenceContext(invoker))
+      .remove.remove(legacyRemoval, { actionInvocationId, scope })
+      .pipe(Effect.flip);
+    expect(unavailable).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE', retryable: true });
+    const conflict = yield* paymentTermsPersistenceForTransaction(
+      persistenceContext(
+        transactionReturning(
+          [row('PRESENT', legacyFiniteState(), 2)],
+          [{ current_revision: 3, outcome: 'REVISION_CONFLICT', payload: null }],
+        ),
+      ),
+    )
+      .remove.remove(legacyRemoval, { actionInvocationId, scope })
+      .pipe(Effect.flip);
+    expect(conflict).toMatchObject({ code: 'REVISION_CONFLICT', currentRevision: 3, retryable: false });
   }),
 );

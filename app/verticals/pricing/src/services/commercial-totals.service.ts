@@ -129,7 +129,9 @@ const preflightFailure = (request: PricingCommercialTotalRequest): PricingCommer
 };
 
 /** Aggregates only already-published Pricing lines. It never rounds, floors, converts currency, or adds downstream totals. */
-export const calculatePricingCommercialTotals = Effect.fn('PricingCommercialTotals.calculate')(
+export const calculatePricingCommercialTotals: (
+  input: PricingCommercialTotalRequest,
+) => Effect.Effect<PricingCommercialTotalResult> = Effect.fn('PricingCommercialTotals.calculate')(
   function* calculatePricingCommercialTotalsProgram(
     input: PricingCommercialTotalRequest,
   ): Effect.fn.Return<PricingCommercialTotalResult> {

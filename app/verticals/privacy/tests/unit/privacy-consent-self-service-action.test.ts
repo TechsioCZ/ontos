@@ -19,7 +19,9 @@ import type {
 import type { ConsentScope } from '../../shared/domain/privacy-consent-scope.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import {
+  ConsentSelfServiceAuthority,
   consentSelfServiceAction,
+  consentSelfServiceAuthorityForScope,
   consentSelfServiceAuthorityUnavailable,
   handleConsentSelfService,
 } from '../../src/actions/consent-self-service.action.ts';
@@ -286,6 +288,107 @@ describe('Consent self-service governed Action', () => {
       expect(retried.decision.recordedAt).toBe(DateTime.formatIso(yield* DateTime.now));
     }).pipe(Effect.provide(TestClock.layer())),
   );
+
+  it.effect(
+    'builds configured authority with the trusted Action scope and owner resolvers before invoking the handler',
+    () =>
+      Effect.gen(function* scopedAuthorityAssembly() {
+        const recorded: ConsentDecision[] = [];
+        const context = contextFor({ authority: consentSelfServiceAuthorityUnavailable }, recorded);
+        const subjects = {
+          listSubjects: () => Effect.succeed([]),
+          readCurrentConsent: () => Effect.succeed({ outcome: 'ABSENT' as const }),
+        };
+        let assembled = 0;
+        const authorityService: ConsentSelfServiceAuthorityService = {
+          forScope: (input) => {
+            assembled += 1;
+            expect(input.scope).toBe(context.scope);
+            expect(input.subjects).toBe(subjects);
+            return portsFor({ portal: portalFact });
+          },
+          ports: consentSelfServiceAuthorityUnavailable.ports,
+        };
+        const selected = yield* consentSelfServiceAuthorityForScope({ scope: context.scope, subjects }).pipe(
+          Effect.provideService(ConsentSelfServiceAuthority, authorityService),
+        );
+        const result = yield* handleConsentSelfService(portalRequest, {
+          ...context,
+          services: { ...context.services, authority: selected },
+        });
+        expect(assembled).toBe(1);
+        expect(result.authorization.allowed).toBe(true);
+        expect(recorded).toEqual([result.decision]);
+        expect(
+          (yield* consentSelfServiceAuthorityForScope({ scope: context.scope, subjects }).pipe(
+            Effect.provideService(ConsentSelfServiceAuthority, consentSelfServiceAuthorityUnavailable),
+          )).ports,
+        ).toBe(consentSelfServiceAuthorityUnavailable.ports);
+      }),
+  );
+
+  it.effect('keeps configured authority failure closed before any Consent write', () =>
+    Effect.gen(function* deniedScopedAuthority() {
+      const recorded: ConsentDecision[] = [];
+      const context = contextFor({ authority: consentSelfServiceAuthorityUnavailable }, recorded);
+      const selected = yield* consentSelfServiceAuthorityForScope({
+        scope: context.scope,
+        subjects: {
+          listSubjects: () => Effect.succeed([]),
+          readCurrentConsent: () => Effect.succeed({ outcome: 'ABSENT' }),
+        },
+      }).pipe(
+        Effect.provideService(ConsentSelfServiceAuthority, {
+          forScope: () => consentSelfServiceAuthorityUnavailable.ports,
+          ports: portsFor({ portal: portalFact }),
+        }),
+      );
+      const error = yield* handleConsentSelfService(portalRequest, {
+        ...context,
+        services: { ...context.services, authority: selected },
+      }).pipe(Effect.flip);
+      expect(error.code).toBe('privacy_operation_persistence_unavailable');
+      expect(recorded).toEqual([]);
+    }),
+  );
+
+  it.effect('retains the real self-service withdrawal time after its original V1 period ends', () =>
+    Effect.gen(function* endedPurposeSelfService() {
+      const at = '2026-09-15T10:00:00.000Z';
+      yield* TestClock.setTime(Date.parse(at));
+      const recorded: ConsentDecision[] = [];
+      // The owner acknowledged the withdrawal at the same instant it reaches Privacy.
+      const withdrawFact = {
+        ...operationFact,
+        decisionReceipt: { ...operationFact.decisionReceipt, acknowledgedAt: at },
+      };
+      const context = contextFor({ authority: authority(portsFor({ operation: withdrawFact })) }, recorded);
+      const services = context.services.consentDecision;
+      const result = yield* handleConsentSelfService(operationRequest, {
+        ...context,
+        services: {
+          ...context.services,
+          consentDecision: {
+            ...services,
+            get: () =>
+              services.get().pipe(
+                Effect.map(
+                  Option.map((purpose) => ({
+                    ...purpose,
+                    versions: purpose.versions.map((version) => ({ ...version, effectiveTo: '2026-02-01T00:00:00Z' })),
+                  })),
+                ),
+              ),
+          },
+        },
+      });
+      expect(result.decision.effectiveAt).toBe(at);
+      expect(result.decision.recordedAt).toBe(at);
+      expect(result.decision.scope).toEqual(consentScope);
+      expect(recorded).toEqual([result.decision]);
+    }),
+  );
+
   it.effect('runs portal authority resolution through the public Action handler', () =>
     Effect.gen(function* runsPortalAction() {
       const result = yield* handleConsentSelfService(

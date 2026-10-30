@@ -10,7 +10,7 @@ import {
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ActionPermissionLive,
@@ -84,30 +84,33 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
         GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive)),
       ),
       ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(GovernedCorePersistenceLive)),
-      ActiveApplicationCompositionConfigLive,
+      ActiveApplicationCompositionConfigLive.pipe(GovernedReadLayer.provide(governedApplicationCompositionSourceLive)),
     ),
   ),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  archiveProjectActionApiLive,
-  createProjectActionApiLive,
-  moveProjectActionApiLive,
-  projectOwnerCandidatesReadApiLive,
-  readProjectReadApiLive,
-  unarchiveProjectActionApiLive,
-  updateProjectActionApiLive,
+  archiveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  createProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  moveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  projectOwnerCandidatesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  readProjectReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  unarchiveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  updateProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
-);
-
-const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive).pipe(
+).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(
-    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
+  GovernedReadLayer.provide(
+    GovernedReadLayer.mergeAll(
+      GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+      GovernedGatewayAssertionRedemptionLive,
+    ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(GovernedContextAccessLive),
+  GovernedReadLayer.provide(GovernedContextAccessLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
@@ -147,26 +150,16 @@ const projectsReadinessLayer = HttpApiBuilder.group(projectsApi, 'foundation', (
 );
 
 const projectsApiHandlersLive = Layer.mergeAll(projectsReadinessLayer, governedReadApiHandlersLive).pipe(
-  Layer.provide(RequestSchemaProblemLive),
-);
-
-const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
-  Layer.provideMerge(governedApplicationCompositionSourceLive),
-  Layer.provideMerge(GovernedDatabaseConfigLive),
-  Layer.provideMerge(databaseIdentitiesLive),
-  Layer.provideMerge(NodeCrypto.layer),
-  Layer.provideMerge(
+  Layer.provide(
     Layer.mergeAll(
       Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
       Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
       Layer.succeed(References.MinimumLogLevel, 'Info'),
     ),
   ),
+  Layer.provide(Layer.mergeAll(governedApplicationCompositionSourceLive, RequestSchemaProblemLive)),
+  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer, databaseIdentitiesLive)),
   Layer.orDie,
 );
 
-export default assembleEffectBffRuntime({
-  api: projectsApi,
-  handlers: projectsApiHandlersLive,
-  services: governedResolvedRequestServicesLive,
-});
+export default assembleEffectBffRuntime({ api: projectsApi, handlers: projectsApiHandlersLive });

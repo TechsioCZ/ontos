@@ -187,6 +187,9 @@ export const addPartyOfficialIdentifierAction = defineAction(
           Match.tag('found', ({ value }) => Effect.succeed(value)),
           Match.exhaustive,
         );
+        // Preserve accepted ICO digits before canonical padding. This is transitional Party
+        // acceptance provenance, not a new identifier identity or future ownership boundary.
+        const originalInputDigits = payload.identifier.identifierType === 'ICO' ? payload.identifier.value : undefined;
         const identifier = normalizeOfficialIdentifier(payload.identifier);
         const partyType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(party.currentType).pipe(
           Effect.mapError(persistenceUnavailable),
@@ -209,6 +212,7 @@ export const addPartyOfficialIdentifierAction = defineAction(
             actionInvocationId,
             externalEvidence: payload.externalEvidence,
             matchRuleVersion: PARTY_EXACT_CLAIM_RULE_VERSION,
+            originalInputDigits,
             partyType,
             principalId: scope.principalId,
             provenanceMethod: payload.provenanceMethod,

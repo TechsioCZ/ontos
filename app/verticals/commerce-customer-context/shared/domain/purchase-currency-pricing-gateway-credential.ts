@@ -13,7 +13,7 @@ export interface PurchaseCurrencyPricingGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'pricing';
     readonly compositionRevision: string;
-    readonly legalEntityId: string;
+    readonly legalEntityId?: string;
     readonly requestCorrelation: string;
   }) => Effect.Effect<PurchaseCurrencyPricingGatewayConnection, PurchaseCurrencyDependencyUnavailable>;
 }

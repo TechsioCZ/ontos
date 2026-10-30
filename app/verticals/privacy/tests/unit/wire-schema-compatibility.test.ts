@@ -1,14 +1,17 @@
+import { CreatePrivacySubjectPayloadSchema } from '../../shared/actions/create-privacy-subject.ts';
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { PrivacySubjectRefSchema } from '../../shared/resources/privacy-subject.ts';
 import { ConsentDecisionSchema } from '../../shared/domain/privacy-consent-decision.ts';
-import { PrivacyIsoTimestampSchema } from '../../shared/domain/privacy-subject.ts';
+import { PrivacySubjectRecordSchema, PrivacyIsoTimestampSchema } from '../../shared/domain/privacy-subject.ts';
+import { CurrentConsentResponseSchema } from '../../shared/privacy-queries.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const subjectRef = {
   moduleId: 'privacy.core',
-  resourceId: 'subject:wire-proof',
+  // Privacy stores its own Subject identity as a UUID.
+  resourceId: '50000000-0000-4000-8000-0000000000a1',
   resourceType: 'privacy.core.privacy-subject',
   tenantId,
 };
@@ -47,6 +50,23 @@ it.effect('retains explicit null and omitted optional consent evidence fields', 
     };
     const decoded = yield* Schema.decodeUnknownEffect(ConsentDecisionSchema)(decision);
     expect(yield* Schema.encodeEffect(ConsentDecisionSchema)(decoded)).toEqual(decision);
+    for (const reason of ['SAME_EFFECTIVE_TIME', 'SUBJECT_BINDING_CONFLICT'] as const) {
+      const wire = {
+        items: [
+          {
+            resolution: {
+              decisions: [decision, { ...decision, decisionId: 'decision:second' }],
+              outcome: 'CONFLICT',
+              reason,
+            },
+            scopeRef: decision.scope.scopeRef,
+          },
+        ],
+        metadata: { observedAt: decision.recordedAt },
+      };
+      const resolution = yield* Schema.decodeUnknownEffect(CurrentConsentResponseSchema)(wire);
+      expect(yield* Schema.encodeEffect(CurrentConsentResponseSchema)(resolution)).toEqual(wire);
+    }
   }),
 );
 
@@ -58,5 +78,41 @@ it.effect('validates UTC wire timestamps without normalizing their spelling', ()
     }
     const invalid = yield* Effect.result(Schema.decodeUnknownEffect(PrivacyIsoTimestampSchema)('not-a-timestamp'));
     expect(Result.isFailure(invalid)).toBe(true);
+  }),
+);
+
+it.effect('preserves optional owner admission history without promoting caller proof to Subject input', () =>
+  Effect.gen(function* subjectAdmissionWire() {
+    const record = {
+      createdAt: '2026-10-19T10:00:00Z',
+      subject: {
+        kind: 'DATA_SUBJECT',
+        partyRef: {
+          moduleId: 'party.registry',
+          resourceId: 'party-owner-wire',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+      },
+      subjectRef,
+      updatedAt: '2026-10-19T10:00:00Z',
+    };
+    const ownerAdmission = {
+      observedAt: '2026-10-19T10:00:00Z',
+      ownerRevision: 4,
+      partyRef: record.subject.partyRef,
+      typeAssertions: [{ assertionId: 'assertion-owner-wire', validFrom: '2020-01-01T00:00:00Z', validTo: null }],
+    };
+    expect(
+      yield* Schema.decodeUnknownEffect(CreatePrivacySubjectPayloadSchema)({
+        ownerAdmission,
+        subject: record.subject,
+        subjectRef,
+      }),
+    ).toEqual({ subject: record.subject, subjectRef });
+    for (const wire of [record, { ...record, ownerAdmission }]) {
+      const decoded = yield* Schema.decodeUnknownEffect(PrivacySubjectRecordSchema)(wire);
+      expect(yield* Schema.encodeEffect(PrivacySubjectRecordSchema)(decoded)).toEqual(wire);
+    }
   }),
 );

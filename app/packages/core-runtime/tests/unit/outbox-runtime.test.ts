@@ -1,4 +1,5 @@
-import { Context, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -22,6 +23,9 @@ class TestWorkerDependency extends Context.Service<
 >()('@app/core-runtime/tests/unit/outbox-runtime.test/TestWorkerDependency') {}
 
 const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
+// Deliberately invalidate a genuine Date so the runtime must reject malformed injected time.
+const invalidOriginFixture = DateTime.toDateUtc(DateTime.makeUnsafe(0));
+invalidOriginFixture.setTime(Number.NaN);
 
 const retryPolicy = {
   initialBackoffMs: 0,
@@ -73,8 +77,11 @@ const worker = <HandlerError, HandlerRequirements = never>(
   );
 
 interface RepositoryProbe {
+  readonly claimedAt: Date[];
   readonly completed: OutboxClaim[];
+  readonly completedAt: Date[];
   readonly failed: { readonly claim: OutboxClaim; readonly message: string }[];
+  readonly failedAt: Date[];
   readonly matchedRevisions: string[];
 }
 
@@ -96,19 +103,34 @@ const repository = (
 ): ControlledRepository => {
   const claims = [...(options.claims ?? [])];
   const failureStatuses = [...(options.failureStatuses ?? [])];
-  const probe: RepositoryProbe = { completed: [], failed: [], matchedRevisions: [] };
+  const probe: RepositoryProbe = {
+    claimedAt: [],
+    completed: [],
+    completedAt: [],
+    failed: [],
+    failedAt: [],
+    matchedRevisions: [],
+  };
   return {
     probe,
     service: {
-      claimNext: () => Effect.succeed(Option.fromNullishOr(claims.shift())),
-      complete: (claimed) => {
+      claimNext: (_registrations, _owner, now) =>
+        Effect.sync(() => {
+          probe.claimedAt.push(now);
+          return Option.fromNullishOr(claims.shift());
+        }),
+      complete: (claimed, now) => {
         if (options.completeError !== undefined) {
           return Effect.fail(options.completeError);
         }
-        return Effect.sync(() => probe.completed.push(claimed)).pipe(Effect.asVoid);
+        return Effect.sync(() => {
+          probe.completedAt.push(now);
+          probe.completed.push(claimed);
+        });
       },
-      fail: (claimed, message) =>
+      fail: (claimed, message, now) =>
         Effect.sync(() => {
+          probe.failedAt.push(now);
           probe.failed.push({ claim: claimed, message });
           return failureStatuses.shift() ?? 'pending';
         }),
@@ -377,6 +399,138 @@ it.effect('surfaces stale-claim finalization and leaves checkpoint responsibilit
 
     const error = yield* Effect.flip(run(controlled.service));
     expect(Schema.is(OutboxClaimLostError)(error)).toBe(true);
+    expect(controlled.probe.failed).toEqual([]);
+  }),
+);
+
+it.effect('reads fresh default clock time for each sequential claim and completion', () =>
+  Effect.gen(function* sequentialDefaultOperationTimes() {
+    const start = (yield* DateTime.nowAsDate).getTime();
+    const controlled = repository({ claims: Array.from({ length: 5 }, () => claim()) });
+    const registration = worker(() => TestClock.adjust('8 seconds'));
+    const result = yield* makeOutboxRuntime(controlled.service).runCycle({
+      claimOwner: 'unit-runtime',
+      compositionRevision: 'a'.repeat(64),
+      maxDeliveries: 5,
+      registrations: [registration],
+      subscriptions: [registration.descriptor],
+    });
+    expect(result.succeeded).toBe(5);
+    expect(controlled.probe.claimedAt.map((date) => date.getTime() - start)).toEqual([0, 8000, 16_000, 24_000, 32_000]);
+    expect(controlled.probe.completedAt.map((date) => date.getTime() - start)).toEqual([
+      8000, 16_000, 24_000, 32_000, 40_000,
+    ]);
+  }),
+);
+
+it.effect('keeps an explicit clock override fixed across claims and success/failure settlement', () =>
+  Effect.gen(function* fixedClockOverride() {
+    const now = DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00Z'));
+    const originalOverride = now.getTime();
+    const start = (yield* DateTime.nowAsDate).getTime();
+    const controlled = repository({ claims: Array.from({ length: 3 }, () => claim()) });
+    let handled = 0;
+    const registration = worker(() =>
+      Effect.gen(function* delayedOutcomeWithFixedOverride() {
+        handled += 1;
+        yield* TestClock.adjust('8 seconds');
+        if (handled === 3) {
+          return yield* new TestHandlerFailure({ reason: 'private failure' });
+        }
+        return yield* Effect.void;
+      }),
+    );
+    const result = yield* makeOutboxRuntime(controlled.service).runCycle({
+      claimOwner: 'unit-runtime',
+      compositionRevision: 'a'.repeat(64),
+      maxDeliveries: 3,
+      now,
+      registrations: [registration],
+      subscriptions: [registration.descriptor],
+    });
+    expect(result).toMatchObject({ claimed: 3, failed: 1, retried: 1, succeeded: 2 });
+    expect((yield* DateTime.nowAsDate).getTime() - start).toBe(24_000);
+    expect(controlled.probe.claimedAt.map((date) => date.getTime())).toEqual([
+      originalOverride,
+      originalOverride,
+      originalOverride,
+    ]);
+    expect(controlled.probe.completedAt.map((date) => date.getTime())).toEqual([originalOverride, originalOverride]);
+    expect(controlled.probe.failedAt.map((date) => date.getTime())).toEqual([originalOverride]);
+    expect(now.getTime()).toBe(originalOverride);
+  }),
+);
+
+for (const outcome of ['declared', 'defect', 'decode'] as const) {
+  it.effect(`uses later ${outcome} failure time instead of cycle start`, () =>
+    Effect.gen(function* laterFailureTime() {
+      const start = (yield* DateTime.nowAsDate).getTime();
+      const controlled = repository({
+        claims: [claim(), claim(2, outcome === 'decode' ? { messageKey: 42 } : undefined)],
+      });
+      let calls = 0;
+      const registration = worker(() =>
+        Effect.gen(function* delayedOutcome() {
+          calls += 1;
+          yield* TestClock.adjust('8 seconds');
+          if (calls > 1) {
+            return yield* outcome === 'declared'
+              ? Effect.fail(new TestHandlerFailure({ reason: 'private failure' }))
+              : Effect.die(new Error('private defect'));
+          }
+          return yield* Effect.void;
+        }),
+      );
+      const result = yield* makeOutboxRuntime(controlled.service).runCycle({
+        claimOwner: 'unit-runtime',
+        compositionRevision: 'a'.repeat(64),
+        maxDeliveries: 2,
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      });
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(1);
+      expect(controlled.probe.claimedAt.map((date) => date.getTime() - start)).toEqual([0, 8000]);
+      expect(controlled.probe.completedAt.map((date) => date.getTime() - start)).toEqual([8000]);
+      expect(controlled.probe.failedAt.map((date) => date.getTime() - start)).toEqual([
+        outcome === 'decode' ? 8000 : 16_000,
+      ]);
+      expect(calls).toBe(outcome === 'decode' ? 1 : 2);
+      expect(controlled.probe.failed[0]?.message).not.toMatch(/private/u);
+    }),
+  );
+}
+
+it.effect('rejects an invalid explicit clock override before repository operations', () =>
+  Effect.gen(function* invalidClockOrigin() {
+    const controlled = repository({ claims: [claim()] });
+    const registration = worker(() => Effect.void);
+    const error = yield* Effect.flip(
+      makeOutboxRuntime(controlled.service).runCycle({
+        claimOwner: 'unit-runtime',
+        compositionRevision: 'a'.repeat(64),
+        now: invalidOriginFixture,
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      }),
+    );
+    expect(Schema.is(OutboxWorkerDescriptorError)(error)).toBe(true);
+    expect(controlled.probe.claimedAt).toEqual([]);
+  }),
+);
+
+it.effect('leaves an interrupted handler unfinalized for lease recovery', () =>
+  Effect.gen(function* interruptedHandler() {
+    const controlled = repository({ claims: [claim()] });
+    const entered = yield* Deferred.make<null>();
+    const running = yield* run(
+      controlled.service,
+      worker(() => Deferred.succeed(entered, null).pipe(Effect.andThen(Effect.never))),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    yield* TestClock.adjust('1 second');
+    yield* Fiber.interrupt(running);
+    expect(controlled.probe.completed).toEqual([]);
     expect(controlled.probe.failed).toEqual([]);
   }),
 );

@@ -4,7 +4,7 @@ import {
   ReadHandlerExecutionError,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadOwnerTransaction, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ReadOwnerTransaction, ReadServiceFactory } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
@@ -48,9 +48,11 @@ export interface CurrentPricingDecisionOwnerState {
   readonly tier: Pick<QuantityTierPersistence, 'readCurrentSet'>;
 }
 
+type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+
 /** Owner state bound to one open transaction: an Action, whose whole handler runs inside its transaction. */
 export const currentPricingDecisionOwnerStateInTransaction = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedTransaction,
   scope: OperationalScope,
   compositionRevision: string,
 ): Effect.Effect<CurrentPricingDecisionOwnerState, OperationContextUnavailable> =>
@@ -98,7 +100,7 @@ export const currentPricingDecisionOwnerStatePerRead = (
   compositionRevision: string,
 ): CurrentPricingDecisionOwnerState => {
   const read = <Port, Value, Failure>(
-    portFor: (transaction: ScopedTransactionExecutor) => Effect.Effect<Port, OperationContextUnavailable>,
+    portFor: (transaction: ScopedTransaction) => Effect.Effect<Port, OperationContextUnavailable>,
     use: (port: Port) => Effect.Effect<Value, Failure>,
   ) => ownerTransaction((transaction) => portFor(transaction).pipe(Effect.flatMap(use)));
   const priceUnavailable = asPortUnavailability((reason, cause) =>

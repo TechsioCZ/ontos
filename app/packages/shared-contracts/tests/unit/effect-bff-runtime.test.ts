@@ -30,25 +30,15 @@ const handlers = HttpApiBuilder.group(api, 'fixture', (group) =>
 );
 
 const makeRuntime = (greeting: string) =>
-  assembleEffectBffRuntime<typeof api.identifier, typeof api.groups.fixture, Layer.Services<typeof handlers>, Greeting>(
-    {
-      api,
-      handlers,
-      services: Layer.succeed(Greeting, { value: greeting }),
-    },
-  );
+  assembleEffectBffRuntime({
+    api,
+    handlers: handlers.pipe(Layer.provide(Layer.succeed(Greeting, { value: greeting }))),
+  });
 
 const makeCorsRuntime = (greeting: string) =>
-  assembleEffectBffRuntime<
-    typeof api.identifier,
-    typeof api.groups.fixture,
-    Layer.Services<typeof handlers>,
-    Greeting,
-    HttpRouter.HttpRouter
-  >({
+  assembleEffectBffRuntime({
     api,
-    handlers,
-    services: Layer.succeed(Greeting, { value: greeting }),
+    handlers: handlers.pipe(Layer.provide(Layer.succeed(Greeting, { value: greeting }))),
     transport: HttpRouter.cors({
       allowedHeaders: ['content-type'],
       allowedMethods: ['GET', 'OPTIONS'],
@@ -57,15 +47,9 @@ const makeCorsRuntime = (greeting: string) =>
     }),
   });
 
-const failingStartupRuntime = assembleEffectBffRuntime<
-  typeof api.identifier,
-  typeof api.groups.fixture,
-  Layer.Services<typeof handlers>,
-  Greeting
->({
+const failingStartupRuntime = assembleEffectBffRuntime({
   api,
-  handlers,
-  services: Layer.effect(Greeting, Effect.die('fixture layer startup defect')),
+  handlers: handlers.pipe(Layer.provide(Layer.effect(Greeting, Effect.die('fixture layer startup defect')))),
 });
 
 const inferredRuntime: EffectBffDefinition<typeof api> & EffectBffRuntime<typeof api> =
@@ -130,37 +114,5 @@ it.live('preserves caller-owned Layer startup defects', () =>
       Effect.flip,
     );
     expect(String(error.cause)).toMatch(/fixture layer startup defect/u);
-  }),
-);
-
-it.live('builds the services for every request when the edge asks for request lifetime', () =>
-  Effect.gen(function* requestServicesEffect() {
-    let builds = 0;
-    const runtime = assembleEffectBffRuntime<
-      typeof api.identifier,
-      typeof api.groups.fixture,
-      Layer.Services<typeof handlers>,
-      Greeting
-    >({
-      api,
-      handlers,
-      services: Layer.effect(
-        Greeting,
-        Effect.sync(() => {
-          builds += 1;
-          return { value: `request ${builds}` };
-        }),
-      ),
-    });
-    const server = yield* Effect.acquireRelease(
-      Effect.sync(() => runtime.createHandler({ servicesLifetime: 'request' })),
-      (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
-    );
-    yield* Effect.promise(() => server.ready ?? Promise.resolve());
-    const greet = () =>
-      Effect.promise(() => server.handler(new Request('http://localhost/greet')).then((response) => response.json()));
-    expect(yield* greet()).toEqual({ greeting: 'request 1' });
-    expect(yield* greet()).toEqual({ greeting: 'request 2' });
-    expect(builds).toBe(2);
   }),
 );

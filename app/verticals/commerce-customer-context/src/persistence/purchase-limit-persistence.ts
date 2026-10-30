@@ -63,6 +63,7 @@ import { PurchaseLimitFxUnavailableSchema } from '../../shared/domain/purchase-l
 import type { PurchaseLimitFxPort, PurchaseLimitFxUnavailable } from '../../shared/domain/purchase-limit-fx-port.ts';
 import type { PurchaseValue } from '../../shared/domain/purchase-limit.ts';
 
+const PURCHASE_LIMIT_EVALUATION_SCOPE = 'commerce.customer-context.purchase-limit-evaluation-scope';
 const MODULE_KEY = 'commerce.customer-context';
 const POLICY_DEPENDENCY = 'commerce.customer-context.purchase-limit-policy';
 const COUNTERPARTY_POLICY_SOURCE = 'counterparty-policy';
@@ -110,7 +111,8 @@ const readPurchaseLimitPoliciesRoutine = defineScopedRoutine({
     { source: 'input', type: 'text' },
     { source: 'input', type: 'uuid' },
   ],
-  resultSchema: PurchaseLimitPolicyRowSchema,
+  // Core validates the native wire Type; nullable SQL values are normalized by this owner after invocation.
+  resultSchema: Schema.toEncoded(PurchaseLimitPolicyRowSchema),
   routineKey: 'purchase-limit.read-current-policies',
   schema: 'commerce_customer_context',
 });
@@ -132,7 +134,8 @@ const changePurchaseLimitPolicyRoutine = defineScopedRoutine({
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'uuid' },
   ],
-  resultSchema: PurchaseLimitMutationRowSchema,
+  // PostgreSQL returns scalars/null, never Effect Options. Decode into owner Options only after Core wire validation.
+  resultSchema: Schema.toEncoded(PurchaseLimitMutationRowSchema),
   routineKey: 'purchase-limit.change-policy',
   schema: 'commerce_customer_context',
 });
@@ -357,6 +360,15 @@ export const readCurrentPurchaseLimitPolicyState = (
     .pipe(
       Effect.mapError((failure) => dependencyUnavailable(POLICY_DEPENDENCY, failure)),
       Effect.flatMap((rows) =>
+        Schema.decodeEffect(Schema.Array(PurchaseLimitPolicyRowSchema))(rows).pipe(
+          Effect.mapError((cause) => {
+            const failure = dependencyUnavailable(POLICY_DEPENDENCY);
+            Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+            return failure;
+          }),
+        ),
+      ),
+      Effect.flatMap((rows) =>
         rows.some(({ outcome }) => outcome === 'PROFILE_NOT_FOUND')
           ? Effect.fail(dependencyUnavailable('commerce.customer-context.counterparty-purchasing-profile'))
           : Effect.all(
@@ -469,6 +481,15 @@ const changePurchaseLimitPolicy = (
     ])
     .pipe(
       Effect.mapError((failure) => dependencyUnavailable(POLICY_DEPENDENCY, failure)),
+      Effect.flatMap((rows) =>
+        Schema.decodeEffect(Schema.Array(PurchaseLimitMutationRowSchema))(rows).pipe(
+          Effect.mapError((cause) => {
+            const failure = dependencyUnavailable(POLICY_DEPENDENCY);
+            Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+            return failure;
+          }),
+        ),
+      ),
       Effect.flatMap(([row]): Effect.Effect<PurchaseLimitPolicyMutationResult, PurchaseLimitPolicyPersistenceError> => {
         if (row === undefined) {
           return Effect.fail(dependencyUnavailable(POLICY_DEPENDENCY));
@@ -729,32 +750,34 @@ const comparableForPolicy = (
     Match.orElse(() => Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>())),
   );
 
-export const purchaseLimitEvaluationSourceForTransaction = (
+const purchaseLimitEvaluationSourceForBusinessSubject = (
   transaction: ScopedTransactionExecutor,
-  scope: OperationalScope & {
+  subject: {
     readonly legalEntityId: string;
-    readonly trustedStorefrontId: string;
+    readonly principalId: string;
+    readonly storefrontId: string;
+    readonly tenantId: string;
   },
   // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local constructor is used only by the factory after yielding the Context service and by focused adapter tests; expires: 2027-09-09.
   currentness: PurchaseLimitEvaluationCurrentnessPortService,
 ): PurchaseLimitEvaluationSourceService => {
   const currentnessForTransaction =
     currentness.forTransaction?.(transaction, {
-      legalEntityId: scope.legalEntityId,
-      principalId: scope.principalId,
-      storefrontId: scope.trustedStorefrontId,
-      tenantId: scope.tenantId,
+      legalEntityId: subject.legalEntityId,
+      principalId: subject.principalId,
+      storefrontId: subject.storefrontId,
+      tenantId: subject.tenantId,
     }) ?? currentness;
   return {
     loadCurrent: ({ principalId, query }) => {
       if (
-        principalId !== scope.principalId ||
-        query.counterpartyRef.tenantId !== scope.tenantId ||
-        query.storefrontId !== scope.trustedStorefrontId
+        principalId !== subject.principalId ||
+        query.counterpartyRef.tenantId !== subject.tenantId ||
+        query.storefrontId !== subject.storefrontId
       ) {
         return Effect.fail(
           dependencyUnavailableFromCause(
-            'commerce.customer-context.purchase-limit-evaluation-scope',
+            PURCHASE_LIMIT_EVALUATION_SCOPE,
             'The Purchase Limit query does not match the trusted operation scope',
           ),
         );
@@ -771,23 +794,23 @@ export const purchaseLimitEvaluationSourceForTransaction = (
                 expectedSourceRevisions: query.expectedSourceRevisions,
                 observedAt: decidedAt,
                 scope: {
-                  legalEntityId: scope.legalEntityId,
-                  principalId: scope.principalId,
-                  storefrontId: scope.trustedStorefrontId,
-                  tenantId: scope.tenantId,
+                  legalEntityId: subject.legalEntityId,
+                  principalId: subject.principalId,
+                  storefrontId: subject.storefrontId,
+                  tenantId: subject.tenantId,
                 },
               })
               .pipe(Effect.flatMap(authoritativeExternalFacts)),
             readCurrentPurchaseLimitPolicyState(transaction, {
               counterpartyRef: query.counterpartyRef,
               principalRef: {
-                principalId: scope.principalId,
-                tenantId: scope.tenantId,
+                principalId: subject.principalId,
+                tenantId: subject.tenantId,
               },
-              tenantId: scope.tenantId,
+              tenantId: subject.tenantId,
             }),
-            Schema.decodeEffect(PurchaseLimitSellingLegalEntityIdSchema)(scope.legalEntityId),
-            Schema.decodeEffect(PurchaseLimitStorefrontIdSchema)(scope.trustedStorefrontId),
+            Schema.decodeEffect(PurchaseLimitSellingLegalEntityIdSchema)(subject.legalEntityId),
+            Schema.decodeEffect(PurchaseLimitStorefrontIdSchema)(subject.storefrontId),
           ],
           { concurrency: 4 },
         ).pipe(
@@ -795,7 +818,7 @@ export const purchaseLimitEvaluationSourceForTransaction = (
             Schema.is(PurchaseLimitDependencyUnavailableSchema)(cause)
               ? cause
               : dependencyUnavailableFromCause(
-                  'commerce.customer-context.purchase-limit-evaluation-scope',
+                  PURCHASE_LIMIT_EVALUATION_SCOPE,
                   'The trusted Purchase Limit operation scope is invalid',
                   cause,
                 ),
@@ -829,7 +852,7 @@ export const purchaseLimitEvaluationSourceForTransaction = (
           currentSourceRevisions,
           decidedAt,
           expectedSourceRevisions: query.expectedSourceRevisions,
-          principalId: scope.principalId,
+          principalId: subject.principalId,
           principalOverrides: policyState.principalOverrides,
           purchaseValue: facts.purchaseValue,
           sellingLegalEntityId,
@@ -843,6 +866,62 @@ export const purchaseLimitEvaluationSourceForTransaction = (
     },
   };
 };
+
+/** Existing buyer entrypoint: authenticated actor and evaluated buyer are the same identity. */
+export const purchaseLimitEvaluationSourceForTransaction = (
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope & { readonly legalEntityId: string; readonly trustedStorefrontId: string },
+  // eslint-disable-next-line effect-native/no-dependency-parameters -- The buyer entrypoint receives the Currentness Context service already yielded by the Action factory and only forwards it to the business-subject constructor; expires: 2027-09-10.
+  currentness: PurchaseLimitEvaluationCurrentnessPortService,
+): PurchaseLimitEvaluationSourceService =>
+  purchaseLimitEvaluationSourceForBusinessSubject(
+    transaction,
+    {
+      legalEntityId: scope.legalEntityId,
+      principalId: scope.principalId,
+      storefrontId: scope.trustedStorefrontId,
+      tenantId: scope.tenantId,
+    },
+    currentness,
+  );
+
+/** Business subject is independently owner-verified; the authenticated service scope is never rewritten. */
+export const purchaseLimitEvaluationSourceForVerifiedOrderSubject = (
+  transaction: ScopedTransactionExecutor,
+  // eslint-disable-next-line effect-native/no-dependency-parameters -- The verified-order entrypoint carries the already-yielded Currentness Context service inside its input and forwards it unchanged; expires: 2027-09-10.
+  input: {
+    readonly actualScope: OperationalScope;
+    readonly businessSubject: { readonly buyerPrincipalId: string; readonly storefrontId: string };
+    readonly currentness: PurchaseLimitEvaluationCurrentnessPortService;
+  },
+): Effect.Effect<PurchaseLimitEvaluationSourceService, PurchaseLimitDependencyUnavailable> =>
+  Effect.suspend(() => {
+    const { actualScope, businessSubject, currentness } = input;
+    if (
+      actualScope.legalEntityId === undefined ||
+      transaction.scope.tenantId !== actualScope.tenantId ||
+      transaction.scope.legalEntityId !== actualScope.legalEntityId
+    ) {
+      return Effect.fail(
+        dependencyUnavailableFromCause(
+          PURCHASE_LIMIT_EVALUATION_SCOPE,
+          'The authenticated Order service scope is invalid',
+        ),
+      );
+    }
+    return Effect.succeed(
+      purchaseLimitEvaluationSourceForBusinessSubject(
+        transaction,
+        {
+          legalEntityId: actualScope.legalEntityId,
+          principalId: businessSubject.buyerPrincipalId,
+          storefrontId: businessSubject.storefrontId,
+          tenantId: actualScope.tenantId,
+        },
+        currentness,
+      ),
+    );
+  });
 
 const sameCounterpartyRef = (
   left: PurchaseApprovalTriggerCurrentEvidence['profileEvidence']['counterpartyRef'],
@@ -1088,7 +1167,7 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
   );
 
   return {
-    loadCandidateCurrent: ({ payload, trustedContext }) => {
+    loadCandidateCurrent: ({ candidateProposal, payload, trustedContext }) => {
       const { resolveCandidate } = currentnessForTransaction;
       if (resolveCandidate === undefined) {
         return Effect.fail(
@@ -1109,8 +1188,8 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
       return loadApprovalEvidence(
         payload,
         trustedContext,
-        (evaluatedAt) =>
-          resolveCandidate({
+        (evaluatedAt) => {
+          const candidateInput = {
             claimedPurchaseValue: payload.purchaseValue,
             counterpartyRef: payload.counterpartyRef,
             expectedSourceRevisions: payload.expectedSourceRevisions,
@@ -1121,7 +1200,11 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
               storefrontId: scope.trustedStorefrontId,
               tenantId: scope.tenantId,
             },
-          }),
+          };
+          return candidateProposal === undefined
+            ? resolveCandidate(candidateInput)
+            : resolveCandidate({ ...candidateInput, candidateProposal });
+        },
         'candidate',
       );
     },
@@ -1179,7 +1262,7 @@ const evaluationSourceFactoryForCurrentness = (
           legalEntityId: scope.legalEntityId,
           trustedStorefrontId: scope.trustedStorefrontId,
         },
-        currentness,
+        currentness.forOperation?.(scopedTransaction, scope) ?? currentness,
       ),
     );
   },
@@ -1214,52 +1297,12 @@ const approvalEvidenceFactoryForCurrentness = (
           legalEntityId: scope.legalEntityId,
           trustedStorefrontId: scope.trustedStorefrontId,
         },
-        currentness,
+        currentness.forOperation?.(scopedTransaction, scope) ?? currentness,
         { resolveCounterpartyRole },
       ),
     );
   },
 });
-
-/**
- * The checked-in proposal snapshot is an owner record, but it is not a currentness oracle for
- * Cart, Storefront, or Customer Commerce Policy. Until those owners supply a transaction-bound
- * adapter, the production layer is deliberately fail-closed rather than promoting its persisted
- * external source vector as fresh evidence. A deployment can replace this layer with the real
- * owner adapter without changing Action or SQL boundaries.
- */
-const durablePurchaseLimitEvaluationCurrentness = (): PurchaseLimitEvaluationCurrentnessPortService => ({
-  forTransaction: () => ({
-    resolveCandidate: () =>
-      Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-candidate-currentness')),
-    resolveCurrent: () => Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-currentness')),
-  }),
-  resolveCandidate: () =>
-    Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-candidate-currentness')),
-  resolveCurrent: () => Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-currentness')),
-});
-
-const unavailablePurchaseLimitEvaluationCurrentness = (): PurchaseLimitEvaluationCurrentnessPortService => ({
-  resolveCurrent: () =>
-    Effect.fail(
-      dependencyUnavailableFromCause(
-        EVALUATION_CURRENTNESS_DEPENDENCY,
-        'Current Purchase Proposal, profile, Storefront, and Customer Commerce Policy owners are not configured',
-      ),
-    ),
-});
-
-// eslint-disable-next-line no-unused-vars -- Retain the fail-closed Layer that keeps its private unavailable currentness factory structurally connected.
-const purchaseLimitEvaluationCurrentnessUnavailableLayer = Layer.succeed(
-  PurchaseLimitEvaluationCurrentnessPort,
-  unavailablePurchaseLimitEvaluationCurrentness(),
-);
-
-/** Real transaction-bound Currentness adapter for approval-trigger evaluation. */
-export const purchaseLimitEvaluationCurrentnessLive = Layer.succeed(
-  PurchaseLimitEvaluationCurrentnessPort,
-  durablePurchaseLimitEvaluationCurrentness(),
-);
 
 /** Real owner composition over scoped persistence, explicit Currentness, and published FX. */
 const purchaseLimitEvaluationSourceFactoryLayer = Layer.effect(

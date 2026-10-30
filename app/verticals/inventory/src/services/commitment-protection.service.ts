@@ -369,10 +369,18 @@ export const makeCommitmentProtectionService = (dependencies: {
 
   const establish: CommitmentProtectionService['establish'] = Effect.fn('CommitmentProtection.establishAction')(
     function* establishAction(payload, context) {
-      const { current, history, request } = yield* load(payload, context);
+      const { current, history, request: attemptedRequest } = yield* load(payload, context);
       const claim = yield* dependencies.ledger
-        .claim(context.tenantId, inventoryEffectLedgerId(payload.effectId), commitmentProtectionLedgerIntent(request))
+        .claim(
+          context.tenantId,
+          inventoryEffectLedgerId(payload.effectId),
+          commitmentProtectionLedgerIntent(attemptedRequest),
+        )
         .pipe(Effect.mapError((cause) => mapLedgerError(payload.effectId, cause)));
+      if (!Predicate.isTagged(claim.record.intent, 'ESTABLISH_COMMITMENT_PROTECTION')) {
+        return yield* rejected(payload.effectId, 'PROTECTION_IDENTITY_CONFLICT');
+      }
+      const { request } = claim.record.intent;
       const terminal = terminalEffectFromRecord(claim.record);
       if (Option.isSome(terminal)) {
         return {
@@ -464,12 +472,20 @@ export const makeCommitmentProtectionEstablishmentExecutionService = <
 
   const prepare: CommitmentProtectionEstablishmentExecutionService<TScope>['prepare'] = Effect.fn(
     'CommitmentProtectionEstablishmentExecution.prepare',
-  )(function* prepareExecution(scope, request) {
-    yield* validateScope(scope, request);
+  )(function* prepareExecution(scope, attemptedRequest) {
+    yield* validateScope(scope, attemptedRequest);
     const ledger = dependencies.ledger(scope);
     const recovered = yield* ledger
-      .recover(scope.tenantId, inventoryEffectLedgerId(request.effectId), commitmentProtectionLedgerIntent(request))
-      .pipe(Effect.mapError((cause) => mapLedgerError(request.effectId, cause)));
+      .recover(
+        scope.tenantId,
+        inventoryEffectLedgerId(attemptedRequest.effectId),
+        commitmentProtectionLedgerIntent(attemptedRequest),
+      )
+      .pipe(Effect.mapError((cause) => mapLedgerError(attemptedRequest.effectId, cause)));
+    if (!Predicate.isTagged(recovered.record.intent, 'ESTABLISH_COMMITMENT_PROTECTION')) {
+      return yield* rejected(attemptedRequest.effectId, 'PROTECTION_IDENTITY_CONFLICT');
+    }
+    const { request } = recovered.record.intent;
     if (Option.isSome(terminalEffectFromRecord(recovered.record))) {
       return { _tag: 'TERMINAL' as const, record: recovered.record, request };
     }

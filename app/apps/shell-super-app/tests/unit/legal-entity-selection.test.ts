@@ -1,5 +1,10 @@
-import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
-import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
+import {
+  ContextAccess,
+  LegalEntityContext,
+  LegalEntityContextUnavailableError,
+  classifyActiveLegalEntities,
+} from '@app/core-runtime';
+import type { ContextAccessService, LegalEntityContextService, SafeLegalEntity } from '@app/core-runtime';
 import { Effect, Layer, Option, Predicate, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -23,7 +28,7 @@ const beta = {
   legalName: 'Beta',
 };
 
-const context = (entities = [alpha, beta] as const): LegalEntityContextService => ({
+const context = (entities: readonly SafeLegalEntity[] = [alpha, beta]): LegalEntityContextService => ({
   listActiveForTenant: () => Effect.succeed(entities),
   validateSelection: (_tenantId, legalEntityId) => {
     const selected = entities.find((entity) => entity.legalEntityId === legalEntityId);
@@ -187,6 +192,25 @@ it.effect('rejects missing, foreign, duplicate or unavailable tenant context dec
   }),
 );
 
+const gamma = {
+  legalEntityId: '30000000-0000-4000-8000-000000000003',
+  legalName: 'Gamma',
+};
+
+it.effect('replaces stale A only with the sole currently authorized same-Tenant B', () =>
+  Effect.gen(function* replacesStaleSelection() {
+    for (const candidates of [[alpha, beta], [beta]]) {
+      expect(
+        yield* provideSelectionServices(
+          resolveAuthorizedLegalEntities({ principalId, savedLegalEntityId: alpha.legalEntityId, tenantId }),
+          context(candidates),
+          access({ [beta.legalEntityId]: 'allowed' }),
+        ),
+      ).toEqual({ available: [beta], selected: beta, state: 'selected' });
+    }
+  }),
+);
+
 it.effect('times SQL and SpiceDB independently for API-key and session legal-entity selection', () =>
   Effect.gen(function* timedSelections() {
     const timings = yield* Ref.make<readonly { readonly durationMs: number; readonly phase: GatewayPhase }[]>([]);
@@ -217,5 +241,112 @@ it.effect('times SQL and SpiceDB independently for API-key and session legal-ent
       { durationMs: 20, phase: 'legal-entity-sql' },
       { durationMs: 2000, phase: 'legal-entity-spicedb' },
     ]);
+  }),
+);
+
+it.effect('blocks stale A with no current grant and requires selection when several alternatives remain', () =>
+  Effect.gen(function* boundsStaleSelection() {
+    const request = { principalId, savedLegalEntityId: alpha.legalEntityId, tenantId };
+    expect(
+      yield* provideSelectionServices(resolveAuthorizedLegalEntities(request), context([beta]), access({})),
+    ).toEqual({ available: [], state: 'access_blocked' });
+    expect(
+      yield* provideSelectionServices(
+        resolveAuthorizedLegalEntities(request),
+        context([alpha, beta, gamma]),
+        access({ [beta.legalEntityId]: 'allowed', [gamma.legalEntityId]: 'allowed' }),
+      ),
+    ).toEqual({ available: [beta, gamma], state: 'selection_required' });
+  }),
+);
+
+it.effect('does not turn an unavailable alternative into a singleton fallback', () =>
+  Effect.gen(function* rejectsUncertainAlternative() {
+    const failure = yield* Effect.flip(
+      provideSelectionServices(
+        resolveAuthorizedLegalEntities({ principalId, savedLegalEntityId: alpha.legalEntityId, tenantId }),
+        context(),
+        access({ [alpha.legalEntityId]: 'unavailable', [beta.legalEntityId]: 'allowed' }),
+      ),
+    );
+    expect(Predicate.isTagged(failure, 'LegalEntitySelectionUnavailableError')).toBe(true);
+  }),
+);
+
+it.effect('fails closed when the active Legal Entity provider is unavailable or returns foreign-Tenant records', () =>
+  Effect.gen(function* rejectsInvalidCandidates() {
+    const validContext = context();
+    for (const listActiveForTenant of [
+      () => Effect.fail(new LegalEntityContextUnavailableError({ reason: 'Fixture provider unavailable' })),
+      (selectedTenant: string) =>
+        classifyActiveLegalEntities(
+          [{ ...beta, status: 'active', tenantId: '10000000-0000-4000-8000-000000000002' }],
+          selectedTenant,
+        ),
+    ]) {
+      const failure = yield* Effect.flip(
+        provideSelectionServices(
+          resolveAuthorizedLegalEntities({ principalId, savedLegalEntityId: alpha.legalEntityId, tenantId }),
+          { ...validContext, listActiveForTenant },
+          access({ [beta.legalEntityId]: 'allowed' }),
+        ),
+      );
+      expect(Predicate.isTagged(failure, 'LegalEntitySelectionUnavailableError')).toBe(true);
+    }
+  }),
+);
+
+const incompleteDecisionCases = [
+  { decisions: [{ decision: 'allowed' as const, key: beta.legalEntityId }], name: 'a missing response' },
+  {
+    decisions: [
+      { decision: 'allowed' as const, key: beta.legalEntityId },
+      { decision: 'denied' as const, key: beta.legalEntityId },
+    ],
+    name: 'contradictory duplicate keys',
+  },
+  {
+    decisions: [
+      { decision: 'allowed' as const, key: beta.legalEntityId },
+      { decision: 'denied' as const, key: gamma.legalEntityId },
+    ],
+    name: 'an unexpected key replacing a missing response',
+  },
+];
+
+for (const { decisions, name } of incompleteDecisionCases) {
+  it.effect(`fails closed for ${name} instead of selecting B from incomplete authorization evidence`, () =>
+    Effect.gen(function* rejectsIncompleteAuthorization() {
+      const unavailable = yield* provideSelectionServices(
+        resolveAuthorizedLegalEntities({ principalId, savedLegalEntityId: alpha.legalEntityId, tenantId }),
+        context(),
+        { ...access({}), legalEntities: () => Effect.succeed(decisions) },
+      ).pipe(
+        Effect.match({
+          onFailure: (failure) => Predicate.isTagged(failure, 'LegalEntitySelectionUnavailableError'),
+          onSuccess: () => false,
+        }),
+      );
+      expect(unavailable).toBe(true);
+    }),
+  );
+}
+
+it.effect('accepts complete authorization evidence regardless of response order', () =>
+  Effect.gen(function* acceptsReorderedEvidence() {
+    expect(
+      yield* provideSelectionServices(
+        resolveAuthorizedLegalEntities({ principalId, savedLegalEntityId: alpha.legalEntityId, tenantId }),
+        context(),
+        {
+          ...access({}),
+          legalEntities: () =>
+            Effect.succeed([
+              { decision: 'allowed' as const, key: beta.legalEntityId },
+              { decision: 'denied' as const, key: alpha.legalEntityId },
+            ]),
+        },
+      ),
+    ).toEqual({ available: [beta], selected: beta, state: 'selected' });
   }),
 );

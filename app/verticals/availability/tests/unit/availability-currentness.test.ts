@@ -21,6 +21,7 @@ import {
   makeChangedCurrentnessInput,
   materialPositionChanges,
   makeCurrentnessInput,
+  makeBroaderCurrentnessInput,
   makeRichExternalCurrentnessInput,
 } from '../support/availability-currentness.ts';
 
@@ -74,6 +75,54 @@ const run = (
 const valid = (input: AvailabilityOwnerVerificationRequest) => Effect.succeed(proof(input.evidence, input.useBoundary));
 
 describe('owner-defined Availability Currentness and revalidation', () => {
+  it.effect('actual owner currentness keeps unusable independent stock irrelevant to a proven usable shortage', () =>
+    Effect.gen(function* qualifiedMaterialShortage() {
+      const original = makeBroaderCurrentnessInput(['3', '10'], '5');
+      const input: AvailabilityEvaluationInput = {
+        ...original,
+        ownerQualification: {
+          ...original.ownerQualification,
+          positions: original.ownerQualification.positions.map((entry, index) =>
+            index === 1 ? { ...entry, constraintSupport: 'INDEPENDENTLY_PROVEN', usability: 'UNUSABLE' } : entry,
+          ),
+        },
+      };
+      const exactRequest = { ...request(), subject: input.subject };
+      const result = yield* run(exactRequest, valid, input);
+      expect(result.currentDecision.currentness).toBe('OWNER_VERIFIED_CURRENT');
+      expect(result.currentDecision.decision.outcome).toBe('UNAVAILABLE');
+      expect(result.currentDecision.decision.reasons).toEqual(['INSUFFICIENT_REUSABLE_QUANTITY']);
+      expect(result.currentDecision.decision.evidence.stockInput).toEqual(input.stockInput);
+      expect(result.currentDecision.decision.evidence.ownerQualification.positions).toEqual(
+        input.ownerQualification.positions,
+      );
+      expect(result.currentDecision.materialEvidence.map((entry) => entry.owner)).toEqual(availabilityMaterialOwners);
+      expect(result.currentDecision.materialEvidence.every((entry) => entry.sourceRevisionRefs[0] === 'R1')).toBe(true);
+      const missingProof = yield* run(
+        exactRequest,
+        () => Effect.succeed({ _tag: 'UNPROVEN', reason: 'OWNER_MISSING' }),
+        input,
+      );
+      expect(missingProof.currentDecision.currentness).toBe('INDETERMINATE');
+      expect(missingProof.currentDecision.decision.outcome).toBe('INDETERMINATE');
+      expect(missingProof.currentDecision.materialEvidence).toEqual([]);
+      const unavailable = yield* run(
+        exactRequest,
+        () => Effect.fail(new AvailabilityOwnerEvidenceUnavailable({ owner: 'INVENTORY' })),
+        input,
+      );
+      expect(unavailable.currentDecision.decision.outcome).toBe('INDETERMINATE');
+      expect(unavailable.currentDecision.currentnessReasons).toContain('OWNER_UNAVAILABLE');
+      const mismatchedProof = yield* run(
+        exactRequest,
+        (candidate) => Effect.succeed({ ...proof(candidate.evidence, candidate.useBoundary), materialEvidence: [] }),
+        input,
+      );
+      expect(mismatchedProof.currentDecision.decision.outcome).toBe('INDETERMINATE');
+      expect(mismatchedProof.currentDecision.currentnessReasons).toContain('OWNER_PROOF_SCOPE_OR_VALIDITY_MISMATCH');
+    }),
+  );
+
   it.effect('integrates real policy and evaluator for 3 units supporting exact 2, but not 5', () =>
     Effect.gen(function* quantity() {
       const positive = yield* run(request(), valid);

@@ -285,7 +285,7 @@ const requireDrainedWork = Effect.fn('ApplicationCompositionAuthority.requireDra
   function* requireDrainedWorkEffect(transaction: CoreTransaction) {
     yield* requireNoPendingDurableWork(transaction);
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} <> 'done') as blocked`,
+      sql`select exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')) as blocked`,
       'objects',
     );
     if (work?.blocked !== false) {
@@ -307,7 +307,7 @@ export const isApplicationCompositionWorkDrained = Effect.fn('ApplicationComposi
       return yield* unavailable('Only the exact draining or sealed Application Composition can report drain progress');
     }
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from ${applicationCompositionDurableWork}) or exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} <> 'done') as blocked`,
+      sql`select exists(select 1 from ${applicationCompositionDurableWork}) or exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')) as blocked`,
       'objects',
     );
     if (work === undefined) {

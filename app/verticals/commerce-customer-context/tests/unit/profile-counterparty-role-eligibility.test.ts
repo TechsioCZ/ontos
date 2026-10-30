@@ -1,9 +1,12 @@
+import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { executeCounterpartyRead } from '@app/party-registry/api/client';
 import {
   CounterpartyReadResponseSchema,
   CounterpartyReadUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
-import { Effect, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -254,4 +257,228 @@ it.effect('publishes the production resolver through its contextual factory Laye
 
     expect(resolver).toBeDefined();
   }).pipe(Effect.provide(profileCounterpartyRoleEligibilityResolverFactoryLive)),
+);
+
+const serverConfig = ConfigProvider.layer(
+  ConfigProvider.fromUnknown({
+    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'unit-server-api-key',
+    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+  }),
+);
+const serverScope = { legalEntityId, requestCorrelation: 'server-profile-role-read', tenantId };
+
+it.effect(
+  'resolves in Node without document through fresh Party assertions and the actual authorized HTTP client',
+  () =>
+    Effect.gen(function* serverAuthorizedRead() {
+      yield* TestClock.setTime(Date.parse(now));
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+      const requests: Request[] = [];
+      const fakeFetch: typeof fetch = (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Promise.resolve(
+          Response.json(
+            requests.length % 2 === 1
+              ? {
+                  apiBaseUrl: '/party-registry-api',
+                  compositionRevision: snapshot.composition.revision,
+                  expiresAt: Date.parse(now) / 1000 + 300,
+                  token: `fresh-party-assertion-${requests.length}`,
+                }
+              : Schema.encodeSync(CounterpartyReadResponseSchema)(response),
+          ),
+        );
+      };
+      const factory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+      const resolve = factory.make(serverScope);
+      expect(globalThis).not.toHaveProperty('document');
+      for (const invocation of [1, 2]) {
+        expect(
+          yield* resolve({ counterpartyResourceId, tenantId }).pipe(
+            Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+            Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+          ),
+        ).toEqual({
+          managedLegalEntityId: legalEntityId,
+          outcome: 'ELIGIBLE',
+          roleResourceId,
+          roleResourceRevision: recordedAt,
+        });
+        expect(requests).toHaveLength(invocation * 2);
+      }
+      for (const index of [0, 2]) {
+        const gateway = requests[index];
+        const owner = requests[index + 1];
+        expect(gateway?.url).toBe('https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context');
+        expect(gateway?.headers.get('x-api-key')).toBe('unit-server-api-key');
+        expect(gateway?.headers.get('authorization')).toBeNull();
+        expect(gateway?.headers.get('cookie')).toBeNull();
+        expect(yield* Effect.promise(() => gateway?.json())).toEqual({
+          audience: 'party-registry',
+          compositionRevision: snapshot.composition.revision,
+          legalEntityId,
+        });
+        expect(owner?.url).toBe('https://shell.example.test/party-registry-api/reads/counterparty-read');
+        expect(owner?.headers.get('authorization')).toBe(`Bearer fresh-party-assertion-${index + 1}`);
+        expect(owner?.headers.get('x-api-key')).toBeNull();
+        expect(owner?.headers.get('x-ontos-composition-revision')).toBe(snapshot.composition.revision);
+        expect(owner?.headers.get('x-correlation-id')).toBe(serverScope.requestCorrelation);
+        expect(gateway?.headers.get('x-correlation-id')).toBe(serverScope.requestCorrelation);
+        expect(yield* Effect.promise(() => owner?.json())).toEqual({ counterpartyRef: response.counterpartyRef });
+      }
+    }).pipe(Effect.provide(profileCounterpartyRoleEligibilityResolverFactoryLive), Effect.provide(serverConfig)),
+);
+
+it.effect('fails closed without server composition authority', () =>
+  Effect.gen(function* missingServerAuthority() {
+    const failure = yield* Effect.flip(
+      makeProfileCounterpartyRoleEligibilityResolver(serverScope)({ counterpartyResourceId, tenantId }),
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    expect(failure.reason).toBe('Party Registry Counterparty eligibility is unavailable');
+  }).pipe(Effect.provide(serverConfig)),
+);
+
+it.effect('fails closed without server credential configuration', () =>
+  Effect.gen(function* missingServerConfiguration() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver(serverScope)({
+      counterpartyResourceId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+  }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({})))),
+);
+
+it.effect('rejects an expired server composition before requesting any credential', () =>
+  Effect.gen(function* expiredServerAuthority() {
+    yield* TestClock.setTime(Date.parse(now));
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    let requests = 0;
+    const fakeFetch: typeof fetch = () => {
+      requests += 1;
+      return Promise.resolve(Response.json({}));
+    };
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver(serverScope)({
+      counterpartyResourceId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ActiveApplicationCompositionService, {
+        load: Effect.succeed({
+          ...snapshot,
+          observedAt: DateTime.makeUnsafe(Date.parse(now) - 2000),
+          validUntil: DateTime.makeUnsafe(Date.parse(now) - 1000),
+        }),
+      }),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    expect(requests).toBe(0);
+  }).pipe(Effect.provide(serverConfig)),
+);
+
+it.effect('rejects a mismatched issued revision before the Party read', () =>
+  Effect.gen(function* mismatchedIssuedComposition() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    let requests = 0;
+    const fakeFetch: typeof fetch = () => {
+      requests += 1;
+      return Promise.resolve(
+        Response.json({
+          apiBaseUrl: '/party-registry-api',
+          compositionRevision: 'f'.repeat(64),
+          expiresAt: 2_000_000_000,
+          token: 'wrong-revision-assertion',
+        }),
+      );
+    };
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver(serverScope)({
+      counterpartyResourceId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    expect(requests).toBe(1);
+  }).pipe(Effect.provide(serverConfig)),
+);
+
+it.effect('preserves a denied public Party read as a dependency failure after server issuance', () =>
+  Effect.gen(function* deniedServerPartyRead() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    let requests = 0;
+    const fakeFetch: typeof fetch = () => {
+      requests += 1;
+      return Promise.resolve(
+        requests === 1
+          ? Response.json({
+              apiBaseUrl: '/party-registry-api',
+              compositionRevision: snapshot.composition.revision,
+              expiresAt: 2_000_000_000,
+              token: 'fresh-assertion',
+            })
+          : Response.json(
+              {
+                _tag: 'CounterpartyReadForbiddenProblem',
+                detail: 'Forbidden',
+                status: 403,
+                title: 'Forbidden',
+                type: 'urn:test:forbidden',
+              },
+              { status: 403 },
+            ),
+      );
+    };
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver(serverScope)({
+      counterpartyResourceId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    expect(failure).toHaveProperty('cause.status', 403);
+    expect(requests).toBe(2);
+  }).pipe(Effect.provide(serverConfig)),
+);
+
+it.effect('does not read Party when Shell denies the server credential', () =>
+  Effect.gen(function* deniedServerIssuance() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    let requests = 0;
+    const fakeFetch: typeof fetch = () => {
+      requests += 1;
+      return Promise.resolve(
+        Response.json(
+          {
+            _tag: 'GatewayForbiddenProblem',
+            detail: 'Forbidden',
+            status: 403,
+            title: 'Forbidden',
+            type: 'urn:test:forbidden',
+          },
+          { status: 403 },
+        ),
+      );
+    };
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver(serverScope)({
+      counterpartyResourceId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    expect(failure).toHaveProperty('cause.status', 403);
+    expect(requests).toBe(1);
+  }).pipe(Effect.provide(serverConfig)),
 );

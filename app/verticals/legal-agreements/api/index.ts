@@ -85,17 +85,14 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  applyCommandActionApiLive,
-  recordsReadApiLive,
+  applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
-);
-
-/** What the handlers resolve when they run: built for each request on Workers, once on Node. */
-const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive).pipe(
+).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(
+  GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
-      GovernedActionPrincipalVerifierLive,
+      GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
       GovernedGatewayAssertionRedemptionLive.pipe(
         GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive),
         GovernedReadLayer.provide(GatewayAssertionPgClientLive),
@@ -104,7 +101,7 @@ const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedActionRun
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(GovernedReadLayer.empty),
+  GovernedReadLayer.provide(GovernedReadLayer.empty),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
@@ -140,12 +137,12 @@ const legalAgreementsReadinessLayer = HttpApiBuilder.group(legalAgreementsApi, '
 );
 
 const apiHandlersLive = legalAgreementsReadinessLayer;
-const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
-  GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provideMerge(databaseIdentitiesLive),
-  GovernedReadLayer.provideMerge(NodeCrypto.layer),
-  GovernedReadLayer.provideMerge(
+const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
+  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       Logger.layer([Logger.defaultLogger]),
       GovernedReadLayer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -158,8 +155,7 @@ const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
 export const makeLegalAgreementsApiRuntime = () =>
   assembleEffectBffRuntime({
     api: legalAgreementsApi,
-    handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive),
-    services: governedResolvedRequestServicesLive,
+    handlers: governedResolvedApiHandlersLive,
   });
 const apiRuntime = makeLegalAgreementsApiRuntime();
 

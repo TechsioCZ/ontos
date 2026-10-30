@@ -16,6 +16,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Function as EffectFunction, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
+import { PricingCommitmentConfirmationProduction } from '../integrations/commitment-confirmation-production.ts';
 
 import {
   ManageCommitmentConfirmationPayloadSchema,
@@ -177,6 +178,7 @@ export interface ManageCommitmentConfirmationActionServices {
 }
 
 interface ManageCommitmentConfirmationTrustedContext {
+  readonly actionInvocationId?: string;
   readonly legalEntityId: string | undefined;
   readonly tenantId: string;
   readonly trustedOperationAt: typeof PricingInstantSchema.Type;
@@ -237,13 +239,14 @@ const confirmStoredProof = (
 const persistIssued = (
   outcome: PricingCommitmentConfirmationIssuanceOutcome,
   store: CommitmentConfirmationPersistence['store'],
+  issuanceInvocationId?: string,
 ): Effect.Effect<
   PricingCommitmentConfirmationIssuanceOutcome,
   ManageCommitmentConfirmationPersistenceConflict | CommitmentConfirmationPersistenceUnavailable
 > =>
   Match.value(outcome).pipe(
     Match.tag('ISSUED', (issued) =>
-      store(issued.confirmation).pipe(
+      store(issued.confirmation, issuanceInvocationId).pipe(
         Effect.flatMap((stored) => confirmStoredProof(issued.confirmation, stored)),
         Effect.as(issued),
       ),
@@ -362,7 +365,7 @@ const executeOperation = Effect.fn('ManageCommitmentConfirmationAction.executeOp
             }
             const outcome = yield* services
               .issueQuotation(quotationCandidate(quotationPayload.binding, quotation.value))
-              .pipe(Effect.flatMap((issued) => persistIssued(issued, services.store)));
+              .pipe(Effect.flatMap((issued) => persistIssued(issued, services.store, trusted.actionInvocationId)));
             return {
               readFound: true,
               result: { kind: quotationPayload.kind, outcome },
@@ -705,6 +708,7 @@ export const handleManageCommitmentConfirmation = Effect.fn('ManageCommitmentCon
   ) {
     const trustedOperationAt = DateTime.formatIso(yield* DateTime.now);
     const trusted = {
+      actionInvocationId: context.actionInvocationId,
       legalEntityId: context.scope.legalEntityId,
       tenantId: context.scope.tenantId,
       trustedOperationAt,
@@ -717,7 +721,15 @@ export const handleManageCommitmentConfirmation = Effect.fn('ManageCommitmentCon
 );
 
 const actionServicesForScope = Effect.fn('ManageCommitmentConfirmationAction.actionServicesForScope')(
-  function* actionServicesForScope(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* actionServicesForScope(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    compositionRevision: string,
+  ) {
+    const production = yield* Effect.serviceOption(PricingCommitmentConfirmationProduction);
+    if (Option.isSome(production)) {
+      return yield* production.value.forScope(transaction, scope, compositionRevision);
+    }
     const current = yield* PricingCurrentBackedConfirmationIssuance;
     const quotationIssuance = yield* PricingQuotationBackedConfirmationIssuance;
     const renewal = yield* PricingCommitmentConfirmationRenewal;

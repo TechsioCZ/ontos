@@ -1,5 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -7,9 +7,10 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
   ReadRuntimeLive,
+  ReadRuntime,
+  GatewayAssertionRedemptionService,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   ModuleEntrypointGatewayLive,
@@ -20,7 +21,7 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Logger, References, Schema, Tracer } from 'effect';
+import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { storefrontRegistryApi, storefrontRegistryOperationContexts } from '../shared/api.ts';
@@ -28,8 +29,8 @@ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 // <generated-governed-http-handler-imports>
@@ -96,9 +97,8 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -121,16 +121,16 @@ export const makeStorefrontRegistryApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     storefrontRegistryReadinessLayer,
     // <generated-governed-http-handler-layers>
-    currentStorefrontApplicationReadApiLive,
-    verifyCurrentStorefrontApplicationV1ReadApiLive,
+    currentStorefrontApplicationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    verifyCurrentStorefrontApplicationV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  );
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
-  const requestServicesLive = governedReadRuntimeLive.pipe(
-    Layer.provideMerge(Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)),
-    Layer.provideMerge(
+  ).pipe(Layer.provide(Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(
+    Layer.provide(
       Layer.mergeAll(
         runtimeObservabilityLive,
+        RequestSchemaProblemLive,
+        databaseIdentitiesLive,
         ActiveApplicationCompositionSourceLive.pipe(
           Layer.provide(
             FetchHttpClient.layer.pipe(
@@ -140,8 +140,6 @@ export const makeStorefrontRegistryApiRuntime = (
         ),
       ),
     ),
-    Layer.provideMerge(databaseIdentitiesLive),
-    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({
@@ -154,10 +152,19 @@ export const makeStorefrontRegistryApiRuntime = (
   return assembleEffectBffRuntime({
     api: storefrontRegistryApi,
     handlers: resolvedApiHandlersLive,
-    services: requestServicesLive,
     transport: transportLive,
   });
 };
+
+/** Explicit owner assembly from already verified caller-owned test/runtime services. */
+export const storefrontRegistryApiRuntimeFromContext = Effect.gen(function* assembleStorefrontRegistryApiRuntime() {
+  const readRuntime = yield* ReadRuntime;
+  const redemption = yield* GatewayAssertionRedemptionService;
+  return makeStorefrontRegistryApiRuntime(
+    Layer.succeed(ReadRuntime, readRuntime),
+    Layer.succeed(GatewayAssertionRedemptionService, redemption),
+  );
+});
 
 const apiRuntime = makeStorefrontRegistryApiRuntime(
   productionReadRuntimeLive,

@@ -205,20 +205,32 @@ const makeCommandDependencies = (
     'define' | 'loadCurrencySupport' | 'validateCatalogTarget'
   > &
     Pick<ProductCommercialFeeBulkCommandDependencies['reviseServices'], 'revise'> & {
+      readonly lookupOriginalResult?: ProductCommercialFeeBulkCommandDependencies['persistence']['lookupOriginalResult'];
       readonly lookupResult?: ProductCommercialFeeBulkCommandDependencies['persistence']['lookupResult'];
     },
 ): ProductCommercialFeeBulkCommandDependencies => {
+  const lookupResult =
+    services.lookupResult ??
+    (({ actionInvocationId }: { readonly actionInvocationId: string }) =>
+      Effect.succeed(
+        Schema.decodeSync(CommercialFeeActionResultLookupOutcomeSchema)({
+          actionInvocationId,
+          outcome: 'COMMERCIAL_FEE_ACTION_RESULT_ABSENT',
+        }),
+      ));
   const persistence = {
     define: services.define,
-    lookupResult:
-      services.lookupResult ??
-      (({ actionInvocationId }: { readonly actionInvocationId: string }) =>
-        Effect.succeed(
-          Schema.decodeSync(CommercialFeeActionResultLookupOutcomeSchema)({
-            actionInvocationId,
-            outcome: 'COMMERCIAL_FEE_ACTION_RESULT_ABSENT',
-          }),
+    lookupOriginalResult:
+      services.lookupOriginalResult ??
+      ((query) =>
+        lookupResult(query).pipe(
+          Effect.map((lookup) =>
+            lookup.outcome === 'COMMERCIAL_FEE_ACTION_RESULT_FOUND'
+              ? { ...lookup, originalIntentMatches: true }
+              : lookup,
+          ),
         )),
+    lookupResult,
     readCurrent: () => Effect.die('unused Commercial Fee Current read'),
     readCurrentSet: () => Effect.die('unused Commercial Fee set read'),
     readSchedule: () => Effect.die('unused Commercial Fee schedule read'),
@@ -428,6 +440,52 @@ describe('Product Commercial Fee bulk management (#797)', () => {
         outcome: { outcome: 'CONFLICT', reasonCode: 'IDEMPOTENCY_CONFLICT' },
         status: 'RESOLVED',
       });
+    }),
+  );
+
+  it.effect('requires the original Fee operation proof before translating a recovered success (#1278)', () =>
+    Effect.gen(function* feeOriginalIntentProof() {
+      const { operation } = firstIntent;
+      if (operation.kind !== 'DEFINE_COMMERCIAL_FEE') {
+        return yield* Effect.die('Expected the existing exact Fee definition fixture');
+      }
+      const found = yield* Schema.decodeEffect(CommercialFeeActionResultLookupOutcomeSchema)({
+        actionInvocationId: '33333333-3333-4333-8333-333333333333',
+        outcome: 'COMMERCIAL_FEE_ACTION_RESULT_FOUND',
+        result: {
+          definition: {
+            catalogTargetEvidence: operation.payload.catalogTargetEvidence,
+            feeRef: canonicalFor(0).feeRef,
+            identityKey: operation.payload.identityKey,
+            revision: {
+              configuredAmount: operation.payload.configuredAmount,
+              effectiveFrom: operation.payload.effectivePeriod.effectiveFrom,
+              revision: 1,
+              revisionId: '44444444-4444-4444-8444-444444444444',
+            },
+          },
+          outcome: 'COMMERCIAL_FEE_REUSED',
+        },
+      });
+      for (const originalIntentMatches of [false, true]) {
+        const dependencies = makeCommandDependencies({
+          define: () => Effect.die('Reconciliation must not define a Fee'),
+          loadCurrencySupport: () => Effect.die('Reconciliation must not refresh owner evidence'),
+          lookupOriginalResult: () => Effect.succeed({ ...found, originalIntentMatches }),
+          lookupResult: () => Effect.succeed(found),
+          revise: () => Effect.die('Reconciliation must not revise a Fee'),
+          validateCatalogTarget: () => Effect.die('Reconciliation must not re-admit the original command'),
+        });
+        const result = yield* makeProductCommercialFeeBulkCommandPort(
+          dependencies,
+        ).reconcileAuthorizedCommercialFeeAction({ ...firstIntent, trusted });
+        expect(result).toMatchObject(
+          originalIntentMatches
+            ? { outcome: { outcome: 'UNCHANGED' }, status: 'RESOLVED' }
+            : { outcome: { outcome: 'CONFLICT', reasonCode: 'IDEMPOTENCY_CONFLICT' }, status: 'RESOLVED' },
+        );
+      }
+      return yield* Effect.void;
     }),
   );
 

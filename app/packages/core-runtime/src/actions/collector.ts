@@ -1,7 +1,13 @@
 import { Effect, Match, Schema, Predicate } from 'effect';
 
 import { ActionCollectorError } from './errors.ts';
-import { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema, createDomainEventReference } from './events.ts';
+import {
+  DataAccessEventSchema,
+  DomainEventSchema,
+  OutboxMessageSchema,
+  OutboxCompletionDeclarationSchema,
+  createDomainEventReference,
+} from './events.ts';
 import type {
   ActionAccessEvidencePolicy,
   ActionEvidenceSnapshot,
@@ -13,6 +19,7 @@ import type {
   DomainEventContractMap,
   DomainEventReference,
   OutboxMessage,
+  OutboxCompletionDeclaration,
 } from './events.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -135,10 +142,12 @@ export interface ActionCollector<DomainEvents extends DomainEventContractMap> {
   readonly addOutboxMessage: (
     domainEvent: DomainEventReference,
     message: OutboxMessage,
+    completion?: OutboxCompletionDeclaration,
   ) => Effect.Effect<void, ActionCollectorError>;
-  readonly addOutboxMessageInput: <Reference, Message>(
+  readonly addOutboxMessageInput: <Reference, Message, Completion>(
     domainEvent: Reference,
     message: Message,
+    completion?: Completion,
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
@@ -157,11 +166,18 @@ const decodeDomainEventPayloadJson = <Payload>(payload: Payload) =>
   );
 
 export const createActionCollector = <DomainEvents extends DomainEventContractMap>(
-  ...[domainEventContracts, owningModuleKey, accessEvidencePolicy, auditEvidenceSchema]: readonly [
+  ...[
+    domainEventContracts,
+    owningModuleKey,
+    accessEvidencePolicy,
+    auditEvidenceSchema,
+    admittedCompositionRevision,
+  ]: readonly [
     domainEventContracts: DomainEvents,
     owningModuleKey: string,
     accessEvidencePolicy: ActionAccessEvidencePolicy,
     auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>,
+    admittedCompositionRevision?: string,
   ]
 ): ActionCollector<DomainEvents> => {
   const dataAccessEvents: DataAccessEvent[] = [];
@@ -311,9 +327,10 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
     }
     return undefined;
   };
-  const addOutboxMessageInput = <Reference, Message>(
+  const addOutboxMessageInput = <Reference, Message, Completion>(
     domainEvent: Reference,
     message: Message,
+    completion?: Completion,
   ): Effect.Effect<void, ActionCollectorError> => {
     const domainEventIndex = findReferenceIndex(domainEvent);
 
@@ -340,14 +357,30 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
         }
         return Effect.succeed(decoded);
       }),
-      Effect.tap((decoded) =>
-        Effect.sync(() => {
+      Effect.flatMap(
+        Effect.fn('ActionCollector.captureMessageCompletion')(function* captureMessageCompletion(decoded) {
+          if (completion === undefined) {
+            outboxMessages.push(Object.freeze({ domainEventIndex, message: cloneAndFreeze(decoded) }));
+            return yield* Effect.void;
+          }
+          if (admittedCompositionRevision === undefined || admittedCompositionRevision.trim().length === 0) {
+            return yield* invalidCollectorInput('Message completion requires a trusted admitted composition revision');
+          }
+          const declaration = yield* Schema.decodeUnknownEffect(OutboxCompletionDeclarationSchema)(completion, {
+            onExcessProperty: 'error',
+          }).pipe(
+            Effect.catchTag('SchemaError', () =>
+              Effect.fail(invalidCollectorInput('The message completion declaration is invalid')),
+            ),
+          );
           outboxMessages.push(
             Object.freeze({
+              completion: Object.freeze({ ...declaration, originalRevision: admittedCompositionRevision }),
               domainEventIndex,
               message: cloneAndFreeze(decoded),
             }),
           );
+          return yield* Effect.void;
         }),
       ),
       Effect.asVoid,

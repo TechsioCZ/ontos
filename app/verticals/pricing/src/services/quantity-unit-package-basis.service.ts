@@ -1,3 +1,4 @@
+import { pricingQuantityBasisTemporalBindingIsValid } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
 import { CatalogQuantityBasisSchema } from '@app/catalog/domain/catalog-quantity-handoff';
 import type { CatalogResourceRef } from '@app/catalog/domain/catalog-revision-reference';
 import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
@@ -59,8 +60,7 @@ const ownerEvidenceIsBoundToCatalog = (
     Match.when(
       { selection: Match.defined },
       (ownerEvidence) =>
-        attempt.effectiveAt === attempt.catalog.evidence.assessedAt &&
-        ownerEvidence.effectiveAt === attempt.effectiveAt &&
+        pricingQuantityBasisTemporalBindingIsValid(attempt, ownerEvidence) &&
         ownerEvidence.requestedOwnerRevision === attempt.catalog.ownerRevision &&
         ownerEvidence.observedAt >= ownerEvidence.effectiveAt &&
         ownerEvidence.hierarchyRevision === attempt.catalog.hierarchyRevision &&
@@ -75,7 +75,7 @@ const ownerEvidenceIsBoundToCatalog = (
           ownerEvidence.observedAt < ownerEvidence.currentness.validUntil) &&
         sameCompletenessScope(ownerEvidence.completeness.scope, attempt.catalog.completeness.scope),
     ),
-    Match.orElse((leanEvidence) => leanEvidence.effectiveAt === attempt.effectiveAt),
+    Match.orElse((leanEvidence) => pricingQuantityBasisTemporalBindingIsValid(attempt, leanEvidence)),
   );
 
 const purchaseEndpointsPreserveCatalogHandoff = (

@@ -404,9 +404,11 @@ jobs:
             <"$RUNNER_TEMP/shard-files"
           git diff --exit-code HEAD
 
-  # Two suites on fresh services, run side by side: the stage-shaped migrator run and Outbox Worker host
-  # artifact followed by the integration tests (as one job ran them), and the authenticated browser tests
-  # on their own freshly migrated database.
+  # Suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host artifacts
+  # followed by the integration tests, and the authenticated browser tests on their own freshly migrated
+  # database. The integration tests are split into package shards that each fit the job timeout. Every
+  # shard repeats the full service preparation; the root suite and every package that no other shard names
+  # run in the first shard, so a new package can never fall out of the gate.
   service-integration:
     name: ${{ matrix.name }}
     needs: [queue-proof]
@@ -419,6 +421,38 @@ jobs:
         include:
           - suite: integration
             name: Database, Migration, RLS, Authorization, and Outbox Integration
+            root-suite: true
+            package-filters: >-
+              --filter !. --filter !./verticals/catalog --filter !./verticals/pricing
+              --filter !./verticals/inventory --filter !./verticals/commerce-customer-context
+              --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order
+              --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog
+              --filter !./verticals/storefront-registry --filter !./verticals/privacy
+              --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects
+          - suite: integration
+            name: Catalog, Pricing, and Inventory Integration
+            package-filters: >-
+              --filter ./verticals/catalog --filter ./verticals/pricing --filter ./verticals/inventory
+          - suite: integration
+            name: Commerce Customer Context Integration (1/2)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 1/2
+          - suite: integration
+            name: Commerce Customer Context Integration (2/2)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 2/2
+          - suite: integration
+            name: Market, Order, Payment Term, Price Group, and Storefront Integration
+            native-preproposal: true
+            package-filters: >-
+              --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order
+              --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog
+              --filter ./verticals/storefront-registry
+          - suite: integration
+            name: Privacy, Party Registry, Tax, and Projects Integration
+            package-filters: >-
+              --filter ./verticals/privacy --filter ./verticals/party-registry --filter ./verticals/tax
+              --filter ./verticals/projects
           - suite: browser
             name: Authenticated Browser Tests
     env:
@@ -596,10 +630,32 @@ jobs:
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         if: matrix.suite == 'integration'
         working-directory: app
+        # The job environment above is the whole configuration. Native fixtures refuse to start unless
+        # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
         env:
+          APP_ENV_PATH: /dev/null
           MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
           MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
-        run: mise exec -- pnpm test:integration
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_SUITE: ${{ matrix.root-suite }}
+          RSTEST_SHARD: ${{ matrix.rstest-shard }}
+        # Same commands as `pnpm test:integration`, restricted to this shard's packages and, for a package
+        # too large for one job, to one Rstest shard of its test files.
+        run: |
+          if [[ "$ROOT_SUITE" == true ]]; then
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1
+          fi
+          # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+          mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+
+      - name: Prove native preproposal basis and genuine approval through registered owners
+        if: matrix.native-preproposal == true
+        working-directory: app
+        timeout-minutes: 20
+        env:
+          APP_ENV_PATH: /dev/null
+        # Reuse this shard's services; each case migrates its own disposable source database.
+        run: mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
@@ -677,12 +733,12 @@ jobs:
           - {
               shard: 1,
               proof: none,
-              units: verticals/catalog verticals/tax verticals/property-portfolio verticals/property-leasing verticals/legal-agreements verticals/work-tasks,
+              units: verticals/catalog verticals/tax verticals/commerce-cart verticals/property-portfolio verticals/property-leasing verticals/legal-agreements verticals/work-tasks,
             }
           - {
               shard: 2,
               proof: none,
-              units: verticals/commerce-customer-context verticals/storefront-registry verticals/workforce verticals/tagging verticals/crm verticals/sales-pipeline,
+              units: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/workforce verticals/tagging verticals/crm verticals/sales-pipeline,
             }
           - {
               shard: 3,

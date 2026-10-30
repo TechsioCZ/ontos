@@ -114,13 +114,10 @@ import { stockListReadApiLive } from './stock-list-read-server.ts';
 const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
 const handlersLive = Layer.mergeAll(
   // <generated-governed-http-handler-layers>
-  stockListReadApiLive,
+  stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 );
-const requestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(
-  GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive), GovernedReadLayer.orDie,
-);
-export default assembleEffectBffRuntime({ api, handlers: handlersLive, services: requestServicesLive });`,
+export default assembleEffectBffRuntime({ api, handlers: handlersLive });`,
   ],
   [
     `${owner}/api/auth/action-principal.ts`,
@@ -226,6 +223,7 @@ for (const [name, replacement] of [
   ['non-Effect fallback', 'load: () => Effect.succeedNone || undefined'],
 ] as const) {
   it(`rejects ${name} instead of a callback returning a known Effect value`, () => {
-    expect(accepts(readSource.replace(load, replacement))).toBe(false);
+    // A missing step removes its whole entry, so the pipeline literal stays well formed.
+    expect(accepts(readSource.replace(replacement === '' ? `${load},` : load, replacement))).toBe(false);
   });
 }

@@ -5,6 +5,7 @@ import { defineOntosModuleManifest, ShellPublicComponentContributionSchema } fro
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
+import { acknowledgePrivacyNoticeAction } from './src/actions/acknowledge-privacy-notice.action.ts';
 import { addProcessingPurposeVersionAction } from './src/actions/add-processing-purpose-version.action.ts';
 import { ApplicabilityDecisionsApi } from './shared/apis/applicability-decisions.ts';
 import { assignDsrResolverAction } from './src/actions/assign-dsr-resolver.action.ts';
@@ -25,8 +26,10 @@ import { identityReconciliationResourceDescriptor } from './shared/resources/ide
 import { issueDsrDeliveryAccessAction } from './src/actions/issue-dsr-delivery-access.action.ts';
 import { legalBasisAssignmentResourceDescriptor } from './shared/resources/legal-basis-assignment.ts';
 import { LegalBasisAssignmentsApi } from './shared/apis/legal-basis-assignments.ts';
+import { NoticePresentationApi } from './shared/apis/notice-presentation.ts';
 import { NoticeVersionsApi } from './shared/apis/notice-versions.ts';
 import { OwnerInventoryApi } from './shared/apis/owner-inventory.ts';
+import { privacyNoticeAcknowledgementResourceDescriptor } from './shared/resources/privacy-notice-acknowledgement.ts';
 import { privacyNoticeVersionResourceDescriptor } from './shared/resources/privacy-notice-version.ts';
 import { privacyResponsibilityAssignmentResourceDescriptor } from './shared/resources/privacy-responsibility-assignment.ts';
 import { privacySubjectResourceDescriptor } from './shared/resources/privacy-subject.ts';
@@ -87,6 +90,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      acknowledgePrivacyNoticeAction,
       addProcessingPurposeVersionAction,
       assignDsrResolverAction,
       assignLegalBasisAction,
@@ -132,6 +136,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       'current-consent': CurrentConsentApi,
       'dsr-cases': DsrCasesApi,
       'legal-basis-assignments': LegalBasisAssignmentsApi,
+      'notice-presentation': NoticePresentationApi,
       'notice-versions': NoticeVersionsApi,
       'owner-inventory': OwnerInventoryApi,
       'privacy-subjects': PrivacySubjectsApi,
@@ -161,6 +166,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       // <generated-module-manifest-resources>
       identityReconciliationResourceDescriptor,
       legalBasisAssignmentResourceDescriptor,
+      privacyNoticeAcknowledgementResourceDescriptor,
       privacyNoticeVersionResourceDescriptor,
       privacyResponsibilityAssignmentResourceDescriptor,
       privacySubjectResourceDescriptor,

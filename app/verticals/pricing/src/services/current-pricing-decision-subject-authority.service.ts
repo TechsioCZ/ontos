@@ -70,6 +70,7 @@ export interface CurrentPricingDecisionCustomerContextGatewayConnection {
 export const CurrentPricingDecisionCustomerContextGatewayUnavailable = Data.TaggedError(
   'CurrentPricingDecisionCustomerContextGatewayUnavailable',
 )<{
+  readonly cause?: unknown;
   readonly reason: 'GATEWAY_ISSUER_UNAVAILABLE' | 'SAME_PRINCIPAL_ASSERTION_UNAVAILABLE';
 }>;
 export type CurrentPricingDecisionCustomerContextGatewayUnavailableError = InstanceType<

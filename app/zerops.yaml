@@ -132,6 +132,8 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         EMAIL_PROVIDER: smtp
         NODE_ENV: production
+        # Private, container-local directory where composition publication retains its legacy completion evidence.
+        ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
         # One container serves every owner, each with several pools, and a deploy runs two containers side by side;
         # small pools that drop idle connections keep both inside db18's 150 connection slots.
         ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '10000'

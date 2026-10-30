@@ -5,10 +5,11 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   ModuleEntrypointGatewayLive,
@@ -16,19 +17,19 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Logger, References, Schema, Tracer } from 'effect';
+import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
 } from './auth/gateway-assertion-redemption.ts';
 // <generated-governed-http-handler-imports>
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
@@ -98,9 +99,8 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
 );
 
 const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
@@ -123,34 +123,31 @@ export const makeCommerceMarketCatalogApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     commerceMarketCatalogReadinessLayer,
     // <generated-governed-http-handler-layers>
-    currentMarketCatalogReadApiLive,
-    eligibleMarketTuplesReadApiLive,
-    marketHistoryReadApiLive,
-    pricingCurrentMarketEvidenceReadApiLive,
-    resolveCommerceMarketReadApiLive,
-    verifyMarketEligibilityV1ReadApiLive,
+    currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    pricingCurrentMarketEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    resolveCommerceMarketReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    verifyMarketEligibilityV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  );
-  const requestServicesLive = Layer.mergeAll(
-    governedReadRuntimeLive,
-    ActionPrincipalVerifierLive,
-    gatewayAssertionRedemption,
-  ).pipe(
-    Layer.provideMerge(runtimeObservabilityLive),
-    Layer.provideMerge(
-      ActiveApplicationCompositionSourceLive.pipe(
-        Layer.provide(
-          FetchHttpClient.layer.pipe(
-            Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+  ).pipe(Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        runtimeObservabilityLive,
+        RequestSchemaProblemLive,
+        databaseIdentitiesLive,
+        ActiveApplicationCompositionSourceLive.pipe(
+          Layer.provide(
+            FetchHttpClient.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ),
           ),
         ),
       ),
     ),
-    Layer.provideMerge(databaseIdentitiesLive),
-    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...commerceMarketCatalogCorsAllowedHeaders],
     allowedMethods: [...commerceMarketCatalogCorsAllowedMethods],
@@ -161,10 +158,21 @@ export const makeCommerceMarketCatalogApiRuntime = (
   return assembleEffectBffRuntime({
     api: commerceMarketCatalogApi,
     handlers: resolvedApiHandlersLive,
-    services: requestServicesLive,
     transport: transportLive,
   });
 };
+
+/** Assemble this owner's unchanged HTTP runtime from caller-owned scoped services. */
+export const commerceMarketCatalogApiRuntimeFromContext = Effect.gen(
+  function* commerceMarketCatalogApiRuntimeFromContext() {
+    const readRuntime = yield* ReadRuntime;
+    const redemption = yield* GatewayAssertionRedemptionService;
+    return makeCommerceMarketCatalogApiRuntime(
+      Layer.succeed(ReadRuntime, readRuntime),
+      Layer.succeed(GatewayAssertionRedemptionService, redemption),
+    );
+  },
+);
 
 const apiRuntime = makeCommerceMarketCatalogApiRuntime(
   productionReadRuntimeLive,

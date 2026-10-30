@@ -5,6 +5,7 @@ import { PricingInstantSchema } from '@app/pricing-contracts/current-supported-c
 import { PriceDefinitionResponseSchema } from '@app/pricing-contracts/price-definition';
 import {
   ExactPriceConflictClaimantSchema,
+  ExactPriceLookupCurrentEvidenceSchema,
   ExactPriceOwnerLookupResultSchema,
 } from '@app/pricing-contracts/domain/exact-price-lookup';
 import type {
@@ -32,6 +33,9 @@ import type {
 } from '@app/pricing-contracts/domain/price-schedule';
 import type { PriceRef } from '@app/pricing-contracts/resources/price';
 import { Effect, Option, Schema } from 'effect';
+
+import { ManageProductPriceOperationSchema } from '../../shared/actions/manage-product-prices-bulk.ts';
+import type { ManageProductPriceOperation } from '../../shared/actions/manage-product-prices-bulk.ts';
 
 const PriceRoutineRowSchema = Schema.Struct({ payload: Schema.Unknown });
 const PriceActionInvocationIdStringSchema = Schema.String.check(Schema.isUUID());
@@ -188,6 +192,21 @@ export const PriceActionResultLookupOutcomeSchema = Schema.Union([
 ]);
 export type PriceActionResultLookupOutcome = typeof PriceActionResultLookupOutcomeSchema.Type;
 
+/** Private bulk recovery proof. Ordinary public result lookup deliberately excludes this verdict. */
+export const PriceOriginalResultLookupOutcomeSchema = Schema.Union([
+  Schema.Struct({
+    actionInvocationId: PriceActionInvocationIdSchema,
+    originalIntentMatches: Schema.Boolean,
+    outcome: Schema.Literal('PRICE_ACTION_RESULT_FOUND'),
+    result: Schema.Union([DefinePricePersistenceOutcomeSchema, RevisePricePersistenceOutcomeSchema]),
+  }),
+  Schema.Struct({
+    actionInvocationId: PriceActionInvocationIdSchema,
+    outcome: Schema.Literal('PRICE_ACTION_RESULT_ABSENT'),
+  }),
+]);
+export type PriceOriginalResultLookupOutcome = typeof PriceOriginalResultLookupOutcomeSchema.Type;
+
 const stableOwnerReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const positiveGeneration = Schema.Int.check(Schema.isGreaterThan(0));
 
@@ -269,6 +288,7 @@ export const ReadExactPriceCandidateSetPersistenceOutcomeSchema = Schema.Union([
         verificationRef: stableOwnerReference,
       }),
     ),
+    lookupEvidence: Schema.optionalKey(ExactPriceLookupCurrentEvidenceSchema),
     outcome: Schema.Literal('EXACT_PRICE_CANDIDATE_SET_CURRENT'),
   }).check(
     Schema.makeFilter(({ authority, candidateSet }) =>
@@ -406,6 +426,13 @@ export interface ExactPriceCandidateSetPersistence {
   ) => Effect.Effect<VerifyExactPriceCandidateSetGenerationPersistenceOutcome, PricePersistenceUnavailable>;
 }
 
+export interface PriceOriginalResultLookupPersistence {
+  readonly lookupOriginalResult: (query: {
+    readonly actionInvocationId: string;
+    readonly operation: ManageProductPriceOperation;
+  }) => Effect.Effect<PriceOriginalResultLookupOutcome, PricePersistenceUnavailable>;
+}
+
 export interface PriceActionResultLookupPersistence {
   readonly lookupResult: (
     query: PriceActionResultLookupQuery,
@@ -453,7 +480,8 @@ export const pricePersistenceForScope = (
   PricePersistence &
     ExactPriceLookupPersistence &
     ExactPriceCandidateSetPersistence &
-    PriceActionResultLookupPersistence
+    PriceActionResultLookupPersistence &
+    PriceOriginalResultLookupPersistence
 > =>
   Effect.succeed({
     define: (command) =>
@@ -465,6 +493,28 @@ export const pricePersistenceForScope = (
       transaction.invoke(lookupExactCurrentPriceRoutine, [request]).pipe(
         Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
         Effect.flatMap((rows) => decodePayload(ExactPriceOwnerLookupResultSchema, rows)),
+      ),
+    lookupOriginalResult: (query) =>
+      Schema.encodeEffect(ManageProductPriceOperationSchema)(query.operation).pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap((operation) =>
+          transaction
+            .invoke(lookupPriceActionResultRoutine, [
+              {
+                actingPrincipalId: scope.principalId,
+                actionInvocationId: query.actionInvocationId,
+                operation,
+              },
+            ])
+            .pipe(
+              Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
+              Effect.flatMap((rows) => decodePayload(PriceOriginalResultLookupOutcomeSchema, rows)),
+              Effect.filterOrFail(
+                (outcome) => outcome.actionInvocationId === query.actionInvocationId,
+                () => unavailable('Original Price intent lookup did not bind the owner invocation'),
+              ),
+            ),
+        ),
       ),
     lookupResult: (query) =>
       transaction

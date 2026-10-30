@@ -116,6 +116,24 @@
       "path": "./verticals/projects"
     },
     {
+      "path": "packages/catalog-selection-contracts"
+    },
+    {
+      "path": "packages/commerce-cart-contracts"
+    },
+    {
+      "path": "verticals/commerce-cart"
+    },
+    {
+      "path": "packages/commerce-cart-finalization-contracts"
+    },
+    {
+      "path": "packages/commerce-order-contracts"
+    },
+    {
+      "path": "verticals/commerce-order"
+    },
+    {
       "path": "packages/party-registry-identity-contracts"
     }
   ]

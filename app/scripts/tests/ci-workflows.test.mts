@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -370,122 +370,6 @@ const GateCommandsWorkflowSchema = Schema.Struct({
   }),
 });
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
-const WorkspacePackagesSchema = Schema.Struct({ packages: Schema.Array(Schema.String) });
-const WORKSPACE_TEST_TASKS = ['test:unit', 'test:component'];
-
-const unitTestPackages = () => {
-  const { packages } = Schema.decodeUnknownSync(WorkspacePackagesSchema)(
-    parse(readFileSync(new URL('../../pnpm-workspace.yaml', import.meta.url), 'utf-8')),
-  );
-  return packages.flatMap((pattern) => {
-    expect(pattern).toMatch(/^[a-z-]+(?:\/\*)?$/u);
-    const directories = pattern.endsWith('/*')
-      ? readdirSync(new URL(`../../${pattern.slice(0, -2)}/`, import.meta.url), { withFileTypes: true })
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => `${pattern.slice(0, -2)}/${entry.name}`)
-      : [pattern];
-    return directories.flatMap((directory) => {
-      const url = new URL(`../../${directory}/package.json`, import.meta.url);
-      if (!existsSync(url)) {
-        return [];
-      }
-      const manifest = Schema.decodeUnknownSync(
-        Schema.Struct({ name: Schema.String, scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
-      )(JSON.parse(readFileSync(url, 'utf-8')));
-      return [{ directory, name: manifest.name, scripts: manifest.scripts ?? {} }];
-    });
-  });
-};
-
-type UnitTestPackage = ReturnType<typeof unitTestPackages>[number];
-
-const selectedTestPackages = (filters: readonly string[], packages: readonly UnitTestPackage[]) => {
-  for (const filter of filters) {
-    expect(
-      filter === '!.' ||
-        packages.some(({ directory, name }) => [name, `./${directory}`].includes(filter.replace(/^!/u, ''))),
-    ).toBe(true);
-  }
-  const includes = filters.filter((filter) => !filter.startsWith('!'));
-  return packages.filter(({ directory, name }) => {
-    const matches = (filter: string) => filter === name || filter === `./${directory}`;
-    return (
-      (includes.length === 0 || includes.some(matches)) &&
-      !filters.some((filter) => filter.startsWith('!') && matches(filter.slice(1)))
-    );
-  });
-};
-
-// Parse the supported pnpm forms without executing any workspace test command.
-const rootUnitCoverage = (script: string, packages: readonly UnitTestPackage[]) => {
-  const coverage: string[] = [];
-  for (const command of script.split(/\s*&&\s*/u)) {
-    const tokens = [...command.matchAll(/'[^']*'|"[^"]*"|[^\s'"]+/gu)].map(([token]) =>
-      token.startsWith("'") || token.startsWith('"') ? token.slice(1, -1) : token,
-    );
-    expect(tokens.shift()).toBe('pnpm');
-    const recursive = tokens[0] === '-r';
-    if (recursive) {
-      tokens.shift();
-    }
-    const filters: string[] = [];
-    const options: string[] = [];
-    while (tokens[0]?.startsWith('--')) {
-      const option = tokens.shift() ?? '';
-      if (option === '--filter') {
-        filters.push(tokens.shift() ?? '');
-      } else {
-        options.push(option);
-      }
-    }
-    const selected = selectedTestPackages(filters, packages);
-    if (recursive) {
-      expect(sorted(options)).toEqual(sorted(['--no-sort', '--workspace-concurrency=1', '--if-present']));
-      expect(tokens.shift()).toBe('run');
-      const task = tokens.shift() ?? '';
-      expect(WORKSPACE_TEST_TASKS).toContain(task);
-      expect(tokens).toEqual(['--pool.maxWorkers', '1']);
-      for (const item of selected.filter((candidate) => candidate.scripts[task] !== undefined)) {
-        // Forwarding Rstest flags through a shell chain would send them to its last command.
-        expect(item.scripts[task]).toMatch(/^rstest(?:\s[^&]*)?$/u);
-        coverage.push(`${item.name}:${task}`);
-      }
-    } else {
-      expect(options).toEqual([]);
-      expect(filters).toHaveLength(1);
-      expect(selected).toHaveLength(1);
-      const [item] = selected;
-      expect(item).toBeDefined();
-      if (item === undefined) {
-        continue;
-      }
-      if (tokens[0] === 'exec') {
-        expect(tokens).toEqual(['exec', 'rstest', '--project', 'unit', '--pool.maxWorkers', '1']);
-        expect(item.scripts['test:unit']).toBe('rstest --project unit && pnpm test:types');
-        coverage.push(`${item.name}:test:unit`);
-      } else if (tokens[0] === 'test:types') {
-        expect(tokens).toEqual(['test:types']);
-        expect(item.scripts['test:types']).toBeDefined();
-        coverage.push(`${item.name}:test:types`);
-      } else {
-        const task = tokens.shift() ?? '';
-        expect(WORKSPACE_TEST_TASKS).toContain(task);
-        expect(item.scripts[task]).toMatch(/^vitest run /u);
-        expect(tokens).toEqual(['--maxWorkers', '1']);
-        coverage.push(`${item.name}:${task}`);
-      }
-    }
-  }
-  const expected = packages.flatMap(({ name, scripts }) =>
-    WORKSPACE_TEST_TASKS.filter((task) => scripts[task] !== undefined).map((task) => `${name}:${task}`),
-  );
-  const types = packages
-    .filter(({ scripts }) => scripts['test:unit']?.endsWith(' && pnpm test:types'))
-    .map(({ name }) => `${name}:test:types`);
-  expect(sorted(coverage)).toEqual(sorted([...expected, ...types]));
-  return coverage;
-};
-
 const readGateCommandJobs = () =>
   Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
 const gateCommands = () =>
@@ -517,12 +401,10 @@ it('runs the root unit and component tests of every workspace package in exactly
   const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
     JSON.parse(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8')),
   );
-  const packages = unitTestPackages();
-  const expected = packages.flatMap(({ name, scripts: packageScripts }) =>
-    WORKSPACE_TEST_TASKS.filter((task) => packageScripts[task] !== undefined).map((task) => `${name}:${task}`),
+  // The shards run exactly what the root script runs, split by package.
+  expect(scripts['test:unit']).toBe(
+    'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component',
   );
-  const rootCoverage = rootUnitCoverage(scripts['test:unit'] ?? '', packages);
-  expect(sorted(rootCoverage.filter((task) => !task.endsWith(':test:types')))).toEqual(sorted(expected));
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
     if (unit === undefined || !unit.endsWith(' run test:unit')) {
@@ -548,33 +430,106 @@ it('runs the root unit and component tests of every workspace package in exactly
     expect(filter).toMatch(/^\.\/(?:apps|packages|verticals)\/[a-z-]+$/u);
     expect(() => readFileSync(new URL(`../../${filter}/package.json`, import.meta.url))).not.toThrow();
   }
-  const shardCoverage = shards.flatMap((filters) =>
-    selectedTestPackages(filters, packages).flatMap(({ name, scripts: packageScripts }) =>
-      WORKSPACE_TEST_TASKS.filter((task) => packageScripts[task] !== undefined).map((task) => `${name}:${task}`),
-    ),
-  );
-  expect(sorted(shardCoverage)).toEqual(sorted(expected));
 });
 
-it('rejects runner flags that the selected package runner cannot consume', () => {
-  const packages = unitTestPackages();
-  expect(() => rootUnitCoverage('pnpm --filter akros-storefront test:unit --pool.maxWorkers 1', packages)).toThrow();
-  expect(() =>
-    rootUnitCoverage('pnpm --filter @app/shared-contracts test:unit --pool.maxWorkers 1', packages),
-  ).toThrow();
-  const recursive =
-    "pnpm -r --no-sort --workspace-concurrency=2 --filter '!@app/shared-contracts' --filter '!akros-storefront'";
-  expect(() => rootUnitCoverage(`${recursive} --if-present run test:unit --pool.maxWorkers 1`, packages)).toThrow();
+const IntegrationShardsWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    'service-integration': Schema.Struct({
+      steps: Schema.Array(WorkflowStepSchema),
+      strategy: Schema.Struct({
+        matrix: Schema.Struct({
+          include: Schema.Array(
+            Schema.Struct({
+              name: Schema.String,
+              'native-preproposal': Schema.optional(Schema.Boolean),
+              'package-filters': Schema.optional(Schema.String),
+              'root-suite': Schema.optional(Schema.Boolean),
+              'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
+              suite: Schema.Literals(['integration', 'browser']),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
 });
 
-it('rejects an omitted or repeated workspace test command', () => {
+const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
+  [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
+
+it('runs the root integration suite once and every package integration suite in exactly one shard', () => {
   const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8')),
+    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
   );
-  const packages = unitTestPackages();
-  const commands = (scripts['test:unit'] ?? '').split(' && ');
-  expect(() => rootUnitCoverage(commands.slice(0, -1).join(' && '), packages)).toThrow();
-  expect(() => rootUnitCoverage([...commands, commands.at(-1) ?? ''].join(' && '), packages)).toThrow();
+  // The shards run exactly what the root script runs, split by package.
+  expect(scripts['test:integration']).toBe(
+    'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
+  );
+  const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(
+    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
+  ).jobs['service-integration'];
+  const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  expect(run?.if).toBe("matrix.suite == 'integration'");
+  expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null' });
+  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
+  expect(run?.run).toContain(
+    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
+  );
+  expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
+  // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
+  const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
+  expect(nativeShards).toHaveLength(1);
+  expect(nativeShards[0]?.suite).toBe('integration');
+  expect(nativeShards[0]?.['rstest-shard']).toBeUndefined();
+  const nativeSteps = job.steps.filter(({ if: condition }) => condition === 'matrix.native-preproposal == true');
+  expect(nativeSteps).toHaveLength(1);
+  expect(nativeSteps[0]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
+  expect(nativeSteps[0]?.run).toBe(
+    'mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal',
+  );
+  expect(nativeSteps[0]?.['timeout-minutes']).toBe(20);
+  const commerceScripts = Schema.decodeUnknownSync(RootScriptsSchema)(
+    JSON.parse(
+      readFileSync(new URL('../../verticals/commerce-customer-context/package.json', import.meta.url), 'utf-8'),
+    ),
+  ).scripts;
+  expect(commerceScripts['test:integration:native-preproposal']).toBe(
+    'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
+  );
+  const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
+  expect(shards.filter((shard) => shard['root-suite'] === true)).toHaveLength(1);
+  const named = shards.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
+  const remainder = shards.filter((shard) => shardFilters(shard).some((filter) => filter.startsWith('!')));
+  // The root-suite shard runs every package the others do not name, excluding the workspace root like `pnpm -r`.
+  expect(remainder.map((shard) => shard['root-suite'])).toEqual([true]);
+  expect(named.length + remainder.length).toBe(shards.length);
+  // A package too large for one job is split by Rstest shards that are alone in their jobs and cover 1..n once.
+  const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
+  for (const shard of split) {
+    expect(shardFilters(shard)).toHaveLength(1);
+  }
+  for (const filter of new Set(split.flatMap(shardFilters))) {
+    const parts = split
+      .filter((shard) => shardFilters(shard)[0] === filter)
+      .map((shard) => shard['rstest-shard'] ?? '');
+    const count = Number(parts[0]?.split('/')[1]);
+    expect(sorted(parts)).toEqual(sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)));
+  }
+  const namedPackages = [
+    ...new Set(split.flatMap(shardFilters)),
+    ...named.filter((shard) => shard['rstest-shard'] === undefined).flatMap(shardFilters),
+  ];
+  expect(sorted(remainder.flatMap(shardFilters))).toEqual(
+    sorted(['!.', ...namedPackages.map((filter) => `!${filter}`)]),
+  );
+  expect(new Set(namedPackages).size).toBe(namedPackages.length);
+  for (const filter of namedPackages) {
+    expect(filter).toMatch(/^\.\/(?:apps|packages|verticals)\/[a-z-]+$/u);
+    const manifest = Schema.decodeUnknownSync(RootScriptsSchema)(
+      JSON.parse(readFileSync(new URL(`../../${filter}/package.json`, import.meta.url), 'utf-8')),
+    );
+    expect(manifest.scripts['test:integration']).toBeDefined();
+  }
 });
 
 it('formats and lints every tracked file in exactly one pre-commit hook shard', () => {
@@ -698,9 +653,9 @@ it('initializes every fresh CI database before reconcile bootstrap without chang
 
 it('runs migration equivalence proofs only against the owned CI maintenance database', () => {
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  const integration = jobs['service-integration'].steps.find(({ run }) => run === 'mise exec -- pnpm test:integration');
+  const integration = jobs['service-integration'].steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
   expect(integration?.if).toBe(INTEGRATION_SUITE_CONDITION);
-  expect(integration?.env).toEqual({
+  expect(integration?.env).toMatchObject({
     MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: 'postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres',
     MIGRATION_EQUIVALENCE_TEST_SANDBOX: 'owned-postgres18',
   });

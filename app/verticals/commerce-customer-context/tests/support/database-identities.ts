@@ -39,3 +39,5 @@ export const FIXTURE_DESCRIPTOR = {
 
 export const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([FIXTURE_DESCRIPTOR]);
 export const DATABASE_IDENTITIES = FIXTURE_DATABASE_IDENTITY_ENROLLMENT.identities;
+/** The Party request login native suites target; the fixture's own copy of the Party descriptor. */
+export const PARTY_REGISTRY_REQUEST_IDENTITY = FIXTURE_DESCRIPTOR.request;

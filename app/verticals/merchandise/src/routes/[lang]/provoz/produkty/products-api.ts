@@ -3,7 +3,7 @@ import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';

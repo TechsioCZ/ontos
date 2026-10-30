@@ -27,7 +27,7 @@ const configuration = Config.all({
 });
 
 type GatewayContextIssue = (
-  payload: { readonly audience: 'catalog'; readonly compositionRevision: string; readonly legalEntityId: string },
+  payload: { readonly audience: 'catalog'; readonly compositionRevision: string; readonly legalEntityId?: string },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 
@@ -57,21 +57,22 @@ export const makeCatalogSelectionGatewayCredentialIssuer = (
     issue: Effect.fn('CatalogSelectionGatewayCredentialIssuer.issue')(function* issueCredential(input: {
       readonly audience: 'catalog';
       readonly compositionRevision: string;
-      readonly legalEntityId: string;
+      readonly legalEntityId?: string;
       readonly requestCorrelation: string;
     }) {
-      const response = yield* issue(
-        {
-          audience: input.audience,
-          compositionRevision: input.compositionRevision,
-          legalEntityId: input.legalEntityId,
-        },
-        {
-          apiKey: configured.apiKey,
-          baseUrl: configured.shellBaseUrl,
-          requestCorrelation: input.requestCorrelation,
-        },
-      ).pipe(Effect.mapError((cause) => unavailable('The Catalog gateway credential could not be issued', cause)));
+      const gatewayContext =
+        input.legalEntityId === undefined
+          ? { audience: input.audience, compositionRevision: input.compositionRevision }
+          : {
+              audience: input.audience,
+              compositionRevision: input.compositionRevision,
+              legalEntityId: input.legalEntityId,
+            };
+      const response = yield* issue(gatewayContext, {
+        apiKey: configured.apiKey,
+        baseUrl: configured.shellBaseUrl,
+        requestCorrelation: input.requestCorrelation,
+      }).pipe(Effect.mapError((cause) => unavailable('The Catalog gateway credential could not be issued', cause)));
       if (response.compositionRevision !== input.compositionRevision) {
         return yield* unavailable('Catalog gateway returned a credential for a different composition revision');
       }

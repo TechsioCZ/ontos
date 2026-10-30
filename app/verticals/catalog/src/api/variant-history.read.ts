@@ -46,22 +46,22 @@ export const readVariantHistory = Effect.fn('VariantHistoryRead.readVariantHisto
     return yield* missing();
   }
   const revision = row.value;
-  return {
-    evidence: { resultCount: 1 },
-    result: {
-      actionInvocationId: revision.actionInvocationId,
-      changeKind: revision.changeKind,
-      combinationAxisRevision: Option.fromNullOr(revision.combinationAxisRevision),
-      combinationKey: Option.fromNullOr(revision.combinationKey),
-      evidenceRefs: revision.evidenceRefs,
-      historical: true as const,
-      lifecycle: revision.lifecycleState,
-      productId: revision.productId,
-      reason: revision.reason,
-      recordedAt: revision.recordedAt.toISOString(),
-      reference,
-    },
+  const result = {
+    actionInvocationId: revision.actionInvocationId,
+    changeKind: revision.changeKind,
+    combinationAxisRevision: Option.fromNullOr(revision.combinationAxisRevision),
+    combinationKey: Option.fromNullOr(revision.combinationKey),
+    evidenceRefs: revision.evidenceRefs,
+    historical: true as const,
+    lifecycle: revision.lifecycleState,
+    productId: revision.productId,
+    recordedAt: revision.recordedAt.toISOString(),
+    reference,
   };
+  if (revision.reason === null) {
+    return { evidence: { resultCount: 1 }, result };
+  }
+  return { evidence: { resultCount: 1 }, result: { ...result, reason: revision.reason } };
 });
 
 export const variantHistoryRead = defineRead(

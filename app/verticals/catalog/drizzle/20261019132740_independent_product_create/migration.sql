@@ -1,0 +1,4 @@
+ALTER TABLE "catalog"."product_revisions" ALTER COLUMN "reason" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "catalog"."product_variant_revisions" ALTER COLUMN "reason" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "catalog"."product_revisions" DROP CONSTRAINT "catalog_product_revisions_reason_ck", ADD CONSTRAINT "catalog_product_revisions_reason_ck" CHECK (("change_kind" = 'CREATED' and "reason" is null) or ("reason" is not null and "reason" = btrim("reason") and length("reason") between 1 and 1000));--> statement-breakpoint
+ALTER TABLE "catalog"."product_variant_revisions" DROP CONSTRAINT "catalog_product_variant_revisions_reason_ck", ADD CONSTRAINT "catalog_product_variant_revisions_reason_ck" CHECK (("change_kind" = 'CREATED' and "reason" is null) or ("reason" is not null and "reason" = btrim("reason") and length("reason") between 1 and 1000));

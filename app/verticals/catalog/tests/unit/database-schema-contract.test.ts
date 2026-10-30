@@ -87,7 +87,7 @@ import {
   variantLocalizedFacts,
 } from '../../src/database/schema.ts';
 
-it('owns the complete Catalog inventory and scopes every business table with RLS', () => {
+it('owns eighty tenant-scoped Catalog tables plus the global gateway replay table, with RLS and immutable history', () => {
   const qualifiedNames = EffectArray.sort(
     CATALOG_TABLES.map((table) => {
       const config = getTableConfig(table);
@@ -181,10 +181,9 @@ it('owns the complete Catalog inventory and scopes every business table with RLS
     'variant_unit_divisibility_revisions',
   ]);
   expect(qualifiedNames).toEqual(CATALOG_TABLE_INVENTORY.map((name) => `catalog.${name}`));
-  for (const table of CATALOG_TABLES) {
-    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
-      continue;
-    }
+  for (const table of CATALOG_TABLES.filter(
+    (candidate) => getTableConfig(candidate).name !== 'gateway_assertion_redemptions',
+  )) {
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -718,9 +717,20 @@ it('keeps exact-locale facts and opaque attachment references tenant-qualified',
     'catalog_media_assignment_sets_product_uk',
     'catalog_media_assignment_sets_variant_uk',
   ]);
-  expect(getTableConfig(catalogMediaAssignments).indexes.map((index) => index.config.name)).toContain(
+  expect(getTableConfig(catalogMediaAssignments).indexes.map((index) => index.config.name)).not.toContain(
     'catalog_media_assignments_active_position_uk',
   );
+  const mediaPositionGuard = getTableConfig(catalogMediaAssignments).uniqueConstraints.find(
+    (constraint) => constraint.name === 'catalog_media_assignments_active_position_commit_uk',
+  );
+  expect(mediaPositionGuard?.columns.map((column) => column.name)).toEqual([
+    'tenant_id',
+    'assignment_set_id',
+    'resource_kind',
+    'active_position',
+  ]);
+  expect(catalogMediaAssignments.activePosition.generated?.type).toBe('always');
+  expect(catalogMediaAssignments.activePosition.notNull).toBe(false);
   expect(getTableConfig(catalogMediaAssignmentSetRevisions).foreignKeys.map((key) => key.getName())).toEqual([
     'catalog_media_assignment_set_revisions_set_fk',
   ]);
@@ -756,12 +766,14 @@ it('checks migration hardening for force-RLS, append-only history, and stable id
     .map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'))
     .join('\n');
 
-  for (const table of CATALOG_TABLE_INVENTORY) {
-    if (table === 'gateway_assertion_redemptions') {
-      continue;
-    }
+  // The replay-identity table is global pre-authentication state without Tenant rows, so it carries no RLS.
+  for (const table of CATALOG_TABLE_INVENTORY.filter((name) => name !== 'gateway_assertion_redemptions')) {
     expect(combined).toContain(`ALTER TABLE "catalog"."${table}" FORCE ROW LEVEL SECURITY`);
   }
+  expect(combined).toContain('catalog_gateway_redemptions_identity_uk');
+  expect(combined).toContain(
+    'GRANT SELECT, INSERT, DELETE ON TABLE "catalog"."gateway_assertion_redemptions" TO ontos_runtime',
+  );
   expect(combined).toContain('catalog_product_revisions_append_only');
   expect(combined).toContain('catalog_result_snapshots_append_only');
   expect(combined).toContain('catalog_sku_assignment_revisions_append_only');
@@ -845,16 +857,47 @@ it('checks migration hardening for force-RLS, append-only history, and stable id
   expect(combined).toContain("'commerce.catalog.product-unit') NOT VALID");
 });
 
-it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
-  const table = CATALOG_TABLES.find((candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions');
-  expect(table).toBeDefined();
-  if (table === undefined) {
-    throw new Error('Missing gateway assertion redemption table');
+it('allows SQL reason absence only on Product and Variant CREATED revisions', () => {
+  for (const table of [productRevisions, productVariantRevisions]) {
+    const config = getTableConfig(table);
+    expect(config.columns.find((column) => column.name === 'reason')?.notNull).toBe(false);
+    expect(config.checks.some((constraint) => constraint.name.endsWith('_reason_ck'))).toBe(true);
   }
-  const config = getTableConfig(table);
-  expect(config.schema).toBe('catalog');
-  expect(config.enableRLS).toBe(false);
-  expect(config.policies).toEqual([]);
-  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
-  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['catalog_redemption_expiry']);
+});
+
+it('keeps the latest Set head guard structural for successors and preserves the initial time gate', () => {
+  const migrationRoot = new URL('../../drizzle/', import.meta.url);
+  const original = readFileSync(new URL('20260917100244_past_living_lightning/migration.sql', migrationRoot), 'utf-8');
+  const prefix = 'CREATE FUNCTION "catalog"."validate_set_composition_current"()';
+  const [originalFunction] = original.slice(original.indexOf(prefix)).split('--> statement-breakpoint');
+  const forward = readFileSync(
+    new URL('20261020103114_set_successor_publication_head/migration.sql', migrationRoot),
+    'utf-8',
+  );
+  const expected = originalFunction
+    .replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION')
+    .replace(
+      '      AND r.revision = NEW.current_revision AND r.effective_from <= now()\n' +
+        '      AND (r.effective_to IS NULL OR r.effective_to > now())',
+      '      AND r.revision = NEW.current_revision\n' +
+        '      AND (\n' +
+        '        NEW.current_revision > 1\n' +
+        '        OR (\n' +
+        '          r.effective_from <= now()\n' +
+        '          AND (r.effective_to IS NULL OR r.effective_to > now())\n' +
+        '        )\n' +
+        '      )',
+    );
+  expect(forward).toBe(expected);
+  const definitions = EffectArray.sort(readdirSync(migrationRoot), Order.String)
+    .map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'))
+    .filter((source) => source.includes('"validate_set_composition_current"() RETURNS trigger'));
+  expect(definitions.at(-1)).toBe(forward);
+  expect(forward).not.toContain('DROP TRIGGER');
+  expect(forward).not.toContain('ALTER TABLE');
+  expect(original).toContain('AFTER INSERT OR UPDATE ON "catalog"."set_compositions" DEFERRABLE INITIALLY DEFERRED');
+  const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
+  expect(verifier).toContain('setHeadGuard.body.trim() !== expectedSetHeadBody.trim()');
+  expect(verifier).toContain('t.tgdeferrable and t.tginitdeferred');
+  expect(verifier).toContain('s.current_revision > 1 or (r.effective_from <= now()');
 });

@@ -17,7 +17,6 @@ import { CommercePortalAuthStepUpApi } from './portal-auth/step-up-api.ts';
 import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './portal-auth/profile-api.ts';
 
 // <generated-governed-http-api-imports>
-import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 import { AddSavedAddressActionApi } from './apis/add-saved-address-action.ts';
 import { ArchiveCustomerGroupActionApi } from './apis/archive-customer-group-action.ts';
 import { ArchiveCustomerProfileActionApi } from './apis/archive-customer-profile-action.ts';
@@ -37,6 +36,8 @@ import { ClearDefaultBillingAddressActionApi } from './apis/clear-default-billin
 import { ClearDefaultDeliveryDestinationActionApi } from './apis/clear-default-delivery-destination-action.ts';
 import { CommerceQuantityPolicyCurrentApi } from './apis/commerce-quantity-policy-current.ts';
 import { CommerceQuantityResolutionApi } from './apis/commerce-quantity-resolution.ts';
+import { CompletePurchaseProposalBasisActionApi } from './apis/complete-purchase-proposal-basis-action.ts';
+import { ConsumeOrderPurchaseApprovalActionApi } from './apis/consume-order-purchase-approval-action.ts';
 import { ConsumePurchaseApprovalActionApi } from './apis/consume-purchase-approval-action.ts';
 import { CounterpartyAccessInvitationReadApi } from './apis/counterparty-access-invitation-read.ts';
 import { CounterpartyAllCustomerArchiveApi } from './apis/counterparty-all-customer-archive.ts';
@@ -80,15 +81,20 @@ import { MarketSubjectRestrictionsCurrentApi } from './apis/market-subject-restr
 import { MigrateCounterpartyPriceGroupActionApi } from './apis/migrate-counterparty-price-group-action.ts';
 import { MigrateCustomerPriceGroupActionApi } from './apis/migrate-customer-price-group-action.ts';
 import { OpenProfileReconciliationActionApi } from './apis/open-profile-reconciliation-action.ts';
+import { OrderCommitmentApprovalEvidenceApi } from './apis/order-commitment-approval-evidence.ts';
+import { OrderServiceApprovalEvidenceApi } from './apis/order-service-approval-evidence.ts';
 import { PaymentTermAffectedUseAssessmentApi } from './apis/payment-term-affected-use-assessment.ts';
 import { PaymentTermPolicyCurrentApi } from './apis/payment-term-policy-current.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
+import { PreparePurchaseProposalBasisActionApi } from './apis/prepare-purchase-proposal-basis-action.ts';
 import { PricingPurchaseContextVerificationApi } from './apis/pricing-purchase-context-verification.ts';
+import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 import { ProfileReconciliationReadApi } from './apis/profile-reconciliation-read.ts';
 import { PurchaseCurrencyPolicyCurrentApi } from './apis/purchase-currency-policy-current.ts';
 import { PurchaseCurrencyResolutionApi } from './apis/purchase-currency-resolution.ts';
 import { PurchaseLimitEvaluationApi } from './apis/purchase-limit-evaluation.ts';
 import { PurchaseLimitPolicyReadApi } from './apis/purchase-limit-policy-read.ts';
+import { PurchaseProposalBasisApi } from './apis/purchase-proposal-basis.ts';
 import { ReactivateCustomerGroupActionApi } from './apis/reactivate-customer-group-action.ts';
 import { ReactivateCustomerProfileActionApi } from './apis/reactivate-customer-profile-action.ts';
 import { RecordPortalEnrollmentOutcomeActionApi } from './apis/record-portal-enrollment-outcome-action.ts';
@@ -112,6 +118,7 @@ import { RetailOrderHistoryDetailApi } from './apis/retail-order-history-detail.
 import { RetailPortalProfileBindingReadApi } from './apis/retail-portal-profile-binding-read.ts';
 import { RetailPrincipalResolutionApi } from './apis/retail-principal-resolution.ts';
 import { RetailPurchasingSubjectCurrentV1Api } from './apis/retail-purchasing-subject-current-v1.ts';
+import { RevalidateOrderPurchaseApprovalActionApi } from './apis/revalidate-order-purchase-approval-action.ts';
 import { RevalidatePurchaseApprovalActionApi } from './apis/revalidate-purchase-approval-action.ts';
 import { RevokeCounterpartyAccessInvitationActionApi } from './apis/revoke-counterparty-access-invitation-action.ts';
 import { RevokeCounterpartyCommerceAccessActionApi } from './apis/revoke-counterparty-commerce-access-action.ts';
@@ -338,7 +345,6 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CustomerOwnProfileReadApi)
   .addHttpApi(CustomerOwnProfileUpdateApi)
   // <generated-governed-http-api-additions>
-  .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(AddSavedAddressActionApi)
   .addHttpApi(ArchiveCustomerGroupActionApi)
   .addHttpApi(ArchiveCustomerProfileActionApi)
@@ -358,6 +364,8 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(ClearDefaultDeliveryDestinationActionApi)
   .addHttpApi(CommerceQuantityPolicyCurrentApi)
   .addHttpApi(CommerceQuantityResolutionApi)
+  .addHttpApi(CompletePurchaseProposalBasisActionApi)
+  .addHttpApi(ConsumeOrderPurchaseApprovalActionApi)
   .addHttpApi(ConsumePurchaseApprovalActionApi)
   .addHttpApi(CounterpartyAccessInvitationReadApi)
   .addHttpApi(CounterpartyAllCustomerArchiveApi)
@@ -401,15 +409,20 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(MigrateCounterpartyPriceGroupActionApi)
   .addHttpApi(MigrateCustomerPriceGroupActionApi)
   .addHttpApi(OpenProfileReconciliationActionApi)
+  .addHttpApi(OrderCommitmentApprovalEvidenceApi)
+  .addHttpApi(OrderServiceApprovalEvidenceApi)
   .addHttpApi(PaymentTermAffectedUseAssessmentApi)
   .addHttpApi(PaymentTermPolicyCurrentApi)
   .addHttpApi(PaymentTermsResolutionApi)
+  .addHttpApi(PreparePurchaseProposalBasisActionApi)
   .addHttpApi(PricingPurchaseContextVerificationApi)
+  .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(ProfileReconciliationReadApi)
   .addHttpApi(PurchaseCurrencyPolicyCurrentApi)
   .addHttpApi(PurchaseCurrencyResolutionApi)
   .addHttpApi(PurchaseLimitEvaluationApi)
   .addHttpApi(PurchaseLimitPolicyReadApi)
+  .addHttpApi(PurchaseProposalBasisApi)
   .addHttpApi(ReactivateCustomerGroupActionApi)
   .addHttpApi(ReactivateCustomerProfileActionApi)
   .addHttpApi(RecordPortalEnrollmentOutcomeActionApi)
@@ -433,6 +446,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(RetailPortalProfileBindingReadApi)
   .addHttpApi(RetailPrincipalResolutionApi)
   .addHttpApi(RetailPurchasingSubjectCurrentV1Api)
+  .addHttpApi(RevalidateOrderPurchaseApprovalActionApi)
   .addHttpApi(RevalidatePurchaseApprovalActionApi)
   .addHttpApi(RevokeCounterpartyAccessInvitationActionApi)
   .addHttpApi(RevokeCounterpartyCommerceAccessActionApi)

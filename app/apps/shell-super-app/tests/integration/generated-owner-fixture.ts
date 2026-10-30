@@ -95,7 +95,6 @@ export const makeIsolationOwnerApiRuntime = () =>
   assembleEffectBffRuntime({
     api: isolationOwnerApi,
     handlers: apiHandlersLive,
-    services: Layer.empty,
   });
 const apiRuntime = makeIsolationOwnerApiRuntime();
 

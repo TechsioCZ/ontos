@@ -616,6 +616,43 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       }
     });
+    const explicitRstestConfigEvidence = Effect.fn('QualityAudit.explicitRstestConfigEvidence')(
+      function* explicitRstestConfigEvidence(
+        command: string,
+        prefix: string,
+        workspace: string,
+        manifestFile: string,
+        manifestText: string,
+      ) {
+        const target =
+          /^rstest(?: run)? --config(?:=| )(?<quote>['"]?)(?<config>[\w./-]+\.[cm]?[jt]s)\k<quote>(?: --project [\w-]+)?$/u.exec(
+            command,
+          )?.groups?.config;
+        if (
+          target === undefined ||
+          target.startsWith('/') ||
+          target.split('/').some((segment) => segment === '..' || segment.length === 0)
+        ) {
+          return;
+        }
+        const file = `${prefix}${target}`;
+        if (!(yield* fs.exists(path.join(appRoot, file)))) {
+          return;
+        }
+        const directory = yield* fs.realPath(path.join(appRoot, prefix));
+        const resolved = yield* fs.realPath(path.join(appRoot, file));
+        const relative = path.relative(directory, resolved);
+        if (relative.startsWith('..') || path.isAbsolute(relative) || (yield* read(file)) === undefined) {
+          return;
+        }
+        const offset = manifestText.indexOf(command);
+        const reason = 'Package script invokes Rstest with this literal workspace configuration';
+        evidence.push(
+          at(manifestFile, manifestText, Math.max(0, offset), workspace, 'file', target, reason),
+          at(manifestFile, manifestText, Math.max(0, offset), workspace, 'export', `${file}#default`, reason),
+        );
+      },
+    );
     const testConsumerEvidence = Effect.fn('QualityAudit.testConsumerEvidence')(function* testConsumerEvidence(
       manifestFile: string,
       manifestText: string,
@@ -623,6 +660,10 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       prefix: string,
       workspace: string,
     ) {
+      // An explicit runner is a consumer only of its literal, contained configuration.
+      for (const command of commands) {
+        yield* explicitRstestConfigEvidence(command, prefix, workspace, manifestFile, manifestText);
+      }
       // Rstest's default-config loader consumes default, not every named export.
       const config = `${prefix}rstest.config.ts`;
       if (

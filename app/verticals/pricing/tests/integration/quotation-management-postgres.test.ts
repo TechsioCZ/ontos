@@ -1,6 +1,15 @@
 import { sql } from 'drizzle-orm';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { PricingCommitmentConfirmationIssuedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
+import {
+  decodeCommitmentConfirmationRecoveryOutcome,
+  decodeCommitmentConfirmationStoreOutcome,
+} from '../../src/services/commitment-confirmation-persistence.service.ts';
+import {
+  makeIssue788CommercialTotal,
+  makeIssue788IssuedConfirmation,
+} from '../unit/support/issue-788-confirmation.fixture.ts';
 
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import {
@@ -284,6 +293,55 @@ it.live('keeps exact pre-Tax Quotation terms immutable and scopes result lookup 
         select_allowed: true,
         update_allowed: false,
       });
+    }),
+  ),
+);
+
+it.live('round-trips complete Quotation-backed Confirmation evidence through native JSON persistence #1257', () =>
+  Effect.scoped(
+    Effect.gen(function* confirmationJsonPostgres1257() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      const total = yield* makeIssue788CommercialTotal('900');
+      const confirmation = makeIssue788IssuedConfirmation(total, { confirmationRef: 'TEST:1257:native-json' });
+      const { purchase } = confirmation.binding;
+      const sle = purchase.commercialScope.sellingLegalEntityId;
+      const cleanup = admin.execute(sql`delete from pricing.pricing_commitment_confirmations
+        where tenant_id = ${purchase.tenantId}::uuid and confirmation_ref = ${confirmation.confirmationRef}`);
+      yield* cleanup;
+      yield* Effect.addFinalizer(() => cleanup.pipe(Effect.orDie));
+      const encoded = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.toCodecJson(PricingCommitmentConfirmationIssuedSchema)),
+      )(confirmation);
+      const persist = () =>
+        runtime.transaction((transaction) =>
+          Effect.gen(function* persistConfirmationJson() {
+            yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${purchase.tenantId}, true),
+              set_config('ontos.legal_entity_id', ${sle}, true)`);
+            const rows = yield* transaction.execute<{ readonly payload: unknown }>(
+              sql`select payload from pricing.persist_pricing_commitment_confirmation_v1(
+                ${purchase.tenantId}::uuid, ${sle}::uuid, ${encoded}::jsonb)`,
+              'objects',
+            );
+            return yield* decodeCommitmentConfirmationStoreOutcome(rows);
+          }),
+        );
+      expect(yield* persist()).toEqual({ confirmation, outcome: 'STORED' });
+      expect(yield* persist()).toEqual({ confirmation, outcome: 'REUSED' });
+      const recovered = yield* runtime.transaction((transaction) =>
+        Effect.gen(function* recoverConfirmationJson() {
+          yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${purchase.tenantId}, true),
+            set_config('ontos.legal_entity_id', ${sle}, true)`);
+          const rows = yield* transaction.execute<{ readonly payload: unknown }>(
+            sql`select payload from pricing.read_pricing_commitment_confirmation_v1(
+              ${purchase.tenantId}::uuid, ${sle}::uuid, ${confirmation.confirmationRef})`,
+            'objects',
+          );
+          return decodeCommitmentConfirmationRecoveryOutcome(confirmation.confirmationRef, rows);
+        }),
+      );
+      expect(recovered).toEqual({ confirmation, outcome: 'FOUND' });
     }),
   ),
 );

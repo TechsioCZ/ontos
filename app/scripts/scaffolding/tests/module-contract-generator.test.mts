@@ -9,9 +9,10 @@ import { expect, it } from 'effect-rstest';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
-import type { JsonValue } from '../shared.mts';
+import { asJsonObject } from '../shared.mts';
+import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
-import { write } from './fixture-files.mts';
+import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
 
 const { checkOntosModuleContracts } = await import(
@@ -44,6 +45,11 @@ const PROPERTY_PACKAGE_PATH = 'verticals/property-registry/package.json';
 const PROPERTY_API_PATH = 'verticals/property-registry/shared/api.ts';
 const PROPERTY_RUNTIME_PATH = 'verticals/property-registry/api/index.ts';
 const VERTICAL_FLAG = '--vertical';
+const BROWSER_ROLE = 'module-federation-remote';
+const PROPERTY_PACKAGE_NAME = '@app/property-registry';
+const TOPOLOGY_PATH = 'topology/reference-topology.json';
+const PROPERTY_BUILD_MARKER = 'property-build';
+const PROPERTY_DIRECTORY = 'verticals/property-registry';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
@@ -108,14 +114,16 @@ const writePinnedEffectApi = (root: string, slug: string): Effect.Effect<void, u
     yield* write(
       root,
       `verticals/${slug}/api/index.ts`,
-      `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
-export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureLayer, services: Layer.empty });
+      `const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
+const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  Layer.provide(fixtureLayer),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
 `,
     );
   });
 
-const createFixture = (): Effect.Effect<string, unknown> =>
+const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
   Effect.gen(function* mergedScenario2() {
     const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-module-contract-')));
     yield* write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
@@ -129,10 +137,10 @@ const createFixture = (): Effect.Effect<string, unknown> =>
           apiRuntime: 'effect',
           appId: APP_ID,
           preset: 'presetUltramodern',
-          role: 'module-federation-remote',
+          role: apiOnly ? 'api-only' : BROWSER_ROLE,
           topology: '../../topology/reference-topology.json',
         },
-        name: '@app/property-registry',
+        name: PROPERTY_PACKAGE_NAME,
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
@@ -151,7 +159,13 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         references: [],
       }),
     );
-    yield* write(root, 'verticals/property-registry/module-federation.config.ts', `export default { exposes: {} };\n`);
+    if (!apiOnly) {
+      yield* write(
+        root,
+        'verticals/property-registry/module-federation.config.ts',
+        `export default { exposes: {} };\n`,
+      );
+    }
     yield* write(
       root,
       'verticals/documents-center/package.json',
@@ -159,7 +173,7 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         dependencies: {},
         modernjs: {
           appId: DOCUMENTS_APP_ID,
-          role: 'module-federation-remote',
+          role: BROWSER_ROLE,
           topology: '../../topology/reference-topology.json',
         },
         name: '@app/documents-center',
@@ -186,21 +200,20 @@ const createFixture = (): Effect.Effect<string, unknown> =>
     });
     yield* write(
       root,
-      'topology/reference-topology.json',
+      TOPOLOGY_PATH,
       json({
         schemaVersion: 1,
         verticals: [
           {
-            deliveryUnit: { buildMarker: 'property-build' },
+            deliveryUnit: { buildMarker: PROPERTY_BUILD_MARKER },
             domain: 'property',
             id: APP_ID,
             kind: 'vertical',
-            moduleFederation: {
-              name: 'verticalPropertyRegistry',
-              role: 'remote',
-            },
-            package: '@app/property-registry',
-            path: 'verticals/property-registry',
+            ...(apiOnly
+              ? { renderer: 'none', surfaceProfile: 'api-only' }
+              : { moduleFederation: { name: 'verticalPropertyRegistry', role: 'remote' } }),
+            package: PROPERTY_PACKAGE_NAME,
+            path: PROPERTY_DIRECTORY,
           },
           {
             deliveryUnit: { buildMarker: 'documents-build' },
@@ -392,7 +405,7 @@ it.live(
         );
         expect(packageJson.dependencies).toEqual({
           '@app/core-runtime': 'workspace:*',
-          '@effect/platform-node': '4.0.5',
+          '@effect/platform-node': '4.0.7',
           zeta: '1.0.0',
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
@@ -679,18 +692,15 @@ it.live(
         yield* write(
           root,
           PROPERTY_RUNTIME_PATH,
-          `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureHandlers, services: ownerServicesLive });
+          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  identity,
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
 `,
         );
         yield* scaffold(root);
         const generated = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_RUNTIME_PATH), 'utf-8'));
-        expect(generated).toContain(
-          'handlers: GovernedReadLayer.mergeAll(fixtureHandlers, governedReadApiHandlersLive)',
-        );
-        expect(generated).toContain(
-          'services: GovernedReadLayer.mergeAll(ownerServicesLive, governedRequestServicesLive)',
-        );
+        expect(generated).toMatch(/GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
         expect(generated).toMatch(/GovernedReadLayer\.orDie/u);
         expect(generated).not.toMatch(/\bLayer\./u);
       }),
@@ -731,43 +741,16 @@ export default apiRuntime;
         expect(shared).toContain("export const fixtureFoundationApi = HttpApi.make('FixtureFoundation')");
         expect(shared).toContain('export const governedHttpApi = fixtureApi;');
         expect(runtime).toContain('GovernedReadLayer.mergeAll(originalHandlers, governedReadApiHandlersLive)');
-        expect(runtime).toContain('GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive)');
+        expect(runtime).toContain('GovernedReadLayer.provide(governedApplicationCompositionSourceLive)');
         expect(runtime).toContain("import { NodeCrypto } from '@effect/platform-node';");
         expect(runtime).toContain(
-          'GovernedReadLayer.provideMerge(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer))',
+          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer))',
         );
         expect(runtime).toContain('defineGovernedDatabaseIdentityEnrollment([])');
-        expect(runtime).toContain('GovernedReadLayer.provideMerge(governedDatabaseIdentitiesLive)');
+        expect(runtime).toContain('GovernedReadLayer.provide(governedDatabaseIdentitiesLive)');
         expect(runtime).toContain('GovernedReadLayer.orDie');
         expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
         expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);
-        expect(runtime).toContain(
-          'const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(',
-        );
-        expect(runtime).not.toContain('export const governedRequestServicesLive');
-        const supportStart = '// <generated-governed-http-handler-support-layers>';
-        const supportEnd = '// </generated-governed-http-handler-support-layers>';
-        const supportEntry = 'GovernedReadLayer.provideMerge(ownerServicesLive),';
-        const supported = runtime.replace(supportStart, `${supportStart}\n  ${supportEntry}`);
-        expect(hasValidGovernedHttpCompositionRoot(shared, supported)).toBe(true);
-        const supportSlot = supported.slice(
-          supported.indexOf(supportStart),
-          supported.indexOf(supportEnd) + supportEnd.length,
-        );
-        const detached = supported.replace(supportSlot, '');
-        for (const invalid of [
-          supported.replace(supportEntry, 'GovernedReadLayer.provide(ownerServicesLive),'),
-          supported.replace('const governedRequestServicesLive =', 'export const governedRequestServicesLive ='),
-          supported.replace('services: governedRequestServicesLive.pipe(', 'services: unrelatedServicesLive.pipe('),
-          detached.replace('GovernedReadLayer.empty,', `GovernedReadLayer.empty,\n${supportSlot}`),
-          `${detached}\nconst disconnectedServices = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(\n${supportSlot}\n);`,
-          runtime.replace(
-            '// <generated-governed-http-handler-layers>',
-            '// <generated-governed-http-handler-layers>\n stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),',
-          ),
-        ]) {
-          expect(hasValidGovernedHttpCompositionRoot(shared, invalid)).toBe(false);
-        }
         expect(
           hasValidGovernedHttpCompositionRoot(shared, runtime.replace(', governedReadApiHandlersLive)', ')')),
         ).toBe(false);
@@ -808,6 +791,238 @@ export default apiRuntime;
         expect(yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'))).not.toContain(
           'ontosModule',
         );
+      }),
+    );
+  }),
+);
+
+it.live(
+  'API-only owner admission generates and validates a server deployment contract without browser artifacts',
+  Effect.fn(function* apiOnlyOwnerAdmission() {
+    yield* withCreatedFixture(createFixture(true))(
+      Effect.fn(function* apiOnlyOwnerFixture(root) {
+        expect((yield* scaffold(root)).kind).toBe('generated');
+        yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
+        for (const vertical of [APP_ID, DOCUMENTS_APP_ID]) {
+          for (const target of ['dist', 'cloudflare-dist'] as const) {
+            const generated = yield* generateOntosModuleContract({ target, vertical, workspaceRoot: root }).pipe(
+              Effect.provide(NodeServices.layer),
+            );
+            const document = yield* decodeModuleContract(
+              yield* Effect.promise(() => readFile(generated.path, 'utf-8')),
+            );
+            expect(document.manifest.publicSurface.components).toEqual([]);
+          }
+        }
+        yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
+        const files = yield* snapshotTree(root, ['node_modules']);
+        expect(
+          Object.keys(files).filter(
+            (file) =>
+              file.startsWith('verticals/property-registry/') &&
+              /module-federation|src\/routes|src\/components/u.test(file),
+          ),
+        ).toEqual([]);
+        expect(Object.keys(files).filter((file) => file.startsWith('apps/'))).toEqual([]);
+      }),
+    );
+  }),
+);
+
+const patchOwnerFixtureJson = Effect.fn(function* patchOwnerFixtureJson(
+  root: string,
+  relativePath: string,
+  patch: (value: JsonObject) => JsonObject,
+) {
+  const content = yield* Effect.promise(() => readFile(path.join(root, relativePath), 'utf-8'));
+  const value = yield* Schema.decodeUnknownEffect(Schema.Json)(JSON.parse(content));
+  yield* write(root, relativePath, json(patch(asJsonObject(value, relativePath))));
+});
+
+it.live(
+  'API-only admission preserves exact generated owner identity and rejects contradictory surfaces without writes',
+  Effect.fn(function* apiOnlyIdentityControls() {
+    const packageCases: readonly JsonObject[] = [
+      { role: 'standalone' },
+      { role: 'headless' },
+      { role: 'custom' },
+      { role: BROWSER_ROLE },
+      { appId: 'Bad Owner' },
+      { appId: 'another-owner' },
+      { topology: '/topology/reference-topology.json' },
+      { topology: '../../../topology/reference-topology.json' },
+    ];
+    for (const replacement of packageCases) {
+      yield* withCreatedFixture(createFixture(true))(
+        Effect.fn(function* invalidApiOnlyPackage(root) {
+          yield* patchOwnerFixtureJson(root, PROPERTY_PACKAGE_PATH, (value) => ({
+            ...value,
+            modernjs: { ...asJsonObject(value['modernjs'], 'modernjs'), ...replacement },
+          }));
+          const before = yield* snapshotTree(root, ['node_modules']);
+          yield* expectFailure(scaffold(root), (error) => expect(String(error)).toMatch(/ScaffoldingError/u));
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        }),
+      );
+    }
+    const topologyCases: readonly JsonObject[] = [
+      { renderer: 'react' },
+      { renderer: null },
+      { surfaceProfile: 'full-stack' },
+      { surfaceProfile: null },
+      { moduleFederation: {} },
+      { moduleFederation: null },
+      { kind: 'app' },
+      { path: 'verticals/documents-center' },
+      { package: '@app/other' },
+      { id: 'other-owner' },
+    ];
+    for (const replacement of topologyCases) {
+      yield* withCreatedFixture(createFixture(true))(
+        Effect.fn(function* invalidApiOnlyTopology(root) {
+          yield* patchOwnerFixtureJson(root, TOPOLOGY_PATH, (value) => ({
+            ...value,
+            verticals: [
+              {
+                deliveryUnit: { buildMarker: PROPERTY_BUILD_MARKER },
+                domain: 'property',
+                id: APP_ID,
+                kind: 'vertical',
+                package: PROPERTY_PACKAGE_NAME,
+                path: PROPERTY_DIRECTORY,
+                renderer: 'none',
+                surfaceProfile: 'api-only',
+                ...replacement,
+              },
+            ],
+          }));
+          const before = yield* snapshotTree(root, ['node_modules']);
+          yield* expectFailure(scaffold(root), (error) => expect(String(error)).toMatch(/ScaffoldingError/u));
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        }),
+      );
+    }
+  }),
+);
+
+it.live(
+  'API-only and browser owners share duplicate appId rejection in either requested order',
+  Effect.fn(function* apiOnlyDuplicateOwners() {
+    for (const roles of [
+      ['api-only', 'api-only'],
+      ['api-only', BROWSER_ROLE],
+      [BROWSER_ROLE, 'api-only'],
+    ]) {
+      for (const requested of [APP_ID, DOCUMENTS_APP_ID]) {
+        yield* withCreatedFixture(createFixture(true))(
+          Effect.fn(function* duplicateGeneratedOwnerFixture(root) {
+            for (const [index, slug] of [APP_ID, DOCUMENTS_APP_ID].entries()) {
+              yield* patchOwnerFixtureJson(root, `verticals/${slug}/package.json`, (value) => ({
+                ...value,
+                modernjs: { ...asJsonObject(value['modernjs'], 'modernjs'), appId: APP_ID, role: roles[index] ?? '' },
+              }));
+            }
+            const before = yield* snapshotTree(root, ['node_modules']);
+            yield* expectFailure(scaffold(root, requested), (error) =>
+              expect(String(error)).toMatch(/duplicate generated appId/u),
+            );
+            expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+          }),
+        );
+      }
+    }
+  }),
+);
+
+it.live(
+  'API-only admission requires both server topology fields and the canonical owner package',
+  Effect.fn(function* apiOnlyRequiredMetadata() {
+    for (const missing of ['renderer', 'surfaceProfile', 'topology']) {
+      yield* withCreatedFixture(createFixture(true))(
+        Effect.fn(function* absentApiOnlyMetadata(root) {
+          if (missing === 'topology') {
+            yield* Effect.promise(() => writeFile(path.join(root, TOPOLOGY_PATH), '{}\n', 'utf-8'));
+          } else {
+            const entry = {
+              deliveryUnit: { buildMarker: PROPERTY_BUILD_MARKER },
+              domain: 'property',
+              id: APP_ID,
+              kind: 'vertical',
+              package: PROPERTY_PACKAGE_NAME,
+              path: PROPERTY_DIRECTORY,
+              renderer: 'none',
+              surfaceProfile: 'api-only',
+            };
+            const { renderer: _renderer, surfaceProfile: _surfaceProfile, ...identity } = entry;
+            const incomplete =
+              missing === 'renderer'
+                ? { ...identity, surfaceProfile: entry.surfaceProfile }
+                : { ...identity, renderer: entry.renderer };
+            yield* write(root, TOPOLOGY_PATH, json({ verticals: [incomplete] }));
+          }
+          const before = yield* snapshotTree(root, ['node_modules']);
+          yield* expectFailure(scaffold(root), (error) => expect(String(error)).toMatch(/ScaffoldingError/u));
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        }),
+      );
+    }
+    yield* withCreatedFixture(createFixture(true))(
+      Effect.fn(function* wrongApiOnlyPackage(root) {
+        yield* patchOwnerFixtureJson(root, PROPERTY_PACKAGE_PATH, (value) => ({ ...value, name: '@app/forged-owner' }));
+        const before = yield* snapshotTree(root, ['node_modules']);
+        yield* expectFailure(scaffold(root), (error) => expect(String(error)).toMatch(/package name must/u));
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'API-only owner prerequisites, duplicate topology and generated identity markers fail closed',
+  Effect.fn(function* apiOnlyOwnerPrerequisites() {
+    yield* withCreatedFixture(createFixture(true))(
+      Effect.fn(function* apiOnlyOwnerPrerequisiteFixture(root) {
+        const beforeOwner = yield* snapshotTree(root, ['node_modules']);
+        yield* expectFailure(
+          runScaffoldEffect('resource', [VERTICAL_FLAG, APP_ID, '--resource', 'selection'], {
+            workspaceRoot: root,
+          }).pipe(Effect.provide(NodeServices.layer)),
+          (error) => expect(String(error)).toMatch(/requires scaffold:module-contract/u),
+        );
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeOwner);
+        yield* scaffold(root);
+        const beforeDuplicate = yield* snapshotTree(root, ['node_modules']);
+        yield* expectFailure(scaffold(root, DOCUMENTS_APP_ID, MODULE_ID), (error) =>
+          expect(String(error)).toMatch(/duplicate OntOS module ID/u),
+        );
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeDuplicate);
+        const manifest = beforeDuplicate[PROPERTY_MANIFEST_PATH] ?? '';
+        yield* write(
+          root,
+          PROPERTY_MANIFEST_PATH,
+          manifest.replace('@ontos-deployment-app-id property-registry', '@ontos-deployment-app-id forged-owner'),
+        );
+        const beforeMarker = yield* snapshotTree(root, ['node_modules']);
+        yield* expectFailure(
+          runScaffoldEffect('resource', [VERTICAL_FLAG, APP_ID, '--resource', 'selection'], {
+            workspaceRoot: root,
+          }).pipe(Effect.provide(NodeServices.layer)),
+          (error) => expect(String(error)).toMatch(/identity markers are inconsistent/u),
+        );
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeMarker);
+      }),
+    );
+    yield* withCreatedFixture(createFixture(true))(
+      Effect.fn(function* duplicateApiOnlyTopology(root) {
+        yield* patchOwnerFixtureJson(root, TOPOLOGY_PATH, (value) => ({
+          ...value,
+          verticals: [{ id: APP_ID }, { id: APP_ID }],
+        }));
+        const before = yield* snapshotTree(root, ['node_modules']);
+        yield* expectFailure(scaffold(root), (error) =>
+          expect(String(error)).toMatch(/duplicate generated topology appId/u),
+        );
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
       }),
     );
   }),

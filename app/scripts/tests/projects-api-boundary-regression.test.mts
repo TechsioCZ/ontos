@@ -24,8 +24,7 @@ const readSources = (directory: string, sources = new Map<string, string>()) => 
 it('distinguishes archive from unarchive handlers while rejecting missing or duplicated publication', () => {
   const sources = readSources(owner);
   const entry = sources.get(handler) ?? '';
-  const archive = '  archiveProjectActionApiLive,';
-  expect(entry).toContain(archive);
+  const archive = 'archiveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),';
   expect(hasCompleteGeneratedModuleApiSeam(sources, `${owner}/shared/api.ts`)).toBe(true);
   for (const replacement of ['', `${archive}\n  ${archive}`]) {
     const invalid = new Map([...sources, [handler, entry.replace(archive, replacement)]]);

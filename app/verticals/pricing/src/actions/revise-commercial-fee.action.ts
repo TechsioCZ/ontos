@@ -387,7 +387,7 @@ export const reviseCommercialFeeAction = defineAction(
         { concurrency: 3 },
       );
       return {
-        loadCurrencySupport: currencySupport.loadCurrent,
+        loadCurrencySupport: currencySupport.loadForCanonicalAdmission,
         revise: persistence.revise,
         validateCatalogTarget: catalogTarget.validate,
       } satisfies ReviseCommercialFeeActionServices;

@@ -29,6 +29,10 @@ import {
 } from '../../shared/actions/manage-quotation.ts';
 import type { ManageQuotationPayload } from '../../shared/actions/manage-quotation.ts';
 import { currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment } from '../integrations/customer-context-subject-authority.ts';
+import {
+  isOrderFinalizationPricingContext,
+  verifyFinalCartQuotationRequest,
+} from '../integrations/order-finalization-owner-gateways.ts';
 import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope } from '../integrations/current-pricing-decision-owner-final-fence.ts';
 import { currentPricingDecisionWholeEvaluationForScope } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
 import type { PricingOwnerMaterialEvidenceFenceGateway } from '../integrations/material-evidence-owner-final-fence.ts';
@@ -111,6 +115,7 @@ export interface ManageQuotationActionServices {
   readonly lookupInvocation: QuotationPersistence['lookupInvocation'];
   readonly resolveFresh: ManageQuotationFreshCurrentResolver;
   readonly store: QuotationPersistence['store'];
+  readonly verifyFinalCandidate?: (payload: ManageQuotationPayload) => Effect.Effect<void, ManageQuotationUnavailable>;
 }
 
 const sameDecision = Schema.toEquivalence(PricingDecisionSchema);
@@ -214,7 +219,7 @@ const freshRequestMatchesTrustedScope = (
   input.currentDecision.decision.commercialScope.sellingLegalEntityId === scope.legalEntityId &&
   input.currentDecision.decision.operationTime === operationTime;
 
-const makeFreshCurrentResolver = (
+export const makeFreshCurrentResolver = (
   dependencies: FreshCurrentResolverDependencies,
 ): ManageQuotationFreshCurrentResolver => {
   const { evaluationFactory, pricingOwnerFinalFence, scope, source, subjectAuthority } = dependencies;
@@ -252,7 +257,12 @@ const makeFreshCurrentResolver = (
       verifiedAuthority.evidence.subjectAuthority.kind !== subject.kind ||
       (subject.kind === 'PROFILE' &&
         (verifiedAuthority.evidence.subjectAuthority.kind !== 'PROFILE' ||
-          verifiedAuthority.evidence.subjectAuthority.actorPrincipalId !== scope.principalId))
+          verifiedAuthority.evidence.subjectAuthority.actorPrincipalId !==
+            ((isOrderFinalizationPricingContext(input.currentDecision.decision.purchasingContext.contextRef) ||
+              /^ccc:preproposal:[a-f0-9-]{36}$/u.test(input.currentDecision.decision.purchasingContext.contextRef)) &&
+            input.currentDecision.decision.purchasingContext.actor.kind === 'PRINCIPAL'
+              ? input.currentDecision.decision.purchasingContext.actor.principalId
+              : scope.principalId)))
     ) {
       return yield* scopeMismatch('Customer Context subject authority does not belong to the trusted actor');
     }
@@ -400,10 +410,12 @@ const sameQuotationBinding = Schema.toEquivalence(PricingQuotationBindingSchema)
  */
 const issueCanonicalQuotation = (request: PricingQuotationIssuanceRequest, trusted: ManageQuotationTrustedContext) => {
   const operationTime = DateTime.formatIso(DateTime.makeUnsafe(trusted.trustedOperationAt));
+  // The Quotation is issued at the instant its fresh material evidence was validated, never before it.
+  const issuanceInstant = request.materialEvidence.validatedAt;
   return makePricingQuotationIssuanceService(
     {
       issueReference: ({ candidateRef, issuedAt, tenantId }) =>
-        candidateRef === request.binding.candidateRef && issuedAt === operationTime && tenantId === trusted.tenantId
+        candidateRef === request.binding.candidateRef && issuedAt === issuanceInstant && tenantId === trusted.tenantId
           ? Effect.succeed(`pricing:quotation:${trusted.actionInvocationId}`)
           : Effect.fail(
               new PricingQuotationIssuanceUnavailable({
@@ -414,7 +426,7 @@ const issueCanonicalQuotation = (request: PricingQuotationIssuanceRequest, trust
       selectValidity: ({ binding, quotedResult, validFrom }) =>
         sameQuotationBinding(binding, request.binding) &&
         sameDecision(quotedResult.decision, request.currentResult.commercialTotal.decision) &&
-        validFrom === operationTime
+        validFrom === issuanceInstant
           ? Effect.succeed({
               durationMilliseconds: QUOTATION_VALIDITY_DURATION_MILLISECONDS,
               policyEvidence: {
@@ -425,11 +437,11 @@ const issueCanonicalQuotation = (request: PricingQuotationIssuanceRequest, trust
             })
           : Effect.fail(new PricingQuotationIssuanceRejected({ reason: 'INVALID_VALIDITY_POLICY' })),
       verifyIssuanceAuthority: ({ binding, operationTime: verifiedAt }) =>
-        sameQuotationBinding(binding, request.binding) && verifiedAt === operationTime
+        sameQuotationBinding(binding, request.binding) && verifiedAt === issuanceInstant
           ? Effect.void
           : Effect.fail(new PricingQuotationIssuanceRejected({ reason: 'AUTHORITY_BINDING_REJECTED' })),
     },
-    { readOperationTime: Effect.succeed(operationTime) },
+    { readIssuanceTime: Effect.succeed(issuanceInstant), readOperationTime: Effect.succeed(operationTime) },
   ).issue(request);
 };
 
@@ -476,6 +488,12 @@ export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')
   }
 
   const fingerprint = yield* commandFingerprint(payload);
+  if (isOrderFinalizationPricingContext(payload.currentDecision.decision.purchasingContext.contextRef)) {
+    if (services.verifyFinalCandidate === undefined) {
+      return yield* currentAuthorityUnavailable('Final Cart authority is not installed');
+    }
+    yield* services.verifyFinalCandidate(payload);
+  }
   const prior = yield* services.lookupInvocation(trusted.actionInvocationId);
   if (Option.isSome(prior)) {
     if (prior.value.commandFingerprint !== fingerprint) {
@@ -513,8 +531,8 @@ export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')
     quotation.binding.candidateRef !== payload.candidateRef ||
     quotation.binding.tenantId !== trusted.tenantId ||
     quotation.binding.commercialScope.sellingLegalEntityId !== trusted.legalEntityId ||
-    quotation.issuedAt !== operationTime ||
-    quotation.validity.validFrom !== operationTime ||
+    quotation.issuedAt !== issuanceRequest.materialEvidence.validatedAt ||
+    quotation.validity.validFrom !== issuanceRequest.materialEvidence.validatedAt ||
     !sameDecision(quotation.quotedResult.decision, currentDecision.decision) ||
     !quotationSubjectMatchesRequest(currentDecision, quotation.binding)
   ) {
@@ -619,6 +637,13 @@ export const manageQuotationAction = defineAction(
         lookupInvocation: persistence.lookupInvocation,
         resolveFresh: currentAuthority,
         store: persistence.store,
+        verifyFinalCandidate: (payload: ManageQuotationPayload) =>
+          verifyFinalCartQuotationRequest(payload, scope, compositionRevision).pipe(
+            Effect.asVoid,
+            Effect.mapError((cause) =>
+              currentAuthorityUnavailable('Final Cart authority could not be verified', cause),
+            ),
+          ),
       })),
     );
   },

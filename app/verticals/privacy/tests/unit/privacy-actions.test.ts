@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { RecordNoticeProvisionPayloadSchema } from '../../shared/actions/record-notice-provision.ts';
@@ -131,6 +132,73 @@ const rejectedNoticeAuthority: NoticeChannelDeliveryAuthorityService = {
 };
 
 describe('Privacy Actions', () => {
+  it.effect('allows ended V1 withdrawal to reach retained-basis persistence without allowing a new grant', () =>
+    Effect.gen(function* endedPurposeActionAdmission() {
+      yield* TestClock.setTime(Date.parse('2026-03-01T00:00:00.000Z'));
+      const purposes = yield* makeInMemoryProcessingPurposeRepository();
+      const original = yield* purposes.create(tenantId, legalEntityId, actionInvocationId, {
+        businessCode: 'RETAINED_WITHDRAWAL',
+        effectiveFrom: '2026-01-01T00:00:00Z',
+        governanceOwnerId: scope.principalId,
+        meaning: 'Original retained Consent meaning',
+      });
+      const version = Option.getOrThrow(Option.fromUndefinedOr(original.versions[0]));
+      const retained = { ...original, versions: [{ ...version, effectiveTo: '2026-02-01T00:00:00Z' }] };
+      for (const kind of ['WITHDRAWN', 'GRANTED', 'REFUSED'] as const) {
+        const collector = createActionCollector(
+          recordConsentDecisionAction.descriptor.domainEvents,
+          'privacy.core',
+          recordConsentDecisionAction.descriptor.accessEvidencePolicy,
+          recordConsentDecisionAction.descriptor.auditEvidenceSchema,
+        );
+        const result = yield* Effect.exit(
+          handleRecordConsentDecision(
+            {
+              decision: {
+                actorEvidence: null,
+                decision: kind,
+                decisionId: `ended:${kind}`,
+                effectiveAt: '2026-03-01T00:00:00.000Z',
+                flowEvidenceRefs: [],
+                noticeEvidenceRefs: ['notice:retained'],
+                provenanceRefs: ['choice:retained'],
+                recordedAt: '2026-03-01T00:00:00.000Z',
+                scope: {
+                  controllerRef: 'controller:retained',
+                  materialDimensions: [],
+                  privacySubjectRef: {
+                    moduleId: 'privacy.core',
+                    resourceId: 'subject:retained',
+                    resourceType: 'privacy.core.privacy-subject',
+                    tenantId,
+                  },
+                  processingPurposeRef: original.purposeRef,
+                  purposeMeaning: version.meaning,
+                  purposeVersionRef: version.versionId,
+                  scopeRef: 'scope:retained',
+                },
+              },
+            },
+            {
+              actionInvocationId,
+              addDomainEvent: collector.addDomainEvent,
+              addOutboxMessage: collector.addOutboxMessage,
+              compositionRevision: 'test-composition',
+              recordAuditEvidence: collector.recordAuditEvidence,
+              recordDataAccess: collector.recordDataAccess,
+              scope,
+              services: {
+                get: () => Effect.succeed(Option.some(retained)),
+                recordConsentDecision: (_tenant, _legal, _invocation, value) => Effect.succeed(value),
+              },
+            },
+          ),
+        );
+        expect(Exit.isSuccess(result)).toBe(kind === 'WITHDRAWN');
+      }
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.effect('rejects applicability authority from another tenant before resolving caller references', () =>
     Effect.gen(function* rejectsForeignApplicabilityAuthority() {
       const foreignTenantId = '00000000-0000-4000-8000-000000000099';

@@ -8,7 +8,7 @@ import {
   SHARED_RUNTIME_IDENTITY,
   acceptPersonInvitationFromTransaction,
   configureDatabasePool,
-  verifyDatabaseSessionRole,
+  verifySessionRoleOnFirstUse,
 } from '@app/core-runtime';
 import type { RuntimeDatabaseConfigValue } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
@@ -46,11 +46,12 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
     Effect.mapError(mapPoolConfigurationError),
   );
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make(poolConfiguration).pipe(
+  const pool = yield* PgClient.make(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );
-  yield* verifyDatabaseSessionRole(client, configuration.expectedRole).pipe(Effect.mapError(connectionFailure));
+  // Building the authentication database opens no connection; the first use confirms the enrolled session role.
+  const client = verifySessionRoleOnFirstUse(pool, configuration.expectedRole);
   const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
     Effect.provideService(PgClient.PgClient, client),
   );

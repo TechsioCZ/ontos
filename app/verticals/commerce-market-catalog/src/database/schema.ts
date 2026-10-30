@@ -1,18 +1,6 @@
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import {
-  check,
-  foreignKey,
-  index,
-  integer,
-  jsonb,
-  pgSchema,
-  primaryKey,
-  text,
-  timestamp,
-  unique,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
 
 export const COMMERCE_MARKET_CATALOG_SCHEMA_NAME = 'commerce_market_catalog';
@@ -29,18 +17,19 @@ export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
 
 export const commerceMarketCatalogSchema = pgSchema(COMMERCE_MARKET_CATALOG_SCHEMA_NAME);
 
-// Replay evidence is consumed before tenant/business scope is installed.
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
 export const gatewayAssertionRedemptions = commerceMarketCatalogSchema.table(
   'gateway_assertion_redemptions',
   {
     audience: text('audience').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     issuer: text('issuer').notNull(),
-    jti: text('jti').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
-    index('commerce_market_catalog_redemption_expiry').on(table.expiresAt),
+    unique('market_catalog_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('market_catalog_gateway_redemptions_expiry_idx').on(table.expiresAt),
   ],
 );
 
@@ -282,7 +271,6 @@ export const COMMERCE_MARKET_CATALOG_TABLES = [
 ] as const;
 
 const commerceMarketCatalogDatabaseSchema = {
-  gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,

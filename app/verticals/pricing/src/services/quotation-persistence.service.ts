@@ -3,7 +3,7 @@ import { defineScopedRoutine } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { PricingQuotationIssuedSchema } from '@app/pricing-contracts/domain/quotation';
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { QuotationActionInvocationIdSchema } from '../../shared/actions/manage-quotation.ts';
 
 const scopeParameters = [
@@ -47,13 +47,16 @@ export const lookupPricingQuotationInvocationRoutine = defineScopedRoutine({
   schema: 'pricing',
 });
 
+// The routines exchange JSON, so retained evidence such as Tier observation instants travels as ISO text.
+const quotationJsonCodec = Schema.toCodecJson(PricingQuotationIssuedSchema);
+const encodeQuotationJson = Schema.encodeEffect(quotationJsonCodec);
 const storedOutcomeSchema = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal('STORED'), quotation: Schema.toType(PricingQuotationIssuedSchema) }),
-  Schema.Struct({ outcome: Schema.Literal('REUSED'), quotation: Schema.toType(PricingQuotationIssuedSchema) }),
+  Schema.Struct({ outcome: Schema.Literal('STORED'), quotation: quotationJsonCodec }),
+  Schema.Struct({ outcome: Schema.Literal('REUSED'), quotation: quotationJsonCodec }),
   Schema.Struct({ outcome: Schema.Literal('IDENTITY_CONFLICT') }),
 ]);
 const readOutcomeSchema = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal('FOUND'), quotation: Schema.toType(PricingQuotationIssuedSchema) }),
+  Schema.Struct({ outcome: Schema.Literal('FOUND'), quotation: quotationJsonCodec }),
   Schema.Struct({ outcome: Schema.Literal('NOT_FOUND'), quotationRef: Schema.String }),
 ]);
 const lookupOutcomeSchema = Schema.Union([
@@ -61,7 +64,7 @@ const lookupOutcomeSchema = Schema.Union([
     actionInvocationId: QuotationActionInvocationIdSchema,
     commandFingerprint: Schema.String,
     outcome: Schema.Literal('FOUND'),
-    quotation: Schema.toType(PricingQuotationIssuedSchema),
+    quotation: quotationJsonCodec,
   }),
   Schema.Struct({ actionInvocationId: QuotationActionInvocationIdSchema, outcome: Schema.Literal('NOT_FOUND') }),
 ]);
@@ -152,29 +155,39 @@ export const quotationPersistenceForScope = (
         }),
       ),
     store: (command) =>
-      transaction
-        .invoke(persistPricingQuotationRoutine, [
-          scope.principalId,
-          command.actionInvocationId,
-          command.commandFingerprint,
-          command.quotation,
-        ])
-        .pipe(
-          Effect.mapError((cause: ScopedRoutineInvocationError) =>
-            unavailable('Quotation storage could not be verified', cause),
-          ),
-          Effect.flatMap((rows) => decodeOne(storedOutcomeSchema, rows)),
-          Effect.flatMap(
-            (
-              outcome,
-            ): Effect.Effect<PricingQuotationIssued, QuotationIdentityConflict | QuotationPersistenceUnavailable> => {
-              if (outcome.outcome === 'IDENTITY_CONFLICT') {
-                return Effect.fail(new QuotationIdentityConflict({ code: 'quotation_identity_conflict' }));
-              }
-              return sameQuotation(outcome.quotation, command.quotation)
-                ? Effect.succeed(outcome.quotation)
-                : Effect.fail(unavailable('Stored Quotation did not preserve the exact immutable issued terms'));
-            },
-          ),
+      encodeQuotationJson(command.quotation).pipe(
+        Effect.mapError((cause) => unavailable('Quotation could not be encoded for storage', cause)),
+        Effect.flatMap((encodedQuotation) =>
+          Predicate.isObject(encodedQuotation)
+            ? Effect.succeed(encodedQuotation)
+            : Effect.fail(unavailable('Quotation could not be encoded for storage')),
         ),
+        Effect.flatMap((encodedQuotation) =>
+          transaction
+            .invoke(persistPricingQuotationRoutine, [
+              scope.principalId,
+              command.actionInvocationId,
+              command.commandFingerprint,
+              encodedQuotation,
+            ])
+            .pipe(
+              Effect.mapError((cause: ScopedRoutineInvocationError) =>
+                unavailable('Quotation storage could not be verified', cause),
+              ),
+            ),
+        ),
+        Effect.flatMap((rows) => decodeOne(storedOutcomeSchema, rows)),
+        Effect.flatMap(
+          (
+            outcome,
+          ): Effect.Effect<PricingQuotationIssued, QuotationIdentityConflict | QuotationPersistenceUnavailable> => {
+            if (outcome.outcome === 'IDENTITY_CONFLICT') {
+              return Effect.fail(new QuotationIdentityConflict({ code: 'quotation_identity_conflict' }));
+            }
+            return sameQuotation(outcome.quotation, command.quotation)
+              ? Effect.succeed(outcome.quotation)
+              : Effect.fail(unavailable('Stored Quotation did not preserve the exact immutable issued terms'));
+          },
+        ),
+      ),
   });

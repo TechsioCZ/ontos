@@ -26,9 +26,9 @@
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
-    "@effect/opentelemetry": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
+    "@effect/opentelemetry": "4.0.7",
+    "@effect/platform-node": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -45,13 +45,13 @@
     "@tanstack/react-router": "1.170.39",
     "@techsio/ui-kit": "0.25.1",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.5",
+    "effect": "4.0.7",
     "i18next": "26.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.53.1",
+    "@effect/tsgo": "0.63.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
@@ -66,7 +66,8 @@
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

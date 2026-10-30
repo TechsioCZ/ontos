@@ -3,11 +3,12 @@ import type {
   OperationalScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
+  ScopedRoutineInvocationError,
   ScopedRoutineInvoker,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
 import type { OwnerVerifiableSetCompletenessEvidenceEncoded } from '@app/shared-contracts';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 
 import {
   CommerceQuantityRuleAssignmentSchema,
@@ -191,6 +192,37 @@ const loadCommerceQuantityRuleAssignmentsRoutine = defineScopedRoutine({
   routineKey: 'customer-commerce-policy.load-commerce-quantity-rule-assignments',
   schema: ROUTINE_SCHEMA,
 });
+const inspectCommerceQuantityAssignmentProfileRoutine = defineScopedRoutine({
+  name: 'inspect_commerce_quantity_assignment_profile',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [...loadParameters, { source: 'input', type: 'text' }, { source: 'input', type: 'text' }],
+  resultSchema: RoutineResultSchema,
+  routineKey: 'customer-commerce-policy.inspect-commerce-quantity-assignment-profile',
+  schema: ROUTINE_SCHEMA,
+});
+const QuantityAssignmentProfileInspectionSchema = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literals(['VERIFIED', 'PROFILE_NOT_FOUND', 'PROFILE_KIND_MISMATCH']) }),
+  Schema.Struct({
+    outcome: Schema.Literal('PROFILE_UNVERIFIABLE'),
+    reason: Schema.Literals(['PROFILE_BUSY', 'RECONCILIATION_REQUIRED', 'COMPLETED_ALIAS', 'OWNER_RESPONSE_INVALID']),
+  }),
+]);
+const quantityAssignmentProfileUnavailableReason = {
+  COMPLETED_ALIAS:
+    'Commerce Quantity assignment profile is a completed alias and cannot be verified as the referenced identity',
+  OWNER_RESPONSE_INVALID: 'Commerce Quantity assignment profile owner response cannot be verified',
+  PROFILE_BUSY: 'Commerce Quantity assignment profile is busy; retry its owner verification',
+  RECONCILIATION_REQUIRED: 'Commerce Quantity assignment profile requires owner reconciliation',
+} as const;
+const brokenQuantityAssignmentProfile = (kindMismatch: boolean) =>
+  new CustomerCommercePolicyAdministrationRejected({
+    code: 'BROKEN_ASSIGNMENT',
+    reason: kindMismatch
+      ? 'Commerce Quantity assignment profile has a different owner kind'
+      : 'Commerce Quantity assignment profile does not exist in its owner scope',
+    retryable: false,
+  });
+
 const persistCommerceQuantityRuleAssignmentsRoutine = defineScopedRoutine({
   name: 'persist_commerce_quantity_rule_assignments',
   ownerModuleKey: MODULE_KEY,
@@ -209,6 +241,36 @@ const persistenceUnavailable = (reason: string, cause?: unknown) => {
   return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
 };
 
+const nativeQuantityAssignmentProfileFailure = (failure: ScopedRoutineInvocationError) => {
+  // Core owns driver decoding. Only this owner's exact guarded write may classify its named
+  // constraints; foreign, unknown and malformed failures retain infrastructure unavailability.
+  if (
+    failure.code !== 'scoped_routine_invocation_failed' ||
+    failure.ownerModuleKey !== MODULE_KEY ||
+    failure.routineKey !== persistCommerceQuantityRuleAssignmentsRoutine.routineKey
+  ) {
+    return null;
+  }
+  const constraint = Option.getOrUndefined(failure.constraint);
+  if (constraint === 'ccc_quantity_assignment_profile_not_found') {
+    return brokenQuantityAssignmentProfile(false);
+  }
+  if (constraint === 'ccc_quantity_assignment_profile_kind_mismatch') {
+    return brokenQuantityAssignmentProfile(true);
+  }
+  for (const [reason, name] of [
+    ['PROFILE_BUSY', 'ccc_quantity_assignment_profile_busy'],
+    ['RECONCILIATION_REQUIRED', 'ccc_quantity_assignment_profile_reconciliation'],
+    ['COMPLETED_ALIAS', 'ccc_quantity_assignment_profile_alias'],
+    ['OWNER_RESPONSE_INVALID', 'ccc_quantity_assignment_profile_response'],
+  ] as const) {
+    if (constraint === name) {
+      return persistenceUnavailable(quantityAssignmentProfileUnavailableReason[reason], failure);
+    }
+  }
+  return null;
+};
+
 const invokeJson = <Result, const Parameters extends readonly ScopedRoutineParameter[]>(
   transaction: ScopedRoutineInvoker,
   routine: ScopedRoutineDefinition<typeof RoutineResultSchema, Parameters>,
@@ -216,8 +278,12 @@ const invokeJson = <Result, const Parameters extends readonly ScopedRoutineParam
   resultSchema: Schema.Decoder<Result>,
 ): Effect.Effect<Result, CustomerCommercePolicyAdministrationRejected> =>
   transaction.invoke(routine, values).pipe(
-    Effect.mapError((cause) =>
-      persistenceUnavailable(`Customer Commerce Policy routine failed (${routine.routineKey})`, cause),
+    Effect.mapError(
+      (cause) =>
+        (routine.name === 'persist_commerce_quantity_rule_assignments'
+          ? nativeQuantityAssignmentProfileFailure(cause)
+          : undefined) ??
+        persistenceUnavailable(`Customer Commerce Policy routine failed (${routine.routineKey})`, cause),
     ),
     Effect.flatMap((rows) => {
       const [row] = rows;
@@ -332,6 +398,9 @@ export interface CustomerCommercePolicyRepository {
       readonly state: CustomerCommercePolicySet<PurchaseCurrencyPolicyRevision>;
     }>,
   ) => Effect.Effect<void, CustomerCommercePolicyAdministrationRejected>;
+  readonly verifyCommerceQuantityAssignmentProfile: (
+    profile: CommerceQuantityAssignmentSet['assignments'][number]['profile'],
+  ) => Effect.Effect<void, CustomerCommercePolicyAdministrationRejected>;
 }
 
 export const customerCommercePolicyRepositoryForScope = (
@@ -398,5 +467,24 @@ export const customerCommercePolicyRepositoryForScope = (
       persist(persistPaymentTermPolicyStateRoutine, expectedGeneration, value),
     persistPurchaseCurrencyPolicyState: (expectedGeneration, value) =>
       persist(persistPurchaseCurrencyPolicyStateRoutine, expectedGeneration, value),
+    verifyCommerceQuantityAssignmentProfile: (profile) =>
+      invokeJson(
+        transaction,
+        inspectCommerceQuantityAssignmentProfileRoutine,
+        [profile.kind, profile.profileRef.resourceId],
+        QuantityAssignmentProfileInspectionSchema,
+      ).pipe(
+        Effect.flatMap((inspection) => {
+          if ('reason' in inspection) {
+            return Effect.fail(persistenceUnavailable(quantityAssignmentProfileUnavailableReason[inspection.reason]));
+          }
+          return Match.value(inspection.outcome).pipe(
+            Match.when('VERIFIED', () => Effect.void),
+            Match.when('PROFILE_NOT_FOUND', () => Effect.fail(brokenQuantityAssignmentProfile(false))),
+            Match.when('PROFILE_KIND_MISMATCH', () => Effect.fail(brokenQuantityAssignmentProfile(true))),
+            Match.exhaustive,
+          );
+        }),
+      ),
   });
 };

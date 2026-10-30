@@ -80,10 +80,15 @@ export const resolveAuthorizedLegalEntities = Effect.fn('LegalEntitySelection.re
         tenantId: input.tenantId,
       })
       .pipe(observeGatewayPhase('legal-entity-spicedb'));
-    if (decisions.length !== candidates.length || decisions.some(({ decision }) => decision === 'unavailable')) {
+    const byId = new Map(candidates.map((candidate) => [candidate.legalEntityId, candidate]));
+    if (
+      byId.size !== candidates.length ||
+      decisions.length !== candidates.length ||
+      new Set(decisions.map(({ key }) => key)).size !== candidates.length ||
+      decisions.some(({ decision, key }) => decision === 'unavailable' || !byId.has(key))
+    ) {
       return yield* new LegalEntitySelectionUnavailableErrorValue();
     }
-    const byId = new Map(candidates.map((candidate) => [candidate.legalEntityId, candidate]));
     const available = decisions.flatMap(({ decision, key }) => {
       const candidate = byId.get(key);
       return decision === 'allowed' && candidate !== undefined ? [candidate] : [];

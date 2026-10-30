@@ -2,19 +2,12 @@
   "name": "@app/shell-super-app",
   "version": "0.1.0",
   "private": true,
-  "imports": {
-    "#auth-configuration-provider": {
-      "workerd": "./api/auth/configuration-provider.workerd.ts",
-      "default": "./api/auth/configuration-provider.node.ts"
-    },
-    "#ssr-bff-fetch": {
-      "workerd": "./src/routes/ssr-bff-fetch.workerd.ts",
-      "default": "./src/routes/ssr-bff-fetch.ts"
-    }
-  },
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/auth-client.ts",
+    "./testing/api-key-gateway-native": "./tests/fixtures/api-key-gateway-native.ts",
+    "./testing/tenant-party-shell-http": "./tests/support/tenant-party-shell-http.ts",
+    "./testing/api-key-gateway-native-child": "./tests/support/api-key-gateway-native-child.ts",
     "./outbox-worker-host": "./src/entry.core-system-worker.ts"
   },
   "scripts": {
@@ -32,20 +25,14 @@
     "test:unit": "rstest --project unit"
   },
   "dependencies": {
-    "@app/admin-ui": "workspace:*",
     "@app/better-auth-effect-drizzle": "workspace:*",
     "@app/core-runtime": "workspace:*",
-    "@app/email-delivery": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.12",
-    "@better-auth/cimd": "1.7.12",
-    "@better-auth/mcp": "1.7.12",
-    "@better-auth/oauth-provider": "1.7.12",
-    "@effect/opentelemetry": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
-    "@modelcontextprotocol/server": "2.3.1",
+    "@effect/opentelemetry": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/boundary-debugger": "catalog:ultramodern",
@@ -64,17 +51,22 @@
     "@techsio/ui-kit": "catalog:",
     "better-auth": "1.7.12",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.5",
+    "effect": "4.0.7",
     "i18next": "26.4.2",
     "jose": "6.2.5",
     "react": "19.3.1",
     "react-dom": "19.3.1",
+    "@app/admin-ui": "workspace:*",
+    "@app/email-delivery": "workspace:*",
+    "@better-auth/cimd": "1.7.12",
+    "@better-auth/mcp": "1.7.12",
+    "@better-auth/oauth-provider": "1.7.12",
+    "@modelcontextprotocol/server": "2.3.1",
     "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
-    "@effect/platform-node": "4.0.5",
-    "@modelcontextprotocol/client": "2.3.1",
+    "@effect/platform-node": "4.0.7",
     "@modern-js/adapter-rstest": "catalog:ultramodern",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
@@ -92,15 +84,26 @@
     "bun-types": "1.4.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
-    "happy-dom": "20.8.3",
-    "pg": "8.22.0",
+    "happy-dom": "21.0.4",
     "tailwindcss": "^4.3.3",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "pg": "8.22.0",
+    "@modelcontextprotocol/client": "2.3.1"
   },
   "modernjs": {
     "preset": "presetUltramodern",
     "role": "shell",
     "appId": "shell-super-app",
     "topology": "../../topology/reference-topology.json"
+  },
+  "imports": {
+    "#auth-configuration-provider": {
+      "workerd": "./api/auth/configuration-provider.workerd.ts",
+      "default": "./api/auth/configuration-provider.node.ts"
+    },
+    "#ssr-bff-fetch": {
+      "workerd": "./src/routes/ssr-bff-fetch.workerd.ts",
+      "default": "./src/routes/ssr-bff-fetch.ts"
+    }
   }
 }

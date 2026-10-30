@@ -1,3 +1,4 @@
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -45,7 +46,7 @@ const catalog = {
   divisible: false,
   equivalentSelectionKey: 'catalog-selection:selection-a',
   evidence: {
-    assessedAt: ownerObservedAt,
+    assessedAt: effectiveAt,
     basis: [
       { role: 'PRODUCT' as const, source: { resourceRef: productRef, revision: 1 } },
       { role: 'VARIANT' as const, source: { resourceRef: variantRef, revision: 2 } },
@@ -57,7 +58,7 @@ const catalog = {
     ],
     membership: {
       attestationId: '99999999-9999-4999-8999-999999999999',
-      observedAt: ownerObservedAt,
+      observedAt: effectiveAt,
       productRef,
       source: 'CATALOG_OWNER_CURRENT_READ' as const,
       variant: { resourceRef: variantRef, revision: 2 },
@@ -65,6 +66,7 @@ const catalog = {
     purpose: 'PRICING',
     selection,
     status: 'VALID',
+    validUntil: '2026-09-28T11:00:00.000Z',
   },
   hierarchyRevision: 'catalog-hierarchy:9',
   ownerRevision: 'opaque:commerce.catalog:set-revision',
@@ -259,7 +261,7 @@ const compatibilityPredicate = {
 const compatibilityResponse = {
   completeness: catalog.completeness,
   currentness: {
-    observedAt: catalog.evidence.assessedAt,
+    observedAt: ownerObservedAt,
     ownerRevision: catalog.ownerRevision,
     status: 'CURRENT' as const,
     validUntil: catalog.completeness.nextApplicabilityBoundary,
@@ -267,9 +269,9 @@ const compatibilityResponse = {
   currentnessEvidence: {
     effectiveAt: compatibilityRequest.effectiveAt,
     generation: catalog.ownerRevision,
-    observedAt: catalog.evidence.assessedAt,
+    observedAt: ownerObservedAt,
     predicateRef: catalog.completeness.scope.predicateRef,
-    revalidatedAt: catalog.evidence.assessedAt,
+    revalidatedAt: ownerObservedAt,
     validUntil: catalog.completeness.nextApplicabilityBoundary,
     verificationMode: 'OWNER_CURRENT_QUANTITY_REVALIDATED' as const,
   },
@@ -282,7 +284,7 @@ const compatibilityResponse = {
   equivalentSelectionKey: catalog.equivalentSelectionKey,
   generation: catalog.ownerRevision,
   hierarchyRevision: catalog.hierarchyRevision,
-  observedAt: catalog.evidence.assessedAt,
+  observedAt: ownerObservedAt,
   outcome: 'NO_CONVERSION_REQUIRED' as const,
   ownerModuleId: 'commerce.catalog' as const,
   ownerRevision: catalog.ownerRevision,
@@ -294,7 +296,7 @@ const compatibilityResponse = {
   source: 'CATALOG_OWNER_CURRENT_READ' as const,
   verificationReceipt: {
     generation: catalog.ownerRevision,
-    issuedAt: catalog.evidence.assessedAt,
+    issuedAt: ownerObservedAt,
     ownerModuleId: 'commerce.catalog' as const,
     ownerRevision: catalog.ownerRevision,
     predicate: compatibilityPredicate,
@@ -446,13 +448,91 @@ const purchaseAuthoritySource = {
     },
   },
 };
+const target = (handoff: typeof catalog) => ({
+  quantityBasis: handoff.quantityBasis,
+  requestedQuantity: handoff.quantity.requested,
+  selection: handoff.selection,
+});
+
+const equivalenceSourceFor = (
+  members: readonly { readonly catalog: typeof catalog; readonly occurrenceId: string }[],
+) => {
+  const [anchor] = members;
+  if (anchor === undefined) {
+    throw new Error('TEST fixture requires an anchor');
+  }
+  const sourceEvidence = verifiedSource('commerce.catalog', 'COMMERCIAL_CONTEXT', 'catalog:equivalence');
+
+  const generation = 'catalog:equivalence:generation';
+  const { predicateRef } = sourceEvidence.request.ownerScope;
+  const validThrough = sourceEvidence.completeness.temporal.nextMaterialBoundary;
+  return {
+    sourceEvidence,
+    verificationMaterial: {
+      kind: 'CATALOG_EQUIVALENCE_AUTHORITY' as const,
+      request: {
+        anchorSelection: anchor.catalog.selection,
+        effectiveAt,
+        members: members.map(({ catalog: handoff, occurrenceId }) => ({ handoff, occurrenceId })),
+      },
+      response: {
+        assessments: [
+          { handoff: anchor.catalog, role: 'ANCHOR' as const },
+          ...members.map(({ catalog: handoff, occurrenceId }) => ({ handoff, occurrenceId, role: 'MEMBER' as const })),
+        ],
+        currentness: { effectiveAt, observedAt: ownerObservedAt, status: 'CURRENT' as const, validThrough },
+        currentnessEvidence: {
+          effectiveAt,
+          generation,
+          observedAt: ownerObservedAt,
+          predicateRef,
+          revalidatedAt: ownerObservedAt,
+          validThrough,
+          verificationMode: 'OWNER_CURRENT_QUANTITY_REVALIDATED' as const,
+        },
+        evidence: {
+          anchorSelection: anchor.catalog.selection,
+          assessmentId: 'catalog:equivalence:assessment',
+          effectiveAt,
+          members: members.map(({ catalog: handoff, occurrenceId }) => ({
+            occurrenceId,
+            selection: handoff.selection,
+          })),
+          observedAt: ownerObservedAt,
+          ownerModuleId: 'commerce.catalog' as const,
+          ownerRevision: sourceEvidence.completeness.ownerSetRevisionRef,
+          purpose: 'PRICING' as const,
+          status: 'CONFIRMED' as const,
+          validThrough,
+        },
+        generation,
+        outcome: 'CATALOG_EQUIVALENCE_CONFIRMED' as const,
+        verificationReceipt: {
+          generation,
+          issuedAt: ownerObservedAt,
+          ownerModuleId: 'commerce.catalog' as const,
+          ownerRevision: sourceEvidence.completeness.ownerSetRevisionRef,
+          predicate: {
+            anchor: target(anchor.catalog),
+            effectiveAt,
+            members: members.map(({ catalog: handoff, occurrenceId }) => ({ ...target(handoff), occurrenceId })),
+            purpose: 'PRICING' as const,
+          },
+          predicateRef,
+          verificationRef: sourceEvidence.completeness.verification.verificationRef,
+        },
+      },
+    },
+  };
+};
+const equivalenceSource = equivalenceSourceFor([line]);
 const request = {
   candidateRef: 'candidate:a',
   decision,
   effectiveAt,
   evaluatedAt,
   requestedAt,
-  sources: [catalogSource, marketSource, priceSource, purchaseAuthoritySource],
+  sources: [catalogSource, marketSource, priceSource, equivalenceSource, purchaseAuthoritySource],
   subject: guestSubject,
 };
 
@@ -630,9 +710,10 @@ describe('Pricing owner material-evidence final-fence request', () => {
       onExcessProperty: 'error',
     });
     expect(decodeReceipt(discountOwnerReadReceipt)).toEqual(discountOwnerReadReceipt);
-    expect(decode({ ...request, sources: [discountSource, purchaseAuthoritySource] }).sources[0]).toEqual(
-      discountSource,
-    );
+    expect(
+      decode({ ...request, sources: [discountSource, catalogSource, equivalenceSource, purchaseAuthoritySource] })
+        .sources[0],
+    ).toEqual(discountSource);
 
     const { ownerReadReceipt: _receipt, ...withoutReceipt } = discountSource.verificationMaterial;
     expect(() =>
@@ -677,9 +758,10 @@ describe('Pricing owner material-evidence final-fence request', () => {
       },
     };
 
-    expect(decode({ ...request, sources: [emptyDiscountSource, purchaseAuthoritySource] }).sources[0]).toEqual(
-      emptyDiscountSource,
-    );
+    expect(
+      decode({ ...request, sources: [emptyDiscountSource, catalogSource, equivalenceSource, purchaseAuthoritySource] })
+        .sources[0],
+    ).toEqual(emptyDiscountSource);
     expect(() =>
       decode({
         ...request,
@@ -824,9 +906,208 @@ describe('Pricing owner material-evidence final-fence request', () => {
         effectiveAt,
         evaluatedAt,
         requestedAt,
-        sources: [eurPrice, purchaseAuthoritySource],
+        sources: [eurPrice, catalogSource, equivalenceSource, purchaseAuthoritySource],
         subject: request.subject,
       }).decision.currencyCode,
     ).toBe('EUR');
+  });
+});
+
+describe('complete Catalog whole-candidate coverage #1225', () => {
+  const secondLine = { ...line, occurrenceId: 'occurrence-b' };
+  const secondSource = {
+    ...catalogSource,
+    verificationMaterial: { ...catalogSource.verificationMaterial, line: secondLine },
+  };
+  const singletonA = equivalenceSourceFor([line]);
+  const singletonB = equivalenceSourceFor([secondLine]);
+  const wholeRequest = {
+    ...request,
+    decision: { ...decision, lines: [line, secondLine] },
+    sources: [catalogSource, secondSource, singletonA, singletonB, purchaseAuthoritySource],
+  };
+
+  it('retains ordered equal-valued occurrences even with identical genuine-shaped owner proof refs', () => {
+    expect(singletonA.sourceEvidence.completeness.verification.verificationRef).toBe(
+      singletonB.sourceEvidence.completeness.verification.verificationRef,
+    );
+    expect(decode(wholeRequest)).toEqual(wholeRequest);
+  });
+
+  it('retains the unchanged legacy complete-group representation', () => {
+    const legacy = {
+      ...wholeRequest,
+      sources: [catalogSource, secondSource, equivalenceSourceFor([line, secondLine]), purchaseAuthoritySource],
+    };
+    expect(decode(legacy)).toEqual(legacy);
+  });
+
+  it('rejects omitted, duplicated, reordered, foreign and mixed whole material', () => {
+    const foreign = equivalenceSourceFor([{ ...line, occurrenceId: 'foreign-occurrence' }]);
+    for (const sources of [
+      [catalogSource, secondSource, singletonA, purchaseAuthoritySource],
+      [catalogSource, secondSource, singletonA, singletonA, purchaseAuthoritySource],
+      [catalogSource, secondSource, singletonB, singletonA, purchaseAuthoritySource],
+      [catalogSource, secondSource, singletonA, foreign, purchaseAuthoritySource],
+      [catalogSource, secondSource, equivalenceSourceFor([line, secondLine]), singletonA, purchaseAuthoritySource],
+      [secondSource, catalogSource, singletonA, singletonB, purchaseAuthoritySource],
+      [catalogSource, singletonA, singletonB, purchaseAuthoritySource],
+      [purchaseAuthoritySource],
+    ]) {
+      expect(() => decode({ ...wholeRequest, sources })).toThrow();
+    }
+  });
+});
+
+it('accepts a later unchanged Catalog observation while preserving the original decision and request #1225', () => {
+  const freshHandoff = {
+    ...catalog,
+    evidence: {
+      ...catalog.evidence,
+      assessedAt: ownerObservedAt,
+      membership: {
+        ...catalog.evidence.membership,
+        attestationId: 'f3333333-3333-4333-8333-333333333333',
+        observedAt: ownerObservedAt,
+      },
+    },
+  };
+  const freshCompatibilityRequest = { ...compatibilityRequest, effectiveAt: ownerObservedAt, handoff: freshHandoff };
+  const freshCompatibilityResponse = {
+    ...compatibilityResponse,
+    currentnessEvidence: { ...compatibilityResponse.currentnessEvidence, effectiveAt: ownerObservedAt },
+    effectiveAt: ownerObservedAt,
+    verificationReceipt: {
+      ...compatibilityResponse.verificationReceipt,
+      predicate: { ...compatibilityResponse.verificationReceipt.predicate, effectiveAt: ownerObservedAt },
+    },
+  };
+  const freshLineSource = {
+    ...catalogSource,
+    verificationMaterial: {
+      ...catalogSource.verificationMaterial,
+      compatibilityRequest: freshCompatibilityRequest,
+      compatibilityResponse: freshCompatibilityResponse,
+      handoff: freshHandoff,
+    },
+  };
+  const freshEquivalence = {
+    ...equivalenceSource,
+    verificationMaterial: {
+      ...equivalenceSource.verificationMaterial,
+      response: {
+        ...equivalenceSource.verificationMaterial.response,
+        assessments: [
+          { handoff: freshHandoff, role: 'ANCHOR' as const },
+          { handoff: freshHandoff, occurrenceId: line.occurrenceId, role: 'MEMBER' as const },
+        ],
+      },
+    },
+  };
+  const candidate = { ...request, sources: [freshLineSource, freshEquivalence, purchaseAuthoritySource] };
+  expect(decode(candidate)).toEqual(candidate);
+  const withFreshHandoff = (
+    handoff: (typeof PricingOwnerMaterialEvidenceFenceGatewayRequestSchema.Type.decision.lines)[number]['catalog'],
+  ) => ({
+    ...candidate,
+    sources: [
+      {
+        ...freshLineSource,
+        verificationMaterial: {
+          ...freshLineSource.verificationMaterial,
+          compatibilityRequest: { ...freshCompatibilityRequest, handoff },
+          handoff,
+        },
+      },
+      {
+        ...freshEquivalence,
+        verificationMaterial: {
+          ...freshEquivalence.verificationMaterial,
+          response: {
+            ...freshEquivalence.verificationMaterial.response,
+            assessments: [
+              { handoff, role: 'ANCHOR' as const },
+              { handoff, occurrenceId: line.occurrenceId, role: 'MEMBER' as const },
+            ],
+          },
+        },
+      },
+      purchaseAuthoritySource,
+    ],
+  });
+  for (const changed of [
+    { ...freshHandoff, hierarchyRevision: 'catalog-hierarchy:10' },
+    { ...freshHandoff, equivalentSelectionKey: 'catalog-selection:other' },
+    { ...freshHandoff, quantity: { ...freshHandoff.quantity, unitRuleRevision: 8 } },
+    { ...freshHandoff, quantityBasis: { ...freshHandoff.quantityBasis, targetDivisibilityRevision: 4 } },
+    { ...freshHandoff, quantity: { ...freshHandoff.quantity, resulting: '3' } },
+    {
+      ...freshHandoff,
+      completeness: { ...freshHandoff.completeness, observedAt: '2026-09-28T09:59:58.000Z' },
+      evidence: {
+        ...freshHandoff.evidence,
+        assessedAt: '2026-09-28T09:59:58.000Z',
+        membership: { ...freshHandoff.evidence.membership, observedAt: '2026-09-28T09:59:58.000Z' },
+      },
+    },
+    {
+      ...freshHandoff,
+      completeness: { ...freshHandoff.completeness, observedAt: '2026-09-28T10:00:02.000Z' },
+      evidence: {
+        ...freshHandoff.evidence,
+        assessedAt: '2026-09-28T10:00:02.000Z',
+        membership: { ...freshHandoff.evidence.membership, observedAt: '2026-09-28T10:00:02.000Z' },
+      },
+    },
+    { ...freshHandoff, completeness: { ...freshHandoff.completeness, ownerRevision: 'foreign-owner-revision' } },
+    { ...freshHandoff, completeness: { ...freshHandoff.completeness, observedAt: effectiveAt } },
+  ]) {
+    const parsedHandoff = Schema.decodeUnknownSync(CatalogQuantityHandoffReadySchema)(changed);
+    expect(() => decode(withFreshHandoff(parsedHandoff))).toThrow();
+  }
+  expect(() => decode({ ...candidate, sources: [catalogSource, freshEquivalence, purchaseAuthoritySource] })).toThrow();
+  expect(() =>
+    decode({ ...candidate, sources: [freshLineSource, equivalenceSource, purchaseAuthoritySource] }),
+  ).toThrow();
+});
+
+describe('exact Price basis quantity compares by decimal value in the final-fence request', () => {
+  const requestWithPriceUnitBasis = (unitBasis: { readonly quantity: string; readonly unitRef: typeof unitRef }) => ({
+    ...request,
+    sources: [
+      catalogSource,
+      marketSource,
+      {
+        ...priceSource,
+        verificationMaterial: {
+          ...priceSource.verificationMaterial,
+          lookupRequest: {
+            ...priceSource.verificationMaterial.lookupRequest,
+            exactKey: { ...priceSource.verificationMaterial.lookupRequest.exactKey, unitBasis },
+          },
+        },
+      },
+      equivalenceSource,
+      purchaseAuthoritySource,
+    ],
+  });
+
+  it('accepts the stored decimal form of the same decision line quantity', () => {
+    expect(line.pricingBasis.quantity).toBe('1');
+    for (const quantity of ['1', '1.0', '1.000', '1.000000000']) {
+      const candidate = requestWithPriceUnitBasis({ quantity, unitRef });
+      expect(decode(candidate)).toEqual(candidate);
+    }
+  });
+
+  it('rejects a different decimal value however it is written', () => {
+    for (const quantity of ['2', '2.0', '1.5', '1.000000001', '0.1']) {
+      expect(() => decode(requestWithPriceUnitBasis({ quantity, unitRef }))).toThrow();
+    }
+  });
+
+  it('still rejects a different Unit when the quantity value is equal', () => {
+    const otherUnitRef = catalogRef('77777777-7777-4777-8777-777777777777', 'commerce.catalog.product-unit');
+    expect(() => decode(requestWithPriceUnitBasis({ quantity: '1.000', unitRef: otherUnitRef }))).toThrow();
   });
 });

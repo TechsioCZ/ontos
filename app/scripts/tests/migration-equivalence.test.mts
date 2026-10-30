@@ -159,10 +159,11 @@ it.layer(Layer.mergeAll(NodeFileSystem.layer, NodeCrypto.layer))((suite) => {
             const before = rows.map((row) => ({ ...row }));
             const plan = yield* planEquivalentMigrations(source.manifest.history, source.migrations, rows);
             expect(plan.lineage).toBe(lineage);
-            expect(plan.migrations.map(({ name }) => name)).toEqual([
-              ...rows.map(({ name }) => name),
-              MIGRATION_MERGES[source.manifest.history],
-            ]);
+            // The checkpoint keeps its folder position; later owner migrations (Core's Outbox delivery resolution) follow it.
+            const planned = new Set([...rows.map(({ name }) => name), MIGRATION_MERGES[source.manifest.history]]);
+            expect(plan.migrations.map(({ name }) => name)).toEqual(
+              source.migrations.map(({ name }) => name).filter((name) => planned.has(name)),
+            );
             expect(rows).toEqual(before);
           }
         }),

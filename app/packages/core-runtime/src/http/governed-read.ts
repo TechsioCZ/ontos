@@ -245,7 +245,7 @@ type GovernedReadDomainMapperResult<Mapper> = Mapper extends (...arguments_: nev
   : never;
 
 interface GovernedReadHttpOptions<
-  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  InputSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
@@ -292,7 +292,7 @@ interface GovernedReadHttpOptions<
 
 /* jscpd:ignore-start -- The overload declaration intentionally repeats the generic HTTP contract; the implementation is singular below. */
 export function makeGovernedReadHttpHandler<
-  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  InputSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
@@ -359,7 +359,7 @@ export function makeGovernedReadHttpHandler<
 >;
 /* jscpd:ignore-end */
 export function makeGovernedReadHttpHandler<
-  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  InputSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
@@ -425,7 +425,7 @@ export function makeGovernedReadHttpHandler<
   GovernedReadHttpRequirements<GovernedReadAuthenticatorRequirements<Authenticator>>
 >;
 export function makeGovernedReadHttpHandler<
-  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  InputSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
@@ -520,6 +520,10 @@ export function makeGovernedReadHttpHandler<
           unavailable: options.problems.unavailable,
         })
         .pipe(observeReadPhase('read-authentication', timings));
+      // HttpApi has decoded the payload; Core validates the schema's encoded input itself.
+      const encodedInput = yield* Schema.encodeEffect(options.registration.descriptor.inputSchema)(payload).pipe(
+        Effect.orDie,
+      );
       const runtime = yield* ReadRuntime;
       let receivingAudience: Pick<OperationalScopeRequest, 'audience'> = {};
       if (options.audience !== undefined) {
@@ -528,8 +532,7 @@ export function makeGovernedReadHttpHandler<
       return yield* runtime
         .runRead({
           ...receivingAudience,
-          decodedInput: payload,
-          inputFormat: 'decoded',
+          input: encodedInput,
           principal,
           registration: options.registration,
           timings,

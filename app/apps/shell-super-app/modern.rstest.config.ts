@@ -1,5 +1,3 @@
-import { appTools, defineConfig } from '@modern-js/app-tools';
+import { defineConfig } from '@modern-js/ultramodern-app-tools';
 
-export default defineConfig({
-  plugins: [appTools()],
-});
+export default defineConfig({});

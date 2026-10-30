@@ -1707,7 +1707,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
 
     const hasPermissionDenial = Effect.fn('ActionRuntime.hasPermissionDenial')(function* hasPermissionDenialEffect(
       preflightDenied: boolean,
-      hasPreflightPermit: boolean,
     ) {
       const permissionDecision = yield* permission
         .checkActionPermission(
@@ -1732,7 +1731,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       const assortmentPermissionDecision = yield* checkActionAssortmentPermissions(scope, assortmentPermissionTargets);
       return (
         preflightDenied ||
-        (permissionDecision === 'denied' && !hasPreflightPermit) ||
+        permissionDecision === 'denied' ||
         tenantPermissionDecision === 'denied' ||
         legalEntityPermissionDecision === 'denied' ||
         resourcePermissionDecision === 'denied' ||
@@ -1747,7 +1746,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         // uses only the immutable Action key and trusted principal identity.
         notifyStage('authentication_boundary');
         const { denied: preflightDenied, permit: preflightPermit } = yield* prepareAuthorizationPreflight();
-        const permissionDenied = yield* hasPermissionDenial(preflightDenied, preflightPermit !== undefined);
+        const permissionDenied = yield* hasPermissionDenial(preflightDenied);
         notifyStage('permission_checked');
         if (permissionDenied) {
           return yield* rejectPermission();
@@ -1963,6 +1962,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         input.registration.descriptor.owningModuleKey,
         input.registration.descriptor.accessEvidencePolicy,
         input.registration.descriptor.auditEvidenceSchema,
+        admittedCompositionRevision,
       );
       const handlerContext = Object.freeze({
         actionInvocationId: lockedInvocation.actionInvocationId,

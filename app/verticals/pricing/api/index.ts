@@ -19,7 +19,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -39,18 +39,21 @@ import {
   commercePriceGroupResolutionGatewayCredentialLive,
   priceGroupCompatibilityGatewayCredentialLive,
 } from './price-group-owner-gateway-credential.ts';
-// <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
+import { pricingCommitmentConfirmationProductionLive } from '../src/integrations/commitment-confirmation-production.ts';
+import { pricingFinalizationCustomerContextGatewayIssuerLive } from '../src/integrations/order-finalization-owner-gateways.ts';
+// <generated-governed-http-handler-support-imports>
+import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
 import { commercialFeeDefinitionReadApiLive } from './commercial-fee-definition-read-server.ts';
 import { commercialFeeResultLookupReadApiLive } from './commercial-fee-result-lookup-read-server.ts';
 import { commercialFeeScheduleReadApiLive } from './commercial-fee-schedule-read-server.ts';
+import { commitmentConfirmationVerificationReadApiLive } from './commitment-confirmation-verification-read-server.ts';
 import { contractualDiscountResultLookupReadApiLive } from './contractual-discount-result-lookup-read-server.ts';
 import { currencySupportResultLookupReadApiLive } from './currency-support-result-lookup-read-server.ts';
 import { currentPricingDecisionReadApiLive } from './current-pricing-decision-read-server.ts';
@@ -58,6 +61,7 @@ import { currentSupportedCurrenciesReadApiLive } from './current-supported-curre
 import { defineCommercialFeeActionApiLive } from './define-commercial-fee-action-server.ts';
 import { definePriceActionApiLive } from './define-price-action-server.ts';
 import { exactPriceResolutionReadApiLive } from './exact-price-resolution-read-server.ts';
+import { manageCommitmentConfirmationActionApiLive } from './manage-commitment-confirmation-action-server.ts';
 import { manageContractualDiscountActionApiLive } from './manage-contractual-discount-action-server.ts';
 import { manageProductCommercialFeesBulkActionApiLive } from './manage-product-commercial-fees-bulk-action-server.ts';
 import { manageProductPricesBulkActionApiLive } from './manage-product-prices-bulk-action-server.ts';
@@ -69,6 +73,7 @@ import { priceResultLookupReadApiLive } from './price-result-lookup-read-server.
 import { priceScheduleReadApiLive } from './price-schedule-read-server.ts';
 import { quantityTierResultLookupReadApiLive } from './quantity-tier-result-lookup-read-server.ts';
 import { quotationResultLookupReadApiLive } from './quotation-result-lookup-read-server.ts';
+import { quotationVerificationReadApiLive } from './quotation-verification-read-server.ts';
 import { reviseCommercialFeeActionApiLive } from './revise-commercial-fee-action-server.ts';
 import { revisePriceActionApiLive } from './revise-price-action-server.ts';
 import { setSupportedCurrenciesActionApiLive } from './set-supported-currencies-action-server.ts';
@@ -129,14 +134,14 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).
       operationalScopeResolverLive,
     ),
   ),
-  Layer.provide(DatabaseConfigLive),
-  Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive, nodeCryptoLayer)),
 );
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
+  Layer.provideMerge(pricingCommitmentConfirmationProductionLive),
   Layer.provideMerge(ExternalPriceInputBoundaryFactoryLive),
   Layer.provideMerge(manageQuotationFreshCurrentAuthorityLive),
+  Layer.provideMerge(pricingFinalizationCustomerContextGatewayIssuerLive),
   Layer.provideMerge(currentPricingDecisionEvaluationFactoryLive),
   Layer.provideMerge(pricingOrdinaryCurrentPublicationLive),
   Layer.provideMerge(pricingCurrentDecisionOwnerFinalFenceGatewaysLive),
@@ -159,9 +164,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
 );
 const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(DatabaseConfigLive),
-  Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive, nodeCryptoLayer)),
 );
 const governedReadRuntimeLive = readRuntimeLive;
 const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(
@@ -171,46 +174,53 @@ const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRe
 export const governedReadApiHandlersLive = Layer.mergeAll(
   pricingReadinessLayer,
   // <generated-governed-http-handler-layers>
-  commercialFeeDefinitionReadApiLive,
-  commercialFeeResultLookupReadApiLive,
-  commercialFeeScheduleReadApiLive,
-  contractualDiscountResultLookupReadApiLive,
-  currencySupportResultLookupReadApiLive,
-  currentPricingDecisionReadApiLive,
-  currentSupportedCurrenciesReadApiLive,
-  defineCommercialFeeActionApiLive,
-  definePriceActionApiLive,
-  exactPriceResolutionReadApiLive,
-  manageContractualDiscountActionApiLive,
-  manageProductCommercialFeesBulkActionApiLive,
-  manageProductPricesBulkActionApiLive,
-  manageQuantityTierActionApiLive,
-  manageQuotationActionApiLive,
-  manageZeroFloorAuthorizationActionApiLive,
-  priceDefinitionReadApiLive,
-  priceResultLookupReadApiLive,
-  priceScheduleReadApiLive,
-  quantityTierResultLookupReadApiLive,
-  quotationResultLookupReadApiLive,
-  reviseCommercialFeeActionApiLive,
-  revisePriceActionApiLive,
-  setSupportedCurrenciesActionApiLive,
-  zeroFloorAuthorizationResultLookupReadApiLive,
+  commercialFeeDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  commercialFeeResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  commercialFeeScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  commitmentConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  contractualDiscountResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  currencySupportResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  currentPricingDecisionReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    Layer.provide(currentPricingDecisionEvaluationFactoryLive),
+    Layer.provide(pricingOrdinaryCurrentPublicationLive),
+    Layer.provide(pricingCurrentDecisionOwnerFinalFenceGatewaysLive),
+    Layer.provide(commercePriceGroupResolutionGatewayCredentialLive),
+  ),
+  currentSupportedCurrenciesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  defineCommercialFeeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  definePriceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  exactPriceResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  manageCommitmentConfirmationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageContractualDiscountActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageProductCommercialFeesBulkActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageProductPricesBulkActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageQuantityTierActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageQuotationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageZeroFloorAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  priceDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  priceResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  priceScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  quantityTierResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  quotationResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  quotationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  reviseCommercialFeeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  revisePriceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  setSupportedCurrenciesActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  zeroFloorAuthorizationResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
-);
-const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(
+  GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(actionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
   ),
+  GovernedReadLayer.provide(
+    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
+  ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(pricingGatewayAssertionRedemptionDatabaseLive),
-  GovernedReadLayer.provideMerge(activeApplicationCompositionLive),
-  Layer.provideMerge(compositionSourceLive),
-  Layer.provideMerge(runtimeObservabilityLive),
-  Layer.provideMerge(databaseIdentitiesLive),
-  Layer.provideMerge(NodeCrypto.layer),
-  Layer.orDie,
+  GovernedReadLayer.provide(pricingGatewayAssertionRedemptionDatabaseLive),
+  GovernedReadLayer.provide(activeApplicationCompositionLive),
+  Layer.provide(compositionSourceLive),
 );
 type PricingApiGroups = (typeof pricingApi.groups)[keyof typeof pricingApi.groups];
 type PricingHandlerRequirements =
@@ -221,15 +231,16 @@ type PricingHandlerRequirements =
 const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
   'PricingApi',
   PricingApiGroups,
-  PricingHandlerRequirements,
-  Layer.Success<typeof requestServicesLive>
->['handlers'] = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
+  PricingHandlerRequirements
+>['handlers'] = governedReadApiHandlersLive.pipe(
+  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, databaseIdentitiesLive)),
+  Layer.orDie,
+);
 
 export const makePricingApiRuntime = (): EffectBffDefinition<typeof pricingApi> & EffectBffRuntime<typeof pricingApi> =>
   assembleEffectBffRuntime({
     api: pricingApi,
     handlers: resolvedApiHandlersLive,
-    services: requestServicesLive,
   });
 
 const apiRuntime: EffectBffDefinition<typeof pricingApi> & EffectBffRuntime<typeof pricingApi> =

@@ -143,20 +143,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager'],
-              tenantManagerRelations: [
-                'party_identity_manager',
-                'party_identity_reader',
-                'party_identity_reviewer',
-                'party_relationship_manager',
-              ],
               actionKeys,
               legalEntityOnlyActionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
-              audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
-              moduleKey: 'party.registry',
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),
@@ -164,17 +155,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager'],
-              tenantManagerRelations: [
-                'party_identity_manager',
-                'party_identity_reader',
-                'party_identity_reviewer',
-                'party_relationship_manager',
-              ],
               actionKeys,
-              audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
-              moduleKey: 'party.registry',
               compositionRevision: compositionSnapshot.composition.revision,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),

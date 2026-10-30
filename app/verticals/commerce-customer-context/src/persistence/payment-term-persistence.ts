@@ -10,7 +10,7 @@ import type {
 import { ReadHandlerUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Equal, Option, Schema } from 'effect';
 
 import type {
   CustomerPaymentTermEntitlementReadRequest,
@@ -31,6 +31,7 @@ import type {
 } from '../../shared/actions/resolve-profile-reconciliation.ts';
 import type { CounterpartyRef } from '../../shared/domain/access-contract.ts';
 import {
+  CustomerPaymentTermEntitlementSchema,
   CustomerPaymentTermsStateSchema,
   PaymentTermsTimestampSchema,
 } from '../../shared/domain/payment-term-contracts.ts';
@@ -66,6 +67,17 @@ const PaymentTermsRoutineRowSchema = Schema.Struct({
     'PAYMENT_TERM_RETIREMENT_RESERVED',
     'UNCHANGED',
   ]),
+  payload: Schema.NullOr(Schema.Unknown),
+});
+const LegacyPaymentTermIntentSchema = Schema.Struct({
+  ...CustomerPaymentTermEntitlementSchema.fields,
+  originalEffectiveTo: PaymentTermsTimestampSchema,
+  profileRef: CustomerPaymentTermsStateSchema.fields.profileRef,
+  revision: Schema.Int,
+});
+const LegacyPaymentTermIntentRoutineRowSchema = Schema.Struct({
+  current_revision: Schema.NullOr(Schema.Int),
+  outcome: Schema.Literals(['PROVED', 'UNPROVED', 'REVISION_CONFLICT']),
   payload: Schema.NullOr(Schema.Unknown),
 });
 /* oxlint-enable effect-native/no-nullable-schema-field */
@@ -271,6 +283,22 @@ const readPaymentTermsRoutine = defineScopedRoutine({
   schema,
 });
 
+const resolveLegacyPaymentTermIntentRoutine = defineScopedRoutine({
+  name: 'resolve_legacy_payment_term_grant_intent_v1',
+  ownerModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'integer' },
+  ],
+  resultSchema: LegacyPaymentTermIntentRoutineRowSchema,
+  routineKey: 'payment-terms.resolve-legacy-grant-intent',
+  schema,
+});
+
 const persistPaymentTermsRoutine = defineScopedRoutine({
   name: 'persist_customer_payment_terms',
   ownerModuleKey,
@@ -351,6 +379,7 @@ export const paymentTermsRoutineAllowlist = Object.freeze([
   readPaymentTermsRoutine,
   assessPaymentTermEntitlementUseRoutine,
   persistPaymentTermsRoutine,
+  resolveLegacyPaymentTermIntentRoutine,
   reservePaymentTermRetirementRoutine,
   verifyPaymentTermsReconciliationOwnerRoutine,
 ]);
@@ -1074,6 +1103,83 @@ export const makeChangeCustomerPaymentTermsServices = (
   }),
 });
 
+// This is a provisional owner result, never caller evidence. SQL independently rechecks it
+// under the existing profile/setting locks before accepting the legacy mutation.
+const stateWithRetainedGrantIntent = Effect.fn('CustomerPaymentTermsPersistence.retainedGrantIntent')(
+  function* retainedGrantIntent(
+    invoker: CustomerPaymentTermsScopedRoutineInvoker,
+    state: CustomerPaymentTermsState,
+    input: RemoveCustomerPaymentTermPayload,
+  ) {
+    const selected = state.entitlements.find(
+      (entry) =>
+        entry.entitlementRef.resourceId === input.entitlementRef.resourceId &&
+        entry.entitlementRef.tenantId === input.entitlementRef.tenantId,
+    );
+    if (
+      state.revision !== input.expectedRevision ||
+      selected === undefined ||
+      selected.status !== 'ACTIVE' ||
+      selected.originalEffectiveTo !== undefined ||
+      selected.effectiveTo === undefined ||
+      selected.endedAt !== undefined ||
+      input.effectiveAt > selected.effectiveFrom
+    ) {
+      return state;
+    }
+    const [result] = yield* invoker
+      .invoke(resolveLegacyPaymentTermIntentRoutine, [
+        input.profileRef.resourceId,
+        input.counterpartyRef.resourceId,
+        input.entitlementRef.resourceId,
+        state.revision,
+      ])
+      .pipe(
+        Effect.mapError((failure) => actionFailure('PERSISTENCE_UNAVAILABLE', persistenceUnavailable(failure), true)),
+      );
+    if (result?.outcome === 'REVISION_CONFLICT') {
+      return yield* actionFailure(
+        'REVISION_CONFLICT',
+        'Payment Terms changed during retained intent lookup',
+        false,
+        result.current_revision ?? undefined,
+      );
+    }
+    if (result?.outcome === 'UNPROVED') {
+      return yield* actionFailure('REMOVAL_CONFLICT', 'The original finite grant intent is absent or ambiguous');
+    }
+    if (result?.outcome !== 'PROVED' || result.payload === null) {
+      return yield* actionFailure('PERSISTENCE_UNAVAILABLE', 'Invalid retained Payment Term grant projection', true);
+    }
+    const proof = yield* Schema.decodeUnknownEffect(LegacyPaymentTermIntentSchema)(result.payload, {
+      onExcessProperty: 'error',
+    }).pipe(
+      Effect.mapError((failure) =>
+        actionFailure(
+          'PERSISTENCE_UNAVAILABLE',
+          `Invalid retained Payment Term grant projection (${failure._tag})`,
+          true,
+        ),
+      ),
+    );
+    const expected = {
+      ...selected,
+      originalEffectiveTo: selected.effectiveTo,
+      profileRef: state.profileRef,
+      revision: state.revision,
+    };
+    if (result.current_revision !== state.revision || !Equal.equals(proof, expected)) {
+      return yield* actionFailure('PERSISTENCE_UNAVAILABLE', 'Invalid retained Payment Term grant projection', true);
+    }
+    return {
+      ...state,
+      entitlements: state.entitlements.map((entry) =>
+        entry === selected ? { ...entry, originalEffectiveTo: proof.originalEffectiveTo } : entry,
+      ),
+    };
+  },
+);
+
 const makeRemoveCustomerPaymentTermServices = (
   persistence: PaymentTermsPersistenceContext,
 ): RemoveCustomerPaymentTermServices => ({
@@ -1084,12 +1190,13 @@ const makeRemoveCustomerPaymentTermServices = (
         'The Action scope does not match the scoped Payment Terms persistence capability',
       );
     }
-    const state = yield* readState(
+    const stored = yield* readState(
       persistence.invoker,
       persistence.scope,
       payload.profileRef,
       payload.counterpartyRef.resourceId,
     ).pipe(Effect.mapError(mapReadFailureToAction));
+    const state = yield* stateWithRetainedGrantIntent(persistence.invoker, stored, payload);
     const outcome = removeCustomerPaymentTerm({
       effectiveAt: payload.effectiveAt,
       entitlementRef: payload.entitlementRef,

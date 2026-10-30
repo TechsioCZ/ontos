@@ -9,7 +9,9 @@ import {
   CreatePurposeVersionInputSchema,
   PurposeNotFound,
   PurposeVersionConflict,
+  resolvePurposeVersionTimeline,
 } from '../../shared/domain/processing-purpose.ts';
+import { isPrivacyInstantAfter } from '../../shared/domain/privacy-subject.ts';
 import type { ProcessingPurposeRef } from '../../shared/resources/processing-purpose.ts';
 import { ProcessingPurposePersistenceUnavailable } from '../persistence/processing-purpose-persistence-unavailable.ts';
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
@@ -48,10 +50,23 @@ const validateVersionAppend = (
   if ('conflictReason' in materiality) {
     return { reason: materiality.conflictReason, valid: false };
   }
-  return previous !== undefined && input.effectiveFrom <= previous.effectiveFrom
+  return previous !== undefined && !isPrivacyInstantAfter(input.effectiveFrom, previous.effectiveFrom)
     ? { reason: 'Purpose Version effective time must follow the latest retained version', valid: false }
     : { materiality, valid: true };
 };
+
+const projectPurpose = (purpose: ProcessingPurpose) =>
+  resolvePurposeVersionTimeline(purpose.versions).pipe(
+    Effect.map((versions) => ({ ...purpose, versions })),
+    Effect.mapError((cause) => {
+      const error = new ProcessingPurposePersistenceUnavailable({
+        code: 'privacy_processing_purpose_persistence_unavailable',
+        reason: 'Stored Purpose Version timeline is incoherent',
+      });
+      Object.defineProperty(error, 'cause', { value: cause });
+      return error;
+    }),
+  );
 
 const makeRepository = (crypto: Crypto.Crypto): ProcessingPurposeRepositoryService => {
   const nextIdentifier = (reason: string) =>
@@ -71,13 +86,14 @@ const makeRepository = (crypto: Crypto.Crypto): ProcessingPurposeRepositoryServi
     addVersion: Effect.fn('makeInMemoryProcessingPurposeRepository.addVersion')(
       function* addVersion(tenantId, legalEntityId, purposeId, _actionInvocationId, input) {
         const key = processingPurposeScopedKey(tenantId, legalEntityId, purposeId);
-        const current = purposes.get(key);
-        if (current === undefined) {
+        const retained = purposes.get(key);
+        if (retained === undefined) {
           return yield* new PurposeNotFound({
             code: 'privacy_purpose_not_found',
             reason: 'Processing Purpose was not found',
           });
         }
+        const current = yield* projectPurpose(retained);
         const invocationKey = processingPurposeScopedKey(tenantId, legalEntityId, _actionInvocationId);
         const replay = versionInvocations.get(invocationKey);
         if (replay !== undefined) {
@@ -111,17 +127,11 @@ const makeRepository = (crypto: Crypto.Crypto): ProcessingPurposeRepositoryServi
           versionId,
           versionNumber: (previous?.versionNumber ?? 0) + 1,
         };
-        const updated: ProcessingPurpose = {
-          ...current,
-          versions: [
-            ...current.versions.slice(0, -1),
-            ...(previous === undefined ? [] : [{ ...previous, effectiveTo: input.effectiveFrom }]),
-            version,
-          ],
-        };
+        const updated: ProcessingPurpose = { ...retained, versions: [...retained.versions, version] };
+        const versions = yield* resolvePurposeVersionTimeline(updated.versions);
         purposes.set(key, updated);
         versionInvocations.set(invocationKey, { input, purposeId });
-        return updated;
+        return { ...updated, versions };
       },
     ),
     create: Effect.fn('makeInMemoryProcessingPurposeRepository.create')(
@@ -163,13 +173,20 @@ const makeRepository = (crypto: Crypto.Crypto): ProcessingPurposeRepositoryServi
     get: (tenantId, legalEntityId, purposeId) =>
       Effect.sync(() =>
         Option.fromNullishOr(purposes.get(processingPurposeScopedKey(tenantId, legalEntityId, purposeId))),
+      ).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeed(Option.none<ProcessingPurpose>()),
+            onSome: (purpose) => projectPurpose(purpose).pipe(Effect.map(Option.some)),
+          }),
+        ),
       ),
     list: (tenantId, legalEntityId) =>
       Effect.sync(() =>
         [...purposes.values()].filter(
           (purpose) => purpose.purposeRef.tenantId === tenantId && purpose.legalEntityId === legalEntityId,
         ),
-      ),
+      ).pipe(Effect.flatMap((visible) => Effect.forEach(visible, projectPurpose, { concurrency: 1 }))),
   };
 };
 

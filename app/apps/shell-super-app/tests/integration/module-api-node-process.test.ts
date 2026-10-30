@@ -292,8 +292,7 @@ const createFixture = Effect.fn('NativeModuleTransportTest.createFixture')(funct
       assembleEffectBffRuntime({
         api: HttpApi.make('NativeModuleTransportProofApi'),
         handlers: Layer.empty,
-        services: layer,
-        transport: ModuleApiTransportLive,
+        transport: ModuleApiTransportLive.pipe(Layer.provide(layer)),
       }).createHandler({ dataPlatform: { batch: { enabled: false }, enabled: false }, openapi: false }),
     ),
     (ownedRouter) => Effect.promise(() => ownedRouter.dispose()),
@@ -354,8 +353,9 @@ it.live('forwards sanitized owner timings on the native held-assertion module AP
         assembleEffectBffRuntime({
           api: HttpApi.make('HeldAssertionTimingProofApi'),
           handlers: Layer.empty,
-          services: makeActiveApplicationCompositionLayer(Effect.succeed(snapshot)),
-          transport: ModuleApiTransportLive,
+          transport: ModuleApiTransportLive.pipe(
+            Layer.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))),
+          ),
         }).createHandler({ dataPlatform: { batch: { enabled: false }, enabled: false }, openapi: false }),
       ),
       (ownedRouter) => Effect.promise(() => ownedRouter.dispose()),

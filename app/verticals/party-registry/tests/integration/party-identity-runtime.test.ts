@@ -216,19 +216,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const openFixture = Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-              tenantManagerRelations: [
-                'party_identity_manager',
-                'party_identity_reader',
-                'party_identity_reviewer',
-                'party_relationship_manager',
-              ],
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
-              audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision,
-              moduleKey: 'party.registry',
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),

@@ -2,20 +2,9 @@
 // @ontos-resource-owner commerce.catalog
 // @ontos-resource-slug variant
 import type { OntosResourceType } from '@app/core-runtime';
-import { Schema } from 'effect';
 
-/** Variant identity is allocated once and retained for the life of the tenant resource. */
-const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
-const ResourceIdSchema = checkedUuid.pipe(Schema.brand('CatalogVariantResourceId'), Schema.decodeTo(checkedUuid));
-const TenantIdSchema = checkedUuid.pipe(Schema.brand('CatalogTenantId'), Schema.decodeTo(checkedUuid));
-
-export const VariantRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('commerce.catalog'),
-  resourceId: ResourceIdSchema,
-  resourceType: Schema.Literal('commerce.catalog.variant'),
-  tenantId: TenantIdSchema,
-});
-export type VariantRef = typeof VariantRefSchema.Type;
+export { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
+export type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 
 export const variantResourceDescriptor = {
   capabilities: {

@@ -10,7 +10,7 @@ import { DatabaseConnectionError } from './connection-error.ts';
 import type { DatabasePoolDeadlines } from './pool-configuration.ts';
 import { configureDatabasePool } from './pool-configuration.ts';
 import { coreRelations } from './schema.ts';
-import { verifyDatabaseSessionRole } from './session-identity.ts';
+import { verifySessionRoleOnFirstUse } from './session-identity.ts';
 import { guardPoolAcquisition, refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';
 import type { CoreDatabaseExecutor } from './types.ts';
 
@@ -58,8 +58,8 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
       (cause) => new DatabaseConnectionError({ cause, reason: 'Unable to initialize the native PostgreSQL client' }),
     ),
   );
-  const client = Context.get(context, PgClient.PgClient);
-  yield* verifyDatabaseSessionRole(client, configuration.expectedRole);
+  // Building the database opens no connection; the first use confirms the enrolled session role.
+  const client = verifySessionRoleOnFirstUse(Context.get(context, PgClient.PgClient), configuration.expectedRole);
   return {
     // A marked transaction body that would check out a second pooled connection dies instead.
     executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(

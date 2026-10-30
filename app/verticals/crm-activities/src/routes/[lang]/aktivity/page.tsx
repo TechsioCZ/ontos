@@ -16,7 +16,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
-import { executeRecords } from '../../../api/records-client.ts';
+import { executeRecords } from '../../../api/records-consumer.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import type { Activity, RecordsResponse } from '../../../../shared/apis/records.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';

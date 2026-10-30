@@ -47,6 +47,173 @@ const uncertainOnHand = (tag: 'STALE' | 'MISSING' | 'UNKNOWN' | 'INDETERMINATE')
 };
 
 describe('Availability owner acceptance: exact subject, authority and truthful quantity', () => {
+  it.effect('proven unusable independent stock cannot change a complete usable quantity conclusion', () =>
+    Effect.gen(function* excludeUnusableIndependentSupport() {
+      for (const usable of ['0', '3', '5', '0.3']) {
+        const requested = usable === '0.3' ? '0.300' : '5';
+        const original = makeBroaderCurrentnessInput([usable, '10'], requested);
+        for (const constraintSupport of ['RESOLVED', 'INDEPENDENTLY_PROVEN'] as const) {
+          for (const reverseStock of [false, true]) {
+            for (const reverseQualification of [false, true]) {
+              const stockInput = {
+                ...original.stockInput,
+                positions: reverseStock
+                  ? [...original.stockInput.positions.slice(1), ...original.stockInput.positions.slice(0, 1)]
+                  : original.stockInput.positions,
+              };
+              const positions = original.ownerQualification.positions.map((entry, index) =>
+                index === 1 ? { ...entry, constraintSupport, usability: 'UNUSABLE' as const } : entry,
+              );
+              const input = {
+                ...original,
+                ownerQualification: {
+                  ...original.ownerQualification,
+                  positions: reverseQualification ? [...positions.slice(1), ...positions.slice(0, 1)] : positions,
+                  stockInput,
+                },
+                stockInput,
+              };
+              const result = yield* evaluate(input);
+              expect(result.outcome).toBe(usable === '5' || usable === '0.3' ? 'AVAILABLE' : 'UNAVAILABLE');
+              expect(result.reasons).toContain(
+                usable === '5' || usable === '0.3' ? 'WHOLE_REQUEST_SUPPORTED' : 'INSUFFICIENT_REUSABLE_QUANTITY',
+              );
+              expect(result.reasons).not.toContain('INDEPENDENT_SUPPORT_INSUFFICIENT');
+              expect(result.reasons).not.toContain('CURRENT_ZERO');
+              expect(result.evidence.stockInput).toEqual(stockInput);
+              expect(result.evidence.ownerQualification).toEqual(input.ownerQualification);
+              expect(result.subject).toEqual(input.subject);
+            }
+          }
+        }
+      }
+    }),
+  );
+
+  it.effect('unusable-only independent evidence remains a nonempty shortage rather than an unknown lower bound', () =>
+    Effect.gen(function* unusableIndependentSet() {
+      const original = makeBroaderCurrentnessInput(['10', '0'], '5');
+      const input = {
+        ...original,
+        ownerQualification: {
+          ...original.ownerQualification,
+          positions: original.ownerQualification.positions.map((entry) => ({
+            ...entry,
+            constraintSupport: 'INDEPENDENTLY_PROVEN' as const,
+            usability: 'UNUSABLE' as const,
+          })),
+        },
+      };
+      const result = yield* evaluate(input);
+      expect(result.outcome).toBe('UNAVAILABLE');
+      expect(result.reasons).toEqual(['INSUFFICIENT_REUSABLE_QUANTITY']);
+      expect(result.evidence.ownerQualification).toEqual(input.ownerQualification);
+      expect(result.evidence.stockInput.positions).toHaveLength(2);
+      const empty = yield* evaluate(makeBroaderCurrentnessInput([], '5'));
+      expect(empty.reasons).toEqual(['COMPLETE_EMPTY_SET']);
+      const zero = yield* evaluate(makeBroaderCurrentnessInput(['0'], '5'));
+      expect(zero.reasons).toEqual(['CURRENT_ZERO']);
+    }),
+  );
+
+  it.effect('relevant independent support stays a positive lower bound even beside proven unusable stock', () =>
+    Effect.gen(function* retainRelevantIndependentSupport() {
+      for (const amount of ['3', '5']) {
+        const original = makeBroaderCurrentnessInput([amount, '100'], '5');
+        const result = yield* evaluate({
+          ...original,
+          ownerQualification: {
+            ...original.ownerQualification,
+            positions: original.ownerQualification.positions.map((entry, index) => ({
+              ...entry,
+              constraintSupport: 'INDEPENDENTLY_PROVEN',
+              usability: index === 0 ? 'USABLE' : 'UNUSABLE',
+            })),
+          },
+        });
+        expect(result.outcome).toBe(amount === '3' ? 'INDETERMINATE' : 'AVAILABLE');
+        expect(result.reasons).toContain(
+          amount === '3' ? 'INDEPENDENT_SUPPORT_INSUFFICIENT' : 'WHOLE_REQUEST_SUPPORTED',
+        );
+      }
+    }),
+  );
+
+  it.effect(
+    'excluding unusable stock preserves material usability, constraint, completeness and authority guards',
+    () =>
+      Effect.gen(function* preserveQualifiedGuards() {
+        const original = makeBroaderCurrentnessInput(['3', '10'], '5');
+        const input: AvailabilityEvaluationInput = {
+          ...original,
+          ownerQualification: {
+            ...original.ownerQualification,
+            positions: original.ownerQualification.positions.map((entry, index) =>
+              index === 1 ? { ...entry, constraintSupport: 'INDEPENDENTLY_PROVEN', usability: 'UNUSABLE' } : entry,
+            ),
+          },
+        };
+        const cases: readonly AvailabilityEvaluationInput[] = [
+          {
+            ...input,
+            ownerQualification: {
+              ...input.ownerQualification,
+              positions: input.ownerQualification.positions.map((entry, index) =>
+                index === 0
+                  ? {
+                      ...entry,
+                      constraintSupport: 'INDETERMINATE',
+                      reusableQuantity: { _tag: 'UNPROVEN' },
+                      uncertaintyReasons: ['UNRESOLVED_RESERVATION_EFFECT'],
+                    }
+                  : entry,
+              ),
+            },
+          },
+          {
+            ...input,
+            ownerQualification: {
+              ...input.ownerQualification,
+              positions: input.ownerQualification.positions.map((entry, index) =>
+                index === 1 ? { ...entry, usability: 'INDETERMINATE' } : entry,
+              ),
+            },
+          },
+          { ...input, ownerQualification: { ...input.ownerQualification, positions: [] } },
+          {
+            ...input,
+            ownerQualification: {
+              ...input.ownerQualification,
+              positions: [...input.ownerQualification.positions, ...input.ownerQualification.positions],
+            },
+          },
+          { ...input, ownerQualification: { ...input.ownerQualification, set: { _tag: 'UNPROVEN' } } },
+          { ...input, ownerQualification: { ...input.ownerQualification, currentness: 'STALE' } },
+          { ...input, ownerQualification: { ...input.ownerQualification, currentness: 'INDETERMINATE' } },
+          {
+            ...input,
+            ownerQualification: { ...input.ownerQualification, selectedBackendAuthority: { _tag: 'UNPROVEN' } },
+          },
+        ];
+        const reasons = [
+          'UNRESOLVED_RESERVATION_EFFECT',
+          'POSITION_USABILITY_UNCERTAIN',
+          'OWNER_QUALIFICATION_MISMATCH',
+          'DUPLICATE_POSITION',
+          'SET_COMPLETENESS_UNPROVEN',
+          'STALE',
+          'INDETERMINATE',
+          'SELECTED_AUTHORITY_UNPROVEN',
+        ];
+        for (const [index, candidate] of cases.entries()) {
+          const result = yield* evaluate(candidate);
+          expect(result.outcome).toBe('INDETERMINATE');
+          expect(result.reasons).toContain(reasons[index]);
+          expect(result.evidence.ownerQualification).toEqual(candidate.ownerQualification);
+        }
+      }),
+  );
+
   it('scenario 1: Product-only and SKU-only inputs cannot form an authoritative subject', () => {
     const input = makeCurrentnessInput(['3'], '2');
     for (const candidate of [

@@ -153,10 +153,10 @@ export const ReleasedReservationEffectSchema = Schema.TaggedStruct('RELEASED', {
       nonCommitEvidenceRef: boundedIdentifier,
       observedAt: releaseInstant,
     }),
-    protection: Schema.TaggedStruct('ABSENT_PROVEN', {
-      evidenceRef: boundedIdentifier,
-      observedAt: releaseInstant,
-    }),
+    protection: Schema.Union([
+      ReservationReleaseProtectionAbsentTruthSchema,
+      ReservationReleaseProtectionEstablishedTruthSchema,
+    ]),
   }),
 });
 export const NotReleasableReservationEffectSchema = Schema.TaggedStruct('NOT_RELEASABLE', {

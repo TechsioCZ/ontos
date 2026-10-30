@@ -87,17 +87,14 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  applyCommandActionApiLive,
-  recordsReadApiLive,
+  applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
-);
-
-/** What the handlers resolve when they run: built for each request on Workers, once on Node. */
-const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive).pipe(
+).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(
+  GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
-      GovernedActionPrincipalVerifierLive,
+      GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
       GovernedGatewayAssertionRedemptionLive.pipe(
         GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive),
         GovernedReadLayer.provide(GatewayAssertionPgClientLive),
@@ -106,7 +103,7 @@ const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedActionRun
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(GovernedReadLayer.empty),
+  GovernedReadLayer.provide(GovernedReadLayer.empty),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
@@ -147,21 +144,20 @@ const propertyPortfolioReadinessLayer = HttpApiBuilder.group(propertyPortfolioAp
 );
 
 const apiHandlersLive = propertyPortfolioReadinessLayer;
-const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
-  GovernedReadLayer.provideMerge(ActiveApplicationCompositionConfigLive),
-  GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provideMerge(databaseIdentitiesLive),
-  GovernedReadLayer.provideMerge(NodeCrypto.layer),
-  GovernedReadLayer.provideMerge(telemetryLive),
+const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
+  GovernedReadLayer.provide(ActiveApplicationCompositionConfigLive),
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
+  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(telemetryLive),
   GovernedReadLayer.orDie,
 );
 
 export const makePropertyPortfolioApiRuntime = () =>
   assembleEffectBffRuntime({
     api: propertyPortfolioApi,
-    handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive),
-    services: governedResolvedRequestServicesLive,
+    handlers: governedResolvedApiHandlersLive,
   });
 const apiRuntime = makePropertyPortfolioApiRuntime();
 

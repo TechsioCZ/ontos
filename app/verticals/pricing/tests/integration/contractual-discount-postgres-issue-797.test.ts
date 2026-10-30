@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { findPostgresFailure, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { findPostgresFailure, ScopedRoutineInvocationError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { PricingDiscountIdentityKeySchema } from '@app/pricing-contracts/domain/discount';
 import type {
   ExpectedPricingDiscountCurrent,
@@ -20,7 +20,10 @@ import type {
   ContractualDiscountPersistence,
   ManageContractualDiscountPersistenceCommand,
 } from '../../src/services/contractual-discount-persistence.service.ts';
-import { contractualDiscountPersistenceForScope } from '../../src/services/contractual-discount-persistence.service.ts';
+import {
+  ContractualDiscountPersistenceUnavailable,
+  contractualDiscountPersistenceForScope,
+} from '../../src/services/contractual-discount-persistence.service.ts';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
@@ -42,6 +45,9 @@ interface RawContractualDiscountGenerationVerification {
   readonly predicate: ContractualDiscountGenerationVerification['predicate'];
   readonly through?: ContractualDiscountGenerationVerification['through'] | null;
 }
+
+/** Owner persistence failures retain the scoped routine failure that carries the native SQLSTATE. */
+const RetainedRoutineFailureSchema = Schema.Struct({ cause: ScopedRoutineInvocationError });
 
 const instant = (value: string) => DateTime.toDateUtc(DateTime.makeUnsafe(value));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -811,6 +817,95 @@ it.live('requires the exact future schedule acknowledgement and preserves immuta
         'objects',
       );
       expect(finalGeneration[0]?.generation).toBe(4);
+    }),
+  ),
+);
+
+it.live('binds a verified-empty Counterparty set to the start of its scheduled Discount (#1257)', () =>
+  Effect.scoped(
+    Effect.gen(function* verifiedEmptyBoundary() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      yield* cleanup(admin);
+      yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+
+      // The read instant trails the wall clock so the owner observes it as already effective; the
+      // scheduled Discount starts shortly after that observation and before the fence re-check.
+      const now = yield* DateTime.now;
+      const readAt = DateTime.subtract(now, { seconds: 1 });
+      const boundary = DateTime.formatIso(DateTime.add(now, { milliseconds: 1500 }));
+      const scheduledCreateCommand = createCommand('e7970000-0000-4000-8000-000000000090', '10');
+      if (scheduledCreateCommand.intent !== 'CREATE') {
+        throw new Error('Expected the scheduled fixture to use the create command');
+      }
+      const created = yield* withPersistence(runtime, (persistence) =>
+        persistence.manage({
+          ...scheduledCreateCommand,
+          effectivePeriod: { effectiveFrom: boundary, effectiveTo: null },
+          trustedOperationAt: DateTime.toDateUtc(readAt),
+        }),
+      );
+      expect(created.outcome).toBe('CONTRACTUAL_DISCOUNT_CREATED');
+      if (created.outcome !== 'CONTRACTUAL_DISCOUNT_CREATED') {
+        throw new Error('Expected the scheduled Counterparty Discount');
+      }
+      expect(created.schedule.current).toBeUndefined();
+
+      const predicate = {
+        audiences: [identityKey.audience],
+        basis: identityKey.basis,
+        commercialScope: identityKey.commercialScope,
+        currencyCode: identityKey.currencyCode,
+        effectiveAt: DateTime.formatIso(readAt),
+        tenantId,
+      } as const;
+      const emptySet = yield* withPersistence(runtime, (persistence) => persistence.readCurrentSet(predicate));
+      expect(emptySet.currentDiscounts).toEqual([]);
+      expect(emptySet.factProofs).toEqual([]);
+      expect(emptySet.completenessEvidence.nextApplicabilityBoundary).toBe(boundary);
+      expect(emptySet.authority.observedAt < boundary).toBe(true);
+
+      const beforeBoundary = yield* withPersistence(runtime, (persistence) =>
+        persistence.verifySetGeneration({
+          authority: emptySet.authority,
+          predicate: emptySet.predicate,
+          through: emptySet.authority.observedAt,
+        }),
+      );
+      expect(beforeBoundary).toEqual({
+        authority: emptySet.authority,
+        outcome: 'CONTRACTUAL_DISCOUNT_SET_GENERATION_CURRENT',
+        verifiedThrough: emptySet.authority.observedAt,
+      });
+
+      const remainingMillis =
+        DateTime.toEpochMillis(DateTime.makeUnsafe(boundary)) - DateTime.toEpochMillis(yield* DateTime.now);
+      yield* Effect.sleep(Math.max(0, remainingMillis) + 250);
+
+      const atBoundary = yield* withPersistence(runtime, (persistence) =>
+        persistence.verifySetGeneration({
+          authority: emptySet.authority,
+          predicate: emptySet.predicate,
+          through: boundary,
+        }),
+      );
+      expect(atBoundary).toEqual({
+        outcome: 'CONTRACTUAL_DISCOUNT_SET_GENERATION_CHANGED',
+        verifiedThrough: boundary,
+      });
+
+      const reread = yield* withPersistence(runtime, (persistence) => persistence.readCurrentSet(predicate)).pipe(
+        Effect.flip,
+      );
+      expect(reread).toBeInstanceOf(ContractualDiscountPersistenceUnavailable);
+      expect(Schema.is(RetainedRoutineFailureSchema)(reread)).toBe(true);
+      if (!Schema.is(RetainedRoutineFailureSchema)(reread)) {
+        throw new Error('Expected the owner read to retain its scoped routine failure');
+      }
+      const routineFailure = reread.cause;
+      expect(routineFailure.routineKey).toBe('pricing.read-current-contractual-discount-set-v1');
+      expect(Option.getOrUndefined(routineFailure.postgresCode)).toBe('P0001');
     }),
   ),
 );

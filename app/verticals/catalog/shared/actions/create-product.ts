@@ -9,16 +9,35 @@ import {
 } from '../domain/product.ts';
 import {
   CompletedProductCreationClassificationSchema,
-  ProductCreationClassificationSchema,
+  IndependentProductCreationSchema,
+  NewProductCreationClassificationSchema,
 } from '../domain/product-change-classification.ts';
 
-export const CreateProductPayloadSchema = Schema.Struct({
-  classification: ProductCreationClassificationSchema,
+const createProductFields = {
   description: Schema.optionalKey(ProductDescriptionSchema),
   name: Schema.optionalKey(ProductNameSchema),
-  reason: ProductReasonSchema,
   variantId: Schema.optionalKey(ProductUuidSchema),
-});
+};
+export const CreateProductPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...createProductFields,
+    classification: Schema.optionalKey(
+      Schema.Struct({
+        ...IndependentProductCreationSchema.fields,
+        affectsOpenSelection: Schema.optionalKey(Schema.Never),
+        evidenceRefs: Schema.optionalKey(Schema.Never),
+        previousProductRef: Schema.optionalKey(Schema.Never),
+        reason: Schema.optionalKey(Schema.Never),
+      }),
+    ),
+    reason: Schema.optionalKey(ProductReasonSchema),
+  }),
+  Schema.Struct({
+    ...createProductFields,
+    classification: NewProductCreationClassificationSchema.annotate({ parseOptions: { onExcessProperty: 'error' } }),
+    reason: ProductReasonSchema,
+  }),
+]).annotate({ parseOptions: { onExcessProperty: 'error' } });
 export type CreateProductPayload = typeof CreateProductPayloadSchema.Type;
 
 export const CreateProductResultSchema = Schema.Struct({

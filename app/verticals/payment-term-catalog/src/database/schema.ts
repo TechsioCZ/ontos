@@ -9,7 +9,6 @@ import {
   integer,
   jsonb,
   pgSchema,
-  primaryKey,
   text,
   timestamp,
   unique,
@@ -33,18 +32,19 @@ export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
 
 export const paymentTermCatalogSchema = pgSchema(PAYMENT_TERM_CATALOG_SCHEMA_NAME);
 
-// Replay evidence is consumed before tenant/business scope is installed.
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
 export const gatewayAssertionRedemptions = paymentTermCatalogSchema.table(
   'gateway_assertion_redemptions',
   {
     audience: text('audience').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     issuer: text('issuer').notNull(),
-    jti: text('jti').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
-    index('payment_term_catalog_redemption_expiry').on(table.expiresAt),
+    unique('payment_term_catalog_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('payment_term_catalog_gateway_redemptions_expiry_idx').on(table.expiresAt),
   ],
 );
 
@@ -462,7 +462,6 @@ export const paymentTermSourceAcceptanceLineage = paymentTermCatalogSchema.table
 );
 
 const paymentTermCatalogDatabaseSchema = {
-  gatewayAssertionRedemptions,
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,

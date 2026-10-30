@@ -14,6 +14,7 @@ import {
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
+import { LegacyCompletionPublicationError } from '../../packages/core-runtime/src/modules/legacy-completion-publication.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -31,6 +32,8 @@ import {
   developmentCompositionApplication,
   makeDevelopmentCompositionPointer,
 } from '../siampark/development-composition.mts';
+import { legacyCompletionPublicationFixture } from './support/legacy-completion-publication.mts';
+import type { LegacyPublicationControl } from './support/legacy-completion-publication.mts';
 
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
 const SHELL_BUILD_MARKER = 'shell-lifecycle-build';
@@ -47,6 +50,9 @@ const COMMITTED_DRAINING = 'COMMITTED draining';
 const DURABLE_COMPLETE = 'DURABLE COMPLETE';
 const DURABLE_BLOCKED = 'DURABLE BLOCKED';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
+const LEGACY_TRANSACTION_CHECK = 'LEGACY TRANSACTION CHECK';
+const OWNER_RELEASE = 'OWNER RELEASE';
+const OWNER_ACQUIRE = 'OWNER ACQUIRE';
 const AUTHORITY_FROM = 'from "core"."application_composition_authority"';
 const JsonText = Schema.fromJsonString(Schema.Unknown);
 const artifact = (url: string, document: typeof JsonText.Type) => ({
@@ -135,6 +141,7 @@ interface MigrationFixtureOptions {
   readonly durableBlocks?: readonly boolean[];
   readonly initialPhase?: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly leaseRemainingMillis?: number;
+  readonly legacyControl?: LegacyPublicationControl;
   readonly legacyTransactionsActive?: boolean;
   readonly missingAuthority?: boolean;
   readonly ownerWorkPending?: boolean;
@@ -160,7 +167,9 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   const pendingAdmissions: (string | undefined)[] = [];
   const statements: string[] = [];
   const events: string[] = [];
+  const authorityLockPositions: number[] = [];
   const proofRequests: string[] = [];
+  const legacy = legacyCompletionPublicationFixture(events, options.legacyControl);
   const recordTransaction = (sql: string) => {
     if (sql === 'BEGIN') {
       pendingPhases.push(undefined);
@@ -184,7 +193,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
   const blockedWork = (sql: string) => {
     if (sql.includes('pg_stat_activity')) {
-      events.push('LEGACY TRANSACTION CHECK');
+      events.push(LEGACY_TRANSACTION_CHECK);
       return [{ blocked: options.legacyTransactionsActive ?? false }];
     }
     const durableWork = sql.includes('application_composition_durable_work');
@@ -240,6 +249,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
     return Effect.succeed(HttpClientResponse.fromWeb(request, response));
   });
   const layer = Layer.mergeAll(
+    legacy.layer,
     Layer.succeed(HttpClient.HttpClient, client),
     ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
     ConfigProvider.layer(
@@ -254,6 +264,13 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
         Effect.sync(() => {
           statements.push(sql);
           recordTransaction(sql);
+          if (sql.includes('pg_advisory_xact_lock(')) {
+            authorityLockPositions.push(events.length);
+          }
+          const legacyRows = legacy.sqlResponse(sql, params);
+          if (legacyRows !== null) {
+            return legacyRows;
+          }
           if (sql.includes('pg_advisory_unlock(')) {
             events.push(SESSION_UNLOCK);
             return [{ unlocked: true }];
@@ -274,6 +291,10 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             if (options.missingAuthority === true) {
               return [];
             }
+            // executeValues maps Object.values in projection order; revision-only reads cannot return phase first.
+            if (sql.startsWith('select "revision" from')) {
+              return [{ revision: oldRevision }];
+            }
             if (sql.includes('"durable_work_admission"')) {
               durablePoll = true;
               return [{ durableWorkAdmission: admission, phase, revision: oldRevision }];
@@ -291,8 +312,39 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
       ).pipe(Effect.map((executor) => ({ executor }))),
     ),
   );
-  return { admission: () => admission, events, layer, phase: () => phase, proofRequests, statements };
+  return {
+    admission: () => admission,
+    authorityLockPositions,
+    events,
+    layer,
+    legacy,
+    phase: () => phase,
+    proofRequests,
+    statements,
+  };
 };
+
+it.effect('fences concurrent public writers before acquiring owner leases for both drain and seal', () =>
+  Effect.gen(function* authorityBeforeOwnerEvidence() {
+    const fixture = migrationFixture();
+    yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(Effect.provide(fixture.layer));
+    const acquisitions = fixture.events.flatMap((event, index) => (event === OWNER_ACQUIRE ? [index] : []));
+    expect(acquisitions).toHaveLength(2);
+    for (const acquisition of acquisitions) {
+      const observation = fixture.events.slice(0, acquisition).lastIndexOf(LEGACY_TRANSACTION_CHECK);
+      expect(observation).toBeGreaterThanOrEqual(0);
+      expect(fixture.authorityLockPositions.some((position) => position > observation && position <= acquisition)).toBe(
+        true,
+      );
+      const release = fixture.events.indexOf(OWNER_RELEASE, acquisition);
+      expect(release).toBeGreaterThan(acquisition);
+      expect(fixture.events.slice(acquisition, release).some((event) => event.startsWith('COMMITTED '))).toBe(true);
+    }
+    expect(fixture.phase()).toBe('migrated');
+  }),
+);
+
+const ownerObservationEvents = [OWNER_ACQUIRE, 'OWNER EMPTY TOPIC', 'OWNER VERIFY', 'OWNER RETAIN'];
 
 it.effect('commits draining and sealing before migration, then records completion under the same session lock', () =>
   Effect.gen(function* migratesOnlyAfterCommittedSeal() {
@@ -306,6 +358,7 @@ it.effect('commits draining and sealing before migration, then records completio
       Effect.provide(fixture.layer),
       Effect.forkChild,
     );
+    yield* TestClock.adjust('0 seconds');
     yield* TestClock.adjust('3 seconds');
     expect(yield* Fiber.join(fiber)).toBe('native-migration-complete');
 
@@ -313,16 +366,35 @@ it.effect('commits draining and sealing before migration, then records completio
       'SESSION LOCK',
       'COMMITTED admission closed',
       DURABLE_COMPLETE,
+      LEGACY_TRANSACTION_CHECK,
+      ...ownerObservationEvents,
       COMMITTED_DRAINING,
+      OWNER_RELEASE,
       'DRAIN BLOCKED',
       'DRAIN COMPLETE',
+      LEGACY_TRANSACTION_CHECK,
+      ...ownerObservationEvents,
       'COMMITTED sealed',
+      OWNER_RELEASE,
       MIGRATION_EVENT,
       'COMMITTED migrated',
       SESSION_UNLOCK,
     ]);
     expect(fixture.phase()).toBe('migrated');
     expect(fixture.proofRequests).toEqual([]);
+    expect(fixture.legacy.observations).toHaveLength(2);
+    expect(fixture.legacy.retained).toHaveLength(2);
+    expect(fixture.legacy.freshnessChecks()).toBe(2);
+    for (const [index, observation] of fixture.legacy.observations.entries()) {
+      expect(observation.complete).toBe(true);
+      expect(observation.messages).toEqual([]);
+      expect(observation.binding.expectedRevision).toEqual(Option.some(OLD_REVISION));
+      expect(fixture.legacy.retained[index]?.binding).toBe(observation.binding);
+      expect(fixture.legacy.retained[index]?.evidenceReference).toBe(observation.evidenceReference);
+    }
+    expect(fixture.legacy.observations[0]?.evidenceReference).not.toBe(
+      fixture.legacy.observations[1]?.evidenceReference,
+    );
     expect(fixture.statements.some((statement) => statement.startsWith('SAVEPOINT'))).toBe(false);
   }),
 );
@@ -398,6 +470,41 @@ it.effect('preserves the sealed fence after native migration failure and refuses
   }),
 );
 
+it.effect('requires quiescent database transactions before the first migration', () =>
+  Effect.gen(function* verifiesInitialMigrationQuiescence() {
+    for (const options of [{ missingAuthority: true }, { schemaInitialized: false }]) {
+      const fixture = migrationFixture(options);
+      yield* runApplicationCompositionMigration(
+        Effect.sync(() => {
+          fixture.events.push(MIGRATION_EVENT);
+        }),
+        Effect.void,
+      ).pipe(Effect.provide(fixture.layer));
+      expect(fixture.events.indexOf(LEGACY_TRANSACTION_CHECK)).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
+      expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
+      expect(fixture.statements).not.toContain('BEGIN');
+      if (options.schemaInitialized === false) {
+        expect(fixture.statements.some((statement) => statement.includes(AUTHORITY_FROM))).toBe(false);
+      }
+    }
+
+    const blocked = migrationFixture({ legacyTransactionsActive: true, missingAuthority: true });
+    const blockedFiber = yield* runApplicationCompositionMigration(
+      Effect.sync(() => {
+        blocked.events.push(MIGRATION_EVENT);
+      }),
+      Effect.void,
+    ).pipe(Effect.provide(blocked.layer), Effect.flip, Effect.forkChild);
+    // A runtime that never goes quiet is re-observed for its bounded window, then refused.
+    yield* TestClock.adjust('10 seconds');
+    const failure = yield* Fiber.join(blockedFiber);
+    expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+    expect(blocked.events.filter((event) => event === LEGACY_TRANSACTION_CHECK).length).toBeGreaterThan(1);
+    expect(blocked.events).not.toContain(MIGRATION_EVENT);
+    expect(blocked.events.at(-1)).toBe(SESSION_UNLOCK);
+  }),
+);
+
 it.effect('bounds durable draining by the lease and leaves the current release active with admission closed', () =>
   Effect.gen(function* preservesActiveReleaseAfterDrainTimeout() {
     const fixture = migrationFixture({ leaseRemainingMillis: 35_000, ownerWorkPending: true });
@@ -410,7 +517,7 @@ it.effect('bounds durable draining by the lease and leaves the current release a
     yield* TestClock.adjust('5 seconds');
     const failure = yield* Fiber.join(fiber);
 
-    expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure)).toBe(true);
+    expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('closed');
     expect(fixture.events).not.toContain(COMMITTED_DRAINING);
@@ -421,6 +528,28 @@ it.effect('bounds durable draining by the lease and leaves the current release a
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('open');
     expect(fixture.events).toContain('COMMITTED admission open');
+  }),
+);
+
+it.effect('bounds durable draining by its phase budget inside a fresh lease and reports the drain phase', () =>
+  Effect.gen(function* reportsDrainBudgetTimeout() {
+    const fixture = migrationFixture({ ownerWorkPending: true });
+    const fiber = yield* runApplicationCompositionMigration(
+      Effect.sync(() => {
+        fixture.events.push(MIGRATION_EVENT);
+      }),
+      Effect.void,
+      { drainMs: 5000 },
+    ).pipe(Effect.provide(fixture.layer), Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust('5 seconds');
+    const failure = yield* Fiber.join(fiber);
+
+    expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure)).toBe(true);
+    expect(failure).toMatchObject({ budgetMs: 5000, migrationStarted: false, phase: 'durable-drain' });
+    expect(fixture.phase()).toBe('active');
+    expect(fixture.admission()).toBe('closed');
+    expect(fixture.events).not.toContain(MIGRATION_EVENT);
+    expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
   }),
 );
 
@@ -513,4 +642,58 @@ it.effect('keeps the committed bytes across a crash before renewal commits and r
     yield* TestClock.adjust('25 hours');
     expect(Option.isNone(yield* restarted.load)).toBe(true);
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'refuses missing, empty, unresolved, replayed, mismatched, unretained, or expired legacy owner evidence',
+  () =>
+    Effect.gen(function* rejectsUnverifiedOwnerTransitions() {
+      const controls: readonly LegacyPublicationControl[] = [
+        'missing',
+        'empty',
+        'unknown',
+        'unresolved',
+        'nonempty',
+        'wrong-database',
+        'replayed-binding',
+        'replayed-reference',
+        'empty-reference',
+        'retention-failed',
+        'expired',
+      ];
+      for (const legacyControl of controls) {
+        const fixture = migrationFixture({ legacyControl });
+        const failure = yield* runApplicationCompositionMigration(
+          Effect.sync(() => {
+            fixture.events.push(MIGRATION_EVENT);
+          }),
+          Effect.void,
+        ).pipe(Effect.provide(fixture.layer), Effect.flip);
+        expect({ control: legacyControl, refused: Schema.is(LegacyCompletionPublicationError)(failure) }).toEqual({
+          control: legacyControl,
+          refused: true,
+        });
+        expect(fixture.phase()).toBe('active');
+        expect(fixture.admission()).toBe('closed');
+        expect(fixture.events).not.toContain(COMMITTED_DRAINING);
+        expect(fixture.events).not.toContain(MIGRATION_EVENT);
+        expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
+        if (legacyControl === 'missing' || legacyControl === 'empty') {
+          expect(fixture.legacy.observations).toEqual([]);
+          expect(fixture.events).not.toContain(OWNER_ACQUIRE);
+        } else {
+          expect(fixture.events).toContain(ROLLBACK_EVENT);
+          expect(fixture.events.lastIndexOf(OWNER_RELEASE)).toBeGreaterThan(fixture.events.lastIndexOf(ROLLBACK_EVENT));
+          expect(fixture.legacy.observations).toHaveLength(1);
+        }
+        if (legacyControl === 'expired') {
+          expect(fixture.legacy.freshnessChecks()).toBe(1);
+          expect(fixture.legacy.retained).toHaveLength(1);
+        }
+        if (legacyControl === 'retention-failed') {
+          expect(fixture.legacy.retained).toEqual([]);
+        }
+        expect(fixture.statements.some((statement) => statement.startsWith('SAVEPOINT'))).toBe(false);
+      }
+    }),
 );

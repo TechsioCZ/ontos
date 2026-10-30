@@ -1,4 +1,4 @@
-import { SqlError, isSqlError } from 'effect/sql/SqlError';
+import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
@@ -788,15 +788,19 @@ const prefetchEntrypointModuleAccess = <AccessValue extends (typeof ContextAcces
 const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
-  entrypoint: ReadRegistration<
-    Schema.ConstraintDecoder<unknown>,
-    Schema.ConstraintDecoder<unknown>,
-    string,
-    unknown,
-    unknown
-  >['descriptor']['entrypoint'],
+  descriptor: Pick<
+    ReadRegistration<
+      Schema.ConstraintDecoder<unknown>,
+      Schema.ConstraintDecoder<unknown>,
+      string,
+      unknown,
+      unknown
+    >['descriptor'],
+    'entrypoint' | 'legalEntityScope' | 'permissionTarget'
+  >,
   permissionTarget: AtomicResolvedReadPermissionTarget,
 ): Effect.Effect<Option.Option<PermissionDecision>> => {
+  const { entrypoint } = descriptor;
   const { authorization } = entrypoint;
   if (authorization.kind !== 'context_permission') {
     return Effect.succeedSome('allowed');
@@ -813,7 +817,15 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     // The primary permission target already decides the entrypoint's permission.
     return Effect.succeedNone;
   }
-  if (authorization.permission === 'module.access') {
+  // Optional tenant-owned Reads keep their module gate at tenant scope. A real
+  // context permission is required; absent Legal Entity never implies a grant.
+  const tenantModulePermission =
+    entrypoint.scope === 'tenant' &&
+    descriptor.legalEntityScope === 'optional' &&
+    descriptor.permissionTarget === 'tenant' &&
+    permissionTarget.kind === 'tenant' &&
+    scope.legalEntityId === undefined;
+  if (authorization.permission === 'module.access' && !tenantModulePermission) {
     return checkAtomicPermissionTarget(
       contextAccess,
       scope,
@@ -881,6 +893,62 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
     value: cause,
     writable: false,
   });
+
+const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
+  preserveFailureCause(
+    Schema.is(ConnectionError)(failure.reason)
+      ? new ReadHandlerUnavailable({
+          code: 'read_handler_unavailable',
+          reason: 'The governed read database connection is temporarily unavailable',
+        })
+      : new ReadHandlerExecutionError({
+          code: 'read_handler_execution_failed',
+          reason: 'The governed read transaction failed',
+        }),
+    failure,
+  );
+
+/**
+ * Effect promotes a transaction body's typed failure to a defect when SQL settlement also defects.
+ * Recover the settlement SqlError only when every other defect is one of this body's own captured
+ * failures, so an outage keeps its connection classification. Other defects and interruption stay.
+ */
+const makeReadSettlementRecovery = () => {
+  const bodyFailures = new Set<unknown>();
+  return {
+    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      body.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            for (const reason of cause.reasons) {
+              if (Cause.isFailReason(reason)) {
+                bodyFailures.add(reason.error);
+              }
+            }
+          }),
+        ),
+      ),
+    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+      transaction.pipe(
+        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+          let settlement: SqlError | undefined;
+          for (const reason of cause.reasons) {
+            if (Cause.isInterruptReason(reason)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.isDieReason(reason)) {
+              if (isSqlError(reason.defect)) {
+                settlement = reason.defect;
+              } else if (!bodyFailures.has(reason.defect)) {
+                return Effect.failCause(cause);
+              }
+            }
+          }
+          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
+        }),
+      ),
+  };
+};
 
 type ReadEvidenceCaptureMode = ReadRegistration<
   Schema.ConstraintDecoder<unknown>,
@@ -1146,29 +1214,6 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
-/** Callers explicitly distinguish encoded ingress from framework-decoded domain values. */
-type ReadRuntimeInput<InputSchema extends Schema.ConstraintDecoder<unknown>> =
-  | {
-      readonly decodedInput?: never;
-      readonly input: unknown;
-      readonly inputFormat?: 'encoded';
-    }
-  | {
-      readonly decodedInput: InputSchema['Type'];
-      readonly input?: never;
-      readonly inputFormat: 'decoded';
-    };
-
-const decodeReadRuntimeInput = <InputSchema extends Schema.ConstraintDecoder<unknown>>(
-  schema: InputSchema,
-  input: ReadRuntimeInput<InputSchema>,
-) => {
-  const decoded = input.inputFormat === 'decoded';
-  return Schema.decodeUnknownEffect(decoded ? Schema.toType(schema) : schema, {
-    onExcessProperty: 'error',
-  })(decoded ? input.decodedInput : input.input);
-};
-
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1195,27 +1240,28 @@ const readRuntimeFromDependencies = <
     DomainErrorSchema extends Schema.ConstraintDecoder<{
       readonly _tag: string;
     }>,
-  >(
-    input: {
-      /** Trusted receiving deployment audience for per-operation admission. */
-      readonly audience?: string;
-      readonly principal: unknown;
-      readonly registration: ReadRegistration<
-        InputSchema,
-        ResultSchema,
-        Owner,
-        Services,
-        HandlerError,
-        Requirements,
-        DomainErrorSchema
-      >;
-      /** Request-owned timing collector; never derived from the read payload. */
-      readonly timings?: Ref.Ref<readonly ReadTiming[]>;
-      readonly transport: unknown;
-    } & ReadRuntimeInput<InputSchema>,
-  ): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
+  >(input: {
+    /** Trusted receiving deployment audience for per-operation admission. */
+    readonly audience?: string;
+    readonly input: unknown;
+    readonly principal: unknown;
+    readonly registration: ReadRegistration<
+      InputSchema,
+      ResultSchema,
+      Owner,
+      Services,
+      HandlerError,
+      Requirements,
+      DomainErrorSchema
+    >;
+    /** Request-owned timing collector; never derived from the read payload. */
+    readonly timings?: Ref.Ref<readonly ReadTiming[]>;
+    readonly transport: unknown;
+  }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
     const observe = (phase: ReadPhase) => observeReadPhase(phase, input.timings);
-    const decodedInput = yield* decodeReadRuntimeInput(input.registration.descriptor.inputSchema, input).pipe(
+    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
+      onExcessProperty: 'error',
+    })(input.input).pipe(
       Effect.mapError((parseIssue) =>
         preserveFailureCause(
           new ReadInputValidationError({
@@ -1309,15 +1355,16 @@ const readRuntimeFromDependencies = <
       );
     const readTransaction = <Value, Failure, Environment>(
       body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
-    ) =>
-      database.executor
+    ) => {
+      const settlement = makeReadSettlementRecovery();
+      return database.executor
         .transaction((transaction) =>
           // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
-          body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey)),
+          body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey), settlement.capture),
         )
         .pipe(
+          settlement.recover,
           observe('read-transaction'),
-          Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
           Effect.tapError((failure) =>
             Schema.is(SqlError)(failure)
               ? Effect.logError('Unexpected governed read transaction failure', failure)
@@ -1325,16 +1372,11 @@ const readRuntimeFromDependencies = <
           ),
           Effect.mapError((transactionFailure) =>
             Schema.is(SqlError)(transactionFailure)
-              ? preserveFailureCause(
-                  new ReadHandlerExecutionError({
-                    code: 'read_handler_execution_failed',
-                    reason: 'The governed read transaction failed',
-                  }),
-                  transactionFailure,
-                )
+              ? mapReadTransactionSqlFailure(transactionFailure)
               : transactionFailure,
           ),
         );
+    };
 
     const admittedTransaction = <Value, Failure, Environment>(
       body: (
@@ -1480,7 +1522,7 @@ const readRuntimeFromDependencies = <
             : checkEntrypointContextPermission(
                 contextAccess,
                 scope,
-                input.registration.descriptor.entrypoint,
+                input.registration.descriptor,
                 canonicalPermissionTarget(permissionTarget),
               ),
         ],

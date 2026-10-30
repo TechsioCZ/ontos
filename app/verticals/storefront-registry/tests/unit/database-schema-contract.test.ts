@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'effect-rstest';
 import {
+  gatewayAssertionRedemptions,
   STOREFRONT_REGISTRY_SCHEMA_NAME,
   STOREFRONT_REGISTRY_TABLE_INVENTORY,
   STOREFRONT_REGISTRY_TABLES,
@@ -11,7 +12,7 @@ import {
 } from '../../src/database/schema.ts';
 
 describe('Storefront Registry database contract', () => {
-  it('owns tenant applications, immutable revisions, owner generation, and pre-scope replay evidence', () => {
+  it('owns only the tenant application identity, immutable revisions, and owner generation', () => {
     const qualified = STOREFRONT_REGISTRY_TABLES.map((table) => {
       const config = getTableConfig(table);
       return `${config.schema}.${config.name}`;
@@ -20,14 +21,29 @@ describe('Storefront Registry database contract', () => {
     expect(qualified).toEqual(
       STOREFRONT_REGISTRY_TABLE_INVENTORY.map((name) => `storefront_registry.${name}`).toSorted(),
     );
-    for (const table of STOREFRONT_REGISTRY_TABLES) {
-      if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
-        continue;
-      }
+    // The replay-identity table is global pre-authentication state and intentionally has no Tenant column or RLS.
+    for (const table of STOREFRONT_REGISTRY_TABLES.filter((candidate) => candidate !== gatewayAssertionRedemptions)) {
       const config = getTableConfig(table);
       expect(config.enableRLS).toBe(true);
       expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
     }
+  });
+
+  it('keeps gateway assertion replay identities global, unique and runtime-limited to select, insert and delete', () => {
+    const config = getTableConfig(gatewayAssertionRedemptions);
+    expect(config.enableRLS).toBe(false);
+    expect(config.columns.some(({ name }) => name === 'tenant_id')).toBe(false);
+    const migration = readFileSync(
+      new URL('../../drizzle/20261021175811_gateway_assertion_redemption/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    expect(migration).toContain('UNIQUE("issuer","audience","jti")');
+    expect(migration).toContain(
+      'REVOKE ALL ON TABLE "storefront_registry"."gateway_assertion_redemptions" FROM PUBLIC, ontos_runtime',
+    );
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, DELETE ON TABLE "storefront_registry"."gateway_assertion_redemptions" TO ontos_runtime',
+    );
   });
 
   it('enforces tenant application identity, immutable revision numbering, lifecycle, channels, and intervals', () => {
@@ -80,20 +96,4 @@ describe('Storefront Registry database contract', () => {
     );
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
-});
-
-it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
-  const table = STOREFRONT_REGISTRY_TABLES.find(
-    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
-  );
-  expect(table).toBeDefined();
-  if (table === undefined) {
-    throw new Error('Missing gateway assertion redemption table');
-  }
-  const config = getTableConfig(table);
-  expect(config.schema).toBe('storefront_registry');
-  expect(config.enableRLS).toBe(false);
-  expect(config.policies).toEqual([]);
-  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
-  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['storefront_registry_redemption_expiry']);
 });

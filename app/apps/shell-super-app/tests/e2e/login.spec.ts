@@ -8,15 +8,15 @@ import type { AuthenticationFixture } from './auth-fixture.ts';
 
 const hydratedLoginForm = (page: Page) => page.locator('form[data-e2e-hydrated-login="true"]');
 
-// SSR already exposes a visible trigger. Zag's menu becomes interactive after hydration
-// installs React props and moves its matching content portal to document.body.
+// SSR already exposes a visible trigger. Zag's menu becomes interactive after its account action item
+// reports hydration and the matching content portal has moved to document.body.
 const waitForInteractiveAccountMenu = async (page: Page) => {
   await page.waitForFunction(() => {
     const trigger = document.querySelector<HTMLButtonElement>('button[data-scope="menu"][data-part="trigger"]');
     if (trigger === null) {
       return false;
     }
-    if (!Object.keys(trigger).some((key) => key.startsWith('__reactProps$'))) {
+    if (trigger.closest('[data-hydrated]') === null) {
       return false;
     }
     const positioner = document.querySelector('[data-scope="menu"][data-part="positioner"]');
@@ -36,7 +36,7 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
     );
     let hydratedForm: HTMLFormElement | undefined;
     for (const form of forms) {
-      if (Object.keys(form).some((key) => key.startsWith('__reactProps$'))) {
+      if (Object.hasOwn(form.dataset, 'hydrated')) {
         hydratedForm = form;
       }
     }
@@ -305,6 +305,13 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   page,
 }) => {
   await login(page, 'en', authentication.credentials);
+
+  // The sidebar search is controlled: typed text reaches the query only through the renderer's change event.
+  await waitForInteractiveAccountMenu(page);
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
+  await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('Unit 1');
+  await sidebar.getByRole('button', { exact: true, name: 'Search' }).click();
+  await expect(page).toHaveURL(/\/en\/search\?q=Unit%201$/u);
 
   const expectPersistentShell = async (path: string, status: string) => {
     await page.goto(path);

@@ -3,14 +3,11 @@ import { Effect, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  configuredGatewayAssertionRedemptionLive,
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
-import {
-  GatewayAssertionRedemptionDatabaseLive,
-  GatewayAssertionRedemptionLive,
-} from '../../api/auth/gateway-assertion-redemption.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { jsonBody } from '../support/response.ts';
 
@@ -31,10 +28,7 @@ const unconfiguredRuntime = Effect.acquireRelease(
     makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive,
       productionActionRuntimeLive,
-      GatewayAssertionRedemptionLive.pipe(
-        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-        Layer.provide(DatabaseConfigLive),
-      ),
+      configuredGatewayAssertionRedemptionLive,
       commercePortalAuthRealmUnavailableLive([ORIGIN]),
       Layer.empty,
       DatabaseConfigLive,

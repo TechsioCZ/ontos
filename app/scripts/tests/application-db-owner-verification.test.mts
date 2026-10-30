@@ -15,8 +15,8 @@ import {
   verifyOwnerSchemas,
 } from '../verify-application-db-schema.mts';
 
-it('retains all 29 owner verifiers including Projects and invokes Core through the application enrollment wrapper', () => {
-  expect(ownerVerifierPaths).toHaveLength(29);
+it('retains all 31 owner verifiers including Projects and invokes Core through the application enrollment wrapper', () => {
+  expect(ownerVerifierPaths).toHaveLength(31);
   expect(ownerVerifierPaths).toEqual([
     './verify-core-db-schema.mts',
     '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
@@ -25,8 +25,10 @@ it('retains all 29 owner verifiers including Projects and invokes Core through t
     '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
     '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
     '../verticals/price-group-catalog/scripts/verify-db-schema.mts',
+    '../verticals/commerce-cart/scripts/verify-db-schema.mts',
     '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
     '../verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
+    '../verticals/commerce-order/scripts/verify-database.mts',
     '../verticals/catalog/scripts/verify-db-schema.mts',
     '../verticals/inventory/scripts/verify-db-schema.mts',
     '../verticals/pricing/scripts/verify-db-schema.mts',

@@ -29,6 +29,44 @@ const decodeSelection = Schema.decodeUnknownSync(CatalogSelectionSchema, { onExc
 const decodeEvidence = Schema.decodeUnknownSync(CatalogSelectionEvidenceSchema, { onExcessProperty: 'error' });
 
 describe('Catalog Selection decision references', () => {
+  it('keeps per-definition allowance counters separate from genuine Product axis revisions', () => {
+    const decode = Schema.decodeUnknownSync(CatalogSelectionBasisSchema, { onExcessProperty: 'error' });
+    const attributeDefinition = { resourceRef: ref('commerce.catalog.attribute-definition', tenantId), revision: 3 };
+    const proof = { allowanceRevision: 7, attributeDefinition };
+    const fact = { axisAllowances: [proof], role: 'VARIANT_AXIS', source: { resourceRef: productRef, revision: 2 } };
+    const parsed = decode(fact);
+    expect(parsed.source.revision).toBe(2);
+    expect(parsed.axisAllowances).toEqual([proof]);
+    expect(
+      sameCatalogSelectionBasis(parsed, decode({ ...fact, axisAllowances: [{ ...proof, allowanceRevision: 8 }] })),
+    ).toBe(false);
+    expect(sameCatalogSelectionBasis(parsed, decode({ role: fact.role, source: fact.source }))).toBe(false);
+    expect(() => decode({ ...fact, role: 'PRODUCT' })).toThrow();
+    expect(() => decode({ ...fact, source: { resourceRef: variantRef, revision: 2 } })).toThrow();
+    expect(() => decode({ ...fact, axisAllowances: [proof, proof] })).toThrow();
+    expect(() => decode({ ...fact, axisAllowances: [{ ...proof, allowanceRevision: 0 }] })).toThrow();
+    expect(() =>
+      decode({
+        ...fact,
+        axisAllowances: [{ ...proof, attributeDefinition: { ...attributeDefinition, resourceRef: variantRef } }],
+      }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        ...fact,
+        axisAllowances: [
+          {
+            ...proof,
+            attributeDefinition: {
+              ...attributeDefinition,
+              resourceRef: { ...attributeDefinition.resourceRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+            },
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it('keeps component dependency roles and subjects distinct without fabricating revision identity', () => {
     const composition = {
       resourceRef: ref('commerce.catalog.set-composition', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
@@ -52,6 +90,43 @@ describe('Catalog Selection decision references', () => {
     ).toBe(false);
     expect(() => decode({ role: 'UNIT_RULE', source: { ...source, resourceRef: variantRef }, subject })).toThrow();
     expect(() => decode({ role: 'PACKAGE_OPTION_ROLE', source, subject })).toThrow();
+  });
+
+  it('retains genuine confirmed-untyped provenance on an exact Set component', () => {
+    const subject = {
+      componentId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      composition: {
+        resourceRef: ref('commerce.catalog.set-composition', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+        revision: 2,
+      },
+      kind: 'SET_COMPONENT',
+    };
+    const fact = {
+      provenance: 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION',
+      role: 'PRODUCT_TYPE_UNTYPED_DECISION',
+      source: { resourceRef: productRef, revision: 4 },
+      subject,
+    };
+    const decode = Schema.decodeUnknownSync(CatalogSelectionBasisSchema, { onExcessProperty: 'error' });
+    expect(decode(fact)).toEqual(fact);
+    expect(() => decode({ role: fact.role, source: fact.source, subject })).toThrow();
+    expect(() => decode({ ...fact, source: { resourceRef: variantRef, revision: 4 } })).toThrow();
+    expect(() => decode({ ...fact, role: 'PRODUCT' })).toThrow();
+    expect(() =>
+      decode({
+        ...fact,
+        subject: {
+          ...subject,
+          composition: {
+            ...subject.composition,
+            resourceRef: { ...subject.composition.resourceRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(sameCatalogSelectionBasis(decode(fact), decode({ ...fact, source: { ...fact.source, revision: 5 } }))).toBe(
+      false,
+    );
   });
 
   it('rejects duplicate component basis identity and facts scoped to a different composition', () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit } from 'effect';
 
 import { readProcessingPurposes } from '../../src/api/processing-purposes.read.ts';
+import { resolvePurposeVersionTimeline } from '../../shared/domain/processing-purpose.ts';
 import { makeInMemoryProcessingPurposeRepository } from '../../src/domain/processing-purpose-catalog.ts';
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -27,6 +28,48 @@ const materialChange = (purposeId: string) => ({
 });
 
 describe('Processing Purpose catalog', () => {
+  it.effect(
+    'derives exclusive predecessor ends from immutable successor facts and fails closed on incoherent chronology',
+    () =>
+      Effect.gen(function* immutablePurposeTimeline() {
+        const first = Object.freeze({
+          effectiveFrom: '2026-01-01T00:00:00.000Z',
+          effectiveTo: null,
+          materialChangeAssessment: null,
+          meaning: 'Original V1',
+          recordedAt: '2026-01-01T00:00:00.000Z',
+          versionId: '00000000-0000-4000-8000-000000000011',
+          versionNumber: 1,
+        });
+        const second = Object.freeze({
+          ...first,
+          effectiveFrom: '2026-02-01T00:00:00.000Z',
+          meaning: 'Changed V2',
+          versionId: '00000000-0000-4000-8000-000000000012',
+          versionNumber: 2,
+        });
+        const raw = Object.freeze([first, second]);
+        const projected = yield* resolvePurposeVersionTimeline(raw);
+        expect(first.effectiveTo).toBeNull();
+        expect(projected[0]).toEqual({ ...first, effectiveTo: second.effectiveFrom });
+        expect(projected[1]).toEqual(second);
+        expect(yield* resolvePurposeVersionTimeline([second, first])).toEqual(projected);
+        const finite = { ...first, effectiveTo: '2026-01-15T00:00:00.000Z' };
+        expect((yield* resolvePurposeVersionTimeline([finite, second]))[0]?.effectiveTo).toBe(finite.effectiveTo);
+        for (const malformed of [
+          [],
+          [first, { ...second, versionNumber: 3 }],
+          [first, { ...second, versionNumber: 1 }],
+          [first, { ...second, versionId: first.versionId }],
+          [first, { ...second, effectiveFrom: first.effectiveFrom }],
+          [{ ...first, effectiveTo: '2026-03-01T00:00:00.000Z' }, second],
+          [{ ...first, effectiveTo: '2025-12-31T00:00:00.000Z' }, second],
+        ]) {
+          expect(Exit.isFailure(yield* Effect.exit(resolvePurposeVersionTimeline(malformed)))).toBe(true);
+        }
+      }),
+  );
+
   it.effect('creates a stable purpose identity with its first immutable version', () =>
     Effect.gen(function* createsPurpose() {
       const repository = yield* makeInMemoryProcessingPurposeRepository();

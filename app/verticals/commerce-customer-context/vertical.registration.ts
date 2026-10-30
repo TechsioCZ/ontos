@@ -27,6 +27,8 @@ import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-cou
 import { claimPortalEnrollmentTransitionAction } from './src/actions/claim-portal-enrollment-transition.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
+import { completePurchaseProposalBasisAction } from './src/actions/complete-purchase-proposal-basis.action.ts';
+import { consumeOrderPurchaseApprovalAction } from './src/actions/consume-order-purchase-approval.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
 import { createApprovalHierarchyAction } from './src/actions/create-approval-hierarchy.action.ts';
 import { createCounterpartyAccessInvitationAction } from './src/actions/create-counterparty-access-invitation.action.ts';
@@ -41,6 +43,7 @@ import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-count
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
+import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
 import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
@@ -65,6 +68,7 @@ import { resendCounterpartyAccessInvitationAction } from './src/actions/resend-c
 import { reserveMarketRetirementAction } from './src/actions/reserve-market-retirement.action.ts';
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
+import { revalidateOrderPurchaseApprovalAction } from './src/actions/revalidate-order-purchase-approval.action.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
 import { revokeCounterpartyAccessInvitationAction } from './src/actions/revoke-counterparty-access-invitation.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from './src/actions/revoke-counterparty-commerce-access.action.ts';
@@ -107,6 +111,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     claimPortalEnrollmentTransitionAction,
     clearDefaultBillingAddressAction,
     clearDefaultDeliveryDestinationAction,
+    completePurchaseProposalBasisAction,
+    consumeOrderPurchaseApprovalAction,
     consumePurchaseApprovalAction,
     createApprovalHierarchyAction,
     createCounterpartyAccessInvitationAction,
@@ -120,6 +126,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     migrateCounterpartyPriceGroupAction,
     migrateCustomerPriceGroupAction,
     openProfileReconciliationAction,
+    preparePurchaseProposalBasisAction,
     reactivateCustomerGroupAction,
     reactivateCustomerProfileAction,
     recordPortalEnrollmentOutcomeAction,
@@ -136,6 +143,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     reserveMarketRetirementAction,
     reservePaymentTermRetirementAction,
     resolveProfileReconciliationAction,
+    revalidateOrderPurchaseApprovalAction,
     revalidatePurchaseApprovalAction,
     revokeCounterpartyAccessInvitationAction,
     revokeCounterpartyCommerceAccessAction,
@@ -193,6 +201,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'market-bootstrap-policy-current': () => import('./src/api/market-bootstrap-policy-current-client.ts'),
       'market-bootstrap-resolution': () => import('./src/api/market-bootstrap-resolution-client.ts'),
       'market-subject-restrictions-current': () => import('./src/api/market-subject-restrictions-current-client.ts'),
+      'order-commitment-approval-evidence': () => import('./src/api/order-commitment-approval-evidence-client.ts'),
+      'order-service-approval-evidence': () => import('./src/api/order-service-approval-evidence-client.ts'),
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
@@ -204,6 +214,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),
       'purchase-limit-evaluation': () => import('./src/api/purchase-limit-evaluation-client.ts'),
       'purchase-limit-policy-read': () => import('./src/api/purchase-limit-policy-read-client.ts'),
+      'purchase-proposal-basis': () => import('./src/api/purchase-proposal-basis-client.ts'),
       'repeat-order-preparation': () => import('./src/api/repeat-order-preparation-client.ts'),
       'retail-access-decision': () => import('./src/api/retail-access-decision-client.ts'),
       'retail-order-history': () => import('./src/api/retail-order-history-client.ts'),

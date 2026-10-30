@@ -11,7 +11,7 @@ import {
 } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { configureDatabasePool } from '../db/pool-configuration.ts';
-import { verifyDatabaseSessionRole } from '../db/session-identity.ts';
+import { verifySessionRoleOnFirstUse } from '../db/session-identity.ts';
 import { GatewayScopeGrantUnavailableError } from './gateway-scope-grant-unavailable-error.ts';
 
 export { GatewayScopeGrantUnavailableError } from './gateway-scope-grant-unavailable-error.ts';
@@ -103,8 +103,7 @@ export const GatewayScopeGrantRegistrarLive: Layer.Layer<
       REGISTRAR_MAX_CONNECTIONS,
     );
     const services = yield* Layer.build(PgClient.layer(poolConfiguration)).pipe(Effect.mapError(connectionFailure));
-    const client = Context.get(services, PgClient.PgClient);
-    yield* verifyDatabaseSessionRole(client, configuration.expectedRole);
+    const client = verifySessionRoleOnFirstUse(Context.get(services, PgClient.PgClient), configuration.expectedRole);
     return makeGatewayScopeGrantRegistrar(client, enrollment);
   }),
 );

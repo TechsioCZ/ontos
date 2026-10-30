@@ -1,3 +1,4 @@
+import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import { Brand, Schema } from 'effect';
 
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
@@ -33,6 +34,14 @@ const ProvenanceSchema = Schema.Struct({
 export const PartySubjectEvidenceSchema = Schema.Struct({
   basis: Schema.Literals(['DIRECT_INTERACTION', 'REVIEWED_DOCUMENT']),
   evidenceRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  // This explicit owner-accepted attestation binds a Guest purchase to the same subject;
+  // contact verification and reference spelling never establish this binding.
+  guestBinding: Schema.optionalKey(
+    Schema.Struct({
+      correlationRoot: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+      legalEntityRef: LegalEntityRefSchema,
+    }),
+  ),
   kind: Schema.Literal('ACTOR_ATTESTATION'),
   observedSubject: Schema.Literals([
     'PERSON',

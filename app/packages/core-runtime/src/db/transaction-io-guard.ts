@@ -1,4 +1,5 @@
 import type { PgClient } from '@effect/sql-pg';
+import type { SqlError } from 'effect/sql/SqlError';
 import { Context, Data, Effect, Option, Schema, flow } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
@@ -100,16 +101,13 @@ const statementExecutions = new Set<PropertyKey>([
 ]);
 
 /**
- * The Core pool, guarded: a statement or transaction that would check out a connection other than the
- * open transaction's own dies inside a marked transaction. Statements on the transaction's connection
- * (the client's transaction service is present) and nested savepoints pass.
+ * Runs `acquisition` before every statement, transaction or reservation of `client`. A failure is a
+ * SqlError, so callers keep the statement's own error channel.
  */
-export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClient => {
-  const acquisition = Effect.flatMap(Effect.serviceOption(client.transactionService), (connection) =>
-    Option.isSome(connection)
-      ? Effect.void
-      : refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool'),
-  );
+export const beforePoolAcquisition = (
+  client: PgClient.PgClient,
+  acquisition: Effect.Effect<void, SqlError>,
+): PgClient.PgClient => {
   const guardStatement = <Statement extends object>(statement: Statement): Statement =>
     new Proxy(statement, {
       get: (target, key, receiver) => {
@@ -133,3 +131,18 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
     },
   });
 };
+
+/**
+ * The Core pool, guarded: a statement or transaction that would check out a connection other than the
+ * open transaction's own dies inside a marked transaction. Statements on the transaction's connection
+ * (the client's transaction service is present) and nested savepoints pass.
+ */
+export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClient =>
+  beforePoolAcquisition(
+    client,
+    Effect.flatMap(Effect.serviceOption(client.transactionService), (connection) =>
+      Option.isSome(connection)
+        ? Effect.void
+        : refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool'),
+    ),
+  );

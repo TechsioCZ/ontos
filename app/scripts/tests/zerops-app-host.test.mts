@@ -141,6 +141,9 @@ describe('processEnvironment', () => {
 });
 
 const STOREFRONT = 'https://akros.example';
+/** Owner runtime keys are derived from the shared configuration, so read them as entries of the overlay. */
+const derivedValue = (derived: ReturnType<typeof derivedEnvironment>, key: string) =>
+  new Map<string, unknown>(Object.entries(derived)).get(key);
 
 describe('derivedEnvironment', () => {
   it('uses the public origin as the issuer and auth URL', () => {
@@ -149,7 +152,36 @@ describe('derivedEnvironment', () => {
     expect(derivedValues.BETTER_AUTH_URL).toBe(ORIGIN);
     expect(derivedValues.ONTOS_OAUTH_ISSUER).toBe(`${ORIGIN}/shell-super-app-api/oauth`);
     expect(derivedValues.COMMERCE_PORTAL_AUTH_URL).toBe(STOREFRONT);
-    expect(derivedValues.ONTOS_PRICE_GROUP_CATALOG_BASE_URL).toBe('http://127.0.0.1:4204/price-group-catalog-api');
+    expect(derivedValue(derivedValues, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL')).toBe(
+      'http://127.0.0.1:4204/price-group-catalog-api',
+    );
+  });
+
+  it('binds each owner API dependency to its serving unit on loopback and leaves unserved ones unset', () => {
+    const derivedValues = derivedEnvironment(
+      ORIGIN,
+      STOREFRONT,
+      3000,
+      new Map([
+        ['commerce-customer-context', 4103],
+        ['commerce-cart', 4115],
+      ]),
+    );
+    expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_CART_API_BASE_URL')).toBe(
+      'http://127.0.0.1:4115/commerce-cart-api',
+    );
+    expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL')).toBe(
+      'http://127.0.0.1:4103/commerce-customer-context-api',
+    );
+    expect(derivedValues.ONTOS_SHELL_GATEWAY_BASE_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
+    // An owner this environment does not serve gets no base, so a stored owner secret cannot point elsewhere.
+    expect(new Map(Object.entries(derivedValues)).has('ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBe(true);
+    expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBeUndefined();
+    expect(derivedValue(derivedValues, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL')).toBeUndefined();
+    expect(derivedValue(derivedValues, 'ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID')).toBe(
+      'ontos.staff.better-auth.v1',
+    );
+    expect(derivedValue(derivedValues, 'ONTOS_PRICING_ORDER_NAMESPACE_ID')).toBe('ontos.staff.better-auth.v1');
   });
 
   it('points the composition source at the host loopback port', () => {

@@ -253,6 +253,7 @@ it('keeps official assertions historical while exclusive claims own exact matchi
     'party_official_identifiers_external_evidence_ck',
     'party_official_identifiers_interval_ck',
     'party_official_identifiers_normalized_value_ck',
+    'party_official_identifiers_original_input_digits_ck',
     'party_official_identifiers_state_ck',
     'party_official_identifiers_type_ck',
     'party_official_identifiers_verification_ck',
@@ -687,8 +688,10 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
         'assortment',
         'auth',
         'catalog',
+        'commerce_cart',
         'commerce_customer_context',
         'commerce_market_catalog',
+        'commerce_order',
         'contacts',
         'core',
         'inventory',
@@ -746,4 +749,17 @@ it('narrows every Counterparty projection policy to the sealed entity without ex
       );
     }
   }
+});
+
+it('bounds retained ICO source digits while leaving historical unknown evidence nullable', () => {
+  const config = configOf(partyOfficialIdentifiers);
+  const original = config.columns.find((column) => column.name === 'original_input_digits');
+  expect(original?.notNull).toBe(false);
+  expect(original?.hasDefault).toBe(false);
+  const constraint = checksOf(partyOfficialIdentifiers);
+  const expression = checkSql(constraint, 'party_official_identifiers_original_input_digits_ck');
+  expect(expression).toMatch(/original_input_digits.*is null/u);
+  expect(expression).toMatch(/identifier_type_key.*ICO/u);
+  expect(expression).toContain('^[0-9]{1,8}$');
+  expect(expression).toMatch(/lpad.*original_input_digits.*8.*normalized_value/u);
 });

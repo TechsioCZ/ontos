@@ -34,6 +34,9 @@ BUILD_JOBS="${DEMO_BUILD_JOBS:-2}"
 DOCKER=(docker --context orbstack)
 COMPOSE=("${DOCKER[@]}" compose -f docker-compose.yml -f scripts/demo/compose.demo.yml)
 mkdir -p "$LOG_DIR" "$PID_DIR" "$STAMP_DIR" "$STUB_DIR"
+# The composition publisher retains native legacy completion evidence for every authority transition.
+export ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$SCRATCH/legacy-completion-evidence"
+install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
 
 say() { printf '\033[1m[demo]\033[0m %s\n' "$*"; }
 die() {

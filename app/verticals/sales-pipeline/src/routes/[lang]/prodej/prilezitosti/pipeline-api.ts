@@ -2,8 +2,8 @@ import { Effect, Random } from 'effect';
 import type { ApplyCommandPayload } from '../../../../../shared/actions/apply-command.ts';
 import type { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
-import type { OpportunityListFilters } from '../../../../api/records-client.ts';
+import { executeRecords } from '../../../../api/records-consumer.ts';
+import type { OpportunityListFilters } from '../../../../api/records-consumer.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 
 export type PipelineCommand = ApplyCommandPayload['command'];
