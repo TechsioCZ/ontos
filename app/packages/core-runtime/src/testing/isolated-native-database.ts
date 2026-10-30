@@ -510,9 +510,11 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       if (input.mode !== 'empty') {
         return yield* unavailable('Core schema bootstrap requires the empty test database mode');
       }
+      // Core's own `db:migrate`: its main and demo migration lineages converge through the reviewed equivalence
+      // plan, which a plain `drizzle-kit migrate` would replay twice.
       const migration = yield* ChildProcess.make(
-        new URL('../../node_modules/.bin/drizzle-kit', import.meta.url).pathname,
-        ['migrate', '--config', 'drizzle.config.ts'],
+        process.execPath,
+        ['../../scripts/migration-convergence-cli.mts', 'core'],
         {
           cwd: new URL('../../', import.meta.url).pathname,
           env: {
