@@ -38,11 +38,10 @@ artifact="$(cd "$artifact" && pwd)"
 port="${OUTBOX_WORKER_HEALTH_PORT:-4100}"
 start="node $runtime/worker.mjs"
 
-# The digest a source materialization compiles in.
-proof_digest="$(node --eval "process.stdout.write(require('node:crypto').createHash('sha256').update('outbox-worker-host-artifact-proof').digest('hex'))")"
+# Materialize the host as scripts/zerops/build-app.sh does, with every hosted owner built from this checkout.
 (
   cd "$app_directory"
-  ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ONTOS_OUTBOX_HOST_DIGEST="$proof_digest" \
+  ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app "$setup" --package 'app' --package-dir '.' --worker
 )
 mkdir -p "$artifact/$(dirname "$runtime")"
