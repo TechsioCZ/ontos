@@ -10,11 +10,7 @@ import { Effect, FileSystem, ManagedRuntime, Option, Path, Schema } from 'effect
 import { build, transform } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
-import {
-  OUTBOX_HOST_ARTIFACT_MODULE,
-  readOutboxWorkerHost,
-  renderOutboxWorkerHostEntry,
-} from './generate-outbox-worker-deployment.mjs';
+import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST } from './outbox-worker-delivery.mjs';
 
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
@@ -119,8 +115,6 @@ const OwnerBuildIdentitySchema = Schema.Struct({
   unitId: UnitIdSchema,
 });
 
-/** The host digest the deployment plan computes over the host's inputs (sha256, lowercase hex). */
-const HostArtifactDigestSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 /** A promotable Git object id: the only revision a kept owner's build identity can name. */
 const PROMOTABLE_REVISION = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 /**
@@ -132,11 +126,9 @@ const OwnerRevisionsSchema = Schema.fromJsonString(Schema.Record(Schema.String, 
 const WorkerArtifactSchema = Schema.fromJsonString(
   Schema.Struct({
     appId: AppIdSchema,
-    /** The host's plan digest, compiled into the bundle and served on /status; null for other workers. */
-    artifactDigest: Schema.OptionFromNullOr(HostArtifactDigestSchema),
     entry: Schema.Literal(WORKER_ENTRY),
     ownerBuildIdentities: Schema.Array(OwnerBuildIdentitySchema),
-    schemaVersion: Schema.Literal(3),
+    schemaVersion: Schema.Literal(4),
     serviceId: ServiceIdSchema,
     sourceInputs: Schema.Array(Schema.String),
     sourceRevision: Schema.OptionFromNullOr(Schema.String),
@@ -227,38 +219,15 @@ const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
 });
 
 /**
- * Only the host artifact carries the plan's host digest, so /status can name the exact prebuilt artifact.
- * @param {{ artifactDigest: string | undefined, workspaceRoot: string }} input The digest from
- *   ONTOS_OUTBOX_HOST_DIGEST and the workspace root.
+ * The plan's owner identity revisions, which only the Outbox Worker host takes: the host compiles each owner under
+ * the revision of the release the composition keeps for it, the build revision for an owner built here.
+ * @param {{ ownerRevisions: string | undefined, owners: readonly string[] }} input
+ *   The JSON from ONTOS_OUTBOX_HOST_OWNER_REVISIONS and the hosted owner ids.
  */
-const resolveHostArtifact = ({ artifactDigest, workspaceRoot }) =>
-  Effect.gen(function* resolveHostArtifactEffect() {
-    if (artifactDigest === undefined) {
-      return Option.none();
-    }
-    const digest = yield* Schema.decodeUnknownEffect(HostArtifactDigestSchema)(artifactDigest).pipe(
-      Effect.mapError(() => failure('The Outbox Worker host digest must be 64 lowercase hex characters')),
-    );
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const modulePath = yield* fs.realPath(path.join(workspaceRoot, OUTBOX_HOST_ARTIFACT_MODULE));
-    return Option.some({ digest, modulePath });
-  });
-
-/**
- * The plan's owner identity revisions, which only the Outbox Worker host takes, and its prebuilt artifact always
- * takes: the host compiles each owner under the revision of the release the composition keeps for it, the build
- * revision for an owner built here.
- * @param {{ hostArtifact: Option.Option<unknown>, ownerRevisions: string | undefined, owners: readonly string[] }} input
- *   The host digest when it is the prebuilt host artifact, the JSON from ONTOS_OUTBOX_HOST_OWNER_REVISIONS and
- *   the hosted owner ids.
- */
-const resolveOwnerRevisions = ({ hostArtifact, ownerRevisions, owners }) =>
+const resolveOwnerRevisions = ({ ownerRevisions, owners }) =>
   Effect.gen(function* resolveOwnerRevisionsEffect() {
     if (ownerRevisions === undefined) {
-      return Option.isNone(hostArtifact)
-        ? Option.none()
-        : yield* Effect.fail(failure('The Outbox Worker host artifact requires every owner identity revision'));
+      return Option.none();
     }
     const revisions = yield* Schema.decodeUnknownEffect(OwnerRevisionsSchema)(ownerRevisions).pipe(
       Effect.mapError(() => failure('The owner identity revisions must map owner ids to source revisions')),
@@ -329,52 +298,6 @@ const resolveOwnerReleaseIdentity = ({ declared, keptRevision, ownerId, sourceRe
             sourceRevision: revision,
           }),
   });
-
-/**
- * @param {Option.Option<{ digest: string, modulePath: string }>} hostArtifact Digest the bundle must carry.
- * @param {Set<string>} compiled Modules the digest plugin compiled.
- */
-const requireCompiledHostDigest = (hostArtifact, compiled) =>
-  Option.isSome(hostArtifact) && compiled.size === 0
-    ? Effect.fail(failure(`The Outbox Worker host does not import ${OUTBOX_HOST_ARTIFACT_MODULE}`))
-    : Effect.void;
-
-/**
- * Compile the host digest in place of the host entry's artifact module. Like the owner identities, it is
- * fixed in the bundle, never read from mutable process configuration.
- * @param {{
- *   compiled: Set<string>,
- *   hostDigest: Option.Option<{ digest: string, modulePath: string }>,
- *   path: import('effect/Path').Path,
- * }} context The digest, the real path of the module it replaces, and the record of compiling it.
- * @returns {import('esbuild').Plugin} Host artifact digest injection.
- */
-const makeHostArtifactDigestPlugin = ({ compiled, hostDigest, path }) => ({
-  name: 'worker-host-artifact-digest',
-  setup(builder) {
-    builder.onLoad(
-      { filter: esbuildFilter(/[/\\]scripts[/\\]outbox-worker-host-artifact\.mts$/u) },
-      /** @returns {PromiseLike<import('esbuild').OnLoadResult> | null} Compiled digest module when selected. */
-      (args) =>
-        Option.isNone(hostDigest) || args.path !== hostDigest.value.modulePath
-          ? null
-          : nodeRuntime.runPromise(
-              Schema.encodeEffect(BuildConstantSchema)(hostDigest.value.digest).pipe(
-                Effect.map((literal) => {
-                  compiled.add(args.path);
-                  /** @type {import('esbuild').OnLoadResult} */
-                  const loaded = {
-                    contents: `import { Option } from 'effect';\nexport const outboxHostArtifactDigest = Option.some(${literal});\n`,
-                    loader: 'js',
-                    resolveDir: path.dirname(args.path),
-                  };
-                  return loaded;
-                }),
-              ),
-            ),
-    );
-  },
-});
 
 /**
  * @param {{
@@ -463,7 +386,6 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
 /**
  * @typedef {{
  *   appId: string,
- *   artifactDigest?: string | undefined,
  *   ownerRevisions?: string | undefined,
  *   packageDir: string,
  *   packageName: string,
@@ -548,7 +470,6 @@ export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveO
  */
 const materializeOutboxWorkerEffect = ({
   appId,
-  artifactDigest,
   ownerRevisions,
   packageDir,
   packageName,
@@ -560,14 +481,10 @@ const materializeOutboxWorkerEffect = ({
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, servedUnits, workspaceRoot });
-    const hostArtifact = yield* resolveHostArtifact({ artifactDigest, workspaceRoot });
     const revisions = yield* resolveOwnerRevisions({
-      hostArtifact,
       ownerRevisions,
       owners: delivery.owners.map(({ ownerId }) => ownerId),
     });
-    /** @type {Set<string>} */
-    const compiledHostDigest = new Set();
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
       yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH)),
     );
@@ -671,7 +588,6 @@ const materializeOutboxWorkerEffect = ({
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
             plugins: [
-              makeHostArtifactDigestPlugin({ compiled: compiledHostDigest, hostDigest: hostArtifact, path }),
               makeOwnerBuildIdentityPlugin({ compiledMarkers, markers, path }),
               makeProductionDependenciesPlugin({
                 packages,
@@ -683,7 +599,6 @@ const materializeOutboxWorkerEffect = ({
           })
         ),
     });
-    yield* requireCompiledHostDigest(hostArtifact, compiledHostDigest);
     const missingMarkers = [...markers.entries()]
       .filter(([markerPath]) => !compiledMarkers.has(markerPath))
       .map(([, marker]) => marker.identity.appId);
@@ -734,10 +649,9 @@ const materializeOutboxWorkerEffect = ({
     sourceInputs.sort();
     const artifactSource = yield* Schema.encodeEffect(WorkerArtifactSchema)({
       appId: artifactAppId,
-      artifactDigest: hostArtifact.pipe(Option.map(({ digest }) => digest)),
       entry: WORKER_ENTRY,
       ownerBuildIdentities: [...markers.values()].map(({ identity }) => identity),
-      schemaVersion: 3,
+      schemaVersion: 4,
       serviceId: artifactServiceId,
       sourceInputs,
       sourceRevision: Option.some(artifactSourceRevision),

@@ -113,8 +113,6 @@ export interface RunOutboxWorkerHostInput<
   LayerErrors extends readonly { readonly _tag: string }[],
   StartupError = never,
 > {
-  /** Digest of the deployed host artifact, compiled into its bundle; /status reports it. Source runs have none. */
-  readonly artifactDigest?: Option.Option<string>;
   readonly entries: { readonly [Index in keyof LayerErrors]: OutboxWorkerEntry<LayerErrors[Index]> };
   readonly health?: boolean;
   /** Additional process services share the host Scope and its existing runtime adapter. */
@@ -308,10 +306,7 @@ const admissionReport = (admission: Ref.Ref<LoopAdmission>): AdmissionReport => 
 });
 
 /** Each owner's admission in host order; readiness is that loop's own health, never the combined host's. */
-const hostStatus = (
-  artifactDigest: Option.Option<string>,
-  loops: readonly HostedLoop<unknown>[],
-): Effect.Effect<OutboxWorkerHostStatus> =>
+const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<OutboxWorkerHostStatus> =>
   Effect.forEach(
     loops,
     ({ admission, health }) =>
@@ -331,7 +326,7 @@ const hostStatus = (
         })),
       ),
     { concurrency: 1 },
-  ).pipe(Effect.map((owners) => ({ artifactDigest, owners })));
+  ).pipe(Effect.map((owners) => ({ owners })));
 
 /**
  * Runs every entry's polling loop in one process behind one signal handler and one readiness
@@ -365,7 +360,7 @@ export const runOutboxWorkerHost = <
         if (Option.isSome(configuredHealthPort)) {
           yield* healthApi.serveOutboxWorkerHealth(
             healthApi.combineOutboxWorkerHealth(loops.flatMap(({ health }) => Option.toArray(health))),
-            { port: configuredHealthPort.value, status: hostStatus(input.artifactDigest ?? Option.none(), loops) },
+            { port: configuredHealthPort.value, status: hostStatus(loops) },
           );
         }
       }

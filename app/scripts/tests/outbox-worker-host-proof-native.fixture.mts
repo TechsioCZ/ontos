@@ -60,10 +60,9 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   });
   const artifact = yield* Schema.decodeEffect(HostWorkerArtifactSchema, { onExcessProperty: 'error' })({
     appId: 'outbox-worker-host',
-    artifactDigest: null,
     entry: 'worker.mjs',
     ownerBuildIdentities,
-    schemaVersion: 3,
+    schemaVersion: 4,
     serviceId: 'outbox-worker-host',
     sourceInputs: [host.entry],
     sourceRevision,
@@ -116,7 +115,6 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   ]) {
     const altered = yield* Schema.decodeEffect(HostWorkerArtifactSchema)({
       ...artifact,
-      artifactDigest: null,
       ownerBuildIdentities: alteredIdentities,
     });
     const rejected = yield* Effect.flip(verifyHostProofOwnerIdentities({ ...base, artifact: altered }));

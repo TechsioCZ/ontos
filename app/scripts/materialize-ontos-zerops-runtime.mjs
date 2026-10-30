@@ -73,9 +73,7 @@ const materializeCommand = Command.make(
             .filter((unit) => unit.length > 0),
           workspaceRoot,
         };
-        // The caller passes the host digest, which the bundle serves on /status, and the revision each hosted owner's
-        // build identity names (JSON, by owner id).
-        const artifactDigest = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_DIGEST'));
+        // The caller passes the revision each hosted owner's build identity names (JSON, by owner id).
         const ownerRevisions = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_OWNER_REVISIONS'));
         const delivery = yield* Effect.tryPromise({
           catch: (cause) => failure(String(cause)),
@@ -102,7 +100,6 @@ const materializeCommand = Command.make(
           try: async () =>
             await materializeOutboxWorker({
               ...options,
-              artifactDigest: Option.getOrUndefined(artifactDigest),
               ownerRevisions: Option.getOrUndefined(ownerRevisions),
               runtimeDir,
             }),

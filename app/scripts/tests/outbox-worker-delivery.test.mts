@@ -60,7 +60,6 @@ const RuntimeManifestSchema = Schema.fromJsonString(
 );
 const ServiceIdSchema = Schema.String.pipe(Schema.brand('ServiceId'));
 const WorkerArtifactSchema = Schema.Struct({
-  artifactDigest: Schema.OptionFromNullOr(Schema.String),
   ownerBuildIdentities: Schema.Array(
     Schema.Struct({
       appId: Schema.String.pipe(Schema.brand('AppId')),
@@ -69,7 +68,7 @@ const WorkerArtifactSchema = Schema.Struct({
       unitId: Schema.String.pipe(Schema.brand('UnitId')),
     }),
   ),
-  schemaVersion: Schema.Literal(3),
+  schemaVersion: Schema.Literal(4),
   serviceId: ServiceIdSchema,
   sourceInputs: Schema.Array(Schema.String),
   sourceRevision: Schema.OptionFromNullOr(Schema.String),
@@ -156,12 +155,6 @@ const makeFixture = () =>
         'export const startZeropsOutboxHost = () => { throw new Error("Artifact fixtures must never execute email startup"); };\n',
       ),
     );
-    yield* Effect.tryPromise(() =>
-      writeFile(
-        path.join(root, 'scripts/outbox-worker-host-artifact.mts'),
-        'export const outboxHostArtifactDigest = null;\n',
-      ),
-    );
     // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
     yield* Effect.tryPromise(() =>
       writeFile(path.join(root, WORKSPACE_LOCKFILE), "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n"),
@@ -234,8 +227,6 @@ it.live('generates the Outbox Worker host entry that hosts every owner and the C
     expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
     expect(hostEntry).toContain('  startup: startZeropsOutboxHost,\n');
     expect(hostEntry).not.toContain('startZeropsOutboxHost();');
-    expect(hostEntry).toContain("import { outboxHostArtifactDigest } from './outbox-worker-host-artifact.mts';\n");
-    expect(hostEntry).toContain('  artifactDigest: outboxHostArtifactDigest,\n');
     expect(hostEntry).toContain(
       "import { outboxWorkerEntry as ledgerOutboxWorkerEntry } from '@app/ledger/outbox-worker-host';",
     );
@@ -323,8 +314,6 @@ it.live('refuses to materialize an Outbox Worker host whose entry drifted from i
   }),
 );
 
-const HOST_DIGEST = 'c'.repeat(64);
-
 it.live('bundles every hosted owner entry into the real Outbox Worker host artifact', () =>
   Effect.gen(function* bundlesHost() {
     const runtimeDir = yield* Effect.acquireRelease(
@@ -343,7 +332,6 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
     const runtimePackage = yield* Effect.tryPromise(() =>
       materializeOutboxWorker({
         ...identity,
-        artifactDigest: HOST_DIGEST,
         ownerRevisions: JSON.stringify(Object.fromEntries(owners.map(({ ownerId }) => [ownerId, buildRevision]))),
         runtimeDir,
       }),
@@ -352,10 +340,6 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
       yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, WORKER_ARTIFACT), 'utf-8')),
     );
     expect(artifact.serviceId).toBe(OUTBOX_WORKER_HOST.id);
-    // The plan's host digest is recorded beside the bundle and compiled into it for /status.
-    expect(artifact.artifactDigest).toEqual(Option.some(HOST_DIGEST));
-    const bundle = yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, 'worker.mjs'), 'utf-8'));
-    expect(bundle).toMatch(new RegExp(`outboxHostArtifactDigest = Option\\d*\\.some\\("${HOST_DIGEST}"\\)`, 'u'));
     expect(runtimePackage.name).toBe('outbox-worker-host-runtime');
     for (const owner of ['party-registry', 'commerce-customer-context', 'price-group-catalog']) {
       expect(artifact.sourceInputs).toContain(`verticals/${owner}/src/worker-host/entry.ts`);
@@ -651,10 +635,9 @@ it.live('compiles each kept host owner under its planned identity revision, and 
     };
     const { ledger: _ledger, ...partial } = ownerRevisions;
     for (const [options, reason] of [
-      [{ ...host, artifactDigest: HOST_DIGEST }, 'requires every owner identity revision'],
-      [{ ...host, artifactDigest: HOST_DIGEST, ownerRevisions: JSON.stringify(partial) }, 'exactly the hosted owners'],
+      [{ ...host, ownerRevisions: JSON.stringify(partial) }, 'exactly the hosted owners'],
       [
-        { ...host, artifactDigest: HOST_DIGEST, ownerRevisions: JSON.stringify({ ...ownerRevisions, ledger: 'v1' }) },
+        { ...host, ownerRevisions: JSON.stringify({ ...ownerRevisions, ledger: 'v1' }) },
         'requires a promotable revision',
       ],
       [

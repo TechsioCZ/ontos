@@ -8,12 +8,6 @@ import { readDevelopmentPorts } from './topology-development-ports.mjs';
 /** Readiness port of the combined host; it must not collide with any topology vertical port. */
 export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
 
-/**
- * The module the host entry reads its artifact digest from. The host bundle compiles the plan's digest in
- * its place, so /status names the exact prebuilt artifact; a source run of the entry reports none.
- */
-export const OUTBOX_HOST_ARTIFACT_MODULE = 'scripts/outbox-worker-host-artifact.mts';
-
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
     shell: Schema.Struct({ id: Schema.String, package: Schema.String, path: Schema.String }),
@@ -88,7 +82,6 @@ export const renderOutboxWorkerHostEntry = (host) => {
   return [
     HOST_ENTRY_HEADER,
     "import { startZeropsOutboxHost } from './zerops/outbox-host-startup.mts';",
-    "import { outboxHostArtifactDigest } from './outbox-worker-host-artifact.mts';",
     "import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
     `import { outboxWorkerEntry as coreSystemOutboxWorkerEntry } from '${host.coreOwner.hostExport}';`,
     ...host.owners.map(
@@ -96,7 +89,6 @@ export const renderOutboxWorkerHostEntry = (host) => {
     ),
     '',
     'startOutboxWorkerHost({',
-    '  artifactDigest: outboxHostArtifactDigest,',
     '  entries: [',
     '    coreSystemOutboxWorkerEntry,',
     ...bindings.map((binding) => `    ${binding},`),
