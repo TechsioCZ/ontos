@@ -1,13 +1,13 @@
 import { Effect, Fiber, Match, Schema } from 'effect';
 import type { Cause, Config } from 'effect';
 
-import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
+import { MODULE_TARGET_BATCH_LIMIT, ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
 import type {
   ResolveModuleTargetPayload,
   ResolvedModuleTarget,
   SafeTenantIdentity,
 } from '../../../../../shared/api.ts';
-import { resolveModuleTarget } from '../../../../api/auth-client.ts';
+import { resolveModuleTarget, resolveModuleTargets } from '../../../../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions, ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
@@ -105,6 +105,12 @@ const browserTargetCache = browserStaleWhileRevalidateCache(
   { capacity: 64, immutable: true, keep: () => true },
 );
 
+/** The browser cache key of one target read. */
+const targetCacheKey = (cacheBaseUrl: string, identity: SafeTenantIdentity, payload: ResolveModuleTargetPayload) =>
+  Schema.encodeEffect(ResolveModuleTargetPayloadJson)(payload).pipe(
+    Effect.map((encoded) => browserReadKey(cacheBaseUrl, identity, encoded)),
+  );
+
 const targetFor = (
   payload: ResolveModuleTargetPayload,
   identity: SafeTenantIdentity,
@@ -113,9 +119,7 @@ const targetFor = (
   const cacheBaseUrl = browserBaseUrl(options);
   return cacheBaseUrl === undefined
     ? resolveModuleTarget(payload, options)
-    : Schema.encodeEffect(ResolveModuleTargetPayloadJson)(payload).pipe(
-        Effect.flatMap((encoded) => browserTargetCache.get(browserReadKey(cacheBaseUrl, identity, encoded))),
-      );
+    : targetCacheKey(cacheBaseUrl, identity, payload).pipe(Effect.flatMap(browserTargetCache.get));
 };
 
 /** A navigation waits this long for the page's code and primary data, then reveals what is ready. */
@@ -145,6 +149,56 @@ const targetPayload = (
     compositionRevision === undefined ? { ...target } : { ...target, compositionRevision },
   );
 };
+
+/**
+ * Idle preparation opens every menu destination at once, and each destination's loader resolved its target alone: one
+ * Shell request (session, release, governed read) per destination. This resolves the targets the browser does not
+ * hold yet in one request first, so those loaders find them. Each target is still its own governed read on the
+ * server. A target the batch did not resolve is left to its loader, which reads it alone and shows its own state.
+ */
+export const prepareCanonicalTargets = Effect.fn('ModulePageModel.prepareCanonicalTargets')(
+  function* prepareCanonicalTargetsEffect(request: Request, canonicalPaths: readonly string[]) {
+    const options = yield* shellAuthenticationClientOptionsFromRequest(request);
+    const cacheBaseUrl = browserBaseUrl(options);
+    if (cacheBaseUrl === undefined || canonicalPaths.length === 0) {
+      return;
+    }
+    const shell = yield* loadHomePageModel(request);
+    if (shell.state !== 'authenticated' || shell.compositionRevision === undefined) {
+      return;
+    }
+    const { compositionRevision, identity } = shell;
+    const wanted = yield* Effect.forEach(
+      [...new Set(canonicalPaths)].slice(0, MODULE_TARGET_BATCH_LIMIT),
+      (canonicalPath) =>
+        targetPayload({ canonicalPath }, compositionRevision).pipe(
+          Effect.flatMap((payload) => targetCacheKey(cacheBaseUrl, identity, payload)),
+          Effect.flatMap((key) =>
+            browserTargetCache.has(key).pipe(Effect.map((held) => (held ? [] : [{ canonicalPath, key }]))),
+          ),
+        ),
+      { concurrency: 1 },
+    );
+    const missing = wanted.flat();
+    if (missing.length === 0) {
+      return;
+    }
+    const { outcomes } = yield* resolveModuleTargets(
+      { compositionRevision, targets: missing.map(({ canonicalPath }) => ({ canonicalPath })) },
+      options,
+    );
+    yield* Effect.forEach(
+      missing,
+      ({ key }, index) => {
+        const outcome = outcomes[index];
+        return outcome?.state === 'resolved' && outcome.target.compositionRevision === compositionRevision
+          ? browserTargetCache.prime(key, outcome.target)
+          : Effect.void;
+      },
+      { concurrency: 1, discard: true },
+    );
+  },
+);
 
 /**
  * Server rendering resolves the page's target beside the Shell's own reads instead of after the composition: it asks

@@ -42,7 +42,9 @@ import type {
   SignInResponse,
   SignOutResponse,
   ResolveModuleTargetPayload,
+  ResolveModuleTargetsPayload,
   ResolvedModuleTarget,
+  ResolvedModuleTargets,
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellComposition,
@@ -255,6 +257,13 @@ export const resolveModuleTarget = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
+
+/** Several targets of one release in one request; each answers its own target or problem. */
+export const resolveModuleTargets = (
+  payload: ResolveModuleTargetsPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ResolvedModuleTargets, ShellTargetClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTargets({ payload }));
 
 /** Gateway assertions for a document's module audiences, one per audience, in one request. */
 export const issueDocumentGatewayContexts = (

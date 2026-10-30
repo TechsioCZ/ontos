@@ -219,9 +219,22 @@ const compositionFor = (
   options: ShellAuthenticationClientOptions,
 ) => {
   const cacheBaseUrl = browserBaseUrl(options);
-  return cacheBaseUrl === undefined
-    ? shellComposition(requestedRevision === undefined ? {} : { compositionRevision: requestedRevision }, options)
-    : browserCompositionCache.get(browserReadKey(cacheBaseUrl, identity, requestedRevision ?? ''));
+  if (cacheBaseUrl === undefined) {
+    return shellComposition(requestedRevision === undefined ? {} : { compositionRevision: requestedRevision }, options);
+  }
+  const key = browserReadKey(cacheBaseUrl, identity, requestedRevision ?? '');
+  const composition = browserCompositionCache.get(key);
+  // The current-release answer is also the answer for its revision: the loaders that follow ask with the revision
+  // the document pinned meanwhile, and would otherwise read the same composition again.
+  return requestedRevision === undefined
+    ? composition.pipe(
+        Effect.tap((answer) =>
+          answer.state === 'available'
+            ? browserCompositionCache.alias(key, browserReadKey(cacheBaseUrl, identity, answer.compositionRevision))
+            : Effect.void,
+        ),
+      )
+    : composition;
 };
 
 const legalEntitiesFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {

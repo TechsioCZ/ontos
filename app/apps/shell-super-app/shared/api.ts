@@ -67,7 +67,10 @@ export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
 export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
 export type ShellComposition = typeof ShellCompositionSchema.Type;
 export type ShellCompositionRequest = typeof ShellCompositionRequestSchema.Type;
+export type ModuleTargetSelector = typeof ModuleTargetSelectorSchema.Type;
 export type ResolveModuleTargetPayload = typeof ResolveModuleTargetPayloadSchema.Type;
+export type ResolveModuleTargetsPayload = typeof ResolveModuleTargetsPayloadSchema.Type;
+export type ResolvedModuleTargets = typeof ResolvedModuleTargetsSchema.Type;
 export type ResolvedModuleTarget = typeof ResolvedModuleTargetSchema.Type;
 export type ResourceRef = typeof ResourceRefSchema.Type;
 export type ShellResourceRequest = typeof ShellResourceRequestSchema.Type;
@@ -540,20 +543,48 @@ export const ShellDocumentCompositionSchema = Schema.Union([
   Schema.Struct({ state: Schema.Literals(['reload_required', 'unavailable']) }),
 ]);
 
-export const ResolveModuleTargetPayloadSchema = Schema.Struct({
+const moduleTargetSelectorFields = {
   canonicalPath: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40_000))),
-  /** The document's pinned release; without it the current release answers and the caller compares its revision. */
-  compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
   entrypointKey: Schema.optionalKey(EntrypointKeySchema),
   moduleId: Schema.optionalKey(ModuleIdSchema),
-}).check(
-  Schema.makeFilter(({ canonicalPath, entrypointKey, moduleId }) =>
-    (canonicalPath === undefined) !== (moduleId === undefined) &&
-    (canonicalPath === undefined || entrypointKey === undefined)
-      ? undefined
-      : 'select either a canonical path or a module target',
-  ),
+};
+const selectsOneModuleTarget = ({
+  canonicalPath,
+  entrypointKey,
+  moduleId,
+}: {
+  readonly canonicalPath?: string;
+  readonly entrypointKey?: string;
+  readonly moduleId?: string;
+}) =>
+  (canonicalPath === undefined) !== (moduleId === undefined) &&
+  (canonicalPath === undefined || entrypointKey === undefined)
+    ? undefined
+    : 'select either a canonical path or a module target';
+const moduleRevisionSchema = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
+
+/** One page of the release: a canonical path, or a module with an optional page entrypoint. */
+export const ModuleTargetSelectorSchema = Schema.Struct(moduleTargetSelectorFields).check(
+  Schema.makeFilter(selectsOneModuleTarget),
 );
+
+export const ResolveModuleTargetPayloadSchema = Schema.Struct({
+  ...moduleTargetSelectorFields,
+  /** The document's pinned release; without it the current release answers and the caller compares its revision. */
+  compositionRevision: Schema.optionalKey(moduleRevisionSchema),
+}).check(Schema.makeFilter(selectsOneModuleTarget));
+
+/** A menu holds far fewer destinations; this only bounds a pathological batch. */
+export const MODULE_TARGET_BATCH_LIMIT = 64;
+
+/** The targets the browser needs at once (every menu destination it prepares), resolved in one request. */
+export const ResolveModuleTargetsPayloadSchema = Schema.Struct({
+  compositionRevision: Schema.optionalKey(moduleRevisionSchema),
+  targets: Schema.Array(ModuleTargetSelectorSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MODULE_TARGET_BATCH_LIMIT),
+  ),
+});
 
 export const ResolvedModuleTargetSchema = Schema.Struct({
   appId: AppIdSchema,
@@ -742,6 +773,30 @@ export const ShellCapabilityUnavailableProblemSchema = makeRetryableProblemDetai
 export const ShellInternalProblemSchema = makeProblemDetailsSchema('ShellInternalProblem', 500);
 export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema('ShellRateLimitedProblem', 429, {
   retryAfterSeconds: Schema.Finite,
+});
+
+/**
+ * Each target's answer, in the order asked: the resolved target, or the problem the single-target read answers for
+ * it. Failures that concern the whole request (session, release) fail the request instead.
+ */
+export const ResolvedModuleTargetsSchema = Schema.Struct({
+  outcomes: Schema.Array(
+    Schema.Union([
+      Schema.Struct({ state: Schema.Literal('resolved'), target: ResolvedModuleTargetSchema }),
+      Schema.Struct({
+        problem: Schema.Union([
+          ShellAuthenticationRequiredProblemSchema,
+          ShellTargetForbiddenProblemSchema,
+          ShellTargetNotFoundProblemSchema,
+          ShellPolicyConflictProblemSchema,
+          ShellPolicyUnprocessableProblemSchema,
+          ShellCapabilityUnavailableProblemSchema,
+          ShellInternalProblemSchema,
+        ]),
+        state: Schema.Literal('failed'),
+      }),
+    ]),
+  ),
 });
 
 const identityErrors = [
@@ -969,6 +1024,23 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: ResolveModuleTargetPayloadSchema,
           success: ResolvedModuleTargetSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('resolveModuleTargets', '/shell/module-targets', {
+          error: [
+            ShellReloadRequiredProblemSchema,
+            ShellAuthenticationRequiredProblemSchema,
+            ShellTargetForbiddenProblemSchema,
+            ShellTargetNotFoundProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
+            ShellSelectionRequiredProblemSchema,
+            ShellCapabilityUnavailableProblemSchema,
+            ShellInternalProblemSchema,
+          ],
+          payload: ResolveModuleTargetsPayloadSchema,
+          success: ResolvedModuleTargetsSchema,
         }),
       ),
   )

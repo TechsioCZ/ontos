@@ -8,6 +8,10 @@ import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from
 export const moduleAgentApprovalsGroupKey = 'shell.navigation.agent-approvals';
 
 const shellAppId = AppIdSchema.make('shell-super-app');
+
+/** A destination of a module (not one of the Shell's own platform pages), whose page the Shell resolves as a target. */
+export const isModuleDestination = (item: { readonly appId?: string | undefined }): boolean =>
+  item.appId !== undefined && item.appId !== shellAppId;
 const shellModuleId = ModuleIdSchema.make('shell-super-app');
 const settingsGroupKey = GroupKeySchema.make('shell.navigation.settings');
 
