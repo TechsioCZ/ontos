@@ -97,6 +97,11 @@ build_unit() {
 
 [ "${1:-}" != '--digest' ] || { unit_digest "$2"; exit 0; }
 
+# The shared contract and design-token declarations every unit's declaration build references (as `pnpm build`).
+for project in packages/shared-contracts packages/shared-design-tokens; do
+  pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
+done
+
 failure_mark="$log_dir/.failed"
 rm -f "$failure_mark"
 started_all="$(date +%s)"
