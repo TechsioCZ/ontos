@@ -583,3 +583,71 @@ zerops:
           port: 3070
           path: /robots.txt
       start: sh -c 'test -n "$ONTOS_AKROS_STOREFRONT_API_KEY" || { echo "ONTOS_AKROS_STOREFRONT_API_KEY is required" >&2; exit 1; }; cd app/.zerops/runtime/akros-storefront && HOSTNAME=0.0.0.0 exec node/bin/node akros-storefront/server.js'
+  # The whole application in one container: scripts/zerops/app-host.mts serves the Shell, every owner and the Outbox
+  # Worker host, runs the owner migrations and publishes the Application Composition. The browser assets of owner
+  # <appId> are served under /_m/<appId>/ on the one public origin.
+  - setup: app
+    build:
+      base: alpine@3.23
+      envVariables:
+        BUILD_JOBS: '3'
+        ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl git libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" sh scripts/zerops/build-app.sh
+        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/node/'
+      deployFiles:
+        - app/
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 3000
+          path: /_host/ready
+        failureTimeout: 15m
+        retryPeriod: 10s
+    run:
+      base: nodejs@24
+      ports:
+        - port: 3000
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${migrator_COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL}
+        COMMERCE_PORTAL_AUTH_DATABASE_URL: ${migrator_COMMERCE_PORTAL_AUTH_DATABASE_URL}
+        DATABASE_ADMIN_URL: postgresql://${db18_superUser}:${db18_superUserPassword}@${db18_hostname}:${db18_port}/${db18_dbName}
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        EMAIL_PROVIDER: smtp
+        NODE_ENV: production
+        ONTOS_APP_HOST_PUBLISH: 'false'
+        ONTOS_EMAIL_FROM: noreply@ontos-stage.web-revolution.cz
+        ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_DB_PASSWORD: ${migrator_PARTY_REGISTRY_DB_PASSWORD}
+        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_WORKER_DB_PASSWORD: ${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}
+        PORT: '3000'
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        SHELL_GATEWAY_ISSUER_DB_PASSWORD: ${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}
+        SMTP_FROM: OntOS <noreply@ontos-stage.web-revolution.cz>
+        SMTP_HOST: smtp.mx.cloudflare.net
+        SMTP_PORT: '465'
+        SMTP_SECURE: 'true'
+        SMTP_USER: api_token
+        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
+        SPICEDB_DATABASE_PASSWORD: ${spicedb_SPICEDB_DATABASE_PASSWORD}
+        SPICEDB_ENDPOINT: spicedb:50051
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: app
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /_host/live
+      start: sh -c 'cd app && PATH="$PWD/.zerops/node/bin:$PATH" exec node scripts/zerops/app-host.mts'

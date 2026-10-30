@@ -22,14 +22,15 @@ import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
 import { request as requestLoopback } from '@effect/platform-node/Undici';
 import { sql } from 'drizzle-orm';
 import {
+  Array as EffectArray,
   Config,
   Console,
   DateTime,
   Duration,
   Effect,
   Exit,
-  FileSystem,
   Option,
+  Order,
   Redacted,
   Ref,
   Schedule,
@@ -47,7 +48,6 @@ import {
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
-import { OntosDeploymentAppIdSchema } from '../../packages/core-runtime/src/modules/manifest.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
   ARTIFACT_FETCH_TIMEOUT,
@@ -60,16 +60,16 @@ import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   publishApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
+import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
+import type { HostedUnit } from './hosted-units.mts';
 
-const workspaceRoot = path.resolve(import.meta.dirname, '../..');
-const SHELL_ID = 'shell-super-app';
 const OUTBOX_HOST_ID = 'outbox-worker-host';
-const SHELL_PORT = 3020;
 const OUTBOX_HEALTH_PORT = 4100;
-const FIRST_SERVER_ONLY_PORT = 4200;
 const MODULE_ASSET_PREFIX = '/_m/';
 const FEDERATION_MANIFEST_PATH = '/mf-manifest.json';
 const READY_PATH = '/_host/ready';
+/** Answers as soon as the host listens: the container is alive while it migrates and starts its units. */
+const LIVE_PATH = '/_host/live';
 /** Loopback-only: the composition source every hosted process reads. */
 const COMPOSITION_PATH = '/_host/composition';
 const STARTUP_BUDGET = Duration.minutes(5);
@@ -78,62 +78,10 @@ const RELAY_HEADERS_TIMEOUT = Duration.seconds(60);
 export class AppHostError extends Schema.TaggedError<AppHostError>()('AppHostError', { reason: Schema.String }) {}
 const failure = (reason: string) => new AppHostError({ reason });
 
-const TopologySchema = Schema.fromJsonString(
-  Schema.Struct({
-    shell: Schema.Struct({ path: Schema.NonEmptyString }),
-    verticals: Schema.Array(
-      Schema.Struct({
-        id: OntosDeploymentAppIdSchema,
-        moduleFederation: Schema.optionalKey(Schema.Struct({ manifestUrl: Schema.URLFromString })),
-        path: Schema.NonEmptyString,
-        surfaceProfile: Schema.optionalKey(Schema.Literal('api-only')),
-      }),
-    ),
-  }),
-);
-const ReleaseIntentSchema = Schema.fromJsonString(
-  Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })) }),
-);
 const OwnerSecretsSchema = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
 );
 type OwnerSecrets = typeof OwnerSecretsSchema.Type;
-
-/** One owner server inside this container. */
-export interface HostedOwner {
-  readonly browser: boolean;
-  readonly directory: string;
-  readonly id: string;
-  readonly port: number;
-}
-
-/** The Shell plus every owner the release intent serves, on stable loopback ports (topology ports first). */
-export const hostedOwners = (
-  topology: typeof TopologySchema.Type,
-  intent: typeof ReleaseIntentSchema.Type,
-): readonly HostedOwner[] => {
-  const served = new Set(intent.modules.map(({ appId }) => appId));
-  const verticals = topology.verticals.filter(({ id }) => served.has(id));
-  const serverOnly = verticals.filter(
-    (vertical) => vertical.surfaceProfile === 'api-only' || vertical.moduleFederation === undefined,
-  );
-  const owners = verticals.map((vertical): HostedOwner =>
-    vertical.surfaceProfile !== 'api-only' && vertical.moduleFederation !== undefined
-      ? {
-          browser: true,
-          directory: vertical.path,
-          id: vertical.id,
-          port: Number(vertical.moduleFederation.manifestUrl.port),
-        }
-      : {
-          browser: false,
-          directory: vertical.path,
-          id: vertical.id,
-          port: FIRST_SERVER_ONLY_PORT + serverOnly.indexOf(vertical),
-        },
-  );
-  return [{ browser: true, directory: topology.shell.path, id: SHELL_ID, port: SHELL_PORT }, ...owners];
-};
 
 /**
  * Database identities one process owns. Every other process starts without them, so a hosted owner holds only its
@@ -171,29 +119,44 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The environment overlay one process starts with: removed keys map to `undefined` (the child then never sees
- * them), host-derived settings win over stored owner secrets.
+ * The environment overlay one process starts with for the owners it serves: removed keys map to `undefined` (the
+ * child then never sees them), host-derived settings win over stored owner secrets. Owners that share a process
+ * share one environment, so two of them storing different values under one key is a configuration error.
  */
-export const ownerEnvironment = (
-  processId: string,
+export const processEnvironment = (
+  processIds: readonly string[],
   ownerSecrets: OwnerSecrets,
   derived: Readonly<Record<string, string>>,
 ) => {
+  const served = new Set(processIds);
   const hidden = [
     ...SUPERVISOR_ONLY_KEYS,
     ...Object.entries(OWNED_KEYS)
-      .filter(([owner]) => owner !== processId)
+      .filter(([owner]) => !served.has(owner))
       .flatMap(([, keys]) => keys),
   ];
   const removed = new Set(hidden);
-  const own = Object.entries(ownerSecrets[processId] ?? {}).filter(
-    ([key]) => !HOST_CONTROLLED_KEYS.has(key) && !removed.has(key),
-  );
+  const own = new Map<string, string>();
+  const conflicts = new Set<string>();
+  for (const processId of processIds) {
+    for (const [key, value] of Object.entries(ownerSecrets[processId] ?? {})) {
+      if (HOST_CONTROLLED_KEYS.has(key) || removed.has(key)) {
+        continue;
+      }
+      if (own.has(key) && own.get(key) !== value) {
+        conflicts.add(key);
+      }
+      own.set(key, value);
+    }
+  }
   return {
-    ...Object.fromEntries(hidden.map((key) => [key, undefined])),
-    ...Object.fromEntries(own),
-    ...derived,
-  } satisfies ChildEnvironment;
+    conflicts: EffectArray.sort([...conflicts], Order.String),
+    environment: {
+      ...Object.fromEntries(hidden.map((key) => [key, undefined])),
+      ...Object.fromEntries(own),
+      ...derived,
+    } satisfies ChildEnvironment,
+  };
 };
 
 const PublicOriginSchema = Schema.URLFromString.check(
@@ -290,7 +253,7 @@ const fetchLoopback = (url: string) =>
     return new Uint8Array(yield* response.arrayBuffer);
   }).pipe(Effect.scoped, Effect.timeout(ARTIFACT_FETCH_TIMEOUT));
 
-const waitForOwner = (owner: HostedOwner) => {
+const waitForOwner = (owner: HostedUnit) => {
   const probe = owner.id === SHELL_ID ? ONTOS_SHELL_RUNTIME_CONTRACT_PATH : ONTOS_MODULE_CONTRACT_PATH;
   return fetchLoopback(`${loopbackOrigin(owner.port)}${probe}`).pipe(
     Effect.retry(Schedule.spaced(Duration.seconds(1))),
@@ -393,6 +356,9 @@ const hostApplication = <Failure, Requirements>(
     if (request.url === COMPOSITION_PATH) {
       return yield* compositionSourceResponse(request, loadComposition);
     }
+    if (request.url === LIVE_PATH) {
+      return HttpServerResponse.text('live\n', { headers: { 'cache-control': 'no-store' } });
+    }
     if (request.url === READY_PATH) {
       const ready = yield* Ref.get(published);
       return HttpServerResponse.text(ready ? 'ready\n' : 'starting\n', {
@@ -461,15 +427,15 @@ const makeCompositionPointer = Effect.gen(function* makePointer() {
   return { load, publish };
 });
 
-const publicArtifactUrl = (owner: HostedOwner, artifactPath: string, publicOrigin: string) =>
+const publicArtifactUrl = (owner: HostedUnit, artifactPath: string, publicOrigin: string) =>
   new URL(owner.id === SHELL_ID ? artifactPath : `${MODULE_ASSET_PREFIX}${owner.id}${artifactPath}`, publicOrigin).href;
 
 /** Reads every artifact over loopback and records it under the public URL the browser and consumers use. */
 const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners(
-  owners: readonly HostedOwner[],
+  owners: readonly HostedUnit[],
   publicOrigin: string,
 ) {
-  const observe = (owner: HostedOwner, artifactPath: string) =>
+  const observe = (owner: HostedUnit, artifactPath: string) =>
     fetchLoopback(`${loopbackOrigin(owner.port)}${artifactPath}`).pipe(
       Effect.map((bytes): ObservedArtifact => ({ bytes, url: publicArtifactUrl(owner, artifactPath, publicOrigin) })),
       Effect.mapError(() => failure(`${owner.id} ${artifactPath} could not be observed`)),
@@ -508,12 +474,6 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
 // ---------------------------------------------------------------------------------------------------------------
 // Host
 
-const readJson = <A,>(relative: string, schema: Schema.Codec<A, string>) =>
-  Effect.gen(function* readWorkspaceJson() {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* Schema.decodeEffect(schema)(yield* fs.readFileString(path.join(workspaceRoot, relative)));
-  });
-
 export const runAppHost = Effect.gen(function* runAppHost() {
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
@@ -522,11 +482,8 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
     Effect.mapError(() => failure('ONTOS_OWNER_SECRETS_JSON must be an owner record of string secrets')),
   );
-  const owners = hostedOwners(
-    yield* readJson('topology/reference-topology.json', TopologySchema),
-    yield* readJson('topology/application-release-intent.json', ReleaseIntentSchema),
-  );
-  const ports = new Map(owners.map(({ id, port }) => [id, port]));
+  const units = yield* readHostedUnits;
+  const ports = new Map(units.map(({ id, port }) => [id, port]));
   const derived = derivedEnvironment(publicOrigin, publicPort);
   const node = process.execPath;
   const published = yield* Ref.make(false);
@@ -534,33 +491,47 @@ export const runAppHost = Effect.gen(function* runAppHost() {
 
   yield* HttpServer.serveEffect(hostApplication(ports, published, pointer.load));
 
-  const exits = yield* Effect.forEach(
-    owners,
-    (owner) =>
-      startChild(
-        owner.id,
-        path.join(workspaceRoot, owner.directory, 'node_modules/.bin/modern'),
-        ['serve'],
-        path.join(workspaceRoot, owner.directory),
-        { ...ownerEnvironment(owner.id, ownerSecrets, derived), PORT: String(owner.port) },
-      ),
-    { concurrency: 'unbounded' },
-  );
-  yield* Console.log(`[app-host] started ${String(owners.length)} owners; migrating`);
+  // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
+  // owner together, so their shared dependencies load once.
+  const ownerIds = units.filter(({ id }) => id !== SHELL_ID).map(({ id }) => id);
+  const shellEnvironment = processEnvironment([SHELL_ID], ownerSecrets, derived);
+  const ownersEnvironment = processEnvironment(ownerIds, ownerSecrets, derived);
+  if (ownersEnvironment.conflicts.length > 0) {
+    return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
+  }
+  const serveUnits = path.join(workspaceRoot, 'scripts/zerops/serve-units.mts');
+  const exits = [
+    yield* startChild(SHELL_ID, node, [serveUnits, SHELL_ID], workspaceRoot, shellEnvironment.environment),
+    yield* startChild('owners', node, [serveUnits, ...ownerIds], workspaceRoot, ownersEnvironment.environment),
+  ];
+  yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
   const publish = Effect.gen(function* publishObservedComposition() {
-    const snapshot = yield* observeOwners(owners, publicOrigin);
+    const snapshot = yield* observeOwners(units, publicOrigin);
     yield* publishApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot), Effect.void);
     yield* Console.log(
       `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
     );
   });
 
+  // ONTOS_APP_HOST_PUBLISH=false starts and observes every unit without migrating or taking the authority, so a new
+  // environment can be checked beside the one that still holds it.
+  const takesAuthority = yield* Config.Boolean('ONTOS_APP_HOST_PUBLISH').pipe(Config.withDefault(true));
+  const observeOnly = Effect.gen(function* observeWithoutAuthority() {
+    yield* Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true });
+    const snapshot = yield* observeOwners(units, publicOrigin);
+    yield* Console.log(
+      `[app-host] observe-only: composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) not published`,
+    );
+    yield* Ref.set(published, true);
+    return yield* Effect.never;
+  });
+
   const startup = Effect.gen(function* startupSequence() {
     yield* Effect.all(
       [
         runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, { MIGRATOR_ONCE: 'true' }),
-        Effect.forEach(owners, waitForOwner, { concurrency: 'unbounded', discard: true }),
+        Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true }),
       ],
       { concurrency: 'unbounded' },
     );
@@ -572,7 +543,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       ['scripts/outbox-worker-host.generated.mts'],
       workspaceRoot,
       {
-        ...ownerEnvironment(OUTBOX_HOST_ID, ownerSecrets, derived),
+        ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
         OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
         PORT: String(OUTBOX_HEALTH_PORT),
       },
@@ -586,7 +557,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     );
     return yield* Effect.raceFirst(outbox, renew);
   });
-  return yield* Effect.raceFirst(Effect.raceAllFirst(exits), startup);
+  return yield* Effect.raceFirst(Effect.raceAllFirst(exits), takesAuthority ? startup : observeOnly);
 });
 
 if (import.meta.main) {

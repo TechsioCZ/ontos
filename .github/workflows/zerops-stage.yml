@@ -1,0 +1,169 @@
+name: Zerops Stage Deploy
+
+# Deploys the sales demo branch to stage, which runs only on Zerops: one `app` service (the Shell, every owner and
+# the Outbox Worker host in one container, see app/scripts/zerops/app-host.mts) and one `storefront` service (AKROS).
+# Zerops builds both from app/zerops.yaml. The app container runs the owner migrations and publishes the Application
+# Composition itself when it starts, and Zerops switches traffic only after /_host/ready answers.
+# Cloudflare stays in front of stage only as DNS, WAF and Access.
+on:
+  push:
+    branches:
+      - demo/sales-crm
+      - feat/zerops-only
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# One deploy at a time; a newer push waits for the running one.
+concurrency:
+  group: zerops-stage
+  cancel-in-progress: false
+
+env:
+  STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
+  STAGE_STOREFRONT_URL: https://ontos-stage-akros.web-revolution.cz
+
+jobs:
+  deploy:
+    name: Build and deploy on Zerops
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment:
+      name: stage-edge
+      deployment: false
+    env:
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
+      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install zcli
+        run: npm install --global @zerops/zcli@1.1.0
+
+      # The owner secret bundle is the one GitHub copy of every owner's runtime secrets. The app host hands each owner
+      # only its own entries; the bundle itself never leaves the supervisor.
+      - name: Sync the owner secret bundle to the app service
+        env:
+          OWNER_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
+
+      - name: Push the app and the storefront
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          zcli login "$ZEROPS_TOKEN" >/dev/null
+          started="$(date +%s)"
+          push() {
+            local setup="$1" service="$2" log="$RUNNER_TEMP/push-$1.log"
+            zcli push --working-dir . --zerops-yaml-path app/zerops.yaml --workspace-state clean --deploy-git-folder \
+              --project-id "$ZEROPS_PROJECT_ID" --service-id "$service" --setup "$setup" \
+              --version-name "$GITHUB_SHA" >"$log" 2>&1
+          }
+          push app "$ZEROPS_APP_SERVICE_ID" & app=$!
+          push storefront "$ZEROPS_STOREFRONT_SERVICE_ID" & storefront=$!
+          status=0
+          wait "$app" || status=1
+          wait "$storefront" || status=1
+          for setup in app storefront; do
+            echo "::group::zcli push $setup"
+            cat "$RUNNER_TEMP/push-$setup.log"
+            echo "::endgroup::"
+          done
+          echo "Zerops build and deploy took $(( $(date +%s) - started ))s" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Show the app log after a failed deploy
+        if: failure()
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
+
+  verify:
+    name: Verify stage
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+
+      - name: Install headless Chromium for the OAuth consent screens
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+
+      - name: Time /cs, OAuth metadata and the storefront home
+        working-directory: app
+        run: mise exec -- node scripts/ops/stage-demo-verify.mjs
+
+      # The newsletter proof only warns: its failure is reported and does not fail the run.
+      - name: Prove the native newsletter grant and withdrawal
+        id: newsletter-proof
+        if: success() || failure()
+        continue-on-error: true
+        working-directory: app
+        env:
+          AKROS_TEST_BASE_URL: ${{ env.STAGE_STOREFRONT_URL }}
+          AKROS_EVIDENCE_DIR: ${{ runner.temp }}/newsletter-consent
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs
+
+      - name: Warn about a failed newsletter proof
+        if: (success() || failure()) && steps.newsletter-proof.outcome == 'failure'
+        run: |
+          echo '::warning title=Newsletter proof::The native newsletter grant and withdrawal proof failed; see its step log and the newsletter-consent artifact.'
+          echo '> [!WARNING]' >>"$GITHUB_STEP_SUMMARY"
+          echo '> The newsletter grant and withdrawal proof failed (non-blocking).' >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the newsletter screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: newsletter-consent
+          path: ${{ runner.temp }}/newsletter-consent/*.png
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Prove MCP over OAuth end to end
+        working-directory: app
+        env:
+          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_OAUTH_ISSUER: ${{ env.STAGE_SHELL_URL }}/shell-super-app-api/oauth
+          E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
+          E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification
+
+      - name: Upload the MCP OAuth proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-oauth-e2e
+          path: ${{ runner.temp }}/mcp-oauth-e2e
+          if-no-files-found: ignore
+          retention-days: 14

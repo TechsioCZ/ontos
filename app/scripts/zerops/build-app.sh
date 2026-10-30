@@ -1,13 +1,15 @@
 #!/usr/bin/env sh
 # Builds every unit the app host serves (the Shell plus each module of topology/application-release-intent.json)
-# for the Node target, BUILD_JOBS at a time. Each unit runs its own package `build` script without the trailing
-# `modern deploy` step: the host runs `modern serve` on dist/ inside the installed workspace.
+# for the Node target, BUILD_JOBS at a time, with each unit's own package `build` script. Its `modern deploy` step
+# emits .output/index.js, which scripts/zerops/owner-entry.mts turns into the unit's dist/zerops-entry.mjs: the app
+# host serves every unit in-process from dist/ inside the installed workspace (.output itself is never deployed).
 #
 #   ONTOS_PUBLIC_ORIGIN=https://… sh scripts/zerops/build-app.sh [unit ...]
 #
 # Browser assets are served by the host under /_m/<appId>/, so every unit's public URL is that prefix on the one
 # public origin. Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs). Run from app/.
 set -eu
+root="$PWD"
 
 : "${ONTOS_PUBLIC_ORIGIN:?ONTOS_PUBLIC_ORIGIN (the public HTTPS origin of the Shell) is required}"
 jobs_limit="${BUILD_JOBS:-3}"
@@ -28,19 +30,13 @@ for unit in $units; do
   [ "$unit" = shell-super-app ] || export "$(env_name "$unit")=$ONTOS_PUBLIC_ORIGIN/_m/$unit"
 done
 export ULTRAMODERN_DISABLE_BUILD_TS_CHECKER="${ULTRAMODERN_DISABLE_BUILD_TS_CHECKER:-1}"
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=3072}"
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2560}"
 
 build_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
-  script="$(node -e '
-    const s = require(process.argv[1]).scripts.build;
-    const c = s.replace(/ && (?:cross-env MODERNJS_DEPLOY=node )?modern deploy --skip-build(?: --deploy-target node)?$/u, "");
-    if (c === s) process.exit(3);
-    console.log(c);
-  ' "$PWD/$dir/package.json")" || { echo "unexpected build script shape for $unit" >&2; return 1; }
   started="$(date +%s)"
-  if (cd "$dir" && pnpm exec sh -c "$script") >"$log_dir/$unit.log" 2>&1; then
+  if (cd "$dir" && pnpm run build && node "$root/scripts/zerops/owner-entry.mts" "$dir") >"$log_dir/$unit.log" 2>&1; then
     echo "built $unit in $(($(date +%s) - started))s"
   else
     tail -40 "$log_dir/$unit.log" >&2

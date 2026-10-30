@@ -1,0 +1,18 @@
+# Zerops leaves these out of every deployed package (zerops.yaml deployFiles). Build-only outputs, source maps and
+# tests are never served at runtime.
+app/**/.output
+app/**/cloudflare-dist
+app/**/dist-cloudflare
+app/**/*.map
+app/**/@mf-types.zip
+app/**/.zerops/build-logs
+app/apps/*/tests
+app/verticals/*/tests
+app/packages/*/tests
+app/scripts/tests
+app/scripts/integration
+app/**/.scratch
+app/**/.codex
+app/quality-audit
+app/specs
+app/docs
