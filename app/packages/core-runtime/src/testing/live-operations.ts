@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   Config,
   Context,
@@ -620,6 +620,8 @@ const makeFaultActionRepository = (state: FixtureFaultState, crypto: Crypto.Cryp
 /**
  * Reads Core evidence rows for the fixture tenant through the caller's executor. Callers pass the
  * admin client: dedicated request roles (for example the Party request role) cannot read events.
+ * Rows come back in creation order with the primary key as tiebreak: PostgreSQL heap order moves
+ * when a row is updated, so unordered snapshots cannot be compared.
  */
 const loadFixtureEvidence = Effect.fn('LiveOperations.loadFixtureEvidence')(
   (executor: FixtureExecutor, tenantId: string) =>
@@ -629,26 +631,31 @@ const loadFixtureEvidence = Effect.fn('LiveOperations.loadFixtureEvidence')(
           .select()
           .from(dataAccessEvents)
           .where(eq(dataAccessEvents.tenantId, tenantId))
+          .orderBy(asc(dataAccessEvents.occurredAt), asc(dataAccessEvents.dataAccessEventId))
           .pipe(Effect.mapError((cause) => fixtureFailure(LOAD_EVIDENCE_FAILURE, cause))),
         audits: executor
           .select()
           .from(auditEvents)
           .where(eq(auditEvents.tenantId, tenantId))
+          .orderBy(asc(auditEvents.occurredAt), asc(auditEvents.auditEventId))
           .pipe(Effect.mapError((cause) => fixtureFailure(LOAD_EVIDENCE_FAILURE, cause))),
         events: executor
           .select()
           .from(domainEvents)
           .where(eq(domainEvents.tenantId, tenantId))
+          .orderBy(asc(domainEvents.tenantSequenceNo))
           .pipe(Effect.mapError((cause) => fixtureFailure(LOAD_EVIDENCE_FAILURE, cause))),
         invocations: executor
           .select()
           .from(actionInvocations)
           .where(eq(actionInvocations.tenantId, tenantId))
+          .orderBy(asc(actionInvocations.startedAt), asc(actionInvocations.actionInvocationId))
           .pipe(Effect.mapError((cause) => fixtureFailure(LOAD_EVIDENCE_FAILURE, cause))),
         outbox: executor
           .select()
           .from(outboxMessages)
           .where(eq(outboxMessages.tenantId, tenantId))
+          .orderBy(asc(outboxMessages.createdAt), asc(outboxMessages.outboxMessageId))
           .pipe(Effect.mapError((cause) => fixtureFailure(LOAD_EVIDENCE_FAILURE, cause))),
       },
       { concurrency: 5 },
