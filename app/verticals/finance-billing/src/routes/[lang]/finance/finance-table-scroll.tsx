@@ -1,16 +1,11 @@
+import { ScrollRegion } from '@app/admin-ui';
 import type { ReactNode } from 'react';
+
+const financeTableViewport = { maxWidth: '100%', minWidth: 0, overflowX: 'auto', width: '100%' } as const;
 
 /** Keep wide finance tables reachable inside the shell's clipped mobile content. */
 export const FinanceTableScroll = ({ children, label }: { readonly children: ReactNode; readonly label: string }) => (
-  /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named viewport needs keyboard scrolling. */
-  <section
-    aria-label={label}
-    className="finance-table-scroll"
-    data-finance-table-scroll
-    style={{ maxWidth: '100%', minWidth: 0, overflowX: 'auto', width: '100%' }}
-    tabIndex={0}
-  >
-    {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+  <ScrollRegion className="finance-table-scroll" label={label} style={financeTableViewport}>
     {children}
-  </section>
+  </ScrollRegion>
 );

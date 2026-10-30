@@ -22,10 +22,7 @@ export class ServeUnitsError extends Schema.TaggedError<ServeUnitsError>()('Serv
 }) {}
 
 /** The generated entry's contract: `start(port)` resolves once the unit's server listens on that port. */
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- start(port) is the Modern.js entry's own Promise API, the driver boundary that the Effect code wraps. expires: 2027-03-31.
-type UnitStart = (port: number) => Promise<void>;
-
-const isUnitStart = (cause: unknown): cause is UnitStart => Predicate.isFunction(cause);
+const isUnitStart = (cause: unknown): cause is (port: number) => Promise<void> => Predicate.isFunction(cause);
 
 const UnitModuleSchema = Schema.Struct({ start: Schema.declare(isUnitStart) });
 
@@ -43,7 +40,8 @@ const loadUnitModule = (unit: HostedUnit) =>
     ),
   );
 
-const startUnitServer = (unit: HostedUnit, start: UnitStart) =>
+/** The Modern.js entry's Promise is converted here, at the driver edge; the rest stays Effect. */
+const startUnitServer = (unit: HostedUnit, start: (typeof UnitModuleSchema.Type)['start']) =>
   Effect.tryPromise({
     catch: () => new ServeUnitsError({ reason: `${unit.id} server failed to start` }),
     try: async () => {

@@ -12,7 +12,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { selectItem } from '../../../../components/select-item.ts';
-import { formatDateTime, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { formatDateTime, formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -260,9 +260,7 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
   const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
   return (
     <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
-      {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */}
-      <section aria-label={t('merchandise.ui.variantPriceHistory')} style={{ overflowX: 'auto' }} tabIndex={0}>
-        {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+      <ScrollRegion label={t('merchandise.ui.variantPriceHistory')}>
         <Table size="sm" variant="line">
           <Table.Header>
             <Table.Row>
@@ -291,7 +289,7 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
             ))}
           </Table.Body>
         </Table>
-      </section>
+      </ScrollRegion>
     </SectionCard>
   );
 };
@@ -542,13 +540,7 @@ export const VariantsPanel = (props: PanelProps) => {
             variantu, pokud se prodává například ve více gramážích nebo provedeních.
           </p>
         ) : (
-          /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */
-          <section
-            aria-label={t('merchandise.ui.variantsScrollLabel')}
-            style={{ maxWidth: '100%', overflowX: 'auto' }}
-            tabIndex={0}
-          >
-            {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+          <ScrollRegion label={t('merchandise.ui.variantsScrollLabel')}>
             <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
@@ -664,7 +656,7 @@ export const VariantsPanel = (props: PanelProps) => {
                 })}
               </Table.Body>
             </Table>
-          </section>
+          </ScrollRegion>
         )}
       </SectionCard>
       {submitted && duplicateSku && (

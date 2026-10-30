@@ -1,6 +1,7 @@
 /// <reference types="@modern-js/ultramodern-app-tools/react-types" />
 // Render the already-authorized file in-page rather than relying on a browser PDF plug-in (absent
 // in headless browsers and on many phones). No public file URL or external document service is used.
+import { ScrollRegion } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useEffect, useRef, useState } from 'react';
@@ -216,10 +217,9 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
         <p className="py-300 text-center text-fg-secondary text-sm">{t(`${k}.previewFailed`)}</p>
       ) : (
         <>
-          {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named viewport needs keyboard scrolling. */}
-          <section
-            aria-busy={pdf === undefined || rendering}
-            aria-label={name}
+          <ScrollRegion
+            busy={pdf === undefined || rendering}
+            label={name}
             style={{
               background: '#fff',
               border: '1px solid var(--color-border-primary, #d4d4d8)',
@@ -227,9 +227,7 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
               maxHeight: height,
               overflow: 'auto',
             }}
-            tabIndex={0}
           >
-            {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
             {(pdf === undefined || rendering) && (
               <output className="block py-200 text-center text-fg-secondary text-sm">
                 {t('facility-operations.common.loading')}
@@ -242,7 +240,7 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
             >
               {canvasLabel}
             </canvas>
-          </section>
+          </ScrollRegion>
           {pdf !== undefined && (
             <div className="mt-100 flex items-center justify-between gap-100 text-fg-secondary text-xs">
               <Button

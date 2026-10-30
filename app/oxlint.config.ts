@@ -296,6 +296,15 @@ export default defineConfig({
       },
     },
     {
+      // The shared scroll region joins the tab order only while its content overflows, so keyboard users can reach
+      // and scroll a wide table or document (WCAG 2.1.1, axe scrollable-region-focusable). A named region is not an
+      // interactive role, so the rule cannot tell this case apart; every other element keeps it.
+      files: ['packages/admin-ui/src/scroll-region.tsx'],
+      rules: {
+        'jsx-a11y/no-noninteractive-tabindex': 'off',
+      },
+    },
+    {
       // This guarded test-only entrypoint composes real services with boundary fakes.
       // database-access:check rejects imports of it from production source.
       files: ['packages/core-runtime/src/testing/**/*.ts', 'apps/shell-super-app/tests/e2e/auth-fixture.ts'],

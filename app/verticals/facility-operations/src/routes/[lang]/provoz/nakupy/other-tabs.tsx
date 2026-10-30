@@ -2,7 +2,15 @@ import type { IsoDate } from '../../../../../shared/domain/common.ts';
 import { Effect } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Doplnění (rule-based), Pohyby (ledger + issues by month + serial lookup), Nabídky, Dodavatelé. ops-purchasing lane.
-import { DetailList, SectionCard, SidePanel, foldSearchText, formatDate, formatNumber } from '@app/admin-ui';
+import {
+  DetailList,
+  ScrollRegion,
+  SectionCard,
+  SidePanel,
+  foldSearchText,
+  formatDate,
+  formatNumber,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -99,13 +107,7 @@ export const ReplenishTab = ({
                   {k('replenish.draftExists', { number: draft.number })}
                 </StatusText>
               )}
-              {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named stock viewport needs keyboard scrolling. */}
-              <section
-                aria-label={t('facility-operations.ui.recommendedReplenishment')}
-                className="overflow-x-auto"
-                tabIndex={0}
-              >
-                {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+              <ScrollRegion label={t('facility-operations.ui.recommendedReplenishment')}>
                 <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
                   <Table.Header>
                     <Table.Row>
@@ -149,7 +151,7 @@ export const ReplenishTab = ({
                     ))}
                   </Table.Body>
                 </Table>
-              </section>
+              </ScrollRegion>
             </SectionCard>
           );
         })

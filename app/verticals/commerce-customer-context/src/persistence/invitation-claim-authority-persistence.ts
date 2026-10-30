@@ -8,7 +8,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Match, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import type {
@@ -397,31 +397,23 @@ const validateClaimTenant = (
     ? Effect.fail(violation('invitation_claimant_mismatch', 'The invitation claim proof is outside the trusted Tenant'))
     : Effect.void;
 
-// oxlint-disable-next-line typescript/consistent-return -- The decoded operation outcome is an exhaustive schema union, so every reachable switch branch returns an Effect.
 const validatePreflightOutcome = (
   row: InvitationClaimPreflightRow | undefined,
 ): Effect.Effect<InvitationClaimPreflightRow, CounterpartyAccessContractViolation> => {
   if (row === undefined) {
     return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
   }
-  // oxlint-disable-next-line eslint/default-case, effect-native/prefer-match-over-tag-switch -- The decoded operation-outcome schema is exhaustive here, and the grouped invalid/revoked branches are the validator's established failure mapping.
-  switch (row.operation_outcome) {
-    case 'INVALID':
-    case 'REVOKED': {
-      return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
-    }
-    case 'EXPIRED': {
-      return Effect.fail(violation('invitation_expired', invitationExpiredReason));
-    }
-    case 'CONSUMED': {
-      return Effect.fail(
-        violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed'),
-      );
-    }
-    case 'VERIFIED': {
-      return Effect.succeed(row);
-    }
-  }
+  return Match.value(row.operation_outcome).pipe(
+    Match.whenOr('INVALID', 'REVOKED', () =>
+      Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason)),
+    ),
+    Match.when('EXPIRED', () => Effect.fail(violation('invitation_expired', invitationExpiredReason))),
+    Match.when('CONSUMED', () =>
+      Effect.fail(violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed')),
+    ),
+    Match.when('VERIFIED', () => Effect.succeed(row)),
+    Match.exhaustive,
+  );
 };
 
 const validatePreflightBinding = (

@@ -8,7 +8,7 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { selectItem } from '../../../../components/select-item.ts';
-import { formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -640,9 +640,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
           : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
       </p>
       <SectionCard flush title={t('merchandise.ui.items')}>
-        {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */}
-        <section aria-label={t('merchandise.ui.orderItems')} style={{ overflowX: 'auto' }} tabIndex={0}>
-          {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+        <ScrollRegion label={t('merchandise.ui.orderItems')}>
           <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
@@ -743,7 +741,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
               ))}
             </Table.Body>
           </Table>
-        </section>
+        </ScrollRegion>
         <div className="flex flex-col gap-150 p-200">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
             <ProductSearchCombobox
