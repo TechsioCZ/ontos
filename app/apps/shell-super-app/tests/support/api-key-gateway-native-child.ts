@@ -50,6 +50,7 @@ import { AuthenticationServiceLive, makeAuthenticationService } from '../../api/
 import { shellAuthenticationFrameworkLive } from './shell-authentication.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
+import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -181,7 +182,8 @@ const serve = Effect.scoped(
       TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCore)),
       undefined,
       false,
-      ContextAccessLive,
+      // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
+      Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
     );
     const handler = yield* Effect.acquireRelease(
       Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: runtime }, {})).pipe(
