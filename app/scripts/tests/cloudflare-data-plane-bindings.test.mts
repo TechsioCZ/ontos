@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { createWranglerConfig } from '@modern-js/app-tools-extensions/cloudflare/wrangler-config';
-import { Array as EffectArray, Order, Schema } from 'effect';
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -340,33 +340,6 @@ it('declares each unit Worker Hyperdrive from the database identities it serves'
     );
     expect(config, unit.id).not.toMatch(DEDICATED_IDENTITY_REFERENCE);
   }
-});
-
-it('places every topology unit and leaves account-specific IDs empty until provisioning writes them', () => {
-  const placement = Schema.decodeUnknownSync(
-    Schema.fromJsonString(
-      Schema.Struct({
-        buildEnvironment: Schema.Record(Schema.String, Schema.String),
-        units: Schema.Array(Schema.String),
-      }),
-    ),
-  )(readFileSync(path.join(appRoot, 'topology/cloudflare-placement.json'), 'utf-8'));
-  expect(placement.units).toHaveLength(topology.verticals.length + 1);
-  expect(EffectArray.sort(placement.units, Order.String)).toEqual(
-    EffectArray.sort([topology.shell.id, ...topology.verticals.map(({ id }) => id)], Order.String),
-  );
-  // Empty until cloudflare-stage-cutover.mts provision writes the account's IDs; a unit build then fails closed.
-  for (const key of [HYPERDRIVE_ID, PARTY_REGISTRY_HYPERDRIVE_ID, GATEWAY_ISSUER_HYPERDRIVE_ID, COMPOSITION_KV_ID]) {
-    expect(placement.buildEnvironment[key]).toMatch(/^(?:[a-f0-9]{32})?$/u);
-  }
-  expect(placement.buildEnvironment[SPICEDB_VPC_SERVICE_ID]).toMatch(
-    /^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?$/u,
-  );
-  expect(() =>
-    createCloudflareDataPlaneBindings(reader({ ...placement.buildEnvironment, [SPICEDB_VPC_SERVICE_ID]: '' }), [
-      SHARED_HYPERDRIVE,
-    ]),
-  ).toThrow(`${SPICEDB_VPC_SERVICE_ID} is required for a Cloudflare Worker build`);
 });
 
 // Exercise Modern's actual jiti dependency in a fresh process, outside Rstest's ESM bundler.

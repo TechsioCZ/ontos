@@ -65,8 +65,8 @@ Then generate its MicroVertical module contract before its business artifacts. G
 | Framework release and package aliases   | `pnpm-workspace.yaml#catalogs.ultramodern` and the installed generator's `release-cohort.json` |
 | Deployments, remotes, ports, and owners | `topology/` and generated ownership metadata                                                   |
 | Agent skill sources and install target  | `.agents/skills-lock.json` and its bootstrap script                                            |
-| CI and production delivery              | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
-| Stage delivery                          | `../.github/workflows/stage-demo-deploy.yml` and `topology/stage-edge.json`                    |
+| CI gates                                | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
+| Stage delivery                          | `../.github/workflows/zerops-stage.yml` and `topology/stage-edge.json`                         |
 | Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
 Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
@@ -157,7 +157,6 @@ Use the source-owned operator evidence commands:
 mise exec -- pnpm authorization:inventory:check
 mise exec -- pnpm authorization:impact:report -- .codex/reports/authorization/would-deny.json
 mise exec -- pnpm authorization:readiness:check -- stage
-mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage --outbox-worker-mode host
 mise exec -- pnpm test:scripts
 ```
 

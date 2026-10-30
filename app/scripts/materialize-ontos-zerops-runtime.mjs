@@ -63,8 +63,8 @@ const materializeCommand = Command.make(
           return yield* Effect.fail(failure('--package must match --package-dir/package.json name'));
         }
         const options = { appId, packageDir, packageName, workspaceRoot };
-        // scripts/ci/build-outbox-host.sh passes the plan's host digest, which the bundle serves on /status, and the
-        // revision each hosted owner's build identity names (JSON, by owner id).
+        // The caller passes the host digest, which the bundle serves on /status, and the revision each hosted owner's
+        // build identity names (JSON, by owner id).
         const artifactDigest = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_DIGEST'));
         const ownerRevisions = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_OWNER_REVISIONS'));
         const delivery = yield* Effect.tryPromise({

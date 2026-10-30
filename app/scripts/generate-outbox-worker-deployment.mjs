@@ -476,8 +476,8 @@ const generateOutboxWorkerDeploymentEffect = (root, source, providerSource) =>
       { id: OUTBOX_WORKER_HOST.stageSetup, service: hostService },
     ]) {
       const current = yield* saveWorkerDeployment(deployment, id, service);
-      // CI builds the host artifact (scripts/ci/build-outbox-host.sh) and Zerops only deploys it, so the
-      // host setup carries no Zerops build that a push could run instead.
+      // The host artifact is built ahead of the Zerops push, so the host setup carries no Zerops build that a push
+      // could run instead.
       if (id === OUTBOX_WORKER_HOST.stageSetup) {
         current.delete('build');
       }

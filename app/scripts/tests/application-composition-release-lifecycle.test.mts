@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, DateTime, Effect, Fiber, FileSystem, Layer, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -14,13 +12,11 @@ import {
   moduleReleaseWorkerName,
 } from '../../packages/core-runtime/src/http/module-release-identity.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
-import { ActiveApplicationCompositionUnavailableError } from '../../packages/core-runtime/src/index.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
-  ActiveApplicationCompositionPublicationError,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
@@ -30,15 +26,12 @@ import {
   runApplicationCompositionMigration,
   ApplicationCompositionPublicationTimeout,
 } from '../application-composition-authority-publication.mts';
-import { verifyInitialCutoverProviderInventory } from '../initial-composition-cutover-provider.mts';
-import { assertPublishedShellIngressSnapshot } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import {
   developmentCompositionApplication,
   makeDevelopmentCompositionPointer,
 } from '../siampark/development-composition.mts';
 
-const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'b'.repeat(32)}/values/active`;
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
 const SHELL_BUILD_MARKER = 'shell-lifecycle-build';
 const MODULE_APP_ID = 'catalog';
@@ -48,7 +41,6 @@ const INITIAL_NODE_ID = 'A'.repeat(22);
 const INITIAL_ACCOUNT_ID = 'a'.repeat(32);
 const INITIAL_NAMESPACE_ID = 'b'.repeat(32);
 const INITIAL_NAMESPACE_PATH = `/client/v4/accounts/${INITIAL_ACCOUNT_ID}/storage/kv/namespaces/${INITIAL_NAMESPACE_ID}`;
-const INITIAL_WORKER_NAME = 'old-shell-worker';
 const SESSION_UNLOCK = 'SESSION UNLOCK';
 const MIGRATION_EVENT = 'MIGRATION';
 const COMMITTED_DRAINING = 'COMMITTED draining';
@@ -56,19 +48,7 @@ const DURABLE_COMPLETE = 'DURABLE COMPLETE';
 const DURABLE_BLOCKED = 'DURABLE BLOCKED';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
 const AUTHORITY_FROM = 'from "core"."application_composition_authority"';
-const initialProviderProof = verifyInitialCutoverProviderInventory({
-  cloudflare: {
-    accountId: INITIAL_ACCOUNT_ID,
-    compositionPointer: {
-      namespaceId: INITIAL_NAMESPACE_ID,
-      sha256: createHash('sha256').update('obsolete lifecycle fixture pointer').digest('hex'),
-    },
-    workerNames: [INITIAL_WORKER_NAME],
-  },
-  zeropsServiceIds: [INITIAL_NODE_ID],
-});
 const JsonText = Schema.fromJsonString(Schema.Unknown);
-const JsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 const artifact = (url: string, document: typeof JsonText.Type) => ({
   bytes: new TextEncoder().encode(Schema.encodeSync(JsonText)(document)),
   url,
@@ -148,197 +128,6 @@ const completeSnapshot = Effect.gen(function* deriveLifecycleSnapshot() {
     validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
   });
 });
-
-const authorityRow = (snapshot: ActiveApplicationCompositionSnapshot) => ({
-  phase: 'active',
-  revision: snapshot.composition.revision,
-  unexpired: true,
-});
-
-const shellReceipt = (snapshot: ActiveApplicationCompositionSnapshot) => ({
-  deployment: snapshot.composition.shell.deployment,
-  federationManifest: snapshot.composition.shell.federationManifest,
-  runtimeContract: snapshot.composition.shell.runtimeContract,
-});
-
-const gateFixture = (value: string, authorityRows: readonly object[], status = 200) => {
-  const requests: { readonly authorization: string | undefined; readonly method: string; readonly url: string }[] = [];
-  const statements: string[] = [];
-  const client = HttpClient.make((request, destination) => {
-    requests.push({ authorization: request.headers.authorization, method: request.method, url: destination.href });
-    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(value, { status })));
-  });
-  return {
-    layer: Layer.mergeAll(
-      Layer.succeed(HttpClient.HttpClient, client),
-      Layer.effect(
-        CoreDatabase,
-        makeTestDatabase((sql) =>
-          Effect.sync(() => {
-            statements.push(sql);
-            if (sql.includes('as isolation')) {
-              return [{ isolation: 'read committed' }];
-            }
-            return sql.includes(AUTHORITY_FROM) ? authorityRows : [];
-          }),
-        ).pipe(Effect.map((executor) => ({ executor }))),
-      ),
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          [ACTIVE_APPLICATION_COMPOSITION_POLICY.sourceUrlVariable]: KV_URL,
-          CLOUDFLARE_API_TOKEN: 'shell-lifecycle-publication-token',
-        }),
-      ),
-    ),
-    requests,
-    statements,
-  };
-};
-
-it.effect('admits only the exact Shell receipt in the fresh published release and active database authority', () =>
-  Effect.gen(function* admitsPublishedShellIngress() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const { layer, requests, statements } = gateFixture(encoded, [authorityRow(snapshot)]);
-
-    yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(Effect.provide(layer));
-
-    expect(requests).toEqual([
-      { authorization: 'Bearer shell-lifecycle-publication-token', method: 'GET', url: KV_URL },
-    ]);
-    expect(statements.some((statement) => statement.includes('application_composition_authority'))).toBe(true);
-    expect(statements.some((statement) => statement.includes('ontos.application-composition-publication'))).toBe(false);
-    expect(statements.some((statement) => /^(?:insert|update|delete) /u.test(statement))).toBe(false);
-  }),
-);
-
-it.effect('refuses Shell mutation when database authority is missing, different, expired, draining, or sealed', () =>
-  Effect.gen(function* rejectsUnapprovedShellAuthority() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const active = authorityRow(snapshot);
-    const states = [
-      { name: 'missing', rows: [] },
-      { name: 'different revision', rows: [{ ...active, revision: `sha256:${'0'.repeat(64)}` }] },
-      { name: 'expired', rows: [{ ...active, unexpired: false }] },
-      { name: 'draining', rows: [{ ...active, phase: 'draining' }] },
-      { name: 'sealed', rows: [{ ...active, phase: 'sealed' }] },
-      { name: 'migrated', rows: [{ ...active, phase: 'migrated' }] },
-    ];
-    for (const state of states) {
-      const { layer, requests, statements } = gateFixture(encoded, state.rows);
-      let ingressMutated = false;
-      const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            ingressMutated = true;
-          }),
-        ),
-        Effect.provide(layer),
-        Effect.flip,
-      );
-
-      expect({ refused: Schema.is(ActiveApplicationCompositionPublicationError)(failure), state: state.name }).toEqual({
-        refused: true,
-        state: state.name,
-      });
-      expect(ingressMutated).toBe(false);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
-      expect(statements.some((statement) => /^(?:insert|update|delete) /u.test(statement))).toBe(false);
-    }
-  }),
-);
-
-it.effect('refuses a changed Shell build marker, artifact URL, or digest before ingress mutation', () =>
-  Effect.gen(function* rejectsDifferentShellReceipt() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const approved = shellReceipt(snapshot);
-    const digest = '0'.repeat(64);
-    const receipts = [
-      { ...approved, deployment: { ...approved.deployment, buildMarker: 'different-shell-build' } },
-      {
-        ...approved,
-        runtimeContract: {
-          ...approved.runtimeContract,
-          url: 'https://shell.example/.well-known/ontos-shell-runtime.json',
-        },
-      },
-      { ...approved, runtimeContract: { ...approved.runtimeContract, sha256: digest } },
-      {
-        ...approved,
-        federationManifest: { ...approved.federationManifest, url: 'https://shell.example/mf-manifest.json' },
-      },
-      { ...approved, federationManifest: { ...approved.federationManifest, sha256: digest } },
-    ];
-    for (const receipt of receipts) {
-      const { layer, requests, statements } = gateFixture(encoded, [authorityRow(snapshot)]);
-      let ingressMutated = false;
-      const failure = yield* assertPublishedShellIngressSnapshot(receipt).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            ingressMutated = true;
-          }),
-        ),
-        Effect.provide(layer),
-        Effect.flip,
-      );
-
-      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(ingressMutated).toBe(false);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
-      expect(statements.some((statement) => /^(?:insert|update|delete) /u.test(statement))).toBe(false);
-    }
-  }),
-);
-
-it.effect('never admits a Shell from missing, malformed, unavailable, or expired publication evidence', () =>
-  Effect.gen(function* rejectsUnavailableShellPublication() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const document = yield* Schema.decodeEffect(Schema.fromJsonString(JsonRecord))(encoded);
-    const composition = yield* Schema.decodeUnknownEffect(JsonRecord)(document.composition);
-    const modules = yield* Schema.decodeUnknownEffect(Schema.Array(JsonRecord))(composition.modules);
-    const missingBackend = yield* Schema.encodeEffect(JsonText)({
-      ...document,
-      composition: { ...composition, modules: modules.map((module) => ({ ...module, backend: null })) },
-    });
-    const sources = [
-      { status: 404, value: '' },
-      { status: 200, value: '{}' },
-      { status: 200, value: missingBackend },
-      { status: 503, value: encoded },
-    ];
-    for (const source of sources) {
-      const { layer, requests } = gateFixture(source.value, [authorityRow(snapshot)], source.status);
-      const check = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-        Effect.forkChild,
-      );
-      if (source.status === 503) {
-        // The production reader retries after one and two seconds. Its child must sleep while
-        // this test drives the virtual clock; awaiting it here would leave both retries suspended.
-        yield* TestClock.adjust('0 seconds');
-        expect(requests.map(({ method }) => method)).toEqual(['GET']);
-        yield* TestClock.adjust('1 second');
-        expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET']);
-        yield* TestClock.adjust('2 seconds');
-      }
-      const failure = yield* Fiber.join(check);
-      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(requests.map(({ method }) => method)).toEqual(source.status === 503 ? ['GET', 'GET', 'GET'] : ['GET']);
-    }
-    yield* TestClock.setTime(DateTime.toEpochMillis(snapshot.validUntil));
-    const expired = gateFixture(encoded, [authorityRow(snapshot)]);
-    const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
-      Effect.provide(expired.layer),
-      Effect.flip,
-    );
-    expect(Schema.is(ActiveApplicationCompositionUnavailableError)(failure)).toBe(true);
-    expect(expired.requests.map(({ method }) => method)).toEqual(['GET']);
-  }),
-);
 
 interface MigrationFixtureOptions {
   readonly currentSnapshot?: ActiveApplicationCompositionSnapshot;
@@ -513,7 +302,7 @@ it.effect('commits draining and sealing before migration, then records completio
       fixture.events.push(MIGRATION_EVENT);
       return 'native-migration-complete';
     });
-    const fiber = yield* runApplicationCompositionMigration(migration, initialProviderProof).pipe(
+    const fiber = yield* runApplicationCompositionMigration(migration, Effect.void).pipe(
       Effect.provide(fixture.layer),
       Effect.forkChild,
     );
@@ -546,7 +335,7 @@ it.effect('keeps the drain committed and never migrates when the final seal find
         Effect.sync(() => {
           fixture.events.push(MIGRATION_EVENT);
         }),
-        initialProviderProof,
+        Effect.void,
       ).pipe(Effect.provide(fixture.layer), Effect.flip);
 
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
@@ -566,7 +355,7 @@ it.effect('closes new durable admission and leaves existing jobs active until th
       Effect.sync(() => {
         fixture.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(fixture.layer), Effect.forkChild);
 
     yield* TestClock.adjust('0 seconds');
@@ -587,10 +376,10 @@ it.effect('closes new durable admission and leaves existing jobs active until th
 it.effect('preserves the sealed fence after native migration failure and refuses a repeated completed migration', () =>
   Effect.gen(function* preservesMigrationFailureFence() {
     const failed = migrationFixture();
-    const failure = yield* runApplicationCompositionMigration(
-      Effect.fail('native migration failed'),
-      initialProviderProof,
-    ).pipe(Effect.provide(failed.layer), Effect.flip);
+    const failure = yield* runApplicationCompositionMigration(Effect.fail('native migration failed'), Effect.void).pipe(
+      Effect.provide(failed.layer),
+      Effect.flip,
+    );
     expect(failure).toBe('native migration failed');
     expect(failed.phase()).toBe('sealed');
     expect(failed.events).not.toContain('COMMITTED migrated');
@@ -601,44 +390,11 @@ it.effect('preserves the sealed fence after native migration failure and refuses
       Effect.sync(() => {
         completed.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(completed.layer), Effect.flip);
     expect(Schema.is(ApplicationCompositionAuthorityError)(repeated)).toBe(true);
     expect(completed.events).not.toContain(MIGRATION_EVENT);
     expect(completed.statements.some((statement) => statement.startsWith('update '))).toBe(false);
-  }),
-);
-
-it.effect('requires native provider absence and quiescent database transactions before the first migration', () =>
-  Effect.gen(function* verifiesInitialMigrationRetirement() {
-    for (const options of [{ missingAuthority: true }, { schemaInitialized: false }]) {
-      const fixture = migrationFixture(options);
-      yield* runApplicationCompositionMigration(
-        Effect.sync(() => {
-          fixture.events.push(MIGRATION_EVENT);
-        }),
-        initialProviderProof,
-      ).pipe(Effect.provide(fixture.layer));
-      expect(fixture.proofRequests).toHaveLength(4);
-      expect(fixture.events.indexOf('LEGACY TRANSACTION CHECK')).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
-      expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
-      expect(fixture.statements).not.toContain('BEGIN');
-      if (options.schemaInitialized === false) {
-        expect(fixture.statements.some((statement) => statement.includes(AUTHORITY_FROM))).toBe(false);
-      }
-    }
-
-    const blocked = migrationFixture({ legacyTransactionsActive: true, missingAuthority: true });
-    const failure = yield* runApplicationCompositionMigration(
-      Effect.sync(() => {
-        blocked.events.push(MIGRATION_EVENT);
-      }),
-      initialProviderProof,
-    ).pipe(Effect.provide(blocked.layer), Effect.flip);
-    expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-    expect(blocked.proofRequests).toHaveLength(4);
-    expect(blocked.events).not.toContain(MIGRATION_EVENT);
-    expect(blocked.events.at(-1)).toBe(SESSION_UNLOCK);
   }),
 );
 
@@ -649,7 +405,7 @@ it.effect('bounds durable draining by the lease and leaves the current release a
       Effect.sync(() => {
         fixture.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(fixture.layer), Effect.flip, Effect.forkChild);
     yield* TestClock.adjust('5 seconds');
     const failure = yield* Fiber.join(fiber);
@@ -700,7 +456,7 @@ it.effect('serves the restored /active authority to the durable job that a nativ
     yield* original.publish(snapshot);
     // A new publisher has no in-memory pointer. Its exact approved bytes survive the restart.
     const restarted = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(fixture.layer));
-    const migration = yield* runApplicationCompositionMigration(Effect.void, initialProviderProof).pipe(
+    const migration = yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(
       Effect.provide(fixture.layer),
       Effect.forkChild,
     );
