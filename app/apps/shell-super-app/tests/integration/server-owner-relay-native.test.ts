@@ -90,6 +90,7 @@ import {
   startPackagedApplication,
   loadPackagedRetailWorker,
   startPackagedRetailWorker,
+  runRegisteredPostalFactoryProbe,
 } from '../support/server-owner-relay-native-fixture.ts';
 
 const PARTY_MODULE_KEY = 'party.registry';
@@ -452,6 +453,7 @@ const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.
       compositionRevision: issued.compositionRevision,
       sourceAssertion: token,
       sourceJti: claims.jti,
+      trustedStorefrontAbsent: claims.principal.trustedStorefrontId === undefined,
     };
   },
 );
@@ -700,6 +702,195 @@ const logCatalogActionProblem = Effect.fn('ServerOwnerRelayNative.logCatalogActi
 );
 
 type NativeCoreDatabase = Effect.Success<typeof testCoreDatabase>;
+
+type NativeSavedAddress = Effect.Success<ReturnType<typeof executeUpdateSavedAddressWithAuthorization>>['address'];
+
+/** Native factory-port proof and separate honest mounted admission proof; no final Current facts. */
+const exerciseRegisteredPostalReads = Effect.fn('ServerOwnerRelayNative.exerciseRegisteredPostalReads')(
+  function* exerciseRegisteredPostalReads(input: {
+    readonly compositionRevision: string;
+    readonly compositionUrl: string;
+    readonly customerContext: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: Effect.Success<ReturnType<typeof makePackagedShellUserFixture>>;
+    readonly gateway: { readonly issuer: string; readonly publicJwks: string };
+    readonly issueProof: () => ReturnType<typeof issueNativeApiKeyGatewayAuthorization>;
+    readonly personalAuthBindingId: string;
+    readonly personalAuthContextRef: Redacted.Redacted;
+    readonly relaySource: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
+    readonly savedAddress: NativeSavedAddress;
+    readonly serviceId: string;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const client = yield* HttpClient.HttpClient;
+    const { authentication, core } = input.fixture;
+    const { principalId } = core.manager;
+    const resources = [input.savedAddress.profile.profileRef, input.savedAddress.savedAddressRef];
+    for (const resource of resources) {
+      yield* core.grantResourceAccess(resource, principalId, 'reader');
+    }
+    const access = yield* makeContextAccessLive(undefined, () =>
+      Effect.succeed({
+        caCertificate: authentication.spice.caCertificate,
+        endpoint: authentication.spice.endpoint,
+        get preSharedKey() {
+          return Redacted.value(authentication.spice.preSharedKey);
+        },
+      }),
+    );
+    if (access.businessPermissions === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Live resolver permission readers unavailable' });
+    }
+    const businessTargets = [
+      {
+        permission: 'retail.address_book.use' as const,
+        target: {
+          kind: 'retail_profile' as const,
+          legalEntityId: core.legalEntityId,
+          profileId: input.savedAddress.profile.profileRef.resourceId,
+          tenantId: core.tenantId,
+        },
+      },
+    ];
+    const moduleDecisions = yield* access.modules({
+      legalEntityId: core.legalEntityId,
+      moduleIds: ['commerce.customer-context'],
+      principalId,
+      tenantId: core.tenantId,
+    });
+    expect(moduleDecisions).toHaveLength(1);
+    expect(moduleDecisions.find((decision) => decision.key === 'commerce.customer-context')?.decision).toBe('allowed');
+    const businessDecisions = yield* access.businessPermissions({
+      principal: { principalId, tenantId: core.tenantId },
+      targets: businessTargets,
+    });
+    expect(businessDecisions).toHaveLength(1);
+    expect(businessDecisions.every((decision) => decision.decision === 'allowed')).toBe(true);
+    const resourceDecisions = yield* access.resources({
+      legalEntityId: core.legalEntityId,
+      principalId,
+      resources,
+      tenantId: core.tenantId,
+    });
+    expect(resourceDecisions).toHaveLength(2);
+    expect(resourceDecisions.every((decision) => decision.decision === 'allowed')).toBe(true);
+    const serviceBusiness = yield* access.businessPermissions({
+      principal: { principalId: input.serviceId, tenantId: core.tenantId },
+      targets: businessTargets,
+    });
+    expect(serviceBusiness.every((decision) => decision.decision === 'denied')).toBe(true);
+    const before = yield* core.evidence(input.database);
+    const previous = new Set(before.accesses.map((row) => row.dataAccessEventId));
+    for (const factory of ['delivery', 'invoice'] as const) {
+      const proof = yield* input.issueProof();
+      expect(proof.trustedStorefrontAbsent).toBe(true);
+      const result = yield* runRegisteredPostalFactoryProbe({
+        authorization: proof.authorization,
+        compositionRevision: input.compositionRevision,
+        compositionUrl: input.compositionUrl,
+        correlationId: yield* crypto.randomUUIDv4(),
+        deployment: { appId: 'commerce-customer-context', buildMarker: input.customerContext.compiled.buildMarker },
+        factory,
+        gateway: input.gateway,
+        relativeDirectory: '../../verticals/commerce-customer-context',
+        relaySource: input.relaySource,
+        savedAddress: input.savedAddress,
+      });
+      expect(result.factory).toBe(factory);
+      expect(result.compositionRevision).toBe(input.compositionRevision);
+      expect(input.savedAddress.origin.kind).toBe('PARTY_BACKED');
+      if (input.savedAddress.origin.kind !== 'PARTY_BACKED') {
+        return yield* new PackagedOwnerStartupError({ reason: 'Real Party-backed saved source required' });
+      }
+      expect(result.postal.currentPartyRef).toEqual(input.savedAddress.origin.partyRef);
+      expect(result.postal.currentContactPointRef).toEqual(input.savedAddress.origin.contactPointRef);
+      expect(result.postal.currentSourceRevision).toBe(input.savedAddress.origin.sourceRevision);
+      expect(result.postal.postalAddress).toMatchObject({
+        addressLine1: 'Native postal fixture 1',
+        city: 'Praha',
+        countryCode: 'CZ',
+        postalCode: '11000',
+      });
+      const exchange = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+        where: { sourceJti: proof.sourceJti },
+      });
+      expect(exchange !== undefined).toBe(true);
+    }
+    const afterFactories = yield* core.evidence(input.database);
+    const providers = afterFactories.accesses.filter(
+      (row) =>
+        row.servingModuleKey === PARTY_MODULE_KEY &&
+        !previous.has(row.dataAccessEventId) &&
+        row.outcomeCode === 'read_allowed',
+    );
+    expect(providers).toHaveLength(2);
+    for (const provider of providers) {
+      expect(provider.principalId).toBe(principalId);
+      expect(provider.principalId === input.serviceId).toBe(false);
+      expect(provider.authBindingId).toBe(input.personalAuthBindingId);
+      expect(provider.authMethod).toBe('api_key');
+      expect(provider.authContextRef === Redacted.value(input.personalAuthContextRef)).toBe(true);
+      expect(provider.legalEntityId).toBe(core.legalEntityId);
+    }
+    // These are unresolved request selectors/expectations, never accepted Storefront or Current authority.
+    const request = {
+      explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef: input.savedAddress.savedAddressRef },
+      purchasingContext: {
+        cartId: 'unresolved-step11-cart',
+        channelId: 'unresolved-step11-channel',
+        expectedProposalRevision: 1,
+        expectedSourceRevisions: [
+          { revision: String(input.savedAddress.revision), source: 'saved-address-expectation' },
+        ],
+        marketId: 'unresolved-step11-market',
+        sellingLegalEntityId: core.legalEntityId,
+        storefrontId: 'unresolved-step11-storefront',
+        tenantId: core.tenantId,
+      },
+      subject: { kind: 'PROFILE', profile: input.savedAddress.profile },
+    };
+    for (const read of ['invoice-recipient-resolution', 'delivery-destination-resolution']) {
+      const proof = yield* input.issueProof();
+      expect(proof.trustedStorefrontAbsent).toBe(true);
+      const response = yield* client.post(
+        `${input.customerContext.origin}${input.customerContext.apiPrefix}/reads/${read}`,
+        {
+          body: yield* HttpBody.json(request),
+          headers: {
+            authorization: Redacted.value(proof.authorization),
+            'x-correlation-id': yield* crypto.randomUUIDv4(),
+            'x-ontos-composition-revision': input.compositionRevision,
+          },
+        },
+      );
+      const problem = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(OutsideRelayProblemSchema)));
+      yield* Effect.logInfo('Mounted postal resolver lacks genuine trusted Storefront', {
+        code: problem.code,
+        declaredPermissionsAllowed: true,
+        finalResolutionProven: false,
+        read,
+        status: response.status,
+        title: problem.title,
+        type: problem.type,
+      });
+      expect(response.status).toBe(403);
+      expect(problem.status).toBe(403);
+      const exchange = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+        where: { sourceJti: proof.sourceJti },
+      });
+      expect(exchange).toBeUndefined();
+    }
+    yield* Effect.logInfo('Actual registered postal factory ports verified separately from mounted admission', {
+      currentRevision: input.compositionRevision,
+      defaultFactories: 2,
+      finalResolutionProven: false,
+      mountedMissingTrustedStorefront: 2,
+      originalProviderActorPreserved: true,
+    });
+    return yield* Effect.void;
+  },
+);
+
 const assertNativeManagedIdentityActions = Effect.fn('ServerOwnerRelayNative.assertManagedIdentityActions')(
   function* assertNativeManagedIdentityActions(
     database: NativeCoreDatabase,
@@ -4893,6 +5084,22 @@ it.live(
                   });
                   expect(claimed !== undefined).toBe(true);
                 }
+                yield* exerciseRegisteredPostalReads({
+                  compositionRevision: approved.composition.revision,
+                  compositionUrl,
+                  customerContext: enrolledCustomerContext,
+                  database,
+                  fixture,
+                  gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+                  issueProof: () =>
+                    issuePostalProof('commerce-customer-context', enrolledCustomerContext.compiled.buildMarker),
+                  personalAuthBindingId: personalKey.authBindingId,
+                  personalAuthContextRef,
+                  relaySource: { apiKey: issued.secret, shellBaseUrl: `${enrolledShell.origin}/shell-super-app-api` },
+                  savedAddress: updatedAddress.address,
+                  serviceId,
+                });
+                const beforePartyDown = yield* fixture.core.evidence(database);
                 expect(yield* party.child.isRunning).toBe(true);
                 yield* party.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
                 expect(yield* party.child.isRunning).toBe(false);
@@ -4933,7 +5140,7 @@ it.live(
                     .filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)
                     .map((row) => row.dataAccessEventId),
                 ).toEqual(
-                  postalValidated.accesses
+                  beforePartyDown.accesses
                     .filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)
                     .map((row) => row.dataAccessEventId),
                 );
@@ -5007,4 +5214,5 @@ it.live(
       Effect.timeout('120 seconds'),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
+  150_000,
 );

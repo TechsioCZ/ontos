@@ -517,7 +517,7 @@ it.effect('logs only fixed classifications for internal Core read failures', () 
         expect(Cause.squash(exit.cause)).toEqual(problems.internal());
       }
       expect(logEntries).toHaveLength(1);
-      const captured = Schema.decodeUnknownSync(
+      const captured = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Struct({
             annotations: Schema.Record(Schema.String, Schema.String),

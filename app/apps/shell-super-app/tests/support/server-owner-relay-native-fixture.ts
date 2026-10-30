@@ -3,9 +3,10 @@ import {
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
+  CoreSearchResourceRefSchema,
 } from '@app/core-runtime';
 import { NodeSocketServer } from '@effect/platform-node';
-import { Config, Crypto, Deferred, Effect, FileSystem, Path, Redacted, Schema, Stream } from 'effect';
+import { Config, Crypto, Deferred, Effect, FileSystem, Option, Path, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
@@ -378,5 +379,179 @@ export const startPackagedRetailWorker = Effect.fn('ServerOwnerRelayNative.start
       );
     }
     return { child, diagnostics };
+  },
+);
+
+const PostalFactoryResultSchema = Schema.Struct({
+  compositionRevision: Schema.String,
+  factory: Schema.Literals(['delivery', 'invoice']),
+  postal: Schema.Struct({
+    currentContactPointRef: CoreSearchResourceRefSchema,
+    currentPartyRef: CoreSearchResourceRefSchema,
+    currentSourceRevision: Schema.Number,
+    kind: Schema.Literal('PARTY_BACKED'),
+    postalAddress: Schema.Record(Schema.String, Schema.String),
+  }),
+});
+
+/** Test-only owner process: actual verifier/native scope/default factory, no HTTP or Current substitute. */
+const PostalFactoryPhaseSchema = Schema.Literals([
+  'redemption_started',
+  'redemption_completed',
+  'scope_admission_started',
+  'scope_admitted',
+  'factory_ready',
+  'postal_resolved',
+  'scope_completed',
+]);
+
+const observePostalFactoryPhase = Effect.fn('ServerOwnerRelayNative.observePostalFactoryPhase')(
+  function* observePostalFactoryPhase(line: string) {
+    const prefix = 'ONTOS_POSTAL_FACTORY_PHASE ';
+    if (!line.startsWith(prefix)) {
+      return;
+    }
+    const phase = yield* Schema.decodeUnknownEffect(PostalFactoryPhaseSchema)(line.slice(prefix.length)).pipe(
+      Effect.mapError(() => new PackagedOwnerStartupError({ reason: 'Invalid closed postal probe phase protocol' })),
+    );
+    yield* Effect.logInfo('Registered postal factory probe phase', { phase });
+  },
+);
+
+export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative.runRegisteredPostalFactoryProbe')(
+  function* runRegisteredPostalFactoryProbe(input: {
+    readonly authorization: Redacted.Redacted;
+    readonly compositionRevision: string;
+    readonly compositionUrl: string;
+    readonly correlationId: string;
+    readonly deployment: { readonly appId: 'commerce-customer-context'; readonly buildMarker: string };
+    readonly factory: 'delivery' | 'invoice';
+    readonly gateway: { readonly issuer: string; readonly publicJwks: string };
+    readonly relativeDirectory: string;
+    readonly relaySource: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
+    readonly savedAddress: object;
+  }) {
+    const path = yield* Path.Path;
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = path.resolve(input.relativeDirectory);
+    const cache = path.join(directory, 'node_modules', '.cache', 'ontos-1284-postal');
+    yield* filesystem.makeDirectory(cache, { recursive: true });
+    const temporary = yield* filesystem.makeTempDirectoryScoped({ directory: cache, prefix: 'factory-' });
+    const artifact = path.join(temporary, 'probe.mjs');
+    const toolchainEnvironment: Record<string, string> = {};
+    for (const key of ['PATH', 'HOME', 'MISE_DATA_DIR', 'MISE_CACHE_DIR', 'MISE_CONFIG_DIR', 'MISE_INSTALL_PATH']) {
+      const value = yield* Config.option(Config.String(key));
+      if (Option.isSome(value)) {
+        toolchainEnvironment[key] = value.value;
+      }
+    }
+    // Same scoped native-child bundling seam as the owner's durable redemption restart test.
+    const bundle = yield* ChildProcess.make(
+      'mise',
+      [
+        'exec',
+        '--',
+        'pnpm',
+        'exec',
+        'esbuild',
+        path.join(directory, 'tests/integration/registered-postal-factory-native-probe.mts'),
+        '--bundle',
+        '--platform=node',
+        '--format=esm',
+        '--packages=external',
+        `--outfile=${artifact}`,
+      ],
+      {
+        cwd: path.resolve(directory, '../..'),
+        env: toolchainEnvironment,
+        extendEnv: false,
+        stderr: 'pipe',
+        stdout: 'pipe',
+      },
+    );
+    const [bundleExit] = yield* Effect.all(
+      [bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)],
+      { concurrency: 3 },
+    );
+    if (bundleExit !== 0) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Owner-local postal probe bundling failed' });
+    }
+    const command = Redacted.make(
+      JSON.stringify({
+        authorization: Redacted.value(input.authorization),
+        compositionRevision: input.compositionRevision,
+        correlationId: input.correlationId,
+        deployment: input.deployment,
+        factory: input.factory,
+        savedAddress: input.savedAddress,
+      }),
+    );
+    const child = yield* ChildProcess.make('node', [artifact], {
+      cwd: directory,
+      env: {
+        APP_ENV_PATH: '/dev/null',
+        DATABASE_URL: Redacted.value(yield* Config.Redacted('DATABASE_URL')),
+        NODE_ENV: 'production',
+        ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl,
+        ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
+        ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
+        ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(input.relaySource.apiKey),
+        ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
+        PATH: yield* Config.String('PATH'),
+        SPICEDB_CA_CERT: yield* Config.String('SPICEDB_CA_CERT'),
+        SPICEDB_ENDPOINT: yield* Config.String('SPICEDB_ENDPOINT'),
+        SPICEDB_PRESHARED_KEY: Redacted.value(yield* Config.Redacted('SPICEDB_PRESHARED_KEY')),
+      },
+      extendEnv: false,
+      forceKillAfter: '3 seconds',
+      stderr: 'pipe',
+      stdin: Stream.make(Redacted.value(command)).pipe(Stream.encodeText),
+      stdout: 'pipe',
+    });
+    const diagnostics: Redacted.Redacted[] = [];
+    yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach((line) => Effect.sync(() => diagnostics.push(Redacted.make(line)))),
+      Effect.forkScoped,
+    );
+    const lines = yield* child.stdout.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.tap(observePostalFactoryPhase),
+      Stream.runCollect,
+    );
+    const exitCode = yield* child.exitCode;
+    if (exitCode !== 0) {
+      const failurePrefix = 'ONTOS_POSTAL_FACTORY_FAILURE ';
+      const failures = lines.filter((line) => line.startsWith(failurePrefix));
+      const safeFailure = Schema.Struct({
+        stage: Schema.Literals(['input', 'redemption', 'admitted_factory', 'output', 'execution']),
+      });
+      for (const line of failures) {
+        const failure = yield* Schema.decodeEffect(Schema.fromJsonString(safeFailure))(
+          line.slice(failurePrefix.length),
+        ).pipe(
+          Effect.mapError(
+            () => new PackagedOwnerStartupError({ reason: 'Invalid closed postal probe failure protocol' }),
+          ),
+        );
+        yield* Effect.logInfo('Registered postal factory probe failed', failure);
+      }
+      return yield* new PackagedOwnerStartupError({ reason: 'Actual owner-local registered postal factory failed' });
+    }
+    if (yield* child.isRunning) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Completed postal factory probe remains running' });
+    }
+    const prefix = 'ONTOS_POSTAL_FACTORY_RESULT ';
+    const resultLines = lines.filter((line) => line.startsWith(prefix));
+    if (resultLines.length !== 1 || resultLines[0] === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Postal factory probe response absent or ambiguous' });
+    }
+    return yield* Schema.decodeEffect(Schema.fromJsonString(PostalFactoryResultSchema))(
+      resultLines[0].slice(prefix.length),
+    ).pipe(
+      Effect.mapError(() => new PackagedOwnerStartupError({ reason: 'Invalid closed postal probe result protocol' })),
+    );
   },
 );
