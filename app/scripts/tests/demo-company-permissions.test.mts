@@ -293,12 +293,13 @@ it.effect('installs missing Privacy before deriving its exact scoped Action topo
         }),
       ),
     );
-    // All named grants are exact: existing operational permissions plus only two Privacy reads, no Privacy write.
+    // All named grants are exact: operational permissions, the customer-group read and only two Privacy reads.
     const operatorPermissions = rows.filter(
       (row) =>
         row.subjectId === operatorRole && row.resourceType === 'context_permission' && row.relation === 'role_grantee',
     );
     const expectedPermissions = [
+      [commerceModule, 'customer.group.read'],
       [merchandiseModule, 'demo.merchandise.read_all'],
       [merchandiseModule, 'demo.merchandise.write_all'],
       ['work.tasks', 'work.tasks.read_all'],
@@ -688,6 +689,24 @@ it('limits the external Nájempark role to real operational/assigned-only permis
   }
 });
 
+it('gives the second Provoz login the same Nájempark module and permission rights as operations', () => {
+  const operations = siamparkRentalPersonas.find((persona) => persona.email === 'operations@najempark.demo');
+  const provoz = siamparkRentalPersonas.find((persona) => persona.email === 'provoz@najempark.demo');
+  if (operations === undefined || provoz === undefined) {
+    throw new Error('The Nájempark operations and provoz personas are required');
+  }
+  expect(provoz.email).toBe('provoz@najempark.demo');
+  for (const moduleId of [operationsModule, portfolioModule, billingModule, workforceModule]) {
+    expect(hasModule(provoz.principalId, rentalDemoLegalEntityId, moduleId)).toBe(
+      hasModule(operations.principalId, rentalDemoLegalEntityId, moduleId),
+    );
+  }
+  expect(hasModule(provoz.principalId, rentalDemoLegalEntityId, operationsModule)).toBe(true);
+  expect(hasPermission(provoz.principalId, rentalDemoLegalEntityId, operationsModule, operationsWriteAll)).toBe(
+    hasPermission(operations.principalId, rentalDemoLegalEntityId, operationsModule, operationsWriteAll),
+  );
+});
+
 it('grants Activities reads, writes and its installed Action only to rental management, not other personas or companies', () => {
   const activitiesAction = actionDescriptor(rentalActivitiesActionKey, activitiesModule);
   const activityInstallation = {
@@ -1060,6 +1079,7 @@ it.effect('restores only seven reviewed human executors in two separately scoped
     const leasing = actionDescriptor('property.leasing.apply-command', 'property.leasing');
     const rows = yield* reviewedHumanActionAddonRelationships([...operational, leasing, ...descriptors]);
     const operationsPerson = siamparkRentalPersonas[1].principalId;
+    const provozPerson = siamparkRentalPersonas[4].principalId;
     expect(new Set(grantsFor(rows, operationsPerson).map((row) => row.resourceId))).toEqual(
       new Set(operational.map((action) => toSpiceDbActionGrantObjectId(actionScope(action, rentalDemoLegalEntityId)))),
     );
@@ -1082,7 +1102,7 @@ it.effect('restores only seven reviewed human executors in two separately scoped
       ]),
     );
     expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.subjectId))).toEqual(
-      new Set([operationsPerson, salesRep.principalId]),
+      new Set([operationsPerson, provozPerson, salesRep.principalId]),
     );
     expect(rows.some((row) => row.resourceType === 'module_access' || row.resourceType === 'context_permission')).toBe(
       false,

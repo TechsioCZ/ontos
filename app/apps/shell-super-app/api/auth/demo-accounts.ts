@@ -75,6 +75,7 @@ const companyRoles = {
       'obchod@demo.ontos': 'spravce',
       'obchodnik@demo.ontos': 'sales',
       'operations@najempark.demo': 'operations',
+      'provoz@najempark.demo': 'operations',
       'ucetni@demo.ontos': 'finance',
     },
   },

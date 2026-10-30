@@ -63,8 +63,9 @@ applications. `mise exec -- pnpm demo:composition` observes their actual contrac
 publishes the canonical development composition and serves it on port 3031. The Shell preview is
 on port 3020. Keep both operators running while demonstrating the application.
 
-Demo logins are `management@siampark.demo`, `operations@siampark.demo`, `finance@siampark.demo` and
-`external@siampark.demo`, with the synthetic fixture password `password1234`. The Operations
+Demo logins are `management@najempark.demo`, `operations@najempark.demo`, `finance@najempark.demo`,
+`external@najempark.demo` and `provoz@najempark.demo` (a second Provoz login with the operations rights), with the
+synthetic fixture password `password1234`. The Operations
 account presents the mutation scenarios; the External account demonstrates assigned records and
 denial. The business date remains 2026-10-05 in Europe/Prague; audit timestamps use actual time.
 

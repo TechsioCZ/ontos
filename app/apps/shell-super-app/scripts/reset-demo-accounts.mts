@@ -8,7 +8,7 @@ import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../api/auth/db
 import { account, user } from '../api/auth/db/schema.ts';
 
 const AuthUserIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isPattern(/^siampark-(?:management|operations|finance|external)$/u)).pipe(
+  Schema.String.check(Schema.isPattern(/^siampark-(?:management|operations|finance|external|provoz)$/u)).pipe(
     Schema.brand('FacilityAuthUserId'),
   ),
 );
@@ -17,7 +17,9 @@ const FixtureSchema = Schema.Struct({
     Schema.Struct({
       authUserId: AuthUserIdSchema,
       displayName: Schema.NonEmptyString,
-      email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external)@najempark\.demo$/u)),
+      email: Schema.String.check(
+        Schema.isPattern(/^(?:management|operations|finance|external|provoz)@najempark\.demo$/u),
+      ),
     }),
   ),
 });
@@ -32,12 +34,12 @@ const main = (fixturePath: string) =>
       .readFileString(fixturePath)
       .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(FixtureSchema))));
     if (
-      input.accounts.length !== 4 ||
-      new Set(input.accounts.map((row) => row.authUserId)).size !== 4 ||
+      input.accounts.length !== 5 ||
+      new Set(input.accounts.map((row) => row.authUserId)).size !== 5 ||
       input.accounts.some((row) => row.email !== `${row.authUserId.slice('siampark-'.length)}@najempark.demo`)
     ) {
       return yield* new ResetAccountsError({
-        reason: 'The fixture must contain the four distinct Nájempark accounts with matching emails',
+        reason: 'The fixture must contain the five distinct Nájempark accounts with matching emails',
       });
     }
     const { executor } = yield* AuthDatabase;
@@ -70,7 +72,7 @@ const main = (fixturePath: string) =>
         }
       }),
     );
-    return yield* Console.log('Four Nájempark development accounts initialized');
+    return yield* Console.log('Five Nájempark development accounts initialized');
   });
 const AdminDatabaseConfigLive = Layer.effect(
   DatabaseConfig,

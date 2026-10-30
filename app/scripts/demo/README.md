@@ -34,8 +34,8 @@ Local only. Nothing here deploys. Run everything from `app/`.
    (AI A/B/C principals and keys).
 8. Unless `DEMO_RESET=0`, `pnpm demo:seed:rental --apply` against the running local shell, authenticated as
    `management@najempark.demo`, fixed Nájempark company `…0021`. This uses public reads/Actions, not private DB writes.
-9. Starts the customer storefront BFF on **http://localhost:3060**, registers its PID for `down.sh`, and waits for
-   `/api/home` to return live backend data. Its managed key is read server-side from `app/.env.demo.local`.
+9. Restarts the AKROS storefront on **http://localhost:3070** (`akros-storefront/scripts/demo-restart.sh`). Its
+   managed key is read server-side; Kavárna Doma has no customer storefront.
 
 The CRM and operations seeds are already wired through `scripts/demo/reset-demo.mts`; their standalone entrypoints
 are `pnpm demo:seed:crm` and `pnpm demo:seed:facility-operations`. Do not run full resets while other lanes are testing.
@@ -63,7 +63,6 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 | --------------- | ----------------------------------------------------------------------------------------------------------- |
 | 3020            | Shell: http://localhost:3020/cs                                                                             |
 | 3041            | Development composition (`/active`). Nájempark used 3031, but launchd still holds 3031 on this machine.     |
-| 3060            | Kavárna Doma customer storefront + server-only BFF                                                          |
 | 4125 / 4126     | CRM / facility operations                                                                                   |
 | 4101            | commerce-customer-context (API only)                                                                        |
 | 4102            | party-registry                                                                                              |
@@ -240,6 +239,7 @@ The company-specific personas below keep their restricted roles.
 | --------------------------- | -------------------------------------------------------------------------------- |
 | `management@najempark.demo` | Management: reads all Nájempark modules                                          |
 | `operations@najempark.demo` | Operations: can write in the Nájempark modules                                   |
+| `provoz@najempark.demo`     | Operations (second login): same rights as `operations@`                          |
 | `finance@najempark.demo`    | Finance: can write in billing/finance                                            |
 | `external@najempark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)    |
 | `demo@test.com`             | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only. |
@@ -302,7 +302,7 @@ exactly one company and a switch to any other company answers 403.
 The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
 `ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
 `merchandise` gateway assertion in company 0023 and runs without the Better Auth rate limit. The Nájempark
-accounts (`management@`, `operations@`, `finance@`, `external@najempark.demo`) also get their roles in the
+accounts (`management@`, `operations@`, `finance@`, `external@`, `provoz@najempark.demo`) also get their roles in the
 Nájempark company 0021 (`siamparkRentalPersonas`).
 
 ### Nájempark CRM: entrusted contacts (S00)

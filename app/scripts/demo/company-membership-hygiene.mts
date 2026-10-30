@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/** Local sales-demo fixture repair: original Nájempark bootstrap accounts belong in Nájempark, not Obchodní firma.
- * Remove ONLY their four stale commercial legal_entity#member edges; all company 0021 grants remain untouched.
+/** Local sales-demo fixture repair: Nájempark staff belong in Nájempark, not Obchodní firma.
+ * Remove ONLY their stale commercial legal_entity#member edges; all company 0021 grants remain untouched.
  * Run after both reset baselines and reset-permissions. No accounts, records, or other grants are reset.
  */
 import { v1 } from '@authzed/authzed-node';
@@ -57,7 +57,7 @@ const program = Effect.gen(function* repairCompanyMemberships() {
   );
   yield* client.writeRelationships(request);
   yield* Console.log(
-    'Company fixture repair: removed four stale Nájempark memberships in Obchodní firma; Nájempark retained.',
+    'Company fixture repair: removed stale Nájempark memberships in Obchodní firma; Nájempark retained.',
   );
   return yield* Effect.void;
 });
