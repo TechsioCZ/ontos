@@ -1,7 +1,7 @@
 import { Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { derivedEnvironment, processEnvironment, routeRequest } from '../zerops/app-host.mts';
+import { derivedEnvironment, finiteProcessEnvironment, processEnvironment, routeRequest } from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
 import { ownerEntrySource } from '../zerops/owner-entry.mts';
@@ -93,6 +93,24 @@ describe('routeRequest', () => {
 
   it('returns none for a module path that names the Shell', () => {
     expect(Option.isNone(routeRequest('/_m/shell-super-app/x', owners))).toBe(true);
+  });
+});
+
+describe('finiteProcessEnvironment', () => {
+  it('keeps one-shot migrators and verifiers on private pools even when the supervisor shares pools', () => {
+    const environment = finiteProcessEnvironment({
+      MIGRATOR_ONCE: 'true',
+      ONTOS_DATABASE_POOL_SHARED: 'true',
+    });
+    expect(environment.ONTOS_DATABASE_POOL_SHARED).toBe('false');
+    expect(environment.MIGRATOR_ONCE).toBe('true');
+  });
+
+  it('overrides inherited sharing without changing other operator settings', () => {
+    expect(finiteProcessEnvironment({ MIGRATOR_ONCE: 'true' })).toEqual({
+      MIGRATOR_ONCE: 'true',
+      ONTOS_DATABASE_POOL_SHARED: 'false',
+    });
   });
 });
 

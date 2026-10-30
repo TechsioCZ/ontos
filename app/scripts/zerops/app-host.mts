@@ -271,13 +271,19 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   );
 });
 
+/** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
+export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
+  ...environment,
+  ONTOS_DATABASE_POOL_SHARED: 'false',
+});
+
 /** Runs one finite child to a successful exit. */
 const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: ChildEnvironment) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
         cwd,
-        env,
+        env: finiteProcessEnvironment(env),
         extendEnv: true,
         stderr: 'inherit',
         stdout: 'inherit',
