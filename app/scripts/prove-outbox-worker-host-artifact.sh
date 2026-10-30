@@ -133,17 +133,25 @@ until [ -s "$source_url_file" ]; do
 done
 source_url="$(cat "$source_url_file")"
 
-# The app host derives the Shell gateway base from the Shell's loopback port and hands each owner its secrets.
-# Customer Context's enrollment recovery requires both before it starts; with an empty journal it presents the
-# proof credential to nobody.
+# The app host (scripts/zerops/app-host.mts derivedEnvironment) derives the Shell gateway and portal origins from
+# its loopback ports and public origins, and hands the Outbox Worker host every hosted owner's secrets. Customer
+# Context's worker requires its portal realm, Core identity transport and enrollment recovery credentials before it
+# starts. The proof supplies proof-only credentials; with an empty journal the workers present them to nobody.
 shell_gateway_base_url='http://127.0.0.1:3020/shell-super-app-api'
+storefront_origin='http://127.0.0.1:3070'
+proof_secret='outbox-worker-host-proof-secret-of-at-least-32-characters'
 log="$artifact/outbox-worker-host.log"
 (
   cd "$artifact"
   exec env \
     NODE_ENV=production \
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="$source_url" \
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY=outbox-worker-host-proof \
+    COMMERCE_CORE_IDENTITY_API_KEY="$proof_secret" \
+    COMMERCE_CORE_IDENTITY_BASE_URL="$shell_gateway_base_url" \
+    COMMERCE_PORTAL_AUTH_SECRET="$proof_secret" \
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS="$storefront_origin" \
+    COMMERCE_PORTAL_AUTH_URL="$storefront_origin" \
+    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$proof_secret" \
     ONTOS_SHELL_GATEWAY_BASE_URL="$shell_gateway_base_url" \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
