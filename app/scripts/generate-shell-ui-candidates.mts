@@ -7,7 +7,7 @@ import path from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { __unstable__loadDesignSystem, compile, optimize, Polyfills } from '@tailwindcss/node';
 import { Scanner } from '@tailwindcss/oxide';
-import { Console, Effect, FileSystem, Layer, Option, Schema } from 'effect';
+import { Array as EffectArray, Console, Effect, FileSystem, Layer, Option, Order, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 const WORKSPACE = path.resolve(import.meta.dirname, '..');
@@ -91,7 +91,7 @@ const projectCandidates = Effect.fn('projectCandidates')(function* project(
       const scanner = new Scanner({
         sources: ['src/**/*', 'vertical.manifest.ts'].map((pattern) => ({ base: directory, negated: false, pattern })),
       });
-      const candidates = [...new Set(scanner.scan())].toSorted();
+      const candidates = EffectArray.sort(new Set(scanner.scan()), Order.String);
       const accepted = design.candidatesToCss(candidates);
       return candidates.filter((candidate, index) => candidate.startsWith('--') || accepted[index] !== null);
     },
@@ -136,7 +136,7 @@ const listVerticals = Effect.fn('listProjectionVerticals')(function* list(worksp
       verticals.push(directory);
     }
   }
-  return verticals.toSorted();
+  return EffectArray.sort(verticals, Order.String);
 });
 
 const generate = Effect.fn('generateShellUiCandidates')(function* generate(options: ProjectionOptions) {

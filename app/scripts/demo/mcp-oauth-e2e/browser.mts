@@ -32,19 +32,23 @@ type Browser = Pick<NativeBrowser, 'close' | 'newContext'>;
 type Launcher = Pick<BrowserType, 'launch'>;
 
 // The external managed bridge has no published declaration. Its page, options and close
-// capabilities come from the SDK; only this bridge-specific entrypoint is declared here.
+// capabilities come from the SDK; its Promise entrypoint is typed only where it becomes an Effect.
 type ForeignTab = Pick<NativeBrowserContext, 'close'> & { readonly page: E2ePage };
-interface SharedClient {
-  readonly openTab: (options: BrowserContextOptions) => Promise<ForeignTab>;
-}
+const openBridgeTab = (
+  openTab: (options: BrowserContextOptions) => Promise<ForeignTab>,
+  options: BrowserContextOptions,
+) =>
+  Effect.tryPromise({
+    catch: (cause) => new BrowserDriverFailure({ cause, operation: 'shared.openTab' }),
+    try: async () => await openTab(options),
+  });
+type BridgeOpenTab = Parameters<typeof openBridgeTab>[0];
 
 const LauncherSchema = Schema.Struct({
   launch: Schema.declare<Launcher['launch']>((value): value is Launcher['launch'] => Predicate.isFunction(value)),
 });
 const SharedClientSchema = Schema.Struct({
-  openTab: Schema.declare<SharedClient['openTab']>((value): value is SharedClient['openTab'] =>
-    Predicate.isFunction(value),
-  ),
+  openTab: Schema.declare<BridgeOpenTab>((value): value is BridgeOpenTab => Predicate.isFunction(value)),
 });
 const BrowserModuleSchema = Schema.Struct({ chromium: LauncherSchema });
 
@@ -150,10 +154,7 @@ export const openSharedTab = () =>
       try: async () => Schema.decodeUnknownResult(SharedClientSchema)(await import(clientPath)),
     });
     const client = yield* Effect.fromResult(imported);
-    const tab = yield* Effect.tryPromise({
-      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'shared.openTab' }),
-      try: async () => await client.openTab(options),
-    });
+    const tab = yield* openBridgeTab(client.openTab, options);
     return ownedTab(
       tab.page,
       Effect.tryPromise({

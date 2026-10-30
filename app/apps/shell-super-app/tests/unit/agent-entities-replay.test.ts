@@ -423,11 +423,7 @@ const fixture = (options: ReplayOptions = {}) =>
     const readRuntime: ReadRuntimeService = {
       ...reads.runtime,
       runRead: (input) => {
-        readInputs.push({
-          input: input.inputFormat === 'decoded' ? input.decodedInput : input.input,
-          principal: input.principal,
-          transport: input.transport,
-        });
+        readInputs.push({ input: input.input, principal: input.principal, transport: input.transport });
         return reads.runtime.runRead(input);
       },
     };

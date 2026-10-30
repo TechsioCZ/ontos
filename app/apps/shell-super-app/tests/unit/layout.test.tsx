@@ -397,7 +397,10 @@ it.effect('renders the account Menu last and dispatches only the logout command 
     expect(onLogout).toHaveBeenCalledTimes(1);
     expect(clearCacheMock).toHaveBeenCalledTimes(1);
 
-    accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
+    accountMenuSelectHandlers.at(-1)?.({
+      modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
+      value: 'unexpected',
+    });
     expect(onLogout).toHaveBeenCalledTimes(1);
     expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),

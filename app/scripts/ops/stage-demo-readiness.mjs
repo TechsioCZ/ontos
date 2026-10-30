@@ -3,7 +3,7 @@
 import { createRequire } from 'node:module';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Clock, Config, Console, Data, Duration, Effect, Redacted, Ref, Schema } from 'effect';
+import { Clock, Config, Console, Data, Duration, Effect, Layer, Redacted, Ref, Schema } from 'effect';
 
 import { Command, Flag } from 'effect/cli';
 
@@ -158,7 +158,6 @@ const requireParser = createRequire(new URL('../../apps/shell-super-app/package.
 const { Window } = requireParser('happy-dom');
 const parserWindow = new Window({
   settings: {
-    disableCSSFileLoading: true,
     disableJavaScriptFileLoading: true,
     enableJavaScriptEvaluation: false,
     navigation: { disableChildFrameNavigation: true, disableMainFrameNavigation: true },
@@ -546,5 +545,9 @@ const command = Command.make(
 );
 
 if (import.meta.main) {
-  NodeRuntime.runMain(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));
+  NodeRuntime.runMain(
+    Layer.build(
+      Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(Layer.provide(NodeServices.layer)),
+    ).pipe(Effect.scoped),
+  );
 }
