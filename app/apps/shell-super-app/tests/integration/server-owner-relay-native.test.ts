@@ -2,6 +2,8 @@ import { GatewayContextV2ClaimsSchema } from '@app/shared-contracts';
 import {
   executeAttributeGuestRetailCustomerWithAuthorization,
   executeBindRetailPortalProfileWithAuthorization,
+  executeAddSavedAddressWithAuthorization,
+  executeUpdateSavedAddressWithAuthorization,
   executeEnsureRetailCustomerProfileWithAuthorization,
 } from '@app/commerce-customer-context/api/client';
 import {
@@ -35,6 +37,7 @@ import {
 } from '@app/core-runtime';
 import {
   createPartyWithAuthorization,
+  addContactPointWithAuthorization,
   executePartyContactPointDetailWithAuthorization,
   executePartyDetailWithAuthorization,
   PartyContactPointDetailAuthenticationProblemSchema,
@@ -3745,6 +3748,9 @@ it.live(
                 'party.registry.create-party',
                 'commerce.customer-context.ensure-retail-customer-profile',
                 'commerce.customer-context.bind-retail-portal-profile',
+                'commerce.customer-context.add-saved-address',
+                'commerce.customer-context.update-saved-address',
+                'party.registry.add-contact-point',
               ],
               gatewayMaterial,
               ['party.registry', 'commerce.customer-context'],
@@ -4657,6 +4663,336 @@ it.live(
               },
             );
             yield* activateBinding();
+            const exerciseSavedAddresses = Effect.fn('ServerOwnerRelayNative.exerciseActualSavedAddresses')(
+              function* exerciseActualSavedAddresses() {
+                const issuePostalProof = Effect.fn('ServerOwnerRelayNative.issuePostalProof')(
+                  function* issuePostalProof(
+                    audience: 'commerce-customer-context' | 'party-registry',
+                    buildMarker: string,
+                  ) {
+                    return yield* issueNativeApiKeyGatewayAuthorization({
+                      apiKey: personalKey.secret,
+                      audience,
+                      authBindingId: personalKey.authBindingId,
+                      authContextRef: personalAuthContextRef,
+                      buildMarker,
+                      legalEntityId: fixture.core.legalEntityId,
+                      origin: fixture.origin,
+                      principalId: fixture.core.manager.principalId,
+                      publicKey: signingKeyPair.publicKey,
+                      revision: approved.composition.revision,
+                    });
+                  },
+                );
+                const producerAuthority = {
+                  principalId: fixture.core.manager.principalId,
+                  relation: 'party_identity_manager' as const,
+                  tenantId: fixture.core.tenantId,
+                };
+                yield* Effect.acquireRelease(setNativeTenantRole(producerAuthority, true), () =>
+                  setNativeTenantRole(producerAuthority, false).pipe(Effect.scoped, Effect.orDie),
+                );
+                expect(
+                  yield* checkNativeTenantPermission({
+                    permission: 'manage_party_identity',
+                    principalId: fixture.core.manager.principalId,
+                    tenantId: fixture.core.tenantId,
+                  }),
+                ).toBe(true);
+                const contactProof = yield* issuePostalProof('party-registry', party.compiled.buildMarker);
+                const contactCorrelation = yield* crypto.randomUUIDv4();
+                const contact = yield* addContactPointWithAuthorization(
+                  {
+                    contactPoint: {
+                      address: {
+                        addressLine1: 'Native postal fixture 1',
+                        city: 'Praha',
+                        countryCode: 'CZ',
+                        postalCode: '11000',
+                      },
+                      purposes: [
+                        { preferred: false, purpose: 'BILLING' },
+                        { preferred: false, purpose: 'DELIVERY' },
+                      ],
+                      type: 'ADDRESS',
+                    },
+                    partyRef,
+                    privacyClassification: 'BUSINESS_SENSITIVE',
+                    provenance: { authoritative: false, method: 'MANUAL_CONFIRMATION', source: 'USER_ASSERTION' },
+                    validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+                    verification: { state: 'UNVERIFIED' },
+                  },
+                  Redacted.value(contactProof.authorization),
+                  {
+                    baseUrl: `${party.origin}${party.apiPrefix}`,
+                    compositionRevision: approved.composition.revision,
+                    correlationId: contactCorrelation,
+                    idempotencyKey: yield* crypto.randomUUIDv4(),
+                  },
+                );
+                expect(contact.partyRef).toEqual(partyRef);
+                expect(contact.contactPointRef.tenantId).toBe(fixture.core.tenantId);
+                expect(contact.revision).toBeGreaterThan(0);
+                yield* setNativeTenantRole(producerAuthority, false);
+                expect(
+                  yield* checkNativeTenantPermission({
+                    permission: 'manage_party_identity',
+                    principalId: fixture.core.manager.principalId,
+                    tenantId: fixture.core.tenantId,
+                  }),
+                ).toBe(false);
+                const postalBefore = yield* fixture.core.evidence(database);
+                const priorPartyReads = new Set(
+                  postalBefore.accesses
+                    .filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)
+                    .map((row) => row.dataAccessEventId),
+                );
+                const profileSelector: Parameters<typeof executeAddSavedAddressWithAuthorization>[0]['profile'] = {
+                  kind: 'RETAIL',
+                  profileRef: created.result.profileRef,
+                };
+                const partyOrigin: Parameters<typeof executeAddSavedAddressWithAuthorization>[0]['origin'] = {
+                  contactPointRef: contact.contactPointRef,
+                  kind: 'PARTY_BACKED',
+                  partyRef,
+                  sourceRevision: contact.revision,
+                };
+                const observePostalAddFailure = (
+                  error: Effect.Error<ReturnType<typeof executeAddSavedAddressWithAuthorization>>,
+                ) =>
+                  Schema.is(OutsideRelayProblemSchema)(error)
+                    ? Effect.logInfo('Native saved-address Add public failure', {
+                        code: error.code,
+                        status: error.status,
+                        title: error.title,
+                        type: error.type,
+                      })
+                    : Effect.logInfo('Native saved-address Add failure', { declaredProblem: false });
+                const addAddress = Effect.fn('ServerOwnerRelayNative.addAddressWithFreshProof')(
+                  function* addAddressWithFreshProof(
+                    addressPayload: Parameters<typeof executeAddSavedAddressWithAuthorization>[0],
+                  ) {
+                    const proof = yield* issuePostalProof(
+                      'commerce-customer-context',
+                      customerContext.compiled.buildMarker,
+                    );
+                    const requestCorrelation = yield* crypto.randomUUIDv4();
+                    const addressResult = yield* executeAddSavedAddressWithAuthorization(
+                      addressPayload,
+                      Redacted.value(proof.authorization),
+                      requestCorrelation,
+                      {
+                        baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
+                        compositionRevision: approved.composition.revision,
+                        idempotencyKey: yield* crypto.randomUUIDv4(),
+                      },
+                    ).pipe(Effect.tapError(observePostalAddFailure));
+                    return { addressResult, proof, requestCorrelation };
+                  },
+                );
+                const partyAddress = yield* addAddress({
+                  label: 'Native Party-backed address',
+                  origin: partyOrigin,
+                  profile: profileSelector,
+                  purposes: ['BILLING', 'DELIVERY'],
+                  reason: 'Save actual Party-produced postal source',
+                });
+                expect(partyAddress.addressResult.outcome).toBe('ADDED');
+                expect(partyAddress.addressResult.address.revision).toBe(1);
+                expect(partyAddress.addressResult.address.origin).toEqual(partyOrigin);
+                const updateProof = yield* issuePostalProof(
+                  'commerce-customer-context',
+                  customerContext.compiled.buildMarker,
+                );
+                const updateCorrelation = yield* crypto.randomUUIDv4();
+                const updatedAddress = yield* executeUpdateSavedAddressWithAuthorization(
+                  {
+                    expectedRevision: partyAddress.addressResult.address.revision,
+                    label: 'Native Party-backed address revalidated',
+                    origin: partyOrigin,
+                    profile: profileSelector,
+                    reason: 'Revalidate the complete actual Party origin',
+                    savedAddressRef: partyAddress.addressResult.address.savedAddressRef,
+                  },
+                  Redacted.value(updateProof.authorization),
+                  updateCorrelation,
+                  {
+                    baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
+                    compositionRevision: approved.composition.revision,
+                    idempotencyKey: yield* crypto.randomUUIDv4(),
+                  },
+                ).pipe(
+                  Effect.tapError((error) =>
+                    Schema.is(OutsideRelayProblemSchema)(error)
+                      ? Effect.logInfo('Native saved-address Update public failure', {
+                          code: error.code,
+                          status: error.status,
+                          title: error.title,
+                          type: error.type,
+                        })
+                      : Effect.logInfo('Native saved-address Update failure', { declaredProblem: false }),
+                  ),
+                );
+                expect(updatedAddress.outcome).toBe('UPDATED');
+                expect(updatedAddress.address.revision).toBe(2);
+                expect(updatedAddress.address.savedAddressRef).toEqual(
+                  partyAddress.addressResult.address.savedAddressRef,
+                );
+                expect(updatedAddress.address.origin).toEqual(partyOrigin);
+                const listAddresses = Effect.fn('ServerOwnerRelayNative.listAddressesWithFreshProof')(
+                  function* listAddressesWithFreshProof() {
+                    const proof = yield* issuePostalProof(
+                      'commerce-customer-context',
+                      customerContext.compiled.buildMarker,
+                    );
+                    const listResponse = yield* client.post(
+                      `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}/reads/saved-address-list`,
+                      {
+                        body: yield* HttpBody.json({ profile: profileSelector }),
+                        headers: {
+                          authorization: Redacted.value(proof.authorization),
+                          'x-correlation-id': yield* crypto.randomUUIDv4(),
+                          'x-ontos-composition-revision': approved.composition.revision,
+                        },
+                      },
+                    );
+                    const listed = yield* listResponse.json;
+                    if (listResponse.status !== 200 && Schema.is(OutsideRelayProblemSchema)(listed)) {
+                      yield* Effect.logInfo('Native saved-address List public failure', {
+                        code: listed.code,
+                        status: listed.status,
+                        title: listed.title,
+                        type: listed.type,
+                      });
+                    }
+                    expect(listResponse.status).toBe(200);
+                    return { listed, proof };
+                  },
+                );
+                const partyList = yield* listAddresses();
+                expect(partyList.listed).toMatchObject({ addresses: expect.arrayContaining([updatedAddress.address]) });
+                const postalValidated = yield* fixture.core.evidence(database);
+                const postalProviderReads = postalValidated.accesses.filter(
+                  (row) =>
+                    row.servingModuleKey === PARTY_MODULE_KEY &&
+                    !priorPartyReads.has(row.dataAccessEventId) &&
+                    row.outcomeCode === 'read_allowed',
+                );
+                expect(postalProviderReads).toHaveLength(2);
+                for (const postalRead of postalProviderReads) {
+                  expect(postalRead.principalId).toBe(fixture.core.manager.principalId);
+                  expect(postalRead.principalId === serviceId).toBe(false);
+                  expect(postalRead.authBindingId).toBe(personalKey.authBindingId);
+                  expect(postalRead.authMethod).toBe('api_key');
+                  expect(postalRead.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(postalRead.legalEntityId).toBe(fixture.core.legalEntityId);
+                }
+                for (const proof of [partyAddress.proof, updateProof]) {
+                  const claimed = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+                    where: { sourceJti: proof.sourceJti },
+                  });
+                  expect(claimed !== undefined).toBe(true);
+                }
+                expect(yield* party.child.isRunning).toBe(true);
+                yield* party.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+                expect(yield* party.child.isRunning).toBe(false);
+                const partyTransport = yield* Effect.exit(client.get(`${party.origin}${ONTOS_MODULE_CONTRACT_PATH}`));
+                expect(Exit.isFailure(partyTransport)).toBe(true);
+                const commerceOrigin: Parameters<typeof executeAddSavedAddressWithAuthorization>[0]['origin'] = {
+                  kind: 'COMMERCE_ONLY',
+                  postalAddress: {
+                    addressLine1: 'Commerce fixture 2',
+                    city: 'Praha',
+                    countryCode: 'CZ',
+                    postalCode: '11000',
+                  },
+                };
+                const commerceAddress = yield* addAddress({
+                  label: 'Native Commerce-only address',
+                  origin: commerceOrigin,
+                  profile: profileSelector,
+                  purposes: ['BILLING', 'DELIVERY'],
+                  reason: 'Persist owner postal data while actual Party receiver is down',
+                });
+                expect(commerceAddress.addressResult.outcome).toBe('ADDED');
+                expect(commerceAddress.addressResult.address.revision).toBe(1);
+                expect(commerceAddress.addressResult.address.origin).toEqual(commerceOrigin);
+                const commerceList = yield* listAddresses();
+                expect(commerceList.listed).toMatchObject({
+                  addresses: expect.arrayContaining([updatedAddress.address, commerceAddress.addressResult.address]),
+                });
+                for (const proof of [commerceAddress.proof, commerceList.proof]) {
+                  const claimed = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+                    where: { sourceJti: proof.sourceJti },
+                  });
+                  expect(claimed).toBeUndefined();
+                }
+                const postalAfter = yield* fixture.core.evidence(database);
+                expect(
+                  postalAfter.accesses
+                    .filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)
+                    .map((row) => row.dataAccessEventId),
+                ).toEqual(
+                  postalValidated.accesses
+                    .filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)
+                    .map((row) => row.dataAccessEventId),
+                );
+                for (const operation of [
+                  { actionKey: 'party.registry.add-contact-point', correlation: contactCorrelation },
+                  {
+                    actionKey: 'commerce.customer-context.add-saved-address',
+                    correlation: partyAddress.requestCorrelation,
+                  },
+                  { actionKey: 'commerce.customer-context.update-saved-address', correlation: updateCorrelation },
+                  {
+                    actionKey: 'commerce.customer-context.add-saved-address',
+                    correlation: commerceAddress.requestCorrelation,
+                  },
+                ]) {
+                  const actions = postalAfter.invocations.filter(
+                    (row) => row.actionKey === operation.actionKey && row.correlationId === operation.correlation,
+                  );
+                  expect(actions).toHaveLength(1);
+                  const [postalInvocation] = actions;
+                  if (postalInvocation === undefined) {
+                    return yield* new PackagedOwnerStartupError({ reason: 'Postal canonical invocation absent' });
+                  }
+                  expect(postalInvocation.status).toBe('succeeded');
+                  expect(postalInvocation.principalId).toBe(fixture.core.manager.principalId);
+                  expect(postalInvocation.authBindingId).toBe(personalKey.authBindingId);
+                  expect(postalInvocation.authMethod).toBe('api_key');
+                  expect(postalInvocation.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(postalInvocation.legalEntityId).toBe(fixture.core.legalEntityId);
+                  const executed = postalAfter.audits.filter(
+                    (row) =>
+                      row.actionInvocationId === postalInvocation.actionInvocationId &&
+                      row.eventType === 'action.executed',
+                  );
+                  expect(executed).toHaveLength(1);
+                  for (const audit of executed) {
+                    expect(audit.outcome).toBe('succeeded');
+                    expect(audit.principalId).toBe(fixture.core.manager.principalId);
+                    expect(audit.authBindingId).toBe(personalKey.authBindingId);
+                    expect(audit.authMethod).toBe('api_key');
+                    expect(audit.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                    expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
+                  }
+                }
+                yield* Effect.logInfo('Actual saved-address Party-backed and Commerce-only branches verified', {
+                  commerceOnlyPartyDown: true,
+                  commerceOnlySourceExchangeAbsent: true,
+                  currentRevision: approved.composition.revision,
+                  exactSavedReferencePreserved: true,
+                  originalActorPreserved: true,
+                  partyBackedProviderReads: postalProviderReads.length,
+                  savedAddressAddAndUpdateRevisions: [1, 2],
+                  savedListMatches: true,
+                });
+                return yield* Effect.void;
+              },
+            );
+            yield* exerciseSavedAddresses();
+
             return yield* Effect.void;
           }),
         ),
