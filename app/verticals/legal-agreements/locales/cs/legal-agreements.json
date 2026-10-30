@@ -25,6 +25,7 @@
     },
     "demo": {
       "feedback": {
+        "ready": "Připraveno",
         "loading": "Načítání…",
         "saving": "Ukládání…",
         "forbidden": "Pro tuto oblast nemáte oprávnění.",

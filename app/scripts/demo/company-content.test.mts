@@ -13,7 +13,7 @@ import {
   statePath,
 } from './company-content.mts';
 import type { TagSpec, TaskSpec } from './company-content.mts';
-import { demoTenantId } from './fixture-ids.mts';
+import { demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import { rentalStory } from './rental-seed.mts';
 
 const domainOf = (email: string) => email.slice(email.indexOf('@'));
@@ -55,7 +55,7 @@ it('adds only tags and tasks that are not there yet', () => {
 });
 
 it('keeps every company catalogue small, unique and applicable to its own subjects', () => {
-  for (const company of companyContent) {
+  for (const company of companyContent.filter((content) => content.tags.length > 0)) {
     expect(company.tags.length).toBeGreaterThanOrEqual(5);
     expect(company.tags.length).toBeLessThanOrEqual(8);
     const names = company.tags.map((tag) => tag.name.toLocaleLowerCase());
@@ -71,6 +71,19 @@ it('keeps every company catalogue small, unique and applicable to its own subjec
       ).toBe(true);
     }
   }
+});
+
+it('seeds varied café work without writing its read-only tag catalogue', () => {
+  const cafe = companyContent.find((company) => company.legalEntityId === eshopDemoLegalEntityId);
+  expect(cafe).toBeDefined();
+  expect(cafe?.writerEmail).toBe('eshop@kavarna.demo');
+  expect(cafe?.tags).toEqual([]);
+  expect(cafe?.tasks.length).toBe(8);
+  expect(cafe?.tasks.every((task) => task.assignee === 'eshop@kavarna.demo')).toBe(true);
+  expect(cafe?.tasks.some((task) => task.dueInDays < 0 && task.state === 'WAITING')).toBe(true);
+  expect(cafe?.tasks.some((task) => task.dueInDays === 0)).toBe(true);
+  expect(cafe?.tasks.some((task) => task.dueInDays > 0)).toBe(true);
+  expect(missingTasks(cafe?.tasks ?? [], cafe?.tasks.map((task) => task.title) ?? [])).toEqual([]);
 });
 
 it('assigns every task to a persona of its own company and links only seeded rental records', () => {

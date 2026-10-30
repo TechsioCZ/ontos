@@ -25,6 +25,7 @@
     },
     "demo": {
       "feedback": {
+        "ready": "Ready",
         "loading": "Loading…",
         "saving": "Saving…",
         "forbidden": "You do not have permission for this area.",

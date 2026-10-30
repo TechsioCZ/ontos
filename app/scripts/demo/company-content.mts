@@ -1,5 +1,5 @@
 /**
- * Štítky and Úkoly of the Nájempark (0021) and Velkoobchod Hanák (0022) demo companies, applied by
+ * Štítky and Úkoly of the Nájempark (0021), Velkoobchod Hanák (0022) and Kavárna Doma (0023) demo companies, applied by
  * `seed-company-content.mts` through the public tagging and work-tasks Actions. Their records (rental tenants,
  * business cases, employees) come from Action-based seeds with server-generated IDs, so every reference here is a
  * natural key resolved through public reads at seed time: customer display name, employee login e-mail,
@@ -13,7 +13,7 @@ import { DateTime, Schema } from 'effect';
 
 import type { TagColor } from '../../verticals/tagging/shared/apis/records.ts';
 import { legalTransitions } from '../../verticals/work-tasks/shared/actions/task-transitions.ts';
-import { crmDemoLegalEntityId, rentalDemoLegalEntityId } from './fixture-ids.mts';
+import { crmDemoLegalEntityId, eshopDemoLegalEntityId, rentalDemoLegalEntityId } from './fixture-ids.mts';
 import { companyHumanAccounts, siamparkRentalPersonas } from './permissions.mts';
 import { rentalStory } from './rental-seed.mts';
 
@@ -70,6 +70,7 @@ const hanakAdmin = 'spravce@hanak.demo';
 const hanakManager = 'vedouci@hanak.demo';
 const hanakRepA = 'obchodnik.a@hanak.demo';
 const hanakRepB = 'obchodnik.b@hanak.demo';
+const kavarnaAdmin = 'eshop@kavarna.demo';
 
 const tenantName = (key: (typeof rentalStory.tenants)[number]['key']) =>
   rentalStory.tenants.find((tenant) => tenant.key === key)?.name ?? key;
@@ -500,7 +501,82 @@ const hanak: CompanyContent = {
   writerEmail: hanakAdmin,
 };
 
-export const companyContent: readonly CompanyContent[] = [najempark, hanak];
+const kavarna: CompanyContent = {
+  label: 'Kavárna Doma',
+  legalEntityId: eshopDemoLegalEntityId,
+  // The e-shop administrator reads tags; its catalogue stays in the tagging owner seed.
+  tags: [],
+  tasks: [
+    {
+      assignee: kavarnaAdmin,
+      description: 'Ověřit platby víkendových objednávek a předat zaplacené zásilky Ondřeji Křížovi k expedici.',
+      dueInDays: 0,
+      priority: 'HIGH',
+      state: 'IN_PROGRESS',
+      title: 'Připravit zaplacené objednávky kávy k expedici',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description: 'Zákaznice čeká na výměnu poškozeného balení zrnkové kávy; potvrdit adresu a odeslání náhrady.',
+      dueInDays: -2,
+      priority: 'HIGH',
+      state: 'WAITING',
+      title: 'Dořešit reklamaci poškozené zásilky kávy',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description: 'Porovnat zásobu espresso směsi a bezkofeinové kávy se stavem e-shopu, zapsat rozdíly po inventuře.',
+      dueInDays: 1,
+      priority: 'NORMAL',
+      state: 'NEW',
+      title: 'Zkontrolovat sklad kávy po víkendovém prodeji',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description: 'Pražírna má potvrdit termín další várky a dostupnost 250g balení před spuštěním dárkové nabídky.',
+      dueInDays: 3,
+      priority: 'HIGH',
+      state: 'WAITING',
+      title: 'Potvrdit dodávku vánoční kávy s pražírnou',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description: 'S Ondřejem Křížem spočítat krabice a výplňový materiál a objednat zásobu na příští dva týdny.',
+      dueInDays: 2,
+      priority: 'NORMAL',
+      state: 'IN_PROGRESS',
+      title: 'Doplnit obaly pro zásilky e-shopu',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description: 'Připravit fotografie dárkových sad, text s doporučením kávy a termín rozeslání zákazníkům.',
+      dueInDays: 7,
+      priority: 'NORMAL',
+      state: 'NEW',
+      title: 'Připravit newsletter s dárkovými sadami kávy',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description: 'Opravené popisy mletí a přípravy filtrované kávy jsou zveřejněné u produktů v e-shopu.',
+      dueInDays: -1,
+      priority: 'LOW',
+      state: 'DONE',
+      title: 'Doplnit doporučení přípravy k produktům',
+    },
+    {
+      assignee: kavarnaAdmin,
+      description:
+        'Dodavatel vyprodal sezónní sirup; plánovanou slevovou akci nahradí nabídka dostupných dárkových sad.',
+      dueInDays: -3,
+      priority: 'LOW',
+      state: 'CANCELLED',
+      title: 'Spustit akci na sezónní kávový sirup',
+    },
+  ],
+  writerEmail: kavarnaAdmin,
+};
+
+export const companyContent: readonly CompanyContent[] = [najempark, hanak, kavarna];
 
 /** Login e-mail → principal ID of every Nájempark and CRM/e-shop company persona. */
 export const personaPrincipalIds: ReadonlyMap<string, string> = new Map([

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Additive Štítky and Úkoly for the Nájempark (0021) and Velkoobchod Hanák (0022) demo companies
+ * Additive Štítky and Úkoly for the Nájempark (0021), Velkoobchod Hanák (0022) and Kavárna Doma (0023) demo companies
  * (content: `company-content.mts`). Runs through the public tagging and work-tasks reads and Actions as each
  * company's administrator, so audit trails, history and revisions stay native:
  *
@@ -148,6 +148,9 @@ const seedTags = Effect.fn('CompanyContent.seedTags')(function* seedTags(
   directory: Directory,
   apply: boolean,
 ) {
+  if (content.tags.length === 0) {
+    return { assigned: 0, created: [], unresolved: [] };
+  }
   let records = yield* client.read(taggingAudience, TaggingRecords);
   if (apply && !records.canWrite) {
     return yield* new DemoSeedError({ reason: `${content.writerEmail} cannot write Štítky in ${content.label}.` });
