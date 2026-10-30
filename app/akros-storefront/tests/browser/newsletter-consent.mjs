@@ -88,7 +88,17 @@ try {
     ).status(),
     403,
   );
+  // Before React hydrates, a click submits the bare form (form-encoded, refused with 415) or toggles
+  // the bare checkbox without a request. Interact as a user who waits for the page to become live.
+  const hydrated = async (locator) => {
+    const element = await locator.elementHandle();
+    await page.waitForFunction(
+      (node) => Object.keys(node).some((key) => key.startsWith("__reactProps$")),
+      element,
+    );
+  };
   await page.goto(new URL("/prihlaseni", base).href, { waitUntil: "domcontentloaded" });
+  await hydrated(page.locator("#login-email"));
   await page.locator("#login-email").fill(STAGE_CUSTOMER_EMAIL);
   await page.locator("#login-password").fill(Redacted.value(DEFAULT_PASSWORD));
   const [login] = await Promise.all([
@@ -113,6 +123,7 @@ try {
   const choose = async (decision) => {
     const previous = await fresh();
     assert.notEqual(previous.decision, decision, "The UI must make an explicit state change");
+    await hydrated(checkbox);
     await checkbox.focus();
     const [response] = await Promise.all([
       page.waitForResponse(
