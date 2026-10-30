@@ -96,13 +96,14 @@ const writeOwnerEntry = Effect.fn('OwnerEntry.write')(function* writeOwnerEntry(
   if (source === undefined) {
     return yield* new OwnerEntryError({ reason: `${unitDirectory}/.output/index.js has an unexpected shape` });
   }
+  const entry = path.join(dist, 'zerops-entry.mjs');
   if (isCommonJsEntry(generated)) {
     yield* fs.writeFileString(path.join(dist, 'zerops-entry.cjs'), source);
-    yield* fs.writeFileString(path.join(dist, 'zerops-entry.mjs'), COMMONJS_SHIM);
+    yield* fs.writeFileString(entry, COMMONJS_SHIM);
   } else {
-    yield* fs.writeFileString(path.join(dist, 'zerops-entry.mjs'), source);
+    yield* fs.writeFileString(entry, source);
   }
-  return yield* Console.log(`wrote ${path.relative(workspaceRoot, path.join(dist, 'zerops-entry.mjs'))}`);
+  return yield* Console.log(`wrote ${path.relative(workspaceRoot, entry)}`);
 });
 
 const command = Command.make(
