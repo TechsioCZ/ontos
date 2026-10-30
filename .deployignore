@@ -18,3 +18,18 @@ app/**/.codex
 app/quality-audit
 app/specs
 app/docs
+# Build, lint and type tooling the app host never loads: it halves the deployed package and its upload.
+# The storefront service builds Next.js itself; the app service never runs it.
+app/node_modules/.pnpm/next@*
+app/node_modules/.pnpm/@next+swc-*
+app/node_modules/.pnpm/@effect+tsgo*
+app/node_modules/.pnpm/@typescript+native*
+app/node_modules/.pnpm/@typescript+typescript-*
+app/node_modules/.pnpm/workerd@*
+app/node_modules/.pnpm/@cloudflare+workerd-*
+app/node_modules/.pnpm/miniflare@*
+app/node_modules/.pnpm/oxlint*
+app/node_modules/.pnpm/@oxlint*
+app/node_modules/.pnpm/@fallow-cli*
+app/node_modules/.pnpm/playwright*
+app/node_modules/.pnpm/happy-dom@*
