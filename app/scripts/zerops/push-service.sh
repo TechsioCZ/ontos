@@ -16,7 +16,9 @@ work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/zerops-push.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 # POSIX (pax) headers like zcli's Go archive/tar; Zerops rejects the GNU format. node_modules is never shipped.
-tar --format=pax --exclude='node_modules' --exclude='.output' --exclude='*.map' -czf "$work/package.tar.gz" .
+# Member names carry no './' prefix, as zcli writes them; Zerops cannot identify an archive of './…' members.
+mapfile -t entries < <(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
+tar --format=pax --exclude='node_modules' --exclude='.output' --exclude='*.map' -czf "$work/package.tar.gz" -- "${entries[@]}"
 echo "package: $(du -h "$work/package.tar.gz" | cut -f1)"
 
 created="$(jq -n --arg name "$version_name" '{name: $name}' |
