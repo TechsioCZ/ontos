@@ -519,7 +519,7 @@ importers:
         version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@modern-js/adapter-rstest':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.15(c5a088b421352b671b7e75ed9b10ab68)'
+        version: '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.15(0fa5c654cecfc2e443ee82b24445dfb8)'
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.15(91f1d28a382d16a445ae786a4ee780b4)'
@@ -540,7 +540,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.2.8(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.18(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.11.12
-        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)
+        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)
       '@testing-library/dom':
         specifier: 10.4.1
         version: 10.4.1
@@ -567,10 +567,10 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
-        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4))(effect@4.0.7)
       happy-dom:
-        specifier: 20.8.3
-        version: 20.8.3
+        specifier: 21.0.4
+        version: 21.0.4
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -2015,7 +2015,7 @@ importers:
         version: 0.63.0
       '@modern-js/adapter-rstest':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.15(c5a088b421352b671b7e75ed9b10ab68)'
+        version: '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.15(0fa5c654cecfc2e443ee82b24445dfb8)'
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.15(91f1d28a382d16a445ae786a4ee780b4)'
@@ -2033,7 +2033,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.2.8(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.18(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.11.12
-        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)
+        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)
       '@testing-library/dom':
         specifier: 10.4.1
         version: 10.4.1
@@ -2057,10 +2057,10 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
-        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4))(effect@4.0.7)
       happy-dom:
-        specifier: 20.8.3
-        version: 20.8.3
+        specifier: 21.0.4
+        version: 21.0.4
       jose:
         specifier: 6.2.5
         version: 6.2.5
@@ -7512,6 +7512,10 @@ packages:
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
 
+  buffer-image-size@0.6.4:
+    resolution: {integrity: sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ==}
+    engines: {node: '>=4.0'}
+
   buffer@5.7.1:
     resolution: {integrity: sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==}
 
@@ -8715,6 +8719,10 @@ packages:
 
   happy-dom@20.8.3:
     resolution: {integrity: sha512-lMHQRRwIPyJ70HV0kkFT7jH/gXzSI7yDkQFe07E2flwmNDFoWUTRMKpW2sglsnpeA7b6S2TJPp98EbQxai8eaQ==}
+    engines: {node: '>=20.0.0'}
+
+  happy-dom@21.0.4:
+    resolution: {integrity: sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==}
     engines: {node: '>=20.0.0'}
 
   has-bigints@1.1.0:
@@ -12265,10 +12273,10 @@ snapshots:
       '@module-federation/runtime': '@bleedingdev/mf-runtime@2.9.3'
       '@module-federation/sdk': '@bleedingdev/mf-sdk@2.9.2'
 
-  '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.15(c5a088b421352b671b7e75ed9b10ab68)':
+  '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.15(0fa5c654cecfc2e443ee82b24445dfb8)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.15(91f1d28a382d16a445ae786a4ee780b4)'
-      '@rstest/adapter-rsbuild': 0.12.3(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3))
+      '@rstest/adapter-rsbuild': 0.12.3(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4))
     transitivePeerDependencies:
       - '@loadable/component'
       - '@microsoft/api-extractor'
@@ -16454,10 +16462,10 @@ snapshots:
     optionalDependencies:
       '@rspack/core': 2.2.8(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)
 
-  '@rstest/adapter-rsbuild@0.12.3(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3))':
+  '@rstest/adapter-rsbuild@0.12.3(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4))':
     dependencies:
       '@rsbuild/core': 2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
-      '@rstest/core': 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)
+      '@rstest/core': 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)
 
   '@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)':
     dependencies:
@@ -16465,6 +16473,16 @@ snapshots:
       '@types/chai': 5.2.3
     optionalDependencies:
       happy-dom: 20.8.3
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
+      - core-js
+
+  '@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)':
+    dependencies:
+      '@rsbuild/core': 2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
+      '@types/chai': 5.2.3
+    optionalDependencies:
+      happy-dom: 21.0.4
     transitivePeerDependencies:
       - '@module-federation/runtime-tools'
       - core-js
@@ -17877,6 +17895,10 @@ snapshots:
 
   buffer-from@1.1.2: {}
 
+  buffer-image-size@0.6.4:
+    dependencies:
+      '@types/node': 26.6.3
+
   buffer@5.7.1:
     dependencies:
       base64-js: 1.5.1
@@ -18511,6 +18533,11 @@ snapshots:
   effect-rstest@https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7):
     dependencies:
       '@rstest/core': 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)
+      effect: 4.0.7
+
+  effect-rstest@https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4))(effect@4.0.7):
+    dependencies:
+      '@rstest/core': 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)
       effect: 4.0.7
 
   effect@4.0.7: {}
@@ -19315,9 +19342,23 @@ snapshots:
 
   happy-dom@20.8.3:
     dependencies:
+      '@types/node': 20.19.43
+      '@types/whatwg-mimetype': 3.0.2
+      '@types/ws': 8.18.2
+      entities: 7.0.1
+      whatwg-mimetype: 3.0.0
+      ws: 8.22.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+    optional: true
+
+  happy-dom@21.0.4:
+    dependencies:
       '@types/node': 26.6.3
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.2
+      buffer-image-size: 0.6.4
       entities: 7.0.1
       whatwg-mimetype: 3.0.0
       ws: 8.22.0
