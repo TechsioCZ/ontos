@@ -1,7 +1,14 @@
-import { Option } from 'effect';
+import { Effect, Option, Ref } from 'effect';
+import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
-import { derivedEnvironment, finiteProcessEnvironment, processEnvironment, routeRequest } from '../zerops/app-host.mts';
+import {
+  derivedEnvironment,
+  finiteProcessEnvironment,
+  hostApplication,
+  processEnvironment,
+  routeRequest,
+} from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
 import { ownerEntrySource } from '../zerops/owner-entry.mts';
@@ -11,6 +18,28 @@ const SHELL_ID = 'shell-super-app';
 const ORIGIN = 'https://ontos.example.com';
 const DIST = '/abs/app/dist';
 const resolvePackage = (specifier: string) => `/abs/app/node_modules/${specifier}/index.js`;
+
+it.effect('rejects credential URLs and native login POSTs at the public host before forwarding to any owner', () =>
+  Effect.gen(function* publicCredentialGuard() {
+    const published = yield* Ref.make(false);
+    for (const [method, path] of [
+      ['GET', '/cs/login?login=x&password=y'],
+      ['GET', '/shell-super-app-api/oauth?client_secret=y'],
+      ['GET', '/_m/crm/private?api_key=y'],
+      ['POST', '/en/login'],
+    ] as const) {
+      const response = yield* hostApplication(new Map(), published, Effect.succeed(Option.none())).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request(`https://stage.test${path}`, { method })),
+        ),
+      );
+      expect(response.status).toBe(303);
+      expect(response.headers.location).toBe(path.startsWith('/en/') ? '/en/login' : '/cs/login');
+      expect(response.headers['referrer-policy']).toBe('no-referrer');
+    }
+  }),
+);
 
 const topology: Topology = {
   shell: { path: 'app/shell' },

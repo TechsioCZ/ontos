@@ -12,6 +12,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { useEffect, useRef, useState } from 'react';
 
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
+import { submitCredentialForm } from '../../../credential-form.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { useBrowserLocationHref } from '../../browser-location.ts';
@@ -42,6 +43,7 @@ const SignInFormSchema = Schema.fromFormData(
 );
 const internalErrorMessageKey = 'shell.login.error.internal';
 const errorTitleKey = 'shell.login.error.title';
+const submitDisabled = (hydrated: true | undefined, attempt: string) => hydrated !== true || attempt !== 'idle';
 
 const loginReason = (href: string | undefined, language: string): SignInReason | 'sign_in_required' | undefined =>
   href === undefined
@@ -134,7 +136,7 @@ const LoginPage = () => {
   // After a successful sign-in the URL moves at once, but this form stays on screen until the next page has loaded.
   // The button then says the app is opening instead of still claiming to sign in.
   const [attempt, setAttempt] = useState<'idle' | 'opening' | 'signing-in'>('idle');
-  // A form action resets its uncontrolled fields after every attempt; keep the login so only the password is retyped.
+  // Keep the login so only the password is retyped after an attempt.
   const [attemptedLogin, setAttemptedLogin] = useState('');
   // Keep failures next to the form until retry; a short-lived toast is easy to miss during an outage.
   const [submissionError, setSubmissionError] = useState<string>();
@@ -284,10 +286,12 @@ const LoginPage = () => {
               {t('shell.login.title')}
             </h1>
             <form
-              action={handleSubmit}
+              action={`/${language}/login`}
               className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
               data-hydrated={hydrated}
+              method="post"
               noValidate
+              onSubmit={(event) => submitCredentialForm(event, hydrated === true, handleSubmit, passwordRef.current)}
             >
               <div hidden={attempt === 'opening'}>
                 <FormInput
@@ -332,7 +336,7 @@ const LoginPage = () => {
               )}
               <Button
                 block
-                disabled={attempt !== 'idle'}
+                disabled={submitDisabled(hydrated, attempt)}
                 isLoading={attempt !== 'idle'}
                 loadingText={t(attempt === 'opening' ? 'shell.login.opening' : 'shell.login.pending')}
                 size="md"

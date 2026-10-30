@@ -8,9 +8,20 @@ const OAUTH_PAGE_PATH = /^\/(?:cs|en)\/(?:login|pripojit|connect)(?:\/.*)?$/u;
 
 export const isOAuthPagePath = (path: string): boolean => OAUTH_PAGE_PATH.test(path);
 
+export type RequestLog = (message: string, ...args: unknown[]) => void;
+export interface RequestMonitors {
+  readonly debug: RequestLog;
+  readonly error: RequestLog;
+  readonly info: RequestLog;
+  readonly trace: RequestLog;
+  readonly warn: RequestLog;
+}
+
 export interface MiddlewareContext {
+  readonly get?: (key: 'monitors') => RequestMonitors | undefined;
   readonly req: { readonly method: string; readonly path: string; readonly raw?: Request; readonly url?: string };
   res: Response;
+  readonly set?: (key: 'monitors', monitors: RequestMonitors) => void;
 }
 
 const METADATA_CORS_HEADERS = {

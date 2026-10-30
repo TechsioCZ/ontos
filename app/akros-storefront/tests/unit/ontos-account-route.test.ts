@@ -42,6 +42,20 @@ beforeEach(() => {
 });
 
 describe("owner-backed customer account transport", () => {
+  it("rejects a native no-JS form POST with a clean 303 without reading or forwarding credentials", async () => {
+    const request = new Request(`${origin}/api/ontos/account`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams([["password", "native-form-probe"]]),
+    });
+    const response = await POST(request);
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/prihlaseni");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(await response.text()).toBe("");
+    expect(request.bodyUsed).toBe(false);
+    expect(ownerRequest).not.toHaveBeenCalled();
+  });
   it("loads the admitted account after a transient owner outage", async () => {
     const account = {
       id: "provider-subject",

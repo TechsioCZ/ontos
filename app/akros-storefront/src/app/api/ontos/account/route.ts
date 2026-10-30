@@ -21,6 +21,20 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  // The JSON client owns sign-in. A native no-JS form POST must not echo or replay its credentials.
+  if (
+    request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded") ||
+    request.headers.get("content-type")?.startsWith("multipart/form-data")
+  ) {
+    return new Response(null, {
+      status: 303,
+      headers: {
+        ...noStore,
+        location: "/prihlaseni",
+        "referrer-policy": "no-referrer",
+      },
+    });
+  }
   try {
     guard(request);
     const origin = requestOrigin(request);

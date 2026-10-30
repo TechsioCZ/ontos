@@ -12,6 +12,8 @@ import {
   Tracer,
 } from 'effect';
 import type { Schema } from 'effect';
+import { authenticationQueryRedactions } from '@app/shared-contracts/credential-url';
+import { UrlParams } from 'effect/http';
 
 import type { handleOAuthMetadata, handleRootRoute } from '../../api/index.ts';
 
@@ -52,6 +54,7 @@ export const shellServerRuntime = ManagedRuntime.make(
     Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
     Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
     Layer.succeed(References.MinimumLogLevel, 'Info'),
+    Layer.succeed(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
   ),
 );
 export const shellBff = ShellBffModule.pipe(Effect.flatten);

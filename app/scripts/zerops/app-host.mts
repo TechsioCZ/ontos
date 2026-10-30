@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
+import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
  * of the release intent and the Outbox Worker host, each as its own process on a loopback port.
@@ -40,7 +41,7 @@ import {
   Stream,
   Struct,
 } from 'effect';
-import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse, UrlParams } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 
 import {
@@ -398,13 +399,20 @@ const compositionSourceResponse = <Failure, Requirements>(
       : HttpServerResponse.empty({ status: 503 });
   });
 
-const hostApplication = <Failure, Requirements>(
+export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
 ) =>
   Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const location = credentialSubmissionRedirect(new URL(request.url, 'https://host.invalid'), request.method);
+    if (location !== undefined) {
+      return HttpServerResponse.empty({
+        headers: { 'cache-control': 'no-store', location, 'referrer-policy': 'no-referrer' },
+        status: 303,
+      });
+    }
     if (request.url === COMPOSITION_PATH) {
       return yield* compositionSourceResponse(request, loadComposition);
     }
@@ -659,6 +667,7 @@ if (import.meta.main) {
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
     Effect.provide(ProcessDatabasePoolsLive),
+    Effect.provideService(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
     Effect.tapCause((cause) => Console.error(`[app-host] stopped: ${String(cause)}`)),
   );
   const exit = await Effect.runPromiseExit(program);

@@ -84,7 +84,8 @@ import {
   Tracer,
 } from 'effect';
 import type { Types } from 'effect';
-import { FetchHttpClient, HttpRouter } from 'effect/http';
+import { FetchHttpClient, HttpRouter, UrlParams } from 'effect/http';
+import { authenticationQueryRedactions } from '@app/shared-contracts/credential-url';
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
@@ -3006,6 +3007,7 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.effect(Tracer.Tracer, Tracer.Tracer),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
+  Layer.succeed(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
 );
 
 type ShellAuthenticationLayer = Layer.Layer<AuthenticationService, Layer.Error<typeof authenticationServiceLive>>;
