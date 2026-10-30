@@ -37,9 +37,10 @@ export const makePaymentTermCatalogDatabase = Effect.fn('PaymentTermCatalogDatab
   const poolConfiguration = yield* configureDatabasePool(
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
+    configuration.maxConnections,
   ).pipe(Effect.mapError((error) => new PaymentTermCatalogDatabaseConnectionError({ reason: error.reason })));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
+  const client = yield* PgClient.make(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

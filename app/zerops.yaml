@@ -132,6 +132,10 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         EMAIL_PROVIDER: smtp
         NODE_ENV: production
+        # One container serves every owner, each with several pools, and a deploy runs two containers side by side;
+        # small pools that drop idle connections keep both inside db18's 150 connection slots.
+        ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '10000'
+        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '4'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
         PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}

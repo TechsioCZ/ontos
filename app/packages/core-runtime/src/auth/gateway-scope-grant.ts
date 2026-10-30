@@ -97,10 +97,12 @@ export const GatewayScopeGrantRegistrarLive: Layer.Layer<
   Effect.gen(function* makeGatewayScopeGrantRegistrarService() {
     const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const configuration = yield* loadDatabaseConfig({ identity: SHELL_GATEWAY_ISSUER_IDENTITY });
-    const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString));
-    const services = yield* Layer.build(
-      PgClient.layer({ ...poolConfiguration, maxConnections: REGISTRAR_MAX_CONNECTIONS }),
-    ).pipe(Effect.mapError(connectionFailure));
+    const poolConfiguration = yield* configureDatabasePool(
+      Redacted.make(configuration.connectionString),
+      undefined,
+      REGISTRAR_MAX_CONNECTIONS,
+    );
+    const services = yield* Layer.build(PgClient.layer(poolConfiguration)).pipe(Effect.mapError(connectionFailure));
     const client = Context.get(services, PgClient.PgClient);
     yield* verifyDatabaseSessionRole(client, configuration.expectedRole);
     return makeGatewayScopeGrantRegistrar(client, enrollment);
