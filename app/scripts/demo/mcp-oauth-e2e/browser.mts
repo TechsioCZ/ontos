@@ -46,10 +46,7 @@ const SharedClientSchema = Schema.Struct({
     Predicate.isFunction(value),
   ),
 });
-const BrowserModuleSchema = Schema.Struct({
-  chromium: Schema.optionalKey(LauncherSchema),
-  default: Schema.optionalKey(Schema.Struct({ chromium: LauncherSchema })),
-});
+const BrowserModuleSchema = Schema.Struct({ chromium: LauncherSchema });
 
 const ownedTab = (page: E2ePage, cleanup: Effect.Effect<void, BrowserDriverFailure>): E2eTab => {
   let closed = false;
@@ -108,16 +105,24 @@ export const openSharedTab = () =>
     if (playwrightModule !== '') {
       const imported = yield* Effect.tryPromise({
         catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import Playwright' }),
-        try: async () => Schema.decodeUnknownResult(BrowserModuleSchema)(await import(playwrightModule)),
+        try: async () => {
+          const loaded: unknown = await import(playwrightModule);
+          // A CommonJS `@playwright/test` default export is its test function, which carries the launchers.
+          return Predicate.hasProperty(loaded, 'chromium') ||
+            !Predicate.hasProperty(loaded, 'default') ||
+            !Predicate.hasProperty(loaded.default, 'chromium')
+            ? loaded
+            : { chromium: loaded.default.chromium };
+        },
       });
-      const mod = yield* Effect.fromResult(imported);
-      const chromium = mod.chromium ?? mod.default?.chromium;
-      if (chromium === undefined) {
+      // Narrow without decoding: a decoded copy would detach `launch` from its browser type.
+      if (!Schema.is(BrowserModuleSchema)(imported)) {
         return yield* new BrowserDriverFailure({
           cause: `${playwrightModule} exports no chromium launcher`,
           operation: 'load Playwright',
         });
       }
+      const { chromium } = imported;
       const browser = yield* Effect.tryPromise({
         catch: (cause) => new BrowserDriverFailure({ cause, operation: 'chromium.launch' }),
         try: async () => await chromium.launch(),
@@ -258,8 +263,10 @@ export const approveConnection = (
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'capture identity consent' }),
-      try: async () =>
-        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png` }),
+      // The screenshot bytes are not needed; the file is the evidence.
+      try: async () => {
+        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png` });
+      },
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'continue consent' }),
@@ -276,8 +283,10 @@ export const approveConnection = (
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'capture final consent' }),
-      try: async () =>
-        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png` }),
+      // The screenshot bytes are not needed; the file is the evidence.
+      try: async () => {
+        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png` });
+      },
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'approve access' }),
