@@ -131,6 +131,32 @@ it.effect('installs only the published scoped task Action and userset role grant
   }),
 );
 
+it.effect(
+  'lets the verification writer propose and review agent proposals once the lifecycle Action is published',
+  () =>
+    Effect.gen(function* verifiesProposalLifecycle() {
+      const proposalAction = 'core.identity.mutate-agent-proposals';
+      const context = yield* verificationContext([
+        { actionKey: taskAction, legalEntityScope: 'required', owningModuleKey: taskModule, provisioning: 'explicit' },
+        {
+          actionKey: proposalAction,
+          legalEntityScope: 'required',
+          owningModuleKey: 'core.identity',
+          provisioning: 'explicit',
+        },
+      ]);
+      const scope = { legalEntityId: verificationLegalEntityId, tenantId: verificationTenantId };
+      expect(
+        context.relationships
+          .filter((row) => row.resourceType === 'action_grant')
+          .map(({ resourceId, subjectId }) => ({ resourceId, subjectId })),
+      ).toEqual([
+        { resourceId: toSpiceDbActionGrantObjectId({ ...scope, actionKey: taskAction }), subjectId: roleId },
+        { resourceId: toSpiceDbActionGrantObjectId({ ...scope, actionKey: proposalAction }), subjectId: roleId },
+      ]);
+    }),
+);
+
 it.effect('generates a v4 stage accounts policy confined to the verification tenant and company', () =>
   Effect.gen(function* validatesNativeStageFile() {
     const accounts = yield* stageVerificationAccounts(Redacted.make('verification-test-password'));
