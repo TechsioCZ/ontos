@@ -77,7 +77,6 @@ interface SeedProduct {
   readonly description: string;
   /** Gross CZK (whole crowns) for products without variants. */
   readonly gross?: number;
-  readonly images?: readonly string[];
   readonly lowStockThreshold: number;
   readonly name: string;
   readonly published?: boolean;
@@ -454,7 +453,6 @@ export const eshopCatalog: readonly SeedProduct[] = [
     description:
       'Papírové filtry Hario pro dripper V60 velikosti 02, bělené, 100 kusů v balení. Dočasně vyprodáno, další dodávka je na cestě.',
     gross: 14_900,
-    images: [],
     lowStockThreshold: 10,
     name: 'Papírové filtry Hario V60 02 (100 ks)',
     shortDescription: 'Bělené filtry pro V60 02 — dočasně vyprodáno.',
@@ -542,12 +540,8 @@ const productState = (product: SeedProduct): EncodedProduct => {
     currentPriceMinor: priceMinor,
     description: product.description,
     id: productId,
-    // Main pack shot, a detail view and (for every other product) a lifestyle scene; the storefront renders them.
-    images: product.images ?? [
-      `/img/${product.slug}.svg`,
-      `/img/${product.slug}--2.svg`,
-      ...(product.slug.length % 2 === 0 ? [`/img/${product.slug}--3.svg`] : []),
-    ],
+    // Kavárna Doma has no storefront that serves product photos, so its products start without images.
+    images: [],
     lowStockThreshold: product.lowStockThreshold,
     name: product.name,
     priceHistory: [{ effectiveFrom: createdAt, priceMinor }],

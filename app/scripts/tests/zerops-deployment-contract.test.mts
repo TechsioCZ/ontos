@@ -135,6 +135,17 @@ it('fails the application build whose Zephyr upload fails', () => {
   expect(app.getIn(['build', 'envVariables', 'ZE_FAIL_BUILD'])).toBe('true');
 });
 
+it('bakes the public origins the app runs with into its bundles, including the AKROS storefront', () => {
+  const app = serviceNode(readZeropsDeploymentYaml(), 'app');
+  const buildApp = readFileSync(new URL('../zerops/build-app.sh', import.meta.url), 'utf-8');
+
+  for (const key of ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN']) {
+    expect(app.getIn(['build', 'envVariables', key])).toBe(app.getIn(['run', 'envVariables', key]));
+  }
+  // Without it the merchandise and Shell bundles fall back to the local storefront (http://localhost:3070).
+  expect(buildApp).toContain('export ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT="$ONTOS_STOREFRONT_ORIGIN"');
+});
+
 it('builds every Node service with the pinned toolchain and ships Node instead of downloading it at start', () => {
   const zeropsYaml = readZeropsDeploymentYaml();
   const node = /^node = "(?<node>[^"]+)"$/mu.exec(readFileSync(new URL('../../.mise.toml', import.meta.url), 'utf-8'))

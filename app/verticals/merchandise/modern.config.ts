@@ -68,8 +68,6 @@ export default defineConfig(
           ...workspaceConfig.source.globalVars,
           'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
             getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ?? 'http://localhost:3070',
-          'globalThis.ULTRAMODERN_PUBLIC_URL_ESHOP_STOREFRONT':
-            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_ESHOP_STOREFRONT') ?? 'http://localhost:3060',
         },
       },
     },

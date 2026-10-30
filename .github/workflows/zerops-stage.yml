@@ -45,6 +45,7 @@ jobs:
     env:
       SHARDS: 7
       ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+      ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
     steps:

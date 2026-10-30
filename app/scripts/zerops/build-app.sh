@@ -4,19 +4,21 @@
 # emits .output/index.js, which scripts/zerops/owner-entry.mts turns into the unit's dist/zerops-entry.mjs: the app
 # host serves every unit in-process from dist/ inside the installed workspace (.output itself is never deployed).
 #
-#   ONTOS_PUBLIC_ORIGIN=https://… sh scripts/zerops/build-app.sh [unit ...]
+#   ONTOS_PUBLIC_ORIGIN=https://… ONTOS_STOREFRONT_ORIGIN=https://… sh scripts/zerops/build-app.sh [unit ...]
 #
 # Browser assets are served by the host under /_m/<appId>/, so every unit's public URL is that prefix on the one
-# public origin. Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs, git-ignored). Run from app/.
+# public origin. The AKROS storefront origin is baked into the bundles that link to it or load its product images.
+# Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs, git-ignored). Run from app/.
 #
 # A unit whose inputs did not change keeps its previous build: dist/.zerops-build-digest records the digest of its
 # committed inputs (its own directory, every workspace vertical it depends on, packages/, the root build
-# configuration and the public origin). Each built dist/ is copied to $UNIT_CACHE_DIR (default .zerops/unit-cache),
+# configuration and the public origins). Each built dist/ is copied to $UNIT_CACHE_DIR (default .zerops/unit-cache),
 # which zerops.yaml keeps in the Zerops build cache together with the Rspack caches, and restored from there.
 set -eu
 root="$PWD"
 
 : "${ONTOS_PUBLIC_ORIGIN:?ONTOS_PUBLIC_ORIGIN (the public HTTPS origin of the Shell) is required}"
+: "${ONTOS_STOREFRONT_ORIGIN:?ONTOS_STOREFRONT_ORIGIN (the public HTTPS origin of the AKROS storefront) is required}"
 jobs_limit="${BUILD_JOBS:-2}"
 log_dir="${BUILD_LOG_DIR:-.zerops/build-logs}"
 entry='dist/zerops-entry.mjs'
@@ -36,6 +38,7 @@ else
 fi
 
 export ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP="$ONTOS_PUBLIC_ORIGIN"
+export ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT="$ONTOS_STOREFRONT_ORIGIN"
 # Every unit sees every public URL: the Shell build names each remote.
 for unit in $all_units; do
   [ "$unit" = shell-super-app ] || export "$(env_name "$unit")=$ONTOS_PUBLIC_ORIGIN/_m/$unit"
@@ -64,11 +67,11 @@ unit_inputs() {
   ' "$1"
 }
 
-# The committed Git object ids of every input of one unit, hashed with the public origin.
+# The committed Git object ids of every input of one unit, hashed with the public origins.
 unit_digest() {
   inputs="$(unit_inputs "$1")"
   {
-    printf '%s\n' "$ONTOS_PUBLIC_ORIGIN"
+    printf '%s\n' "$ONTOS_PUBLIC_ORIGIN" "$ONTOS_STOREFRONT_ORIGIN"
     for input in $inputs packages scripts/zerops/owner-entry.mts scripts/generate-ontos-module-contract.mts topology \
       package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json module-federation.shared.ts; do
       printf '%s %s\n' "$input" "$(git rev-parse "HEAD:app/$input")"

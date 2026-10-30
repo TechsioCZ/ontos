@@ -17,7 +17,7 @@ import {
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand, StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
-import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
+import { AKROS_STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
 import {
   EntityIdSchema,
@@ -2139,7 +2139,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
+      const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : undefined;
       const response: Mutable<RecordsResponse> = {
         ...catalogMetadata,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
