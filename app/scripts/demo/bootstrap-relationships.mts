@@ -54,7 +54,7 @@ export const writeBootstrapRelationships = Effect.fn('Demo.writeBootstrapRelatio
         legalEntityId: commercialDemoCompany.legalEntityId,
         legalName: commercialDemoCompany.legalName,
         registrationCountry: 'CZ',
-        registrationNumber: 'DEMO-SIAMPARK',
+        registrationNumber: 'DEMO-NAJEMPARK',
       },
       modules: [],
       relationships,

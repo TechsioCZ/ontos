@@ -17,14 +17,14 @@ const commercial: DemoCompanyRecord = {
   ...commercialDemoCompany,
   legalName: 'Siampark DEMO s.r.o.',
   registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-SIAMPARK',
+  registrationNumber: 'DEMO-NAJEMPARK',
   status: 'active',
   tenantId: demoCompanyTenantId,
 };
 const rental: DemoCompanyRecord = {
   ...rentalDemoCompany,
   registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-SIAMPARK-RENTAL',
+  registrationNumber: 'DEMO-NAJEMPARK-RENTAL',
   status: 'active',
   tenantId: demoCompanyTenantId,
 };

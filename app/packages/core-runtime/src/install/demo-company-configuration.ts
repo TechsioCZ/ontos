@@ -17,9 +17,9 @@ import {
 import { demoCompanyActiveModuleKeys } from './demo-seed/demo-company-modules.ts';
 import { rebrandRentalDemoPrincipals } from './demo-rental-principal-brand.ts';
 
-const rentalRegistrationNumber = 'DEMO-SIAMPARK-RENTAL';
+const rentalRegistrationNumber = 'DEMO-NAJEMPARK-RENTAL';
 const rentalLegacyLegalName = 'Siampark';
-const commercialRegistrationNumber = 'DEMO-SIAMPARK';
+const commercialRegistrationNumber = 'DEMO-NAJEMPARK';
 type AdditionalDemoCompany = (typeof additionalDemoCompanies)[number];
 const knownCompanyIds: ReadonlySet<string> = new Set([
   commercialDemoCompany.legalEntityId,

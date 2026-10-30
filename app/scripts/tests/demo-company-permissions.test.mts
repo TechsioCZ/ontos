@@ -435,7 +435,7 @@ it('seeds every membership company before bootstrap on a fresh baseline, without
   expect(demoBootstrapCompanyRows.find((row) => row.legalEntityId === rentalDemoLegalEntityId)).toEqual({
     ...rentalDemoCompany,
     registrationCountry: 'CZ',
-    registrationNumber: 'DEMO-SIAMPARK-RENTAL',
+    registrationNumber: 'DEMO-NAJEMPARK-RENTAL',
     status: 'active',
     tenantId: demoTenantId,
   });

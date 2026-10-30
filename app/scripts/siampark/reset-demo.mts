@@ -211,7 +211,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
       legalEntityId: demoLegalEntityId,
       legalName: 'Nájempark DEMO s.r.o.',
       registrationCountry: 'CZ',
-      registrationNumber: 'DEMO-SIAMPARK',
+      registrationNumber: 'DEMO-NAJEMPARK',
     },
     modules: moduleIds.map((moduleId, index) => ({
       moduleId,

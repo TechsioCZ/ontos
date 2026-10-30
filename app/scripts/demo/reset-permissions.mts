@@ -89,7 +89,7 @@ const STOREFRONT_KEY_AUDIENCE = 'merchandise';
 const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
 /** Membership targets must exist before bootstrap; the audited company Action runs only after its grants exist. */
 export const demoBootstrapCompanyRows = [
-  { ...rentalDemoCompany, registrationNumber: 'DEMO-SIAMPARK-RENTAL' },
+  { ...rentalDemoCompany, registrationNumber: 'DEMO-NAJEMPARK-RENTAL' },
   ...additionalDemoCompanies,
 ].map((company) => ({
   ...company,
@@ -275,7 +275,7 @@ export const bootstrapDemoPermissionContexts = Effect.fn('DemoPermissions.contex
         legalEntityId: demoLegalEntityId,
         legalName: 'Obchodní firma',
         registrationCountry: 'CZ',
-        registrationNumber: 'DEMO-SIAMPARK',
+        registrationNumber: 'DEMO-NAJEMPARK',
       },
       modules: [crmModuleState, facilityOperationsModuleState, privacyModuleState],
       tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
