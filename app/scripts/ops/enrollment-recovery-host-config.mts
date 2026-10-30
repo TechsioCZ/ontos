@@ -33,8 +33,26 @@ const OPTIONAL_OWNER_KEYS = [
   'SMTP_TIMEOUT_MS',
   'ONTOS_EMAIL_FROM',
 ] as const;
-const ManagedKeySchema = Schema.Literals([...REQUIRED_OWNER_KEYS, ...OPTIONAL_OWNER_KEYS]);
+/**
+ * The Shell's email dispatch endpoint, under the owner's Shell gateway base URL. The host posts there only beside its
+ * own ONTOS_EMAIL_DISPATCH_SECRET (the two are configured together), so it is managed only on a host that has one.
+ */
+const EMAIL_DISPATCH_URL = 'ONTOS_EMAIL_DISPATCH_URL';
+const EMAIL_DISPATCH_SECRET = 'ONTOS_EMAIL_DISPATCH_SECRET';
+const ManagedKeySchema = Schema.Literals([...REQUIRED_OWNER_KEYS, ...OPTIONAL_OWNER_KEYS, EMAIL_DISPATCH_URL]);
 type ManagedKey = typeof ManagedKeySchema.Type;
+/**
+ * Non-secret URL and sender settings the release secret preparation derives from topology/stage-edge.json. A host
+ * copy that differs is stale (a domain move), so APPLY replaces it; any other mismatch is a credential conflict.
+ */
+const DERIVED_KEYS: ReadonlySet<ManagedKey> = new Set([
+  'COMMERCE_CORE_IDENTITY_BASE_URL',
+  'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS',
+  'COMMERCE_PORTAL_AUTH_URL',
+  EMAIL_DISPATCH_URL,
+  'ONTOS_EMAIL_FROM',
+  'ONTOS_SHELL_GATEWAY_BASE_URL',
+]);
 /**
  * Host settings that must not stand. The portal realm connects as the shared runtime identity the
  * deployment grants (`DATABASE_URL`), so a provider URL on the host names a role nothing grants.
@@ -200,32 +218,50 @@ const serviceIds = Effect.gen(function* readProtectedServiceIds() {
 const retiredPresent = (existing: ReadonlyMap<string, Redacted.Redacted>): RetiredKey[] =>
   RETIRED_HOST_KEYS.filter((key) => existing.has(key));
 
+/** The canonical keys plus the dispatch endpoint, which joins only a host that holds its dispatch secret. */
+const desiredFor = (
+  canonical: ReadonlyMap<ManagedKey, Redacted.Redacted>,
+  existing: ReadonlyMap<string, Redacted.Redacted>,
+) => {
+  const base = canonical.get('ONTOS_SHELL_GATEWAY_BASE_URL');
+  if (!existing.has(EMAIL_DISPATCH_SECRET) || base === undefined) {
+    return canonical;
+  }
+  const endpoint = `${Redacted.value(base).replace(/\/+$/u, '')}/email/dispatch`;
+  return new Map([...canonical, [EMAIL_DISPATCH_URL, Redacted.make(endpoint)] as const]);
+};
+
+/** Missing keys, and stale derived keys to replace. `exact` (VERIFY) also refuses a stale derived key. */
 const compare = (
   desired: ReadonlyMap<ManagedKey, Redacted.Redacted>,
   existing: ReadonlyMap<string, Redacted.Redacted>,
-  requirePresent: boolean,
+  exact: boolean,
 ) =>
   Effect.gen(function* compareEveryManagedKey() {
     const missing: ManagedKey[] = [];
+    const stale: ManagedKey[] = [];
     for (const [key, expected] of desired) {
       const actual = existing.get(key);
       if (actual === undefined) {
         missing.push(key);
       } else if (Redacted.value(actual) !== Redacted.value(expected)) {
-        return yield* failure('existing-value-mismatch', key);
+        if (exact || !DERIVED_KEYS.has(key)) {
+          return yield* failure('existing-value-mismatch', key);
+        }
+        stale.push(key);
       }
     }
     const [firstMissing] = missing;
-    if (requirePresent && firstMissing !== undefined) {
+    if (exact && firstMissing !== undefined) {
       return yield* failure('host-value-missing', firstMissing);
     }
-    return missing;
+    return { missing, stale };
   });
 
 /** Safe output only. A successful CHECK plans absent keys, not runtime readiness or permission proof. */
 const ReportSchema = Schema.Struct({
   /**
-   * APPLY only: it created or removed a host secret. Zerops hands a running container its secrets at
+   * APPLY only: it created, replaced or removed a host secret. Zerops hands a running container its secrets at
    * start, so the release redeploys the host even when the host artifact itself is unchanged.
    */
   changed: Schema.Boolean,
@@ -233,6 +269,8 @@ const ReportSchema = Schema.Struct({
   managedKeys: Schema.Array(ManagedKeySchema),
   missingKeys: Schema.Array(ManagedKeySchema),
   mode: ModeSchema,
+  /** Stale derived keys: planned replacements for CHECK, the ones replaced for APPLY. */
+  replacedKeys: Schema.Array(ManagedKeySchema),
   /** Retired keys the host carried: planned removals for CHECK, the ones removed for APPLY. */
   retiredKeys: Schema.Array(RetiredKeySchema),
 });
@@ -248,26 +286,32 @@ export const enrollmentRecoveryHostConfig = (mode: EnrollmentRecoveryHostConfigM
     EnrollmentRecoveryHostConfigError,
     ZeropsPublicApi | typeof OpsShell.Identifier
   > {
-    const desired = yield* canonicalOwner;
+    const canonical = yield* canonicalOwner;
     const ids = yield* serviceIds;
     const api = yield* ZeropsPublicApi;
     const existing = yield* protectedRead(api.serviceSecrets(ids.host));
-    const missingKeys = yield* compare(desired, existing, mode === 'verify');
+    const desired = desiredFor(canonical, existing);
+    const { missing: missingKeys, stale: staleKeys } = yield* compare(desired, existing, mode === 'verify');
     const retiredKeys = retiredPresent(existing);
     const [firstRetired] = retiredKeys;
     if (mode === 'verify' && firstRetired !== undefined) {
       return yield* failure(RETIRED_VALUE_PRESENT, firstRetired);
     }
     const createdKeys: ManagedKey[] = [];
+    const replacedKeys: ManagedKey[] = [];
     if (mode === 'apply') {
       for (const key of retiredKeys) {
         yield* protectedRead(api.deleteServiceSecret(ids.host, key));
       }
       for (const [key, value] of desired) {
-        // Re-read and compare the entire plan before each create. The API has no atomic batch/CAS;
-        // a failure may leave correct additions behind, and a rerun converges without overwrites.
-        const missing = yield* compare(desired, yield* protectedRead(api.serviceSecrets(ids.host)), false);
-        if (missing.includes(key)) {
+        // Re-read and compare the entire plan before each write. The API has no atomic batch/CAS or update;
+        // a failure may leave correct writes behind, and a rerun converges. Only a stale derived key is replaced.
+        const current = yield* compare(desired, yield* protectedRead(api.serviceSecrets(ids.host)), false);
+        if (current.stale.includes(key)) {
+          yield* protectedRead(api.deleteServiceSecret(ids.host, key));
+          yield* protectedRead(api.createServiceSecret(ids.host, key, Redacted.value(value)));
+          replacedKeys.push(key);
+        } else if (current.missing.includes(key)) {
           yield* protectedRead(api.createServiceSecret(ids.host, key, Redacted.value(value)));
           createdKeys.push(key);
         }
@@ -280,11 +324,12 @@ export const enrollmentRecoveryHostConfig = (mode: EnrollmentRecoveryHostConfigM
       }
     }
     return {
-      changed: mode === 'apply' && (createdKeys.length > 0 || retiredKeys.length > 0),
+      changed: mode === 'apply' && (createdKeys.length > 0 || replacedKeys.length > 0 || retiredKeys.length > 0),
       createdKeys,
       managedKeys: [...desired.keys()],
       missingKeys,
       mode,
+      replacedKeys: mode === 'apply' ? replacedKeys : staleKeys,
       retiredKeys,
     };
   });

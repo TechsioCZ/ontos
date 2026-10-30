@@ -1,0 +1,10 @@
+{
+  "accountId": "384e8a94acf428ce447e7e73122d91d1",
+  "workersDevSubdomain": "naucmeit",
+  "zone": "web-revolution.cz",
+  "shellHostname": "ontos-stage.web-revolution.cz",
+  "storefrontHostname": "ontos-stage-akros.web-revolution.cz",
+  "spicedbHostname": "ontos-stage-spicedb.web-revolution.cz",
+  "emailSender": "noreply@ontos-stage.web-revolution.cz",
+  "storefrontCatalogKvId": "c496dbe45ffd422ba9523bf016cc388b"
+}

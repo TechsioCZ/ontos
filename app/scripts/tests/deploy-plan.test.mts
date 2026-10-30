@@ -45,7 +45,7 @@ import {
 const REPOSITORY = 'TechsioCZ/ontos';
 const REPOSITORY_ID = 7;
 const ACCOUNT = 'account-1';
-const SUBDOMAIN = 'edution';
+const SUBDOMAIN = 'stage-subdomain';
 const SHELL = 'shell-super-app';
 const SHELL_PACKAGE = '@app/shell-super-app';
 const UNIT_IDS = [SHELL, 'alpha', 'beta', 'gamma', 'projects'] as const;
@@ -147,9 +147,16 @@ const FIXTURE_FILES = {
   'app/zerops.yaml': 'zerops: []\n',
 } satisfies Readonly<Record<string, string>>;
 
+// Resolve the installed Git once; execFileSync always receives an absolute executable path.
+const gitLocator = process.platform === 'win32' ? 'C:/Windows/System32/where.exe' : '/usr/bin/which';
+const [gitExecutable] = execFileSync(gitLocator, ['git'], { encoding: 'utf-8' }).trim().split(/\r?\n/u);
+if (!gitExecutable || !path.isAbsolute(gitExecutable)) {
+  throw new Error('Could not resolve an absolute Git executable for deployment tests');
+}
+
 const runGit = (root: string, argumentsList: readonly string[]): string =>
   execFileSync(
-    '/usr/bin/git',
+    gitExecutable,
     [
       '-c',
       'user.email=ontos-ci@example.invalid',
@@ -296,6 +303,8 @@ it.live('a global input or the build environment invalidates every unit', () =>
         'app/tsconfig.base.json',
         'app/patches/x.patch',
         'app/topology/cloudflare-placement.json',
+        'app/topology/stage-edge.json',
+        'app/scripts/prepare-stage-release-secrets.mts',
         'app/scripts/release-shared.mts',
         '.github/actions/install-app/action.yml',
       ]) {
@@ -507,6 +516,7 @@ const ONLINE_ENV = {
   RELEASE_FINGERPRINT_KEY: KEY,
   STOREFRONT_CATALOG_KV_ID: 'kv-1',
   STOREFRONT_IMAGE_HOSTS: '',
+  STOREFRONT_URL: 'https://storefront.example',
 };
 
 /** Workers are named by the build marker, which hashes unit, content and source revision. */

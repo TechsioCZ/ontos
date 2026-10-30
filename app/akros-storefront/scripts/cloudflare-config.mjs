@@ -9,6 +9,13 @@ const required = (name) => {
 };
 const shellUrl = new URL(required("ONTOS_SHELL_URL"));
 if (shellUrl.protocol !== "https:") throw new Error("ONTOS_SHELL_URL must use HTTPS");
+// The storefront's public origin (app/topology/stage-edge.json storefrontHostname), served as its custom domain.
+const storefrontUrl = new URL(required("STOREFRONT_URL"));
+if (
+  storefrontUrl.protocol !== "https:" ||
+  storefrontUrl.origin !== process.env.STOREFRONT_URL.trim()
+)
+  throw new Error("STOREFRONT_URL must be an HTTPS origin");
 // The storefront's own catalog cache (public catalog reads only), shared by every data center.
 const catalogNamespaceId = required("STOREFRONT_CATALOG_KV_ID");
 if (!/^[a-f\d]{32}$/u.test(catalogNamespaceId)) throw new Error("Invalid catalog KV namespace ID");
@@ -28,6 +35,7 @@ config.vars = {
   ONTOS_SHELL_URL: shellUrl.origin,
   STOREFRONT_IMAGE_HOSTS: process.env.STOREFRONT_IMAGE_HOSTS ?? "",
 };
+config.routes = [{ pattern: storefrontUrl.hostname, custom_domain: true }];
 config.kv_namespaces = [{ binding: "STOREFRONT_CATALOG_CACHE", id: catalogNamespaceId }];
 config.services = [{ binding: "ONTOS_SHELL", service: shellWorker }];
 writeFileSync(

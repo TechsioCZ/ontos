@@ -687,11 +687,17 @@ export default defineConfig({
       },
     },
     {
-      // The stage demo deploy planner runs in its plan job before any workspace install, which keeps the plan off
-      // the deploy's critical path, so these scripts import Node builtins only: no Effect, Schema or Redacted. They
-      // validate JSON by hand at each boundary, throw to one CLI edge and run the checkout's git. Every rule below
-      // prescribes an Effect or Schema replacement; the rest of the rule set still applies.
-      files: ['scripts/ci/deploy-plan.mts', 'scripts/ci/release-ledger.mts', 'scripts/ci/unit-closure.mts'],
+      // The stage demo deploy planner and its stage edge config export run in the plan job before any workspace
+      // install, which keeps the plan off the deploy's critical path, so these scripts import Node builtins only: no
+      // Effect, Schema or Redacted. They validate JSON by hand at each boundary, throw to one CLI edge and run the
+      // checkout's git. Every rule below prescribes an Effect or Schema replacement; the rest of the rule set still
+      // applies.
+      files: [
+        'scripts/ci/deploy-plan.mts',
+        'scripts/ci/release-ledger.mts',
+        'scripts/ci/stage-edge.mts',
+        'scripts/ci/unit-closure.mts',
+      ],
       rules: {
         'anti-slop/no-runtime-typeof': 'off',
         'anti-slop/no-unknown-parameters': 'off',

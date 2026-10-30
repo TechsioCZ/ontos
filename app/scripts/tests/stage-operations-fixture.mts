@@ -135,7 +135,14 @@ const projectTable = (projects: readonly FakeZeropsProject[]) =>
 const unexpected = (command: OpsCommand) =>
   Effect.fail(new OpsCommandError({ command: renderCommand(command), message: 'unexpected command' }));
 
-const ImportSchema = Schema.Struct({ services: Schema.Array(Schema.Struct({ hostname: Schema.String })) });
+const ImportSchema = Schema.Struct({
+  services: Schema.Array(
+    Schema.Struct({
+      envSecrets: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+      hostname: Schema.String,
+    }),
+  ),
+});
 const VALUE_TEMPLATE = /^\{\{if eq \.Key "(?<key>[^"]+)"\}\}/u;
 
 const zcliProjectAnswer = (stage: FakeStage, command: OpsCommand) => {
@@ -173,11 +180,14 @@ const zcliAnswer = (stage: FakeStage, command: OpsCommand, nextId: () => string)
   }
   if (group === 'project' && action === 'service-import') {
     const stdin = command.stdin === undefined ? '' : Redacted.value(command.stdin);
-    for (const { hostname } of Schema.decodeUnknownSync(ImportSchema)(parseYaml(stdin)).services) {
+    for (const { envSecrets, hostname } of Schema.decodeUnknownSync(ImportSchema)(parseYaml(stdin)).services) {
       if (stage.hiddenOnImport.has(hostname)) {
         continue;
       }
       stage.services.push({ hostname, id: nextId(), status: 'READY_TO_DEPLOY' });
+      for (const [key, value] of Object.entries(envSecrets ?? {})) {
+        stage.projectValues.set(`${hostname}_${key}`, value);
+      }
     }
     return Effect.succeed('');
   }
@@ -506,7 +516,18 @@ export const fakeZeropsApi = (
           }
           stage.services = stage.services.filter(({ id }) => id !== serviceId);
         }),
-      deleteServiceSecret: notFaked('deleteServiceSecret'),
+      deleteServiceSecret: (serviceId, key) =>
+        Effect.sync(() => {
+          const hostname = stage.services.find(({ id }) => id === serviceId)?.hostname ?? serviceId;
+          const reference = `${hostname}_${key}`;
+          stage.projectValues.delete(reference);
+          stage.projectUserKeys.splice(
+            0,
+            stage.projectUserKeys.length,
+            ...stage.projectUserKeys.filter((candidate) => candidate !== reference),
+          );
+          stage.sensitiveKeys.delete(reference);
+        }),
       deployAppVersion: notFaked('deployAppVersion'),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
       findServiceStack: notFaked('findServiceStack'),
@@ -630,9 +651,6 @@ export interface FakeCloudflareAccount {
   readonly layer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: FakeCloudflareRequest[];
   readonly rulesets: FakeRuleset[];
-  readonly scripts: string[];
-  /** Secret names per Worker script. */
-  readonly secrets: Map<string, string[]>;
   readonly serviceTokens: FakeRecord[];
   readonly tunnels: FakeTunnel[];
   /** What the GraphQL Analytics API reports for any window, one row per script. */
@@ -650,13 +668,13 @@ export interface FakeCloudflareInitial {
   readonly kvKeys?: Readonly<Record<string, readonly string[]>>;
   readonly kvNamespaces?: readonly FakeKvNamespace[];
   readonly rulesets?: readonly FakeRuleset[];
-  readonly scripts?: readonly string[];
-  readonly secrets?: Readonly<Record<string, readonly string[]>>;
   readonly serviceTokens?: readonly FakeRecord[];
   readonly tunnels?: readonly FakeTunnel[];
   readonly tunnelStatus?: string;
   readonly usage?: readonly FakeUsage[];
   readonly vpcServices?: readonly FakeVpcService[];
+  readonly workersDevSubdomain?: string;
+  readonly zoneReadDeniedForToken?: string;
   /** Defaults to the test stage zone `stage.example.com` as `zone-1`. */
   readonly zones?: readonly FakeZone[];
 }
@@ -858,13 +876,17 @@ const nonAccountAnswer = (
   return zoneResult === undefined ? noRoute() : envelope(zoneResult);
 };
 
+/** The ID the fake account gives its `index`th created KV namespace (1-based). */
+export const fakeKvNamespaceId = (index: number) => String(index).padStart(32, '0');
+
 /** The KV namespace list and create routes, and a namespace's key list (names only, by prefix). */
 const kvAnswer = (account: FakeState, method: string, url: URL, path: string, body: Option.Option<Json>): Response => {
   if (path === '/storage/kv/namespaces') {
     if (method === 'POST') {
       const created = {
         ...decodeBody(KvNamespaceBodySchema, body),
-        id: `kv-${String(account.kvNamespaces.length + 1)}`,
+        // Cloudflare KV namespace IDs are 32 hex digits; topology/stage-edge.json accepts nothing else.
+        id: fakeKvNamespaceId(account.kvNamespaces.length + 1),
       };
       account.kvNamespaces.push(created);
       return envelope(created);
@@ -923,8 +945,6 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
     kvNamespaces: [...(initial.kvNamespaces ?? [])],
     requests: [],
     rulesets: (initial.rulesets ?? []).map((ruleset) => ({ ...ruleset, rules: [...ruleset.rules] })),
-    scripts: [...(initial.scripts ?? [])],
-    secrets: new Map(Object.entries(initial.secrets ?? {}).map(([script, names]) => [script, [...names]])),
     serviceTokens: [...(initial.serviceTokens ?? [])],
     tunnels: [...(initial.tunnels ?? [])],
     usage: [...(initial.usage ?? [])],
@@ -943,6 +963,9 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
     const guardResult = accountGuardAnswer(account, method, path, body);
     if (guardResult !== undefined) {
       return Array.isArray(guardResult) ? firstPage(url, guardResult) : envelope(guardResult);
+    }
+    if (path === '/workers/subdomain') {
+      return envelope({ subdomain: initial.workersDevSubdomain ?? 'stage-example' });
     }
     if (path.startsWith('/cfd_tunnel')) {
       return tunnelAnswer(account, initial, method, url, path) ?? noRoute();
@@ -964,17 +987,27 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
     if (path.startsWith('/storage/kv/namespaces')) {
       return kvAnswer(account, method, url, path, body);
     }
-    const secretScript = /^\/workers\/scripts\/(?<script>[^/]+)\/secrets$/u.exec(path)?.groups?.script;
-    if (secretScript !== undefined) {
-      const names = account.secrets.get(decodeURIComponent(secretScript));
-      return names === undefined ? noRoute() : envelope(names.map((name) => ({ name, type: 'secret_text' })));
-    }
-    return path === '/workers/scripts' ? envelope(account.scripts.map((id) => ({ id }))) : noRoute();
+    return noRoute();
   };
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request, url) => {
       const body = requestBody(request);
+      if (
+        url.pathname === '/client/v4/zones' &&
+        initial.zoneReadDeniedForToken !== undefined &&
+        request.headers.authorization === `Bearer ${initial.zoneReadDeniedForToken}`
+      ) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              { errors: [{ code: 9109, message: 'Zone Read denied' }], result: null, success: false },
+              { status: 403 },
+            ),
+          ),
+        );
+      }
       account.requests.push({ body, method: request.method, url });
       return Effect.succeed(HttpClientResponse.fromWeb(request, answer(request.method, url, body)));
     }),

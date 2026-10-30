@@ -1,10 +1,14 @@
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Exit, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
+import { APP_ROOT, readStageEdgeConfig, stageEdgeUrls } from '../ci/stage-edge.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 
 const StepSchema = Schema.Struct({
@@ -124,6 +128,54 @@ it('passes operator data only as environment values and masks the derived worklo
     'mise exec -- pnpm exec node verticals/commerce-customer-context/scripts/recover-admitted-retail-profile.mts',
   );
   expect(run.run).not.toContain('GITHUB_ENV');
+});
+
+// Runs the real recovery step with `mise` and `pnpm` stubbed: the owner script records the gateway URL it received.
+const recoveryGatewayUrl = (owner: Readonly<Record<string, string>>) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'stage-profile-recovery-'));
+  try {
+    const bin = path.join(directory, 'bin');
+    const record = path.join(directory, 'record');
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, 'mise'),
+      // `mise exec -- node …` runs this test's Node; `mise exec -- pnpm …` runs the pnpm stub.
+      `#!/bin/bash\n[[ "$1" == exec && "$2" == -- ]] || exit 2\nshift 2\n[[ "$1" == node ]] && exec ${JSON.stringify(process.execPath)} "\${@:2}"\nexec "$@"\n`,
+    );
+    writeFileSync(path.join(bin, 'pnpm'), '#!/bin/bash\nprintf %s "$ONTOS_SHELL_GATEWAY_BASE_URL" >"$RECORD"\n');
+    chmodSync(path.join(bin, 'mise'), 0o755);
+    chmodSync(path.join(bin, 'pnpm'), 0o755);
+    const result = spawnSync(
+      '/bin/bash',
+      ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step(OPERATOR_RUN).run ?? ''],
+      {
+        cwd: APP_ROOT,
+        encoding: 'utf-8',
+        env: {
+          ALL_RELEASE_SECRETS: JSON.stringify({ 'commerce-customer-context': owner }),
+          PATH: `${bin}:/usr/bin:/bin`,
+          RECORD: record,
+          RECOVERY_TRANSITION: 'ensure-retail-customer-profile',
+        },
+      },
+    );
+    expect(result.status).toBe(0);
+    return readFileSync(record, 'utf-8');
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+it('derives the recovery gateway URL from the stage edge config, never from the stored bundle', () => {
+  const derived = stageEdgeUrls(readStageEdgeConfig()).shellApiBaseUrl;
+  const key = { ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'synthetic-workload-key-never-real' };
+  expect(
+    recoveryGatewayUrl({
+      ...key,
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://ontos-stage.retired.invalid/shell-super-app-api',
+    }),
+  ).toBe(derived);
+  expect(recoveryGatewayUrl(key)).toBe(derived);
 });
 
 it('clears only its own VPN through an always cleanup with the exact connection outputs', () => {

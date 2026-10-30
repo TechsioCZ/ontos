@@ -969,7 +969,7 @@ export const productMovements = Effect.fn('MerchandiseQueries.productMovements')
   );
 });
 
-/** Company-wide indicators in two aggregate queries. */
+/** Company-wide indicators in two aggregate queries. The bigint sums arrive as strings and are mapped to numbers. */
 export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* indicators(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -981,7 +981,7 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
           .select({
             lowStockCount: sql<number>`count(*) filter (where ${products.lowStock})::int`,
             productCount: sql<number>`count(*)::int`,
-            stockValueMinor: sql<number>`coalesce(sum(${products.stockValueMinor}), 0)::bigint`,
+            stockValueMinor: sql`coalesce(sum(${products.stockValueMinor}), 0)::bigint`.mapWith(Number),
           })
           .from(products)
           .where(and(whereScope(products, scope), eq(products.archived, false))),
@@ -989,7 +989,10 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
       query(
         db
           .select({
-            openOrderValueMinor: sql<number>`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}), 0)::bigint`,
+            openOrderValueMinor:
+              sql`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}), 0)::bigint`.mapWith(
+                Number,
+              ),
             orderCount: sql<number>`count(*)::int`,
           })
           .from(orders)

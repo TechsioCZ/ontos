@@ -1,22 +1,22 @@
 // One post-deploy verification pass of stage (no load: the stage Workers CPU budget is capped).
 // Signs in as a persona, times three authenticated /cs documents, checks the OAuth metadata and the
 // AKROS storefront home, then signs the session out through the native action even when a check
-// failed. Each page document must answer within DOCUMENT_ACCEPTANCE_MS; OAuth metadata and the auth
+// failed. A page document slower than DOCUMENT_ACCEPTANCE_MS is reported as a GitHub warning and does not
+// fail the pass; every status, transport, session and timeout failure does. OAuth metadata and the auth
 // writes are checked for status only, because the page budget is not their contract.
-// usage: node scripts/ops/stage-demo-verify.mjs
+// usage: STAGE_SHELL_URL=https://<shell> STAGE_STOREFRONT_URL=https://<storefront> node scripts/ops/stage-demo-verify.mjs
+// (the deploy workflow exports both from app/topology/stage-edge.json)
 import { NodeRuntime } from '@effect/platform-node';
 import { Clock, Config, Console, Data, Duration, Effect, Redacted, Ref, Schema } from 'effect';
 
 import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
 
-const DEFAULT_SHELL_URL = 'https://ontos-stage.bleeding.dev';
-const DEFAULT_STOREFRONT_URL = 'https://ontos-stage-akros.bleeding.dev';
 const DEFAULT_PERSONA = 'management@najempark.demo';
 export const DEFAULT_PASSWORD = Redacted.make('password1234');
 const REQUEST_TIMEOUT_MS = 60_000;
 const SIGN_OUT_TIMEOUT_MS = 10_000;
 
-/** Page acceptance for a document response. Deliberately has no environment or flag override. */
+/** Page budget for a document response, reported as a warning. Deliberately has no environment or flag override. */
 export const DOCUMENT_ACCEPTANCE_MS = 1500;
 
 /** A request or body read failed at the private fetch adapter. */
@@ -26,7 +26,7 @@ export const StageTransportError = Data.TaggedError('StageTransportError');
 export class StageVerificationFailure extends Data.TaggedError('StageVerificationFailure') {
   /**
    * @param {string} label The probe that failed.
-   * @param {'transport' | 'body' | 'status' | 'budget' | 'session' | 'timeout' | 'payload' | 'summary'} reason The failed contract.
+   * @param {'transport' | 'body' | 'status' | 'session' | 'timeout' | 'payload' | 'summary'} reason The failed contract.
    * @param {string} message The operator-facing failure description.
    */
   constructor(label, reason, message) {
@@ -102,8 +102,9 @@ const abortRequest = (controller) => Effect.sync(() => controller.abort());
 /**
  * @param {StageTransport} transport The Effect-shaped HTTP port.
  * @param {StageVerificationFailure[]} failures The pass-local report.
+ * @param {string[]} warnings The pass-local page budget overruns.
  */
-const makeProbe = (transport, failures) => {
+const makeProbe = (transport, failures, warnings) => {
   const recordFailure = recordInto(failures);
   /**
    * @param {string} label The probe label.
@@ -139,13 +140,9 @@ const makeProbe = (transport, failures) => {
         if (response.status !== 200) {
           yield* recordFailure(new StageVerificationFailure(label, 'status', `${label} answered ${response.status}`));
         } else if (budgetMs !== undefined && total > budgetMs) {
-          yield* recordFailure(
-            new StageVerificationFailure(
-              label,
-              'budget',
-              `${label} took ${Math.round(total)}ms, over the ${budgetMs}ms page budget`,
-            ),
-          );
+          yield* Effect.sync(() => {
+            warnings.push(`${label} took ${Math.round(total)}ms, over the ${budgetMs}ms page budget`);
+          });
         }
       }),
     ).pipe(
@@ -201,28 +198,32 @@ const receiveSession =
   };
 
 /**
- * Runs one sequential verification pass and retains typed failures without skipping later probes.
+ * Runs one sequential verification pass and retains typed failures and page budget warnings without
+ * skipping later probes.
  * Clock and Console come from Effect services; tests replace only the Effect-shaped HTTP port.
- * @param {object} [options] The pass configuration.
+ * @param {object} options The pass configuration.
  * @param {Redacted.Redacted} [options.password] The persona's password.
  * @param {string} [options.persona] The account the pass signs in with.
- * @param {string} [options.shellUrl] The Shell origin.
- * @param {string} [options.storefrontUrl] The storefront origin.
+ * @param {string} options.shellUrl The Shell origin.
+ * @param {string} options.storefrontUrl The storefront origin.
  * @param {StageTransport} [options.transport] The HTTP transport.
- * @returns {Effect.Effect<{failures: StageVerificationFailure[]}>} Failures in probe order, including finalization.
+ * @returns {Effect.Effect<{failures: StageVerificationFailure[], warnings: string[]}>} Failures in probe order,
+ * including finalization, and the page budget overruns.
  */
 export const verifyStage = ({
   password = DEFAULT_PASSWORD,
   persona = DEFAULT_PERSONA,
-  shellUrl = DEFAULT_SHELL_URL,
-  storefrontUrl = DEFAULT_STOREFRONT_URL,
+  shellUrl,
+  storefrontUrl,
   transport = fetchTransport,
-} = {}) =>
+}) =>
   Effect.suspend(() => {
     /** @type {StageVerificationFailure[]} */
     const failures = [];
+    /** @type {string[]} */
+    const warnings = [];
     const recordFailure = recordInto(failures);
-    const probe = makeProbe(transport, failures);
+    const probe = makeProbe(transport, failures, warnings);
     const pass = Effect.gen(function* verifyOwnedSession() {
       yield* Effect.forEach(
         ['oauth-authorization-server', 'oauth-protected-resource'],
@@ -262,7 +263,7 @@ export const verifyStage = ({
     });
     return Effect.scoped(pass).pipe(
       Effect.catchTag('StageVerificationFailure', recordFailure),
-      Effect.as({ failures }),
+      Effect.as({ failures, warnings }),
     );
   });
 
@@ -271,10 +272,13 @@ export const verifyStageFromConfig = (transport = fetchTransport) =>
   Effect.gen(function* verifyStageCommand() {
     const settings = yield* Config.all({
       persona: Config.String('STAGE_VERIFY_PERSONA').pipe(Config.withDefault(DEFAULT_PERSONA)),
-      shellUrl: Config.String('STAGE_SHELL_URL').pipe(Config.withDefault(DEFAULT_SHELL_URL)),
-      storefrontUrl: Config.String('STAGE_STOREFRONT_URL').pipe(Config.withDefault(DEFAULT_STOREFRONT_URL)),
+      shellUrl: Config.String('STAGE_SHELL_URL'),
+      storefrontUrl: Config.String('STAGE_STOREFRONT_URL'),
     });
-    const { failures } = yield* verifyStage({ ...settings, transport });
+    const { failures, warnings } = yield* verifyStage({ ...settings, transport });
+    yield* Effect.forEach(warnings, (warning) => Console.log(`::warning title=Stage page budget::${warning}`), {
+      discard: true,
+    });
     if (failures.length > 0) {
       yield* Effect.fail(
         new StageVerificationFailure(

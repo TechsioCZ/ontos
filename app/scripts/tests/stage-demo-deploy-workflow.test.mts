@@ -22,6 +22,7 @@ import { ApplicationReleaseIntentSchema } from '../application-release-intent.mt
 import { STOREFRONT_ENV_KEYS } from '../ci/deploy-plan.mts';
 import { emptyLedger, parseLedger, serializeLedger } from '../ci/release-ledger.mts';
 import { HOST_BUILD_JOB, STOREFRONT_BUILD_JOB } from '../ci/release-stream.mts';
+import { readStageEdgeConfig } from '../ci/stage-edge.mts';
 import { sharedBuildSourceDigest } from '../demo/shared-build-source-digest.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import { gatewayPublicJwksFor, workerSecretPlan } from '../ops/cloudflare-stage-cutover.mts';
@@ -74,7 +75,7 @@ const JobSchema = Schema.Struct({
   'timeout-minutes': Schema.Number,
 });
 const WorkflowSchema = Schema.Struct({
-  env: Schema.Record(Schema.String, Schema.String),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   jobs: Schema.Struct({
     build: JobSchema,
     'build-outbox-host': JobSchema,
@@ -101,10 +102,11 @@ const readWorkflow = () => Schema.decodeUnknownSync(WorkflowSchema)(parse(readFi
 const readJobs = () => readWorkflow().jobs;
 const SHELL_INGRESS = 'Activate the Shell ingress';
 const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
+const RENTAL_REBRAND = 'Rebrand the rental demo through the native Shell Action';
 
 it('runs the native rental rebrand only after Shell activation and gates it on its own tests', () => {
   const { release, 'release-script-tests': tests } = readJobs();
-  const rebrandName = 'Rebrand the rental demo through the native Shell Action';
+  const rebrandName = RENTAL_REBRAND;
   const position = release.steps.findIndex((step) => step.name === rebrandName);
   const step = release.steps[position];
   expect(position).toBeGreaterThan(release.steps.findIndex(({ name }) => name === SHELL_INGRESS));
@@ -116,7 +118,12 @@ it('runs the native rental rebrand only after Shell activation and gates it on i
   expect(step?.['timeout-minutes']).toBe(5);
   expect(step?.['continue-on-error']).toBeUndefined();
   expect(step?.run).toBe(
-    `mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL" --idempotency-key "\${GITHUB_SHA}-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}-najempark-v1"`,
+    [
+      'sleep 60',
+      'mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL" \\',
+      `  --idempotency-key "\${GITHUB_SHA}-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}-najempark-v1"`,
+      '',
+    ].join('\n'),
   );
   expect(tests.steps.find(({ run }) => run?.includes('rstest') === true)?.run).toContain(
     'scripts/tests/rebrand-rental-demo.test.mts',
@@ -210,6 +217,7 @@ const STOREFRONT_DEPLOY = 'Deploy the AKROS storefront';
 const CANDIDATE = 'Assemble the composition candidate';
 const workflowExpression = (body: string) => ['${{', body, '}}'].join(' ');
 const HOST_RELEASE_DIGEST = workflowExpression('steps.host-release.outputs.digest');
+const ACCOUNT_VARIABLE = workflowExpression('vars.CLOUDFLARE_ACCOUNT_ID');
 const freshMigrationCondition = ['${{', '!inputs.outbox_only && !inputs.continue_migrated_publication', '}}'].join(' ');
 const fullDatabaseCondition = [
   '${{',
@@ -225,8 +233,9 @@ const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
 const indexOf = (steps: readonly { readonly name: string }[], name: string) =>
   steps.findIndex((step) => step.name === name);
-const TEST_STAGE_URL = 'https://stage.example.test';
-const TEST_STAGE_ZONE = 'example.test';
+const TEST_STAGE_TOPOLOGY = readStageEdgeConfig();
+const TEST_STAGE_URL = `https://${TEST_STAGE_TOPOLOGY.shellHostname}`;
+const TEST_STAGE_ZONE = TEST_STAGE_TOPOLOGY.zone;
 const RUNNER_TEMP_CONTEXT = 'runner.temp';
 const SECRET_CLEANUP_CONDITION = "always() && steps.release-secrets.outputs.directory != ''";
 const OUTBOX_ONLY_SUCCESS = 'outbox-only-success';
@@ -410,8 +419,6 @@ it('routes each reviewed recovery transition to its own operator command and tes
 });
 
 it('keeps the original bundle only in preparation and gives every later release consumer the same private file', () => {
-  expect(readWorkflow().env.STAGE_ZONE).toBe('bleeding.dev');
-  expect(readWorkflow().env.STAGE_SHELL_URL).toBe('https://ontos-stage.bleeding.dev');
   const { steps } = readJobs().release;
   const prepare = steps.find(({ name }) => name === PREPARE_SECRETS);
   const cleanup = steps.find(({ name }) => name === CLEANUP_SECRETS);
@@ -482,7 +489,11 @@ const runnerBundleFixture = Effect.gen(function* validRunnerBundleFixture() {
   const secret = Redacted.make('synthetic-runner-shared-service-secret');
   const plan = workerSecretPlan(
     units,
-    { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+    {
+      shellHostname: TEST_STAGE_TOPOLOGY.shellHostname,
+      spicedbHostname: TEST_STAGE_TOPOLOGY.spicedbHostname,
+      stageZone: TEST_STAGE_ZONE,
+    },
     {
       betterAuthSecret: secret,
       commerceCustomerContextGatewayApiKey: secret,
@@ -569,7 +580,6 @@ for (const mode of [
             GITHUB_OUTPUT: Redacted.make(mode === 'registration-failure' ? `${root}/missing/step-output` : output),
             RUNNER_TEMP: Redacted.make(root),
             STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
-            STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
             UNITS_JSON: Redacted.make(''),
           },
           stdin: Redacted.make(program ?? ''),
@@ -613,7 +623,6 @@ for (const mode of [
             env: {
               ALL_RELEASE_SECRETS_FILE: Redacted.make(file),
               STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
-              STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
               UNITS_JSON: Redacted.make(
                 JSON.stringify([{ id: 'shell-super-app' }, ...intent.modules.map(({ appId }) => ({ id: appId }))]),
               ),
@@ -875,7 +884,11 @@ for (const example of secretInventoryExamples) {
         const secret = Redacted.make(SYNTHETIC_SECRET);
         const plan = workerSecretPlan(
           units,
-          { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+          {
+            shellHostname: TEST_STAGE_TOPOLOGY.shellHostname,
+            spicedbHostname: TEST_STAGE_TOPOLOGY.spicedbHostname,
+            stageZone: TEST_STAGE_ZONE,
+          },
           {
             betterAuthSecret: secret,
             commerceCustomerContextGatewayApiKey: secret,
@@ -913,7 +926,6 @@ for (const example of secretInventoryExamples) {
             ALL_RELEASE_SECRETS_FILE: Redacted.make(bundleFile),
             GITHUB_STEP_SUMMARY: Redacted.make(summary),
             STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
-            STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
             UNITS_JSON: Redacted.make(JSON.stringify(example.select?.(planned) ?? planned)),
           },
           stdin: Redacted.make(program ?? ''),
@@ -1027,7 +1039,7 @@ it('hands the environment-scoped Cloudflare account to the builds, which run wit
   const { build, plan, release } = readJobs();
   const planner = plan.steps.find(({ id }) => id === 'plan');
   // Read in the env-less build job, vars.CLOUDFLARE_ACCOUNT_ID is empty and every unit digest differs from the plan's.
-  expect(planner?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(workflowExpression('vars.CLOUDFLARE_ACCOUNT_ID'));
+  expect(planner?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(ACCOUNT_VARIABLE);
   expect(release.env?.CLOUDFLARE_ACCOUNT_ID).toBe(planner?.env?.CLOUDFLARE_ACCOUNT_ID);
   expect(planner?.run).toContain(
     String.raw`printf 'cloudflare_account_id=%s\n' "$CLOUDFLARE_ACCOUNT_ID" >>"$GITHUB_OUTPUT"`,
@@ -1193,7 +1205,10 @@ it('always redeploys the outbox host after the configuration apply, with no live
 it('deploys the prebuilt outbox host beside the Shell tail after publication and requires positive admission', () => {
   const { steps } = readJobs().release;
   expect(steps.some(({ name }) => name === 'Install Zerops CLI')).toBe(false);
-  expect(steps.some(({ run }) => run?.includes('sleep 60') === true)).toBe(false);
+  // Only the rental rebrand waits, for Workers KV to serve the published composition everywhere.
+  expect(steps.filter(({ run }) => run?.includes('sleep 60') === true).map(({ name }) => name)).toEqual([
+    RENTAL_REBRAND,
+  ]);
   const start = steps.find(({ name }) => name === HOST_DEPLOY_START);
   // The deploy activates the version staged before publication; it neither fetches nor uploads the artifact.
   expect(start?.run).not.toContain('release-stream.mts fetch');
@@ -1231,7 +1246,7 @@ it('deploys the prebuilt outbox host beside the Shell tail after publication and
     RECOVERY_CONFIG_APPLY,
     HOST_DEPLOY_START,
     SHELL_INGRESS,
-    'Rebrand the rental demo through the native Shell Action',
+    RENTAL_REBRAND,
     STOREFRONT_DEPLOY,
     HOST_DEPLOY_JOIN,
     HOST_ADMISSION,
@@ -1487,28 +1502,77 @@ for (const example of [
   );
 }
 
+/** The plan and the release export topology/stage-edge.json to their environment; the builds read the plan outputs. */
+const resolveStageEdgeReference = (value: string | undefined) =>
+  value
+    ?.replace(/^\$\{\{ env\.(?<key>[A-Z_]+) \}\}$/u, (_match, key: string) => `stage-edge:${key}`)
+    .replace(
+      /^\$\{\{ needs\.plan\.outputs\.(?<key>[a-z_]+) \}\}$/u,
+      (_match, key: string) => `stage-edge:${key.toUpperCase()}`,
+    );
+
 it('plans, rechecks, builds and deploys the storefront with the same build literals', () => {
   const {
-    env,
     jobs: { 'build-storefront': build, plan, release },
   } = readWorkflow();
-  const resolve = (value: string | undefined) =>
-    value?.replace(/^\$\{\{ env\.(?<key>[A-Z_]+) \}\}$/u, (_match, key: string) => env[key] ?? 'unset');
   const literals = [
     plan.steps.find(({ id }) => id === 'plan')?.env,
     release.steps.find(({ name }) => name === RECOMPUTE_PLAN)?.env,
     build.steps.find(({ name }) => name === 'Build the storefront Worker')?.env,
     release.steps.find(({ name }) => name === STOREFRONT_DEPLOY)?.env,
-  ].map((stepEnv) => Object.fromEntries(STOREFRONT_ENV_KEYS.map((key) => [key, resolve(stepEnv?.[key])])));
+  ].map((stepEnv) =>
+    Object.fromEntries(STOREFRONT_ENV_KEYS.map((key) => [key, resolveStageEdgeReference(stepEnv?.[key]) ?? 'unset'])),
+  );
   // Every literal is set, the explicitly empty image hosts included, so the plan may reuse a storefront build.
   for (const key of STOREFRONT_ENV_KEYS) {
-    expect(literals[0]?.[key]).toBeTypeOf('string');
     expect(literals[0]?.[key]).not.toBe('unset');
   }
-  expect(literals[0]?.STOREFRONT_IMAGE_HOSTS).toBe('');
+  expect(literals[0]).toEqual({
+    ONTOS_SHELL_URL: 'stage-edge:STAGE_SHELL_URL',
+    ONTOS_SHELL_WORKER_NAME: 'app-shell-super-app',
+    STOREFRONT_CATALOG_KV_ID: 'stage-edge:STAGE_STOREFRONT_CATALOG_KV_ID',
+    STOREFRONT_IMAGE_HOSTS: '',
+    STOREFRONT_URL: 'stage-edge:STAGE_STOREFRONT_URL',
+  });
   for (const stepLiterals of literals) {
     expect(stepLiterals).toEqual(literals[0]);
   }
+});
+
+it('takes the stage edge account, subdomain and hostnames only from topology/stage-edge.json', () => {
+  const workflow = readWorkflow();
+  const { build, plan, 'prune-workers': prune, release, verify } = workflow.jobs;
+  expect(workflow.env).toBeUndefined();
+  expect(readFileSync(STAGE_DEMO_WORKFLOW, 'utf-8')).not.toMatch(/bleeding\.dev|edution|techsio\.cz|\.workers\.dev/u);
+  const exportCommand = 'mise exec -- node scripts/ci/stage-edge.mts export';
+  const accountCheck = '--cloudflare-account-id "$CLOUDFLARE_ACCOUNT_ID"';
+  const edge = plan.steps.find(({ id }) => id === 'edge');
+  expect(edge?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(ACCOUNT_VARIABLE);
+  expect(edge?.run).toContain(exportCommand);
+  expect(edge?.run).toContain(accountCheck);
+  expect(edge?.run).toContain('--github-env "$GITHUB_ENV" --github-output "$GITHUB_OUTPUT"');
+  expect(indexOf(plan.steps, edge?.name ?? '')).toBeLessThan(plan.steps.findIndex(({ id }) => id === 'plan'));
+  for (const output of [
+    'workers_dev_subdomain',
+    'stage_shell_url',
+    'stage_storefront_url',
+    'stage_storefront_catalog_kv_id',
+  ]) {
+    expect(plan.outputs?.[output]).toBe(workflowExpression(`steps.edge.outputs.${output}`));
+  }
+  expect(build.env?.WORKERS_DEV_SUBDOMAIN).toBe(workflowExpression('needs.plan.outputs.workers_dev_subdomain'));
+  // The release, which may run without the plan (outbox-only), and the prune check the account themselves.
+  for (const job of [release, prune]) {
+    expect(job.env?.CLOUDFLARE_ACCOUNT_ID).toBe(ACCOUNT_VARIABLE);
+    const check = job.steps.find(({ run }) => run?.includes(exportCommand) === true);
+    expect(check?.run).toContain(accountCheck);
+    expect(check?.if).toBeUndefined();
+  }
+  const releaseExport = release.steps.find(({ run }) => run?.includes(exportCommand) === true);
+  expect(releaseExport?.run).toContain('--github-env "$GITHUB_ENV"');
+  expect(indexOf(release.steps, releaseExport?.name ?? '')).toBeLessThan(indexOf(release.steps, PREPARE_SECRETS));
+  const verifyExport = verify.steps.find(({ run }) => run?.includes(exportCommand) === true);
+  expect(verifyExport?.run).toBe(`${exportCommand} --github-env "$GITHUB_ENV"`);
 });
 
 it('builds each unit reference graph before the native Cloudflare build on a fresh runner', () => {
@@ -1992,7 +2056,7 @@ it('keeps the real MCP propose/reject proof outside every customer demo tenant',
   expect(proof?.run).not.toContain('--keep');
 });
 
-it('runs the existing newsletter browser proof after Chromium even if timing fails, but not on outbox-only retries', () => {
+it('runs the non-blocking newsletter browser proof after Chromium even if timing fails, but not on outbox-only retries', () => {
   const { verify } = readJobs();
   const { steps } = verify;
   const proofName = 'Prove the native newsletter grant and withdrawal';
@@ -2002,7 +2066,14 @@ it('runs the existing newsletter browser proof after Chromium even if timing fai
   const fixture = readJobs().release.steps.find(({ name }) => name === 'Prepare the native demo customer fixture');
   expect(fixture?.if).toBe(fullPublicationCondition);
   expect(proof?.if).toBe('(success() || failure()) && !inputs.outbox_only');
-  expect(proof?.['continue-on-error']).toBeUndefined();
+  expect(proof?.id).toBe('newsletter-proof');
+  expect(proof?.['continue-on-error']).toBe(true);
+  const warningName = 'Warn about a failed newsletter proof';
+  const warning = steps.find(({ name }) => name === warningName);
+  expect(warning?.if).toBe("(success() || failure()) && steps.newsletter-proof.outcome == 'failure'");
+  expect(warning?.run).toContain('::warning title=Newsletter proof::');
+  expect(warning?.run).toContain('$GITHUB_STEP_SUMMARY');
+  expect(indexOf(steps, warningName)).toBe(indexOf(steps, proofName) + 1);
   expect(proof?.['working-directory']).toBe('app');
   expect(proof?.env).toEqual({
     AKROS_EVIDENCE_DIR: ['${{', RUNNER_TEMP_CONTEXT, '}}/newsletter-consent'].join(' '),

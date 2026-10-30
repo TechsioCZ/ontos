@@ -342,7 +342,7 @@ it('declares each unit Worker Hyperdrive from the database identities it serves'
   }
 });
 
-it('preserves every DEMO and upstream unit and reuses the verified dedicated Hyperdrive IDs', () => {
+it('places every topology unit and leaves account-specific IDs empty until provisioning writes them', () => {
   const placement = Schema.decodeUnknownSync(
     Schema.fromJsonString(
       Schema.Struct({
@@ -355,9 +355,18 @@ it('preserves every DEMO and upstream unit and reuses the verified dedicated Hyp
   expect(EffectArray.sort(placement.units, Order.String)).toEqual(
     EffectArray.sort([topology.shell.id, ...topology.verticals.map(({ id }) => id)], Order.String),
   );
-  expect(placement.buildEnvironment[HYPERDRIVE_ID]).toBe('372fc29c7f034f41b0e7844a69724069');
-  expect(placement.buildEnvironment[PARTY_REGISTRY_HYPERDRIVE_ID]).toBe('1acaeefc14c14bb79dbd646170cc1060');
-  expect(placement.buildEnvironment[GATEWAY_ISSUER_HYPERDRIVE_ID]).toBe('f414f6c64c0b43cc85af7b182ca249a4');
+  // Empty until cloudflare-stage-cutover.mts provision writes the account's IDs; a unit build then fails closed.
+  for (const key of [HYPERDRIVE_ID, PARTY_REGISTRY_HYPERDRIVE_ID, GATEWAY_ISSUER_HYPERDRIVE_ID, COMPOSITION_KV_ID]) {
+    expect(placement.buildEnvironment[key]).toMatch(/^(?:[a-f0-9]{32})?$/u);
+  }
+  expect(placement.buildEnvironment[SPICEDB_VPC_SERVICE_ID]).toMatch(
+    /^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?$/u,
+  );
+  expect(() =>
+    createCloudflareDataPlaneBindings(reader({ ...placement.buildEnvironment, [SPICEDB_VPC_SERVICE_ID]: '' }), [
+      SHARED_HYPERDRIVE,
+    ]),
+  ).toThrow(`${SPICEDB_VPC_SERVICE_ID} is required for a Cloudflare Worker build`);
 });
 
 // Exercise Modern's actual jiti dependency in a fresh process, outside Rstest's ESM bundler.

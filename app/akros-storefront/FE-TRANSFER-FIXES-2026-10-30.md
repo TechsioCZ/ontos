@@ -1,5 +1,7 @@
 # Opravy převodu UI AKROS — 30. 10. 2026
 
+Aktuální integrační a validační stav po dalším upstream updatu popisuje [finální review](FINAL-REVIEW-2026-10-30.md).
+
 Navazuje na [audit z 29. 10.](FE-TRANSFER-AUDIT-2026-10-29.md). Tato změna řeší potvrzené FE nedodělky v `demo/sales-crm-updated`. Nemění kontrakty backendu ani nevkládá demo data do aplikace.
 
 ## Provedené opravy

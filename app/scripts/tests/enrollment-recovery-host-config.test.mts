@@ -29,6 +29,9 @@ const redactedMap = (values: Readonly<Record<string, string>>) =>
 
 const unused = () => Effect.die('Unexpected API method');
 const NOT_COPIED = 'must-not-copy';
+const OTHER_CREDENTIAL = 'other-host-credential-0123456789';
+const MISMATCH = 'existing-value-mismatch';
+const DISPATCH_URL = 'https://shell.example/email/dispatch';
 const reference = (key: string) => `\${${key}}`;
 
 const fixture = (
@@ -344,16 +347,75 @@ it.effect('fails APPLY when a retired key survives its deletion', () =>
   }),
 );
 
-it.effect('a mismatch in the final managed key blocks all writes in every mode, never rotating', () =>
+it.effect('a credential mismatch blocks all writes in every mode, never rotating', () =>
   Effect.gen(function* rejectExistingMismatchesBeforeWrites() {
     for (const mode of ['check', 'apply', 'verify'] as const) {
-      const state = fixture({ host: { COMMERCE_PORTAL_AUTH_URL: 'https://other.example' } });
+      const state = fixture({ host: { COMMERCE_CORE_IDENTITY_API_KEY: OTHER_CREDENTIAL } });
       expectSafeFailure(
         yield* enrollmentRecoveryHostConfig(mode).pipe(Effect.provide(state.layer), Effect.result),
-        'existing-value-mismatch',
+        MISMATCH,
       );
       expect(state.writes).toEqual([]);
     }
+  }),
+);
+
+it.effect('replaces stale derived URLs and senders on APPLY, after CHECK plans them, and VERIFY refuses them', () =>
+  Effect.gen(function* replaceStaleDerivedValues() {
+    const owner = { ...OWNER_VALUES, ONTOS_EMAIL_FROM: 'noreply@stage.example' };
+    const stale = {
+      ...expectedValues,
+      COMMERCE_PORTAL_AUTH_URL: 'https://old.example',
+      KEEP: 'existing',
+      ONTOS_EMAIL_FROM: 'noreply@old.example',
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://old.example/shell-super-app-api',
+    };
+    const state = fixture({ host: stale, owner });
+    const planned = yield* enrollmentRecoveryHostConfig('check').pipe(Effect.provide(state.layer));
+    expect(Arr.sort(planned.replacedKeys, Order.String)).toEqual([
+      'COMMERCE_PORTAL_AUTH_URL',
+      'ONTOS_EMAIL_FROM',
+      'ONTOS_SHELL_GATEWAY_BASE_URL',
+    ]);
+    expect(state.writes).toEqual([]);
+    expectSafeFailure(
+      yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer), Effect.result),
+      MISMATCH,
+    );
+    const applied = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
+    expect(applied.changed).toBe(true);
+    expect(Arr.sort(applied.replacedKeys, Order.String)).toEqual(Arr.sort(planned.replacedKeys, Order.String));
+    expect(applied.createdKeys).toEqual([]);
+    for (const [key, value] of Object.entries(owner)) {
+      expect(Redacted.value(state.host.get(key) ?? Redacted.make('missing'))).toBe(value);
+    }
+    expect(Redacted.value(state.host.get('KEEP') ?? Redacted.make('missing'))).toBe('existing');
+    expect(JSON.stringify(applied)).not.toContain('old.example');
+    yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer));
+  }),
+);
+
+it.effect('manages the Shell email dispatch endpoint only beside the host dispatch secret', () =>
+  Effect.gen(function* manageDispatchEndpoint() {
+    const without = fixture({ host: expectedValues });
+    const unmanaged = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(without.layer));
+    expect(unmanaged.managedKeys).not.toContain('ONTOS_EMAIL_DISPATCH_URL');
+    expect(without.host.has('ONTOS_EMAIL_DISPATCH_URL')).toBe(false);
+
+    const state = fixture({
+      host: {
+        ...expectedValues,
+        ONTOS_EMAIL_DISPATCH_SECRET: SYNTHETIC_SECRET,
+        ONTOS_EMAIL_DISPATCH_URL: 'https://old.example/shell-super-app-api/email/dispatch',
+      },
+    });
+    const applied = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
+    expect(applied.replacedKeys).toEqual(['ONTOS_EMAIL_DISPATCH_URL']);
+    expect(Redacted.value(state.host.get('ONTOS_EMAIL_DISPATCH_URL') ?? Redacted.make('missing'))).toBe(DISPATCH_URL);
+    expect(Redacted.value(state.host.get('ONTOS_EMAIL_DISPATCH_SECRET') ?? Redacted.make('missing'))).toBe(
+      SYNTHETIC_SECRET,
+    );
+    yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer));
   }),
 );
 
@@ -382,11 +444,11 @@ it.effect('detects missing write readback and a concurrent mismatch before any f
     );
     const changed = fixture();
     changed.setAfterWrite(() => {
-      changed.host.set('COMMERCE_PORTAL_AUTH_URL', Redacted.make('https://other.example'));
+      changed.host.set('COMMERCE_CORE_IDENTITY_API_KEY', Redacted.make(OTHER_CREDENTIAL));
     });
     expectSafeFailure(
       yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(changed.layer), Effect.result),
-      'existing-value-mismatch',
+      MISMATCH,
     );
     expect(changed.writes).toHaveLength(1);
   }),

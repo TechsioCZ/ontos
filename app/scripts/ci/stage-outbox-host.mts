@@ -54,6 +54,8 @@ const UNDEPLOYED_STATUSES: ReadonlySet<string> = new Set(['UPLOADING', 'WAITING_
 const DISCARD_WAIT = Duration.minutes(10);
 const NOTHING_STAGED = 'no outbox host version was staged';
 const POLL_INTERVAL = Duration.seconds(2);
+/** Zerops kept a 20-second upload of the host package and none of a 31-second one (or of a slower, smaller one). */
+const UPLOAD_WINDOW = Duration.seconds(30);
 
 /** The staging directory's files; `stream.log` and `exit-code` belong to the workflow's background wrapper. */
 export const stagingFiles = (directory: string) => ({
@@ -198,8 +200,15 @@ const stageVersion = (
       return yield* failure('the outbox host service configuration changed while its version was created');
     }
     yield* phase('upload-start');
-    yield* api.uploadAppVersionPackage(created.uploadUrl, archive);
+    const [took] = yield* Effect.timed(api.uploadAppVersionPackage(created.uploadUrl, archive));
     yield* phase('upload-done');
+    // Zerops answers 200 to a longer upload but keeps none of its data: its deploy would fail with "failed to
+    // identify artifact file format" only after publication.
+    if (Duration.isGreaterThanOrEqualTo(took, UPLOAD_WINDOW)) {
+      return yield* failure(
+        `the outbox host package upload took ${Duration.format(took)}; Zerops keeps no data of an upload that runs longer than about ${Duration.format(UPLOAD_WINDOW)}`,
+      );
+    }
     const uploaded = { ...receipt, uploaded: true };
     yield* writeReceipt(files.receipt, uploaded);
     return uploaded;
@@ -255,10 +264,14 @@ export const uploadStagedHost = ({
     }
     const { ownerBuildIdentities } = yield* Schema.decodeUnknownEffect(WorkerArtifactJson)(identity);
     yield* runCommand({
-      args: ['-c', '-z', '-f', files.package, '-C', files.unpacked, 'app'],
+      // POSIX (pax) headers like zcli's Go archive/tar: Zerops fails the deploy with "failed to identify artifact file
+      // format" on the GNU tar default format the CI runner writes.
+      args: ['--format=pax', '-c', '-z', '-f', files.package, '-C', files.unpacked, 'app'],
       command: 'tar',
     }).pipe(Effect.mapError(() => failure('the outbox host package could not be packed')));
     const archive = yield* fs.readFile(files.package);
+    const packageSha256 = createHash('sha256').update(archive).digest('hex');
+    yield* Console.log(`outbox host package ${String(archive.byteLength)} bytes, sha256 ${packageSha256}`);
     // The release is stopping: create nothing it would have to discard. `creating` first, so a discard that finds
     // no marker knows this check still lies ahead.
     yield* fs.writeFileString(files.creating, '');
@@ -272,7 +285,7 @@ export const uploadStagedHost = ({
         artifactDigest: digest,
         attempt: yield* runIdentity,
         owners: ownerBuildIdentities,
-        packageSha256: createHash('sha256').update(archive).digest('hex'),
+        packageSha256,
         serviceId: yield* hostServiceId,
         version: 1,
       },

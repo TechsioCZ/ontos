@@ -14,6 +14,7 @@ import {
   TenantIdSchema,
 } from '../../src/auth/external-identity-contracts.ts';
 import {
+  ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS,
   assertAuthenticationAdmission,
   assertExternalSubjectAdmission,
   externalSubjectFromAdmission,
@@ -570,6 +571,68 @@ it.layer(NodeCrypto.layer)('external operation admission', (suite) => {
           ),
       );
       expect(failure.code).toBe('identity_invalid');
+    }),
+  );
+
+  suite.effect('admits a provider stamp slightly ahead of the receiver clock, but no further', () =>
+    Effect.gen(function* providerClockAhead() {
+      const timeline = makeAdmissionClock(now);
+      const trusted = makeTrustedAuthenticationAdmissionService({
+        attesterPrincipalId,
+        maxAdmissionWindowMillis: 5000,
+      });
+      const observer: TrustedAdmissionObservationService = {
+        observeAuthentication: (request) =>
+          Effect.succeed(
+            Schema.decodeSync(AuthenticationAdmissionObservationSchema)({
+              audience: request.audience,
+              authBindingId: request.authBindingId,
+              authContextRef: request.authContextRef,
+              authenticationNamespaceId: request.authenticationNamespaceId,
+              bindingRevision: 1,
+              expiresAt: DateTime.add(now, { milliseconds: 5000 }),
+              nonce: request.nonce,
+              observedAt: now,
+              operationRef: request.operationRef,
+              principalId: request.principalId,
+              tenantId: request.tenantId,
+            }),
+          ),
+        observeExternalSubject: () => Effect.succeed(preBindingObservation),
+      };
+      const request = {
+        audience,
+        authBindingId,
+        authContextRef: 'opaque-provider-context',
+        authenticationNamespaceId: namespaceId,
+        nonce: '50000000-0000-4000-8000-000000000005',
+        operationRef: 'skewed-operation',
+        principalId: PrincipalIdSchema.make(principal.principalId),
+        subjectType: 'user' as const,
+        tenantId: TenantIdSchema.make(principal.tenantId),
+      };
+      const verify = trusted
+        .verify(request)
+        .pipe(
+          Effect.provideService(AuthenticationNamespaceRegistry, registry),
+          Effect.provideService(TrustedAdmissionObservation, observer),
+          Effect.provideService(Clock.Clock, timeline.clock),
+        );
+      // The receiver reads its I/O-frozen clock 150 ms before the provider's stamp (observed on stage Workers).
+      timeline.set(DateTime.subtract(now, { milliseconds: 150 }));
+      const admission = yield* verify;
+      yield* assertAuthenticationAdmission(admission, { ...request, bindingRevision: 1 });
+
+      timeline.set(DateTime.subtract(now, { milliseconds: ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS + 1 }));
+      const early = yield* Effect.flip(verify);
+      expect(early.code).toBe('identity_invalid');
+
+      // The tolerance never extends the proof: expiry is still the receiver clock against the provider deadline.
+      timeline.set(now);
+      const late = yield* verify;
+      timeline.set(DateTime.add(now, { milliseconds: 5000 }));
+      const expired = yield* Effect.exit(assertAuthenticationAdmission(late, { ...request, bindingRevision: 1 }));
+      expect(Exit.isFailure(expired)).toBe(true);
     }),
   );
 

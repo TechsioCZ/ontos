@@ -215,9 +215,12 @@ it.live('uploads the verified artifact, packed as zcli packs the runtime, to an 
       expect(zerops.calls).toEqual([`read ${SERVICE}`, `create ${SERVICE} ${'f'.repeat(40)}`, `read ${SERVICE}`]);
       expect(zerops.deployed).toEqual([]);
       const [upload] = zerops.uploads;
+      const tarBytes = gunzipSync(upload ?? []);
+      // The POSIX magic Zerops recognizes, not GNU tar's "ustar  \0".
+      expect(tarBytes.subarray(257, 265).toString('latin1')).toBe('ustar\u000000');
       const listing = spawnSync('/usr/bin/tar', ['-t', '-f', '-'], {
         encoding: 'utf-8',
-        input: gunzipSync(upload ?? []),
+        input: tarBytes,
       });
       expect(listing.stdout.split('\n')).toEqual(
         expect.arrayContaining(['app/', `${HOST_RUNTIME}/worker.mjs`, `${HOST_RUNTIME}/node/bin/node`]),

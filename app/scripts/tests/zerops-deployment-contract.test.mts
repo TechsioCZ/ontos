@@ -12,9 +12,11 @@ import { readZeropsDeployment } from '../generate-zerops-provider-deployment.mts
 import {
   DEPLOYMENT_ENVIRONMENT_VARIABLE,
   materializeZeropsEnvironment,
+  materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
@@ -22,7 +24,6 @@ const priceGroupCatalogSetup = 'price-group-catalog';
 const PARTY_REGISTRY_WORKER_SETUP = 'party-registry-worker';
 const priceGroupWorkerSetup = 'price-group-catalog-worker';
 const partyRegistrySetup = 'party-registry';
-const zeropsYamlPath = new URL('../../zerops.yaml', import.meta.url);
 const workflowPath = new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url);
 
 const ZeropsYamlSchema = Schema.Struct({
@@ -74,7 +75,7 @@ const identityUrl = (role: string, password: string) =>
 
 const serviceEnvironments = (): ReadonlyMap<string, Readonly<Record<string, string>>> =>
   new Map(
-    Schema.decodeUnknownSync(ServiceEnvironmentSchema)(parse(readFileSync(zeropsYamlPath, 'utf-8'))).zerops.map(
+    Schema.decodeUnknownSync(ServiceEnvironmentSchema)(parse(readZeropsDeploymentYaml())).zerops.map(
       ({ run, setup }) => [setup, run.envVariables ?? {}],
     ),
   );
@@ -121,7 +122,7 @@ const expectPriceGroupBinding = (service: YAMLMap): void => {
 };
 
 it('binds generated PostgreSQL credentials into every database-using service', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
 
   for (const setup of [
     'migrator',
@@ -139,7 +140,7 @@ it('binds generated PostgreSQL credentials into every database-using service', (
 });
 
 it('binds the SpiceDB datastore password, never a URL, into the migrator and SpiceDB services', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
   const migrator = serviceBlock(zeropsYaml, 'migrator');
   const spicedb = serviceBlock(zeropsYaml, 'spicedb');
 
@@ -154,7 +155,7 @@ it('binds the SpiceDB datastore password, never a URL, into the migrator and Spi
 });
 
 it('inherits a stable composition source without coupling service startup to publication', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
   const customerContext = serviceBlock(zeropsYaml, commerceCustomerContextSetup);
 
   const sourceConfiguration = readFileSync(
@@ -173,7 +174,7 @@ it('inherits a stable composition source without coupling service startup to pub
 });
 
 it('binds Commerce to the independently deployed Price Group Catalog API base', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
 
   expectPriceGroupBinding(serviceNode(zeropsYaml, commerceCustomerContextSetup));
   expect(
@@ -237,7 +238,7 @@ it('declares the Inventory public URL for Cloudflare proof', () => {
 });
 
 it('starts a dedicated Price Group worker that drains durable pending projections after restart', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
   const worker = serviceBlock(zeropsYaml, priceGroupWorkerSetup);
 
   expect(worker).toContain(
@@ -253,7 +254,7 @@ it('starts a dedicated Price Group worker that drains durable pending projection
 });
 
 it('runs every owner worker in one Outbox Worker host service beside the dedicated workers', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
   const host = serviceBlock(zeropsYaml, OUTBOX_WORKER_HOST.id);
 
   // CI prebuilds the host (scripts/ci/build-outbox-host.sh) and Zerops only deploys it: no Zerops build.
@@ -282,7 +283,7 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
 });
 
 it('builds every Node service with the pinned toolchain and ships Node instead of downloading it at start', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const zeropsYaml = readZeropsDeploymentYaml();
   const node = /^node = "(?<node>[^"]+)"$/mu.exec(readFileSync(new URL('../../.mise.toml', import.meta.url), 'utf-8'))
     ?.groups?.node;
   const pnpm = /"packageManager": "pnpm@(?<pnpm>[^"+]+)"/u.exec(
@@ -305,7 +306,7 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
 
 it.effect('fails every app build whose Zephyr upload fails', () =>
   Effect.gen(function* zephyrBuildFailures() {
-    const deployment = yield* readZeropsDeployment(readFileSync(zeropsYamlPath, 'utf-8'));
+    const deployment = yield* readZeropsDeployment(readZeropsDeploymentYaml());
     const appBuilds = [...deployment.services.values()].filter((service) =>
       serviceStrings(service, ['build', 'buildCommands']).some((command) => command.endsWith(' run build')),
     );
@@ -317,7 +318,7 @@ it.effect('fails every app build whose Zephyr upload fails', () =>
 );
 
 it('ships every package the migrator runs drizzle-kit in', () => {
-  const source = readFileSync(zeropsYamlPath, 'utf-8');
+  const source = readZeropsDeploymentYaml();
   const migrator = serviceNode(source, 'migrator');
   const runner = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
   const migratedPackages = [...runner.matchAll(/migrate\('(?<directory>[^']+)'/gu)].map(
@@ -349,7 +350,7 @@ const hostnameOf = (setup: string) =>
   setup === 'commerce-customer-context-worker' ? 'commercecstmrcntxtworker' : setup.replaceAll('-', '');
 
 it('declares a public subdomain at service creation for every non-worker unit and never for a worker', () => {
-  const units = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readFileSync(zeropsYamlPath, 'utf-8'))).zerops.filter(
+  const units = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readZeropsDeploymentYaml())).zerops.filter(
     ({ setup }) => setup !== 'spicedb',
   );
   const { services: declared } = Schema.decodeUnknownSync(ZeropsImportSchema)(
@@ -384,7 +385,7 @@ it('declares a public subdomain at service creation for every non-worker unit an
   }
   // Services reach each other by Zerops hostname, which never contains a hyphen.
   const hostnames = new Set(services.map(({ hostname }) => hostname));
-  for (const [, host] of readFileSync(zeropsYamlPath, 'utf-8').matchAll(/http:\/\/(?<host>[^/:']+):/gu)) {
+  for (const [, host] of readZeropsDeploymentYaml().matchAll(/http:\/\/(?<host>[^/:']+):/gu)) {
     expect(hostnames).toContain(host);
   }
 });
@@ -407,24 +408,36 @@ it('lets stage deploy failures fail the job, tolerating only best-effort log col
 });
 
 it('keeps module origins out of the Shell build so new approved modules require no Shell deployment', () => {
-  const shellBuild = JSON.stringify(serviceNode(readFileSync(zeropsYamlPath, 'utf-8'), 'shellsuperapp').get('build'));
+  const shellBuild = JSON.stringify(serviceNode(readZeropsDeploymentYaml(), 'shellsuperapp').get('build'));
   expect(shellBuild).not.toContain('ULTRAMODERN_PUBLIC_URL_');
   expect(shellBuild).not.toContain('_zeropsSubdomain');
 });
 
 it.effect('pushes every Zerops setup with the deploying environment named in its builds and runtimes', () =>
   Effect.gen(function* materializedEnvironment() {
-    const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+    const zeropsYaml = readZeropsDeploymentYaml();
     const source = parseDocument(zeropsYaml);
-    const stage = yield* materializeZeropsEnvironment(zeropsYaml, { environment: 'stage' });
+    // Every setup pushes from its own file within Zerops' 50 kB limit; rejoined they are the whole deployment.
+    const pushedFiles = (files: readonly { readonly file: string; readonly setup: string }[]) => {
+      expect(files.map(({ setup }) => setup)).toEqual(
+        Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(zeropsYaml)).zerops.map(({ setup }) => setup),
+      );
+      for (const { file } of files) {
+        expect(new TextEncoder().encode(file).byteLength).toBeLessThan(50_000);
+      }
+      return `zerops:\n${files.map(({ file }) => file.replace(/^zerops:\n/u, '')).join('')}`;
+    };
+    const stage = pushedFiles(yield* materializeZeropsSetupFiles(zeropsYaml, { environment: 'stage' }));
     expect(Schema.decodeUnknownSync(Schema.Unknown)(parse(stage))).toEqual(
       Schema.decodeUnknownSync(Schema.Unknown)(parse(zeropsYaml)),
     );
     const productionEndpoint = 'spicedb.production.example:443';
-    const production = yield* materializeZeropsEnvironment(zeropsYaml, {
-      environment: 'production',
-      spiceDbEndpoint: productionEndpoint,
-    });
+    const production = pushedFiles(
+      yield* materializeZeropsSetupFiles(zeropsYaml, {
+        environment: 'production',
+        spiceDbEndpoint: productionEndpoint,
+      }),
+    );
     const actual = parseDocument(production);
     const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(zeropsYaml));
     let environmentCount = 0;
@@ -471,12 +484,16 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
     expect(workflow).toContain('--environment "$DEPLOY_ENVIRONMENT"');
     expect(workflow).toContain('--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT"');
     const pushUnits = readFileSync(pushUnitsPath, 'utf-8');
-    expect(pushUnits).toContain('--zerops-yaml-path "$ZEROPS_YAML_PATH"');
+    expect(pushUnits).toContain('--zerops-yaml-path "$zerops_yaml"');
+    expect(pushUnits).toContain('zerops_yaml="$ZEROPS_YAML_DIRECTORY/$unit.yaml"');
+    expect(workflow).toContain('--input zerops.yaml');
+    expect(workflow).toContain('--input zerops-providers.yaml');
+    expect(workflow).toContain('--output-directory "$ZEROPS_YAML_DIRECTORY"');
   }),
 );
 
 it('keeps the full demo inventory and binds Party requests and workers to their separate migrator secrets', () => {
-  const source = readFileSync(zeropsYamlPath, 'utf-8');
+  const source = readZeropsDeploymentYaml();
   const party = serviceBlock(source, partyRegistrySetup);
   expect(party).toContain(
     `PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:\${migrator_PARTY_REGISTRY_DB_PASSWORD}@`,
@@ -587,7 +604,7 @@ it('references each identity password only from the migrator and the services th
 
 it('declares no project-level variable that could carry a database credential', () => {
   const deployment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
-    parse(readFileSync(zeropsYamlPath, 'utf-8')),
+    parse(readZeropsDeploymentYaml()),
   );
   const imports = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
     parse(readFileSync(zeropsImportPath, 'utf-8')),
@@ -700,6 +717,8 @@ it("deploys the main pipeline's planned Outbox Worker host from the artifact bui
     const calls = path.join(directory, 'calls');
     mkdirSync(bin);
     mkdirSync(path.join(directory, 'checkout/app'), { recursive: true });
+    mkdirSync(path.join(directory, 'zerops'));
+    writeFileSync(path.join(directory, 'zerops', `${OUTBOX_WORKER_HOST.stageSetup}.yaml`), 'zerops: []\n');
     writeFileSync(path.join(bin, 'mise'), '#!/bin/sh\necho host-service-id\n');
     writeFileSync(path.join(bin, 'zcli'), '#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$ZCLI_CALLS"\n');
     chmodSync(path.join(bin, 'mise'), 0o755);
@@ -715,7 +734,7 @@ it("deploys the main pipeline's planned Outbox Worker host from the artifact bui
           UNITS_JSON: JSON.stringify([OUTBOX_WORKER_HOST.stageSetup]),
           ZCLI_CALLS: calls,
           ZEROPS_PROJECT_ID: 'project-id',
-          ZEROPS_YAML_PATH: path.join(directory, 'zerops.yaml'),
+          ZEROPS_YAML_DIRECTORY: path.join(directory, 'zerops'),
           ...host,
         },
         stdio: ['ignore', 'pipe', 'pipe'],

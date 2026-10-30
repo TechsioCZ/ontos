@@ -1,6 +1,7 @@
 import { Console, Context, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
+import { joinZeropsDeployments, ZEROPS_DEPLOYMENT_FILES } from '../materialize-zerops-environment.mts';
 import { ZeropsPublicApi } from '../zerops-public-api.mts';
 import { runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
@@ -16,7 +17,6 @@ export const STAGE_ZEROPS_PROJECT_ID = 't1ljmn3DRDafgi8AuPvhdQ';
 export const ONTOS_REPOSITORY = 'TechsioCZ/ontos';
 export const STAGE_ENVIRONMENT = 'stage';
 export const STAGE_EDGE_ENVIRONMENT = 'stage-edge';
-export const DEPLOY_WORKFLOW = 'ultramodern-workspace-gates.yml';
 export const DEPLOY_TARGET_VARIABLE = 'DEPLOY_TARGET';
 /** `dedicated` or `host`: how an environment runs its Outbox Workers, whatever its deploy target. */
 export const OUTBOX_WORKER_MODE_VARIABLE = 'OUTBOX_WORKER_MODE';
@@ -95,6 +95,15 @@ export const readAppText = (...segments: readonly string[]) =>
       (cause) => new StageOperationError({ cause, message: `app/${segments.join('/')} could not be read` }),
     ),
   );
+
+/** Every Zerops deployment setup, from `app/zerops.yaml` and `app/zerops-providers.yaml`, as one zerops.yaml text. */
+export const readZeropsDeploymentText = Effect.all(ZEROPS_DEPLOYMENT_FILES.map((file) => readAppText(file))).pipe(
+  Effect.flatMap((texts) =>
+    joinZeropsDeployments(texts).pipe(
+      Effect.mapError((cause) => new StageOperationError({ cause, message: 'app/zerops*.yaml are not setup lists' })),
+    ),
+  ),
+);
 
 /** One `zerops-import.yaml` service entry, kept verbatim so a re-import recreates the same service. */
 export const ZeropsImportEntrySchema = Schema.StructWithRest(
@@ -288,9 +297,3 @@ export const listGithubVariables = (repository: string, environment: string) =>
   );
 
 export const githubApi = (args: readonly string[]) => runCommand({ args: ['api', ...args], command: GH });
-
-export const dispatchFullDeploy = (repository: string) =>
-  runCommand({
-    args: ['workflow', 'run', DEPLOY_WORKFLOW, REPOSITORY_FLAG, repository, '--ref', 'main', '-f', 'full=true'],
-    command: GH,
-  });

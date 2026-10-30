@@ -33,15 +33,10 @@ type BrowserContext = Pick<NativeBrowserContext, 'close' | 'newPage'>;
 type Browser = Pick<NativeBrowser, 'close' | 'newContext'>;
 type Launcher = Pick<BrowserType, 'launch'>;
 
-const LauncherMethodsSchema = Schema.Struct({
+const LauncherSchema = Schema.Struct({
   launch: Schema.declare<Launcher['launch']>((value): value is Launcher['launch'] => Predicate.isFunction(value)),
 });
-// Validate the shape without copying the SDK instance: launch needs its original receiver.
-const LauncherSchema = Schema.declare<Launcher>(Schema.is(LauncherMethodsSchema));
-const BrowserModuleSchema = Schema.Struct({
-  chromium: Schema.optionalKey(LauncherSchema),
-  default: Schema.optionalKey(Schema.Struct({ chromium: LauncherSchema })),
-});
+const BrowserModuleSchema = Schema.Struct({ chromium: LauncherSchema });
 
 const ownedTab = (page: E2ePage, cleanup: Effect.Effect<void, BrowserDriverFailure>): E2eTab => {
   let closed = false;
@@ -103,18 +98,24 @@ export const openSharedTab = () =>
     const options: BrowserContextOptions = { viewport: { height: 900, width: 1440 } };
     const imported = yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import Playwright' }),
-      try: async () => Schema.decodeUnknownResult(BrowserModuleSchema)(await import(moduleSpecifier)),
+      try: async () => {
+        const loaded: unknown = await import(moduleSpecifier);
+        // CommonJS @playwright/test exports a callable default with the launchers attached.
+        return Predicate.hasProperty(loaded, 'chromium') ||
+          !Predicate.hasProperty(loaded, 'default') ||
+          !Predicate.hasProperty(loaded.default, 'chromium')
+          ? loaded
+          : { chromium: loaded.default.chromium };
+      },
     });
-    const mod = yield* Effect.fromResult(imported).pipe(
-      Effect.mapError((cause) => new BrowserDriverFailure({ cause, operation: 'load Playwright' })),
-    );
-    const chromium = mod.chromium ?? mod.default?.chromium;
-    if (chromium === undefined) {
+    // Narrow without copying: launch depends on its original SDK receiver.
+    if (!Schema.is(BrowserModuleSchema)(imported)) {
       return yield* new BrowserDriverFailure({
         cause: `${playwrightModule} exports no chromium launcher`,
         operation: 'load Playwright',
       });
     }
+    const { chromium } = imported;
     const browser = yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'chromium.launch' }),
       try: async () => await chromium.launch(),
@@ -237,8 +238,10 @@ export const approveConnection = (
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'capture identity consent' }),
-      try: async () =>
-        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png` }),
+      // The screenshot bytes are not needed; the file is the evidence.
+      try: async () => {
+        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png` });
+      },
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'continue consent' }),
@@ -255,8 +258,10 @@ export const approveConnection = (
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'capture final consent' }),
-      try: async () =>
-        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png` }),
+      // The screenshot bytes are not needed; the file is the evidence.
+      try: async () => {
+        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png` });
+      },
     });
     yield* Effect.tryPromise({
       catch: (cause) => new BrowserDriverFailure({ cause, operation: 'approve access' }),

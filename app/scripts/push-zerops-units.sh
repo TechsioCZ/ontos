@@ -9,16 +9,18 @@
 # app/.zerops/runtime/outbox-worker-host/ (worker.mjs, worker-artifact.json, node/), which is exactly where
 # the setup's start command expects it under /var/www.
 #
-# Environment: UNITS_JSON (JSON array of zerops.yaml setups), ZEROPS_YAML_PATH (the deploying environment's
-# zerops.yaml, from `zerops:materialize-environment`), STAGE_VARIABLES_JSON, ZEROPS_PROJECT_ID, GITHUB_SHA,
-# and ZEROPS_TOKEN for the subdomain check. The host also needs OUTBOX_HOST_ARTIFACT (its outbox-host.tar.zst)
+# Zerops rejects a build file over 50 kB, so every unit pushes its own one-setup copy.
+#
+# Environment: UNITS_JSON (JSON array of zerops.yaml setups), ZEROPS_YAML_DIRECTORY (the deploying environment's
+# `<setup>.yaml` files, from `zerops:materialize-environment --output-directory`), STAGE_VARIABLES_JSON,
+# ZEROPS_PROJECT_ID, GITHUB_SHA, and ZEROPS_TOKEN for the subdomain check. The host also needs OUTBOX_HOST_ARTIFACT (its outbox-host.tar.zst)
 # and OUTBOX_HOST_DIGEST (the plan's host digest the artifact must carry). Run from the repository root.
 set -euo pipefail
 
-: "${ZEROPS_YAML_PATH:?ZEROPS_YAML_PATH (the materialized zerops.yaml) is required}"
+: "${ZEROPS_YAML_DIRECTORY:?ZEROPS_YAML_DIRECTORY (the materialized one-setup zerops.yaml files) is required}"
 # zcli resolves a relative zerops.yaml path against --working-dir, which differs for the host deploy.
-if [[ "$ZEROPS_YAML_PATH" != /* ]]; then
-  echo "ZEROPS_YAML_PATH must be absolute, not $ZEROPS_YAML_PATH" >&2
+if [[ "$ZEROPS_YAML_DIRECTORY" != /* ]]; then
+  echo "ZEROPS_YAML_DIRECTORY must be absolute, not $ZEROPS_YAML_DIRECTORY" >&2
   exit 1
 fi
 
@@ -49,12 +51,17 @@ stage_outbox_host() {
 
 deploy_unit() {
   local unit="$1" service_id="$2"
+  local zerops_yaml="$ZEROPS_YAML_DIRECTORY/$unit.yaml"
+  if [[ ! -f "$zerops_yaml" ]]; then
+    echo "No materialized zerops.yaml for planned unit $unit at $zerops_yaml" >&2
+    return 1
+  fi
   if [[ "$unit" == "$host_setup" ]]; then
     stage_outbox_host || return 1
     zcli service deploy \
       --working-dir "$host_staging" \
       --path-to-file-or-dir "$host_runtime" \
-      --zerops-yaml-path "$ZEROPS_YAML_PATH" \
+      --zerops-yaml-path "$zerops_yaml" \
       --project-id "$ZEROPS_PROJECT_ID" \
       --service-id "$service_id" \
       --setup "$unit" \
@@ -63,7 +70,7 @@ deploy_unit() {
   fi
   zcli push \
     --working-dir . \
-    --zerops-yaml-path "$ZEROPS_YAML_PATH" \
+    --zerops-yaml-path "$zerops_yaml" \
     --workspace-state clean \
     --deploy-git-folder \
     --project-id "$ZEROPS_PROJECT_ID" \

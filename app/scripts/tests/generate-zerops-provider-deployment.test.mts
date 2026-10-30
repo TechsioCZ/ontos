@@ -118,10 +118,10 @@ it.effect('rejects duplicate setup identities before changing a deployment', () 
   }),
 );
 
-it.effect('reproduces the checked-in provider setups from topology and preserves other services', () =>
+it.effect('reproduces the checked-in provider setups from topology apart from the pushable zerops.yaml', () =>
   Effect.gen(function* testProviderReproducer() {
     const fs = yield* FileSystem.FileSystem;
-    const source = yield* fs.readFileString(path.join(root, 'zerops.yaml'));
+    const source = yield* fs.readFileString(path.join(root, 'zerops-providers.yaml'));
     const topology = yield* readZeropsProviderTopology(root);
     const checkedInToolchain = yield* readZeropsToolchain(
       yield* fs.readFileString(path.join(root, '.mise.toml')),
@@ -137,8 +137,14 @@ it.effect('reproduces the checked-in provider setups from topology and preserves
         `--app '${vertical.id}' --package '${vertical.package}' --package-dir '${vertical.path}'`,
       );
     }
-    expect(deployment.services.has('migrator')).toBe(true);
-    expect(deployment.services.has('shellsuperapp')).toBe(true);
+    expect([...deployment.services.keys()]).toStrictEqual(topology.verticals.map(({ id }) => id));
+    const pushable = yield* fs.readFileString(path.join(root, 'zerops.yaml'));
+    const infrastructure = yield* readZeropsDeployment(pushable);
+    expect(infrastructure.services.has('migrator')).toBe(true);
+    expect(infrastructure.services.has('shellsuperapp')).toBe(true);
+    expect(topology.verticals.filter(({ id }) => infrastructure.services.has(id))).toStrictEqual([]);
+    // Zerops rejects a build file over 50 kB; zerops.yaml must push as-is.
+    expect(new TextEncoder().encode(pushable).byteLength).toBeLessThan(50_000);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

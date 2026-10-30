@@ -1514,7 +1514,7 @@ const readRuntimeFromDependencies = <
         reason: 'Read authorization is temporarily unavailable',
       });
     }
-    if (!isConnectionReadAllowed(principal, input.registration.descriptor.owningModuleKey)) {
+    if (!isConnectionReadAllowed(principal, input.registration.descriptor)) {
       return yield* recordDenial(
         evidenceFor(scope, permissionTargetMetadata, {
           outcome: 'denied',

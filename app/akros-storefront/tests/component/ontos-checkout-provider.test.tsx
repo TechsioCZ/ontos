@@ -129,6 +129,7 @@ describe("OntOS submission recovery", () => {
     async ({ failure, remount }) => {
       const user = userEvent.setup();
       const requests: string[] = [];
+      const initialQuote = Promise.withResolvers<void>();
       let rejectedRefreshes = 0;
       vi.stubGlobal(
         "fetch",
@@ -141,6 +142,7 @@ describe("OntOS submission recovery", () => {
                 requests.length && remount ? [] : [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
             });
           if (url.endsWith("/cart")) {
+            initialQuote.resolve();
             if (requests.length) rejectedRefreshes++;
             if (requests.length && failure === "unavailable")
               return new Response(null, { status: 503 });
@@ -175,6 +177,10 @@ describe("OntOS submission recovery", () => {
           </CartProvider>,
         );
       let view = checkout();
+      // Flush initial transport and React effects before testing submission recovery.
+      await act(async () => {
+        await initialQuote.promise;
+      });
       const submit = await screen.findByRole("button", { name: "Odeslat objednávku" });
       await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
       await user.click(submit);

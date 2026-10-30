@@ -28,6 +28,14 @@ while IFS= read -r name; do
 done < <(compgen -e | grep '^GIT_' || true)
 
 cd "$(dirname "$0")/../.."
+
+# Provisioning writes the data-plane IDs into the reviewed placement; a unit built without one would bind nothing.
+unset_placement="$(jq -r '.buildEnvironment | to_entries[] | select(.value == "") | .key' topology/cloudflare-placement.json)"
+if [[ -n "$unset_placement" ]]; then
+  echo "::error title=Unprovisioned placement::topology/cloudflare-placement.json leaves ${unset_placement//$'\n'/, } empty: run cloudflare-stage-cutover.mts provision" >&2
+  exit 1
+fi
+
 releases=".codex/reports/releases/$UNIT_ID"
 mkdir -p "$releases"
 

@@ -1,1 +1,68 @@
-{ "clients": {} }
+{
+  "clients": {},
+  "clientFilters": {
+    "metrics": {
+      "activeClients": "Active clients",
+      "archivedClients": "Archived clients",
+      "unassignedClients": "Without a salesperson",
+      "contacts": "Contact persons",
+      "contactedRecently": "Contacted within 30 days",
+      "linkedActive": "Linked to the customer registry",
+      "unlinkedActive": "Not linked to the customer registry"
+    },
+    "entity": {
+      "client": "Clients",
+      "contact": "Contact persons"
+    },
+    "filters": {
+      "search": "Search",
+      "searchPlaceholder": "Name, company id, phone, e-mail, contact person",
+      "status": "Status",
+      "statusActive": "Active",
+      "statusArchived": "Archived",
+      "statusAll": "Active and archived",
+      "owner": "Salesperson",
+      "ownerAll": "All salespeople",
+      "ownerNone": "Without a salesperson",
+      "registry": "Customer registry",
+      "registryAll": "Linked and unlinked",
+      "registryLinked": "Linked to the registry",
+      "registryUnlinked": "Waiting for a link",
+      "recency": "Last contact",
+      "recencyAll": "No limit",
+      "recency30": "Last 30 days",
+      "segment": "Segment",
+      "segmentAll": "All segments",
+      "reset": "Clear filters"
+    },
+    "table": {
+      "client": "Client",
+      "regNo": "Company id",
+      "contact": "Contact person",
+      "phone": "Phone",
+      "owner": "Salesperson",
+      "lastVisit": "Last contact",
+      "person": "Person",
+      "role": "Job role",
+      "email": "E-mail",
+      "owningClient": "Owning client",
+      "primary": "Main contact",
+      "noContact": "no contact",
+      "searchContacts": "Search contact persons…",
+      "emptyClients": "No matching clients",
+      "emptyContacts": "No matching contact persons",
+      "archived": "Archived",
+      "adjustFilters": "Adjust the search or filters.",
+      "emptyManager": "Add your first client with New client.",
+      "emptyAssigned": "No clients have been assigned to you yet."
+    },
+    "navigation": "Client and contact filters",
+    "assignedTitle": "My clients",
+    "assignedDescription": "Your assigned clients: contacts, visits and orders in one place.",
+    "actions": {
+      "export": "Export contacts (CSV)",
+      "team": "Salespeople",
+      "create": "New client"
+    }
+  }
+}

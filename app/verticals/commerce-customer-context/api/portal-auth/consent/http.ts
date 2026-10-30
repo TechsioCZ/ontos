@@ -21,7 +21,7 @@ import {
 import { CommercePortalAuthAudit } from '../../../src/portal-auth/audit/audit.ts';
 import { noStoreHeaders, requireTrustedOrigin } from '../http-transport.ts';
 import { authorizeCustomerProfile } from '../profile/http.ts';
-import { readCustomerPartyProfile } from '../profile/party-profile.ts';
+import { readDirectCustomerParty } from '../profile/party-profile.ts';
 import { admitCustomerAccount } from '../session/http.ts';
 import { readDemoNewsletterChoice, writeDemoNewsletterChoice } from './choice-persistence.ts';
 import {
@@ -75,7 +75,8 @@ const admitted = Effect.fn('CustomerConsent.admit')(function* admit(
     tenantId: current.workloadPrincipal.tenantId,
   };
   // Archived/merged/aliased Parties require real owner reconciliation, not a guessed successor.
-  yield* readCustomerPartyProfile(scope).pipe(Effect.mapError(consentUnavailable));
+  // Consent needs only that Party check, not the profile's contact points.
+  yield* readDirectCustomerParty(scope).pipe(Effect.mapError(consentUnavailable));
   return { current, scope };
 });
 const projectChoice = (decision: CustomerOwnConsent['decision'], revision: number) =>

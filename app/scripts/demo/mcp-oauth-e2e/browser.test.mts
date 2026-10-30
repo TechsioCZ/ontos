@@ -6,6 +6,11 @@ import { expect, it } from 'effect-rstest';
 import { BrowserDriverFailure, openSharedTab } from './browser.mts';
 
 const recordedCalls = Schema.Struct({ calls: Schema.Array(Schema.String) });
+const fixtureExports = {
+  callable: 'function test() {}\ntest.chromium = chromium;\nexport default test;',
+  default: 'export default { chromium };',
+  named: 'export { chromium };',
+};
 const operations = {
   closeBrowser: 'browser.close',
   closeContext: 'context.close',
@@ -15,7 +20,7 @@ const operations = {
 };
 
 // Exercise the configured native module boundary without starting a real browser in unit tests.
-const browserFixture = (failure = '', defaultExport = false) =>
+const browserFixture = (failure = '', exportKind: keyof typeof fixtureExports = 'named') =>
   Effect.gen(function* makeBrowserFixture() {
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-browser-' });
@@ -48,7 +53,7 @@ const chromium = {
     };
   },
 };
-${defaultExport ? 'export default { chromium };' : 'export { chromium };'}
+${fixtureExports[exportKind]}
 `,
     );
     const moduleUrl = pathToFileURL(filename).href;
@@ -65,25 +70,23 @@ ${defaultExport ? 'export default { chromium };' : 'export { chromium };'}
     return { calls, filename, moduleUrl, open };
   });
 
-for (const defaultExport of [false, true]) {
-  it.effect(
-    `opens a module by native absolute path and closes its context and browser once (default=${defaultExport})`,
-    () =>
-      Effect.gen(function* openAndCloseBrowser() {
-        const fixture = yield* browserFixture('', defaultExport);
-        const tab = yield* fixture.open;
-        expect(tab.page.url()).toBe('about:blank');
-        yield* tab.close;
-        yield* tab.close;
-        expect(yield* fixture.calls).toEqual([
-          operations.launch,
-          operations.newContext,
-          JSON.stringify({ viewport: { height: 900, width: 1440 } }),
-          operations.newPage,
-          operations.closeContext,
-          operations.closeBrowser,
-        ]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+for (const exportKind of ['named', 'default', 'callable'] as const) {
+  it.effect(`opens a module by native absolute path and closes its context and browser once (${exportKind})`, () =>
+    Effect.gen(function* openAndCloseBrowser() {
+      const fixture = yield* browserFixture('', exportKind);
+      const tab = yield* fixture.open;
+      expect(tab.page.url()).toBe('about:blank');
+      yield* tab.close;
+      yield* tab.close;
+      expect(yield* fixture.calls).toEqual([
+        operations.launch,
+        operations.newContext,
+        JSON.stringify({ viewport: { height: 900, width: 1440 } }),
+        operations.newPage,
+        operations.closeContext,
+        operations.closeBrowser,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
 

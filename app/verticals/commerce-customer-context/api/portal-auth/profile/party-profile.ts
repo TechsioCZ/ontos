@@ -77,7 +77,8 @@ export const projectCustomerOwnProfile = (
   ),
 });
 
-export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty')(function* readParty(
+/** The account's own Party, read directly. A merge, alias or archive needs owner reconciliation, not a successor. */
+export const readDirectCustomerParty = Effect.fn('CustomerOwnProfile.readDirectParty')(function* readDirectParty(
   scope: CustomerPartyProfileScope,
 ) {
   const partyRef: PartyRef = {
@@ -86,14 +87,13 @@ export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty'
     resourceType: 'party.registry.party',
     tenantId: scope.tenantId,
   };
-  const detailGateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
+  const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
   const detail = yield* executePartyDetailWithAuthorization(
     { partyRef },
-    Redacted.value(detailGateway.credential),
+    Redacted.value(gateway.credential),
     scope.requestCorrelation,
-    detailGateway.options,
+    gateway.options,
   ).pipe(Effect.mapError(profileUnavailable));
-  // A merge/alias requires reconciliation of the account binding; it is not authority to choose another Party.
   if (
     !sameParty(detail.party.partyRef, partyRef) ||
     detail.resolution.kind !== 'DIRECT' ||
@@ -101,6 +101,13 @@ export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty'
   ) {
     return yield* Effect.fail(profileConflict());
   }
+  return { detail, partyRef };
+});
+
+export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty')(function* readParty(
+  scope: CustomerPartyProfileScope,
+) {
+  const { detail, partyRef } = yield* readDirectCustomerParty(scope);
   const contactGateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
   const contacts = yield* executePartyContactPointsWithAuthorization(
     { includeHistorical: false, partyRef },

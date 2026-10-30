@@ -19,6 +19,7 @@ import type {
   WorkersUsage,
 } from './cloudflare-api.mts';
 import { readEdgeUnits } from './stage-edge-units.mts';
+import { readStageEdgeTopology } from './stage-edge-topology.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import {
   OpsMode,
@@ -667,13 +668,27 @@ export const checkUsage = (now: DateTime.Utc) =>
 
 const BillingCycleDay = Config.Int('STAGE_BILLING_CYCLE_DAY').pipe(Config.withDefault(1));
 
-const loadUsageLimits = Effect.gen(function* loadUsageLimitsEffect() {
+export const loadUsageLimits = Effect.gen(function* loadUsageLimitsEffect() {
+  const topology = yield* readStageEdgeTopology;
+  const api = yield* CloudflareApi;
+  const zoneId = yield* api.findZoneId(topology.zone);
+  if (Option.isNone(zoneId)) {
+    return yield* new StageOperationError({
+      message: `the API token cannot read the stage topology zone ${topology.zone}`,
+    });
+  }
+  const configuredZoneId = yield* Config.NonEmptyString(ZONE_ID_VARIABLE);
+  if (configuredZoneId !== zoneId.value) {
+    return yield* new StageOperationError({
+      message: `${ZONE_ID_VARIABLE} does not match topology/stage-edge.json zone; refusing to target another zone`,
+    });
+  }
   const limits: UsageLimits = {
     billingCycleDay: yield* BillingCycleDay,
     cpuMsLimit: yield* Config.Int('STAGE_WORKERS_CPU_MS_LIMIT').pipe(Config.withDefault(DEFAULT_CPU_MS_LIMIT)),
     ontosScripts: (yield* readEdgeUnits).map(({ workerName }) => workerName),
     requestLimit: yield* Config.Int('STAGE_WORKERS_REQUEST_LIMIT').pipe(Config.withDefault(DEFAULT_REQUEST_LIMIT)),
-    zoneId: yield* Config.NonEmptyString(ZONE_ID_VARIABLE),
+    zoneId: zoneId.value,
   };
   if (limits.billingCycleDay < 1 || limits.billingCycleDay > 28) {
     return yield* new StageOperationError({ message: 'STAGE_BILLING_CYCLE_DAY must be between 1 and 28' });
@@ -681,21 +696,30 @@ const loadUsageLimits = Effect.gen(function* loadUsageLimitsEffect() {
   return limits;
 });
 
-const usageLayer = Layer.mergeAll(
-  CloudflareApiLive.pipe(
-    Layer.provide(
-      Layer.effect(
-        CloudflareCredentials,
-        Effect.gen(function* credentials() {
-          return {
-            accountId: yield* Config.NonEmptyString('CLOUDFLARE_ACCOUNT_ID'),
-            apiToken: yield* Config.Redacted('CLOUDFLARE_API_TOKEN'),
-          };
-        }),
-      ),
+const usageApiLayer = CloudflareApiLive.pipe(
+  Layer.provide(
+    Layer.effect(
+      CloudflareCredentials,
+      Effect.gen(function* credentials() {
+        const topology = yield* readStageEdgeTopology;
+        const accountId = yield* Config.NonEmptyString('CLOUDFLARE_ACCOUNT_ID');
+        if (accountId !== topology.accountId) {
+          return yield* new StageOperationError({
+            message:
+              'CLOUDFLARE_ACCOUNT_ID differs from topology/stage-edge.json accountId; refusing to run the cost guard',
+          });
+        }
+        return {
+          accountId: topology.accountId,
+          apiToken: yield* Config.Redacted('CLOUDFLARE_API_TOKEN'),
+        };
+      }),
     ),
   ),
-  Layer.effect(UsageConfiguration, loadUsageLimits),
+);
+const usageLayer = Layer.mergeAll(
+  usageApiLayer,
+  Layer.effect(UsageConfiguration, loadUsageLimits).pipe(Layer.provide(usageApiLayer)),
   Layer.succeed(OpsMode, { dryRun: false }),
 );
 

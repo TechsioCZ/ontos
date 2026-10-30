@@ -39,7 +39,7 @@ import {
   listZeropsServices,
   mutate,
   perform,
-  readAppText,
+  readZeropsDeploymentText,
   readZeropsImport,
   setGithubSecret,
   setGithubVariable,
@@ -150,10 +150,10 @@ export const productionImportEntries = (stageEntries: readonly ZeropsImportEntry
 
 const ZeropsSetupsSchema = Schema.Struct({ zerops: Schema.Array(Schema.Struct({ setup: Schema.String })) });
 
-const readZeropsSetups = readAppText('zerops.yaml').pipe(
+const readZeropsSetups = readZeropsDeploymentText.pipe(
   Effect.flatMap((text) =>
     Schema.decodeUnknownEffect(ZeropsSetupsSchema)(parseYaml(text)).pipe(
-      Effect.mapError((cause) => new StageOperationError({ cause, message: 'app/zerops.yaml is not a setup list' })),
+      Effect.mapError((cause) => new StageOperationError({ cause, message: 'app/zerops*.yaml are not setup lists' })),
     ),
   ),
   Effect.map(({ zerops }) => zerops.map(({ setup }) => setup)),
@@ -174,7 +174,7 @@ export const productionServices = Effect.gen(function* productionServicesEffect(
       const setup = setups.find((name) => zeropsHostname(name) === entry.hostname);
       if (setup === undefined && !isManaged(entry)) {
         return Effect.fail(
-          new StageOperationError({ message: `app/zerops.yaml has no setup that deploys ${entry.hostname}` }),
+          new StageOperationError({ message: `app/zerops*.yaml have no setup that deploys ${entry.hostname}` }),
         );
       }
       return Effect.succeed({

@@ -45,7 +45,9 @@ Codesmith or another approved generator must update these surfaces atomically. U
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*` cannot be mapped to known delivery units. An unknown new vertical must never produce a no-op deploy.
 
-The stage plan diffs from the commit of the last successful `stage` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`.
+Stage deploys only from `demo/sales-crm` through `.github/workflows/stage-demo-deploy.yml`. Its plan hashes every unit's inputs, including `topology/stage-edge.json`, and rebuilds only units whose digest has no live receipt in the stage release ledger. Rebuild and redeploy every unit with `gh workflow run stage-demo-deploy.yml --ref demo/sales-crm -f deploy=true -f force_full=true`.
+
+The production plan diffs from the commit of the last successful `production` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true`.
 
 ### Change-impact rules
 
@@ -128,7 +130,7 @@ Stage provisioning, run by a human, never an agent:
 
 1. From a host on the Zerops VPN, with `DATABASE_ADMIN_URL` set, run `node scripts/ops/cloudflare-stage-cutover.mts database-identities`. It creates the missing sensitive `migrator` service secrets `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD` (never printed), then creates the three login roles with `LOGIN` and `CONNECT` only. Roles must exist first because Hyperdrive tests the connection when a config is created.
 2. Run `provision`. It creates Hyperdrive `ontos-stage-party-registry` (user `party_registry_runtime`, caching off, origin limit 10) and `ontos-stage-gateway-issuer` (user `shell_gateway_issuer`, caching off, limit 5), and writes `ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID` and `ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID` into `topology/cloudflare-placement.json` `buildEnvironment` for a reviewed PR. `verify` checks user, caching and limit drift.
-3. Merge. `edge-deploy-readiness` requires both IDs, so no deploy starts before provisioning is complete.
+3. Merge. The demo deploy's `scripts/ci/stage-edge.mts export` and every unit build require both IDs, so no deploy starts before provisioning is complete.
 
 The passwords are `migrator` service secrets, referenced as `${migrator_<KEY>}`, never project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this. Each process holds only its own URLs:
 
@@ -291,54 +293,56 @@ Do not report release success before all required smoke checks pass.
 
 ### Deploy target per environment
 
-One workflow deploys every GitHub deployment environment. Each environment chooses where its
-delivery units run with its `DEPLOY_TARGET` variable, and how its Outbox Workers run on Zerops with
-its required `OUTBOX_WORKER_MODE` variable (`dedicated` or `host`, see
-[Outbox Workers](./OUTBOX_WORKERS.md)). The two are independent:
+Stage and production deploy from different workflows:
 
-| Environment  | `DEPLOY_TARGET`   | What deploys                                                                                                                                                                                                                          |
-| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage`      | unset or `zerops` | The whole Zerops topology: migrator, SpiceDB, every vertical, its outbox worker and the Shell, each with its own `ZEROPS_*_SERVICE_ID`. Placed units also deploy as Workers when the edge deploy is configured (a shadow deployment). |
-| `stage`      | `cloudflare`      | On Zerops only the migrator, SpiceDB and the outbox workers; every placed unit as a Cloudflare Worker (`deploy-cloudflare`).                                                                                                          |
-| `production` | unset or `zerops` | The whole Zerops topology from `production`'s own variables and secrets. `cloudflare` is rejected: only stage has an edge deploy history (`stage-edge`) and a reviewed edge build environment.                                        |
+| Environment  | Deploys from                                                                        | What deploys                                                                                                                                          |
+| ------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stage-edge` | `demo/sales-crm`, `.github/workflows/stage-demo-deploy.yml`                         | Every placed unit as an immutable Cloudflare Worker release, the AKROS storefront, and the Zerops outbox worker host beside the migrator and SpiceDB. |
+| `production` | an explicit dispatch on `main`, `.github/workflows/ultramodern-workspace-gates.yml` | The whole Zerops topology from `production`'s own variables and secrets. `DEPLOY_TARGET` must be unset or `zerops`.                                   |
 
-The deployment planner always emits both plans from the same topology: the Zerops phases (`phases`,
-`units.providers` with each vertical's outbox worker, `units.shell`, `units.workers`) and the edge
-units (`units.cloudflare`). The workflow picks by target, so neither path depends on the other and
-tests assert both for the same diffs. Nothing on the Zerops path is removed for the Cloudflare
-target: `zerops.yaml`, `zerops-import.yaml`, the generators, the materializers and the push script
-keep deploying every environment that targets Zerops.
-
-| Environment  | `OUTBOX_WORKER_MODE` | Outbox Workers on Zerops                                                         |
-| ------------ | -------------------- | -------------------------------------------------------------------------------- |
-| `stage`      | `host`               | Every owner's worker in the one `outbox-worker-host` process, the cheap choice.  |
-| `production` | `dedicated`          | One `<owner>-worker` service per owner, deployed and failing independently (HA). |
-
-Before the Cloudflare cut-over stage runs `dedicated`, the workers it has today; `cloudflare-stage-cutover.mts
-activate` switches it to `host` beside `DEPLOY_TARGET=cloudflare`. A preview or demo environment on
-Zerops can equally run `host`.
-
-`deploy-target` reads `DEPLOY_TARGET`, `OUTBOX_WORKER_MODE`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN`
-secret from the deploying environment without creating a deployment. An invalid target or mode fails
-the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it has no default. An
-environment without its Zerops project or token deploys nothing and records nothing. `deploy-plan`
-then plans in that environment from the environment's last successful deployment and promotes
-authorization for that environment (`--authorization-environment`), so production needs its own
-enforced authorization evidence and context. `deploy-migrations` runs the planned migrations and
-SpiceDB deploy, and `deploy-zerops`, the environment's one deployment record, deploys the rest. Pushes to `main` deploy `stage`. Production deploys
-only on an explicit dispatch:
+A push to `main` deploys nothing: it only runs the gates. Production deploys on an explicit dispatch:
 
 ```sh
 gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
 ```
 
+The stage edge's Cloudflare account, workers.dev subdomain, zone, public hostnames, email sender and
+storefront catalog KV namespace live in one reviewed file, `topology/stage-edge.json`. The demo deploy's
+plan job exports it (`node scripts/ci/stage-edge.mts export`), the builds read the plan outputs, and the
+release, prune and verify jobs export it again. A `stage-edge` `CLOUDFLARE_ACCOUNT_ID` variable that differs
+from its `accountId`, an empty `storefrontCatalogKvId` or an empty placement build variable fails the job.
+`scripts/prepare-stage-release-secrets.mts` derives every host-bearing release secret (gateway issuer,
+SpiceDB endpoint, Better Auth and OAuth URLs, public and storefront URLs, the Commerce portal and core
+identity URLs, the Shell gateway base URL and `ONTOS_EMAIL_FROM`) from it and replaces whatever
+`DEMO_IMMUTABLE_RELEASE_SECRETS` holds, so that secret keeps only real secrets. The file is under
+`topology/**`, a global digest input, so a change rebuilds every unit.
+
+| Environment  | `OUTBOX_WORKER_MODE` | Outbox Workers on Zerops                                                         |
+| ------------ | -------------------- | -------------------------------------------------------------------------------- |
+| `stage-edge` | `host`               | Every owner's worker in the one `outbox-worker-host` process, the cheap choice.  |
+| `production` | `dedicated`          | One `<owner>-worker` service per owner, deployed and failing independently (HA). |
+
+`deploy-target` reads `DEPLOY_TARGET`, `OUTBOX_WORKER_MODE`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN`
+secret from `production` without creating a deployment. A target other than `zerops`, an invalid mode or a
+configured environment without `OUTBOX_WORKER_MODE` fails the run; an environment without its Zerops
+project or token deploys nothing and records nothing. `deploy-plan` plans from the environment's last
+successful deployment and promotes authorization for it (`--authorization-environment`), so production
+needs its own enforced authorization evidence and context. `deploy-migrations` runs the planned
+migrations and SpiceDB deploy, and `deploy-zerops`, the environment's one deployment record, deploys the
+rest and publishes the composition.
+
 Create `production` once, outside CI, before the first dispatch, with the operator script in
 [Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
 `OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
 
-`zerops.yaml` describes stage. Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
+`zerops.yaml` and `zerops-providers.yaml` describe stage. Zerops rejects a build file over 50 kB, so
+`zerops.yaml` (migrator, SpiceDB, cloudflared, Shell, Outbox Workers) stays small enough to push as-is,
+and `pnpm zerops:providers --write` keeps the per-vertical provider setups in `zerops-providers.yaml`.
+Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
-names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
+names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy;
+`deploy-zerops` writes one file per setup (`--output-directory`) because the providers together exceed
+the limit. Production
 therefore never runs stage-only behaviour. Every runtime reaches SpiceDB over TLS gRPC and pins
 `SPICEDB_CA_CERT`, which `zerops.yaml` takes from the `spicedb` service's `SPICEDB_GRPC_TLS_CERT`
 secret; there is no plaintext mode. Production's copy sets every `SPICEDB_ENDPOINT` to production's
@@ -348,114 +352,40 @@ scheduled composition refresh has a `refresh-production` lane beside `refresh-st
 own environment and `zerops-production` concurrency group; it publishes nothing until production is
 configured and has deployed once.
 Each refresh lane holds its environment's deploy lock, so it is bounded to 10 minutes (about two in
-practice), and it yields to a main deploy run that is still unfinished: GitHub cancels the older pending
-job when another queues in the same concurrency group, so a refresh queued behind a deploy could cancel
-the next deploy job, and every deploy re-publishes the composition anyway.
-
-The composition publisher resolves each unit's public origin by target: the Zerops subdomain of its
-service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
-(`ULTRAMODERN_PUBLIC_URL_<UNIT>` in the placement `buildEnvironment`). On `cloudflare` it restarts
-only the consumers that remain on Zerops (the Outbox Workers of the environment's mode). `deploy-zerops` does not publish
-on `cloudflare`, because a new or moved Worker is unobservable until `deploy-cloudflare` ships it;
-`publish-edge-composition` publishes from the new Workers afterwards. A placed Worker that consumes
-the snapshot (Commerce Customer Context) has no Zerops project variable, and the snapshot outgrows
-a Worker secret's 5.1 kB limit. Every placed Worker binds the stage composition KV namespace as
-`ONTOS_ACTIVE_APPLICATION_COMPOSITION` and reads key `active` on each request, failing closed when
-the binding or key is missing. `sync-edge-composition`, and `refresh-stage-edge` after each
-scheduled refresh, write every publication to that key from `stage-edge`
-(`scripts/put-edge-composition-snapshot.sh`). Writing the key deploys nothing. Both writes run outside
-the stage deploy lock, so the script leaves the key alone when it already holds a newer `observedAt`.
-
-Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
-`full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
-is not configured fails in `edge-deploy-readiness`, before anything changes on Zerops.
+practice), and it yields to a deploy run that is still unfinished (a sales demo deploy for stage, a
+dispatched `main` run for production): GitHub cancels the older pending job when another queues in the
+same concurrency group, so a refresh queued behind a deploy could cancel the next deploy job, and every
+deploy re-publishes the composition anyway.
 
 ### Edge units on Cloudflare Workers
 
-`topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
-each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
+`topology/cloudflare-placement.json` lists the delivery units the stage demo deploy ships as Cloudflare
+Workers; each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
 deployable on its own. Every vertical (UI and headless API) and the Shell are placed, so every
-Worker the Shell binds as a service is placed too. The deployment planner emits the placed,
-impacted units as `units.cloudflare` in dependency order (providers before Shell).
-
-The edge deploy runs only for `stage`, and only when it is configured (below). On the `zerops` target
-it is additive; on the `cloudflare` target it is how the placed units reach stage.
-In the `host` Outbox Worker mode, whatever the target, `deploy-zerops` deploys the one
-`outbox-worker-host` service (`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's
-dedicated worker service; see [Outbox Workers](./OUTBOX_WORKERS.md). The run that deploys one mode's
-workers stops the other mode's. A switch changes no source, so each deploy first checks whether the
-other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
-when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
-
-The edge ships in three jobs. `edge-plan` resolves the last successful `stage-edge` deployment and
-plans the diff from there. `edge-build` builds and verifies each planned unit on its own runner (the
-unit's `cloudflare:deploy` up to its final `wrangler deploy`) and uploads its output; a build is
-CPU-bound, and two builds on one two-core hosted runner take as long as two in a row. Both wait only
-for the deploy target, so they run beside the migrations. `deploy-cloudflare` runs once
-`deploy-migrations` has migrated the database and SpiceDB, beside `deploy-zerops`, in its own
-`stage-edge` environment, one edge deploy at a time (`edge-stage` concurrency group). It unpacks this
-run's builds, deploys them with Wrangler one by one in plan order, runs every unit's `cloudflare:proof`
-side by side, then records each deployed version as proven. Only its Wrangler steps receive
-`CLOUDFLARE_API_TOKEN`; the plan, builds and proof run dependency code and never see it.
-
-A version is recorded as proven by redeploying it at 100% with a deployment message starting
-`Proven by cloudflare:proof at`; traffic does not change. Only such a version is a rollback target.
-The active version by itself is not: a secret change or a manual deploy creates a version nobody
-proved, and the provisioning secrets once left every Worker on a version without its ASSETS or
-Hyperdrive bindings. Before the first deploy each Worker's rollback target is read from its
-deployment history: the version of its newest proven deployment, `unproven` when it has none, or no
-Worker at all. A failed deploy or proof returns each Worker this run deployed to its proven version,
-and that restore carries the proven marker too, so failed runs never push the newest proven
-deployment out of the listed history. A Worker the run created is deleted. A Worker with no proven
-version is not rolled back; it is reported and fails the job. A cancelled run restores the same
-way, because its deploy may have stopped after some Workers changed. The restore step verifies that
-state, and any Worker left on the candidate is reported and fails the job. A
-change to the edge workflow or the install action replans every placed unit, and a change to the
-planner itself replans every unit on Zerops and the edge. Because the history is separate, a failed
-edge deploy is replanned by the next run even when Zerops succeeded for the same revision.
-
-Build, deploy, proof, proven-record and retirement-check steps each have a timeout that leaves the restore step
-its own budget inside the job deadline, so a hung deploy still ends with every changed Worker
-restored.
-
-Removing a unit from placement, or renaming its Worker, must list the old Worker in
-`retiredWorkers`. The planner compares placement with the last successful edge deployment, in full
-plans too, and refuses a change that drops a deployed Worker without retiring it. Placed units must
-also have distinct Worker names. Retirement has two phases, and CI never deletes a Worker. The
-deploy that drops a Worker leaves it running, so a rollback of the Shell or another dependent still
-finds its binding target. After the proofs pass, every successful edge deploy reports each retired
-Worker that still exists as a warning, until an operator deletes it with
-`wrangler delete --name <worker>`. `retiredWorkers` is a ledger: CI cannot see a deletion, so the
-planner keeps every entry the last edge deployment retired, and a deleted Worker's entry costs one
-read-only check per deploy.
-
-The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
-variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
-environment (below). The `edge-deploy-readiness` job checks all three from `stage-edge` without
-creating a deployment. If any is missing, `deploy-cloudflare` is skipped, records nothing, a notice
-names what is missing, and CI stays green. Reading `stage-edge` without a deployment uses
-`environment.deployment: false`, which GitHub refuses for environments with custom deployment
-protection rules, so `stage-edge` must not have any.
+Worker the Shell binds as a service is placed too.
 
 The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
 `topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
 origin (the placed units' API CORS allowlist), `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
-unit (the output verifier requires them), and the private data plane every Worker binds:
+unit (the output verifier requires them), `ULTRAMODERN_EMAIL_SENDER` (the `send_email` binding's one
+allowed sender, `topology/stage-edge.json` `emailSender`), and the private data plane every Worker binds:
 `ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID` (the `HYPERDRIVE` binding, from which Core's
-`#database-runtime` takes the runtime `DATABASE_URL`) and
+`#database-runtime` takes the runtime `DATABASE_URL`),
 `ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID` (the `SPICEDB` Workers VPC binding Core's
 `#spicedb-transport` calls), and `ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID` (the
 `ONTOS_ACTIVE_APPLICATION_COMPOSITION` KV binding Core's `#active-application-composition-source`
-reads). A Worker build without any of them fails. It may add `MODERN_ASSET_PREFIX`.
+reads). `cloudflare-stage-cutover.mts provision` writes the IDs; until it has, they are empty and every
+unit build (`scripts/ci/build-edge-unit.sh`) and the deploy's stage edge export fail closed.
+It may add `MODERN_ASSET_PREFIX`.
 Only `MODERN_`, `ULTRAMODERN_` and `VERTICAL_` keys are accepted. `ULTRAMODERN_SOURCE_REVISION` and
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for the run. `VERTICAL_*_WORKER_NAME` and
 `VERTICAL_*_WORKER_BINDING` are rejected: a Worker's name and service-binding name are its topology
 `cloudflare.workerName` and `workerDispatch.serviceBinding`, the names CI deploys and every caller uses. Because it is a topology document,
-changing a value replans every unit, so no Worker keeps a build of the old configuration. The job
-never reads the Zerops `stage` environment.
-Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
-(`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`); the
-Hyperdrive config and Workers VPC service the IDs above name are account objects.
+changing a value replans every unit, so no Worker keeps a build of the old configuration.
+
+The AKROS storefront is not a placed unit. Its custom domain comes from the `STOREFRONT_URL` its
+Cloudflare config generator requires (`akros-storefront/scripts/cloudflare-config.mjs`), which the demo
+deploy derives from `topology/stage-edge.json` `storefrontHostname`; `wrangler.jsonc` carries no route.
 
 Inside the account the Shell reaches module releases through service bindings: a binding call runs
 the target Worker on the caller's machine, without a public round trip. `immutable-shell-release.mts
@@ -485,10 +415,7 @@ The `Cloudflare Workerd Artifact Proof (topology)` job runs the built Workers to
 PostgreSQL (as the `HYPERDRIVE` local connection string) and SpiceDB (a local gateway Worker stands
 in for the `SPICEDB` VPC service), then proves repeated database requests, a SpiceDB-authorized
 Shell read, module discovery and a vertical API over service bindings, and SSR. Run it locally
-after `pnpm cloudflare:build`, `pnpm db:migrate` and `pnpm local:initialize`. The per-unit
-`cloudflare:proof` and the verified rollback catch a Worker whose configuration is incomplete.
-The first edge deploy has no previous edge deployment, so seed it with a full run:
-`gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
+after `pnpm cloudflare:build`, `pnpm db:migrate` and `pnpm local:initialize`. Placement adds the Worker
 delivery; it never removes a Zerops service or any GitHub environment variable or secret.
 
 ### Adding a vertical
@@ -502,87 +429,86 @@ first: it needs no secrets, so it also runs for forks. In the same pull request 
 2. Add its id to `units` in `topology/cloudflare-placement.json`, and add its service-binding
    targets to `unitServiceBindings` when it calls other placed units.
 3. Set `buildEnvironment.ULTRAMODERN_PUBLIC_URL_<UNIT>` to its stage origin,
-   `https://ontos-stage-<unit>.<STAGE_ZONE>`.
+   `https://ontos-stage-<unit>.<zone>`, with `zone` from `topology/stage-edge.json`.
 
-Before the merge, an operator runs `node scripts/ops/cloudflare-stage-cutover.mts worker-secrets`
-from the pull request's checkout, so the new Worker holds its runtime secrets when the stage deploy
-ships it, and runs `verify` after that deploy. A vertical needs no new GitHub variables or secrets.
+The immutable release receives its runtime secrets through `prepare-stage-release-secrets.mts`;
+provisioning never writes secrets to legacy `app-<unit>` Workers. Run `verify` after the demo deploy.
+A vertical needs no new GitHub variables or secrets.
 
 ## Stage cut-over and Zerops service retirement
 
-Two operator scripts own the one-time account and service changes around the Cloudflare stage. Run
-them from `app/` on a clean `main`. Both read before they write, so a re-run after a partial failure
-converges, and `--dry-run` performs every read and prints each mutation instead of running it. Zerops
-is reached through the locally authenticated `zcli` and GitHub through `gh`. Secret values stay in
-memory: they reach Cloudflare in request bodies, Wrangler and `zcli` on standard input, and never
-appear in a command line or in the output.
-
-`node scripts/ops/cloudflare-stage-cutover.mts <step> [--dry-run] [--env-file <path>]` reads
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `STAGE_ZONE` and `STAGE_SHELL_HOSTNAME` from the
-environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The optional
-`CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives. Without it, CI receives
-`CLOUDFLARE_API_TOKEN`. The SpiceDB TLS step also needs `ZEROPS_TOKEN`, because `zcli` cannot set
-service secrets, and a `CLOUDFLARE_API_TOKEN` with the stage zone permission "SSL and
-Certificates: Edit" for the Origin CA.
-`provision` creates the composition KV namespace, and CI writes its `active` key with the
-`stage-edge` token, so both tokens need the account permission "Workers KV Storage: Edit".
-
-The same file holds the Shell's two secrets, because the Zerops Shell they used to live on is
-retired: `shellsuperapp_BETTER_AUTH_SECRET` (at least 32 characters) and
-`shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK` (the Shell's Ed25519 gateway signing key as a private JWK,
-in single quotes). They use the vault export's `<hostname>_<KEY>` names, so the file also serves
-`stage-zerops-services.mts restore --secrets-file`. Zerops is no place for them: it returns a
-sensitive project variable only masked, and every service would inherit it. The Worker secrets step
-and `verify` fail when either is missing. A new value takes effect only after `worker-secrets`, which
-gives the Shell the new key and every vertical its derived public JWKS in the same run. To create
-them:
+Run the operator scripts from `app/` on the reviewed `demo/sales-crm` revision. Stage is deployed
+by `stage-demo-deploy.yml`, not the main-branch gates workflow. Provisioning is read-before-write:
+re-runs reuse matching objects and stop on incompatible VPC, Hyperdrive or TLS configuration.
+`--dry-run` still reads live state and validates prerequisites, but prints each planned mutation
+instead of performing it. It requires valid credentials and network access; `verify --dry-run`
+checks the same prerequisites as `verify`, and `activate --dry-run` verifies before reporting the
+`DEPLOY_TARGET=cloudflare` and `OUTBOX_WORKER_MODE=host` changes. Zerops uses authenticated `zcli`
+and GitHub uses `gh`; secret values never appear in arguments or logs.
 
 ```sh
-node -e "const c=require('node:crypto');const k=c.generateKeyPairSync('ed25519').privateKey.export({format:'jwk'});const kid=c.createHash('sha256').update(JSON.stringify({crv:k.crv,kty:k.kty,x:k.x})).digest('base64url');console.log('shellsuperapp_BETTER_AUTH_SECRET='+c.randomBytes(48).toString('base64url'));console.log(\"shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK='\"+JSON.stringify({alg:'EdDSA',crv:k.crv,d:k.d,kid,kty:k.kty,use:'sig',x:k.x})+\"'\")" >> ~/.cloudflare-ontos-stage-token
+node scripts/ops/cloudflare-stage-cutover.mts <step> --env-file <credentials-path> [--dry-run]
+node scripts/ops/cloudflare-stage-cutover.mts seed-composition \
+  --old-env-file <old-account-credentials> --env-file <new-account-credentials> [--dry-run]
 ```
 
-- `spicedb-tls` creates the SpiceDB TLS material as sensitive secrets on the Zerops `spicedb` service,
-  and `provision` runs it first. The gRPC pair `SPICEDB_GRPC_TLS_CERT`/`SPICEDB_GRPC_TLS_KEY` is a
-  self-signed certificate for `spicedb`, `localhost` and `127.0.0.1` that Node clients pin. The HTTP
-  gateway pair `SPICEDB_HTTP_TLS_CERT`/`SPICEDB_HTTP_TLS_KEY` is a Cloudflare Origin CA certificate
-  for `ontos-stage-spicedb.<STAGE_ZONE>`, the server name Workers VPC verifies; it needs no DNS record.
-  A pair that exists and holds is kept. A partial pair, a wrong name, a mismatched key or a
-  certificate expiring within 30 days fails with the pair to remove, instead of rotating silently.
-- `provision` runs every step in dependency order. It creates or reuses the remotely managed Tunnel
-  `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
-  as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
-  stage variables and deploys `cloudflared`, then waits until the tunnel is healthy. Next it creates
-  the Workers VPC services `ontos-stage-db18` (tcp `db18.zerops:5432`, certificate verification
-  `disabled`, because Zerops Postgres serves a self-signed certificate and the hop stays inside the
-  Tunnel and the project network) and `ontos-stage-spicedb` (HTTPS `spicedb.zerops:8443`, certificate
-  verification `verify_full`). cloudflared resolves fully qualified names, and Zerops answers only a
-  service's `<hostname>.zerops` name that way. Then it creates Hyperdrive `ontos-stage-runtime`: role
-  `ontos_runtime`, caching disabled, origin connection limit 40, and the password read from Zerops
-  `db18_password`. Service values such as that password come from the service's data through the
-  Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
-  The db18 hop is encrypted but not certificate-checked; see "Why db18 TLS is not CA-verified" below.
-  It creates the KV namespace `ontos-stage-active-application-composition`, empty until CI writes the
-  first publication. It writes the IDs
-  and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
-  `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
-  placed Worker's secrets with `wrangler secret bulk`: the Shell's secrets from the settings file, the
-  SpiceDB preshared key from Zerops, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, because the Worker build's environment never
-  reaches the Worker's runtime. A Worker's `SPICEDB_ENDPOINT` is the gateway name
-  `ontos-stage-spicedb.<STAGE_ZONE>`, which the VPC service verifies. An existing object that differs from the runbook fails the step instead of being reused.
-- `cost-guards` repeats only the cost-guard step, which `provision` runs after the `stage-edge`
-  settings (see [Stage cost guards](#stage-cost-guards)).
-- `resume` turns the cost kill switch off again.
-- `worker-secrets` repeats only the Worker secrets step.
-- `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy, and both
-  SpiceDB TLS pairs must exist and hold. Both VPC
-  services and Hyperdrive must match the runbook, the composition KV namespace must exist, and the
-  reviewed `buildEnvironment` must name them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
-  `cloudflare:proof`, must have succeeded for the checked-out revision. Once `stage` targets
-  Cloudflare, the composition KV namespace must also hold key `active`, which the stage deploy's
-  composition sync writes. Before activation `verify` only reports that check as waiting, so run it again after
-  `activate` and the full deploy, and move DNS only when it passes.
-- `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
-  `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.
+`--env-file` is required, with no inferred personal-token path. File values take precedence over
+ambient environment variables. It contains `CLOUDFLARE_API_TOKEN`, `ZEROPS_TOKEN`,
+`STAGE_ACCESS_EMAILS` (comma-separated notification emails), and `DATABASE_ADMIN_URL` when creating
+database login roles from a host on the Zerops VPN. `STAGE_ACCESS_ENFORCE` defaults to `false`.
+Optional `CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives; otherwise CI receives
+the provisioning token. An optional `CLOUDFLARE_ACCOUNT_ID` must equal the reviewed topology.
+Shell signing/authentication secrets belong to the immutable release bundle, not this settings file.
+
+`topology/stage-edge.json` is the public topology source: `accountId`, `workersDevSubdomain`, `zone`,
+`shellHostname`, `storefrontHostname`, `spicedbHostname`, `emailSender`, `storefrontCatalogKvId`.
+Provision and verify read the account's actual workers.dev subdomain and fail if it differs from
+`workersDevSubdomain`; resolve the provisional value before bootstrap. Hostnames, TLS names and
+email are not credential-file overrides. Provisioning fills `storefrontCatalogKvId`, preserving
+other fields. The reviewed placement starts with empty account-specific KV/Hyperdrive/VPC IDs;
+readiness and builds reject them until provisioning writes the new account's IDs.
+
+- `spicedb-tls` ensures sensitive gRPC and HTTP TLS pairs on Zerops `spicedb`; provision runs it
+  before creating the tunnel. gRPC uses `spicedb`, `localhost`, `127.0.0.1`; the HTTP Origin CA
+  certificate uses exactly `stage-edge.json` `spicedbHostname`, also the Workers' `SPICEDB_ENDPOINT`.
+  It needs no DNS record. Valid pairs are kept; partial, mismatched, wrong-name or nearly expired
+  pairs fail instead of being silently rotated. Origin CA needs Zone SSL and Certificates Edit.
+- `database-identities` creates missing dedicated passwords on `migrator` and ensures their login
+  roles. Provision runs it before creating Hyperdrive configurations.
+- `provision` first validates workers.dev and the CI token's Zone Read permission. It creates or
+  reuses remotely managed Tunnel `ontos-stage`, imports missing `cloudflared` and `outboxworkerhost`
+  services, and records their `ZEROPS_*_SERVICE_ID` stage variables. An existing connector receives
+  this account's `TUNNEL_TOKEN` when different. It deploys only after token replacement, when the
+  service is `READY_TO_DEPLOY`, or to recover a down/inactive tunnel; a connected,
+  converged connector is not restarted. It waits for tunnel health before continuing.
+  It ensures VPC services `ontos-stage-db18` (TCP `db18.zerops:5432`, certificate verification
+  disabled inside the tunnel) and `ontos-stage-spicedb` (HTTPS `spicedb.zerops:8443`, `verify_full`).
+  Hyperdrive caching is disabled: runtime role `ontos_runtime` has origin connection limit **60**,
+  Party Registry **10**, gateway issuer **5**. Current origin credentials are reapplied on re-runs.
+  It ensures composition KV `ontos-stage-active-application-composition` and the initially empty,
+  price-free storefront cache `ontos-stage-akros-storefront-catalog`. It writes KV/Hyperdrive/VPC
+  IDs, public URLs and email sender into `cloudflare-placement.json`, and the storefront KV ID into
+  `stage-edge.json`. Commit both reviewed topology files before building a release.
+  It configures `stage-edge` variables `CLOUDFLARE_ACCOUNT_ID` and
+  `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, and secret `CLOUDFLARE_API_TOKEN`, then cost guards.
+  It checks the account's workers.dev subdomain against `stage-edge.json` and copies it nowhere.
+  It never runs `wrangler secret bulk` on legacy Workers.
+- `seed-composition` requires both explicit credential files, each containing `CLOUDFLARE_ACCOUNT_ID`
+  and `CLOUDFLARE_API_TOKEN`; it ignores ambient credentials. The accounts must differ and the new
+  account must match topology. It discovers composition namespaces and checks the new namespace ID
+  against placement, then validates the old `active` snapshot and copies its original bytes without
+  re-encoding. Expired or invalid snapshots fail before PUT. Dry run performs the same reads and
+  validation but never PUTs. Refresh the source snapshot immediately before copying; never seed the
+  storefront catalog cache. Both provisioning and CI need Workers KV Storage Edit.
+- `cost-guards` converges Access, usage notification and the disabled kill switch, including the
+  storefront hostname. `resume --env-file <credentials-path>` turns the switch off after investigation.
+- `verify` changes nothing. It checks tunnel/TLS/VPC/Hyperdrive state, composition KV, storefront KV
+  and its nonempty reviewed ID, placement IDs/URLs/email, the derived stage-edge variables, cost
+  guards and the latest successful stage-edge deployment for the checked-out revision. Uncommitted
+  placement or stage-edge topology changes fail. It does not inspect legacy Worker names or secrets.
+  Once stage targets Cloudflare it also requires composition KV key `active`; before activation it
+  reports that check as pending. Verify again after the full demo deploy, before moving DNS.
+- `activate` verifies first, then sets stage `OUTBOX_WORKER_MODE=host` and `DEPLOY_TARGET=cloudflare`.
 
 ### Why db18 TLS is not CA-verified
 
@@ -672,16 +598,19 @@ To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete the three applicatio
 dashboard; `cost-guards` never deletes them.
 
 To resume after the kill switch trips, find out why, then run
-`node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if
+`node scripts/ops/cloudflare-stage-cutover.mts resume --env-file <credentials-path>` (the check trips it again within the hour if
 usage is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
 guards, delete the kill switch rule and the notification in the dashboard and remove the Access
 applications; deleting `CLOUDFLARE_STAGE_ZONE_ID` stops the hourly check.
 
 The cut-over token needs these permissions. Account: Cloudflare Tunnel Edit, Workers Scripts Edit,
-Hyperdrive Edit, Connectivity Directory Admin, Access: Apps and Policies Edit, Access: Service Tokens
-Edit, Notifications Edit, Account Analytics Read and Account Settings Read. Zone: Zone Read, DNS
-Edit, Workers Routes Edit and Zone WAF Edit. The narrower `stage-edge` token additionally needs
-Account Analytics Read and Zone WAF Edit for the hourly check.
+Workers KV Storage Edit, Hyperdrive Edit, Connectivity Directory Admin, Access: Apps and Policies Edit,
+Access: Service Tokens Edit, Notifications Edit, Account Analytics Read, Account Settings Read and Email
+Sending Edit (the Shell and Commerce `send_email` bindings). Zone: Zone Read, DNS Edit, Workers Routes
+Edit, Zone WAF Edit and SSL and Certificates Edit. The narrower `stage-edge` token additionally needs
+Account Analytics Read, **Zone Read** and Zone WAF Edit for the hourly check; provision and verify
+exercise Zone Read with that narrower token. Workers Scripts Read (or Edit) lets them check the
+account's actual workers.dev subdomain against `stage-edge.json`.
 
 ### Zerops service retirement
 
@@ -892,22 +821,17 @@ No merge strategy flag is needed: the queue rebases. Before the pull request's o
 command enables auto-merge, and the pull request joins the queue once they do. It leaves the queue if
 its merge-group run fails. Nobody bypasses the queue, so do not pass `--admin`.
 
-The push that lands the commit deploys straight away. `queue-proof` looks for a successful
-`merge_group` run of the workflow on that commit; when one exists every gate job is skipped and
-`Workspace gates` passes on that proof. A commit without one (a dispatch on a commit pushed before
-the queue) runs the gates first. The deploy then runs:
+The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
+run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
+passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
+gates first. A production dispatch then runs:
 
 ```text
-deploy-target ──┬─ deploy-plan ───────────────┐
-edge-readiness ─┴─ edge-plan ─ edge-build ─┐  │
-Workspace gates ───────────────────────────┼──┴─ deploy-migrations ─┬─ deploy-zerops ─────┬─ publish-edge-composition ─ sync-edge-composition
-                                           └────────────────────────┴─ deploy-cloudflare ─┘
+deploy-target ─ deploy-plan ─┬─ build-outbox-host ──────────────────────────────────────┐
+Workspace gates ─────────────┴─ initial-composition-cutover-guard ─ deploy-migrations ─┴─ deploy-zerops
 ```
 
-`deploy-plan` and `edge-plan` need no gate, so both plans are ready when the gates pass or prove
-skipped, and the edge builds run while the migrations do. A plan with no migration and no SpiceDB
-change finishes `deploy-migrations` in seconds, so a one-vertical change reaches its Worker within
-minutes of the merge.
+Stage deploys from `demo/sales-crm` (`stage-demo-deploy.yml`), never from `main`.
 
 ## Pull-request and release hygiene
 

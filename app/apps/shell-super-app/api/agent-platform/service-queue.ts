@@ -24,7 +24,7 @@ import type {
   AgentQueueRequest,
 } from '@app/shared-contracts/agent-proposals';
 import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
-import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Schema, Struct } from 'effect';
 
 import type { AgentProposalCommandPayload } from '@app/core-runtime';
 
@@ -407,7 +407,8 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
           Effect.flatMap((read) =>
             callModuleAs(caller.principal, module.appId, read.path, {
               ...read.query,
-              agentHistory: { ...request, mode: 'activity' },
+              // Owners read only their history fields; the page size and module filter stay in the Shell.
+              agentHistory: { ...Struct.pick(request, ['agentPrincipalId', 'cursor', 'kind']), mode: 'activity' },
             }),
           ),
           Effect.map((result) => [module.moduleId, result.status === 200 ? result.body : undefined] as const),

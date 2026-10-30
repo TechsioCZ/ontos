@@ -1,178 +1,66 @@
-import { pipe, DateTime, Effect, Schema } from 'effect';
-import { orderDateText } from '../../../../../shared/domain/imports.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-
-// AREA: clients (C00/C01) — owned by the crm-clients lane.
-// Klienti (Správce, Vedoucí) / Mí klienti (Obchodník): search, filters, list, and the client card in a SidePanel
-// opened from `?klient=<id>` (drill-down links from other CRM pages use the same param).
-import { PageHeader, StatCard, StatRow, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
+import { DateTime, Effect, Schema, Option } from 'effect';
+import { PageHeader, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-
 import { useState } from 'react';
-import type { ComponentProps } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
 import { uncorrelatedCustomerLinks } from '../../../../../shared/commands/clients.ts';
-import type { Client } from '../../../../../shared/domain/clients.ts';
+import { toCsv } from '../../../../../shared/domain/reports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
-import { salespersonName, useCrmRecords } from '../../../../crm/records.ts';
-import {
-  CrmScopeNote,
-  CrmStateGate,
-  useCrmRouteSelection,
-  crmPaginationProps,
-  crmTableTranslations,
-} from '../../../../crm/ui.tsx';
+import { useCrmRecords } from '../../../../crm/records.ts';
+import { CrmStateGate, useCrmRouteSelection, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import { CrmSalesKpiStrip } from '../prehled-prodeju/sales-kpi-strip.tsx';
+import { downloadCsv } from '../prehled-prodeju/report-format.ts';
 import { ClientCard } from './client-card.tsx';
 import { ClientFormDialog } from './client-form-dialog.tsx';
-import {
-  activeContactsOf,
-  cityOf,
-  clientMatches,
-  clientSegments,
-  contactsCsv,
-  kindLabels,
-  lastVisitOf,
-  partyLinked,
-  primaryContactOf,
-  segmentLabel,
-  segmentLabels,
-} from './clients-model.ts';
-import { SalespersonChip } from './salesperson-chip.tsx';
 import { TeamPanel } from './team-panel.tsx';
-import { downloadCsv } from '../prehled-prodeju/report-format.ts';
+import { clientSegments, contactsCsv, segmentLabels } from './clients-model.ts';
+import ClientFilterPanel from './client-filter-panel.tsx';
+import { clientColumns, contactColumns } from './client-table-columns.tsx';
+import {
+  KPI_ALL,
+  KPI_UNASSIGNED,
+  clientQueryForViewer,
+  buildClientRows,
+  buildContactRows,
+  filterClientRows,
+  filterContactRows,
+  defaultClientFilters,
+  metricCount,
+  kpiMetricEntity,
+  clientMetricsForViewer,
+  kpiEntities,
+  metricQuery,
+  selectedMetric,
+  parseClientQuery,
+  serializeClientQuery,
+  resetClientFilters,
+  sameClientFilters,
+  kpiStatusOf as clientStatusOf,
+  kpiRegistryOf as clientRegistryOf,
+  kpiRecencyOf as clientRecencyOf,
+  kpiSegmentOf as clientSegmentOf,
+} from './client-filters.ts';
+import type { ClientEntity, ClientFilters, ClientMetric, ClientQuery } from './client-filters.ts';
 
-const ALL = 'all';
-const UNASSIGNED = 'none';
-const StatusFilterSchema = Schema.Literals(['active', 'archived', 'all']);
-type StatusFilter = typeof StatusFilterSchema.Type;
-const RegistryFilterSchema = Schema.Literals(['all', 'linked', 'unlinked']);
-type RegistryFilter = typeof RegistryFilterSchema.Type;
-
-const DAY_MS = 86_400_000;
-
-interface ClientRow {
-  readonly city: string | undefined;
-  readonly client: Client;
-  readonly contactCount: number;
-  readonly lastVisit: DateTime.Utc | undefined;
-  readonly owner: string | undefined;
-  readonly primaryContact: { readonly name: string; readonly role?: string } | undefined;
-}
-
-const ownerColumn: ColumnDef<ClientRow> = {
-  accessorFn: (row) => row.owner ?? '',
-  cell: (info) => <SalespersonChip name={info.getValue<string>()} />,
-  header: 'Obchodník',
-  id: 'owner',
-  meta: { type: 'string', width: 180 },
-};
-
-const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
-  {
-    accessorFn: (row) => row.client.name,
-    cell: (info) => {
-      const row = info.row.original;
-      const segment = segmentLabel(row.client.segment);
-      return (
-        <div className="flex min-w-0 flex-col py-50">
-          <span className="flex min-w-0 items-center gap-100">
-            <span
-              aria-hidden
-              className={`${row.client.kind === 'person' ? 'icon-[mdi--account-outline]' : 'icon-[mdi--office-building-outline]'} size-200 shrink-0 text-fg-secondary`}
-            />
-            <span className="truncate font-medium">{row.client.name}</span>
-            {row.client.status === 'archived' && (
-              <Badge size="sm" variant="outline">
-                Archiv
-              </Badge>
-            )}
-          </span>
-          <span className="truncate text-fg-secondary text-xs">
-            {[segment ?? kindLabels[row.client.kind], row.city].filter((part) => part !== undefined).join(' · ')}
-          </span>
-        </div>
-      );
-    },
-    header: 'Klient',
-    id: 'name',
-    meta: { type: 'string', width: 300 },
-  },
-  {
-    accessorFn: (row) => row.client.regNo ?? '',
-    cell: (info) => {
-      const value = info.getValue<string>();
-      return value === '' ? (
-        <span className="text-fg-secondary">—</span>
-      ) : (
-        <span className="tabular-nums">{value}</span>
-      );
-    },
-    header: 'IČO',
-    id: 'regNo',
-    meta: { type: 'string', width: 110 },
-  },
-  {
-    accessorFn: (row) => row.primaryContact?.name ?? '',
-    cell: (info) => {
-      const row = info.row.original;
-      if (row.primaryContact === undefined) {
-        return <span className="text-fg-secondary">bez kontaktní osoby</span>;
-      }
-      return (
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate">{row.primaryContact.name}</span>
-          <span className="truncate text-fg-secondary text-xs">
-            {[row.primaryContact.role, row.contactCount > 1 ? `+${row.contactCount - 1} další` : undefined]
-              .filter((part) => part !== undefined)
-              .join(' · ')}
-          </span>
-        </div>
-      );
-    },
-    header: 'Kontaktní osoba',
-    id: 'contact',
-    meta: { type: 'string', width: 200 },
-  },
-  {
-    accessorFn: (row) => row.client.phone ?? '',
-    cell: (info) => {
-      const value = info.getValue<string>();
-      return value === '' ? (
-        <span className="text-fg-secondary">—</span>
-      ) : (
-        <span className="tabular-nums">{value}</span>
-      );
-    },
-    header: 'Telefon',
-    id: 'phone',
-    meta: { type: 'string', width: 150 },
-  },
-  ...(showOwner ? [ownerColumn] : []),
-  {
-    accessorFn: (row) => orderDateText(row.lastVisit) ?? '',
-    cell: (info) => {
-      const value = info.row.original.lastVisit;
-      return value === undefined ? (
-        <span className="text-fg-secondary">bez kontaktu</span>
-      ) : (
-        <span className="tabular-nums">{pipe(value, orderDateText, formatDate)}</span>
-      );
-    },
-    header: 'Poslední kontakt',
-    id: 'lastVisit',
-    meta: { type: 'string', width: 140 },
-  },
-];
+const statusArchivedKey = 'crm.clientFilters.filters.statusArchived';
+const metricLabelKey = {
+  activeClients: 'crm.clientFilters.metrics.activeClients',
+  archivedClients: 'crm.clientFilters.metrics.archivedClients',
+  contactedRecently: 'crm.clientFilters.metrics.contactedRecently',
+  contacts: 'crm.clientFilters.metrics.contacts',
+  linkedActive: 'crm.clientFilters.metrics.linkedActive',
+  unassignedClients: 'crm.clientFilters.metrics.unassignedClients',
+  unlinkedActive: 'crm.clientFilters.metrics.unlinkedActive',
+} satisfies Record<ClientMetric, string>;
+const entityLabelKey = { client: 'crm.clientFilters.entity.client', contact: 'crm.clientFilters.entity.contact' };
 
 /** `?klient=<id>` of the current URL. */
 const useClientParam = () => {
@@ -190,24 +78,154 @@ const useClientParam = () => {
   return [openId, setClient] as const;
 };
 
-const buildRows = (records: RecordsResponse): ClientRow[] =>
-  records.state.clients.items.map((client) => {
-    const primary = primaryContactOf(records, client.id);
-    const primaryContact: ClientRow['primaryContact'] = primary === undefined ? undefined : { name: primary.name };
-    if (primary !== undefined && primary.role !== undefined && primaryContact !== undefined) {
-      Object.assign(primaryContact, { role: primary.role });
-    }
-    return {
-      city: cityOf(client.address),
-      client,
-      contactCount: activeContactsOf(records, client.id).length,
-      lastVisit: lastVisitOf(records, client.id),
-      owner: salespersonName(records, client.ownerSalespersonId),
-      primaryContact,
-    };
+const HistoryIndexSchema = Schema.Struct({ __TSR_index: Schema.Int });
+const writeClientQuery = (query: ClientQuery, mode: 'push' | 'replace') => {
+  const url = new URL(globalThis.location.href);
+  url.search = serializeClientQuery(url.search, query);
+  if (mode === 'replace') {
+    globalThis.history.replaceState(globalThis.history.state, '', url);
+    return;
+  }
+  const index = Option.match(Schema.decodeUnknownOption(HistoryIndexSchema)(globalThis.history.state), {
+    onNone: () => 0,
+    onSome: (state) => state.__TSR_index,
   });
+  const key = `clients-${String(index + 1)}`;
+  globalThis.history.pushState({ __TSR_index: index + 1, __TSR_key: key, key }, '', url);
+};
 
-const useClientsList = ({
+interface FiltersBarProps {
+  readonly entity: ClientEntity;
+  readonly filters: ClientFilters;
+  readonly manager: boolean;
+  readonly onChange: (patch: Partial<ClientFilters>, mode: 'push' | 'replace') => void;
+  readonly onReset: () => void;
+  readonly records: RecordsResponse;
+}
+
+const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: FiltersBarProps) => {
+  const { t } = useModernI18n();
+  const active = !sameClientFilters(filters, defaultClientFilters);
+  return (
+    <div className="flex flex-col gap-100">
+      <div className="flex flex-wrap items-end gap-150">
+        <Input
+          aria-label={t('crm.clientFilters.filters.search')}
+          className="w-full sm:w-80"
+          onChange={(event) => onChange({ search: event.target.value }, 'replace')}
+          placeholder={t(
+            entity === 'contact'
+              ? 'crm.clientFilters.table.searchContacts'
+              : 'crm.clientFilters.filters.searchPlaceholder',
+          )}
+          size="sm"
+          type="search"
+          value={filters.search}
+        />
+        <div className="w-full sm:w-44">
+          <SelectTemplate
+            items={[
+              { label: t('crm.clientFilters.filters.statusActive'), value: 'active' },
+              { label: t(statusArchivedKey), value: 'archived' },
+              { label: t('crm.clientFilters.filters.statusAll'), value: 'all' },
+            ]}
+            label={t('crm.clientFilters.filters.status')}
+            name="status"
+            onValueChange={(details) => {
+              const next = clientStatusOf(details.value[0]);
+              if (next !== undefined) {
+                onChange({ status: next }, 'push');
+              }
+            }}
+            size="sm"
+            value={[filters.status]}
+          />
+        </div>
+        {manager && (
+          <div className="w-full sm:w-52">
+            <SelectTemplate
+              items={[
+                { label: t('crm.clientFilters.filters.ownerAll'), value: KPI_ALL },
+                ...records.state.salespeople.map((person) => ({ label: person.name, value: person.id })),
+                { label: t('crm.clientFilters.filters.ownerNone'), value: KPI_UNASSIGNED },
+              ]}
+              label={t('crm.clientFilters.filters.owner')}
+              name="owner"
+              onValueChange={(details) => onChange({ owner: details.value[0] ?? KPI_ALL }, 'push')}
+              size="sm"
+              value={[filters.owner]}
+            />
+          </div>
+        )}
+        {manager && (
+          <div className="w-full sm:w-52">
+            <SelectTemplate
+              items={[
+                { label: t('crm.clientFilters.filters.registryAll'), value: 'all' },
+                { label: t('crm.clientFilters.filters.registryLinked'), value: 'linked' },
+                { label: t('crm.clientFilters.filters.registryUnlinked'), value: 'unlinked' },
+              ]}
+              label={t('crm.clientFilters.filters.registry')}
+              name="registry"
+              onValueChange={(details) => {
+                const next = clientRegistryOf(details.value[0]);
+                if (next !== undefined) {
+                  onChange({ registry: next }, 'push');
+                }
+              }}
+              size="sm"
+              value={[filters.registry]}
+            />
+          </div>
+        )}
+        <div className="w-full sm:w-48">
+          <SelectTemplate
+            items={[
+              { label: t('crm.clientFilters.filters.recencyAll'), value: 'all' },
+              { label: t('crm.clientFilters.filters.recency30'), value: 'recent30' },
+            ]}
+            label={t('crm.clientFilters.filters.recency')}
+            name="recency"
+            onValueChange={(details) => {
+              const next = clientRecencyOf(details.value[0]);
+              if (next !== undefined) {
+                onChange({ recency: next }, 'push');
+              }
+            }}
+            size="sm"
+            value={[filters.recency]}
+          />
+        </div>
+        <div className="w-full sm:w-52">
+          <SelectTemplate
+            items={[
+              { label: t('crm.clientFilters.filters.segmentAll'), value: KPI_ALL },
+              ...clientSegments.map((key) => ({ label: segmentLabels[key], value: key })),
+            ]}
+            label={t('crm.clientFilters.filters.segment')}
+            name="segment"
+            onValueChange={(details) => onChange({ segment: clientSegmentOf(details.value[0]) ?? KPI_ALL }, 'push')}
+            size="sm"
+            value={[filters.segment]}
+          />
+        </div>
+        {active && (
+          <Button
+            icon="icon-[mdi--filter-remove-outline]"
+            onClick={onReset}
+            size="sm"
+            theme="borderless"
+            variant="secondary"
+          >
+            {t('crm.clientFilters.filters.reset')}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ClientsList = ({
   busy,
   onOpen,
   records,
@@ -219,240 +237,76 @@ const useClientsList = ({
   readonly submit: ReturnType<typeof useCrmRecords>['submit'];
 }) => {
   const { t } = useModernI18n();
-  const [search, setSearch] = useState('');
-  const [owner, setOwner] = useState<string>(ALL);
-  const [segment, setSegment] = useState<string>(ALL);
-  const [status, setStatus] = useState<StatusFilter>('active');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(false);
-  const [registry, setRegistry] = useState<RegistryFilter>('all');
-
+  const search = useRouterState({ select: (state) => state.location.searchStr });
+  const query = clientQueryForViewer(parseClientQuery(search), records.viewer);
   const manager = canSeeEverything(records.viewer);
   const canCreate = records.viewer.writeAll || records.viewer.writeAssigned;
-  const rows = buildRows(records);
-  const active = rows.filter((row) => row.client.status === 'active');
-  const archivedCount = rows.length - active.length;
-  const visitedRecently = active.filter(
-    (row) =>
-      row.lastVisit !== undefined &&
-      DateTime.toEpochMillis(records.now) - DateTime.toEpochMillis(row.lastVisit) <= 30 * DAY_MS,
-  ).length;
-  const visible = rows.filter(
-    (row) =>
-      (status === 'all' || row.client.status === status) &&
-      (owner === ALL ||
-        (owner === UNASSIGNED
-          ? row.client.ownerSalespersonId === undefined
-          : row.client.ownerSalespersonId === owner)) &&
-      (segment === ALL || row.client.segment === segment) &&
-      (registry === 'all' || (registry === 'linked') === partyLinked(row.client)) &&
-      clientMatches(records, row.client, search),
-  );
-  const filtered =
-    search.trim() !== '' || owner !== ALL || segment !== ALL || status !== 'active' || registry !== 'all';
-  let emptyDescription = manager
-    ? 'Založte prvního klienta tlačítkem Nový klient.'
-    : 'Zatím vám nebyl přidělen žádný klient.';
-  if (filtered) {
-    emptyDescription = 'Upravte hledání nebo filtry.';
-  }
-  const linkedCount = active.filter((row) => partyLinked(row.client)).length;
+  const [createOpen, setCreateOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
+  const rows = buildClientRows(records);
+  const visible = filterClientRows(records, rows, query.filters);
+  const contacts = filterContactRows(records, buildContactRows(records), query.filters);
+  const visibleCount = query.entity === 'contact' ? contacts.length : visible.length;
+  const filtered = !sameClientFilters(query.filters, defaultClientFilters);
+  const activeCount = metricCount(records, 'activeClients');
+  const linkedCount = metricCount(records, 'linkedActive');
   const pendingCorrelations = uncorrelatedCustomerLinks(records.state);
   const toaster = useToast();
-  const mine = records.viewer.salespersonId;
-  const activeClientHint: Pick<ComponentProps<typeof StatCard>, 'hint'> = {};
-  if (archivedCount > 0) {
-    activeClientHint.hint = `${formatNumber(archivedCount)} v archivu`;
-  }
-
-  return {
-    active,
-    activeClientHint,
-    busy,
-    canCreate,
-    createOpen,
-    emptyDescription,
-    filtered,
-    linkedCount,
-    manager,
-    mine,
-    onOpen,
-    owner,
-    pendingCorrelations,
-    records,
-    registry,
-    search,
-    segment,
-    setCreateOpen,
-    setOwner,
-    setRegistry,
-    setSearch,
-    setSegment,
-    setStatus,
-    setTeamOpen,
-    status,
-    submit,
-    t,
-    teamOpen,
-    toaster,
-    visible,
-    visitedRecently,
-  };
-};
-
-const renderClientSummaries = ({
-  active,
-  activeClientHint,
-  busy,
-  linkedCount,
-  manager,
-  mine,
-  pendingCorrelations,
-  records,
-  submit,
-  t,
-  toaster,
-  visitedRecently,
-}: ReturnType<typeof useClientsList>) => (
-  <>
-    <StatRow>
-      <StatCard
-        {...activeClientHint}
-        label={t('crm.ciClientsVisits.clients.active')}
-        value={formatNumber(active.length)}
-      />
-      {manager ? (
-        <StatCard
-          hint="Vidí je jen vedení a správce"
-          label={t('crm.ciClientsVisits.clients.withoutSalesperson')}
-          value={formatNumber(active.filter((row) => row.client.ownerSalespersonId === undefined).length)}
-        />
-      ) : (
-        <StatCard
-          hint={salespersonName(records, mine) ?? 'bez záznamu obchodníka'}
-          label={t('crm.ciClientsVisits.clients.assignedToMe')}
-          value={formatNumber(active.length)}
-        />
-      )}
-      <StatCard
-        label={t('crm.ciClientsVisits.contacts.title')}
-        value={formatNumber(active.reduce((sum, row) => sum + row.contactCount, 0))}
-      />
-      <StatCard
-        hint="podle zapsaných kontaktů"
-        label={t('crm.ciClientsVisits.clients.contactedLast30Days')}
-        value={formatNumber(visitedRecently)}
-      />
-      {manager && (
-        <StatCard
-          hint={
-            linkedCount === active.length
-              ? 'všichni aktivní klienti mají ověřenou identitu'
-              : `${formatNumber(active.length - linkedCount)} bez přiřazeného zákazníka`
-          }
-          label={t('crm.ciClientsVisits.clients.linkedToRegistry')}
-          value={`${formatNumber(linkedCount)} z ${formatNumber(active.length)}`}
-        />
-      )}
-    </StatRow>
-    {records.viewer.writeAll && (active.length > linkedCount || pendingCorrelations > 0) && (
-      <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg bg-bg-light-warning-base px-200 py-150">
-        <p className="text-sm">
-          {active.length > linkedCount
-            ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v evidenci zákazníků.`
-            : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na evidenci zákazníků.`}{' '}
-          Systém je založí nebo dohledá podle IČO a názvu a propojí.
-        </p>
-        <Button
-          disabled={busy}
-          icon="icon-[mdi--link-variant]"
-          onClick={() => {
-            browserRuntime.runFork(
-              submit({ _tag: 'SyncClientParties' }).pipe(
-                Effect.tap((outcome) =>
-                  Effect.sync(() =>
-                    toaster.create(
-                      outcome.ok
-                        ? { title: 'Klienti propojeni s evidencí zákazníků', type: 'success' }
-                        : {
-                            description: outcome.message ?? 'Zkuste to prosím znovu.',
-                            title: 'Propojení se nezdařilo',
-                            type: 'error',
-                          },
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }}
-          size="sm"
-          theme="outlined"
-          variant="secondary"
-        >
-          Propojit s evidencí zákazníků
-        </Button>
-      </div>
-    )}
-    {/* Order statistics only where the company has imported wholesale orders (Hanák); a firm without orders, such as
-        Nájempark, never sees the wholesale "Prodeje v kostce" block. */}
-    {records.state.imports.orders.length > 0 && <CrmSalesKpiStrip records={records} />}
-  </>
-);
-
-const ClientsList = (props: Parameters<typeof useClientsList>[0]) => {
-  const model = useClientsList(props);
-  const {
-    active,
-    busy,
-    canCreate,
-    createOpen,
-    emptyDescription,
-    filtered,
-    manager,
-    onOpen,
-    owner,
-    records,
-    registry,
-    search,
-    segment,
-    setCreateOpen,
-    setOwner,
-    setRegistry,
-    setSearch,
-    setSegment,
-    setStatus,
-    setTeamOpen,
-    status,
-    submit,
-    t,
-    teamOpen,
-    visible,
-  } = model;
-  const summaries = renderClientSummaries(model);
-
+  const emptyDescription = filtered
+    ? t('crm.clientFilters.table.adjustFilters')
+    : t(manager ? 'crm.clientFilters.table.emptyManager' : 'crm.clientFilters.table.emptyAssigned');
+  const groups = kpiEntities.map((entity) => ({
+    entity,
+    label: t(entityLabelKey[entity]),
+    metrics: clientMetricsForViewer(records.viewer).flatMap((metricId) =>
+      kpiMetricEntity(metricId) === entity
+        ? [
+            {
+              countLabel: formatNumber(metricCount(records, metricId)),
+              label: t(metricLabelKey[metricId]),
+              metricId,
+            },
+          ]
+        : [],
+    ),
+  }));
+  const exportCsv =
+    query.entity === 'contact'
+      ? toCsv(
+          [
+            t('crm.clientFilters.table.person'),
+            t('crm.clientFilters.table.role'),
+            t('crm.clientFilters.table.email'),
+            t('crm.clientFilters.table.phone'),
+            t('crm.clientFilters.table.owningClient'),
+          ],
+          contacts.map((row) => [
+            row.contact.name,
+            row.contact.role,
+            row.contact.email,
+            row.contact.phone,
+            row.client.name,
+          ]),
+        )
+      : contactsCsv(
+          records,
+          visible.map((row) => row.client),
+        );
   return (
     <>
       <PageHeader
         actions={
           <div className="flex flex-wrap gap-100">
             <Button
-              disabled={visible.length === 0}
+              disabled={visibleCount === 0}
               icon="icon-[mdi--download]"
-              onClick={() =>
-                downloadCsv(
-                  contactsCsv(
-                    records,
-                    visible.map((row) => row.client),
-                  ),
-                  `kontakty-${DateTime.formatIsoDateUtc(records.now)}.csv`,
-                )
-              }
+              onClick={() => downloadCsv(exportCsv, `kontakty-${DateTime.formatIsoDateUtc(records.now)}.csv`)}
               size="sm"
               theme="outlined"
               title={t('crm.ciClientsVisits.clients.exportDescription')}
               variant="secondary"
             >
-              Exportovat kontakty (CSV)
+              {t('crm.clientFilters.actions.export')}
             </Button>
             {records.viewer.assign && (
               <Button
@@ -462,196 +316,117 @@ const ClientsList = (props: Parameters<typeof useClientsList>[0]) => {
                 theme="outlined"
                 variant="secondary"
               >
-                Obchodníci
+                {t('crm.clientFilters.actions.team')}
               </Button>
             )}
             {canCreate && (
               <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
-                Nový klient
+                {t('crm.clientFilters.actions.create')}
               </Button>
             )}
           </div>
         }
-        description={
-          manager
-            ? t('crm.pages.clients.description')
-            : 'Klienti, které máte přidělené: kontakty, návštěvy a objednávky na jednom místě.'
-        }
-        title={manager ? t('crm.pages.clients.title') : 'Mí klienti'}
+        description={manager ? t('crm.pages.clients.description') : t('crm.clientFilters.assignedDescription')}
+        title={manager ? t('crm.pages.clients.title') : t('crm.clientFilters.assignedTitle')}
       />
-      <div className="hidden flex-col gap-250 md:flex">{summaries}</div>
-      <details className={`${surfaceTileClassName} p-150 md:hidden`}>
-        <summary className="cursor-pointer font-medium text-sm">
-          Souhrny klientů a prodejů
-          <span className="mt-50 block text-fg-secondary text-xs">Aktivní klienti: {formatNumber(active.length)}</span>
-        </summary>
-        <div className="flex flex-col gap-250 pt-200">{summaries}</div>
-      </details>
-      <div className="flex flex-wrap items-end gap-150">
-        <Input
-          aria-label={t('crm.ciClientsVisits.clients.searchLabel')}
-          className="w-full sm:w-80"
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={t('crm.ciClientsVisits.clients.searchPlaceholder')}
-          size="sm"
-          type="search"
-          value={search}
-        />
-        {manager && (
-          <div className="w-full sm:w-52">
-            <SelectTemplate
-              items={[
-                { label: 'Všichni obchodníci', value: ALL },
-                ...records.state.salespeople.map((person) => ({
-                  label: person.active ? person.name : `${person.name} (vyřazen)`,
-                  value: person.id,
-                })),
-                { label: 'Bez obchodníka', value: UNASSIGNED },
-              ]}
-              label={t('crm.ciClientsVisits.fields.salesperson')}
-              name="owner"
-              onValueChange={(details) => setOwner(details.value[0] ?? ALL)}
-              size="sm"
-              value={[owner]}
-            />
-          </div>
-        )}
-        <div className="w-full sm:w-52">
-          <SelectTemplate
-            items={[
-              { label: 'Všechny segmenty', value: ALL },
-              ...clientSegments.map((key) => ({ label: segmentLabels[key], value: key })),
-            ]}
-            label={t('crm.ciClientsVisits.fields.segment')}
-            name="segment"
-            onValueChange={(details) => setSegment(details.value[0] ?? ALL)}
-            size="sm"
-            value={[segment]}
-          />
-        </div>
-        <div className="w-full sm:w-44">
-          <SelectTemplate
-            items={[
-              { label: 'Aktivní', value: 'active' },
-              { label: 'Archivovaní', value: 'archived' },
-              { label: 'Aktivní i archiv', value: 'all' },
-            ]}
-            label={t('crm.ciClientsVisits.fields.status')}
-            name="status"
-            onValueChange={(details) => {
-              const [next] = details.value;
-              if (next === 'active' || next === 'archived' || next === 'all') {
-                setStatus(next);
-              }
-            }}
-            size="sm"
-            value={[status]}
-          />
-        </div>
-        {manager && (
-          <div className="w-full sm:w-52">
-            <SelectTemplate
-              items={[
-                { label: 'Propojení i nepropojení', value: 'all' },
-                { label: 'Propojení s registrem', value: 'linked' },
-                { label: 'Čeká na propojení', value: 'unlinked' },
-              ]}
-              label={t('crm.ciClientsVisits.clients.customerRegistry')}
-              name="registry"
-              onValueChange={(details) => {
-                const [next] = details.value;
-                if (next === 'all' || next === 'linked' || next === 'unlinked') {
-                  setRegistry(next);
-                }
-              }}
-              size="sm"
-              value={[registry]}
-            />
-          </div>
-        )}
-        {filtered && (
+      {records.viewer.writeAll && (activeCount > linkedCount || pendingCorrelations > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg bg-bg-light-warning-base px-200 py-150">
+          <p className="text-sm">
+            {activeCount > linkedCount
+              ? `${formatNumber(activeCount - linkedCount)} aktivních klientů zatím nemá identitu v evidenci zákazníků.`
+              : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na evidenci zákazníků.`}{' '}
+            Systém je založí nebo dohledá podle IČO a názvu a propojí.
+          </p>
           <Button
-            icon="icon-[mdi--filter-remove-outline]"
+            disabled={busy}
+            icon="icon-[mdi--link-variant]"
             onClick={() => {
-              setSearch('');
-              setOwner(ALL);
-              setSegment(ALL);
-              setStatus('active');
-              setRegistry('all');
+              browserRuntime.runFork(
+                submit({ _tag: 'SyncClientParties' }).pipe(
+                  Effect.tap((outcome) =>
+                    Effect.sync(() =>
+                      toaster.create(
+                        outcome.ok
+                          ? { title: 'Klienti propojeni s evidencí zákazníků', type: 'success' }
+                          : {
+                              description: outcome.message ?? 'Zkuste to prosím znovu.',
+                              title: 'Propojení se nezdařilo',
+                              type: 'error',
+                            },
+                      ),
+                    ),
+                  ),
+                ),
+              );
             }}
             size="sm"
-            theme="borderless"
+            theme="outlined"
             variant="secondary"
           >
-            Zrušit filtry
+            Propojit s evidencí zákazníků
           </Button>
-        )}
-        <div className="ms-auto">
-          <CrmScopeNote records={records} />
         </div>
-      </div>
-      <ul className="flex flex-col gap-100 md:hidden">
-        {visible.length === 0 && (
-          <li className="p-200 text-center text-fg-secondary text-sm">Žádný klient neodpovídá.</li>
-        )}
-        {visible.slice(0, 100).map((row) => (
-          <li key={row.client.id}>
-            <button
-              className={`${surfaceTileClassName} flex w-full flex-col gap-50 p-200 text-start`}
-              onClick={() => onOpen(row.client.id)}
-              type="button"
-            >
-              <span className="flex items-center justify-between gap-100">
-                <span className="truncate font-medium">{row.client.name}</span>
-                {row.client.status === 'archived' && (
-                  <Badge size="sm" variant="outline">
-                    Archiv
-                  </Badge>
-                )}
-              </span>
-              <span className="truncate text-fg-secondary text-xs">
-                {[segmentLabel(row.client.segment) ?? kindLabels[row.client.kind], row.city, row.primaryContact?.name]
-                  .filter((part) => part !== undefined)
-                  .join(' · ')}
-              </span>
-              <span className="flex items-center justify-between gap-100 text-sm">
-                {manager ? (
-                  <SalespersonChip name={row.owner} />
-                ) : (
-                  <span className="tabular-nums">{row.client.phone ?? ''}</span>
-                )}
-                <span className="text-fg-secondary text-xs">
-                  {row.lastVisit === undefined
-                    ? 'bez kontaktu'
-                    : `kontakt ${pipe(row.lastVisit, orderDateText, formatDate)}`}
-                </span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="hidden min-w-0 md:block">
-        <DataTable
-          columns={columns(manager)}
-          data={visible}
-          enablePagination
-          enableSorting
-          getRowId={(row) => row.client.id}
-          getRowLabel={(row) => row.original.client.name}
-          maxHeight="calc(100dvh - 22rem)"
-          onRowClick={(row) => onOpen(row.original.client.id)}
-          pageSizeOptions={[25, 50, 100]}
-          paginationProps={crmPaginationProps}
-          size="sm"
-          stickyHeader
-          tableLayout="fixed"
-          translations={{
-            ...crmTableTranslations,
-            emptyDescription,
-            emptyTitle: filtered ? 'Žádný klient neodpovídá' : 'Zatím žádní klienti',
-          }}
-        />
-      </div>
+      )}
+
+      <ClientFilterPanel
+        groups={groups}
+        label={t('crm.clientFilters.navigation')}
+        onOpenMetric={(metric) => writeClientQuery(metricQuery(metric), 'push')}
+        selectedMetric={selectedMetric(query, records.viewer)}
+      >
+        <div className="flex min-w-0 flex-col gap-200">
+          <FiltersBar
+            entity={query.entity}
+            filters={query.filters}
+            manager={manager}
+            onChange={(patch, mode) => writeClientQuery({ ...query, filters: { ...query.filters, ...patch } }, mode)}
+            onReset={() => writeClientQuery(resetClientFilters(query), 'push')}
+            records={records}
+          />
+          {query.entity === 'contact' ? (
+            <DataTable
+              columns={contactColumns(t)}
+              data={contacts}
+              enablePagination
+              enableSorting
+              getRowId={(row) => row.contact.id}
+              getRowLabel={(row) => row.original.contact.name}
+              key="contacts"
+              onRowClick={(row) => onOpen(row.original.client.id)}
+              pageSizeOptions={[25, 50, 100]}
+              paginationProps={crmPaginationProps}
+              size="sm"
+              tableLayout="fixed"
+              translations={{
+                ...crmTableTranslations,
+                emptyDescription,
+                emptyTitle: t('crm.clientFilters.table.emptyContacts'),
+              }}
+            />
+          ) : (
+            <DataTable
+              columns={clientColumns(t, { manager, showStatus: query.filters.status === 'all' })}
+              data={visible}
+              enablePagination
+              enableSorting
+              getRowId={(row) => row.client.id}
+              getRowLabel={(row) => row.original.client.name}
+              key="clients"
+              onRowClick={(row) => onOpen(row.original.client.id)}
+              pageSizeOptions={[25, 50, 100]}
+              paginationProps={crmPaginationProps}
+              size="sm"
+              tableLayout="fixed"
+              translations={{
+                ...crmTableTranslations,
+                emptyDescription,
+                emptyTitle: t('crm.clientFilters.table.emptyClients'),
+              }}
+            />
+          )}
+        </div>
+      </ClientFilterPanel>
+      {records.state.imports.orders.length > 0 && <CrmSalesKpiStrip records={records} />}
       {teamOpen && <TeamPanel busy={busy} onClose={() => setTeamOpen(false)} records={records} submit={submit} />}
       {createOpen && (
         <ClientFormDialog
@@ -671,10 +446,11 @@ const ClientsList = (props: Parameters<typeof useClientsList>[0]) => {
 };
 
 const ClientsContent = () => {
+  const { t } = useModernI18n();
   const { busy, load, state, submit } = useCrmRecords();
   const [openId, setOpenId] = useClientParam();
   return (
-    <CrmStateGate loadingTitle="Klienti" onRetry={load} state={state}>
+    <CrmStateGate loadingTitle={t('crm.pages.clients.title')} onRetry={load} state={state}>
       {(records) => (
         <>
           <ClientsList busy={busy} onOpen={setOpenId} records={records} submit={submit} />

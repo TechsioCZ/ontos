@@ -24,7 +24,7 @@ cd "$(dirname "$0")/../../.."
 setup='outbox-worker-host'
 runtime="app/.zerops/runtime/$setup"
 
-apk add --no-cache curl git jq libstdc++ tar zstd >/dev/null
+apk add --no-cache binutils curl git jq libstdc++ tar zstd >/dev/null
 # The checkout belongs to the runner user, not to this container's root; Git must still read it, or the release
 # identity would silently fall back to the configured revision without the clean-tree check.
 git config --global --add safe.directory "$PWD"
@@ -72,5 +72,15 @@ fi
 # The start command runs node/bin/node; npm, corepack and pnpm are build tooling the host never runs.
 mkdir -p "$runtime/node/bin"
 cp "$node_home/bin/node" "$runtime/node/bin/node"
+
+# Zerops keeps no data of a package upload that runs longer than about 30 seconds (scripts/zerops-public-api.mts),
+# so the host ships only what it runs, about 63 MB instead of 115 MB gzipped. The musl Node carries its debug
+# information. Node never strips types under node_modules and the start command enables no source maps, so type
+# declarations, TypeScript sources, source maps and Markdown are never read. Only the modern.js plugin CLI imports
+# @rsbuild/core (and through it @rspack's 70 MB native binding), and nothing the bundle loads imports that CLI.
+strip --strip-all "$runtime/node/bin/node"
+find "$runtime/node_modules" -type f \( -name '*.map' -o -name '*.ts' -o -name '*.mts' -o -name '*.cts' \
+  -o -name '*.md' \) -delete
+rm -rf "$runtime/node_modules/@rsbuild" "$runtime/node_modules/@rspack"
 tar --create --owner=0 --group=0 --numeric-owner --file - "$runtime" | zstd --quiet -T0 -o "$RUNNER_TEMP/outbox-host.tar.zst" -f
 ls -l "$RUNNER_TEMP/outbox-host.tar.zst"

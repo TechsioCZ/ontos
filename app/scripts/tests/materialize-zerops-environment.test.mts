@@ -1,15 +1,20 @@
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Exit, FileSystem, Layer, Schema } from 'effect';
+import { Array as Arr, Effect, Exit, FileSystem, Layer, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parseDocument } from 'yaml';
 
-import { materializeZeropsEnvironment } from '../materialize-zerops-environment.mts';
+import {
+  joinZeropsDeployments,
+  materializeZeropsEnvironment,
+  materializeZeropsSetupFiles,
+} from '../materialize-zerops-environment.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 
 const HOST = 'outbox-worker-host';
 const stage = { environment: 'stage' } as const;
+const PRODUCTION_SPICEDB_ENDPOINT = 'spicedb.production.test:443';
 const readSetups = (text: string) =>
   Schema.decodeUnknownSync(Schema.Struct({ zerops: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)) }))(
     parseDocument(text).toJS(),
@@ -127,10 +132,10 @@ it.effect('only rewrites the selected setup for production and preserves its TLS
     const expected = parseDocument(fixture);
     expected.setIn(['zerops', 1, 'build', 'envVariables', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'], 'production');
     expected.setIn(['zerops', 1, 'run', 'envVariables', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'], 'production');
-    expected.setIn(['zerops', 1, 'run', 'envVariables', 'SPICEDB_ENDPOINT'], 'spicedb.production.test:443');
+    expected.setIn(['zerops', 1, 'run', 'envVariables', 'SPICEDB_ENDPOINT'], PRODUCTION_SPICEDB_ENDPOINT);
     const text = yield* materializeZeropsEnvironment(
       fixture,
-      { environment: 'production', spiceDbEndpoint: 'spicedb.production.test:443' },
+      { environment: 'production', spiceDbEndpoint: PRODUCTION_SPICEDB_ENDPOINT },
       HOST,
     );
     expect(parseDocument(text).toJS()).toEqual({ zerops: [readSetups(expected.toString())[1]] });
@@ -158,3 +163,97 @@ for (const bytes of [49_999, 50_000, 50_001]) {
     }),
   );
 }
+
+const providers = `zerops:
+  - setup: provider
+    run:
+      envVariables:
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        SPICEDB_ENDPOINT: spicedb:50051
+  - setup: spicedb
+    run:
+      base: alpine/docker@26.1
+`;
+const production = { environment: 'production', spiceDbEndpoint: PRODUCTION_SPICEDB_ENDPOINT } as const;
+
+it.effect('joins every deployment file and splits it into one pushable file per setup', () =>
+  Effect.gen(function* splitsSetups() {
+    const joined = yield* joinZeropsDeployments([fixture, providers]);
+    expect(readSetups(joined).map(({ setup }) => setup)).toEqual([
+      'before',
+      HOST,
+      `${HOST}-extra`,
+      'provider',
+      'spicedb',
+    ]);
+    const files = yield* materializeZeropsSetupFiles(joined, production);
+    expect(files.map(({ setup }) => setup)).toEqual(readSetups(joined).map(({ setup }) => setup));
+    const file = (setup: string) => parseDocument(files.find((item) => item.setup === setup)?.file ?? '');
+    expect(file('provider').toJS()).toEqual({
+      zerops: [
+        {
+          run: {
+            envVariables: {
+              SPICEDB_ENDPOINT: production.spiceDbEndpoint,
+              ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
+            },
+          },
+          setup: 'provider',
+        },
+      ],
+    });
+    // A setup that names no environment, such as SpiceDB, still gets its own unchanged file.
+    expect(file('spicedb').toJS()).toEqual({ zerops: [readSetups(providers)[1]] });
+    const unnamed = yield* Effect.flip(materializeZeropsSetupFiles(`${fixture}  - setup: ../escape\n`, production));
+    expect(unnamed.message).toContain('cannot name a file');
+    expect((yield* Effect.flip(joinZeropsDeployments([]))).message).toBe('no zerops.yaml to join');
+    expect((yield* Effect.flip(joinZeropsDeployments([fixture, 'zerops: [']))).message).toContain(
+      'has no zerops setups',
+    );
+  }),
+);
+
+it.effect('the real CLI writes one setup file per setup of every input', () =>
+  Effect.scoped(
+    Effect.gen(function* writesSetupFiles() {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'zerops-setup-files-' });
+      yield* fs.writeFileString(`${directory}/zerops.yaml`, fixture);
+      yield* fs.writeFileString(`${directory}/zerops-providers.yaml`, providers);
+      const materialize = (output: readonly string[]) =>
+        runCommand({
+          args: [
+            new URL('../materialize-zerops-environment.mts', import.meta.url).pathname,
+            '--environment',
+            'stage',
+            '--input',
+            `${directory}/zerops.yaml`,
+            '--input',
+            `${directory}/zerops-providers.yaml`,
+            ...output,
+          ],
+          captureProviderFailure: true,
+          command: 'node',
+        }).pipe(Effect.exit);
+      expect(Exit.isSuccess(yield* materialize(['--output-directory', `${directory}/out`]))).toBe(true);
+      expect(Arr.sort(yield* fs.readDirectory(`${directory}/out`), Order.String)).toEqual([
+        'before.yaml',
+        `${HOST}-extra.yaml`,
+        `${HOST}.yaml`,
+        'provider.yaml',
+        'spicedb.yaml',
+      ]);
+      expect(parseDocument(yield* fs.readFileString(`${directory}/out/provider.yaml`)).toJS()).toEqual({
+        zerops: [readSetups(providers)[0]],
+      });
+      // One file holds both inputs only when it stays pushable; a selected setup still works.
+      expect(Exit.isSuccess(yield* materialize(['--output', `${directory}/one.yaml`, '--setup', 'provider']))).toBe(
+        true,
+      );
+      expect(
+        Exit.isFailure(yield* materialize(['--output-directory', `${directory}/out`, '--setup', 'provider'])),
+      ).toBe(true);
+      expect(Exit.isFailure(yield* materialize([]))).toBe(true);
+    }),
+  ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+);

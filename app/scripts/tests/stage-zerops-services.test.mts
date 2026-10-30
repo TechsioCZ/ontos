@@ -16,6 +16,7 @@ import {
 } from '../ops/stage-zerops-services.mts';
 import { APP_DIRECTORY, fakeFiles, fakeStage, mutatingCommands } from './stage-operations-fixture.mts';
 import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
+import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 const RECORD_PATH = `${APP_DIRECTORY}/scripts/ops/stage-zerops-retirement.json`;
 // Retirement never touches these: the data plane, the migrator, the tunnel, the Outbox Worker host, and the dedicated
@@ -72,9 +73,9 @@ const RuntimeEnvironmentSchema = Schema.Struct({
   ),
 });
 const declaredRuntimeKeys = new Map(
-  Schema.decodeUnknownSync(RuntimeEnvironmentSchema)(
-    parse(readFileSync(`${APP_DIRECTORY}/zerops.yaml`, 'utf-8')),
-  ).zerops.map(({ run, setup }): [string, readonly string[]] => [setup, Object.keys(run?.envVariables ?? {})]),
+  Schema.decodeUnknownSync(RuntimeEnvironmentSchema)(parse(readZeropsDeploymentYaml())).zerops.map(
+    ({ run, setup }): [string, readonly string[]] => [setup, Object.keys(run?.envVariables ?? {})],
+  ),
 );
 
 // Recorded fixture IDs remain stable; newly declared applications receive synthetic IDs below.
@@ -232,9 +233,7 @@ it('retires exactly the application services zerops-import.yaml declares, each w
   ).services.map(({ hostname }) => hostname);
   const SetupsSchema = Schema.Struct({ zerops: Schema.Array(Schema.Struct({ setup: Schema.String })) });
   const setups = new Set(
-    Schema.decodeUnknownSync(SetupsSchema)(parse(readFileSync(`${APP_DIRECTORY}/zerops.yaml`, 'utf-8'))).zerops.map(
-      ({ setup }) => setup,
-    ),
+    Schema.decodeUnknownSync(SetupsSchema)(parse(readZeropsDeploymentYaml())).zerops.map(({ setup }) => setup),
   );
 
   expect(new Set(RETIRED_STAGE_SERVICES.map(({ hostname }) => hostname))).toStrictEqual(
@@ -471,9 +470,8 @@ it.effect('re-imports the retired services with their secrets, re-points the var
     }
     expect(stage.variables.get('stage')?.get('DEPLOY_TARGET')).toBe('zerops');
     const rendered = stage.commands.slice(commandsBefore).map(({ args, command }) => [command, ...args].join(' '));
-    expect(rendered.at(-1)).toBe(
-      'gh workflow run ultramodern-workspace-gates.yml --repo TechsioCZ/ontos --ref main -f full=true',
-    );
+    // Main deploys only production: a restore never dispatches a deploy.
+    expect(rendered.join('\n')).not.toContain('gh workflow run');
     expect(rendered.join('\n')).not.toContain('private-jwk-secret');
     expect(rendered.join('\n')).not.toContain(AUTH_SECRET);
   }),

@@ -27,6 +27,7 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
+import { ZEROPS_DEPLOYMENT_FILES } from './materialize-zerops-environment.mts';
 import {
   CORE_SYSTEM_OUTBOX_WORKER,
   OUTBOX_WORKER_HOST,
@@ -737,7 +738,7 @@ const validateOwnershipCoverage = (
 const validateStageSetupCoverage = (units: readonly TopologyUnit[], stageSetups: ReadonlySet<string>): void => {
   for (const phase of [...Object.values(INFRASTRUCTURE_PHASES), ...units]) {
     if (!stageSetups.has(phase.stageSetup)) {
-      fail(`topology delivery unit "${phase.id}" has unsupported stage setup "${phase.stageSetup}" in zerops.yaml`);
+      fail(`topology delivery unit "${phase.id}" has unsupported stage setup "${phase.stageSetup}" in zerops*.yaml`);
     }
   }
 };
@@ -1132,7 +1133,7 @@ const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => 
 };
 
 export const FULL_PLAN_SEED_INSTRUCTION =
-  'plan the whole topology once instead: dispatch "Ultramodern Workspace Gates and Main-to-Stage Deploy" on main with full=true (gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true)';
+  'plan the whole topology once instead: dispatch "Ultramodern Workspace Gates and Production Deploy" on main with full=true (gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true)';
 
 const gitSucceeds = (rootDirectory: string, args: readonly string[]) =>
   Effect.gen(function* gitSucceedsEffect() {
@@ -1338,6 +1339,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   OUTBOX_WORKER_HOST.entry,
   CORE_SYSTEM_OUTBOX_WORKER.entry,
   'zerops.yaml',
+  'zerops-providers.yaml',
 ]);
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
   CONSERVATIVE_FULL_DEPLOY_PATHS.has(changedPath) ||
@@ -1566,7 +1568,9 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     );
     validateCloudflareBuildEnvironment(cloudflarePlacement.buildEnvironment);
     const stageSetups = parseStageSetups(
-      yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
+      (yield* Effect.all(
+        ZEROPS_DEPLOYMENT_FILES.map((file) => fileSystem.readFileString(pathService.join(rootDirectory, file))),
+      )).join('\n'),
     );
     const orderedUnits = orderUnits(buildTopologyUnits(topology, ownership, stageSetups));
     const standaloneWorkspaces = topology.standaloneWorkspaces ?? [];
