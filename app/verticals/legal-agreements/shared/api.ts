@@ -20,7 +20,11 @@ import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 export type LegalAgreementsMarker = MicroVerticalBuildMarker;
 export type LegalAgreementsReadiness = MicroVerticalReadiness;
 export type OperationContext = MicroVerticalOperationContext;
-export const legalAgreementsMarkerSchema = Schema.Struct({ ...MicroVerticalBuildMarkerSchema.fields });
+export const legalAgreementsMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export const legalAgreementsReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: legalAgreementsMarkerSchema,
