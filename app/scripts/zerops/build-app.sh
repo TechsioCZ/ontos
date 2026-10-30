@@ -26,14 +26,18 @@ mkdir -p "$log_dir" "$unit_cache"
 env_name() { printf 'ULTRAMODERN_PUBLIC_URL_%s' "$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"; }
 unit_dir() { [ "$1" = shell-super-app ] && printf 'apps/shell-super-app' || printf 'verticals/%s' "$1"; }
 
-if [ "$#" -gt 0 ]; then
+all_units="shell-super-app $(node -e 'for (const m of require("./topology/application-release-intent.json").modules) console.log(m.appId)')"
+if [ "${1:-}" = --unit ]; then
+  units="$2"
+elif [ "$#" -gt 0 ]; then
   units="$*"
 else
-  units="shell-super-app $(node -e 'for (const m of require("./topology/application-release-intent.json").modules) console.log(m.appId)')"
+  units="$all_units"
 fi
 
 export ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP="$ONTOS_PUBLIC_ORIGIN"
-for unit in $units; do
+# Every unit sees every public URL: the Shell build names each remote.
+for unit in $all_units; do
   [ "$unit" = shell-super-app ] || export "$(env_name "$unit")=$ONTOS_PUBLIC_ORIGIN/_m/$unit"
 done
 export ULTRAMODERN_DISABLE_BUILD_TS_CHECKER="${ULTRAMODERN_DISABLE_BUILD_TS_CHECKER:-1}"
@@ -95,26 +99,20 @@ build_unit() {
   fi
 }
 
-[ "${1:-}" != '--digest' ] || { unit_digest "$2"; exit 0; }
+if [ "${1:-}" = --unit ]; then
+  build_unit "$2"
+  exit $?
+fi
 
 # The shared contract and design-token declarations every unit's declaration build references (as `pnpm build`).
 for project in packages/shared-contracts packages/shared-design-tokens; do
   pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
 done
 
-failure_mark="$log_dir/.failed"
-rm -f "$failure_mark"
 started_all="$(date +%s)"
-pids=''
-for unit in $units; do
-  while [ "$(jobs -p | wc -l | tr -d ' ')" -ge "$jobs_limit" ]; do sleep 1; done
-  # Stop scheduling after the first failure; the builds already running finish.
-  [ ! -f "$failure_mark" ] || break
-  { build_unit "$unit" || touch "$failure_mark"; } &
-  pids="$pids $!"
-done
-for pid in $pids; do
-  wait "$pid" || true
-done
-[ ! -f "$failure_mark" ] || { echo "one or more unit builds failed" >&2; exit 1; }
+# xargs bounds the parallel builds (a POSIX shell cannot count its own background jobs from a subshell).
+if ! printf '%s\n' $units | xargs -P "$jobs_limit" -n 1 sh "$root/scripts/zerops/build-app.sh" --unit; then
+  echo "one or more unit builds failed" >&2
+  exit 1
+fi
 echo "built $(echo "$units" | wc -w | tr -d ' ') units in $(($(date +%s) - started_all))s"
