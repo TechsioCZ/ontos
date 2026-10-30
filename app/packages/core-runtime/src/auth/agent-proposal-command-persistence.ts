@@ -35,6 +35,7 @@ import {
 
 import type { AgentProposalCommandError } from './agent-proposal-command-error.ts';
 import type { AgentProposalCommandRecovery, AgentProposalReservation } from './agent-proposal-queue-contract.ts';
+import { isApprovalConnection } from './oauth-connection-scope.ts';
 
 type RecoveryTarget = {
   -readonly [Key in keyof ActionRequestHashInput['target']]: ActionRequestHashInput['target'][Key];
@@ -379,16 +380,24 @@ const loadInsertDuplicate = Effect.fn('AgentProposalCommand.loadInsertDuplicate'
   return rows;
 });
 
+/** Agents propose; a person proposes only their own changes through an approval connection, never withdraws them. */
+const mayPropose = (payload: AgentProposalCommandPayload, proposer: Actor, scope: OperationalScope) =>
+  proposer.kind === 'agent' ||
+  (proposer.kind === 'human' &&
+    (payload.operation === 'insert' ? isApprovalConnection(scope) : payload.operation !== 'withdraw-pending-of-agent'));
+
 const validateActors = Effect.fn('AgentProposalCommand.validateActors')(function* validateActors(
   payload: AgentProposalCommandPayload,
   actor: Actor,
   proposer: Actor,
+  scope: OperationalScope,
 ) {
-  if (proposer.kind !== 'agent') {
-    return yield* invalid('Only agent principals may propose module commands');
+  if (!mayPropose(payload, proposer, scope)) {
+    return yield* invalid('Only agents and approval connections may propose module commands');
   }
-  if (actor.status !== 'active' || (payload.operation === 'insert' ? actor.kind !== 'agent' : actor.kind !== 'human')) {
-    return yield* invalid('Only active agents submit; only active humans decide or revert');
+  // On insert the actor is the proposer itself.
+  if (actor.status !== 'active' || (payload.operation !== 'insert' && actor.kind !== 'human')) {
+    return yield* invalid('Only active proposers submit; only active humans decide or revert');
   }
   if (payload.operation === APPROVAL_CLAIM_OPERATION && proposer.status !== 'active') {
     return yield* invalid('A no-longer-active agent cannot acquire a new approval');
@@ -435,7 +444,7 @@ export const loadProposalCommandSnapshot = Effect.fn('AgentProposalCommand.loadS
   const membership = payload.operation === APPROVAL_CLAIM_OPERATION ? 'active' : 'historical';
   const proposer =
     proposerId === actor.principalId ? actor : yield* loadActor(transaction, scope, proposerId, membership);
-  yield* validateActors(payload, actor, proposer);
+  yield* validateActors(payload, actor, proposer, scope);
   const targetId = proposalCommandTargetId(payload);
   if (Option.isSome(targetId) && !rows.some((row) => row.proposalId === targetId.value)) {
     return yield* invalid('The proposal does not belong to this exact batch and company');

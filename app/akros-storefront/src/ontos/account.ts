@@ -144,14 +144,19 @@ export const readAccount = async (
   };
 };
 
-/** Server pages require a fresh owner admission. No browser-storage or email-based identity fallback. */
-export const requireCustomerAccount = async (): Promise<CustomerAccount> => {
+/** The fresh owner admission of the current server request, or null for a guest. */
+export const readRequestAccount = async (): Promise<CustomerAccount | null> => {
   const requestHeaders = await headers();
   const host = requestHeaders.get("host");
   if (!host) throw new Error("Storefront request host is missing");
   const protocol =
     host.startsWith("localhost:") || host.startsWith("127.0.0.1:") ? "http" : "https";
-  const account = await readAccount(`${protocol}://${host}`, requestHeaders.get("cookie"));
+  return readAccount(`${protocol}://${host}`, requestHeaders.get("cookie"));
+};
+
+/** Server pages require a fresh owner admission. No browser-storage or email-based identity fallback. */
+export const requireCustomerAccount = async (): Promise<CustomerAccount> => {
+  const account = await readRequestAccount();
   if (!account) redirect("/prihlaseni");
   return account;
 };

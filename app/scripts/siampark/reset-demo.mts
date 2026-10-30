@@ -62,6 +62,10 @@ type AddRelationship = (
   subjectType: string,
   subjectId: string,
 ) => number;
+/** Indexes into `demoAccounts`: Vedení, Provoz, Účetní and provoz@ (same read pattern); external@ stays outside it. */
+const internalStaffIndexes = new Set([0, 1, 2, 4]);
+/** Operations and provoz@ share the write_all grant; no other Nájempark account holds it. */
+const operationsStaffIndexes = new Set([1, 4]);
 const addPermissionRelationships = (add: AddRelationship, index: number, principalId: string) => {
   for (const moduleId of [workModuleId, relationshipsModuleId, ...salesDemoModuleIds]) {
     for (const permission of ['read_all', 'write_all']) {
@@ -79,7 +83,10 @@ const addPermissionRelationships = (add: AddRelationship, index: number, princip
         'legal_entity',
         toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '',
       );
-      if ((permission === 'read_all' && index < 3) || (permission === 'write_all' && index === 1)) {
+      if (
+        (permission === 'read_all' && internalStaffIndexes.has(index)) ||
+        (permission === 'write_all' && operationsStaffIndexes.has(index))
+      ) {
         add('context_permission', objectId, 'grantee', 'principal', principalId);
       }
     }
@@ -124,7 +131,7 @@ const relationships = (): readonly Relationship[] => {
     const shell = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, 'core.shell') ?? '';
     add('module_access', shell, 'legal_entity', 'legal_entity', legal);
     add('module_access', shell, 'accessor', 'principal', account.principalId);
-    if (index < 3) {
+    if (internalStaffIndexes.has(index)) {
       add('tenant', demoTenantId, 'party_identity_reader', 'principal', account.principalId);
       add('legal_entity', legal, 'counterparty_reader', 'principal', account.principalId);
       for (const counterparty of partyFixture.counterparties) {
@@ -147,7 +154,12 @@ const relationships = (): readonly Relationship[] => {
     for (const moduleId of moduleIds) {
       const module = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, moduleId) ?? '';
       add('module_access', module, 'legal_entity', 'legal_entity', legal);
-      if (index < 3 || moduleId === partyModuleId || moduleId === workModuleId || moduleId === relationshipsModuleId) {
+      if (
+        internalStaffIndexes.has(index) ||
+        moduleId === partyModuleId ||
+        moduleId === workModuleId ||
+        moduleId === relationshipsModuleId
+      ) {
         add('module_access', module, 'accessor', 'principal', account.principalId);
       }
     }
@@ -193,6 +205,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
       { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[1].principalId },
       { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[2].principalId },
       { affiliation: 'external', legalEntityId: demoLegalEntityId, principalId: demoAccounts[3].principalId },
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[4].principalId },
     ],
     legalEntity: {
       legalEntityId: demoLegalEntityId,

@@ -83,7 +83,7 @@ it.live(
   }),
 );
 
-// The stage demo deploy's unit build runs its own TS-Go reference build first (scripts/ci/build-edge-unit.sh), which
+// The unit build runs its own TS-Go reference build first, which
 // fails on a transitive type error (typecheck-project-references.test.mts), so its bundler skips the second check.
 it.live(
   'every application build skips the bundler checker after the unit TS-Go reference build',

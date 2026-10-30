@@ -1,5 +1,7 @@
 # Finální review integrační větve — 30. 10. 2026
 
+Pozdější aktualizace na `bf9a05e5e` a její nové výsledky jsou v [následném upstream syncu](UPSTREAM-SYNC-2026-10-30.md).
+
 Navazuje na [audit převodu](FE-TRANSFER-AUDIT-2026-10-29.md) a [provedené FE opravy](FE-TRANSFER-FIXES-2026-10-30.md). Vizuální reference je původní `feat/akros` na `f1b74b02aa9ca978300a88189721c7813ef02e06`.
 
 ## Aktualizace upstreamu

@@ -1,4 +1,4 @@
-import { Cache, Clock, Effect, Exit } from 'effect';
+import { Cache, Clock, Effect, Exit, Option } from 'effect';
 
 import type { SafeTenantIdentity } from '../../shared/api.ts';
 import type { ShellAuthenticationClientOptions } from '../api/auth-client.ts';
@@ -55,7 +55,28 @@ export const browserStaleWhileRevalidateCache = <Key, A, E>(
       ),
       Effect.map(([{ value }]) => value),
     );
-  return { get, invalidateAll: Cache.invalidateAll(cache) };
+  /**
+   * Answers `alias` with the entry `from` already holds, keeping its age, when both keys name the same read (e.g. the
+   * current release and its revision). An `alias` the cache already holds is left alone.
+   */
+  const alias = Effect.fn('BrowserStaleWhileRevalidateCache.alias')(function* aliasEntry(from: Key, aliasKey: Key) {
+    if (yield* Cache.has(cache, aliasKey)) {
+      return;
+    }
+    const entry = yield* Cache.getSuccess(cache, from);
+    if (Option.isSome(entry) && options.keep(entry.value.value)) {
+      yield* Cache.set(cache, aliasKey, entry.value);
+    }
+  });
+  /** Whether the cache holds or is reading `key`. */
+  const has = (key: Key): Effect.Effect<boolean> => Cache.has(cache, key);
+  /** Stores an answer the server just gave for `key` in a request that also answered other keys. */
+  const prime = Effect.fn('BrowserStaleWhileRevalidateCache.prime')(function* primeEntry(key: Key, value: A) {
+    if (options.keep(value) && !(yield* Cache.has(cache, key))) {
+      yield* Cache.set(cache, key, { fetchedAt: yield* Clock.currentTimeMillis, value });
+    }
+  });
+  return { alias, get, has, invalidateAll: Cache.invalidateAll(cache), prime };
 };
 
 export const keyPart = '\n';

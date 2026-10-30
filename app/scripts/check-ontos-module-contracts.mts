@@ -444,11 +444,8 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
       return yield* failure(`${appId} package, manifest, registration, and topology identities disagree`);
     }
     const verticalName = path.basename(relativePath);
-    if (
-      !packageJson.scripts.build?.includes(`--vertical ${verticalName} --target dist`) ||
-      !packageJson.scripts['cloudflare:build']?.includes(`--vertical ${verticalName} --target cloudflare-dist`)
-    ) {
-      return yield* failure(`${appId} build scripts do not emit both module-contract deployment targets`);
+    if (!packageJson.scripts.build?.includes(`--vertical ${verticalName} --target dist`)) {
+      return yield* failure(`${appId} build script does not emit its module-contract deployment target`);
     }
     if (!contractUrl.endsWith(ONTOS_MODULE_CONTRACT_PATH)) {
       return yield* failure(`${appId} development module-contract URL is invalid`);

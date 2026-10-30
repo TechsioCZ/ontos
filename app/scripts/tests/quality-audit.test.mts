@@ -362,16 +362,7 @@ it.live(
     const checkedConfig = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(KnipConfigSchema))(
       readFileSync(path.join(appRoot, KNIP_CONFIG), 'utf-8'),
     );
-    const coreWorker = 'scripts/core-system-outbox-worker.generated.mts';
     const deadWorker = 'scripts/unused-worker-neighbor.mts';
-    for (const file of ['scripts/outbox-worker-delivery.mjs', 'scripts/materialize-outbox-worker.mjs']) {
-      copyFileSync(path.join(appRoot, file), path.join(root, file));
-    }
-    writeFileSync(path.join(root, coreWorker), "import { consume } from './core-worker-runtime.mts'; consume();\n");
-    writeFileSync(
-      path.join(root, 'scripts/core-worker-runtime.mts'),
-      'export const consume = () => 1; export const unusedWorkerExport = 2;\n',
-    );
     writeFileSync(path.join(root, deadWorker), 'export const unusedWorkerFile = 1;\n');
     const rootConfig = {
       ...checkedConfig.workspaces?.['.'],
@@ -395,8 +386,6 @@ it.live(
     expect(native).toContain(deadDatabase);
     expect(native).toContain('unusedStorefrontExport');
     expect(native).toContain(deadWorker);
-    expect(native).toContain('unusedWorkerExport');
-    expect(native).not.toContain(`"name":"${coreWorker}"`);
     expect(native).not.toContain('"name":"live"');
     expect(native).toContain(`${storefront}"`);
 

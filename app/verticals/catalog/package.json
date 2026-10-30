@@ -50,10 +50,6 @@
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts catalog && modern dev",
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical catalog --target dist && ultramodern-create ultramodern public-surface --app catalog --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical catalog --target cloudflare-dist && ultramodern-create ultramodern public-surface --app catalog --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app catalog",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -111,7 +107,6 @@
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
     "zephyr-rspack-plugin": "1.2.4"
   },
   "modernjs": {

@@ -1,6 +1,7 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { AgentProposalCommandError } from '../../src/auth/agent-proposal-command-error.ts';
 import {
   loadProposalCommandSnapshot,
@@ -609,3 +610,102 @@ it('snapshot revisions include persisted chronology and the latest native audit 
   );
   expect(proposalSnapshotHash(snapshot)).not.toBe(proposalSnapshotHash({ ...snapshot, previous: reservationAudit() }));
 });
+
+/** A person's MCP connection: it acts as that human principal, with the given write policy. */
+const connectionScope = (writePolicy: 'approval' | 'direct') => ({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000001',
+    authContextRef: 'oauth-grant:80000000-0000-4000-8000-000000000001',
+    authMethod: 'oauth_connection',
+    connection: {
+      clientId: 'proposal-client',
+      clientName: 'Proposal client',
+      grantId: '80000000-0000-4000-8000-000000000001',
+      modules: [{ access: 'write', moduleId: 'work.tasks' }],
+      writePolicy,
+    },
+    legalEntityId,
+    principalId: humanId,
+    tenantId,
+  }),
+  correlationId: scope.correlationId,
+});
+const humanInsert = {
+  batchId,
+  instruction: 'Requested',
+  operation: 'insert' as const,
+  proposals: [
+    {
+      actionSlug: 'update',
+      appId: 'tasks',
+      command: { title: 'New' },
+      diff: [],
+      moduleKey: 'work.tasks',
+      proposalId,
+      reason: 'Requested',
+      risk: 'low' as const,
+      summary: 'Update',
+      targetLabel: 'Task',
+    },
+  ],
+};
+const humanProposalDatabase = (stored: readonly ReturnType<typeof proposalRow>[]) =>
+  makeTestDatabase((sql, params) => {
+    if (sql.includes('current_setting')) {
+      return Effect.succeed(scopeRows);
+    }
+    if (sql.includes('from "core"."principals"')) {
+      return Effect.succeed(actorRows(params));
+    }
+    if (sql.includes('from "core"."agent_proposals"')) {
+      return Effect.succeed(stored.map(proposalSqlRow));
+    }
+    return Effect.succeed([]);
+  });
+
+for (const [caller, callerScope, allowed] of [
+  ['an approval connection', connectionScope('approval'), true],
+  ['a direct connection', connectionScope('direct'), false],
+  ['a session', scope, false],
+] as const) {
+  it.effect(`a person proposes only through an approval connection (${caller})`, () =>
+    Effect.gen(function* personInsert() {
+      const database = yield* humanProposalDatabase([]);
+      const outcome = yield* database.transaction((transaction) =>
+        Effect.gen(function* snapshotInsert() {
+          const scoped = yield* installOperationalScope(transaction, callerScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+          return yield* loadProposalCommandSnapshot(scoped, callerScope, humanInsert).pipe(Effect.result);
+        }),
+      );
+      expect(Result.isSuccess(outcome)).toBe(allowed);
+      if (Result.isSuccess(outcome)) {
+        expect(outcome.success.proposer).toMatchObject({ kind: 'human', principalId: humanId });
+      } else {
+        expect(outcome.failure).toMatchObject({ code: 'agent_proposal_invalid' });
+      }
+    }),
+  );
+}
+
+it.effect('a person decides a connection proposal, but it is never withdrawn as an agent lifecycle', () =>
+  Effect.gen(function* personProposalLifecycle() {
+    const database = yield* humanProposalDatabase([proposalRow({ agentPrincipalId: humanId })]);
+    yield* database.transaction((transaction) =>
+      Effect.gen(function* decide() {
+        const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+        const rejected = yield* loadProposalCommandSnapshot(scoped, scope, {
+          batchId,
+          operation: 'mark-rejected',
+          proposalId,
+        });
+        expect(rejected.proposer).toMatchObject({ kind: 'human', principalId: humanId });
+        const withdrawn = yield* loadProposalCommandSnapshot(scoped, scope, {
+          batchId,
+          note: 'Agent disabled',
+          operation: 'withdraw-pending-of-agent',
+        }).pipe(Effect.flip);
+        expect(withdrawn).toMatchObject({ code: 'agent_proposal_invalid' });
+      }),
+    );
+  }),
+);

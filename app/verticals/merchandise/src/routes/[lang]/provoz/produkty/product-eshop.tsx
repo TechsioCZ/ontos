@@ -28,15 +28,16 @@ import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
 import { moveImage } from './product-images.ts';
 
-import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../../../../shared/storefront-urls.ts';
+import { AKROS_STOREFRONT_ORIGIN } from '../../../../../shared/storefront-urls.ts';
 
 export const imageUrl = (reference: string): string | undefined => {
   if (/^https?:\/\//u.test(reference)) {
     return reference;
   }
   const path = reference.startsWith('/') ? reference : `/${reference}`;
-  const origin = path.startsWith('/akros/') ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
-  return origin === undefined ? undefined : `${origin}${path}`;
+  return path.startsWith('/akros/') && AKROS_STOREFRONT_ORIGIN !== undefined
+    ? `${AKROS_STOREFRONT_ORIGIN}${path}`
+    : undefined;
 };
 
 const availabilityPresentation = {
@@ -725,7 +726,7 @@ const useEshopPanel = ({
   onReload,
   product,
   revision,
-  storefrontOrigin = STOREFRONT_ORIGIN,
+  storefrontOrigin,
 }: PanelProps) => {
   const failure = useCommandFailure();
   const [images, setImages] = useState<readonly GalleryImage[]>(() =>

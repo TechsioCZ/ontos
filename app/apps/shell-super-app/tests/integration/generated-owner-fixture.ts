@@ -71,8 +71,6 @@ const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEf
       private: true,
       scripts: {
         build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-        'cloudflare:build':
-          'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
       },
       type: 'module',
       version: '0.0.0',

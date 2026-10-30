@@ -1,6 +1,6 @@
 import "server-only";
 import { accountMessage, portalRequest } from "@/ontos/account";
-import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
 const states = [
@@ -18,7 +18,7 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
     if (url.search) throw new RequestError(400, "Požadavek nesmí obsahovat identifikátor účtu.");
     if (operation !== "read") {
       guard(request);
-      if (request.headers.get("origin") !== url.origin)
+      if (request.headers.get("origin") !== requestOrigin(request))
         throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
       const body: unknown = await jsonBody(request);
       if (
@@ -31,7 +31,7 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
     }
     const cookie = request.headers.get("cookie");
     // A created provider session is not customer admission. Recheck the real account each time.
-    const admitted = await portalRequest("/customer-account", url.origin, cookie);
+    const admitted = await portalRequest("/customer-account", requestOrigin(request), cookie);
     if (admitted.ok) {
       const account = (await admitted.json()) as { state?: string };
       if (account.state === "authenticated")
@@ -44,7 +44,7 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
     }
     const response = await portalRequest(
       operation === "read" ? "/enrollment/current" : `/enrollment/current/${operation}`,
-      url.origin,
+      requestOrigin(request),
       cookie,
       operation === "read" ? undefined : {},
     );

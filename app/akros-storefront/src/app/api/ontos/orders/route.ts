@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
 import { assertCart } from "@/ontos/quote";
 import { readProducts } from "@/ontos/catalog-server";
 import { callAction, OntosError } from "@/ontos/gateway";
@@ -13,7 +13,7 @@ const isOntosError = (value: unknown): value is OntosError =>
 
 export async function GET(request: Request) {
   try {
-    const account = await readAccount(new URL(request.url).origin, request.headers.get("cookie"));
+    const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     if (!account)
       return Response.json(
         { message: "Přihlaste se ke svému účtu." },
@@ -42,12 +42,8 @@ import {
 export async function POST(request: Request) {
   try {
     guard(request);
-    const account = await readAccount(new URL(request.url).origin, request.headers.get("cookie"));
-    if (!account)
-      return Response.json(
-        { message: "Před odesláním objednávky se přihlaste." },
-        { status: 401, headers: { "cache-control": "no-store" } },
-      );
+    // A signed-in order is bound to the admitted portal subject and Party; without a session it is a guest order.
+    const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     const options = await readCheckoutOptions();
     const { cart, draft, clientRequestId } = await jsonBody(request);
     assertCart(cart);
@@ -64,11 +60,10 @@ export async function POST(request: Request) {
     const command = {
       _tag: "PlaceStorefrontOrder",
       clientRequestId,
-      customerAccountId: account.id,
-      partyId: account.partyId,
+      ...(account ? { customerAccountId: account.id, partyId: account.partyId } : {}),
       contact: {
         name: `${draft.billing.firstName} ${draft.billing.lastName}`,
-        email: account.email,
+        email: account ? account.email : draft.email.trim(),
         phone: draft.billing.phone,
       },
       billingAddress: {

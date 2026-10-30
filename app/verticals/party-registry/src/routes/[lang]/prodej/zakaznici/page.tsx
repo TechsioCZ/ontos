@@ -19,6 +19,7 @@ import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
+import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { Predicate } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -114,6 +115,9 @@ const statusCell = (info: CellContext<CustomerListItem>) => (
   </Badge>
 );
 const format = (count: number | undefined) => (count === undefined ? '—' : formatNumber(count));
+/** A role that may not read tags gets no Štítky column at all, never a column of load errors. */
+const tagColumnsFor = (tagStatus: TagsStatus, column: ColumnDef<CustomerListItem>): ColumnDef<CustomerListItem>[] =>
+  tagStatus === 'forbidden' ? [] : [column];
 
 const downloadCsv = (csv: string) => {
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -366,6 +370,13 @@ const CustomersContent = () => {
     }
     return <TagCell tags={tagsBySubject.get(subjectIdOf(info.row.original.partyId)) ?? []} />;
   };
+  const tagColumns = tagColumnsFor(tagStatus, {
+    cell: tagsCell,
+    enableSorting: false,
+    header: t(`${key}.columns.tags`),
+    id: 'tags',
+    meta: { width: 180 },
+  });
 
   // Eight visible columns at 1440px; DIČ and Stav live in the column menu.
   const columns: ColumnDef<CustomerListItem>[] = [
@@ -391,7 +402,7 @@ const CustomersContent = () => {
       header: t(`${key}.columns.createdAt`),
       meta: { type: 'date', width: 110 },
     },
-    { cell: tagsCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 180 } },
+    ...tagColumns,
     { accessorKey: 'vatId', cell: textCell, header: t(`${key}.columns.vatId`), meta: { width: 130 } },
     {
       accessorFn: statusLabel,

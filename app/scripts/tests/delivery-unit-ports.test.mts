@@ -3,13 +3,10 @@ import { readFileSync } from 'node:fs';
 import { createPresetUltramodernWorkspaceConfig } from '@modern-js/ultramodern-app-tools';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { parse } from 'yaml';
-
-import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 // The development overlay's `ports` is the one local port map. Every other place that names a delivery
 // unit's local port (its dev server default, the Shell's federation remotes, the browser-test web servers,
-// the reference topology, the overlay's own URLs, and stage zerops*.yaml) must agree with it.
+// the reference topology and the overlay's own URLs) must agree with it.
 const appRoot = new URL('../../', import.meta.url);
 const readText = (path: string) => readFileSync(new URL(path, appRoot), 'utf-8');
 
@@ -31,15 +28,6 @@ const TopologySchema = Schema.Struct({
   shell: Schema.Struct({ id: Schema.String, path: Schema.String }),
   verticals: Schema.Array(Schema.Json),
 });
-const ZeropsYamlSchema = Schema.Struct({
-  zerops: Schema.Array(
-    Schema.Struct({
-      run: Schema.Struct({ envVariables: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
-      setup: Schema.String,
-    }),
-  ),
-});
-
 const overlay = Schema.decodeUnknownSync(Schema.fromJsonString(OverlaySchema))(
   readText('topology/local-overlays/development.json'),
 );
@@ -134,26 +122,6 @@ it('loads remotes from approved composition and waits for verticals on their ove
   expect(readinessUrls.length).toBeGreaterThan(0);
   for (const { port, unitId } of readinessUrls) {
     expect(`${unitId} ${port}`).toBe(`${unitId} ${portOf(unitId)}`);
-  }
-});
-
-it('runs each unit and its outbox worker on the unit overlay port in stage zerops*.yaml', () => {
-  const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readZeropsDeploymentYaml()));
-  const unitBySetup = new Map(
-    unitIds.flatMap((unitId) => [
-      [unitId.replaceAll('-', ''), unitId],
-      [unitId, unitId],
-      [`${unitId}-worker`, unitId],
-    ]),
-  );
-  const setups = zerops.flatMap(({ run, setup }) => {
-    const unitId = unitBySetup.get(setup);
-    const port = run.envVariables?.PORT;
-    return unitId === undefined || port === undefined ? [] : [{ port, setup, unitId }];
-  });
-  expect(setups.length).toBeGreaterThanOrEqual(unitIds.length);
-  for (const { port, setup, unitId } of setups) {
-    expect(`${setup} ${port}`).toBe(`${setup} ${portOf(unitId)}`);
   }
 });
 

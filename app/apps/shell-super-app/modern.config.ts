@@ -17,16 +17,7 @@ import {
   fromJsonString,
   makeFilter,
 } from 'effect/Schema';
-import {
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identity-data.ts';
-import {
-  createCloudflareEmailBindings,
-  createWorkspaceModernConfig,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
-import { ROOT_ROUTES } from './shared/mcp-resource.ts';
-import { OAUTH_METADATA_ROUTES } from './shared/oauth-metadata-routes.ts';
+import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'shell-super-app';
 
@@ -52,32 +43,8 @@ getResultOrThrow(
 
 const ontos = createWorkspaceModernConfig({
   appId,
-  // Shell reaches PostgreSQL as the shared runtime and, for gateway scope grants only, as the issuer.
-  cloudflareHyperdrives: [
-    SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive,
-    SHELL_GATEWAY_ISSUER_IDENTITY.cloudflareHyperdrive,
-  ],
   moduleUrl: import.meta.url,
 });
-
-const shellDeploy = { ...ontos.deploy, releaseEnvelopeRole: 'shell' as const };
-if (ontos.deploy !== undefined) {
-  Object.assign(shellDeploy, {
-    worker: {
-      ...ontos.deploy.worker,
-      // Node root middleware is not executable in the Worker artifact.
-      publicAssetExcludes: ['server'],
-      rootRoutes: {
-        metadata: Object.fromEntries(OAUTH_METADATA_ROUTES),
-        routes: Object.fromEntries(ROOT_ROUTES),
-      },
-      wrangler: {
-        ...ontos.deploy.worker.wrangler,
-        ...createCloudflareEmailBindings(getBuildConfigEnvironment),
-      },
-    },
-  });
-}
 
 export default defineConfig(
   presetUltramodernWorkspace(
@@ -93,7 +60,7 @@ export default defineConfig(
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
-      deploy: shellDeploy,
+      deploy: { releaseEnvelopeRole: 'shell' },
       dev: { ...ontos.dev, lazyCompilation: getBuildConfigEnvironment('CI') ? false : undefined },
       plugins: [
         bffPlugin(),
@@ -141,8 +108,7 @@ export default defineConfig(
         globalVars: {
           ...ontos.source.globalVars,
           'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
-            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ??
-            (ontos.deploy === undefined ? 'http://localhost:3070' : ''),
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ?? 'http://localhost:3070',
         },
       },
       splitChunks: { chunks: 'async' },

@@ -5,13 +5,11 @@ import { Command, Flag } from 'effect/cli';
 import { isMap, isSeq, parseDocument } from 'yaml';
 
 /**
- * `app/zerops.yaml` and the generated `app/zerops-providers.yaml` together describe stage, the
- * environment every push deploys. `zerops.yaml` stays under Zerops' 50 kB build-file limit, so it pushes
- * as-is; the providers together exceed it, so a deploy pushes each setup from its own one-setup copy
- * (`--output-directory`). A deployment to another environment pushes a copy that names that environment
- * in every build and runtime, so its services never run stage-only behaviour. Every runtime reaches SpiceDB over TLS and pins the in-project
- * `spicedb` service's gRPC certificate (`SPICEDB_CA_CERT`); production's copy also points every
- * runtime at production's SpiceDB endpoint, which that certificate must name.
+ * `app/zerops.yaml` describes stage, the environment every push deploys. A deployment to another
+ * environment pushes a copy that names that environment in every build and runtime, so its services never
+ * run stage-only behaviour. Every runtime reaches SpiceDB over TLS and pins the in-project `spicedb`
+ * service's gRPC certificate (`SPICEDB_CA_CERT`); production's copy also points every runtime at
+ * production's SpiceDB endpoint, which that certificate must name.
  */
 export const DEPLOYMENT_ENVIRONMENT_VARIABLE = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
@@ -36,9 +34,6 @@ const variablePaths = (document: ReturnType<typeof parseDocument>, setupCount: n
   );
 
 const ZEROPS_BUILD_FILE_LIMIT_BYTES = 50_000;
-
-/** The app-relative files whose setups make up the deployment, in setup order. */
-export const ZEROPS_DEPLOYMENT_FILES = ['zerops.yaml', 'zerops-providers.yaml'] as const;
 
 const parseSetups = (zeropsYamlText: string, setup?: string) =>
   Effect.gen(function* parseSetupsEffect() {
@@ -69,24 +64,6 @@ const withinBuildFileLimit = (text: string, setup: string | undefined) => {
         }),
       );
 };
-
-/** One zerops.yaml text holding the setups of every given deployment file, in order. */
-export const joinZeropsDeployments = (texts: readonly string[]) =>
-  Effect.gen(function* joinZeropsDeploymentsEffect() {
-    const [first, ...rest] = texts;
-    if (first === undefined) {
-      return yield* new ZeropsEnvironmentMaterializationError({ message: 'no zerops.yaml to join' });
-    }
-    const { document } = yield* parseSetups(first);
-    const setups = document.get('zerops');
-    for (const text of rest) {
-      const other = (yield* parseSetups(text)).document.get('zerops');
-      if (isSeq(setups) && isSeq(other)) {
-        setups.items.push(...other.items);
-      }
-    }
-    return document.toString({ lineWidth: 0 });
-  });
 
 /** Retains exactly one setup unchanged, within Zerops' 50 kB build-file limit, for a setup that names no environment. */
 const selectZeropsSetup = (zeropsYamlText: string, setup: string) =>
@@ -172,7 +149,7 @@ const materializeCommand = Command.make(
   'materialize-zerops-environment',
   {
     environment: Flag.Literals('environment', DeploymentEnvironmentSchema.literals),
-    input: Flag.String('input').pipe(Flag.atLeast(1)),
+    input: Flag.String('input'),
     output: Flag.String('output').pipe(Flag.optional),
     outputDirectory: Flag.String('output-directory').pipe(Flag.optional),
     setup: Flag.String('setup').pipe(Flag.optional),
@@ -182,9 +159,7 @@ const materializeCommand = Command.make(
     Effect.gen(function* materialize() {
       const fileSystem = yield* FileSystem.FileSystem;
       const target = yield* commandTarget(environment, spiceDbEndpoint);
-      const text = yield* joinZeropsDeployments(
-        yield* Effect.all(input.map((file) => fileSystem.readFileString(file))),
-      );
+      const text = yield* fileSystem.readFileString(input);
       if (Option.isSome(outputDirectory) && Option.isNone(output) && Option.isNone(setup)) {
         const files = yield* materializeZeropsSetupFiles(text, target);
         yield* fileSystem.makeDirectory(outputDirectory.value, { recursive: true });

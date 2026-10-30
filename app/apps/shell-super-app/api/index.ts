@@ -111,6 +111,7 @@ import {
   MediaAttachmentResponseSchema,
   PrincipalMutationResponseSchema,
   ResolvedModuleTargetSchema,
+  ResolvedModuleTargetsSchema,
   SelfApiKeyListResponseSchema,
   ShellAuthenticationApi,
   ShellCompositionSchema,
@@ -134,6 +135,7 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
   ShellDocumentContextRequest,
+  ResolveModuleTargetsPayload,
   ShellInvalidRequestProblem,
   ShellPolicyConflictProblem,
   ShellPolicyUnprocessableProblem,
@@ -1269,6 +1271,42 @@ const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAsse
 );
 
 /**
+ * The targets the browser prepares together (every menu destination), with one session resolution and one captured
+ * release. Each target is still its own governed read with its own evidence; its problem is its own outcome, while a
+ * session or release problem fails the request. Run inside `withRequestPermissionDecisions`: SpiceDB decisions are
+ * shared only within this request.
+ */
+export const moduleTargetsHandler = Effect.fn('shell.composition.moduleTargets')(function* moduleTargetsHandlerEffect(
+  request: RequestWithHeaders,
+  payload: ResolveModuleTargetsPayload,
+) {
+  const session = yield* requireAuthenticatedShellContext(request.headers);
+  const catalog = yield* captureShellRelease(payload.compositionRevision);
+  const governedReads = yield* ShellGovernedReads;
+  const correlationId = correlationFromRequest(request);
+  const outcomes = yield* Effect.forEach(
+    payload.targets,
+    (selector) =>
+      governedReads
+        .moduleTarget({
+          ...selector,
+          compositionRevision: catalog.composition.revision,
+          correlationId,
+          principal: session.principal,
+        })
+        .pipe(
+          Effect.provideService(CapturedShellCompositionCatalog, catalog),
+          Effect.map((target) => ({ state: 'resolved' as const, target })),
+          Effect.tapError((error) => logShellReadFailure('module_target', request, error)),
+          Effect.catch((error) => Effect.succeed({ problem: shellReadProblem(error), state: 'failed' as const })),
+        ),
+    // Each read holds a pooled connection only for its own short transaction; this matches the pool size.
+    { concurrency: 4 },
+  );
+  return yield* decodeResponse(ResolvedModuleTargetsSchema, { outcomes }, shellInternalProblem);
+});
+
+/**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
  * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
@@ -1503,6 +1541,13 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
       }).pipe(
         withRequestPermissionDecisions,
         recoverUnexpectedDefect(request, 'Unexpected module target defect', () =>
+          failShellProblem(shellInternalProblem()),
+        ),
+      ),
+    )
+    .handle('resolveModuleTargets', ({ payload, request }) =>
+      withRequestPermissionDecisions(moduleTargetsHandler(request, payload)).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected module targets defect', () =>
           failShellProblem(shellInternalProblem()),
         ),
       ),

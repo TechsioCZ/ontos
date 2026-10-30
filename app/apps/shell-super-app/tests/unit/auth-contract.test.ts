@@ -152,6 +152,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
     resolveModuleTarget: '/shell/module-target',
+    resolveModuleTargets: '/shell/module-targets',
     resourceDetail: '/shell/resource',
     revokeConnection: '/auth/oauth-connections/revoke',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',

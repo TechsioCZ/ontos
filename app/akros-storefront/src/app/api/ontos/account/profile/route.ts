@@ -1,6 +1,6 @@
 import { readCustomerProfile, saveCustomerProfile } from "@/ontos/customer-profile";
 import { OntosError } from "@/ontos/gateway";
-import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
 import { profileInput } from "@/ontos/profile-model";
 
 const noStore = { "cache-control": "no-store" };
@@ -13,7 +13,7 @@ const anonymous = () =>
 export async function GET(request: Request) {
   try {
     return Response.json(
-      await readCustomerProfile(new URL(request.url).origin, request.headers.get("cookie")),
+      await readCustomerProfile(requestOrigin(request), request.headers.get("cookie")),
       {
         headers: noStore,
       },
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     guard(request);
-    const { origin } = new URL(request.url);
+    const origin = requestOrigin(request);
     if (request.headers.get("origin") !== origin) {
       throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
     }

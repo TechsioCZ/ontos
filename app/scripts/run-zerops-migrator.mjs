@@ -12,6 +12,8 @@ import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/comme
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 const { spawn } = process.getBuiltinModule('node:child_process');
 const migratorPort = Config.Int('MIGRATOR_PORT').pipe(Config.withDefault(8080));
+// The app host runs the same chain once before it publishes; the standalone migrator stays up for readiness.
+const migrateOnce = Config.Boolean('MIGRATOR_ONCE').pipe(Config.withDefault(false));
 
 class MigratorError extends Error {
   /**
@@ -193,7 +195,9 @@ const main = Effect.scoped(
       yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
     }
     yield* runAppScript('scripts/verify-application-db-schema.mts');
-    yield* serveReadiness(yield* migratorPort);
+    if (!(yield* migrateOnce)) {
+      yield* serveReadiness(yield* migratorPort);
+    }
   }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
 );
 

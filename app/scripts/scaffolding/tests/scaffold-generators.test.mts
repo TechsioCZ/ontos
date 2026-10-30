@@ -689,8 +689,6 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-          'cloudflare:build':
-            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: preservedFixtureValue,
         },
         type: 'module',

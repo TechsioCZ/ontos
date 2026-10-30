@@ -1,13 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-data.ts';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata.ts';
 
@@ -16,14 +14,12 @@ const appId = 'sales-insights';
 const workContractDigest = createHash('sha256')
   .update(readFileSync(new URL('../work-tasks/shared/apis/records.ts', import.meta.url)))
   .digest('hex');
-const buildTarget = resolveDeployTarget().target === 'cloudflare' ? 'cloudflare' : 'web';
 
 export default defineConfig(
   presetUltramodernWorkspace(
     {
       ...createWorkspaceModernConfig({
         appId,
-        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         moduleUrl: import.meta.url,
       }),
       bff: {
@@ -37,7 +33,7 @@ export default defineConfig(
       },
       builderPlugins: [pluginTailwindcss()],
       performance: {
-        buildCache: { cacheDigest: [appId, buildTarget, workContractDigest] },
+        buildCache: { cacheDigest: [appId, 'web', workContractDigest] },
       },
       plugins: [
         tanstackRouterPlugin(),

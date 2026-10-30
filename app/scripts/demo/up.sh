@@ -328,7 +328,7 @@ cat <<EOF
 [demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   testovací adresy: http://localhost:8026   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
 [demo] Verticals: ${VERTICALS[*]}
-[demo] Login: management@najempark.demo / password1234  (also operations@, finance@, external@)
+[demo] Login: management@najempark.demo / password1234  (also operations@, provoz@, finance@, external@)
 [demo] Sales demo: obchod@ / obchodnik@ / ucetni@ / sklad@demo.ontos, password1234; bot key in app/.env.demo.local
 [demo] MCP (Claude/ChatGPT): http://localhost:$SHELL_PORT/mcp
 [demo] Logs: $LOG_DIR   Stop: scripts/demo/down.sh [--containers]

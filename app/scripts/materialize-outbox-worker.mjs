@@ -13,15 +13,9 @@ import { parseSync } from 'oxc-parser';
 import {
   OUTBOX_HOST_ARTIFACT_MODULE,
   readOutboxWorkerHost,
-  renderCoreSystemOutboxWorkerEntry,
   renderOutboxWorkerHostEntry,
 } from './generate-outbox-worker-deployment.mjs';
-import {
-  CORE_SYSTEM_OUTBOX_WORKER,
-  OUTBOX_WORKER_BUNDLE,
-  OUTBOX_WORKER_HOST,
-  outboxWorkerDelivery,
-} from './outbox-worker-delivery.mjs';
+import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST } from './outbox-worker-delivery.mjs';
 
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));
@@ -234,16 +228,13 @@ const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
 
 /**
  * Only the host artifact carries the plan's host digest, so /status can name the exact prebuilt artifact.
- * @param {{ appId: string, artifactDigest: string | undefined, workspaceRoot: string }} input Worker and the
- *   digest from ONTOS_OUTBOX_HOST_DIGEST.
+ * @param {{ artifactDigest: string | undefined, workspaceRoot: string }} input The digest from
+ *   ONTOS_OUTBOX_HOST_DIGEST and the workspace root.
  */
-const resolveHostArtifact = ({ appId, artifactDigest, workspaceRoot }) =>
+const resolveHostArtifact = ({ artifactDigest, workspaceRoot }) =>
   Effect.gen(function* resolveHostArtifactEffect() {
     if (artifactDigest === undefined) {
       return Option.none();
-    }
-    if (appId !== OUTBOX_WORKER_HOST.id) {
-      return yield* Effect.fail(failure('Only the Outbox Worker host artifact carries a host digest'));
     }
     const digest = yield* Schema.decodeUnknownEffect(HostArtifactDigestSchema)(artifactDigest).pipe(
       Effect.mapError(() => failure('The Outbox Worker host digest must be 64 lowercase hex characters')),
@@ -258,19 +249,16 @@ const resolveHostArtifact = ({ appId, artifactDigest, workspaceRoot }) =>
  * The plan's owner identity revisions, which only the Outbox Worker host takes, and its prebuilt artifact always
  * takes: the host compiles each owner under the revision of the release the composition keeps for it, the build
  * revision for an owner built here.
- * @param {{ appId: string, hostArtifact: Option.Option<unknown>, ownerRevisions: string | undefined, owners: readonly string[] }} input
- *   The worker, its host digest when it is the prebuilt host artifact, the JSON from
- *   ONTOS_OUTBOX_HOST_OWNER_REVISIONS and the hosted owner ids.
+ * @param {{ hostArtifact: Option.Option<unknown>, ownerRevisions: string | undefined, owners: readonly string[] }} input
+ *   The host digest when it is the prebuilt host artifact, the JSON from ONTOS_OUTBOX_HOST_OWNER_REVISIONS and
+ *   the hosted owner ids.
  */
-const resolveOwnerRevisions = ({ appId, hostArtifact, ownerRevisions, owners }) =>
+const resolveOwnerRevisions = ({ hostArtifact, ownerRevisions, owners }) =>
   Effect.gen(function* resolveOwnerRevisionsEffect() {
     if (ownerRevisions === undefined) {
       return Option.isNone(hostArtifact)
         ? Option.none()
         : yield* Effect.fail(failure('The Outbox Worker host artifact requires every owner identity revision'));
-    }
-    if (appId !== OUTBOX_WORKER_HOST.id) {
-      return yield* Effect.fail(failure('Only the Outbox Worker host takes owner identity revisions'));
     }
     const revisions = yield* Schema.decodeUnknownEffect(OwnerRevisionsSchema)(ownerRevisions).pipe(
       Effect.mapError(() => failure('The owner identity revisions must map owner ids to source revisions')),
@@ -494,61 +482,44 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
  */
 
 /**
- * The deployable worker an identity names: one topology owner's dedicated worker, or the Outbox Worker
- * host that runs every owner's entry. Its service id names the runtime directory and the artifact.
+ * The deployable worker an identity names: the Outbox Worker host, which runs every hosted owner's entry in
+ * one process. Its service id names the runtime directory and the artifact.
  * @param {WorkerIdentity} identity Materialization identity.
  */
 const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRoot }) =>
   Effect.gen(function* resolveWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    if (appId === OUTBOX_WORKER_HOST.id || appId === CORE_SYSTEM_OUTBOX_WORKER.id) {
-      const rootPackage = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(
-        yield* fs.readFileString(path.join(workspaceRoot, 'package.json')),
-      );
-      if (packageDir !== '.' || packageName !== rootPackage.name) {
-        return yield* Effect.fail(failure('Worker identity must match the generated Outbox Worker host'));
-      }
-      const host = yield* readOutboxWorkerHost(workspaceRoot);
-      if (host === undefined) {
-        return yield* Effect.fail(failure('No MicroVertical has a generated Outbox Worker entry'));
-      }
-      const dedicatedCore = appId === CORE_SYSTEM_OUTBOX_WORKER.id;
-      const entryPoint = dedicatedCore ? CORE_SYSTEM_OUTBOX_WORKER.entry : host.entry;
-      const hostEntryPath = path.join(workspaceRoot, entryPoint);
-      const hostEntry = (yield* fs.exists(hostEntryPath)) ? yield* fs.readFileString(hostEntryPath) : null;
-      const expectedEntry = dedicatedCore
-        ? renderCoreSystemOutboxWorkerEntry(host.coreOwner)
-        : renderOutboxWorkerHostEntry(host);
-      if (hostEntry !== expectedEntry) {
-        return yield* Effect.fail(
-          failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
-        );
-      }
-      return {
-        entryPoint,
-        owners: dedicatedCore ? [host.coreOwner] : [host.coreOwner, ...host.owners],
-        serviceId: appId,
-      };
+    if (appId !== OUTBOX_WORKER_HOST.id) {
+      return yield* Effect.fail(failure('Worker identity must be the generated Outbox Worker host'));
     }
-    const topologySource = yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH));
-    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
-    const vertical = topology.verticals.find((candidate) => candidate.id === appId);
-    if (vertical === undefined || vertical.package !== packageName || vertical.path !== packageDir) {
-      return yield* Effect.fail(failure('Worker identity must match its topology owner'));
-    }
-    const delivery = yield* outboxWorkerDelivery(workspaceRoot, vertical).pipe(
-      Effect.mapError(() => failure(`Invalid generated worker delivery for ${appId}`)),
+    const rootPackage = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(
+      yield* fs.readFileString(path.join(workspaceRoot, 'package.json')),
     );
-    if (delivery === undefined) {
-      return yield* Effect.fail(failure(`${appId} has no generated Outbox Worker host`));
+    if (packageDir !== '.' || packageName !== rootPackage.name) {
+      return yield* Effect.fail(failure('Worker identity must match the generated Outbox Worker host'));
     }
-    return { entryPoint: path.join(packageDir, delivery.entry), owners: [delivery], serviceId: delivery.id };
+    const host = yield* readOutboxWorkerHost(workspaceRoot);
+    if (host === undefined) {
+      return yield* Effect.fail(failure('No MicroVertical has a generated Outbox Worker entry'));
+    }
+    const hostEntryPath = path.join(workspaceRoot, host.entry);
+    const hostEntry = (yield* fs.exists(hostEntryPath)) ? yield* fs.readFileString(hostEntryPath) : null;
+    if (hostEntry !== renderOutboxWorkerHostEntry(host)) {
+      return yield* Effect.fail(
+        failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
+      );
+    }
+    return {
+      entryPoint: host.entry,
+      owners: [host.coreOwner, ...host.owners],
+      serviceId: appId,
+    };
   });
 
 /**
  * @param {WorkerIdentity} identity Materialization identity.
- * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner[], serviceId: string }>} The worker's bundle entry, hosted owners, and service id.
+ * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner[], serviceId: string }>} The host's bundle entry, hosted owners, and service id.
  */
 export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveOutboxWorkerEffect(identity));
 
@@ -569,9 +540,8 @@ const materializeOutboxWorkerEffect = ({
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, workspaceRoot });
-    const hostArtifact = yield* resolveHostArtifact({ appId, artifactDigest, workspaceRoot });
+    const hostArtifact = yield* resolveHostArtifact({ artifactDigest, workspaceRoot });
     const revisions = yield* resolveOwnerRevisions({
-      appId,
       hostArtifact,
       ownerRevisions,
       owners: delivery.owners.map(({ ownerId }) => ownerId),

@@ -7,12 +7,15 @@ import { createContext, createElement, Suspense, useEffect, useRef, useState } f
 import type { ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { isModuleDestination } from '../../shared/shell-platform-navigation.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { prepareCanonicalTargets } from './[lang]/modules/[moduleId]/module-page-model.ts';
 import { awaitPrimaryModuleReads, forgetRecordedPageReads, withoutRecordedPageReads } from './browser-request-cache.ts';
 
 export const StaffRoutePreloadContext = createContext({ enabled: false, generation: 0 });
 
 interface PreloadableNavigationItem {
+  readonly appId?: string | undefined;
   readonly enabled: boolean;
   readonly href?: string;
 }
@@ -62,12 +65,43 @@ const pageRouteComponents = (router: ReturnType<typeof useRouter>, language: str
   });
 };
 
-const warmDestinations = (router: ReturnType<typeof useRouter>, language: string, hrefs: string) =>
+const preloadDestinations = (router: ReturnType<typeof useRouter>, language: string, hrefs: readonly string[]) =>
   Effect.forEach(
-    hrefs === '' ? [] : hrefs.split('\n'),
+    hrefs,
     (href) => withoutRecordedPageReads(() => router.preloadRoute({ to: `/${language}${href}` })).pipe(Effect.ignore),
     { concurrency: 64, discard: true },
   );
+
+/**
+ * Module destinations first get their page targets in one request (instead of one each), then load like the Shell's
+ * own pages, which start at once. A failed batch only means each module loader resolves its own target.
+ */
+const warmDestinations = (
+  router: ReturnType<typeof useRouter>,
+  language: string,
+  hrefs: string,
+  moduleHrefs: string,
+) => {
+  const destinations = hrefs === '' ? [] : hrefs.split('\n');
+  const modules = new Set(moduleHrefs === '' ? [] : moduleHrefs.split('\n'));
+  const [first] = modules;
+  return Effect.all(
+    [
+      preloadDestinations(
+        router,
+        language,
+        destinations.filter((href) => !modules.has(href)),
+      ),
+      (first === undefined
+        ? Effect.void
+        : prepareCanonicalTargets(new Request(new URL(`/${language}${first}`, globalThis.location.href)), [
+            ...modules,
+          ]).pipe(Effect.ignore)
+      ).pipe(Effect.andThen(preloadDestinations(router, language, [...modules]))),
+    ],
+    { concurrency: 2, discard: true },
+  );
+};
 
 /**
  * Native render preloads prepare code AND declared data concurrently. The only gate is the current page:
@@ -87,6 +121,9 @@ export const useIdleRoutePreload = (
   const previousContext = useRef(contextKey);
   const key = [contextKey, currentHref, generation].join('\n');
   const hrefs = navigation.flatMap((item) => (item.enabled && item.href !== undefined ? [item.href] : [])).join('\n');
+  const moduleHrefs = navigation
+    .flatMap((item) => (item.enabled && item.href !== undefined && isModuleDestination(item) ? [item.href] : []))
+    .join('\n');
 
   useEffect(() => {
     const restart = () => {
@@ -120,7 +157,7 @@ export const useIdleRoutePreload = (
                   Effect.all(
                     [
                       Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
-                      warmDestinations(router, language, hrefs),
+                      warmDestinations(router, language, hrefs, moduleHrefs),
                     ],
                     { concurrency: 2, discard: true },
                   ),
@@ -133,7 +170,7 @@ export const useIdleRoutePreload = (
     return () => {
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, [currentHref, disabled, hrefs, key, language, router, settledHref]);
+  }, [currentHref, disabled, hrefs, key, language, moduleHrefs, router, settledHref]);
 
   return {
     enabled: !disabled && currentHref === settledHref && preparedKey === key,

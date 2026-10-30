@@ -131,11 +131,6 @@ export function ReviewStep() {
           Zpět k dodacím údajům
         </LinkButton>
         <div className="grid w-full gap-(--dimension-12) sm:max-w-(--akros-checkout-continue-width)">
-          {!accountEmail && (
-            <StoreLink className="underline" href="/prihlaseni">
-              Před objednáním se přihlaste
-            </StoreLink>
-          )}
           <Button
             type="submit"
             data-akros-checkout-action
@@ -143,7 +138,7 @@ export function ReviewStep() {
             variant="primary"
             size="sm"
             uppercase
-            disabled={sending || submitted || !cart.lines.length || blocked || !accountEmail}
+            disabled={sending || submitted || !cart.lines.length || blocked}
             aria-describedby={`review-order-information${blocked ? " review-blocked" : ""}${storageError ? " review-submit-error" : ""}`}
           >
             {sending ? "Odesílám do OntOS…" : "Odeslat objednávku"}
@@ -163,7 +158,11 @@ export function ReviewStep() {
             className="grid gap-(--dimension-4) text-center text-xs text-(--color-fg-secondary)"
           >
             <p>{cs.checkout.noOnlinePayment}</p>
-            <p>{cs.checkout.orderTrackingInformation}</p>
+            <p>
+              {accountEmail
+                ? cs.checkout.orderTrackingInformation
+                : cs.checkout.guestOrderTrackingInformation(draft.email)}
+            </p>
           </div>
         </div>
       </div>

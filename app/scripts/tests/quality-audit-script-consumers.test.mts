@@ -21,9 +21,6 @@ const unusedModule = 'export const stillAudited = 1;';
 const calledScript = 'scripts/called.mts';
 const workflowFile = '../.github/workflows/proof.yml';
 const demoFile = 'scripts/demo/up.sh';
-const workerFile = 'scripts/core-system-outbox-worker.generated.mts';
-const registryFile = 'scripts/outbox-worker-delivery.mjs';
-const materializerFile = 'scripts/materialize-outbox-worker.mjs';
 const appDirectory = `APP="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"`;
 const wrappers = `step() {
@@ -39,23 +36,6 @@ start() {
   nohup "$@" >"$name.log" 2>&1 &
 }
 WITH_ENV=(mise exec --)`;
-const registry = `export const CORE_SYSTEM_OUTBOX_WORKER = Object.freeze({
-  entry: '${workerFile}',
-  id: 'core-system-worker'
-});
-const unusedNeighbor = { entry: 'scripts/unused-worker.mts' };`;
-const materializer = `import { build } from 'esbuild';
-import { CORE_SYSTEM_OUTBOX_WORKER } from './outbox-worker-delivery.mjs';
-const resolveOutboxWorkerEffect = ({appId}) => Effect.gen(function* resolveWorker() {
-  const dedicatedCore = appId === CORE_SYSTEM_OUTBOX_WORKER.id;
-  const entryPoint = dedicatedCore ? CORE_SYSTEM_OUTBOX_WORKER.entry : host.entry;
-  return { entryPoint };
-});
-const materializeOutboxWorkerEffect = (identity) => Effect.gen(function* materializeWorker() {
-  const delivery = yield* resolveOutboxWorkerEffect(identity);
-  yield* Effect.tryPromise(() => build({ entryPoints: [delivery.entryPoint] }));
-});`;
-
 it.effect('workflow consumers require an actual run step in the app working directory', () =>
   Effect.gen(function* nativeWorkflowCommands() {
     const { root, write } = yield* fixture;
@@ -154,29 +134,5 @@ start server "\${WITH_ENV[@]}" node scripts/server.mts
     expect(yield* buildKnipRuntimeEvidence(root)).toEqual([]);
     yield* write(demoFile, source.replace('cd "$APP"', 'cd /unrelated'));
     expect(yield* buildKnipRuntimeEvidence(root)).toEqual([]);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.effect('the Core worker is consumed only through its imported identity resolver and native esbuild option', () =>
-  Effect.gen(function* nativeWorkerBundle() {
-    const { root, write } = yield* fixture;
-    yield* write(workerFile, unusedModule);
-    yield* write('scripts/unused-worker.mts', unusedModule);
-    yield* write(registryFile, registry);
-    yield* write(materializerFile, materializer);
-    const facts = yield* buildKnipRuntimeEvidence(root);
-    expect(facts.map(({ kind, target }) => ({ kind, target }))).toEqual([{ kind: 'file', target: workerFile }]);
-    expect(facts[0]?.source).toBe(materializerFile);
-
-    for (const source of [
-      materializer.replace("from 'esbuild'", "from 'unrelated-builder'"),
-      materializer.replace('build({ entryPoints:', 'inert({ entryPoints:'),
-      materializer.replace('CORE_SYSTEM_OUTBOX_WORKER.entry', 'unusedNeighbor.entry'),
-      materializer.replace('const delivery =', 'const build = inert; const delivery ='),
-      `const inert = ${JSON.stringify(materializer)};`,
-    ]) {
-      yield* write(materializerFile, source);
-      expect(yield* buildKnipRuntimeEvidence(root)).toEqual([]);
-    }
   }).pipe(Effect.provide(NodeServices.layer)),
 );

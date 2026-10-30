@@ -192,7 +192,7 @@ describe('SMTP email delivery adapter', () => {
         const transport = yield* EmailDeliveryService;
         const receipt = yield* transport.send(message);
         expect(receipt.accepted).toBe(true);
-        expect(receipt.id.endsWith('@ontos.local')).toBe(true);
+        expect(receipt.id.endsWith('@najempark.demo')).toBe(true);
         expect(server.messages.length).toBe(1);
         expect(server.messages[0]).toContain(`Subject: =?UTF-8?B?${Buffer.from(message.subject).toString('base64')}?=`);
         expect(server.messages[0]).toContain(

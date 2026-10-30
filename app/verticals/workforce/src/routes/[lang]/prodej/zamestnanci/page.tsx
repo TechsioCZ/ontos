@@ -14,8 +14,14 @@ import {
 } from '@app/admin-ui';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
-import type { TagCatalog, TagsStatus } from '@app/tagging/components/tag-controls';
+import {
+  BulkTagDialog,
+  TagCell,
+  TagFilter,
+  tagsFailureStatus,
+  tagsReadable,
+} from '@app/tagging/components/tag-controls';
+import type { TagCallFailure, TagCatalog, TagsStatus } from '@app/tagging/components/tag-controls';
 import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -103,11 +109,15 @@ const loadStateOf = (snapshot: PageDataSnapshot<RecordsResponse, EmployeesLoadEr
 
 const noTags: EmployeeTags = { catalog: [], tagsBySubject: new Map() };
 
-const tagsStatusOf = (snapshot: PageDataSnapshot<EmployeeTags, unknown>): TagsStatus => {
+/** A role that may not read tags reads `forbidden` (no Štítky column, filter or bulk action), never an error. */
+const tagsStatusOf = (snapshot: PageDataSnapshot<EmployeeTags, TagCallFailure>): TagsStatus => {
+  if (!tagsReadable()) {
+    return 'forbidden';
+  }
   if (snapshot.state === 'pending') {
     return 'loading';
   }
-  return snapshot.state === 'failed' ? 'error' : 'ready';
+  return snapshot.state === 'failed' ? tagsFailureStatus(snapshot.error) : 'ready';
 };
 
 /** Text columns sort in Czech collation. The default sort compares code points, so "Účetní" would land after "Vedoucí". */
@@ -362,7 +372,8 @@ const EmployeeBulkBar = ({
   readonly onDepartment: () => void;
   readonly onRole: () => void;
   readonly onSetActive: (active: boolean) => void;
-  readonly onTags: () => void;
+  /** Absent for a role that may not read tags, so the bar offers no tag panel the owner would refuse. */
+  readonly onTags: (() => void) | undefined;
 }) => {
   const { t } = useModernI18n();
   // No selection renders nothing, so the page column keeps no empty gap for the bar.
@@ -380,9 +391,11 @@ const EmployeeBulkBar = ({
         <Button disabled={busy} onClick={onRole} size="sm" theme="outlined" variant="secondary">
           {t(`${key}.bulk.role`)}
         </Button>
-        <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
-          {t(`${key}.bulk.tags`)}
-        </Button>
+        {onTags !== undefined && (
+          <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.bulk.tags`)}
+          </Button>
+        )}
         <Button
           disabled={busy}
           onClick={() => {
@@ -415,7 +428,7 @@ const EmployeeBulkBar = ({
  * 44 px selection column add up to 1104 px, so at a 1440 px window (256 px sidebar, page padding) the table needs no
  * horizontal scroll and the last column is not clipped. Wider windows share the spare width across the columns.
  */
-const employeeColumns = (t: (key: string) => string): ColumnDef<Employee>[] => [
+const employeeColumns = (t: (key: string) => string, tagsShown: boolean): ColumnDef<Employee>[] => [
   {
     accessorKey: 'fullName',
     cell: nameCell,
@@ -423,13 +436,18 @@ const employeeColumns = (t: (key: string) => string): ColumnDef<Employee>[] => [
     meta: { width: 190 },
     sortFn: czechSortFn,
   },
-  {
-    cell: EmployeeTagsCell,
-    enableSorting: false,
-    header: t(`${key}.columns.tags`),
-    id: 'tags',
-    meta: { width: 160 },
-  },
+  // A role that may not read tags gets no Štítky column.
+  ...(tagsShown
+    ? [
+        {
+          cell: EmployeeTagsCell,
+          enableSorting: false,
+          header: t(`${key}.columns.tags`),
+          id: 'tags',
+          meta: { width: 160 },
+        } satisfies ColumnDef<Employee>,
+      ]
+    : []),
   { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 220 } },
   {
     accessorFn: (row) => t(`${key}.roles.${row.role}`),
@@ -575,7 +593,7 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
     setSelection({});
   };
 
-  const columns = employeeColumns(t);
+  const columns = employeeColumns(t, tagStatus !== 'forbidden');
 
   const translations: DataTableTranslations = {
     ...dataTableRowLabels,
@@ -673,7 +691,7 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
             onDepartment={() => setBulk('department')}
             onRole={() => setBulk('role')}
             onSetActive={bulkSetActive}
-            onTags={() => setTagDialogOpen(true)}
+            onTags={tagStatus === 'forbidden' ? undefined : () => setTagDialogOpen(true)}
           />
         )}
 

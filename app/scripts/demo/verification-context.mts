@@ -29,6 +29,8 @@ export const verificationContext = Effect.fn('Demo.verificationContext')(functio
         actionKeys: { 'work.tasks': ['work.tasks.apply-command'] },
         label: verificationName,
         modules: { 'work.tasks': 'write' },
+        // The MCP OAuth proof turns its write into a proposal for approval, which needs the proposal lifecycle.
+        proposalReview: true,
       },
       actions,
       verificationLegalEntityId,

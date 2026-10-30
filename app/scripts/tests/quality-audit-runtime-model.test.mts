@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -469,76 +469,6 @@ jobs:
     expect(String(yield* Effect.flip(facts(root)))).toMatch(/InvalidWorkflow/u);
     write(root, workflow, 'jobs:\n  proof:\n    steps: not-an-array\n');
     expect(String(yield* Effect.flip(facts(root)))).toMatch(/steps/u);
-  }),
-);
-
-it.live(
-  'native repository workflow consumes an exact storefront Node file without admitting opaque or outside-project paths',
-  Effect.fn(function* workflowStorefrontControls() {
-    const root = yield* fixture();
-    const workflow = '../.github/workflows/stage-demo-deploy.yml';
-    const target = `${storefrontWorkspace}/tests/browser/newsletter-consent.mjs`;
-    const neighboring = `${storefrontWorkspace}/tests/browser/email-verification.mjs`;
-    const outside = '../outside.mjs';
-    const linked = `${storefrontWorkspace}/tests/browser/outside-link.mjs`;
-    const command = `mise exec -- node ${target}`;
-    const source = readFileSync(path.resolve(import.meta.dirname, '../..', workflow), 'utf-8');
-    expect(source).toContain(command);
-    write(root, workflow, source);
-    write(root, `${storefrontWorkspace}/package.json`, '{"name":"storefront","private":true,"type":"module"}');
-    write(root, target, "import { used } from './values.mjs'; void used; export const unusedBrowserExport = 1;");
-    write(
-      root,
-      `${storefrontWorkspace}/tests/browser/values.mjs`,
-      'export const used = 1; export const unusedValue = 2;',
-    );
-    write(root, neighboring, 'export const unusedLocalProof = 1;');
-    write(root, outside, 'export const outsideProject = 1;');
-    symlinkSync(path.resolve(root, outside), path.join(root, linked));
-    const initial = yield* facts(root);
-    expect(initial.some((fact) => fact.source === workflow && fact.kind === 'file' && fact.target === target)).toBe(
-      true,
-    );
-    const consumer = path.join(root, consumerFile);
-    const model = yield* buildKnipModel(
-      root,
-      {
-        workspaces: {
-          '.': { entry: [], node: false, project: [] },
-          [storefrontWorkspace]: { entry: [], node: false, project: ['tests/browser/*.mjs'] },
-        },
-      },
-      consumer,
-    ).pipe(Effect.provide(NodeServices.layer));
-    const native = yield* runPinnedKnip(root, consumer, model).pipe(Effect.provide(NodeServices.layer));
-    expect(native.status, `${native.stdout}\n${native.stderr}`).toBe(1);
-    expect(model.consumerSource).toContain(path.join(root, target));
-    expect(native.stdout).not.toContain(`"name":"${target}"`);
-    expect(native.stdout).toContain(`"name":"${neighboring}"`);
-    expect(native.stdout).toContain('unusedBrowserExport');
-    expect(native.stdout).toContain('unusedValue');
-    for (const [directory, run] of [
-      ['app', `# ${command}`],
-      ['app', `echo "${command}"`],
-      ['elsewhere', command],
-      ['.', command],
-      ['app', `TARGET="${target}"\nnode "$TARGET"`],
-      ['app', `bash -c '${command}'`],
-      ['app', `node ${outside}`],
-      ['app', `node ${path.resolve(root, outside)}`],
-      ['app', `node ${linked}`],
-      ['app', `node() {\n  echo ignored\n}\n${command}`],
-    ]) {
-      write(
-        root,
-        workflow,
-        yield* stringify({ jobs: { proof: { steps: [{ run, 'working-directory': directory }] } } }),
-      );
-      expect(
-        (yield* facts(root)).filter((fact) => fact.source === workflow),
-        `${directory}: ${run}`,
-      ).toEqual([]);
-    }
   }),
 );
 

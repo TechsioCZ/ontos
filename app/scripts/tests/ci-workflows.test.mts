@@ -1,20 +1,10 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -37,106 +27,14 @@ const readWorkflow = (name: string) =>
     parse(readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf-8')),
   );
 
-const DemoDeploymentSchema = Schema.Struct({
-  jobs: Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      concurrency: Schema.optionalKey(Schema.Struct({ group: Schema.String })),
-      env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-      steps: Schema.Array(
-        Schema.Struct({
-          if: Schema.optionalKey(Schema.String),
-          name: Schema.String,
-          run: Schema.optionalKey(Schema.String),
-        }),
-      ),
-    }),
-  ),
-});
-
-const LOAD_IDENTITIES = 'Load the dedicated database identity credentials';
-const BOOTSTRAP_BEFORE = 'Bootstrap every database identity before migrations';
-const EDGE_PUBLICATION_LOCK = 'zerops-stage';
-
-const demoDeployment = () =>
-  Schema.decodeUnknownSync(DemoDeploymentSchema)(
-    parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
-  );
-
-it('holds one stage lock across dedicated identity bootstrap, every demo migration, edge publication and outbox push', () => {
-  const { jobs } = demoDeployment();
-  const { release } = jobs;
-  expect(release?.concurrency?.group).toBe(EDGE_PUBLICATION_LOCK);
-  // Job-wide policy also covers both bootstraps nested inside db:migrate.
-  expect(release?.env?.DATABASE_LOGIN_ROLE_POLICY).toBe('reconcile');
-  expect(release?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
-  expect(jobs['outbox-host']).toBeUndefined();
-  const steps = release?.steps ?? [];
-  const ordered = [
-    LOAD_IDENTITIES,
-    BOOTSTRAP_BEFORE,
-    'Migrate every owner schema',
-    'Upload every immutable release Worker',
-    'Publish the Application Composition',
-    'Activate the Shell ingress',
-    'Push the outbox worker host',
-    'Clear the runner-owned Zerops VPN',
-  ];
-  const positions = ordered.map((name) => steps.findIndex((step) => step.name === name));
-  expect(positions.every((position) => position >= 0)).toBe(true);
-  expect(positions).toEqual(EffectArray.sort(positions, Order.Number));
-  expect(steps.find((step) => step.name === BOOTSTRAP_BEFORE)?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
-  expect(steps.find((step) => step.name === 'Migrate every owner schema')?.run).toContain(
-    'mise exec -- pnpm exec node scripts/stage-demo-migrate.mts',
-  );
-  const packageScripts = Schema.decodeUnknownSync(
-    Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
-  )(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8'));
-  expect(packageScripts.scripts['db:migrate:prepared:internal']).toBe(
-    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate && pnpm db:verify',
-  );
-  expect(readFileSync(new URL('../stage-demo-migrate.mts', import.meta.url), 'utf-8')).toContain(
-    "ChildProcess.make('pnpm', ['db:migrate:prepared:internal']",
-  );
-});
-
-it('loads dedicated credentials from existing sensitive stage secrets, never from shared fallback or build jobs', () => {
-  const { jobs } = demoDeployment();
-  const { release } = jobs;
-  const load = release?.steps.find(({ name }) => name === LOAD_IDENTITIES);
-  expect(load?.run).toContain('scripts/ops/database-identities.mts');
-  expect(load?.run).toContain('--github-environment-file "$GITHUB_ENV"');
-  expect(load?.run).not.toContain('database-identities --');
-  for (const job of ['build', 'build-storefront']) {
-    expect(jobs[job]?.env?.DATABASE_URL).toBeUndefined();
-    expect(jobs[job]?.env?.ZEROPS_TOKEN).toBeUndefined();
-  }
-});
-
-it('retries outbox only at the exact published hardened revision instead of checking out an older deployment', () => {
-  const { release } = demoDeployment().jobs;
-  const check = release?.steps.find(
-    ({ name }) => name === 'Require the exact published revision for an outbox-only retry',
-  );
-  expect(check?.if).toBe('inputs.outbox_only');
-  expect(check?.run).toContain('"$published" != "$GITHUB_SHA"');
-  expect(check?.run).toContain('run a full hardened release instead');
-  expect(release?.steps.filter(({ name }) => name.startsWith('Checkout'))).toHaveLength(1);
-  const checkout = release?.steps.findIndex(({ name }) => name === 'Checkout') ?? -1;
-  const publish = release?.steps.findIndex(({ name }) => name === 'Publish the Application Composition') ?? -1;
-  const outbox = release?.steps.findIndex(({ name }) => name === 'Push the outbox worker host') ?? -1;
-  expect(publish).toBeGreaterThan(checkout);
-  expect(outbox).toBeGreaterThan(publish);
-});
-
-/** The GitHub environment that holds the Cloudflare account token. */
-const EDGE_ENVIRONMENT = 'stage-edge';
 const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url);
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
 /** The step after which a build shard's outputs are downloadable by the target's proving shards. */
 const UPLOAD_STEP = "Upload the shard's build outputs";
+/** The condition of the Node shard that runs the Node proof. */
+const NODE_PROOF_CONDITION = "matrix.proof == 'node'";
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
@@ -184,98 +82,9 @@ const WorkflowStepSchema = Schema.Struct({
   'timeout-minutes': Schema.optional(Schema.Number),
   'working-directory': Schema.optional(Schema.String),
 });
-const MIGRATIONS_JOB = 'deploy-migrations';
-const DEPLOY_TARGET_JOB = 'deploy-target';
-const OUTBOX_WORKER_MODE_OUTPUT = expression('needs.deploy-target.outputs.outbox-worker-mode');
-const DEPLOY_TARGET_OUTPUT = expression('needs.deploy-target.outputs.target');
-const DEPLOY_ENVIRONMENT_OUTPUT = expression('needs.deploy-target.outputs.environment');
-const DEPLOY_ENVIRONMENT_ARGUMENT = '--environment "$DEPLOY_ENVIRONMENT"';
-const ZEROPS_TOKEN_EXPRESSION = expression('secrets.ZEROPS_TOKEN');
-const ZEROPS_PROJECT_EXPRESSION = expression('vars.ZEROPS_PROJECT_ID');
-const DATABASE_ADMIN_EXPRESSION = expression('secrets.DATABASE_ADMIN_URL');
-const RUNNER_TEMP_EXPRESSION = expression('runner.temp');
 
-const runStep = (script: string, environment: Readonly<Record<string, string>>, workingDirectory?: string) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workflow-step-'));
-  const outputPath = path.join(directory, 'output');
-  try {
-    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
-      cwd: workingDirectory,
-      env: { GITHUB_OUTPUT: outputPath, PATH: STEP_PATH, ...environment },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return Object.fromEntries(
-      readFileSync(outputPath, 'utf-8')
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
-    );
-  } catch {
-    return 'failed';
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-};
-
-const DEPLOY_PLAN_JOB = 'deploy-plan';
-const INITIAL_CUTOVER_GUARD_JOB = 'initial-composition-cutover-guard';
-const INITIAL_CUTOVER_RECEIPT_ARTIFACT = 'initial-composition-cutover-receipt';
-const DATABASE_MIGRATION_STEP = 'Run verified database migrations';
-const SPICEDB_DEPLOYMENT_STEP = 'Deploy SpiceDB when affected';
-const PublicationWorkflowStepSchema = Schema.Struct({
-  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  id: Schema.optional(Schema.String),
-  if: Schema.optional(Schema.String),
-  name: Schema.String,
-  run: Schema.optional(Schema.String),
-  uses: Schema.optional(Schema.String),
-  with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  'working-directory': Schema.optional(Schema.String),
-});
-
-const TargetWorkflowSchema = Schema.Struct({
+const GatesWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    'deploy-migrations': Schema.Struct({
-      concurrency: Schema.Struct({ group: Schema.String }),
-      env: Schema.Record(Schema.String, Schema.String),
-      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-      if: Schema.String,
-      needs: Schema.Array(Schema.String),
-      permissions: Schema.Record(Schema.String, Schema.String),
-      steps: Schema.Array(PublicationWorkflowStepSchema),
-    }),
-    'deploy-plan': Schema.Struct({
-      env: Schema.Record(Schema.String, Schema.String),
-      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-      if: Schema.String,
-      needs: Schema.Array(Schema.String),
-      outputs: Schema.Record(Schema.String, Schema.String),
-      steps: Schema.Array(WorkflowStepSchema),
-    }),
-    'deploy-target': Schema.Struct({
-      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-      if: Schema.String,
-      outputs: Schema.Record(Schema.String, Schema.String),
-      steps: Schema.Array(WorkflowStepSchema),
-    }),
-    'deploy-zerops': Schema.Struct({
-      concurrency: Schema.Struct({ group: Schema.String }),
-      env: Schema.Record(Schema.String, Schema.String),
-      environment: Schema.String,
-      if: Schema.String,
-      needs: Schema.Array(Schema.String),
-      permissions: Schema.Record(Schema.String, Schema.String),
-      steps: Schema.Array(PublicationWorkflowStepSchema),
-    }),
-    'initial-composition-cutover-guard': Schema.Struct({
-      concurrency: Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String }),
-      env: Schema.Record(Schema.String, Schema.String),
-      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-      if: Schema.String,
-      needs: Schema.Array(Schema.String),
-      permissions: Schema.Record(Schema.String, Schema.String),
-      steps: Schema.Array(PublicationWorkflowStepSchema),
-    }),
     'queue-proof': Schema.Struct({
       if: Schema.String,
       outputs: Schema.Record(Schema.String, Schema.String),
@@ -289,1118 +98,13 @@ const TargetWorkflowSchema = Schema.Struct({
       steps: Schema.Array(WorkflowStepSchema),
     }),
   }),
-  on: Schema.Struct({
-    workflow_dispatch: Schema.Struct({
-      inputs: Schema.Struct({
-        environment: Schema.Struct({ default: Schema.String, options: Schema.Array(Schema.String) }),
-      }),
-    }),
-  }),
 });
 
-const readTargetWorkflow = () =>
-  Schema.decodeUnknownSync(TargetWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-
-const VpnWorkflowStepSchema = Schema.Struct({
-  ...PublicationWorkflowStepSchema.fields,
-  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
-});
-const VpnWorkflowJobsSchema = Schema.Struct({
-  jobs: Schema.Record(Schema.String, Schema.Struct({ steps: Schema.optional(Schema.Array(VpnWorkflowStepSchema)) })),
-});
-const VpnWorkflowEntriesSchema = Schema.Struct({
-  jobs: Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      steps: Schema.optional(
-        Schema.Array(
-          Schema.Union([Schema.Struct({ parallel: Schema.Array(VpnWorkflowStepSchema) }), VpnWorkflowStepSchema]),
-        ),
-      ),
-    }),
-  ),
-});
-const ZEROPS_VPN_ACTION = './.github/actions/zerops-vpn';
-const PRIVATE_DELIVERY_JOBS = [INITIAL_CUTOVER_GUARD_JOB, MIGRATIONS_JOB, 'deploy-zerops'] as const;
-
-const PRIVATE_REFRESH_JOBS = ['refresh-stage', 'refresh-production'] as const;
-
-const readVpnWorkflowJobs = (
-  name: string,
-  source = readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf-8'),
-) => {
-  const { jobs } = Schema.decodeUnknownSync(VpnWorkflowEntriesSchema)(parse(source));
-  return Schema.decodeUnknownSync(VpnWorkflowJobsSchema)({
-    jobs: Object.fromEntries(
-      Object.entries(jobs).map(([jobName, job]) => {
-        // Private network operations require ordered steps, not siblings in a parallel group.
-        if ([...PRIVATE_DELIVERY_JOBS, ...PRIVATE_REFRESH_JOBS].some((privateJob) => privateJob === jobName)) {
-          expect(
-            job.steps?.some((step) => 'parallel' in step),
-            jobName,
-          ).not.toBe(true);
-        }
-        return [jobName, { steps: job.steps?.flatMap((step) => ('parallel' in step ? step.parallel : [step])) }];
-      }),
-    ),
-  }).jobs;
-};
-
-const NativeVpnActionSchema = Schema.Struct({
-  inputs: Schema.Record(Schema.String, Schema.Struct({ required: Schema.Boolean })),
-  outputs: Schema.Record(Schema.String, Schema.Struct({ value: Schema.String })),
-  runs: Schema.Struct({
-    steps: Schema.Array(Schema.Struct({ ...PublicationWorkflowStepSchema.fields, shell: Schema.String })),
-    using: Schema.Literal('composite'),
-  }),
-});
-const readNativeVpnAction = () =>
-  Schema.decodeUnknownSync(NativeVpnActionSchema)(
-    parse(readFileSync(new URL('../../../.github/actions/zerops-vpn/action.yml', import.meta.url), 'utf-8')),
-  );
-const VPN_CONNECT_STEP = "Connect to the protected project's private network";
-const VPN_CLEAR_STEP = "Clear only this runner's native VPN key and configuration";
-const VPN_DATABASE_STEP = 'Verify both private database endpoints';
-const VPN_STATE_OUTPUT = expression('steps.composition-vpn.outputs.state-directory');
-const VPN_CLI_OUTPUT = expression('steps.composition-vpn.outputs.cli-path');
-// Actions runs Linux Bash; macOS's system Bash 3.2 does not stop on a failed [[ ... ]] under errexit.
-const VPN_TEST_BASH = os.platform() === 'darwin' ? '/opt/homebrew/bin/bash' : '/bin/bash';
-const FAKE_BASH_SHEBANG = '#!/bin/bash';
-const VPN_INTERFACE_CALL = 'sudo=ip link show dev zerops';
-const VPN_OWNED_CLEANUP_CALL = 'sudo=rm --recursive --force -- <runner>/ontos-zerops-vpn.test';
-const VPN_NATIVE_UP_CALL = 'native=vpn up --project-id test-project --mtu 1350';
-const VPN_NATIVE_DOWN_CALL = 'native=vpn down';
-const VPN_NATIVE_CLEAR_CALL = 'native=vpn clear --project-id test-project';
-const VPN_RUNTIME_HOST = 'runtime-private';
-const VPN_ADMIN_HOST = 'admin-private';
-const VPN_RUNTIME_TCP_CALL = 'tcp=runtime-private:5432,family=ipv4,timeout=2';
-const VPN_ADMIN_TCP_CALL = 'tcp=admin-private:5433,family=ipv4,timeout=2';
-const VPN_REGISTRY_MISSING_KEY = 'missing-key';
-const VPN_REGISTRY_CORRUPT = 'corrupt';
-const VPN_REGISTRY_MISSING_FILE = 'missing-file';
-const VPN_REGISTRY_SYMLINK = 'symlink';
-const VPN_TEST_KEY = Buffer.alloc(32, 7).toString('base64');
-const VPN_NATIVE_NOISE = 'postgres://secret-user:secret-password@secret-host/secret-db private-key-canary token-canary';
-const VPN_VERIFY_PRESERVE_CALL =
-  'preserve=--preserve-env=DATABASE_URL,DATABASE_ADMIN_URL,VPN_PROJECT_ID,VPN_STATE_DIRECTORY,VPN_CLI_PATH,RUNNER_TEMP,ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH';
-const nativeVpnScript = (name: string) =>
-  readNativeVpnAction().runs.steps.find((step) => step.name === name)?.run ?? 'exit 1';
-
-const FAKE_VPN_SUDO = [
-  FAKE_BASH_SHEBANG,
-  'if [[ "$1" == --preserve-env=* ]]; then',
-  String.raw`  printf "preserve=%s\n" "$1" >>"$VPN_CALLS"`,
-  '  shift',
-  '  exec "$@"',
-  'fi',
-  String.raw`printf "sudo=%s\n" "$*" >>"$VPN_CALLS"`,
-  'case "$1" in',
-  '  ip) if [[ "$VPN_INTERFACE_STATUS" == 0 && ! -f "$VPN_INTERFACE_FILE" ]]; then exit 0; fi; exit 1 ;;',
-  '  rm) exit 0 ;;',
-  '  *) exit 77 ;;',
-  'esac',
-].join('\n');
-const FAKE_VPN_CLI = [
-  FAKE_BASH_SHEBANG,
-  String.raw`printf "native=%s\n" "$*" >>"$VPN_CALLS"`,
-  '[[ "$ZEROPS_TOKEN" == test-token ]] || exit 67',
-  '[[ "$ZEROPS_CLI_DATA_FILE_PATH" == "$VPN_STATE_DIRECTORY/cli.data" ]] || exit 68',
-  '[[ "$ZEROPS_WG_CONFIG_FILE_PATH" == "$VPN_STATE_DIRECTORY/zerops.conf" ]] || exit 69',
-  '[[ "$ZEROPS_CLI_YAML_FILE_PATH" == "$VPN_STATE_DIRECTORY/.zcli.yml" ]] || exit 70',
-  '[[ "$ZEROPS_CLI_LOG_FILE_PATH" == /dev/null ]] || exit 71',
-  '[[ "$2" != "$VPN_NATIVE_FAILURE" ]] || exit 72',
-  String.raw`printf "%s\n" "$VPN_NATIVE_NOISE"`,
-  'if [[ "$2" == down && "$VPN_DOWN_KEEPS_INTERFACE" != 1 ]]; then : >"$VPN_INTERFACE_FILE"; fi',
-  'if [[ "$2" == up ]]; then : >"$VPN_RECONNECTED_FILE"; rm -f -- "$VPN_INTERFACE_FILE"; fi',
-  'if [[ "$2" == "$VPN_MUTATE_KEY_AT" ]]; then printf \'{"ProjectVpnKeyRegistry":{}}\' >"$ZEROPS_CLI_DATA_FILE_PATH"; fi',
-].join('\n');
-const FAKE_VPN_WG = [
-  FAKE_BASH_SHEBANG,
-  String.raw`printf "wg=%s\n" "$*" >>"$VPN_CALLS"`,
-  'case "$*" in',
-  '  pubkey) read -r key; [[ "$key" == "$VPN_TEST_KEY" ]] || exit 73; echo test-public-key ;;',
-  '  "show zerops public-key")',
-  '    [[ ! -f "$VPN_INTERFACE_FILE" ]] || exit 1',
-  '    if [[ "$VPN_FOREIGN_INTERFACE" == 1 ]]; then echo foreign-key; else echo test-public-key; fi ;;',
-  String.raw`  "show zerops latest-handshakes") printf "peer-key-canary\t%s\n" "$VPN_HANDSHAKE_TIME" ;;`,
-  '  *) exit 74 ;;',
-  'esac',
-].join('\n');
-const FAKE_VPN_PYTHON = [
-  '#!/usr/bin/python3',
-  'import errno, os, pathlib, socket, subprocess, sys',
-  'native_run = subprocess.run',
-  'def run(arguments, **options):',
-  '    if arguments[1:3] == ["vpn", os.environ.get("VPN_NATIVE_TIMEOUT")]: raise subprocess.TimeoutExpired(arguments, options["timeout"])',
-  '    return native_run(arguments, **options)',
-  'subprocess.run = run',
-  'def failing(host, family="both"):',
-  '    recovered = pathlib.Path(os.environ["VPN_RECONNECTED_FILE"]).exists() and os.environ.get("VPN_RECOVER_AFTER_UP") == "1"',
-  '    return not recovered and host == os.environ.get("VPN_UNREACHABLE_HOST") and os.environ.get("VPN_FAIL_FAMILY", family) in (family, "both")',
-  'def resolve(host, port, type):',
-  '    with open(os.environ["VPN_CALLS"], "a") as output:',
-  String.raw`        output.write(f"dns={host}:{port}\n")`,
-  '    if failing(host) and os.environ.get("VPN_FAILURE_KIND") == "dns": raise socket.gaierror(socket.EAI_AGAIN, os.environ["VPN_NATIVE_NOISE"])',
-  '    if failing(host) and os.environ.get("VPN_FAILURE_KIND") == "dns_timeout": raise TimeoutError(os.environ["VPN_NATIVE_NOISE"])',
-  '    families = {"ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}',
-  '    return [(families[name], socket.SOCK_STREAM, 6, "", (host, port)) for name in os.environ.get("VPN_FAMILIES", "ipv4").split(",")]',
-  'class Connection:',
-  '    def __init__(self, family, *_): self.family = "ipv4" if family == socket.AF_INET else "ipv6"',
-  '    def settimeout(self, timeout): self.timeout = timeout',
-  '    def __enter__(self): return self',
-  '    def __exit__(self, *_): return False',
-  '    def connect(self, address):',
-  '        with open(os.environ["VPN_CALLS"], "a") as output:',
-  String.raw`            output.write(f"tcp={address[0]}:{address[1]},family={self.family},timeout={self.timeout}\n")`,
-  '        if failing(address[0], self.family):',
-  '            kind = os.environ.get("VPN_FAILURE_KIND", "tcp_timeout")',
-  '            if kind == "tcp_timeout": raise TimeoutError(os.environ["VPN_NATIVE_NOISE"])',
-  '            raise OSError(errno.ECONNREFUSED if kind == "tcp_refused" else errno.ENETUNREACH, os.environ["VPN_NATIVE_NOISE"])',
-  'socket.getaddrinfo = resolve',
-  'socket.socket = Connection',
-  'exec(compile(sys.stdin.read(), "<native-vpn-endpoints>", "exec"))',
-].join('\n');
-
-/** Executes the real action script with local native-command and socket substitutes. */
-const runNativeVpnScriptDetails = (
-  script: string,
-  environment: Readonly<Record<string, string | undefined>> = {},
-  cleanupScript?: string,
-) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-vpn-test-'));
-  const stateDirectory = path.join(directory, 'ontos-zerops-vpn.test');
-  const callsPath = path.join(directory, 'calls');
-  try {
-    mkdirSync(stateDirectory);
-    chmodSync(stateDirectory, 0o700);
-    writeFileSync(callsPath, '');
-    const registryState = Schema.decodeUnknownSync(
-      Schema.OptionFromUndefinedOr(
-        Schema.Literals([
-          VPN_REGISTRY_MISSING_KEY,
-          VPN_REGISTRY_CORRUPT,
-          VPN_REGISTRY_MISSING_FILE,
-          VPN_REGISTRY_SYMLINK,
-        ]),
-      ),
-    )(environment.VPN_REGISTRY_STATE).pipe(Option.getOrElse(() => 'valid'));
-    const projectId = environment.VPN_REGISTRY_PROJECT ?? 'test-project';
-    const registry = { [projectId]: { Key: environment.VPN_REGISTRY_KEY ?? VPN_TEST_KEY, ProjectId: projectId } };
-    const dataPath = path.join(stateDirectory, 'cli.data');
-    writeFileSync(
-      dataPath,
-      JSON.stringify({ ProjectVpnKeyRegistry: registryState === VPN_REGISTRY_MISSING_KEY ? {} : registry }),
-    );
-    writeFileSync(
-      path.join(stateDirectory, 'zerops.conf'),
-      `[Interface]\nPrivateKey = ${environment.VPN_CONFIG_KEY ?? VPN_TEST_KEY}\n`,
-    );
-    if (registryState === VPN_REGISTRY_CORRUPT) {
-      writeFileSync(dataPath, 'invalid-json-secret-canary');
-    }
-    if (registryState === VPN_REGISTRY_MISSING_FILE) {
-      rmSync(dataPath);
-    }
-    if (registryState === VPN_REGISTRY_SYMLINK) {
-      const linkedData = path.join(directory, 'other-cli.data');
-      writeFileSync(linkedData, JSON.stringify({ ProjectVpnKeyRegistry: registry }));
-      rmSync(dataPath);
-      symlinkSync(linkedData, dataPath);
-    }
-    for (const [name, source] of [
-      ['sudo', FAKE_VPN_SUDO],
-      ['zcli', FAKE_VPN_CLI],
-      ['python3', FAKE_VPN_PYTHON],
-      ['wg', FAKE_VPN_WG],
-    ]) {
-      const executable = path.join(directory, name);
-      writeFileSync(executable, source);
-      chmodSync(executable, 0o755);
-    }
-    const execute = (source: string) =>
-      spawnSync(VPN_TEST_BASH, ['-eo', 'pipefail', '-c', source], {
-        encoding: 'utf-8',
-        env: {
-          DATABASE_ADMIN_URL: 'postgres://admin@admin-private:5433/ontos',
-          DATABASE_URL: 'postgresql://runtime@runtime-private/ontos',
-          PATH: `${directory}:${STEP_PATH}`,
-          RUNNER_OS: 'Linux',
-          RUNNER_TEMP: directory,
-          VPN_CALLS: callsPath,
-          VPN_CLI_PATH: path.join(directory, 'zcli'),
-          VPN_HANDSHAKE_TIME: '0',
-          VPN_INTERFACE_FILE: path.join(directory, 'interface-down'),
-          VPN_NATIVE_NOISE,
-          VPN_OPERATION: 'connect',
-          VPN_PROJECT_ID: 'test-project',
-          VPN_RECONNECTED_FILE: path.join(directory, 'reconnected'),
-          VPN_STATE_DIRECTORY: stateDirectory,
-          VPN_TEST_KEY,
-          ZEROPS_TOKEN: 'test-token',
-          ...environment,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
-      });
-    const result = execute(script);
-    let output = result.stdout + result.stderr;
-    let cleanupPassed = true;
-    if (cleanupScript !== undefined) {
-      const cleanup = execute(cleanupScript);
-      cleanupPassed = cleanup.status === 0;
-      output += cleanup.stdout + cleanup.stderr;
-    }
-    return {
-      calls: readFileSync(callsPath, 'utf-8').replaceAll(directory, '<runner>').split('\n').filter(Boolean),
-      cleanupPassed,
-      output,
-      passed: result.status === 0,
-    };
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-};
-const runNativeVpnScript = (script: string, environment: Readonly<Record<string, string | undefined>> = {}) => {
-  const { calls, passed } = runNativeVpnScriptDetails(script, environment);
-  return { calls, passed };
-};
-
-it('rejects parallel private operations rather than inventing an order while reading them', () => {
-  expect(() =>
-    readVpnWorkflowJobs(
-      GATES_WORKFLOW,
-      'jobs:\n  deploy-zerops:\n    steps:\n      - parallel:\n          - name: Connect VPN\n          - name: Deploy private service\n',
-    ),
-  ).toThrow();
-});
-
-it('connects every private deployment and refresh runner through native Zerops VPN and always clears it', () => {
-  const deploymentJobs = readVpnWorkflowJobs(GATES_WORKFLOW);
-  const refreshJobs = readVpnWorkflowJobs('active-application-composition-refresh.yml');
-  const jobs = [
-    ...PRIVATE_DELIVERY_JOBS.map((name) => ({ name, steps: deploymentJobs[name]?.steps ?? [] })),
-    ...PRIVATE_REFRESH_JOBS.map((name) => ({ name, steps: refreshJobs[name]?.steps ?? [] })),
-  ];
-  for (const { name, steps } of jobs) {
-    const connections = steps.filter((step) => step.uses === ZEROPS_VPN_ACTION && step.with?.operation === 'connect');
-    const cleanups = steps.filter((step) => step.uses === ZEROPS_VPN_ACTION && step.with?.operation === 'clear');
-    expect(connections, name).toHaveLength(1);
-    expect(cleanups, name).toHaveLength(1);
-    const [connection] = connections;
-    const [cleanup] = cleanups;
-    expect(connection?.id, name).toBe('composition-vpn');
-    expect(connection?.with, name).toMatchObject({
-      'database-admin-url': DATABASE_ADMIN_EXPRESSION,
-      'database-url': expression('secrets.DATABASE_URL'),
-      'project-id': ZEROPS_PROJECT_EXPRESSION,
-      token: ZEROPS_TOKEN_EXPRESSION,
-    });
-    expect(cleanup?.if, name).toBe("always() && steps.composition-vpn.outputs.state-directory != ''");
-    expect(cleanup?.with, name).toEqual({
-      'cli-path': VPN_CLI_OUTPUT,
-      operation: 'clear',
-      'project-id': ZEROPS_PROJECT_EXPRESSION,
-      'state-directory': VPN_STATE_OUTPUT,
-      token: ZEROPS_TOKEN_EXPRESSION,
-    });
-    const stepNames = steps.map((step) => step.name);
-    const connectIndex = stepNames.indexOf(connection?.name ?? '');
-    const clearIndex = stepNames.indexOf(cleanup?.name ?? '');
-    const privateOperations = steps.filter((step) =>
-      /active-composition:publish (?:verify-initial-cutover|capture-approved-snapshot|migrate|publish|refresh)\b|immutable-(?:application|shell)-release\.mts (?:deploy|ingress-deploy)\b/u.test(
-        step.run ?? '',
-      ),
-    );
-    expect(privateOperations.length, name).toBeGreaterThan(0);
-    for (const operation of privateOperations) {
-      const operationIndex = stepNames.indexOf(operation.name);
-      expect(connectIndex, `${name}: ${operation.name}`).toBeLessThan(operationIndex);
-      expect(clearIndex, `${name}: ${operation.name}`).toBeGreaterThan(operationIndex);
-    }
-  }
-});
-
-it('pins the native VPN client and preserves cleanup outputs after a failed connection', () => {
-  const action = readNativeVpnAction();
-  expect(action.inputs.operation?.required).toBe(true);
-  expect(action.inputs['project-id']?.required).toBe(true);
-  expect(action.inputs.token?.required).toBe(true);
-  expect(action.outputs['state-directory']?.value).toBe(expression('steps.prepare.outputs.state-directory'));
-  expect(action.outputs['cli-path']?.value).toBe(expression('steps.prepare.outputs.cli-path'));
-  const prepare = action.runs.steps.find((step) => step.id === 'prepare');
-  expect(prepare?.run).toContain('npm install --global @zerops/zcli@1.1.0');
-  expect(prepare?.run).toContain('wireguard-tools systemd-resolved iputils-ping');
-  expect(prepare?.run).toContain('getBinaryPath()');
-  expect(prepare?.run).toContain('chmod 700 "$state_directory"');
-  expect(action.runs.steps.every((step) => step.shell === 'bash')).toBe(true);
-  const clear = action.runs.steps.find((step) => step.name === VPN_CLEAR_STEP);
-  expect(clear?.if).toBe("always() && inputs.operation == 'clear'");
-  expect(action.runs.steps[0]?.if).toBe('always()');
-  expect(runNativeVpnScript(nativeVpnScript(VPN_CONNECT_STEP), { VPN_NATIVE_FAILURE: 'up' }).passed).toBe(false);
-  expect(runNativeVpnScript(nativeVpnScript(VPN_CLEAR_STEP)).passed).toBe(true);
-});
-
-it('requires Linux, a supported VPN operation and both native credentials before connecting or clearing', () => {
-  const validate = nativeVpnScript('Validate the native VPN operation');
-  expect(runNativeVpnScript(validate).passed).toBe(true);
-  expect(runNativeVpnScript(validate, { VPN_OPERATION: 'clear' }).passed).toBe(true);
-  for (const environment of [
-    { RUNNER_OS: 'Darwin' },
-    { VPN_OPERATION: 'delete' },
-    { VPN_PROJECT_ID: '' },
-    { ZEROPS_TOKEN: '' },
-  ]) {
-    expect(runNativeVpnScript(validate, environment)).toEqual({ calls: [], passed: false });
-  }
-});
-
-it('runs native VPN up and clear with the exact project and isolated credential registry', () => {
-  const connected = runNativeVpnScript(nativeVpnScript(VPN_CONNECT_STEP));
-  expect(connected.passed).toBe(true);
-  expect(connected.calls[0]).toBe(
-    'preserve=--preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH',
-  );
-  expect(connected.calls[1]).toBe(VPN_NATIVE_UP_CALL);
-  expect(connected.calls).toHaveLength(2);
-  const cleared = runNativeVpnScript(nativeVpnScript(VPN_CLEAR_STEP));
-  expect(cleared.passed).toBe(true);
-  expect(cleared.calls.slice(1)).toEqual([
-    VPN_NATIVE_CLEAR_CALL,
-    VPN_INTERFACE_CALL,
-    VPN_INTERFACE_CALL,
-    VPN_OWNED_CLEANUP_CALL,
-  ]);
-});
-
-it('removes only owned state even when native clearing fails and reports the native failure', () => {
-  const clear = nativeVpnScript(VPN_CLEAR_STEP);
-  for (const environment of [
-    { VPN_NATIVE_FAILURE: 'clear' },
-    { VPN_INTERFACE_STATUS: '0', VPN_NATIVE_FAILURE: 'down' },
-  ]) {
-    const result = runNativeVpnScript(clear, environment);
-    expect(result.passed).toBe(false);
-    expect(result.calls.at(-1)).toBe(VPN_OWNED_CLEANUP_CALL);
-  }
-  expect(runNativeVpnScript(clear, { VPN_STATE_DIRECTORY: '/foreign/ontos-zerops-vpn.test' })).toEqual({
-    calls: [],
-    passed: false,
-  });
-});
-
-it('uses native VPN down when the interface survives clearing and verifies its removal before local cleanup', () => {
-  const result = runNativeVpnScript(nativeVpnScript(VPN_CLEAR_STEP), { VPN_INTERFACE_STATUS: '0' });
-  expect(result.passed).toBe(true);
-  expect(result.calls.slice(1).filter((call) => !call.startsWith('preserve='))).toEqual([
-    VPN_NATIVE_CLEAR_CALL,
-    VPN_INTERFACE_CALL,
-    VPN_NATIVE_DOWN_CALL,
-    VPN_INTERFACE_CALL,
-    VPN_OWNED_CLEANUP_CALL,
-  ]);
-});
-
-const REFRESH_VPN_PRESERVE_STEP = "Preserve the workflow's native VPN action";
-const REFRESH_REVISION_STEP = 'Check out the deployed revision';
-const REFRESH_WORKFLOW = 'active-application-composition-refresh.yml';
-
-/** Simulates an older revision and git clean both removing the local action, without touching the repository. */
-const refreshPreservesNativeAction = (preserveScript: string, checkoutScript: string) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-refresh-vpn-action-'));
-  const workspace = path.join(directory, 'workspace');
-  const runnerTemp = path.join(directory, 'runner-temp');
-  const actionDirectory = path.join(workspace, '.github', 'actions', 'zerops-vpn');
-  const actionPath = path.join(actionDirectory, 'action.yml');
-  const actionSource = readFileSync(
-    new URL('../../../.github/actions/zerops-vpn/action.yml', import.meta.url),
-    'utf-8',
-  );
-  try {
-    mkdirSync(actionDirectory, { recursive: true });
-    mkdirSync(runnerTemp);
-    writeFileSync(actionPath, actionSource);
-    const git = path.join(directory, 'git');
-    writeFileSync(
-      git,
-      [
-        FAKE_BASH_SHEBANG,
-        '[[ -f "$RUNNER_TEMP/composition-workflow-actions/zerops-vpn.yml" ]] || exit 77',
-        '[[ "$1" == checkout || "$1" == clean ]] || exit 78',
-        'rm -rf -- "$GITHUB_WORKSPACE/.github/actions/zerops-vpn"',
-      ].join('\n'),
-    );
-    chmodSync(git, 0o755);
-    const environment = {
-      DEPLOYED_SHA: 'older-deployed-revision',
-      GITHUB_WORKSPACE: workspace,
-      PATH: `${directory}:${STEP_PATH}`,
-      RUNNER_TEMP: runnerTemp,
-    };
-    for (const script of [preserveScript, checkoutScript]) {
-      execFileSync(VPN_TEST_BASH, ['-eo', 'pipefail', '-c', script], {
-        cwd: workspace,
-        env: environment,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
-      });
-    }
-    return readFileSync(actionPath, 'utf-8') === actionSource;
-  } catch {
-    return false;
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-};
-
-it('preserves this workflow revision of the native VPN action before checkout and restores it after git clean', () => {
-  const jobs = readVpnWorkflowJobs(REFRESH_WORKFLOW);
-  for (const name of PRIVATE_REFRESH_JOBS) {
-    const steps = jobs[name]?.steps ?? [];
-    const preserve = steps.find((step) => step.name === REFRESH_VPN_PRESERVE_STEP);
-    const checkout = steps.find((step) => step.name === REFRESH_REVISION_STEP);
-    const connect = steps.find((step) => step.with?.operation === 'connect');
-    expect(preserve?.if, name).toBe(checkout?.if);
-    expect(checkout?.if, name).toBe(connect?.if);
-    const stepNames = steps.map((step) => step.name);
-    expect(stepNames.indexOf(REFRESH_VPN_PRESERVE_STEP), name).toBeLessThan(stepNames.indexOf(REFRESH_REVISION_STEP));
-    expect(stepNames.indexOf(REFRESH_REVISION_STEP), name).toBeLessThan(stepNames.indexOf(connect?.name ?? ''));
-    expect(refreshPreservesNativeAction(preserve?.run ?? 'exit 1', checkout?.run ?? 'exit 1'), name).toBe(true);
-  }
-});
-
-it('checks DNS and TCP for both private PostgreSQL endpoints before admitting database operations', () => {
-  expect(runNativeVpnScript(nativeVpnScript(VPN_DATABASE_STEP))).toEqual({
-    calls: [
-      VPN_VERIFY_PRESERVE_CALL,
-      'dns=runtime-private:5432',
-      VPN_RUNTIME_TCP_CALL,
-      'dns=admin-private:5433',
-      VPN_ADMIN_TCP_CALL,
-    ],
-    passed: true,
-  });
-  for (const host of [VPN_RUNTIME_HOST, VPN_ADMIN_HOST]) {
-    const result = runNativeVpnScript(nativeVpnScript(VPN_DATABASE_STEP), { VPN_UNREACHABLE_HOST: host });
-    expect(result.passed).toBe(false);
-    expect(result.calls.filter((call) => call.startsWith(`tcp=${host}:`))).toHaveLength(2);
-    expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([
-      VPN_NATIVE_DOWN_CALL,
-      VPN_NATIVE_UP_CALL,
-    ]);
-  }
-});
-
-it('rejects malformed runtime or administrative database URIs before a private socket attempt', () => {
-  const verify = nativeVpnScript(VPN_DATABASE_STEP);
-  for (const environment of [
-    { DATABASE_URL: '' },
-    { DATABASE_URL: 'https://runtime-private/ontos' },
-    { DATABASE_URL: 'postgres://runtime-private:not-a-port/ontos' },
-    { DATABASE_URL: 'postgres://runtime-private:0/ontos' },
-  ]) {
-    expect(runNativeVpnScript(verify, environment)).toEqual({ calls: [VPN_VERIFY_PRESERVE_CALL], passed: false });
-  }
-  const missingAdmin = runNativeVpnScript(verify, { DATABASE_ADMIN_URL: '' });
-  expect(missingAdmin).toEqual({ calls: [VPN_VERIFY_PRESERVE_CALL], passed: false });
-});
-
-it('rechecks both endpoints after exactly one native reconnect using the same project and registry', () => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_RECOVER_AFTER_UP: '1',
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-  });
-  expect(result.passed).toBe(true);
-  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([VPN_NATIVE_DOWN_CALL, VPN_NATIVE_UP_CALL]);
-  expect(result.calls.filter((call) => call.startsWith('tcp='))).toEqual([
-    VPN_RUNTIME_TCP_CALL,
-    VPN_ADMIN_TCP_CALL,
-    VPN_RUNTIME_TCP_CALL,
-    VPN_ADMIN_TCP_CALL,
-  ]);
-  expect(result.output).toContain('native_handshake=absent');
-  expect(result.output).not.toContain(VPN_NATIVE_NOISE);
-  const verify = readNativeVpnAction().runs.steps.find((step) => step.name === VPN_DATABASE_STEP);
-  expect(verify?.env?.VPN_STATE_DIRECTORY).toBe(expression('steps.prepare.outputs.state-directory'));
-  expect(verify?.env?.VPN_CLI_PATH).toBe(expression('steps.prepare.outputs.cli-path'));
-  expect(verify?.env?.VPN_PROJECT_ID).toBe(expression('inputs.project-id'));
-});
-
-it.each([
-  ['dns', 'dns=resolution_failed'],
-  ['dns_timeout', 'dns=timeout'],
-  ['tcp_timeout', 'ipv4=tcp_timeout'],
-  ['tcp_refused', 'ipv4=tcp_refused'],
-  ['tcp_unreachable', 'ipv4=tcp_unreachable'],
-])('classifies %s without printing URLs, hosts, credentials, peer keys or native configuration', (kind, diagnosis) => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_FAILURE_KIND: kind,
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-  });
-  expect(result.passed).toBe(false);
-  const expectedDiagnosis = kind.startsWith('dns') ? diagnosis : `dns=resolved ${diagnosis}`;
-  expect(result.output).toContain(`DATABASE_URL: ${expectedDiagnosis}`);
-  expect(result.output).toContain('DATABASE_ADMIN_URL: dns=resolved ipv4=tcp_connected');
-  expect(result.calls.filter((call) => call.startsWith('dns=admin-private:'))).toHaveLength(2);
-  expect(result.calls.filter((call) => call.startsWith('native='))).toHaveLength(2);
-  for (const secret of [VPN_NATIVE_NOISE, VPN_RUNTIME_HOST, VPN_ADMIN_HOST, VPN_TEST_KEY, 'peer-key-canary']) {
-    expect(result.output).not.toContain(secret);
-  }
-});
-
-it('reports both address families and accepts an endpoint only when one family actually connects', () => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_FAIL_FAMILY: 'ipv6',
-    VPN_FAILURE_KIND: 'tcp_refused',
-    VPN_FAMILIES: 'ipv4,ipv6',
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-  });
-  expect(result.passed).toBe(true);
-  expect(result.output).toContain('DATABASE_URL: dns=resolved ipv4=tcp_connected ipv6=tcp_refused');
-  expect(result.output).toContain('DATABASE_ADMIN_URL: dns=resolved ipv4=tcp_connected ipv6=tcp_connected');
-  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([]);
-});
-
-it.each([
-  { VPN_REGISTRY_STATE: VPN_REGISTRY_MISSING_KEY },
-  { VPN_REGISTRY_STATE: VPN_REGISTRY_MISSING_FILE },
-  { VPN_REGISTRY_STATE: VPN_REGISTRY_CORRUPT },
-  { VPN_REGISTRY_STATE: VPN_REGISTRY_SYMLINK },
-  { VPN_REGISTRY_KEY: 'invalid-base64' },
-  { VPN_REGISTRY_PROJECT: 'foreign-project' },
-  { VPN_CONFIG_KEY: 'invalid-key' },
-  { VPN_STATE_DIRECTORY: '/foreign/ontos-zerops-vpn.test' },
-  { VPN_FOREIGN_INTERFACE: '1' },
-])('refuses native recovery for missing, corrupt or foreign runner credentials %j', (environment) => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-    ...environment,
-  });
-  expect(result.passed).toBe(false);
-  expect(result.output).toContain('Native Zerops VPN recovery refused:');
-  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([]);
-});
-
-it('reports native handshake age without printing the peer key', () => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_HANDSHAKE_TIME: '1',
-    VPN_RECOVER_AFTER_UP: '1',
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-  });
-  expect(result.passed).toBe(true);
-  expect(result.output).toMatch(/native_handshake=present age_seconds=\d+/u);
-  expect(result.output).not.toContain('peer-key-canary');
-});
-
-it.each(['down', 'up'])('fails closed when native %s changes the credential registry', (operation) => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_MUTATE_KEY_AT: operation,
-    VPN_RECOVER_AFTER_UP: '1',
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-  });
-  expect(result.passed).toBe(false);
-  expect(result.calls.filter((call) => call.startsWith('native='))).toHaveLength(operation === 'down' ? 1 : 2);
-  expect(result.calls.filter((call) => call.startsWith('dns=runtime-private:'))).toHaveLength(1);
-});
-
-it('never invokes native up when down has not removed the runner-owned interface', () => {
-  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
-    VPN_DOWN_KEEPS_INTERFACE: '1',
-    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
-  });
-  expect(result.passed).toBe(false);
-  expect(result.output).toContain('interface removal was not confirmed');
-  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([VPN_NATIVE_DOWN_CALL]);
-});
-
-it.each(['down', 'up'])(
-  'fails closed on native %s failure or timeout and still permits caller cleanup',
-  (operation) => {
-    for (const failure of [{ VPN_NATIVE_FAILURE: operation }, { VPN_NATIVE_TIMEOUT: operation }]) {
-      const result = runNativeVpnScriptDetails(
-        nativeVpnScript(VPN_DATABASE_STEP),
-        { VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST, ...failure },
-        nativeVpnScript(VPN_CLEAR_STEP),
-      );
-      expect(result.passed).toBe(false);
-      expect(result.cleanupPassed).toBe(true);
-      expect(result.calls).toContain(VPN_NATIVE_CLEAR_CALL);
-      expect(result.calls.at(-1)).toBe(VPN_OWNED_CLEANUP_CALL);
-      expect(result.output).not.toContain(VPN_NATIVE_NOISE);
-    }
-  },
-);
-
-it('preserves caller cleanup on initial connection failure, exhausted recovery and recovered success', () => {
-  const scenarios = [
-    { environment: { VPN_NATIVE_FAILURE: 'up' }, script: VPN_CONNECT_STEP, success: false },
-    { environment: { VPN_UNREACHABLE_HOST: VPN_ADMIN_HOST }, script: VPN_DATABASE_STEP, success: false },
-    {
-      environment: { VPN_RECOVER_AFTER_UP: '1', VPN_UNREACHABLE_HOST: VPN_ADMIN_HOST },
-      script: VPN_DATABASE_STEP,
-      success: true,
-    },
-  ];
-  for (const { environment, script, success } of scenarios) {
-    const result = runNativeVpnScriptDetails(nativeVpnScript(script), environment, nativeVpnScript(VPN_CLEAR_STEP));
-    expect(result.passed).toBe(success);
-    expect(result.cleanupPassed).toBe(true);
-    expect(result.calls.at(-1)).toBe(VPN_OWNED_CLEANUP_CALL);
-    expect(result.output).not.toContain(VPN_NATIVE_NOISE);
-  }
-});
-
-/** Runs a workflow step's script as Actions would and returns its GitHub outputs, or its failure. */
-/** The deploying environment: the dispatched one, production, the only one main deploys. */
-const DEPLOY_ENVIRONMENT_EXPRESSION = expression('inputs.environment');
-
-const CONFIGURED = { ZEROPS_PROJECT_ID: 'project', ZEROPS_TOKEN: 'token' } as const;
-const DEDICATED = { OUTBOX_WORKER_MODE: 'dedicated' } as const;
-const HOST = { OUTBOX_WORKER_MODE: 'host' } as const;
-
-it('deploys only production from main, on an explicit dispatch, and never ships stage or the edge', () => {
-  const workflow = readTargetWorkflow();
-  const { 'deploy-target': target } = workflow.jobs;
-  // Stage deploys from the sales demo branch (stage-demo-deploy.yml); a push to main deploys nothing.
-  expect(workflow.on.workflow_dispatch.inputs.environment).toEqual({ default: 'production', options: ['production'] });
-  expect(target.if).toBe(
-    "github.event_name == 'workflow_dispatch' && inputs.environment == 'production' && github.ref == 'refs/heads/main'",
-  );
-  const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
-  expect(source).not.toMatch(/stage-edge|ONTOS_IMMUTABLE_RELEASE_SECRETS|CLOUDFLARE_WORKERS_DEV_SUBDOMAIN/u);
-  expect(source).not.toMatch(/immutable-(?:application|shell)-release\.mts (?:deploy|ingress-deploy)/u);
-  expect(source).not.toContain("inputs.environment || 'stage'");
-});
-
-it('selects the environment deploy target from its DEPLOY_TARGET variable, Zerops only', () => {
-  const { 'deploy-target': target } = readTargetWorkflow().jobs;
-  // Reading the environment's variables must not add an entry to its deployment history.
-  expect(target.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_EXPRESSION });
-  const step = target.steps.find(({ id }) => id === 'target');
-  expect(step?.env).toEqual({
-    DEPLOY_ENVIRONMENT: DEPLOY_ENVIRONMENT_EXPRESSION,
-    DEPLOY_TARGET: expression('vars.DEPLOY_TARGET'),
-    OUTBOX_WORKER_MODE: expression('vars.OUTBOX_WORKER_MODE'),
-    ZEROPS_PROJECT_ID: ZEROPS_PROJECT_EXPRESSION,
-    ZEROPS_TOKEN: ZEROPS_TOKEN_EXPRESSION,
-  });
-  expect(target.outputs['outbox-worker-mode']).toBe(expression('steps.target.outputs.outbox_worker_mode'));
-  const resolve = (environment: Readonly<Record<string, string>>) => runStep(step?.run ?? 'exit 1', environment);
-  for (const DEPLOY_TARGET of ['', 'zerops']) {
-    expect(resolve({ ...CONFIGURED, ...DEDICATED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET })).toEqual({
-      configured: 'true',
-      environment: 'production',
-      outbox_worker_mode: 'dedicated',
-      target: 'zerops',
-    });
-  }
-  // An environment without its Zerops project and token deploys nothing, so it needs no mode either.
-  expect(resolve({ DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: '', OUTBOX_WORKER_MODE: '' })).toEqual({
-    configured: 'false',
-    environment: 'production',
-    outbox_worker_mode: '',
-    target: 'zerops',
-  });
-  // The Cloudflare edge deploys only from the sales demo branch; unknown targets fail closed too.
-  for (const DEPLOY_TARGET of ['cloudflare', 'workers']) {
-    expect(resolve({ ...CONFIGURED, ...HOST, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET })).toBe('failed');
-  }
-});
-
-it('requires each configured environment to choose its Outbox Worker mode', () => {
-  const step = readTargetWorkflow().jobs['deploy-target'].steps.find(({ id }) => id === 'target');
-  const resolve = (environment: Readonly<Record<string, string>>) => runStep(step?.run ?? 'exit 1', environment);
-  for (const OUTBOX_WORKER_MODE of ['host', 'dedicated']) {
-    expect(
-      resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: 'zerops', OUTBOX_WORKER_MODE }),
-    ).toEqual({
-      configured: 'true',
-      environment: 'production',
-      outbox_worker_mode: OUTBOX_WORKER_MODE,
-      target: 'zerops',
-    });
-  }
-  // No default: a configured environment that has not chosen fails instead of inheriting a mode.
-  expect(
-    resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: 'zerops', OUTBOX_WORKER_MODE: '' }),
-  ).toBe('failed');
-  expect(
-    resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: '', OUTBOX_WORKER_MODE: 'shared' }),
-  ).toBe('failed');
-});
-
-it('deploys the whole topology to Zerops after the gates', () => {
-  const { jobs } = readTargetWorkflow();
-  const plan = jobs[DEPLOY_PLAN_JOB];
-  const migrations = jobs[MIGRATIONS_JOB];
-  const zerops = jobs['deploy-zerops'];
-  // The plan needs no gate, so it is ready when the gates pass.
-  expect(plan.if).toBe(expression("!cancelled() && needs.deploy-target.outputs.configured == 'true'"));
-  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB]);
-  // Only deploy-zerops records the environment's deployment, so a plan or migration before a failed deploy
-  // never moves the diff base.
-  expect(plan.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_OUTPUT });
-  expect(migrations.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_OUTPUT });
-  expect(zerops.environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
-  // Nothing changes on Zerops before the gates pass or prove skipped on the merge queue's proof.
-  expect(migrations.needs).toEqual(['workspace-gates', DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, INITIAL_CUTOVER_GUARD_JOB]);
-  expect(migrations.if).toBe(
-    expression(
-      "!cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success'",
-    ),
-  );
-  // A planned Outbox Worker host deploys only its CI-built artifact, so a failed host build stops the deploy.
-  expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, MIGRATIONS_JOB, 'build-outbox-host']);
-  expect(zerops.if).toBe(
-    expression(
-      `!cancelled() && needs.${MIGRATIONS_JOB}.result == 'success' && (needs.build-outbox-host.result == 'success' || needs.build-outbox-host.result == 'skipped')`,
-    ),
-  );
-  // Publication shares the environment lock; migrations lock on their own after the initial guard.
-  expect(zerops.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
-  expect(migrations.concurrency.group).toBe(`zerops-migrations-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
-  expect(plan.env.DEPLOY_TARGET).toBe(DEPLOY_TARGET_OUTPUT);
-  expect(plan.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
-  expect(zerops.env.DEPLOY_TARGET).toBe(DEPLOY_TARGET_OUTPUT);
-  expect(zerops.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
-  // Every service ID comes from the deploying environment's own variables.
-  for (const [name, value] of Object.entries({ ...migrations.env, ...zerops.env }).filter(
-    ([key]) => key.startsWith('ZEROPS_') && key !== 'ZEROPS_TOKEN',
-  )) {
-    expect(value).toBe(expression(`vars.${name}`));
-  }
-  expect(migrations.env.ZEROPS_TOKEN).toBe(ZEROPS_TOKEN_EXPRESSION);
-  // Migrations and SpiceDB run alone, before the Zerops units; a plan without them only skips steps.
-  const migrationSteps = new Map(migrations.steps.map((step) => [step.name, step]));
-  expect(migrationSteps.get(DATABASE_MIGRATION_STEP)?.if).toBe("needs.deploy-plan.outputs.migrator == 'true'");
-  expect(migrationSteps.get(SPICEDB_DEPLOYMENT_STEP)?.if).toBe("needs.deploy-plan.outputs.spicedb == 'true'");
-  expect(migrations.env.INFRASTRUCTURE).toBe(
-    expression("needs.deploy-plan.outputs.migrator == 'true' || needs.deploy-plan.outputs.spicedb == 'true'"),
-  );
-  expect(zerops.steps.map(({ name }) => name)).not.toContain(DATABASE_MIGRATION_STEP);
-  expect(zerops.steps.map(({ name }) => name)).not.toContain(SPICEDB_DEPLOYMENT_STEP);
-  const byName = new Map(plan.steps.map((step) => [step.name, step]));
-  const planRun = byName.get('Generate topology-driven deployment impact plan')?.run;
-  expect(byName.get("Resolve the environment's last successful deployment")?.run).toContain(
-    DEPLOY_ENVIRONMENT_ARGUMENT,
-  );
-  expect(planRun).toContain('--authorization-environment "$DEPLOY_ENVIRONMENT"');
-  // The Outbox Worker mode, not the deploy target, chooses the workers the plan deploys and stops.
-  expect(planRun).toContain('--outbox-worker-mode "$OUTBOX_WORKER_MODE"');
-  expect(planRun).not.toContain('--deploy-target');
-  expect(plan.outputs).toEqual({
-    any: expression('steps.units.outputs.any'),
-    migrator: expression('steps.impact.outputs.migrator'),
-    providers: expression('steps.units.outputs.providers'),
-    shell: expression('steps.units.outputs.shell'),
-    spicedb: expression('steps.impact.outputs.spicedb'),
-    'stopped-workers': expression('steps.impact.outputs.stopped_workers'),
-  });
-  const select = byName.get('Select the Zerops units of the deploy target');
-  const impact = {
-    MIGRATOR: 'false',
-    PROVIDERS_JSON: '["contacts","contacts-worker"]',
-    SHELL: 'true',
-    SPICEDB: 'false',
-  };
-  const units = (environment: Readonly<Record<string, string>>) => runStep(select?.run ?? 'exit 1', environment);
-  expect(units(impact)).toEqual({ any: 'true', providers: impact.PROVIDERS_JSON, shell: 'true' });
-  expect(units({ ...impact, PROVIDERS_JSON: '[]', SHELL: 'false' })).toEqual({
-    any: 'false',
-    providers: '[]',
-    shell: 'false',
-  });
-  // Every Zerops push and publication follows the selected units the plan hands over.
-  expect(select?.id).toBe('units');
-  for (const step of [...migrations.steps, ...zerops.steps]) {
-    expect(`${step.if ?? ''}${JSON.stringify(step.env ?? {})}`).not.toMatch(
-      /steps\.impact\.outputs\.(?:any|providers|shell)/u,
-    );
-    expect(step.run ?? '').not.toContain('--environment stage');
-  }
-  const zeropsSteps = new Map(zerops.steps.map((step) => [step.name, step]));
-  expect(zeropsSteps.get('Publish the complete active Application Composition')?.if).toBe(
-    "needs.deploy-plan.outputs.any == 'true'",
-  );
-  expect(zerops.steps.map((step) => step.run ?? '').join('\n')).not.toMatch(/restart-consumers|recover-consumers/u);
-});
-
-it('requires first-cutover provider quiescence before incompatible migrations', () => {
-  const { jobs } = readTargetWorkflow();
-  const guard = jobs[INITIAL_CUTOVER_GUARD_JOB];
-  const migrations = jobs[MIGRATIONS_JOB];
-  expect(guard.needs).toEqual(['workspace-gates', DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB]);
-  expect(guard.if).toBe(
-    expression("!cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success'"),
-  );
-  expect(guard.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_OUTPUT });
-  expect(guard.steps.map((step) => step.run ?? '').join('\n')).not.toContain('capture-approved-snapshot');
-  expect(guard.permissions.actions).toBe('read');
-  expect(guard.concurrency).toEqual({
-    'cancel-in-progress': false,
-    group: `zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`,
-  });
-  for (const binding of [
-    'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
-    'DATABASE_URL',
-    'DATABASE_ADMIN_URL',
-    'CLOUDFLARE_API_TOKEN',
-  ] as const) {
-    expect(guard.env[binding]).toBe(migrations.env[binding]);
-  }
-  expect(guard.env.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE).toBe(
-    expression('vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE'),
-  );
-  expect(guard.env.ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE).toBe(
-    '.initial-composition-cutover/initial-composition-cutover-receipt.json',
-  );
-  const receipt = guard.steps.find((step) => step.with?.name === INITIAL_CUTOVER_RECEIPT_ARTIFACT);
-  expect(receipt?.if).toBe("vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''");
-  expect(receipt?.uses).toMatch(/^actions\/download-artifact@/u);
-  expect(receipt?.with).toEqual({
-    'github-token': expression('github.token'),
-    name: INITIAL_CUTOVER_RECEIPT_ARTIFACT,
-    path: 'app/.initial-composition-cutover',
-    'run-id': expression('vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID'),
-  });
-  const verification = guard.steps.filter(
-    (step) => step.run?.includes('active-composition:publish verify-initial-cutover') === true,
-  );
-  expect(verification).toHaveLength(1);
-  expect(verification[0]?.run).toContain('verify-initial-cutover --environment "$DEPLOY_ENVIRONMENT"');
-  expect(guard.steps.map((step) => step.name).indexOf(receipt?.name ?? '')).toBeLessThan(
-    guard.steps.map((step) => step.name).indexOf(verification[0]?.name ?? ''),
-  );
-});
-
-it('downloads the verified first-cutover receipt onto the Node deployment runner before provider writes', () => {
-  const { jobs } = readTargetWorkflow();
-  const zerops = jobs['deploy-zerops'];
-  const guard = jobs[INITIAL_CUTOVER_GUARD_JOB];
-  expect(zerops.needs).toContain(MIGRATIONS_JOB);
-  expect(jobs[MIGRATIONS_JOB].needs).toContain(INITIAL_CUTOVER_GUARD_JOB);
-  expect(zerops.permissions.actions).toBe('read');
-  for (const binding of [
-    'ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE',
-    'ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE',
-  ] as const) {
-    expect(zerops.env[binding]).toBe(guard.env[binding]);
-  }
-  const receipt = zerops.steps.find((step) => step.with?.name === INITIAL_CUTOVER_RECEIPT_ARTIFACT);
-  const guardReceipt = guard.steps.find((step) => step.with?.name === INITIAL_CUTOVER_RECEIPT_ARTIFACT);
-  expect(receipt?.uses).toMatch(/^actions\/download-artifact@/u);
-  expect(receipt?.if).toBe(
-    "needs.deploy-plan.outputs.any == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''",
-  );
-  expect(receipt?.with).toEqual(guardReceipt?.with);
-  expect(path.posix.join('app', zerops.env.ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE ?? '')).toBe(
-    path.posix.join(String(receipt?.with?.path), `${INITIAL_CUTOVER_RECEIPT_ARTIFACT}.json`),
-  );
-  const zeropsStepNames = zerops.steps.map((step) => step.name);
-  const receiptIndex = zeropsStepNames.indexOf(receipt?.name ?? '');
-  expect(receiptIndex).toBeGreaterThanOrEqual(0);
-  for (const [index, step] of zerops.steps.entries()) {
-    if (step.run?.includes('push-zerops-units.sh') === true) {
-      expect(receiptIndex).toBeLessThan(index);
-    }
-  }
-  const publication = zerops.steps.filter((step) => step.run?.includes('active-composition:publish publish') === true);
-  expect(publication).toHaveLength(1);
-  expect(publication[0]?.['working-directory']).toBe('app');
-  expect(publication[0]?.run).toContain(DEPLOY_ENVIRONMENT_ARGUMENT);
-  expect(receiptIndex).toBeLessThan(zeropsStepNames.indexOf(publication[0]?.name ?? ''));
-});
-
-it('delegates migration and migrator retirement to one native publication session', () => {
-  const { jobs } = readTargetWorkflow();
-  const migrations = jobs[MIGRATIONS_JOB];
-  const guard = jobs[INITIAL_CUTOVER_GUARD_JOB];
-  const migrationCommands = migrations.steps.filter(
-    (step) => step.run?.includes('active-composition:publish migrate') === true,
-  );
-  expect(migrationCommands).toHaveLength(1);
-  const [migration] = migrationCommands;
-  expect(migration?.name).toBe(DATABASE_MIGRATION_STEP);
-  expect(migration?.id).toBe('migrator');
-  expect(migration?.if).toBe("needs.deploy-plan.outputs.migrator == 'true'");
-  expect(migration?.['working-directory']).toBe('app');
-  expect(migration?.run?.replaceAll(/\s+/gu, ' ')).toBe(
-    'mise exec -- pnpm active-composition:publish migrate --environment "$DEPLOY_ENVIRONMENT" --zerops-yaml-path "$ZEROPS_YAML_PATH" --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_MIGRATOR_SERVICE_ID" --version-name "$GITHUB_SHA"',
-  );
-  for (const binding of [
-    'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
-    'ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE',
-    'ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE',
-    'DATABASE_URL',
-    'DATABASE_ADMIN_URL',
-    'CLOUDFLARE_API_TOKEN',
-  ] as const) {
-    expect(migrations.env[binding]).toBe(guard.env[binding]);
-  }
-  const receipt = migrations.steps.find((step) => step.with?.name === INITIAL_CUTOVER_RECEIPT_ARTIFACT);
-  expect(migrations.permissions.actions).toBe('read');
-  expect(receipt?.uses).toMatch(/^actions\/download-artifact@/u);
-  expect(receipt?.if).toBe(
-    "needs.deploy-plan.outputs.migrator == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''",
-  );
-  expect(receipt?.with).toEqual({
-    'github-token': expression('github.token'),
-    name: INITIAL_CUTOVER_RECEIPT_ARTIFACT,
-    path: 'app/.initial-composition-cutover',
-    'run-id': expression('vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID'),
-  });
-  const receiptIndex = migrations.steps.findIndex(({ name }) => name === receipt?.name);
-  const migrationIndex = migrations.steps.findIndex(({ name }) => name === migration?.name);
-  expect(receiptIndex).toBeGreaterThanOrEqual(0);
-  expect(receiptIndex).toBeLessThan(migrationIndex);
-  const providerMutations = migrations.steps.filter((step) => /zcli (?:push|service stop)\b/u.test(step.run ?? ''));
-  expect(providerMutations.map((step) => step.name)).toEqual([SPICEDB_DEPLOYMENT_STEP]);
-  expect(providerMutations[0]?.run).not.toContain('ZEROPS_MIGRATOR_SERVICE_ID');
-});
-
-const RefreshPublicationJobSchema = Schema.Struct({
-  concurrency: Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String }),
-  env: Schema.Record(Schema.String, Schema.String),
-  environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-  steps: Schema.Array(PublicationWorkflowStepSchema),
-});
-const RefreshPublicationWorkflowSchema = Schema.Struct({
-  jobs: Schema.Struct({
-    'refresh-production': RefreshPublicationJobSchema,
-    'refresh-stage': RefreshPublicationJobSchema,
-  }),
-});
-
-const InitialCutoverWorkflowSchema = Schema.Struct({
-  jobs: Schema.Struct({
-    quiesce: Schema.Struct({
-      concurrency: Schema.Struct({ 'cancel-in-progress': Schema.Boolean, group: Schema.String }),
-      env: Schema.Record(Schema.String, Schema.String),
-      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-      steps: Schema.Array(PublicationWorkflowStepSchema),
-    }),
-  }),
-});
-const INITIAL_CUTOVER_WORKFLOW = 'initial-composition-cutover.yml';
-const readInitialCutoverJob = () =>
-  Schema.decodeUnknownSync(InitialCutoverWorkflowSchema)(
-    parse(readFileSync(new URL(`../../../.github/workflows/${INITIAL_CUTOVER_WORKFLOW}`, import.meta.url), 'utf-8')),
-  ).jobs.quiesce;
-const readRefreshPublicationJobs = () =>
-  Schema.decodeUnknownSync(RefreshPublicationWorkflowSchema)(
-    parse(readFileSync(new URL(`../../../.github/workflows/${REFRESH_WORKFLOW}`, import.meta.url), 'utf-8')),
-  ).jobs;
-const CONFIGURE_SOURCE_COMMAND = 'mise exec -- pnpm active-composition:publish configure-source';
-const COMPOSITION_SOURCE_EXPRESSION = expression('vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL');
-const CLOUDFLARE_TOKEN_EXPRESSION = expression('secrets.CLOUDFLARE_API_TOKEN');
-
-it('keeps the cutover, deployment and refresh on their environment credentials and publication locks', () => {
-  const quiesce = readInitialCutoverJob();
-  const { jobs } = readTargetWorkflow();
-  const refresh = readRefreshPublicationJobs();
-  expect(quiesce.environment).toEqual({
-    deployment: false,
-    name: expression("inputs.environment == 'stage' && 'stage-edge' || inputs.environment"),
-  });
-  expect(quiesce.env.DEPLOY_ENVIRONMENT).toBe(DEPLOY_ENVIRONMENT_EXPRESSION);
-  expect(quiesce.concurrency).toEqual({
-    'cancel-in-progress': false,
-    group: `zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`,
-  });
-  for (const job of [jobs[INITIAL_CUTOVER_GUARD_JOB], jobs[MIGRATIONS_JOB]]) {
-    expect(job.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_OUTPUT });
-    expect(job.env.DEPLOY_ENVIRONMENT).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
-    expect(job.env.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(COMPOSITION_SOURCE_EXPRESSION);
-    expect(job.env.CLOUDFLARE_API_TOKEN).toBe(CLOUDFLARE_TOKEN_EXPRESSION);
-    expect(job.env.ZEROPS_TOKEN).toBe(ZEROPS_TOKEN_EXPRESSION);
-  }
-  expect(refresh['refresh-stage'].environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
-  expect(refresh['refresh-stage'].env.DEPLOY_TARGET).toBe('cloudflare');
-  expect(refresh['refresh-stage'].env.OUTBOX_WORKER_MODE).toBe(expression('vars.OUTBOX_WORKER_MODE'));
-  expect(refresh['refresh-stage'].concurrency.group).toBe(EDGE_PUBLICATION_LOCK);
-  expect(refresh['refresh-production'].environment).toEqual({ deployment: false, name: 'production' });
-  expect(refresh['refresh-production'].env.DEPLOY_TARGET).toBe('zerops');
-  expect(refresh['refresh-production'].concurrency.group).toBe('zerops-production');
-  for (const job of [refresh['refresh-stage'], refresh['refresh-production']]) {
-    expect(job.env.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(COMPOSITION_SOURCE_EXPRESSION);
-    expect(job.env.CLOUDFLARE_API_TOKEN).toBe(CLOUDFLARE_TOKEN_EXPRESSION);
-    expect(job.steps.map((step) => step.run ?? '').join('\n')).not.toContain('configure-source');
-  }
-});
-
-it('archives successful native retirement before configuring the protected source once with environment-only credentials', () => {
-  const quiesce = readInitialCutoverJob();
-  const retirement = quiesce.steps.find((step) => step.run?.includes('quiesce-initial-cutover') === true);
-  const archive = quiesce.steps.find((step) => step.with?.name === INITIAL_CUTOVER_RECEIPT_ARTIFACT);
-  const configurations = quiesce.steps.filter((step) => step.run?.trim() === CONFIGURE_SOURCE_COMMAND);
-  expect(configurations).toHaveLength(1);
-  const [configuration] = configurations;
-  const names = quiesce.steps.map((step) => step.name);
-  const retirementIndex = names.indexOf(retirement?.name ?? '');
-  expect(retirementIndex).toBeGreaterThanOrEqual(0);
-  expect(names.indexOf(archive?.name ?? '')).toBe(retirementIndex + 1);
-  expect(names.indexOf(configuration?.name ?? '')).toBe(retirementIndex + 2);
-  expect(retirement?.run).toContain(DEPLOY_ENVIRONMENT_ARGUMENT);
-  expect(retirement?.env?.CUTOVER_RECEIPT_FILE).toBe(
-    `${RUNNER_TEMP_EXPRESSION}/initial-composition-cutover-receipt.json`,
-  );
-  expect(archive?.uses).toMatch(/^actions\/upload-artifact@/u);
-  expect(archive?.with).toMatchObject({
-    'if-no-files-found': 'error',
-    name: INITIAL_CUTOVER_RECEIPT_ARTIFACT,
-    path: `${RUNNER_TEMP_EXPRESSION}/initial-composition-cutover-receipt.json`,
-  });
-  for (const step of [retirement, archive, configuration]) {
-    expect(step?.if).toBeUndefined();
-  }
-  expect(configuration?.['working-directory']).toBe('app');
-  expect(configuration?.env).toEqual({
-    ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: CLOUDFLARE_TOKEN_EXPRESSION,
-    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_SOURCE_EXPRESSION,
-    ZEROPS_PROJECT_ID: ZEROPS_PROJECT_EXPRESSION,
-    ZEROPS_TOKEN: ZEROPS_TOKEN_EXPRESSION,
-  });
-  expect(configuration?.run).not.toContain('--environment');
-  expect(quiesce.env.CLOUDFLARE_API_TOKEN).toBe(CLOUDFLARE_TOKEN_EXPRESSION);
-  expect(quiesce.env.ZEROPS_TOKEN).toBe(ZEROPS_TOKEN_EXPRESSION);
-});
-
-it('renews the approved release through the same authority and publication lock as deployment', () => {
-  const migrations = readTargetWorkflow().jobs[MIGRATIONS_JOB];
-  const { jobs } = Schema.decodeUnknownSync(RefreshPublicationWorkflowSchema)(
-    parse(
-      readFileSync(
-        new URL('../../../.github/workflows/active-application-composition-refresh.yml', import.meta.url),
-        'utf-8',
-      ),
-    ),
-  );
-  for (const environment of ['stage', 'production'] as const) {
-    const refresh = jobs[`refresh-${environment}`];
-    expect(refresh.concurrency).toEqual({ 'cancel-in-progress': false, group: `zerops-${environment}` });
-    expect(refresh.environment).toEqual({
-      deployment: false,
-      name: environment === 'stage' ? EDGE_ENVIRONMENT : environment,
-    });
-    for (const binding of [
-      'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
-      'DATABASE_URL',
-      'DATABASE_ADMIN_URL',
-      'CLOUDFLARE_API_TOKEN',
-    ] as const) {
-      expect(refresh.env[binding]).toBe(migrations.env[binding]);
-    }
-    const renewals = refresh.steps.filter((step) => step.run?.includes('active-composition:publish refresh') === true);
-    expect(renewals).toHaveLength(1);
-    expect(renewals[0]?.run?.replaceAll(/\s+/gu, ' ')).toContain(`refresh --environment ${environment}`);
-    expect(refresh.steps.map((step) => step.run ?? '').join('\n')).not.toMatch(
-      /restart-consumers|recover-consumers|put-edge-composition-snapshot/u,
-    );
-  }
-});
+const readGatesWorkflow = () =>
+  Schema.decodeUnknownSync(GatesWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
-const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
 /** The gates that start once the merge queue proof is checked. */
@@ -1410,9 +114,8 @@ const ROOT_GATE_JOBS = [
   FORMAT_AND_LINT_JOB,
   'service-integration',
   NODE_ARTIFACT_BUILD_JOB,
-  CLOUDFLARE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** Every gate job; each target's artifact proofs run inside its own build shards. */
+/** Every gate job; the node artifact proofs run inside the node build shards. */
 const GATE_JOBS = ROOT_GATE_JOBS;
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
@@ -1435,8 +138,7 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 };
 
 it('skips the gates on main only for a commit the merge queue already proved', () => {
-  const workflow = readTargetWorkflow();
-  const proof = workflow.jobs[QUEUE_PROOF_JOB];
+  const proof = readGatesWorkflow().jobs[QUEUE_PROOF_JOB];
   // Only a push or dispatch on main can carry a proven commit; pull requests and merge groups run every gate.
   expect(proof.if).toBe(
     "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
@@ -1455,7 +157,7 @@ it('skips the gates on main only for a commit the merge queue already proved', (
 });
 
 it('requires every gate, or the merge queue proof, in the one Workspace gates check', () => {
-  const gates = readTargetWorkflow().jobs['workspace-gates'];
+  const gates = readGatesWorkflow().jobs['workspace-gates'];
   // The main ruleset requires this check by name.
   expect(gates.name).toBe('Workspace gates');
   expect(gates.if).toBe(expression('always()'));
@@ -1492,9 +194,7 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
   // A skipped ancestor skips a job whose `if` relies on the implicit success(), so every job that the
   // skipped gates precede must decide with !cancelled() (or always()) and check its own needs' results.
   const afterGates = Object.keys(jobs).filter((job) => GATE_JOBS.some((gate) => ancestors(job).has(gate)));
-  expect(afterGates).toContain(INITIAL_CUTOVER_GUARD_JOB);
-  expect(afterGates).toContain(MIGRATIONS_JOB);
-  expect(jobs).not.toHaveProperty('sync-edge-composition');
+  expect(afterGates).toContain('workspace-gates');
   for (const job of afterGates) {
     // The job name leads the subject, so a failure names the job.
     expect(`${job}: ${jobs[job]?.if ?? ''}`).toMatch(/^[a-z-]+: \$\{\{ (?:!cancelled\(\)|always\(\))/u);
@@ -1523,7 +223,6 @@ const ArtifactBuildJobSchema = Schema.Struct({
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
     [NODE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
   }),
 });
@@ -1542,10 +241,7 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
   );
   const units = [topology.shell, ...topology.verticals].map((unit) => unit.path);
-  for (const [job, script] of [
-    [NODE_ARTIFACT_BUILD_JOB, 'build'],
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB, 'cloudflare:build'],
-  ] as const) {
+  for (const [job, script] of [[NODE_ARTIFACT_BUILD_JOB, 'build']] as const) {
     const { steps, strategy } = jobs[job];
     // Every shard builds units, and the target's shards build every unit once, with the target's script.
     expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
@@ -1555,34 +251,13 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
   }
 });
 
-it('supplies a placeholder public URL for every unit in Cloudflare builds and output proofs', () => {
-  const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
-    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
-  );
-  const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
-    JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
-  );
-  for (const name of [
-    "Build the shard's Cloudflare artifacts one unit at a time",
-    'Generate federated types, verify the Worker outputs and prove their SSR',
-  ]) {
-    const step = jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB].steps.find((candidate) => candidate.name === name);
-    expect(step, name).toBeDefined();
-    for (const { id } of [topology.shell, ...topology.verticals]) {
-      const variable = `ULTRAMODERN_PUBLIC_URL_${id.replaceAll('-', '_').toUpperCase()}`;
-      expect(step?.env?.[variable], `${name}: ${variable}`).toBe(`https://${id}.invalid`);
-    }
-  }
-});
-
 const readArtifactBuildJobs = () =>
   Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
 
-it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
+it('proves the node target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
-  for (const [job, proofs, artifacts] of [
-    [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*'],
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
+  for (const [job, proofs, artifacts, downloadCondition] of [
+    [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*', NODE_PROOF_CONDITION],
   ] as const) {
     const { name, permissions, steps, strategy } = jobs[job];
     // Each proof runs on exactly one shard; the other shards only build.
@@ -1603,8 +278,8 @@ it('proves each target on its own shards only after every other shard of the tar
     for (const step of steps.slice(upload + 1)) {
       expect(`${step.name}: ${step.if ?? ''}`).toMatch(/matrix\.proof (?:!= 'none'|== '[a-z]+')$/u);
     }
-    // Only the target's proving shards download: a single one compares by name, several by `!= 'none'`.
-    expect(steps[download]?.if).toBe(proofs.length === 1 ? `matrix.proof == '${proofs[0]}'` : "matrix.proof != 'none'");
+    // Only the target's proving shards download, on the condition its workflow job states.
+    expect(steps[download]?.if).toBe(downloadCondition);
     expect(steps[download]?.with?.pattern).toBe(artifacts);
   }
 });
@@ -1828,7 +503,6 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm shell:ui-candidates:check',
     'pnpm test:scripts',
     'pnpm module-entrypoints:check',
-    'pnpm test:deployment-impact',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
@@ -1942,7 +616,6 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
 const RUNTIME_IDENTITY_URLS = Object.fromEntries(
   DATABASE_IDENTITIES.filter(({ urlKey }) => urlKey !== 'DATABASE_URL').map(({ role, urlKey }) => [urlKey, role]),
 );
-const IDENTITY_STEP_ENV_FILTER = /printenv \| grep -E '(?<pattern>[^']+)'/gu;
 const AUDIT_STEP = 'Audit runtime database identities against the checked-in grant manifest';
 const IdentityGateJobSchema = Schema.Struct({
   // Unquoted placeholder IDs parse as numbers.
@@ -1951,7 +624,6 @@ const IdentityGateJobSchema = Schema.Struct({
 });
 const IdentityGateJobsSchema = Schema.Struct({
   jobs: Schema.Struct({
-    'cloudflare-artifact-build': IdentityGateJobSchema,
     'node-artifact-build': Schema.Struct({
       ...IdentityGateJobSchema.fields,
       services: Schema.Record(
@@ -1978,23 +650,17 @@ it('initializes every fresh CI database before reconcile bootstrap without chang
       condition: null,
       consumers: [
         'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
-        'Run the assembled stage migrator artifact against the fresh database',
+        'Run the stage migrator once against the fresh database',
         'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
       ],
       job: jobs['service-integration'],
       start: 'Start fresh PostgreSQL and SpiceDB services',
     },
     {
-      condition: "matrix.proof == 'node'",
+      condition: NODE_PROOF_CONDITION,
       consumers: ['Migrate the Node proof database and provision its runtime identities'],
       job: jobs['node-artifact-build'],
       start: 'Install the app workspace',
-    },
-    {
-      condition: "matrix.proof == 'topology'",
-      consumers: ['Migrate and initialize the local tenant for the Worker topology'],
-      job: jobs['cloudflare-artifact-build'],
-      start: 'Start fresh PostgreSQL and SpiceDB services for the Worker topology',
     },
   ]) {
     const { steps } = job;
@@ -2022,10 +688,10 @@ it('initializes every fresh CI database before reconcile bootstrap without chang
       expect(step.run ?? '').not.toContain('initialize-local');
     }
   }
-  // Service integration and browser share the unconditional initializer. The artifact still proves stage.
+  // Service integration and browser share the unconditional initializer. The migrator run still proves stage.
   const integration = jobs['service-integration'].steps;
   expect(integration.find(({ name }) => name.startsWith('Apply and verify Core'))?.if).toBeUndefined();
-  const migrator = integration.find(({ name }) => name.startsWith('Run the assembled stage migrator'));
+  const migrator = integration.find(({ name }) => name.startsWith('Run the stage migrator once'));
   expect(migrator?.if).toBe(INTEGRATION_SUITE_CONDITION);
   expect(migrator?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
 });
@@ -2041,26 +707,10 @@ it('runs migration equivalence proofs only against the owned CI maintenance data
 });
 
 it('gives every CI database tool a separate login per runtime identity and audits their grants', () => {
-  const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
-  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   const integration = jobs['service-integration'];
-  const proofValues = jobs['cloudflare-artifact-build'].steps.find(
-    ({ name }) => name === 'Set the development-only service values of the Worker proofs',
-  );
-  for (const environment of [integration.env, proofValues?.env]) {
-    for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
-      expect(environment?.[key]).toBe(`postgresql://${role}:${role}@localhost:5433/ontos_ci`);
-    }
-  }
-  // Both dotenv writers pass exactly the identity URLs through, and nothing that merely shares a prefix.
-  const filters = Array.from(source.matchAll(IDENTITY_STEP_ENV_FILTER), (match) => match.groups?.pattern ?? '');
-  expect(filters).toHaveLength(2);
-  for (const filter of filters) {
-    const pattern = new RegExp(filter, 'u');
-    for (const key of Object.keys(RUNTIME_IDENTITY_URLS)) {
-      expect(pattern.test(`${key}=postgresql://identity`)).toBe(true);
-      expect(pattern.test(`${key}_EXTRA=value`)).toBe(false);
-    }
+  for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
+    expect(integration.env?.[key]).toBe(`postgresql://${role}:${role}@localhost:5433/ontos_ci`);
   }
   const { steps } = integration;
   const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
@@ -2090,7 +740,7 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     const proof = node.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
     expect(provision).toBeGreaterThanOrEqual(0);
     expect(provision).toBeLessThan(proof);
-    expect(node.steps[provision]?.if).toBe("matrix.proof == 'node'");
+    expect(node.steps[provision]?.if).toBe(NODE_PROOF_CONDITION);
     expect(node.steps[provision]?.run).toBe('mise exec -- pnpm db:migrate');
     expect(node.steps[proof]?.env).toBeUndefined();
     for (const identity of DATABASE_IDENTITIES) {
@@ -2104,18 +754,3 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     }
   }),
 );
-
-it('gives the workerd SSR proof every dedicated Hyperdrive connection from the canonical identity URL', () => {
-  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  const outputs = jobs['cloudflare-artifact-build'].steps.find(
-    ({ run }) => run?.includes('pnpm cloudflare:ssr-proof') === true,
-  );
-  expect(outputs).toBeDefined();
-  for (const identity of DATABASE_IDENTITIES.filter(({ id }) => id !== 'shared_runtime')) {
-    if (identity.cloudflareHyperdrive !== null) {
-      expect(outputs?.run).toContain(
-        `export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${identity.cloudflareHyperdrive.binding}="$${identity.urlKey}"`,
-      );
-    }
-  }
-});

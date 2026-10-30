@@ -337,6 +337,78 @@ it.layer(
     }),
   );
 
+  const connectionScope = {
+    ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+      authBindingId: '40000000-0000-4000-8000-000000000001',
+      authContextRef: 'oauth-grant:80000000-0000-4000-8000-000000000001',
+      authMethod: 'oauth_connection',
+      connection: {
+        clientId: 'proposal-client',
+        clientName: 'Proposal client',
+        grantId: '80000000-0000-4000-8000-000000000001',
+        modules: [{ access: 'write', moduleId: 'work.tasks' }],
+        writePolicy: 'approval',
+      },
+      legalEntityId,
+      principalId,
+      tenantId,
+    }),
+    correlationId: scope.correlationId,
+  };
+
+  suite.effect("a person's approval connection reads back only that person's own proposals", () =>
+    Effect.gen(function* approvalConnectionOwnRead() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: (query) => {
+          if (query.sql.includes('from "core"."principals"')) {
+            expect(query.params).toContain('agent');
+            expect(query.params).toContain('human');
+            return Effect.succeed([{ principalId }]);
+          }
+          expect(query.sql).toContain('"agent_principal_id" = $');
+          expect(query.params).toContain(principalId);
+          return Effect.succeed([driverRow()]);
+        },
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope: connectionScope,
+      });
+      const result = yield* harness.runtime.runRead({
+        input: { mode: 'own-recent' },
+        principal: connectionScope,
+        registration: agentProposalQueueRead,
+        transport,
+      });
+      expect(result.proposals).toHaveLength(1);
+    }),
+  );
+
+  for (const input of [
+    { mode: 'queue', request: {} },
+    { batchId, mode: 'batch' },
+    { batchId, mode: 'batch-state' },
+    { idempotencyKey: 'original-subcommand', mode: 'command-recovery', payload: recoveryPayload },
+    { agentPrincipalId: principalId, mode: 'withdrawal-batches' },
+  ] as const) {
+    suite.effect(`a connection never reads ${input.mode} beyond its own proposals`, () =>
+      Effect.gen(function* connectionQueueDenied() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.die('A connection reached proposal SQL'),
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope: connectionScope,
+        });
+        const failure = yield* harness.runtime
+          .runRead({ input, principal: connectionScope, registration: agentProposalQueueRead, transport })
+          .pipe(Effect.flip);
+        expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+      }),
+    );
+  }
+
   for (const execute of ['allowed', 'denied'] as const) {
     suite.effect(`queue requires exact execution rights (${execute}), never proposal-only rights`, () =>
       Effect.gen(function* personRead() {

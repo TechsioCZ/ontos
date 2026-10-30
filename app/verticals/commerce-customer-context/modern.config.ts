@@ -1,6 +1,5 @@
 import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-data.ts';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'commerce-customer-context';
@@ -11,8 +10,6 @@ export default defineConfig(
       ...createWorkspaceModernConfig({
         appId,
         // Portal verification, recovery and step-up mail.
-        cloudflareEmail: true,
-        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         headless: true,
         moduleUrl: import.meta.url,
       }),

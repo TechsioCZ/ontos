@@ -86,6 +86,13 @@ const filterRows = (
 };
 
 /** Ids the tag filter lets through: none while it loads or after it failed, everything when no tag is chosen. */
+/** The opportunities' tags, or `null` for a role that may not read tags: no Štítky column and no tag bulk action. */
+const shownTags = ({
+  status,
+  tagsBySubject,
+}: ReturnType<typeof useTagsFor>): ReturnType<typeof useTagsFor>['tagsBySubject'] | null =>
+  status === 'forbidden' ? null : tagsBySubject;
+
 const tagMembersOf = (state: ReturnType<typeof useSubjectIdsWithTag>): ReadonlySet<string> | undefined => {
   if (state === undefined) {
     return undefined;
@@ -99,9 +106,11 @@ interface PipelineBulkBarProps {
   readonly onStage: () => void;
   readonly onTags: () => void;
   readonly selectedCount: number;
+  /** False for a role that may not read tags, so the bar offers no tag panel. */
+  readonly tagsShown: boolean;
 }
 
-const PipelineBulkBar = ({ onClear, onOwner, onStage, onTags, selectedCount }: PipelineBulkBarProps) => {
+const PipelineBulkBar = ({ onClear, onOwner, onStage, onTags, selectedCount, tagsShown }: PipelineBulkBarProps) => {
   const { t } = useModernI18n();
   return (
     <BulkActionBar onClear={onClear} selectedCount={selectedCount}>
@@ -117,9 +126,11 @@ const PipelineBulkBar = ({ onClear, onOwner, onStage, onTags, selectedCount }: P
       >
         {t(`${K}.bulk.owner`)}
       </Button>
-      <Button icon="icon-[mdi--tag-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
-        {t(`${K}.bulk.tags`)}
-      </Button>
+      {tagsShown && (
+        <Button icon="icon-[mdi--tag-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
+          {t(`${K}.bulk.tags`)}
+        </Button>
+      )}
     </BulkActionBar>
   );
 };
@@ -394,7 +405,9 @@ const RecordsPageContent = ({
   const { busy, dialogError, runCommand, setDialogError } = usePipelineCommands(revision, reload);
 
   const items = response?.items ?? [];
-  const { refetch: refetchTags, tagsBySubject } = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
+  const opportunityTags = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
+  const { refetch: refetchTags } = opportunityTags;
+  const tagsBySubject = shownTags(opportunityTags);
   const tagState = useSubjectIdsWithTag('opportunity', tagFilter, tagVersion);
   const rows = filterRows(items, search, unassignedOnly, tagMembersOf(tagState));
   const selectedIds = rows.flatMap((row) => (selection[row.id] === true ? [row.id] : []));
@@ -561,6 +574,7 @@ const RecordsPageContent = ({
           }
           onTags={() => openDialog({ ids: selectedIds, kind: 'tags' })}
           selectedCount={selectedIds.length}
+          tagsShown={tagsBySubject !== null}
         />
       )}
 

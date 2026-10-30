@@ -536,17 +536,15 @@ ${VERTICAL_REPORT_SLOT_END}
 const addArtifactCommand = (
   current: JsonValue | undefined,
   vertical: VerticalMetadata,
-  target: 'cloudflare-dist' | 'dist',
   label: string,
 ): Effect.Effect<string, ModuleContractScaffoldError> =>
   Effect.gen(function* addArtifactCommandEffect() {
     const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} ${label} script`));
-    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
+    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target dist`;
     if (script.includes('generate-ontos-module-contract.mts')) {
       return yield* scaffoldError(`vertical ${vertical.slug} ${label} script already contains module emission`);
     }
-    const buildToken =
-      target === 'dist' ? 'modern build --deploy-target node' : 'modern build --deploy-target cloudflare';
+    const buildToken = 'modern build --deploy-target node';
     if (!script.includes(buildToken)) {
       return yield* scaffoldError(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
     }
@@ -575,13 +573,7 @@ const patchPackage = (
     const scripts = yield* trySync(() => ({
       ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
     }));
-    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
-    scripts['cloudflare:build'] = yield* addArtifactCommand(
-      scripts['cloudflare:build'],
-      vertical,
-      'cloudflare-dist',
-      'cloudflare:build',
-    );
+    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'build');
     return yield* trySync(() => {
       let content = patchJsonObjectProperty(vertical.packageContent, [], 'dependencies', sortedDependencies);
       content = patchJsonObjectProperty(content, [], 'scripts', scripts);

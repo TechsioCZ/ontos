@@ -134,6 +134,13 @@ export const demoAccounts = [
     email: 'external@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
   },
+  {
+    authBindingId: '73000000-0000-4000-8000-000000000025',
+    authUserId: 'siampark-provoz',
+    displayName: 'Provozní Nájempark',
+    email: 'provoz@najempark.demo',
+    principalId: '72000000-0000-4000-8000-000000000025',
+  },
 ] as const;
 const principal = (principalId: string) => ({ principalId, tenantId: demoTenantId });
 const property = (alias: typeof fixturePropertyParkova | typeof fixturePropertyRiverside) =>
@@ -667,7 +674,7 @@ const SeedTextSchema = Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength
 const PrincipalIdSchema = Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoPrincipalId')));
 const AuthBindingIdSchema = Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoAuthBindingId')));
 const AuthUserIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isPattern(/^siampark-(?:management|operations|finance|external)$/u)).pipe(
+  Schema.String.check(Schema.isPattern(/^siampark-(?:management|operations|finance|external|provoz)$/u)).pipe(
     Schema.brand('DemoAuthUserId'),
   ),
 );
@@ -675,15 +682,15 @@ const SeedAccountSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   authUserId: AuthUserIdSchema,
   displayName: SeedTextSchema,
-  email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external)@najempark\.demo$/u)),
+  email: Schema.String.check(Schema.isPattern(/^(?:management|operations|finance|external|provoz)@najempark\.demo$/u)),
   principalId: PrincipalIdSchema,
 });
 const SeedAccountsSchema = Schema.Array(SeedAccountSchema).check(
-  Schema.isMinLength(4),
-  Schema.isMaxLength(4),
+  Schema.isMinLength(5),
+  Schema.isMaxLength(5),
   Schema.makeFilter(
     (accounts) =>
-      new Set(accounts.map((account) => account.authUserId)).size === 4 &&
+      new Set(accounts.map((account) => account.authUserId)).size === 5 &&
       accounts.every((account) => account.email === `${account.authUserId.slice('siampark-'.length)}@najempark.demo`),
   ),
 );

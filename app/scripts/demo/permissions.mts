@@ -646,6 +646,13 @@ export const siamparkRentalPersonas = [
       restrictedModules: ['demo.crm', pipelineModule, operationsModule],
     },
   },
+  {
+    // Second Provoz login: the same role and grants as operations@ (index 1), applied through the index-4 entries in
+    // scripts/siampark/reset-demo.mts and the operations-execution grants below.
+    email: 'provoz@najempark.demo',
+    principalId: '72000000-0000-4000-8000-000000000025',
+    role: withFacilityOperations(rentalDemoRoles.salesRep),
+  },
 ] as const satisfies readonly { readonly email: string; readonly principalId: string; readonly role: DemoRole }[];
 
 export const rentalPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
@@ -716,6 +723,8 @@ export const eshopDemoRoles = {
     },
     label: eshopAdministratorLabel,
     modules: {
+      // Like the Kavárna e-shop administrator: the customer list shows each customer's groups.
+      [commerceModule]: 'read',
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
       [partyModule]: 'write',
@@ -1157,6 +1166,21 @@ export const reviewedHumanActionAddonRelationships = Effect.fn('DemoPermissions.
           'operations-execution',
         ),
       ),
+      // provoz@ joins the same operations-execution role: membership only, the role's grants are written above.
+      ...new Map(
+        (yield* selected(operationsKeys))
+          .flatMap((action) =>
+            scopedDemoActionRelationships(
+              siamparkRentalPersonas[4].principalId,
+              action,
+              rentalDemoLegalEntityId,
+              demoTenantId,
+              'operations-execution',
+            ),
+          )
+          .filter((row) => row.relation === 'member')
+          .map((row) => [row.resourceId, row] as const),
+      ).values(),
       ...(yield* selected(['property.leasing.apply-command'])).flatMap((action) =>
         scopedDemoActionRelationships(
           demoHumanAccounts[1].principalId,

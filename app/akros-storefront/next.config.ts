@@ -8,14 +8,23 @@ const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
   .map((host) => host.trim())
   .filter(Boolean);
 
+// Zerops runs the storefront as a plain Node server from the self-contained standalone bundle
+// (.next/standalone/akros-storefront/server.js). The server serves image URLs as is.
 const nextConfig: NextConfig = {
   agentRules: false,
+  output: "standalone",
+  // Build-only tooling the workspace hoists next to Next.js; the server never loads it.
+  outputFileTracingExcludes: {
+    "*": [
+      "**/node_modules/.pnpm/{webpack,minimizer-webpack-plugin,cssnano*,postcss-*,clean-css,csso,css-tree,html-minifier-terser,terser,svgo,sass,lightningcss*,esbuild,@esbuild+*,@swc+core*,sharp,@img+*}@*/**",
+    ],
+  },
   // Preserve loopback IP origins so the exact-origin request guard matches the browser.
   skipProxyUrlNormalize: true,
   // pnpm resolves dependencies through the workspace virtual store above this app.
   outputFileTracingRoot: resolve(process.cwd(), ".."),
   images: {
-    unoptimized: process.env.AKROS_CLOUDFLARE_BUILD === "1",
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",

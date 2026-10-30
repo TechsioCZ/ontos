@@ -34,11 +34,9 @@ export const guardedPgClientLayer = (
     PgClient.PgClient,
     Effect.gen(function* guardedPgClient() {
       yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool');
-      const configuration = yield* configureDatabasePool(connectionString, poolDeadlines);
+      const configuration = yield* configureDatabasePool(connectionString, poolDeadlines, maxConnections);
       const reactivity = yield* Reactivity.make;
-      const client = yield* PgClient.make({ ...configuration, maxConnections }).pipe(
-        Effect.provideService(Reactivity.Reactivity, reactivity),
-      );
+      const client = yield* PgClient.make(configuration).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
       return guardPoolAcquisition(client);
     }),
   );

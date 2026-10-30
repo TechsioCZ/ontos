@@ -372,6 +372,40 @@ it.effect('shares one composition, tenant and legal-entity read across concurren
   }),
 );
 
+/** A new browser document: it has not pinned a release yet, like the page right after sign-in. */
+const inNewDocument = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: document.implementation.createHTMLDocument(),
+      });
+      return descriptor;
+    }),
+    () => operation,
+    (descriptor) =>
+      Effect.sync(() => {
+        if (descriptor !== undefined) {
+          Object.defineProperty(globalThis, 'document', descriptor);
+        }
+      }),
+  );
+
+it.effect('reuses the current-release composition for loaders that ask with its pinned revision', () =>
+  Effect.gen(function* verifyRevisionAlias() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    const [first, second] = yield* inNewDocument(Effect.all([load, load], { concurrency: 1 }));
+    expect(first).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(second).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(shellCompositionMock).toHaveBeenCalledTimes(1);
+    expect(shellCompositionMock.mock.calls[0]?.[0]).toEqual({});
+  }),
+);
+
 it.effect('rechecks Home contribution permissions on every visit even when navigation composition is reused', () =>
   Effect.gen(function* freshHomeContributionPermission() {
     shellCompositionMock.mockReturnValue(

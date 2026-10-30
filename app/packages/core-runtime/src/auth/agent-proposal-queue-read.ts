@@ -19,7 +19,7 @@ import {
   AgentProposalQueueVisibilitySchema,
 } from './agent-proposal-queue-contract.ts';
 import type { AgentProposalQueueInput, AgentProposalQueueRow } from './agent-proposal-queue-contract.ts';
-import { proposalQueueFromTransaction } from './agent-proposal-queue-persistence.ts';
+import { isOwnProposalRead, proposalQueueFromTransaction } from './agent-proposal-queue-persistence.ts';
 import type { AgentProposalQueueAction } from './agent-proposal-queue-persistence.ts';
 import {
   agentProposalQueueDenied,
@@ -34,6 +34,10 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
   if (legalEntityId === undefined) {
     return yield* unavailable('An exact company context is required');
   }
+  // A connected application reads back only its own proposals, never a person's queue or lifecycle batches.
+  if (context.scope.authMethod === 'oauth_connection' && !isOwnProposalRead(input)) {
+    return yield* agentProposalQueueDenied();
+  }
   if (
     input.mode === 'withdrawal-batches' ||
     (input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE && input.payload.operation === 'withdraw-pending-of-agent')
@@ -46,11 +50,7 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     const actions: readonly AgentProposalQueueAction[] = [];
     return { actions, revision: '' };
   }
-  if (
-    input.mode === 'own-run' ||
-    input.mode === 'own-recent' ||
-    (input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE && input.payload.operation === 'insert')
-  ) {
+  if (isOwnProposalRead(input)) {
     // Kind is checked against the current principal row in the owner transaction, not client input.
     const actions: readonly AgentProposalQueueAction[] = [];
     return { actions, revision: '' };
@@ -196,11 +196,7 @@ const finish = Effect.fn('AgentProposalQueueRead.finish')(function* finish(
     // Lifecycle administration never grants a view of private business commands or results.
     return { evidence: { resultCount: 1 }, result: { ...loaded, candidates: [], proposals: [] } };
   }
-  if (
-    input.mode === 'own-run' ||
-    input.mode === 'own-recent' ||
-    (input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE && input.payload.operation === 'insert')
-  ) {
+  if (isOwnProposalRead(input)) {
     return { evidence: { resultCount: loaded.proposals.length }, result: loaded };
   }
   const batchState = input.mode === 'batch-state';

@@ -38,6 +38,7 @@
       "records": {
         "title": "Tags",
         "description": "Tags and their assignments.",
+        "forbidden": "You do not have permission to view tags.",
         "unavailable": "Data could not be loaded."
       }
     },

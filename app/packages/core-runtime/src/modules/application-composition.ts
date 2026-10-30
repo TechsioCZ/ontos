@@ -573,15 +573,6 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
           reason: 'artifact URLs must use HTTPS outside development',
         });
       }
-      if (
-        observed.environment !== 'development' &&
-        module.backend.transport === 'node-http' &&
-        new URL(module.backend.baseUrl).protocol !== 'https:'
-      ) {
-        return yield* new ApplicationCompositionValidationError({
-          reason: 'backend URLs must use HTTPS outside development',
-        });
-      }
       yield* claim(appIds, module.deployment.appId, 'deployment app ID');
       yield* Effect.forEach(artifactUrlsOfModule, (url) => claim(artifactUrls, new URL(url).href, 'artifact URL'), {
         concurrency: 1,

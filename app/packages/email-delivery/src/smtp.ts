@@ -224,14 +224,16 @@ const smtpDeliveryService = (config: SmtpConfiguration, crypto: Crypto.Crypto) =
         }),
       ),
     );
-    const id = `${Hex.encode(fingerprint)}@ontos.local`;
+    // The sender's own domain names this client and its message IDs; receivers score a foreign `.local` name as spam.
+    const senderDomain = from.value.slice(from.value.lastIndexOf('@') + 1);
+    const id = `${Hex.encode(fingerprint)}@${senderDomain}`;
     const replies = yield* Queue.unbounded<string, EmailDeliveryAcceptanceIndeterminate>();
     let dataStarted = false;
     return yield* Effect.gen(function* submitSmtp() {
       const { socket } = yield* openSocket(config, replies);
       const timeoutMs = config.timeoutMs ?? 10_000;
       yield* reply(replies, 220, timeoutMs);
-      yield* command(socket, replies, timeoutMs, 'EHLO ontos.local', 250);
+      yield* command(socket, replies, timeoutMs, `EHLO ${senderDomain}`, 250);
       if (authenticated) {
         const credentials = `\0${config.user}\0${config.password === undefined ? '' : Redacted.value(config.password)}`;
         yield* command(socket, replies, timeoutMs, `AUTH PLAIN ${Buffer.from(credentials).toString('base64')}`, 235);

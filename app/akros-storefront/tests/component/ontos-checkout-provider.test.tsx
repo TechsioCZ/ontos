@@ -45,6 +45,7 @@ function Probe({
       <output aria-label="Cart">{cart.lines.length}</output>
       <output aria-label="Stock">{cart.lines[0]?.stockCount}</output>
       <output aria-label="Submitted">{String(submitted)}</output>
+      <output aria-label="Methods">{methods.length}</output>
       <button
         onClick={() => {
           if (lineChange)
@@ -398,6 +399,72 @@ describe("OntOS submission recovery", () => {
     expect(placed.cart.lines[0].quantity).toBe(2);
     expect(quoteChecks).toBe(2);
     expect(requests).toHaveLength(rejection === "quote" ? 1 : 2);
+  });
+
+  it("places a guest order without an account and keeps the receipt for the guest confirmation", async () => {
+    const user = userEvent.setup();
+    sessionStorage.setItem("akros-checkout-guest", "true");
+    const fetchOrder = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
+      Response.json({
+        outcome: "PLACED",
+        orderId: "guest-order-1",
+        orderNumber: "OBJ-2026-0100",
+        totalMinor: 121,
+        totalVatMinor: 21,
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/checkout"))
+          return Response.json({
+            shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+          });
+        if (url.endsWith("/account")) return Response.json({ account: null });
+        if (url.endsWith("/cart"))
+          return Response.json({
+            cart: JSON.parse(String(init?.body)).cart,
+            canCheckout: true,
+            priceChanged: false,
+            issues: [],
+          });
+        return fetchOrder(url, init);
+      }),
+    );
+    render(
+      <CartProvider>
+        <CheckoutProvider>
+          <Probe />
+          <CartQuoteProvider>
+            <CheckoutLayout recommendations={[]}>
+              <ReviewStep />
+            </CheckoutLayout>
+          </CartQuoteProvider>
+        </CheckoutProvider>
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Methods").textContent).toBe("1"));
+    const submit = await screen.findByRole("button", { name: "Odeslat objednávku" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    expect(
+      screen.getByText(
+        "Objednáváte bez registrace. Potvrzení a změny stavu pošleme na verified@example.test.",
+      ),
+    ).toBeDefined();
+    await user.click(submit);
+    await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
+    expect(screen.getByLabelText("Error").textContent).toBe("");
+    expect(fetchOrder).toHaveBeenCalledOnce();
+    const [url, init] = fetchOrder.mock.calls[0];
+    expect(url).toBe("/api/ontos/orders");
+    const body = JSON.parse(String(init?.body));
+    expect(body.draft.email).toBe("verified@example.test");
+    expect(JSON.parse(sessionStorage.getItem("akros-guest-order") ?? "null")).toEqual({
+      orderId: "guest-order-1",
+      orderNumber: "OBJ-2026-0100",
+      clientRequestId: body.clientRequestId,
+      email: "verified@example.test",
+    });
   });
 
   it("clears only the submitted cart after switching carts during an order request", async () => {
