@@ -1,6 +1,7 @@
 import { GatewayContextV2ClaimsSchema } from '@app/shared-contracts';
 import {
   executeAttributeGuestRetailCustomerWithAuthorization,
+  executeBindRetailPortalProfileWithAuthorization,
   executeEnsureRetailCustomerProfileWithAuthorization,
 } from '@app/commerce-customer-context/api/client';
 import {
@@ -75,6 +76,8 @@ import {
   AuthenticatedSessionSchema,
   CurrentSessionSchema,
   PrincipalMutationResponseSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
   ShellAuthenticationRequiredProblemSchema,
   SignInResponseSchema,
 } from '../../shared/api.ts';
@@ -82,6 +85,8 @@ import {
   allocateLoopbackPort,
   PackagedOwnerStartupError,
   startPackagedApplication,
+  loadPackagedRetailWorker,
+  startPackagedRetailWorker,
 } from '../support/server-owner-relay-native-fixture.ts';
 
 const PARTY_MODULE_KEY = 'party.registry';
@@ -3739,6 +3744,7 @@ it.live(
                 'core.identity.bind-self-api-key',
                 'party.registry.create-party',
                 'commerce.customer-context.ensure-retail-customer-profile',
+                'commerce.customer-context.bind-retail-portal-profile',
               ],
               gatewayMaterial,
               ['party.registry', 'commerce.customer-context'],
@@ -3790,6 +3796,10 @@ it.live(
               relativeDirectory: '../../verticals/commerce-customer-context',
             });
             children.push(customerContext.child);
+            const packagedWorker = yield* loadPackagedRetailWorker({
+              expected: customerContext.compiled,
+              relativeDirectory: '../../.zerops/runtime/commerce-customer-context-worker',
+            });
             const client = yield* HttpClient.HttpClient;
             const observe = Effect.fn('ServerOwnerRelayNative.observeCompositionArtifact')(
               function* observeCompositionArtifact(url: string) {
@@ -4360,6 +4370,293 @@ it.live(
               sameProfileAndRevision: true,
               sourceExchangeCount: 2,
             });
+
+            const activateBinding = Effect.fn('ServerOwnerRelayNative.activateRealRetailBinding')(
+              function* activateRealRetailBinding() {
+                const recordedEnsure = invocations.find((row) => row.correlationId === created.correlationId);
+                if (recordedEnsure === undefined) {
+                  return yield* new PackagedOwnerStartupError({
+                    reason: 'Recorded Ensure evidence absent before binding',
+                  });
+                }
+                const bindingEvidenceRef = `core-action-invocation:${recordedEnsure.actionInvocationId}`;
+                const bindingCorrelation = yield* crypto.randomUUIDv4();
+                const issueBindingProof = Effect.fn('ServerOwnerRelayNative.issueBindingProof')(
+                  function* issueBindingProof() {
+                    return yield* issueNativeApiKeyGatewayAuthorization({
+                      apiKey: personalKey.secret,
+                      audience: 'commerce-customer-context',
+                      authBindingId: personalKey.authBindingId,
+                      authContextRef: personalAuthContextRef,
+                      buildMarker: customerContext.compiled.buildMarker,
+                      legalEntityId: fixture.core.legalEntityId,
+                      origin: fixture.origin,
+                      principalId: fixture.core.manager.principalId,
+                      publicKey: signingKeyPair.publicKey,
+                      revision: approved.composition.revision,
+                    });
+                  },
+                );
+                const bindProof = yield* issueBindingProof();
+                const bound = yield* executeBindRetailPortalProfileWithAuthorization(
+                  {
+                    effectiveAt: DateTime.formatIso(yield* DateTime.now),
+                    enrollmentEvidenceRef: bindingEvidenceRef,
+                    expectedRevision: null,
+                    expectedState: null,
+                    principalRef: {
+                      moduleId: 'core.identity',
+                      resourceId: yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(
+                        fixture.core.manager.principalId,
+                      ),
+                      resourceType: 'core.identity.principal',
+                      tenantId: yield* Schema.decodeUnknownEffect(TenantIdSchema)(fixture.core.tenantId),
+                    },
+                    profileRef: created.result.profileRef,
+                    reason: 'Bind current authenticated native Principal to its actual Retail profile',
+                    sellingLegalEntityRef,
+                  },
+                  Redacted.value(bindProof.authorization),
+                  bindingCorrelation,
+                  {
+                    baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
+                    compositionRevision: approved.composition.revision,
+                    idempotencyKey: yield* crypto.randomUUIDv4(),
+                  },
+                ).pipe(
+                  Effect.tapError((error) =>
+                    Schema.is(OutsideRelayProblemSchema)(error)
+                      ? Effect.logInfo('Native binding declared public failure', {
+                          code: error.code,
+                          status: error.status,
+                          title: error.title,
+                          type: error.type,
+                        })
+                      : Effect.logInfo('Native binding failure', { declaredProblem: false }),
+                  ),
+                );
+                expect(bound.outcome).toBe('BINDING_ACTIVATED');
+                expect(bound.state).toBe('ACTIVE');
+                expect(bound.revision).toBe(1);
+                expect(bound.authorizationOperation).toBe('grant');
+                expect(bound.authorizationState).toBe('PENDING_GRANT');
+                expect(bound.permissionMutations?.length).toBeGreaterThan(0);
+                expect(
+                  bound.permissionMutations?.every((mutation) => mutation.operation === 'grant' && mutation.staged),
+                ).toBe(true);
+                const probeJtis = new Set<string>();
+                const readBinding = Effect.fn('ServerOwnerRelayNative.readBindingWithFreshProof')(
+                  function* readBindingWithFreshProof() {
+                    const proof = yield* issueBindingProof();
+                    expect(probeJtis.has(proof.sourceJti)).toBe(false);
+                    probeJtis.add(proof.sourceJti);
+                    const bindingResponse = yield* client.post(
+                      `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}/reads/retail-portal-profile-binding-read`,
+                      {
+                        body: yield* HttpBody.json({
+                          bindingRef: bound.bindingRef,
+                          profileRef: created.result.profileRef,
+                        }),
+                        headers: {
+                          authorization: Redacted.value(proof.authorization),
+                          'x-correlation-id': yield* crypto.randomUUIDv4(),
+                          'x-ontos-composition-revision': approved.composition.revision,
+                        },
+                      },
+                    );
+                    return { body: yield* bindingResponse.json, status: bindingResponse.status };
+                  },
+                );
+                const pending = yield* readBinding();
+                if (pending.status !== 403 && Schema.is(OutsideRelayProblemSchema)(pending.body)) {
+                  yield* Effect.logInfo('Native preworker binding read problem', {
+                    code: pending.body.code,
+                    status: pending.body.status,
+                    title: pending.body.title,
+                    type: pending.body.type,
+                  });
+                }
+                expect(pending.status).toBe(403);
+                expect(Schema.is(OutsideRelayProblemSchema)(pending.body)).toBe(true);
+                const worker = yield* startPackagedRetailWorker({ compositionUrl, packaged: packagedWorker });
+                children.push(worker.child);
+                const activeBindingProjection = Schema.Struct({
+                  _tag: Schema.Literal('BINDING_AVAILABLE'),
+                  authorizationFreshness: Schema.Struct({ status: Schema.Literal('CURRENT') }),
+                  binding: Schema.Struct({
+                    authorizationState: Schema.Literal('ACTIVE'),
+                    bindingRef: Schema.Struct({ resourceId: Schema.Literal(bound.bindingRef.resourceId) }),
+                    enrollmentEvidenceRef: Schema.Literal(bindingEvidenceRef),
+                    principalRef: Schema.Struct({
+                      resourceId: Schema.Literal(fixture.core.manager.principalId),
+                      tenantId: Schema.Literal(fixture.core.tenantId),
+                    }),
+                    profileRef: Schema.Struct({
+                      resourceId: Schema.Literal(created.result.profileRef.resourceId),
+                      tenantId: Schema.Literal(fixture.core.tenantId),
+                    }),
+                    sellingLegalEntityRef: Schema.Struct({ resourceId: Schema.Literal(fixture.core.legalEntityId) }),
+                    state: Schema.Literal('ACTIVE'),
+                  }),
+                  completeness: Schema.Literal('FULL'),
+                  grantedPermissions: Schema.Array(Schema.String),
+                  permissionsFreshness: Schema.Struct({ status: Schema.Literal('CURRENT') }),
+                });
+                const awaitBinding = Effect.fn('ServerOwnerRelayNative.awaitRealBindingActivation')(
+                  function* awaitRealBindingActivation() {
+                    for (let attempt = 0; attempt < 40; attempt += 1) {
+                      expect(yield* worker.child.isRunning).toBe(true);
+                      const bindingProbe = yield* readBinding();
+                      if (bindingProbe.status === 200 && Schema.is(activeBindingProjection)(bindingProbe.body)) {
+                        return bindingProbe.body;
+                      }
+                      if (bindingProbe.status !== 200 && bindingProbe.status !== 403) {
+                        if (Schema.is(OutsideRelayProblemSchema)(bindingProbe.body)) {
+                          yield* Effect.logInfo('Native worker binding poll public failure', {
+                            code: bindingProbe.body.code,
+                            status: bindingProbe.body.status,
+                            title: bindingProbe.body.title,
+                            type: bindingProbe.body.type,
+                          });
+                        }
+                        return yield* new PackagedOwnerStartupError({
+                          reason: 'Binding activation polling received an unexpected public response',
+                        });
+                      }
+                      yield* Effect.sleep(Duration.millis(250));
+                    }
+                    return yield* new PackagedOwnerStartupError({
+                      reason: 'Actual registered worker did not activate binding within the bounded polling window',
+                    });
+                  },
+                );
+                const activeBinding = yield* awaitBinding().pipe(Effect.timeout('30 seconds'));
+                expect(activeBinding.grantedPermissions).toEqual(
+                  expect.arrayContaining(bound.permissionMutations?.map((mutation) => mutation.permission) ?? []),
+                );
+                const accessProof = yield* issueBindingProof();
+                expect(probeJtis.has(accessProof.sourceJti)).toBe(false);
+                probeJtis.add(accessProof.sourceJti);
+                const accessResponse = yield* client.post(
+                  `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}/reads/retail-access-decision`,
+                  {
+                    body: yield* HttpBody.json({
+                      profileRef: created.result.profileRef,
+                      requiredPermission: 'retail.profile.read',
+                    }),
+                    headers: {
+                      authorization: Redacted.value(accessProof.authorization),
+                      'x-correlation-id': yield* crypto.randomUUIDv4(),
+                      'x-ontos-composition-revision': approved.composition.revision,
+                    },
+                  },
+                );
+                const access = yield* accessResponse.json;
+                if (accessResponse.status !== 200 && Schema.is(OutsideRelayProblemSchema)(access)) {
+                  yield* Effect.logInfo('Native activated Retail access public failure', {
+                    code: access.code,
+                    status: access.status,
+                    title: access.title,
+                    type: access.type,
+                  });
+                }
+                expect(accessResponse.status).toBe(200);
+                expect(access).toMatchObject({
+                  authorizationFreshness: { status: 'CURRENT' },
+                  bindingRef: bound.bindingRef,
+                  bindingState: 'ACTIVE',
+                  decision: { allowed: true, outcome: 'ALLOWED' },
+                  profileRef: created.result.profileRef,
+                  requiredPermission: 'retail.profile.read',
+                });
+                const bindingEvidence = yield* fixture.core.evidence(database);
+                const bindingInvocations = bindingEvidence.invocations.filter(
+                  (row) =>
+                    row.actionKey === 'commerce.customer-context.bind-retail-portal-profile' &&
+                    row.correlationId === bindingCorrelation,
+                );
+                expect(bindingInvocations).toHaveLength(1);
+                const [bindingInvocation] = bindingInvocations;
+                if (bindingInvocation === undefined) {
+                  return yield* new PackagedOwnerStartupError({ reason: 'Actual binding canonical invocation absent' });
+                }
+                expect(bindingInvocation.status).toBe('succeeded');
+                expect(bindingInvocation.principalId).toBe(fixture.core.manager.principalId);
+                expect(bindingInvocation.authBindingId).toBe(personalKey.authBindingId);
+                expect(bindingInvocation.authMethod).toBe('api_key');
+                expect(bindingInvocation.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                expect(bindingInvocation.legalEntityId).toBe(fixture.core.legalEntityId);
+                const bindingAudits = bindingEvidence.audits.filter(
+                  (row) =>
+                    row.actionInvocationId === bindingInvocation.actionInvocationId &&
+                    row.eventType === 'action.executed',
+                );
+                expect(bindingAudits).toHaveLength(1);
+                for (const audit of bindingAudits) {
+                  expect(audit.outcome).toBe('succeeded');
+                  expect(audit.principalId).toBe(fixture.core.manager.principalId);
+                  expect(audit.authBindingId).toBe(personalKey.authBindingId);
+                  expect(audit.authMethod).toBe('api_key');
+                  expect(audit.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
+                }
+                const activationTopic =
+                  'commerce.customer-context.retail-portal-profile-binding-activation-authorization-mutation-requested.v1';
+                const activationEvents = bindingEvidence.events.filter(
+                  (row) => row.eventType === activationTopic && row.subjectResourceId === bound.bindingRef.resourceId,
+                );
+                expect(activationEvents).toHaveLength(1);
+                const [activationEvent] = activationEvents;
+                if (activationEvent === undefined) {
+                  return yield* new PackagedOwnerStartupError({ reason: 'Binding authorization event absent' });
+                }
+                const messages = bindingEvidence.outbox.filter(
+                  (row) => row.topic === activationTopic && row.domainEventId === activationEvent.domainEventId,
+                );
+                expect(messages).toHaveLength(1);
+                const [message] = messages;
+                if (message === undefined) {
+                  return yield* new PackagedOwnerStartupError({
+                    reason: 'Actual binding activation outbox message absent',
+                  });
+                }
+                let delivered = false;
+                for (let attempt = 0; attempt < 20; attempt += 1) {
+                  const deliveries = yield* database.query.outboxDeliveries.findMany({
+                    where: { consumerModuleKey: 'commerce.customer-context', outboxMessageId: message.outboxMessageId },
+                  });
+                  expect(deliveries.length).toBeLessThanOrEqual(1);
+                  const [delivery] = deliveries;
+                  if (delivery?.status === 'done') {
+                    expect(delivery.workerKey).toBe(
+                      'commerce.customer-context.reconcile-retail-portal-profile-binding-activation-authorization-mutation',
+                    );
+                    expect(delivery.attemptsCount).toBeGreaterThan(0);
+                    delivered = true;
+                    break;
+                  }
+                  if (delivery !== undefined) {
+                    expect(['pending', 'processing']).toContain(delivery.status);
+                  }
+                  yield* Effect.sleep(Duration.millis(250));
+                }
+                expect(delivered).toBe(true);
+                yield* worker.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+                expect(yield* worker.child.exitCode).toBe(0);
+                expect(yield* worker.child.isRunning).toBe(false);
+                yield* Effect.logInfo('Actual Retail binding activated by registered production worker', {
+                  authorizationCurrent: true,
+                  bindingFull: true,
+                  compositionRevision: approved.composition.revision,
+                  originalActorPreserved: true,
+                  permissionAccessAllowed: true,
+                  registeredDeliveryDone: true,
+                  workerGracefullyStopped: true,
+                });
+                return yield* Effect.void;
+              },
+            );
+            yield* activateBinding();
             return yield* Effect.void;
           }),
         ),
