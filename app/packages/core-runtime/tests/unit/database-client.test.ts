@@ -2,11 +2,11 @@ import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
 
 import { PgClient } from '@effect/sql-pg';
-import { ConfigProvider, Effect, Exit, Layer, Predicate, Redacted, Scope } from 'effect';
+import { ConfigProvider, Context, Effect, Exit, Layer, Predicate, Redacted, Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
-import { DatabasePoolRegistryLive, openDatabaseClient } from '../../src/db/database-client.ts';
+import { DatabasePoolRegistryLive, DatabasePools, openDatabaseClient } from '../../src/db/database-client.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
 /** One physical backend session the fake server accepted. */
@@ -237,8 +237,11 @@ const fakePostgres = Effect.acquireRelease(
 ).pipe(Effect.map(({ fake }) => fake));
 
 const sharedPools = <A, E, R>(program: Effect.Effect<A, E, R>) =>
-  program.pipe(
-    Effect.provide(DatabasePoolRegistryLive.pipe(Layer.provide(Reactivity.layer))),
+  Effect.gen(function* withSharedPools() {
+    const context = yield* Layer.build(DatabasePoolRegistryLive.pipe(Layer.provide(Reactivity.layer)));
+    return yield* program.pipe(Effect.provideContext(context));
+  }).pipe(
+    Effect.scoped,
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromUnknown({ ONTOS_DATABASE_POOL_SHARED: 'true' }),
@@ -440,6 +443,63 @@ it.live('fails closed when sharing is enabled without a process host registry', 
     expect(Exit.isFailure(result)).toBe(true);
     expect(String(result)).toContain('Shared database pools require a scoped process host registry');
     expect(fake.sessions).toHaveLength(0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({ ONTOS_DATABASE_POOL_SHARED: 'true' }),
+    ),
+  ),
+);
+
+it.live('keeps native driver metadata and after-commit callbacks on each owner client', () =>
+  Effect.gen(function* nativeTransactionCallbacks() {
+    const fake = yield* fakePostgres;
+    const first = yield* ownerClient(fake.url('ontos_runtime'), yield* Effect.scope);
+    const second = yield* ownerClient(fake.url('ontos_runtime'), yield* Effect.scope);
+    const committed: string[] = [];
+    expect(first.driver).toBe('pg');
+    expect(second.driver).toBe('pg');
+    yield* first.withTransaction(
+      Effect.gen(function* outerTransaction() {
+        yield* first.afterCommit(
+          Effect.sync(() => {
+            committed.push('first');
+          }),
+        );
+        yield* second.withTransaction(
+          second.afterCommit(
+            Effect.sync(() => {
+              committed.push('second');
+            }),
+          ),
+        );
+        expect(committed).toEqual(['second']);
+      }),
+    );
+    expect(committed).toEqual(['second', 'first']);
+  }).pipe(Effect.scoped, sharedPools),
+);
+
+it.live('closes shared pools when the runtime registry shuts down with owner scopes still open', () =>
+  Effect.gen(function* runtimeShutdown() {
+    const fake = yield* fakePostgres;
+    const ownerScope = yield* Effect.scope;
+    yield* Effect.scoped(
+      Effect.gen(function* runtimeScope() {
+        const registry = Context.get(
+          yield* Layer.build(DatabasePoolRegistryLive.pipe(Layer.provide(Reactivity.layer))),
+          DatabasePools,
+        );
+        const client = yield* ownerClient(fake.url('ontos_runtime'), ownerScope).pipe(
+          Effect.provideService(DatabasePools, registry),
+        );
+        yield* query(client, 'select 1 as before_shutdown');
+        expect(fake.sessions[0]?.closed).toBe(false);
+      }),
+    );
+    yield* awaitClosed(fake.sessions[0]);
+    expect(fake.sessions[0]?.closed).toBe(true);
   }).pipe(
     Effect.scoped,
     Effect.provideService(

@@ -132,6 +132,7 @@ const makeGatewayAssertionRedemptionDatabase = Effect.fn(
   const poolConfiguration = yield* configureDatabasePool(
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
+    configuration.maxConnections,
   ).pipe(Effect.mapError((error) => unavailableError(error)));
   const reactivity = yield* Reactivity.make;
   const client = yield* openDatabaseClient(poolConfiguration).pipe(

@@ -116,6 +116,7 @@ const clientOnSharedPool = Effect.fnUntraced(function* clientOnSharedPool(pool: 
     acquirer: pool.reserve,
     commit: commitUnlessAborted,
     compiler: PgClient.makeCompiler(),
+    driver: 'pg',
     prepareTransactionControls: true,
     releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
     spanAttributes: [

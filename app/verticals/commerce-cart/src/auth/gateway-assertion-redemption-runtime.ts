@@ -4,10 +4,10 @@ import {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
   configureDatabasePool,
+  openDatabaseClient,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { PgClient } from '@effect/sql-pg';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
@@ -76,7 +76,7 @@ export const gatewayAssertionRedemptionPgClient = Effect.gen(function* makeCartR
   const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
     Effect.mapError(unavailableError),
   );
-  return yield* PgClient.make(poolConfiguration).pipe(Effect.mapError(unavailableError));
+  return yield* openDatabaseClient(poolConfiguration).pipe(Effect.mapError(unavailableError));
 });
 export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
   CartGatewayAssertionRedemptionDatabase,
