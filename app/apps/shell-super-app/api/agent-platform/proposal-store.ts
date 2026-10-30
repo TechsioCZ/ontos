@@ -331,8 +331,21 @@ export const principalNames = Effect.fn('AgentStore.principalNames')(function* p
       registration: agentActivityActorsRead,
       transport,
     })
-    .pipe(Effect.mapError(unavailable));
-  return new Map<string, string>(actors.names.map((row) => [row.principalId, row.displayName]));
+    .pipe(
+      Effect.map(Option.some),
+      // A connected application reads only the modules it was granted, never core.identity; its
+      // proposals then show actor labels instead of names.
+      Effect.catchTag('ReadPermissionDenied', (denied) =>
+        principal.authMethod === 'oauth_connection' ? Effect.succeedNone : Effect.fail(denied),
+      ),
+      Effect.mapError(unavailable),
+    );
+  return new Map<string, string>(
+    Option.match(actors, {
+      onNone: () => [],
+      onSome: ({ names }) => names.map((row) => [row.principalId, row.displayName] as const),
+    }),
+  );
 });
 
 /** Agent principals of the tenant; company filtering remains on their activity rows. */
