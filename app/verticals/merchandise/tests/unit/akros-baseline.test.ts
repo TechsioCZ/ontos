@@ -2,7 +2,7 @@
 // builds from the storefront feed. Regenerate with `node scripts/generate-akros-baseline.mts` when this fails.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { gunzipSync } from 'node:zlib';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { akrosBaselineParts } from '../../scripts/akros-baseline-parts.ts';
@@ -37,13 +37,11 @@ it.effect('bundled baseline parts equal the seed baseline built from the storefr
   }),
 );
 
+// gzip bytes differ between zlib builds (the header names the OS), so the parts' content is proven above by
+// decompression and the sources are proven here by rendering the committed parts.
 it.effect('every generated source matches the generator and stays within the source budget', () =>
   Effect.gen(function* generatedSources() {
-    const built = yield* buildAkrosEncoded();
-    const parts = yield* akrosBaselineParts(built);
-    const encoded = parts.map((part) => gzipSync(JSON.stringify(part), { level: 9 }).toString('base64'));
-    expect(loadAkrosBaselineParts()).toEqual(encoded);
-    const modules = yield* renderAkrosBaselineModules(encoded);
+    const modules = yield* renderAkrosBaselineModules(loadAkrosBaselineParts());
     expect(modules.size).toBeGreaterThan(2);
     for (const [name, expected] of modules) {
       const source = readFileSync(new URL(`../../src/services/${name}`, import.meta.url), 'utf-8');
