@@ -3623,14 +3623,41 @@ it.live('completes the real CCC Guest attribution through Party with the origina
             });
           }
           if (readback.status !== 200) {
-            const diagnostic = enrolledCustomerContext.diagnostics.map((line) => Redacted.value(line)).join('\n');
-            yield* Effect.logInfo('Safe native Guest status failure discriminator', {
+            // Give the scoped stdout/stderr collectors one bounded delivery window; do not retry HTTP.
+            yield* Effect.sleep(Duration.millis(100));
+            const lines = enrolledCustomerContext.diagnostics.map((line) => Redacted.value(line));
+            const diagnostic = lines.join('\n');
+            const coreFailureEntries = lines.flatMap((line, index) =>
+              line.includes('Governed-read HTTP Core failure') ? [lines.slice(index, index + 8).join('\n')] : [],
+            );
+            const permittedFailures = [
+              {
+                categoryPattern: /["']?failureCategory["']?\s*[:=]\s*["']?evidence_validation\b/u,
+                failureCategory: 'evidence_validation',
+                reasonCode: 'read_evidence_invalid',
+                reasonPattern: /["']?reasonCode["']?\s*[:=]\s*["']?read_evidence_invalid\b/u,
+              },
+              {
+                categoryPattern: /["']?failureCategory["']?\s*[:=]\s*["']?core_execution\b/u,
+                failureCategory: 'core_execution',
+                reasonCode: 'read_handler_execution_failed',
+                reasonPattern: /["']?reasonCode["']?\s*[:=]\s*["']?read_handler_execution_failed\b/u,
+              },
+              {
+                categoryPattern: /["']?failureCategory["']?\s*[:=]\s*["']?result_validation\b/u,
+                failureCategory: 'result_validation',
+                reasonCode: 'read_result_invalid',
+                reasonPattern: /["']?reasonCode["']?\s*[:=]\s*["']?read_result_invalid\b/u,
+              },
+            ];
+            const recognizedCoreFailures = permittedFailures
+              .filter(({ categoryPattern, reasonPattern }) =>
+                coreFailureEntries.some((entry) => categoryPattern.test(entry) && reasonPattern.test(entry)),
+              )
+              .map(({ failureCategory, reasonCode }) => ({ failureCategory, reasonCode }));
+            yield* Effect.logInfo('Safe native Guest status failure from combined captured diagnostics', {
               missingCryptoService: diagnostic.includes('Service not found: effect/Crypto'),
-              observedStaticTags: [
-                'ReadEvidenceValidationError',
-                'ReadHandlerExecutionError',
-                'ReadResultValidationError',
-              ].filter((tag) => diagnostic.includes(tag)),
+              recognizedCoreFailures,
               unexpectedGovernedReadHttpDefect: diagnostic.includes('Unexpected governed-read HTTP defect'),
             });
           }
