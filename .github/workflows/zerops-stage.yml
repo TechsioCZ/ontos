@@ -9,7 +9,6 @@ on:
   push:
     branches:
       - demo/sales-crm
-      - feat/zerops-only
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
