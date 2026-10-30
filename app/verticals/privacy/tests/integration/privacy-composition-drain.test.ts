@@ -468,6 +468,12 @@ const fixtureRuntimeInventory = [
       'temporary_dsr_exports',
     ],
   },
+  {
+    operations: 'select, insert, delete',
+    rls: false,
+    schema: 'privacy',
+    tables: ['gateway_assertion_redemptions'],
+  },
 ] as const;
 
 // The public boundary exposes the transaction category, not a private SQL trigger reason.
