@@ -16,9 +16,20 @@ export class RequestError extends Error {
     super(message);
   }
 }
+/**
+ * The public origin the browser addressed. A standalone Next server behind a proxy builds `request.url` from the
+ * address it listens on (https://0.0.0.0:3070 on Zerops), so the origin comes from the forwarded protocol and the
+ * Host header, which the browser sets and the Zerops router routes by.
+ */
+export function requestOrigin(request: Request) {
+  const url = new URL(request.url);
+  const protocol =
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.slice(0, -1);
+  return `${protocol}://${request.headers.get("host") ?? url.host}`;
+}
 export function guard(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin && origin !== new URL(request.url).origin)
+  if (origin && origin !== requestOrigin(request))
     throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new RequestError(415, "Neplatný formát požadavku.");

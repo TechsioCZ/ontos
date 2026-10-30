@@ -7,13 +7,13 @@ import {
   registrationInput,
 } from "@/ontos/account";
 import type { AccountSubmissionResponse } from "@/ontos/account";
-import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
 
 export async function GET(request: Request) {
   try {
-    const account = await readAccount(new URL(request.url).origin, request.headers.get("cookie"));
+    const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     return Response.json({ account }, { headers: noStore });
   } catch (error) {
     return problem(error, accountMessage(503));
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     guard(request);
-    const origin = new URL(request.url).origin;
+    const origin = requestOrigin(request);
     if (request.headers.get("origin") !== origin)
       throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
     const input: unknown = await jsonBody(request);

@@ -1,4 +1,5 @@
 import { portalRequest } from "@/ontos/account";
+import { requestOrigin } from "@/ontos/http";
 
 /** Mail links terminate here; the typed owner recovery route alone may consume their token. */
 export async function GET(request: Request): Promise<Response> {
@@ -12,7 +13,7 @@ export async function GET(request: Request): Promise<Response> {
       // fixed, same-origin landing prevents an email link from becoming an open redirect.
       const response = await portalRequest(
         `/verify-email?${new URLSearchParams({ token })}`,
-        url.origin,
+        requestOrigin(request),
         null,
       );
       if (response.ok) {
@@ -38,7 +39,7 @@ export async function GET(request: Request): Promise<Response> {
   return new Response(null, {
     status: 303,
     headers: {
-      location: `${url.origin}/overeni-emailu?${new URLSearchParams({ stav: status })}`,
+      location: `${requestOrigin(request)}/overeni-emailu?${new URLSearchParams({ stav: status })}`,
       "cache-control": "no-store",
       pragma: "no-cache",
       "referrer-policy": "no-referrer",

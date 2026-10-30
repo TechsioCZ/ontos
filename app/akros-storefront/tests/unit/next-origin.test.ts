@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import nextConfig from "../../next.config";
-import { guard, RequestError } from "@/ontos/http";
+import { guard, RequestError, requestOrigin } from "@/ontos/http";
 
 const origin = "http://127.0.0.1:4925";
 const request = (requestOrigin: string) =>
@@ -31,4 +31,29 @@ describe("Next request origin preservation", () => {
       expect(() => guard(request(requestOrigin))).toThrow(RequestError);
     },
   );
+});
+
+describe("origin behind the Zerops router", () => {
+  const publicOrigin = "https://ontos-stage-akros.web-revolution.cz";
+  // The standalone server builds request.url from its listening address, not the public hostname.
+  const proxied = (submittedOrigin: string) =>
+    new NextRequest("https://0.0.0.0:3070/api/ontos/account", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        host: "ontos-stage-akros.web-revolution.cz",
+        origin: submittedOrigin,
+        "x-forwarded-proto": "https",
+      },
+      body: "{}",
+    });
+
+  it("takes the origin from the forwarded protocol and the Host header", () => {
+    expect(requestOrigin(proxied(publicOrigin))).toBe(publicOrigin);
+    expect(() => guard(proxied(publicOrigin))).not.toThrow();
+  });
+
+  it("still rejects a foreign origin", () => {
+    expect(() => guard(proxied("https://foreign.example.test"))).toThrow(RequestError);
+  });
 });

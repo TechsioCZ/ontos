@@ -1,7 +1,7 @@
 import "server-only";
 import { portalRequest } from "@/ontos/account";
 import { customerConsentInput, isCustomerNewsletterConsent } from "@/ontos/consent-model";
-import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
 async function ownerResponse(response: Response) {
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     return await ownerResponse(
       await portalRequest(
         "/customer-consent",
-        new URL(request.url).origin,
+        requestOrigin(request),
         request.headers.get("cookie"),
       ),
     );
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     guard(request);
-    const { origin } = new URL(request.url);
+    const origin = requestOrigin(request);
     if (request.headers.get("origin") !== origin)
       throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
     const input = customerConsentInput(await jsonBody(request));
