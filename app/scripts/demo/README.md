@@ -302,7 +302,8 @@ exactly one company and a switch to any other company answers 403.
 The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
 `ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
 `merchandise` gateway assertion in company 0023 and runs without the Better Auth rate limit. The Nájempark
-accounts (`management@`, `operations@`, `finance@`, `external@`, `provoz@najempark.demo`) also get their roles in the
+accounts (`management@najempark.demo`, `operations@najempark.demo`, `finance@najempark.demo`,
+`external@najempark.demo`, `provoz@najempark.demo`) also get their roles in the
 Nájempark company 0021 (`siamparkRentalPersonas`).
 
 ### Nájempark CRM: entrusted contacts (S00)

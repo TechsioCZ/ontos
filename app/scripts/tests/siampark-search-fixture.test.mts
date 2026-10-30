@@ -130,3 +130,12 @@ it.live(
       expect(result.stdout).not.toContain('initialized');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it('seeds the four rental personas with Nájempark addresses and keeps their stable identities', () => {
+  expect(demoAccounts.slice(0, 4).map(({ authUserId, email }) => ({ authUserId, email }))).toEqual([
+    { authUserId: 'siampark-management', email: 'management@najempark.demo' },
+    { authUserId: 'siampark-operations', email: 'operations@najempark.demo' },
+    { authUserId: 'siampark-finance', email: 'finance@najempark.demo' },
+    { authUserId: 'siampark-external', email: 'external@najempark.demo' },
+  ]);
+});

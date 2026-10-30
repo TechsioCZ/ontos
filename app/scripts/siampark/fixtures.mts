@@ -1,3 +1,4 @@
+import { rentalDemoBrandProfiles } from '../../packages/core-runtime/src/install/demo-rental-brand-profiles.ts';
 import { BootstrapCompanyMembershipSchema } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { rentalDemoCompany } from '../../packages/core-runtime/src/install/demo-company-profiles.ts';
 import { CoreSearchProjectionDocumentSchema } from '@app/core-runtime';
@@ -110,28 +111,28 @@ export const demoAccounts = [
     authBindingId: '73000000-0000-4000-8000-000000000021',
     authUserId: 'siampark-management',
     displayName: 'Vedení Nájempark',
-    email: 'management@najempark.demo',
+    email: rentalDemoBrandProfiles[0].email,
     principalId: '72000000-0000-4000-8000-000000000021',
   },
   {
     authBindingId: '73000000-0000-4000-8000-000000000022',
     authUserId: 'siampark-operations',
     displayName: operationsDisplayName,
-    email: 'operations@najempark.demo',
+    email: rentalDemoBrandProfiles[1].email,
     principalId: '72000000-0000-4000-8000-000000000022',
   },
   {
     authBindingId: '73000000-0000-4000-8000-000000000023',
     authUserId: 'siampark-finance',
     displayName: 'Účetní Nájempark',
-    email: 'finance@najempark.demo',
+    email: rentalDemoBrandProfiles[2].email,
     principalId: '72000000-0000-4000-8000-000000000023',
   },
   {
     authBindingId: '73000000-0000-4000-8000-000000000024',
     authUserId: 'siampark-external',
     displayName: 'Externí obchodník',
-    email: 'external@najempark.demo',
+    email: rentalDemoBrandProfiles[3].email,
     principalId: '72000000-0000-4000-8000-000000000024',
   },
   {
