@@ -4,9 +4,92 @@ This playbook is the authoritative release guidance for OntOS application delive
 
 > [!IMPORTANT] Explicit `implementationId`, dependency-closure selection, public-contract hashes, migration-set identity, and full artifact metadata are accepted target architecture, not fields in the current manifest/catalog schema. Requirements below that name them become mandatory with that contract. Until then, releases use one implicit `standard` implementation per `moduleId` and the current generated `buildMarker`; do not simulate missing fields with ad hoc configuration.
 
-Application Composition validation and stage publication are implemented; live Shell loading is not. After the delivery units deploy, the deploy workflow observes the deployed artifacts and publishes the active snapshot as the `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` Zerops project variable, deploys the composition consumers on it, then publishes the complete inventory and restarts them; a scheduled workflow re-publishes it before it expires (see ADR-0020). Until #374–#377 wire those paths in, remote URL and generated lazy-registry changes still require Shell regeneration and redeployment. The composition promotion sequence below is the target flow.
+Application Composition validation and stage publication are implemented; live Shell loading is not. Stage publication is described in [Stage on Zerops](#stage-on-zerops). Until #374–#377 wire those paths in, remote URL and generated lazy-registry changes still require Shell regeneration and redeployment. The composition promotion sequence below is the target flow.
 
 The rules exist because the first Zerops stage rollout was merged after source-level validation and then required 43 linear repair commits. Stage had become the first production-shaped integration test. Future releases must prove the target artifact and the distributed user journey before promotion.
+
+## Stage on Zerops
+
+Stage runs on Zerops only. Cloudflare stays in front of it as DNS, WAF and Access. The layout below comes from `app/zerops.yaml`, `app/scripts/zerops/` and `.github/workflows/zerops-stage.yml`.
+
+### Services
+
+Stage is the Zerops project `t1ljmn3DRDafgi8AuPvhdQ` (LIGHT core).
+
+- `app`: one Node container. It serves the Shell, every owner in `topology/application-release-intent.json`, and the Outbox Worker host.
+- `storefront`: the AKROS Next.js standalone server, on port 3070. It calls the Shell at `http://app:3000`.
+- `db18`: PostgreSQL.
+- `spicedb`: SpiceDB.
+- `migrator`: keeps only its secrets, the database identity passwords that the app references as `${migrator_…}`. The app container runs the migrations itself.
+
+Each service runs one container, with no HA and no autoscaling. The app host keeps no local state, so it can scale out later.
+
+### Inside the app container
+
+`scripts/zerops/app-host.mts` is the supervisor. It listens on port 3000.
+
+- It routes `/_m/<appId>/…` to that owner's loopback server. Every other request goes to the Shell on loopback port 3020.
+- It starts three processes:
+  - the Shell: `serve-units.mts shell-super-app`;
+  - all owners in one process: `serve-units.mts <appId> …`, so shared dependencies load once;
+  - the Outbox Worker host, with its health endpoint on port 4100.
+- If any process exits, the container stops, and Zerops restarts it from a clean state.
+- Browser owners keep their topology port. Server-only owners (api-only, or without a Module Federation remote) start at 4200. Every unit listens on `127.0.0.1` only.
+
+Each owner's composition backend is its loopback `node-http` origin. The browser loads each remote's manifest and assets from `https://<origin>/_m/<appId>/`.
+
+### Composition and authority
+
+On every start, the host does the following.
+
+1. Runs the migrations with `scripts/run-zerops-migrator.mjs` (`MIGRATOR_ONCE=true`) while it waits for every unit to serve its contract. Each unit has five minutes.
+2. Observes the running artifacts over loopback, and derives the snapshot using the public artifact URLs.
+3. Publishes the snapshot with `publishApplicationCompositionAuthoritySnapshot`. The result is one active revision in the PostgreSQL table `core.application_composition_authority`.
+4. Runs `scripts/demo/reconcile-stage-service-grants.mts --apply` for the SpiceDB schema and the stage service grants. A failure is logged and does not stop the release.
+5. Serves the snapshot bytes at `/_host/composition`, a loopback-only path. Every hosted process reads it through `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`. The host serves a revision only while the database still names it.
+
+The host renews the lease itself every 6 hours. Validity is 24 hours. A failed renewal is logged, and if renewals keep failing the lease expires. There is no KV namespace, no workers.dev route and no scheduled refresh workflow.
+
+Probes:
+
+- `/_host/live` answers as soon as the host listens.
+- `/_host/ready` returns 200 after publication. Zerops switches traffic only after it answers.
+- `ONTOS_APP_HOST_PUBLISH=false` starts and observes every unit without migrating or publishing. In that mode `/_host/ready` returns 200 after observation. The committed `app` setup in `zerops.yaml` currently sets it to `false`.
+
+### Secrets
+
+- `ONTOS_OWNER_SECRETS_JSON` is a sensitive `app` service variable. Each deploy writes it from the GitHub secret `DEMO_IMMUTABLE_RELEASE_SECRETS` through `scripts/zerops/sync-service-secret.sh`. It maps each appId to that owner's secrets.
+- Each process gets only the entries of the owners it serves. Host-derived settings win over stored values: the issuer, auth URL, composition URL, gateway base URL, SpiceDB settings and `DATABASE_URL`.
+- `DATABASE_ADMIN_URL` and the identity passwords never reach an owner process. Each process gets only its own identity URL: Party Registry in the owners process, `PARTY_REGISTRY_WORKER_DATABASE_URL` in the Outbox Worker host, and `SHELL_GATEWAY_ISSUER_DATABASE_URL` in the Shell.
+- Known isolation trade-off: owners in the shared owners process share one environment, so any owner there can read every owner's entries. Two owners that store different values under one key stop the host at startup. Per-service hosting kept these apart.
+
+### Email
+
+- SMTP goes through the Cloudflare SMTP bridge at `smtp.mx.cloudflare.net:465`, with implicit TLS (`SMTP_SECURE=true`).
+- User `api_token`. The password is a Cloudflare API token with Email Sending, stored as the `app` service secret `SMTP_PASSWORD`.
+- Sender: `noreply@ontos-stage.web-revolution.cz`.
+
+### Build
+
+- Zerops builds the `app` and `storefront` setups from `app/zerops.yaml`, in a 5 vCPU / 8 GB build container.
+- `scripts/zerops/build-app.sh` builds the units two at a time (`BUILD_JOBS=2`). Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
+- A unit whose committed inputs are unchanged keeps its cached `dist/`. The digest is in `dist/.zerops-build-digest`. Cached copies live in `.zerops/unit-cache`, which Zerops keeps in its build cache.
+- `.deployignore` keeps `.output`, source maps, caches and tests out of the deployed package.
+
+### Deploy
+
+`.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm` or `feat/zerops-only`, except pushes that touch only `docs/**` or Markdown files. It also runs on manual dispatch. Runs are serialized in the `zerops-stage` concurrency group.
+
+1. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups with `zcli push` in parallel, using the commit SHA as the version name. On failure it prints the app log.
+2. **Verify**: runs the timing probe (`/cs`, OAuth metadata and the storefront home) and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
+
+Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
+
+### Edge
+
+- Cloudflare is DNS only. Proxied AAAA records point at the Zerops project IPv6. WAF and Access stay in front.
+- `scripts/zerops/route-stage-domains.sh` creates a Zerops public HTTP routing with TLS for each hostname. It detaches any Worker custom domain on that hostname (the Worker itself stays), removes other A, AAAA and CNAME records on it, and writes the proxied AAAA.
+- It adds one page rule, `ontos-stage*.web-revolution.cz/*`, with SSL `full`. Zerops terminates TLS itself, so Cloudflare must reach it over HTTPS. The zone default is `flexible`.
 
 ## Release invariants
 
@@ -45,7 +128,7 @@ Codesmith or another approved generator must update these surfaces atomically. U
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*` cannot be mapped to known delivery units. An unknown new vertical must never produce a no-op deploy.
 
-Stage deploys only from `demo/sales-crm` through `.github/workflows/stage-demo-deploy.yml`. Its plan hashes every unit's inputs, including `topology/stage-edge.json`, and rebuilds only units whose digest has no live receipt in the stage release ledger. Rebuild and redeploy every unit with `gh workflow run stage-demo-deploy.yml --ref demo/sales-crm -f deploy=true -f force_full=true`.
+Stage deploys from `demo/sales-crm` and `feat/zerops-only` through `.github/workflows/zerops-stage.yml`, which builds and pushes the `app` and `storefront` services on Zerops. It has no deploy plan and no release ledger. A unit whose committed inputs are unchanged keeps its cached build (see [Stage on Zerops](#stage-on-zerops)), and there is no force-full input. Run it manually with `gh workflow run zerops-stage.yml --ref demo/sales-crm`.
 
 The production plan diffs from the commit of the last successful `production` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true`.
 
@@ -268,7 +351,7 @@ Follow [Commerce Application Boundaries](./COMMERCE_APPLICATIONS.md). Storefront
 
 - React, Modern runtime, and provider-context packages such as i18n must be exact strict singletons on both Shell and remotes.
 - Promoted compositions pin immutable `mf-manifest.json` references and permit browser execution only. Routine upgrades wait for a new browser document; they never force-replace a loaded remote.
-- Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in a MicroVertical-owned isolated process, not the Shell/Core Node.js process.
+- Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in a MicroVertical-owned isolated process, not the Shell/Core Node.js process. On Zerops stage the owners run in one owners process beside the Shell process in the same container, reached over loopback. Module code still never runs inside the Shell process (see [Stage on Zerops](#stage-on-zerops)).
 - Every app owns a CSS prefix/namespace. A Shell or MicroVertical build must not scan, erase, or collide with another delivery unit's utility classes.
 - A remote is healthy only when its manifest, remote entry, chunks, shared runtime, localized page, and Shell integration all load successfully.
 
