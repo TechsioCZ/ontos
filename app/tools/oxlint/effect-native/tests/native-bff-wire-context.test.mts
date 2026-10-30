@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { expect, it } from 'effect-rstest';
 
-import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
+import { appRoot, fixtureConfigPath, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const ruleName = 'no-threaded-correlation-parameter';
@@ -71,14 +71,20 @@ it('proves published native BFF wire context while retaining internal correlatio
         source: `${source}\nexport const operation = (traceparent: string) => perform(traceparent);`,
       },
     ];
-    const folder = path.join(directory, 'packages/fixture/src');
+    // The rule scopes fixture inputs by the path below their fixture root, as for its checked-in fixtures.
+    const folder = path.join(
+      directory,
+      'tools/oxlint/effect-native/tests/fixtures',
+      ruleName,
+      'invalid/packages/fixture/src',
+    );
     mkdirSync(folder, { recursive: true });
     const files = cases.map((entry) => {
       const filename = path.join(folder, `${entry.name}.ts`);
       writeFileSync(filename, entry.source);
       return filename;
     });
-    const result = runOxlint(path.join(testsDirectory, 'native-bff-wire-context.config.ts'), files, appRoot);
+    const result = runOxlint(fixtureConfigPath(ruleName), files, appRoot);
     expect(result.numberOfFiles).toBe(cases.length);
     expect(result.diagnostics.filter(({ code }) => code !== ruleCode)).toEqual([]);
     for (const [index, entry] of cases.entries()) {
