@@ -628,8 +628,9 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
-        COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${migrator_COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL}
-        COMMERCE_PORTAL_AUTH_DATABASE_URL: ${migrator_COMMERCE_PORTAL_AUTH_DATABASE_URL}
+        # The portal realm lives in the shared database under the shared identities, as the stage release ran it.
+        COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://${db18_superUser}:${db18_superUserPassword}@${db18_hostname}:${db18_port}/${db18_dbName}
+        COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         DATABASE_ADMIN_URL: postgresql://${db18_superUser}:${db18_superUserPassword}@${db18_hostname}:${db18_port}/${db18_dbName}
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         EMAIL_PROVIDER: smtp
