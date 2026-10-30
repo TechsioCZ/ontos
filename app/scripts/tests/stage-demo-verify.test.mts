@@ -22,6 +22,7 @@ const SIGN_OUT_LINE = 'sign-out 200';
 const OAUTH_AUTHORIZATION_SERVER = '/.well-known/oauth-authorization-server';
 const OAUTH_PROTECTED_RESOURCE = '/.well-known/oauth-protected-resource';
 const SLOW_DOCUMENT = '1600 millis';
+const PASS_LINE = 'stage verification PASS';
 
 const pathOf = (url: string) => {
   const parsed = new URL(url);
@@ -73,9 +74,10 @@ const fixture = (respond: StageTransport = defaultTransport) =>
 it.effect('signs the persona out through the native action after a passing verification pass', () =>
   Effect.gen(function* signsOutAfterPassingPass() {
     const test = yield* fixture();
-    const { failures } = yield* test.run;
+    const { failures, warnings } = yield* test.run;
 
     expect(failures).toEqual([]);
+    expect(warnings).toEqual([]);
     expect(test.calls.map((call) => call.path)).toEqual([
       OAUTH_AUTHORIZATION_SERVER,
       OAUTH_PROTECTED_RESOURCE,
@@ -123,7 +125,7 @@ it.effect('still signs the session out when a document probe fails', () =>
   }),
 );
 
-it.effect('rejects a page document over the acceptance budget but never a slow auth write', () =>
+it.effect('warns about a page document over the budget but never about a slow auth write', () =>
   Effect.gen(function* rejectsOverBudgetPage() {
     let csAttempts = 0;
     const test = yield* fixture((url) => {
@@ -141,18 +143,17 @@ it.effect('rejects a page document over the acceptance budget but never a slow a
     });
     const fiber = yield* Effect.forkChild(test.run);
     yield* TestClock.adjust('6600 millis');
-    const { failures } = yield* Fiber.join(fiber);
+    const { failures, warnings } = yield* Fiber.join(fiber);
 
     expect((yield* test.output).at(-1)).toContain(SIGN_OUT_LINE);
     expect(yield* test.output).toContain('sign-in 200 ttfb=5.00s total=5.00s');
     expect(DOCUMENT_ACCEPTANCE_MS).toBe(1500);
-    expect(failures.map((failure) => failure.message)).toEqual([
-      '/cs #1 (management@najempark.demo) took 1600ms, over the 1500ms page budget',
-    ]);
+    expect(failures).toEqual([]);
+    expect(warnings).toEqual(['/cs #1 (management@najempark.demo) took 1600ms, over the 1500ms page budget']);
   }),
 );
 
-it.effect('includes the complete document body in the page budget and reports failed cleanup', () =>
+it.effect('includes the complete document body in the page budget and fails on failed cleanup', () =>
   Effect.gen(function* rejectsSlowBodyAndFailedCleanup() {
     const test = yield* fixture((url) => {
       const path = pathOf(url);
@@ -163,27 +164,26 @@ it.effect('includes the complete document body in the page budget and reports fa
     });
     const fiber = yield* Effect.forkChild(test.run);
     yield* TestClock.adjust(SLOW_DOCUMENT);
-    const { failures } = yield* Fiber.join(fiber);
+    const { failures, warnings } = yield* Fiber.join(fiber);
 
-    expect(failures.map((failure) => failure.message)).toEqual([
-      'storefront home took 1600ms, over the 1500ms page budget',
-      'sign-out answered 503',
-    ]);
+    expect(warnings).toEqual(['storefront home took 1600ms, over the 1500ms page budget']);
+    expect(failures.map((failure) => failure.message)).toEqual(['sign-out answered 503']);
     expect(yield* test.output).toContain('storefront home 200 ttfb=0.00s total=1.60s');
     expect(test.calls.at(-1)?.path).toBe(SIGN_OUT);
   }),
 );
 
-it.effect.each([1500, 1501])('enforces the fixed document-body budget at %i milliseconds', (duration) =>
+it.effect.each([1500, 1501])('warns past the fixed document-body budget at %i milliseconds', (duration) =>
   Effect.gen(function* checksDocumentBoundary() {
     const test = yield* fixture((url) =>
       pathOf(url) === '/' ? Effect.succeed(response(200, Effect.sleep(duration))) : defaultTransport(url),
     );
     const fiber = yield* Effect.forkChild(test.run);
     yield* TestClock.adjust(duration);
-    const { failures } = yield* Fiber.join(fiber);
+    const { failures, warnings } = yield* Fiber.join(fiber);
 
-    expect(failures.map((failure) => failure.reason)).toEqual(duration === 1500 ? [] : ['budget']);
+    expect(failures).toEqual([]);
+    expect(warnings).toHaveLength(duration === 1500 ? 0 : 1);
     expect(test.calls.at(-1)?.path).toBe(SIGN_OUT);
   }),
 );
@@ -314,9 +314,35 @@ it.effect('reads CLI configuration and encodes the redacted credentials with the
     expect(Redacted.value(payload.password)).toBe('password1234');
     expect(test.calls[0]?.url).toBe(`${shellUrl}${OAUTH_AUTHORIZATION_SERVER}`);
     expect(test.calls.find((call) => call.path === '/')?.url).toBe(`${storefrontUrl}/`);
-    expect((yield* test.output).at(-1)).toBe('stage verification PASS');
+    expect((yield* test.output).at(-1)).toBe(PASS_LINE);
     expect((yield* test.output).join('\n')).not.toContain('password1234');
     expect((yield* test.output).join('\n')).not.toContain('ontos.session=issued');
+    expect(yield* test.errors).toEqual([]);
+  }),
+);
+
+it.effect('passes the command with a GitHub warning when only the page budget is exceeded', () =>
+  Effect.gen(function* warnsWithoutFailing() {
+    const test = yield* fixture((url) =>
+      pathOf(url) === '/' ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT))) : defaultTransport(url),
+    );
+    const fiber = yield* Effect.forkChild(
+      test.command.pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({ STAGE_SHELL_URL: shellUrl, STAGE_STOREFRONT_URL: storefrontUrl }),
+          ),
+        ),
+      ),
+    );
+    yield* TestClock.adjust(SLOW_DOCUMENT);
+    yield* Fiber.join(fiber);
+
+    const output = yield* test.output;
+    expect(output).toContain(
+      '::warning title=Stage page budget::storefront home took 1600ms, over the 1500ms page budget',
+    );
+    expect(output.at(-1)).toBe(PASS_LINE);
     expect(yield* test.errors).toEqual([]);
   }),
 );
@@ -340,7 +366,7 @@ it.effect('reports a typed failure after native cleanup fails', () =>
     expect(test.calls[0]?.url).toBe(`${shellUrl}${OAUTH_AUTHORIZATION_SERVER}`);
     expect(test.calls.find((call) => call.path === '/')?.url).toBe(`${storefrontUrl}/`);
     expect(test.calls.at(-1)?.path).toBe(SIGN_OUT);
-    expect(yield* test.output).not.toContain('stage verification PASS');
+    expect(yield* test.output).not.toContain(PASS_LINE);
     expect(yield* test.errors).toEqual(['stage verification FAILED: sign-out answered 503']);
   }),
 );

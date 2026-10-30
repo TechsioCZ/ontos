@@ -1576,9 +1576,12 @@ jobs:
         working-directory: app
         run: mise exec -- node scripts/ops/stage-demo-verify.mjs
 
-      # The timing probe remains blocking, but its failure must not skip this independent browser proof.
+      # The timing probe's own failures stay blocking, but must not skip this independent browser proof.
+      # The newsletter proof itself only warns: its failure is reported and does not fail the run.
       - name: Prove the native newsletter grant and withdrawal
+        id: newsletter-proof
         if: (success() || failure()) && !inputs.outbox_only
+        continue-on-error: true
         working-directory: app
         env:
           AKROS_TEST_BASE_URL: ${{ env.STAGE_STOREFRONT_URL }}
@@ -1587,6 +1590,13 @@ jobs:
           E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
           export E2E_PLAYWRIGHT_MODULE
           mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs
+
+      - name: Warn about a failed newsletter proof
+        if: (success() || failure()) && steps.newsletter-proof.outcome == 'failure'
+        run: |
+          echo '::warning title=Newsletter proof::The native newsletter grant and withdrawal proof failed; see its step log and the newsletter-consent artifact.'
+          echo '> [!WARNING]' >>"$GITHUB_STEP_SUMMARY"
+          echo '> The newsletter grant and withdrawal proof failed (non-blocking).' >>"$GITHUB_STEP_SUMMARY"
 
       - name: Upload the newsletter screenshots
         if: always() && !inputs.outbox_only

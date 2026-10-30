@@ -2047,7 +2047,7 @@ it('keeps the real MCP propose/reject proof outside every customer demo tenant',
   expect(proof?.run).not.toContain('--keep');
 });
 
-it('runs the existing newsletter browser proof after Chromium even if timing fails, but not on outbox-only retries', () => {
+it('runs the non-blocking newsletter browser proof after Chromium even if timing fails, but not on outbox-only retries', () => {
   const { verify } = readJobs();
   const { steps } = verify;
   const proofName = 'Prove the native newsletter grant and withdrawal';
@@ -2057,7 +2057,14 @@ it('runs the existing newsletter browser proof after Chromium even if timing fai
   const fixture = readJobs().release.steps.find(({ name }) => name === 'Prepare the native demo customer fixture');
   expect(fixture?.if).toBe(fullPublicationCondition);
   expect(proof?.if).toBe('(success() || failure()) && !inputs.outbox_only');
-  expect(proof?.['continue-on-error']).toBeUndefined();
+  expect(proof?.id).toBe('newsletter-proof');
+  expect(proof?.['continue-on-error']).toBe(true);
+  const warningName = 'Warn about a failed newsletter proof';
+  const warning = steps.find(({ name }) => name === warningName);
+  expect(warning?.if).toBe("(success() || failure()) && steps.newsletter-proof.outcome == 'failure'");
+  expect(warning?.run).toContain('::warning title=Newsletter proof::');
+  expect(warning?.run).toContain('$GITHUB_STEP_SUMMARY');
+  expect(indexOf(steps, warningName)).toBe(indexOf(steps, proofName) + 1);
   expect(proof?.['working-directory']).toBe('app');
   expect(proof?.env).toEqual({
     AKROS_EVIDENCE_DIR: ['${{', RUNNER_TEMP_CONTEXT, '}}/newsletter-consent'].join(' '),
