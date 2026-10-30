@@ -1,4 +1,6 @@
-import { NodeCrypto, NodeFileSystem, NodePath } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { layer as nodeFileSystemLayer } from '@effect/platform-node/NodeFileSystem';
+import { layer as nodePathLayer } from '@effect/platform-node/NodePath';
 import { PartyIntakeLive } from '../src/services/party-intake.ts';
 import {
   defineDatabaseIdentityEnrollment,
@@ -98,7 +100,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(
-    GovernedReadLayer.mergeAll(PartyIntakeLive, GovernedFetchHttpClient.layer, NodeFileSystem.layer, NodePath.layer),
+    GovernedReadLayer.mergeAll(PartyIntakeLive, GovernedFetchHttpClient.layer, nodeFileSystemLayer, nodePathLayer),
   ),
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
@@ -141,7 +143,7 @@ const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLi
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(databaseIdentitiesLive),
-  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(nodeCryptoLayer),
   GovernedReadLayer.provide(runtimeObservabilityLive),
   GovernedReadLayer.orDie,
 );

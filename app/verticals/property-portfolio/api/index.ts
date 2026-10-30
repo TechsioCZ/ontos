@@ -1,4 +1,4 @@
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -149,7 +149,7 @@ const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLi
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(databaseIdentitiesLive),
-  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(nodeCryptoLayer),
   GovernedReadLayer.provide(telemetryLive),
   GovernedReadLayer.orDie,
 );

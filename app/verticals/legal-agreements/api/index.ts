@@ -1,4 +1,4 @@
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { Logger, References, Tracer, Layer as GovernedReadLayer } from 'effect';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -141,7 +141,7 @@ const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLi
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(databaseIdentitiesLive),
-  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(nodeCryptoLayer),
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       Logger.layer([Logger.defaultLogger]),
