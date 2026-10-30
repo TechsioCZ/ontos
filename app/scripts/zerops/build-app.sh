@@ -116,3 +116,20 @@ if ! printf '%s\n' $units | xargs -P "$jobs_limit" -n 1 sh "$root/scripts/zerops
   exit 1
 fi
 echo "built $(echo "$units" | wc -w | tr -d ' ') units in $(($(date +%s) - started_all))s"
+
+# The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
+# with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
+if [ "$units" = "$all_units" ]; then
+  revisions="$(node -e '
+    const fs = require("node:fs");
+    const hosted = [...fs.readFileSync("scripts/outbox-worker-host.generated.mts", "utf8").matchAll(/from '"'"'@app\/([a-z-]+)\/outbox-worker-host'"'"'/gu)].map((m) => m[1]);
+    const dir = (id) => (id === "shell-super-app" ? "apps/shell-super-app" : `verticals/${id}`);
+    const revision = (id) => JSON.parse(fs.readFileSync(`${dir(id)}/dist/ultramodern-build.json`, "utf8")).deliveryUnit.sourceRevision;
+    console.log(JSON.stringify(Object.fromEntries(hosted.map((id) => [id, revision(id)]))));
+  ')"
+  started="$(date +%s)"
+  ONTOS_OUTBOX_HOST_OWNER_REVISIONS="$revisions" ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
+    pnpm run zerops:materialize --app outbox-worker-host --package app --package-dir . --worker >"$log_dir/outbox-worker-host.log" 2>&1 ||
+    { tail -60 "$log_dir/outbox-worker-host.log" >&2; echo 'outbox worker host build failed' >&2; exit 1; }
+  echo "built outbox-worker-host in $(($(date +%s) - started))s"
+fi

@@ -65,6 +65,8 @@ import type { HostedUnit } from './hosted-units.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
+/** The Outbox Worker host bundle scripts/zerops/build-app.sh materializes under each owner's release identity. */
+const OUTBOX_HOST_BUNDLE = '.zerops/runtime/outbox-worker-host/worker.mjs';
 const MODULE_ASSET_PREFIX = '/_m/';
 const FEDERATION_MANIFEST_PATH = '/mf-manifest.json';
 const READY_PATH = '/_host/ready';
@@ -552,7 +554,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     const outbox = yield* startChild(
       OUTBOX_HOST_ID,
       node,
-      ['scripts/outbox-worker-host.generated.mts'],
+      [OUTBOX_HOST_BUNDLE],
       workspaceRoot,
       {
         ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
