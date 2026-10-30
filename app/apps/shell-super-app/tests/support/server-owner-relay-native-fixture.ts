@@ -5,13 +5,20 @@ import {
   OntosShellRuntimeContractSchema,
   CoreSearchResourceRefSchema,
 } from '@app/core-runtime';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
+import type { GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import { jwtVerify } from 'jose';
 import { NodeSocketServer } from '@effect/platform-node';
 import { Config, Crypto, Deferred, Effect, FileSystem, Option, Path, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
+import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
+
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
+const MARKET_APP_ID = 'commerce-market-catalog';
 
 export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerStartupError>()(
   'PackagedOwnerStartupError',
@@ -21,7 +28,7 @@ export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerS
 ) {}
 
 const IdentitySchema = Schema.Struct({
-  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog', CUSTOMER_CONTEXT_APP_ID]),
+  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog', CUSTOMER_CONTEXT_APP_ID, MARKET_APP_ID]),
   build: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   buildMarker: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   sourceRevision: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u)),
@@ -30,6 +37,7 @@ const IdentitySchema = Schema.Struct({
     'app/party-registry',
     'app/catalog',
     'app/commerce-customer-context',
+    'app/commerce-market-catalog',
   ]),
   version: Schema.String.check(Schema.isMinLength(1)),
 });
@@ -49,7 +57,12 @@ const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127
 const PACKAGED_STARTUP_PHASE = 'Packaged native startup phase';
 
 interface PackagedApplicationInput {
-  readonly appId: typeof SHELL_APP_ID | 'party-registry' | 'catalog' | typeof CUSTOMER_CONTEXT_APP_ID;
+  readonly appId:
+    | typeof SHELL_APP_ID
+    | 'party-registry'
+    | 'catalog'
+    | typeof CUSTOMER_CONTEXT_APP_ID
+    | typeof MARKET_APP_ID;
   readonly authentication?: {
     readonly baseUrl: string;
     readonly connectionString: Redacted.Redacted;
@@ -273,6 +286,134 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     return { apiPrefix: apiRoute.urlPath, child, compiled: compiled.deliveryUnit, diagnostics, origin };
   },
 );
+
+interface FixtureStorefrontActor {
+  readonly authBindingId: string;
+  readonly authContextRef: Redacted.Redacted;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+interface FixtureStorefrontGatewayInput<Failure, Requirements> {
+  readonly actor: FixtureStorefrontActor;
+  readonly buildMarker: string;
+  readonly compositionRevision: string;
+  readonly gateway: {
+    readonly issuer: string;
+    readonly publicKey: CryptoKey;
+  };
+  readonly personalProof: Effect.Effect<Redacted.Redacted, Failure, Requirements>;
+  readonly storefrontId: string;
+}
+
+interface FixtureStorefrontGatewayAuthorization {
+  readonly authorization: Redacted.Redacted;
+  readonly compositionRevision: string;
+  readonly expiresAt: number;
+  readonly fixtureTrust: 'OWNER_FIXTURE_TRUSTED_STOREFRONT_ONLY';
+  readonly principal: GatewayTrustedPrincipalContext;
+  readonly sourceJti: string;
+}
+
+const matchesFixtureStorefrontActor = (principal: GatewayTrustedPrincipalContext, actor: FixtureStorefrontActor) =>
+  principal.authMethod === 'api_key' &&
+  principal.authenticationNamespaceId === STAFF_AUTHENTICATION_NAMESPACE_ID &&
+  principal.principalId === actor.principalId &&
+  principal.tenantId === actor.tenantId &&
+  principal.legalEntityId === actor.legalEntityId &&
+  principal.authBindingId === actor.authBindingId &&
+  principal.authContextRef === Redacted.value(actor.authContextRef) &&
+  principal.impersonatedByPrincipalId === undefined;
+
+const fixtureSigningFailure = () =>
+  new PackagedOwnerStartupError({ reason: 'Qualified Storefront fixture issuance failed closed' });
+
+/**
+ * The Storefront precondition is owned by this fixture, not a production authentication producer.
+ * Every other identity field comes from fresh actual personal-key issuance and is checked unchanged.
+ */
+export const issueFixtureStorefrontGatewayAuthorization = Effect.fn(
+  'ServerOwnerRelayNative.issueFixtureStorefrontGatewayAuthorization',
+)(function* issueFixtureStorefrontGatewayAuthorization<Failure, Requirements>(
+  input: FixtureStorefrontGatewayInput<Failure, Requirements>,
+): Effect.fn.Return<
+  FixtureStorefrontGatewayAuthorization,
+  Failure | PackagedOwnerStartupError,
+  Requirements | GatewayIssuer
+> {
+  const originalAuthorization = yield* input.personalProof;
+  const token = /^Bearer (?<token>[^\s]+)$/iu.exec(Redacted.value(originalAuthorization))?.groups?.['token'];
+  if (token === undefined) {
+    return yield* fixtureSigningFailure();
+  }
+  const verified = yield* Effect.tryPromise({
+    catch: fixtureSigningFailure,
+    try: async () =>
+      await jwtVerify(token, input.gateway.publicKey, {
+        algorithms: ['EdDSA'],
+        audience: CUSTOMER_CONTEXT_APP_ID,
+        issuer: input.gateway.issuer,
+      }),
+  });
+  const source = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)(verified.payload).pipe(
+    Effect.mapError(fixtureSigningFailure),
+  );
+  if (
+    !matchesFixtureStorefrontActor(source.principal, input.actor) ||
+    source.principal.trustedStorefrontId !== undefined ||
+    source.sub !== input.actor.principalId ||
+    source.compositionRevision !== input.compositionRevision ||
+    source.targetBuildMarker !== input.buildMarker
+  ) {
+    return yield* fixtureSigningFailure();
+  }
+  const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
+    onExcessProperty: 'error',
+  })({ ...source.principal, trustedStorefrontId: input.storefrontId }).pipe(Effect.mapError(fixtureSigningFailure));
+  const issuer = yield* GatewayIssuer;
+  const issued = yield* issuer
+    .issue({
+      audience: CUSTOMER_CONTEXT_APP_ID,
+      compositionRevision: input.compositionRevision,
+      principal,
+      sourceValidity: { expiresAt: source.exp, issuedAt: source.iat },
+    })
+    .pipe(Effect.mapError(fixtureSigningFailure));
+  const signed = yield* Effect.tryPromise({
+    catch: fixtureSigningFailure,
+    try: async () =>
+      await jwtVerify(issued.token, input.gateway.publicKey, {
+        algorithms: ['EdDSA'],
+        audience: CUSTOMER_CONTEXT_APP_ID,
+        issuer: input.gateway.issuer,
+      }),
+  });
+  const claims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)(signed.payload).pipe(
+    Effect.mapError(fixtureSigningFailure),
+  );
+  if (
+    !Schema.toEquivalence(GatewayTrustedPrincipalContextSchema)(claims.principal, principal) ||
+    claims.sub !== source.sub ||
+    claims.jti === source.jti ||
+    claims.iat !== source.iat ||
+    claims.exp !== source.exp ||
+    claims.compositionRevision !== source.compositionRevision ||
+    claims.targetBuildMarker !== input.buildMarker ||
+    issued.compositionRevision !== source.compositionRevision ||
+    issued.expiresAt !== source.exp
+  ) {
+    return yield* fixtureSigningFailure();
+  }
+  return {
+    authorization: Redacted.make(`Bearer ${issued.token}`),
+    compositionRevision: claims.compositionRevision,
+    expiresAt: claims.exp,
+    fixtureTrust: 'OWNER_FIXTURE_TRUSTED_STOREFRONT_ONLY',
+    principal: claims.principal,
+    sourceJti: claims.jti,
+  };
+});
 
 export const allocateLoopbackPort = Effect.fn('ServerOwnerRelayNative.allocateLoopbackPort')(
   function* allocateLoopbackPort() {

@@ -1,10 +1,13 @@
-import { GatewayContextV2ClaimsSchema } from '@app/shared-contracts';
+import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   executeAttributeGuestRetailCustomerWithAuthorization,
   executeBindRetailPortalProfileWithAuthorization,
   executeAddSavedAddressWithAuthorization,
   executeUpdateSavedAddressWithAuthorization,
   executeEnsureRetailCustomerProfileWithAuthorization,
+  executeMarketBootstrapResolutionWithAuthorization,
 } from '@app/commerce-customer-context/api/client';
 import {
   issueApiKeyGatewayContext,
@@ -13,6 +16,8 @@ import {
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   ActiveApplicationCompositionSnapshotSchema,
+  ActiveApplicationCompositionConfigLive,
+  GatewayScopeGrantRegistrarLive,
   ApplicationCompositionAuthorityError,
   CoreSearchResourceRefSchema,
   toLegalEntityAccessObjectId,
@@ -43,6 +48,7 @@ import {
   PartyContactPointDetailAuthenticationProblemSchema,
 } from '@app/party-registry/api/client';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   deleteTestCoreOutbox,
   makeLiveOperationFixture,
@@ -54,7 +60,21 @@ import { NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { v1 } from '@authzed/authzed-node';
 import { getCookies } from 'better-auth/cookies';
-import { Brand, Config, Crypto, DateTime, Duration, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import {
+  Brand,
+  Clock,
+  Config,
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { Cookies, HttpBody, HttpClient } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
@@ -69,6 +89,12 @@ import {
 } from '../../../../scripts/active-application-composition.mts';
 import { startNativeHttpServer } from '../support/native-http-server.ts';
 
+import { GatewayIssuer, GatewayIssuerError, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
+import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
+import {
+  ShellInstalledModuleCatalog,
+  ShellInstalledModuleCatalogLive,
+} from '../../api/modules/installed-module-catalog.ts';
 import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user } from '../../api/auth/db/schema.ts';
@@ -91,6 +117,7 @@ import {
   loadPackagedRetailWorker,
   startPackagedRetailWorker,
   runRegisteredPostalFactoryProbe,
+  issueFixtureStorefrontGatewayAuthorization,
 } from '../support/server-owner-relay-native-fixture.ts';
 
 const PARTY_MODULE_KEY = 'party.registry';
@@ -886,6 +913,213 @@ const exerciseRegisteredPostalReads = Effect.fn('ServerOwnerRelayNative.exercise
       finalResolutionProven: false,
       mountedMissingTrustedStorefront: 2,
       originalProviderActorPreserved: true,
+    });
+    return yield* Effect.void;
+  },
+);
+
+/** Actual mounted two-provider Read; only the trusted Storefront is an explicit fixture precondition. */
+const fixtureSigningFailure = () =>
+  new PackagedOwnerStartupError({ reason: 'Qualified Storefront fixture live issuer assembly failed' });
+
+const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarketBootstrap')(
+  function* exerciseMarketBootstrap(input: {
+    readonly compositionRevision: string;
+    readonly compositionUrl: string;
+    readonly customerContext: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: Effect.Success<ReturnType<typeof makePackagedShellUserFixture>>;
+    readonly gateway: {
+      readonly issuer: string;
+      readonly privateJwk: Redacted.Redacted;
+      readonly publicKey: Awaited<ReturnType<typeof generateKeyPair>>['publicKey'];
+    };
+    readonly personalAuthBindingId: string;
+    readonly personalAuthContextRef: Redacted.Redacted;
+    readonly personalProof: ReturnType<typeof issueNativeApiKeyGatewayAuthorization>;
+    readonly serviceId: string;
+  }) {
+    const { core } = input.fixture;
+    const crypto = yield* Crypto.Crypto;
+    const storefrontId = 'qualified-native-market-bootstrap';
+    const personalAuthorization = yield* input.personalProof;
+    const observedTimeSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+    const originalProvider = yield* ConfigProvider.ConfigProvider;
+    const compositionProvider = ConfigProvider.fromUnknown({
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl,
+    }).pipe(ConfigProvider.orElse(originalProvider));
+    const catalogContext = yield* Layer.build(
+      ShellInstalledModuleCatalogLive.pipe(
+        Layer.provide(
+          ActiveApplicationCompositionConfigLive.pipe(Layer.provide(ActiveApplicationCompositionSourceLive)),
+        ),
+        Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, compositionProvider)),
+      ),
+    ).pipe(Effect.mapError(fixtureSigningFailure));
+    const catalog = Context.get(catalogContext, ShellInstalledModuleCatalog);
+    const issuerContext = yield* Layer.build(
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Effect.succeed(observedTimeSeconds),
+        generateJti: crypto.randomUUIDv4().pipe(
+          Effect.mapError(
+            () =>
+              new GatewayIssuerError({
+                code: 'gateway_issuer_unavailable',
+                reason: 'Fixture issuer JTI acquisition failed',
+                stage: 'signing',
+              }),
+          ),
+        ),
+        loadAdmission: catalog.load.pipe(
+          Effect.map(({ composition, contracts }) => ({
+            audiences: new Map([
+              [composition.shell.deployment.appId, composition.shell.deployment.buildMarker],
+              ...contracts.map(({ deployment }) => [deployment.appId, deployment.buildMarker] as const),
+            ]),
+            revision: composition.revision,
+          })),
+        ),
+        loadConfig: parseGatewayIssuerConfig({
+          ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
+          ONTOS_GATEWAY_PRIVATE_JWK: Redacted.value(input.gateway.privateJwk),
+        }),
+      }).pipe(Layer.provide(GatewayScopeGrantRegistrarLive)),
+    ).pipe(Effect.mapError(fixtureSigningFailure));
+    const proof = yield* issueFixtureStorefrontGatewayAuthorization({
+      actor: {
+        authBindingId: input.personalAuthBindingId,
+        authContextRef: input.personalAuthContextRef,
+        legalEntityId: core.legalEntityId,
+        principalId: core.manager.principalId,
+        tenantId: core.tenantId,
+      },
+      buildMarker: input.customerContext.compiled.buildMarker,
+      compositionRevision: input.compositionRevision,
+      gateway: input.gateway,
+      personalProof: Effect.succeed(personalAuthorization.authorization),
+      storefrontId,
+    }).pipe(Effect.provideService(GatewayIssuer, Context.get(issuerContext, GatewayIssuer)));
+    expect(proof.fixtureTrust).toBe('OWNER_FIXTURE_TRUSTED_STOREFRONT_ONLY');
+    expect(proof.principal.trustedStorefrontId).toBe(storefrontId);
+    expect(proof.principal.principalId === input.serviceId).toBe(false);
+    const before = yield* core.evidence(input.database);
+    const previous = new Set(before.accesses.map((row) => row.dataAccessEventId));
+    const existingExchanges = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findMany({
+      where: { sourceJti: proof.sourceJti },
+    });
+    expect(existingExchanges).toHaveLength(0);
+    const correlationId = yield* crypto.randomUUIDv4();
+    const response = yield* executeMarketBootstrapResolutionWithAuthorization(
+      {
+        channel: 'B2C',
+        storefrontRef: { appId: storefrontId, tenantId: core.tenantId },
+      },
+      Redacted.value(proof.authorization),
+      correlationId,
+      {
+        baseUrl: `${input.customerContext.origin}${input.customerContext.apiPrefix}`,
+        compositionRevision: input.compositionRevision,
+      },
+    );
+    expect(response.eligibleMarketResponse.outcome).toBe('ELIGIBLE_MARKET_TUPLES');
+    if (response.eligibleMarketResponse.outcome !== 'ELIGIBLE_MARKET_TUPLES') {
+      return yield* new PackagedOwnerStartupError({ reason: 'Actual Market eligibility was unavailable' });
+    }
+    const eligible = response.eligibleMarketResponse;
+    expect(eligible.tuples).toHaveLength(0);
+    expect(DateTime.toEpochMillis(eligible.effectiveAt)).toBe(DateTime.toEpochMillis(response.evaluatedAt));
+    expect(eligible.completenessEvidence.ownerRevision.length).toBeGreaterThan(0);
+    expect(eligible.completenessEvidence.scope).toEqual({
+      kind: 'EXACT_PREDICATE',
+      predicateRef: [
+        'market-eligibility:v1',
+        core.tenantId,
+        storefrontId,
+        'B2C',
+        DateTime.formatIso(response.evaluatedAt),
+        'all-sellers',
+        'guest-or-unrestricted',
+        'none',
+        'none',
+      ].join(':'),
+    });
+    expect(response.policyEvidence.status).toBe('NOT_EVALUATED_NO_ELIGIBLE_SELLER');
+    expect(response.policyEvidence.partitions).toHaveLength(0);
+    expect(DateTime.toEpochMillis(response.policyEvidence.evaluatedAt)).toBe(
+      DateTime.toEpochMillis(response.evaluatedAt),
+    );
+    expect(response.marketResolution.outcome).toBe('MARKET_CONFIGURATION_MISSING_OR_INCONSISTENT');
+    const after = yield* core.evidence(input.database);
+    const reads = after.accesses.filter((row) => !previous.has(row.dataAccessEventId));
+    const providerKeys = [
+      'commerce.market-catalog.api.eligible-market-tuples',
+      'commerce.market-catalog.api.resolve-commerce-market',
+    ];
+    expect(reads).toHaveLength(3);
+    const providers = reads.filter((row) => row.servingModuleKey === 'commerce.market-catalog');
+    expect(providers).toHaveLength(2);
+    expect(providers.map((row) => row.evidencePolicyKey).toSorted()).toEqual(
+      providerKeys.map((key) => `${key}.evidence.v1`).toSorted(),
+    );
+    expect(reads.filter((row) => row.servingModuleKey === 'commerce.customer-context')).toHaveLength(1);
+    for (const read of reads) {
+      expect(read.tenantId).toBe(core.tenantId);
+      expect(read.principalId).toBe(core.manager.principalId);
+      expect(read.principalId === input.serviceId).toBe(false);
+      expect(read.authBindingId).toBe(input.personalAuthBindingId);
+      expect(read.authContextRef === Redacted.value(input.personalAuthContextRef)).toBe(true);
+      expect(read.authMethod).toBe('api_key');
+      expect(read.legalEntityId).toBe(core.legalEntityId);
+      expect(read.outcome).toBe('allowed');
+      expect(read.outcomeCode).toBe('read_allowed');
+    }
+    const exchanges = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findMany({
+      where: { sourceJti: proof.sourceJti },
+    });
+    expect(exchanges).toHaveLength(2);
+    expect(new Set(exchanges.map((row) => row.exchangeId)).size).toBe(2);
+    const expectedFingerprints = yield* Effect.all(
+      providerKeys.map((operationKey) =>
+        Schema.encodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              audience: Schema.String,
+              compositionRevision: Schema.String,
+              correlationId: Schema.String.pipe(Schema.brand('GatewayRelayCorrelationId')),
+              operationKey: Schema.String.pipe(Schema.brand('GatewayRelayOperationKey')),
+              principal: GatewayTrustedPrincipalContextSchema,
+              sourceAppId: Schema.String.pipe(Schema.brand('GatewayRelaySourceAppId')),
+              sourceBuildMarker: Schema.String,
+            }),
+          ),
+        )({
+          audience: 'commerce-market-catalog',
+          compositionRevision: input.compositionRevision,
+          correlationId,
+          operationKey,
+          principal: proof.principal,
+          sourceAppId: 'commerce-customer-context',
+          sourceBuildMarker: input.customerContext.compiled.buildMarker,
+        }).pipe(Effect.map((encoded) => bytesToHex(sha256(utf8ToBytes(encoded))))),
+      ),
+    );
+    expect(new Set(expectedFingerprints).size).toBe(2);
+    expect(exchanges.map((row) => row.requestFingerprint).toSorted()).toEqual(expectedFingerprints.toSorted());
+    for (const exchange of exchanges) {
+      expect(exchange.sourceJti).toBe(proof.sourceJti);
+      expect(exchange.expiresAt.getTime()).toBeGreaterThanOrEqual(proof.expiresAt * 1000);
+    }
+    yield* Effect.logInfo('Actual Market Bootstrap invoked both governed Market providers', {
+      compositionRevision: input.compositionRevision,
+      currentEmptyEligibilityProven: true,
+      exactSourceExchangeFingerprints: 2,
+      fixtureTrust: proof.fixtureTrust,
+      marketResolvedProven: false,
+      originalActorPreserved: true,
+      providerReadCount: providers.length,
+      targetJtiValues: 'NOT_DIRECTLY_OBSERVED',
+      targetPrivateNonceRows: 'NOT_DIRECTLY_OBSERVED',
+      trustedStorefrontProductionProducerProven: false,
     });
     return yield* Effect.void;
   },
@@ -3944,7 +4178,7 @@ it.live(
                 'party.registry.add-contact-point',
               ],
               gatewayMaterial,
-              ['party.registry', 'commerce.customer-context'],
+              ['party.registry', 'commerce.customer-context', 'commerce.market-catalog'],
             );
             yield* Effect.logInfo('Native Retail setup phase', { phase: 'initial-shell-fixture-returned' });
             const cleanupConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -3993,6 +4227,13 @@ it.live(
               relativeDirectory: '../../verticals/commerce-customer-context',
             });
             children.push(customerContext.child);
+            const market = yield* startPackagedApplication({
+              appId: 'commerce-market-catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/commerce-market-catalog',
+            });
+            children.push(market.child);
             const packagedWorker = yield* loadPackagedRetailWorker({
               expected: customerContext.compiled,
               relativeDirectory: '../../.zerops/runtime/commerce-customer-context-worker',
@@ -4032,6 +4273,12 @@ it.live(
                   appId: 'commerce-customer-context',
                   backend: { baseUrl: `${customerContext.origin}/`, transport: 'node-http' },
                   contract: yield* observe(`${customerContext.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                },
+                {
+                  appId: 'commerce-market-catalog',
+                  backend: { baseUrl: `${market.origin}/`, transport: 'node-http' },
+                  contract: yield* observe(`${market.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                  federationManifest: yield* observe(`${market.origin}/mf-manifest.json`),
                 },
               ],
               observedAt: yield* DateTime.now,
@@ -4113,7 +4360,7 @@ it.live(
               appId: 'shell-super-app',
               buildMarker: shell.compiled.buildMarker,
             });
-            expect(current.composition.modules).toHaveLength(2);
+            expect(current.composition.modules).toHaveLength(3);
             expect(current.composition.modules).toEqual(
               expect.arrayContaining([
                 expect.objectContaining({
@@ -4125,6 +4372,11 @@ it.live(
                   backend: { baseUrl: `${customerContext.origin}/`, transport: 'node-http' },
                   deployment: { appId: 'commerce-customer-context', buildMarker: customerContext.compiled.buildMarker },
                   federation: expect.objectContaining({ execution: 'server' }),
+                }),
+                expect.objectContaining({
+                  backend: { baseUrl: `${market.origin}/`, transport: 'node-http' },
+                  deployment: { appId: 'commerce-market-catalog', buildMarker: market.compiled.buildMarker },
+                  federation: expect.objectContaining({ execution: 'browser' }),
                 }),
               ]),
             );
@@ -5199,6 +5451,35 @@ it.live(
               },
             );
             yield* exerciseSavedAddresses();
+
+            yield* grantNativeCatalogModuleAccess(fixture.core, 'commerce.market-catalog');
+            yield* exerciseMarketBootstrap({
+              compositionRevision: approved.composition.revision,
+              compositionUrl,
+              customerContext: enrolledCustomerContext,
+              database,
+              fixture,
+              gateway: {
+                issuer: fixture.origin,
+                privateJwk: gatewayMaterial.privateJwk,
+                publicKey: signingKeyPair.publicKey,
+              },
+              personalAuthBindingId: personalKey.authBindingId,
+              personalAuthContextRef,
+              personalProof: issueNativeApiKeyGatewayAuthorization({
+                apiKey: personalKey.secret,
+                audience: 'commerce-customer-context',
+                authBindingId: personalKey.authBindingId,
+                authContextRef: personalAuthContextRef,
+                buildMarker: enrolledCustomerContext.compiled.buildMarker,
+                legalEntityId: fixture.core.legalEntityId,
+                origin: fixture.origin,
+                principalId: fixture.core.manager.principalId,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              }),
+              serviceId,
+            });
 
             return yield* Effect.void;
           }),
