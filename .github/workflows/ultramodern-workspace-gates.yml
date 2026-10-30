@@ -183,10 +183,10 @@ jobs:
               pnpm typecheck:lint-rules
               pnpm test:lint-rules
               pnpm api:check:ontos
+          # `pnpm test:deployment-impact` runs the module entrypoint boundary check first.
           - name: Repository Tooling, Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests
             commands: |
               pnpm test:scripts
-              pnpm module-entrypoints:check
               pnpm test:deployment-impact
               pnpm test:generation
           # The root `pnpm test:unit` (every package's test:unit, then every package's test:component) in
