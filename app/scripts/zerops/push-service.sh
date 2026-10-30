@@ -18,11 +18,14 @@ auth=(-H "Authorization: Bearer $ZEROPS_TOKEN")
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/zerops-push.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
-# POSIX (pax) headers like zcli's Go archive/tar; Zerops rejects the GNU format. node_modules is never shipped.
+# POSIX (pax) headers like zcli's Go archive/tar; Zerops rejects the GNU format. Installed node_modules are never
+# shipped, but the two tracked files of the root node_modules are: a missing tracked file leaves the build's Git tree
+# dirty, and every release identity then reads as `workspace`. Patterns are anchored at the member name, and `*`
+# spans directories.
 # Member names carry no './' prefix, as zcli writes them; Zerops cannot identify an archive of './…' members.
 mapfile -t entries < <(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
-tar --format=pax --exclude='node_modules' --exclude='.output' --exclude='*.map' --exclude="${PUSH_EXCLUDE:-}" \
-  -czf "$work/package.tar.gz" -- "${entries[@]}"
+tar --format=pax --anchored --exclude='*/node_modules' --exclude='*/.output' --exclude='*.map' \
+  --exclude="${PUSH_EXCLUDE:-}" -czf "$work/package.tar.gz" -- "${entries[@]}"
 echo "package: $(du -h "$work/package.tar.gz" | cut -f1)"
 
 # An upload that took longer than the limit is assumed truncated and goes again to a fresh app version.

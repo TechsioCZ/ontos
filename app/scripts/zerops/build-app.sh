@@ -90,7 +90,7 @@ build_unit() {
   fi
   if (cd "$dir" && pnpm run build && node "$root/scripts/zerops/owner-entry.mts" "$dir") >"$log_dir/$unit.log" 2>&1; then
     printf '%s\n' "$digest" >"$dir/dist/.zerops-build-digest"
-    rm -rf "$unit_cache/$unit" && cp -a "$dir/dist" "$unit_cache/$unit"
+    rm -rf "${unit_cache:?}/$unit" && cp -a "$dir/dist" "$unit_cache/$unit"
     echo "built $unit in $(($(date +%s) - started))s"
   else
     tail -60 "$log_dir/$unit.log" >&2
@@ -128,6 +128,9 @@ if [ "$units" = "$all_units" ]; then
     console.log(JSON.stringify(Object.fromEntries(hosted.map((id) => [id, revision(id)]))));
   ')"
   started="$(date +%s)"
+  # The host bundle names this checkout's revision only from a clean tree; show what makes it dirty.
+  dirty="$(git status --porcelain --untracked-files=all | head -20)"
+  [ -z "$dirty" ] || printf 'the Git tree is not clean, so the host build reads as workspace:\n%s\n' "$dirty" >&2
   ONTOS_OUTBOX_HOST_OWNER_REVISIONS="$revisions" ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app outbox-worker-host --package app --package-dir . --worker >"$log_dir/outbox-worker-host.log" 2>&1 ||
     { tail -60 "$log_dir/outbox-worker-host.log" >&2; echo 'outbox worker host build failed' >&2; exit 1; }
