@@ -54,7 +54,6 @@ import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/appl
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
   ARTIFACT_FETCH_TIMEOUT,
-  decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
@@ -433,52 +432,59 @@ const hostApplication = <Failure, Requirements>(
 // ---------------------------------------------------------------------------------------------------------------
 // Composition
 
+interface ApprovedCompositionObservation {
+  readonly encoded: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}
+
 /** The candidate first, then the previously committed value, so either side of the authority commit matches. */
 const withLatestFirst =
-  (encoded: string) =>
-  (current: readonly string[]): readonly string[] =>
-    [encoded, ...current.filter((value) => value !== encoded)].slice(0, 2);
+  (observation: ApprovedCompositionObservation) =>
+  (current: readonly ApprovedCompositionObservation[]): readonly ApprovedCompositionObservation[] =>
+    [observation, ...current.filter(({ encoded }) => encoded !== observation.encoded)].slice(0, 2);
+
+interface CompositionPointerAuthority {
+  readonly phase: string;
+  readonly revision: string;
+  readonly validUntilMillis: number;
+}
 
 /**
  * The one approved snapshot this host serves. A value is readable only while the PostgreSQL authority names its
  * revision and lease, so the loopback source never serves a revision the database no longer admits.
  */
-const makeCompositionPointer = Effect.gen(function* makePointer() {
-  const database = yield* CoreDatabase;
-  const journal = yield* Ref.make<readonly string[]>([]);
-  const load = Effect.gen(function* loadApprovedPointer() {
-    const [authority] = yield* database.executor.execute<{
-      readonly phase: string;
-      readonly revision: string;
-      readonly validUntilMillis: number;
-    }>(
-      sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
-      'objects',
-    );
-    if (authority === undefined || (authority.phase !== 'active' && authority.phase !== 'draining')) {
-      return Option.none<string>();
-    }
-    for (const encoded of yield* Ref.get(journal)) {
-      const approved = yield* decodeActiveApplicationCompositionSnapshot(encoded).pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.option,
-      );
-      if (
-        Option.isSome(approved) &&
-        approved.value.composition.revision === authority.revision &&
-        DateTime.toEpochMillis(approved.value.validUntil) === authority.validUntilMillis
-      ) {
-        return Option.some(encoded);
+export const makeCompositionPointer = <Failure, Requirements>(
+  readAuthority: Effect.Effect<readonly CompositionPointerAuthority[], Failure, Requirements>,
+) =>
+  Effect.gen(function* makePointer() {
+    const journal = yield* Ref.make<readonly ApprovedCompositionObservation[]>([]);
+    const load = Effect.gen(function* loadApprovedPointer() {
+      // Mutable authority is always re-read. Only immutable content validation moves to publication.
+      const [authority] = yield* readAuthority;
+      if (authority === undefined || (authority.phase !== 'active' && authority.phase !== 'draining')) {
+        return Option.none<string>();
       }
-    }
-    return Option.none<string>();
+      for (const { encoded, snapshot } of yield* Ref.get(journal)) {
+        const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(Effect.option);
+        if (
+          Option.isSome(approved) &&
+          approved.value.composition.revision === authority.revision &&
+          DateTime.toEpochMillis(approved.value.validUntil) === authority.validUntilMillis
+        ) {
+          return Option.some(encoded);
+        }
+      }
+      return Option.none<string>();
+    });
+    const publish = Effect.fn('AppHost.publishCompositionPointer')(function* publishPointer(
+      snapshot: ActiveApplicationCompositionSnapshot,
+    ) {
+      const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
+      yield* Ref.update(journal, withLatestFirst({ encoded, snapshot: approved }));
+    });
+    return { load, publish };
   });
-  const publish = (snapshot: ActiveApplicationCompositionSnapshot) =>
-    encodeActiveApplicationCompositionSnapshot(snapshot).pipe(
-      Effect.flatMap((encoded) => Ref.update(journal, withLatestFirst(encoded))),
-    );
-  return { load, publish };
-});
 
 const publicArtifactUrl = (owner: HostedUnit, artifactPath: string, publicOrigin: string) =>
   new URL(owner.id === SHELL_ID ? artifactPath : `${MODULE_ASSET_PREFIX}${owner.id}${artifactPath}`, publicOrigin).href;
@@ -541,7 +547,17 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports);
   const node = process.execPath;
   const published = yield* Ref.make(false);
-  const pointer = yield* makeCompositionPointer;
+  const database = yield* CoreDatabase;
+  const pointer = yield* makeCompositionPointer(
+    database.executor.execute<{
+      readonly phase: string;
+      readonly revision: string;
+      readonly validUntilMillis: number;
+    }>(
+      sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
+      'objects',
+    ),
+  );
 
   yield* HttpServer.serveEffect(hostApplication(ports, published, pointer.load));
 
