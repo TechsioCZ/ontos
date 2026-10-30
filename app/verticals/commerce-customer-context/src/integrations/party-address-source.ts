@@ -11,7 +11,7 @@ import {
   PartyContactPointDetailPolicyProblemSchema,
   executePartyContactPointDetailWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Context, Redacted, Effect, Schema } from 'effect';
+import { Context, Redacted, Effect, Function as EffectFunction, Schema } from 'effect';
 
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
@@ -36,7 +36,7 @@ type PartyContactPointDetailExecutor = (
 // The default carries no credentials; scope-bound factories acquire their own relay proof.
 export const PartyAddressSourceExecutor = Context.Reference<PartyContactPointDetailExecutor | undefined>(
   '@app/commerce-customer-context/PartyAddressSourceExecutor',
-  { defaultValue: () => undefined },
+  { defaultValue: EffectFunction.constUndefined },
 );
 
 type PartyContactPointDetailResponse = Effect.Success<ReturnType<PartyContactPointDetailExecutor>>;
@@ -175,7 +175,7 @@ export const partyBackedAddressSourceValidator =
       return Effect.void;
     }
     return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
-      Effect.flatMap((client) =>
+      Effect.flatMap((client: PartyContactPointDetailExecutor | undefined) =>
         client === undefined
           ? Effect.fail(new GatewayRelaySourceError({ reason: 'An explicit Party owner transport is required' }))
           : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
@@ -236,7 +236,7 @@ export const partyBackedPostalAddressResolver =
     }
     const { origin } = address;
     return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
-      Effect.flatMap((client) =>
+      Effect.flatMap((client: PartyContactPointDetailExecutor | undefined) =>
         client === undefined
           ? Effect.fail(new GatewayRelaySourceError({ reason: 'An explicit Party owner transport is required' }))
           : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
