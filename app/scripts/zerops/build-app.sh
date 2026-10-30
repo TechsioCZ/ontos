@@ -76,18 +76,23 @@ unit_digest() {
   } | sha256sum | cut -d' ' -f1
 }
 
-build_unit() {
+# Restores a unit's cached build when its inputs are unchanged; succeeds only when the unit can be kept.
+keep_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
-  started="$(date +%s)"
-  digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 1; }
+  digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
   if [ "$(cat "$unit_cache/$unit/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
     rm -rf "$dir/dist" && cp -a "$unit_cache/$unit" "$dir/dist"
   fi
-  if [ -f "$dir/$entry" ] && [ "$(cat "$dir/dist/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
-    echo "kept $unit (inputs unchanged)"
-    return 0
-  fi
+  [ -f "$dir/$entry" ] && [ "$(cat "$dir/dist/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]
+}
+
+build_unit() {
+  started="$(date +%s)"
+  status=0
+  keep_unit "$1" || status=$?
+  [ "$status" -eq 0 ] && return 0
+  [ "$status" -eq 1 ] || return 1
   if (cd "$dir" && pnpm run build && node "$root/scripts/zerops/owner-entry.mts" "$dir") >"$log_dir/$unit.log" 2>&1; then
     printf '%s\n' "$digest" >"$dir/dist/.zerops-build-digest"
     rm -rf "${unit_cache:?}/$unit" && cp -a "$dir/dist" "$unit_cache/$unit"
@@ -104,18 +109,31 @@ if [ "${1:-}" = --unit ]; then
   exit $?
 fi
 
-# The shared contract and design-token declarations every unit's declaration build references (as `pnpm build`).
-for project in packages/shared-contracts packages/shared-design-tokens; do
-  pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
+started_all="$(date +%s)"
+pending=''
+for unit in $units; do
+  status=0
+  keep_unit "$unit" || status=$?
+  case "$status" in
+    0) echo "kept $unit (inputs unchanged)" ;;
+    1) pending="$pending $unit" ;;
+    *) exit 1 ;;
+  esac
 done
 
-started_all="$(date +%s)"
-# xargs bounds the parallel builds (a POSIX shell cannot count its own background jobs from a subshell).
-if ! printf '%s\n' $units | xargs -P "$jobs_limit" -n 1 sh "$root/scripts/zerops/build-app.sh" --unit; then
-  echo "one or more unit builds failed" >&2
-  exit 1
+if [ -n "$pending" ]; then
+  # The shared contract and design-token declarations every unit's declaration build references (as `pnpm build`).
+  for project in packages/shared-contracts packages/shared-design-tokens; do
+    pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
+  done
+  # xargs bounds the parallel builds (a POSIX shell cannot count its own background jobs from a subshell).
+  # shellcheck disable=SC2086
+  if ! printf '%s\n' $pending | xargs -P "$jobs_limit" -n 1 sh "$root/scripts/zerops/build-app.sh" --unit; then
+    echo "one or more unit builds failed" >&2
+    exit 1
+  fi
 fi
-echo "built $(echo "$units" | wc -w | tr -d ' ') units in $(($(date +%s) - started_all))s"
+echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(date +%s) - started_all))s"
 
 # The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
 # with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
