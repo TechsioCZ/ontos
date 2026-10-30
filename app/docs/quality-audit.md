@@ -98,6 +98,23 @@ for local severity changes under this calibration.
 
 Rollout measurements, calibration evidence, and follow-up scope belong to [PR #492](https://github.com/TechsioCZ/ontos/pull/492).
 
+## Tests that block merges
+
+A blocking test checks observable behavior or an explicit, important restriction: auth, tenant
+isolation, database identity, API contracts, release-asset safety, or a real Node/Cloudflare build.
+It must pass after a harmless refactor and after an intended app policy change, such as new browser
+targets or checker settings.
+
+- Do not compare an app's whole evaluated config or output with a generated starter. Apps own their
+  policy; test the one setting that matters through the code that applies it.
+- Do not match source text, helper names, or option order to stand in for behavior. Call the code with
+  an input and check the result. A text check is acceptable for a dependency boundary or a forbidden
+  binding that a harmless refactor cannot trip.
+- Delete a check that has no independent useful failure. Add a replacement only when the deletion
+  leaves an important behavior untested.
+- When a test blocks a legitimate change, fix or delete that test. Do not add an exception list to it,
+  and do not make the gate advisory.
+
 An unused export identifies an unnecessary exported name or forwarding surface; it does not establish that its declaration or initializer can be deleted. Preserve locally used implementations and prove the intended public boundary before changing an export. Knip duplicate-export groups concern aliases and remain separate from JSCPD/Fallow body-clone observations.
 
 ADR-0016 remains binding throughout. A clone between MicroVerticals never permits importing another deployment's private registration, handler, repository, worker, or business behavior. Repeat deliberate domain structure when ownership or type semantics require it and document the reason.
