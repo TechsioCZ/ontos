@@ -331,7 +331,8 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       cwd: appRoot,
       env: {
         BETTER_AUTH_SECRET: secret,
-        BETTER_AUTH_URL: 'http://shell-native.localhost',
+        // The Shell's MCP resource accepts only HTTPS or a loopback development origin.
+        BETTER_AUTH_URL: 'http://localhost',
         DATABASE_ADMIN_URL: Redacted.value(authRuntime.adminConnectionString),
         DATABASE_URL: Redacted.value(authRuntime.runtimeConnectionString),
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
