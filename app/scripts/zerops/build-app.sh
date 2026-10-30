@@ -7,7 +7,7 @@
 #   ONTOS_PUBLIC_ORIGIN=https://… sh scripts/zerops/build-app.sh [unit ...]
 #
 # Browser assets are served by the host under /_m/<appId>/, so every unit's public URL is that prefix on the one
-# public origin. Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs). Run from app/.
+# public origin. Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs, git-ignored). Run from app/.
 #
 # A unit whose inputs did not change keeps its previous build: dist/.zerops-build-digest records the digest of its
 # committed inputs (its own directory, every workspace vertical it depends on, packages/, the root build
