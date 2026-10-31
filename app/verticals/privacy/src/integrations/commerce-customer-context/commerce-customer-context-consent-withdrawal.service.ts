@@ -14,8 +14,8 @@ import type { ConsentSelfServiceAuthorityPorts } from '../../../shared/domain/pr
 import { ConsentScopeSchema } from '../../../shared/domain/privacy-consent-scope.ts';
 import type { ConsentScope } from '../../../shared/domain/privacy-consent-scope.ts';
 import type { PrivacySubjectOwnerEvidence, PrivacySubjectRecord } from '../../../shared/domain/privacy-subject.ts';
-import { consentSelfServiceAuthorityUnavailable } from '../../actions/consent-self-service.action.ts';
-import type { ConsentSelfServiceAuthorityScope } from '../../actions/consent-self-service.action.ts';
+import { consentSelfServiceAuthorityUnavailable } from '../../actions/consent-self-service-authority.ts';
+import type { ConsentSelfServiceAuthorityScope } from '../../actions/consent-self-service-authority.ts';
 import { PrivacySubjectPartyOwner } from '../../persistence/privacy-subject-party-owner.ts';
 
 // These operations use the native client's default decoded-only response mode.
@@ -283,6 +283,9 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
         const { scope } = input;
         const client = Effect.gen(function* freshOwnerClient() {
           const transport = yield* acquire(scope);
+          if (input.compositionRevision !== undefined && transport.compositionRevision !== input.compositionRevision) {
+            return yield* unavailable();
+          }
           return yield* makeGovernedEffectBffClient(
             {
               api: commerceCustomerContextApi,
@@ -346,7 +349,9 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
         });
         const observeInitialSources = Effect.fn('ConsentProfileAuthority.initialSources')(
           function* observeInitialSources(subject: Subject, profileId: string) {
-            const party = yield* partyOwner.resolve(subject.partyRef, scope, false).pipe(Effect.mapError(unavailable));
+            const party = yield* partyOwner
+              .resolve(subject.partyRef, scope, false, input.compositionRevision)
+              .pipe(Effect.mapError(unavailable));
             return yield* observeProfile(subject, profileId).pipe(Effect.map((profile) => ({ party, profile })));
           },
         );
@@ -356,7 +361,7 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
           requested: ConsentScope,
         ) {
           const binding = yield* observeBinding(principal);
-          const current = yield* partyOwner.resolve(subject.partyRef, scope, false).pipe(
+          const current = yield* partyOwner.resolve(subject.partyRef, scope, false, input.compositionRevision).pipe(
             Effect.mapError(unavailable),
             Effect.map((party) => ({ binding, party })),
           );
@@ -415,6 +420,7 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
             if (bindingFreshness === undefined || permissionFreshness === undefined) {
               return yield* unavailable();
             }
+            input.observePartyEvidence?.(final.party);
             return yield* Schema.decodeUnknownEffect(TrustedPortalConsentAuthorityFactSchema)({
               actorPrincipalRef: principalRef,
               authorizedScope: retained.decision.scope,

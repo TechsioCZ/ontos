@@ -1,5 +1,6 @@
+import { consentSelfServiceAction, handleConsentSelfService } from '../../src/actions/consent-self-service.action.ts';
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Clock, DateTime, Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -15,21 +16,30 @@ import type {
   ConsentSelfServiceAuthorityPorts,
   TrustedOperationConsentAuthorityFact,
   TrustedPortalConsentAuthorityFact,
+  TrustedSupportConsentAuthorityFact,
 } from '../../shared/domain/privacy-consent-self-service.ts';
 import type { ConsentScope } from '../../shared/domain/privacy-consent-scope.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import {
   ConsentSelfServiceAuthority,
-  consentSelfServiceAction,
   consentSelfServiceAuthorityForScope,
   consentSelfServiceAuthorityUnavailable,
-  handleConsentSelfService,
-} from '../../src/actions/consent-self-service.action.ts';
+} from '../../src/actions/consent-self-service-authority.ts';
 import type {
   ConsentSelfServiceAuthorityService,
   ConsentSelfServiceServices,
-} from '../../src/actions/consent-self-service.action.ts';
+} from '../../src/actions/consent-self-service-authority.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
+import {
+  consentSelfServicePreparationScopeMatches,
+  checkPreparedConsentAuthorityObservation,
+  loadConsentSelfServiceSnapshot,
+  observeConsentSelfServicePreparation,
+  preparedConsentSelfServicePorts,
+  preparedConsentSelfServiceServices,
+} from '../../src/services/consent-self-service-preparation.ts';
+import { PrivacySubjectRecordSchema, PrivacySubjectOwnerEvidenceSchema } from '../../shared/domain/privacy-subject.ts';
+import type { ConsentSelfServicePayload } from '../../shared/actions/consent-self-service.ts';
 
 const tenantId = '00000000-0000-4000-8000-000000000101';
 const principalId = '00000000-0000-4000-8000-000000000102';
@@ -214,6 +224,7 @@ const contextFor = (
 const portsFor = (facts: {
   readonly operation?: TrustedOperationConsentAuthorityFact;
   readonly portal?: TrustedPortalConsentAuthorityFact;
+  readonly support?: TrustedSupportConsentAuthorityFact;
 }): ConsentSelfServiceAuthorityPorts => ({
   resolveCurrentRetailPortalProfileBinding: () =>
     facts.portal === undefined
@@ -225,12 +236,14 @@ const portsFor = (facts: {
         )
       : Effect.succeed(facts.portal),
   resolveSupportAuthority: () =>
-    Effect.fail(
-      new ConsentSelfServiceAuthorizationError({
-        code: 'AUTHORITY_UNAVAILABLE',
-        reason: 'Support authority unavailable',
-      }),
-    ),
+    facts.support === undefined
+      ? Effect.fail(
+          new ConsentSelfServiceAuthorizationError({
+            code: 'AUTHORITY_UNAVAILABLE',
+            reason: 'Support authority unavailable',
+          }),
+        )
+      : Effect.succeed(facts.support),
   verifyOperationCredential: () =>
     facts.operation === undefined
       ? Effect.fail(
@@ -242,7 +255,376 @@ const portsFor = (facts: {
       : Effect.succeed(facts.operation),
 });
 
+const preparedFixture = Effect.fn('ConsentSelfServiceUnit.preparedFixture')(function* preparedFixture(
+  request: ConsentSelfServicePayload = operationRequest,
+  owner: ConsentSelfServiceAuthorityService = authority(portsFor({ operation: operationFact })),
+  writeDelay = 0,
+) {
+  const capturedRequest = structuredClone(request);
+  const recorded: ConsentDecision[] = [];
+  const context = contextFor({ authority: owner }, recorded);
+  const purposeServices = makeConsentDecisionServices(recorded);
+  const at = DateTime.formatIso(yield* DateTime.now);
+  const subject = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+    createdAt: at,
+    subject: {
+      kind: 'DATA_SUBJECT',
+      partyRef: {
+        moduleId: 'party.registry',
+        resourceId: '00000000-0000-4000-8000-000000000109',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+    },
+    subjectRef,
+    updatedAt: at,
+  });
+  let subjectReads = 0;
+  const repositories = {
+    operations: {
+      listSubjects: () =>
+        Effect.sync(() => {
+          subjectReads += 1;
+          return [subject];
+        }),
+      readCurrentConsent: () => Effect.succeed({ outcome: 'ABSENT' as const }),
+      recordConsentDecision: (...args: Parameters<typeof purposeServices.recordConsentDecision>) =>
+        purposeServices.recordConsentDecision(...args).pipe(Effect.tap(() => TestClock.adjust(writeDelay))),
+    },
+    purposes: purposeServices,
+  };
+  const deadline = (yield* Clock.currentTimeMillis) + 30_000;
+  const snapshot = yield* loadConsentSelfServiceSnapshot(capturedRequest, context, repositories);
+  const prepared = yield* observeConsentSelfServicePreparation({
+    context: {
+      actionInvocationId,
+      compositionRevision: context.compositionRevision,
+      scope: context.scope,
+    },
+    deadline,
+    payload: capturedRequest,
+    snapshot,
+  }).pipe(Effect.provideService(ConsentSelfServiceAuthority, owner));
+  return { context, prepared, recorded, repositories, subject, subjectReads: () => subjectReads };
+});
+
 describe('Consent self-service governed Action', () => {
+  it.effect(
+    'uses an exclusive thirty-second deadline for profile and support facts, including a persistence wait',
+    () =>
+      Effect.gen(function* preparedCurrentnessDeadline() {
+        const supportRequest = Schema.decodeUnknownSync(ConsentSelfServicePayloadSchema)({
+          ...portalRequest,
+          path: {
+            kind: 'SUPPORT_ASSISTED',
+            operation: portalPath.operation,
+            operationRef: portalPath.operationRef,
+            representationRef: 'representation:unit',
+            requestRef: 'request:support',
+            scopeRef: consentScope.scopeRef,
+            subjectRef,
+            verificationRef: 'verification:unit',
+          },
+        });
+        const support: TrustedSupportConsentAuthorityFact = {
+          actorPrincipalRef: { principalId, tenantId },
+          authorizedScope: consentScope,
+          evidenceRefs: ['support:actual-unit-authority'],
+          kind: 'SUPPORT_ASSISTED',
+          operation: portalPath.operation,
+          operationRef: portalPath.operationRef,
+          representationRef: 'representation:unit',
+          representationStatus: 'CURRENT',
+          scopeRef: consentScope.scopeRef,
+          status: 'CURRENT',
+          subjectRef,
+          verificationRef: 'verification:unit',
+          verificationStatus: 'CURRENT',
+        };
+        for (const selected of [
+          { owner: authority(portsFor({ portal: portalFact })), request: portalRequest },
+          { owner: authority(portsFor({ support })), request: supportRequest },
+        ]) {
+          const at = Date.parse('2026-09-15T10:00:00.000Z');
+          yield* TestClock.setTime(at);
+          const before = yield* preparedFixture(selected.request, selected.owner);
+          yield* TestClock.adjust(29_999);
+          yield* checkPreparedConsentAuthorityObservation(before.prepared);
+          yield* TestClock.adjust(1);
+          expect((yield* checkPreparedConsentAuthorityObservation(before.prepared).pipe(Effect.flip)).code).toBe(
+            'privacy_operation_persistence_unavailable',
+          );
+          expect(before.recorded).toHaveLength(0);
+          yield* TestClock.setTime(at);
+          const during = yield* preparedFixture(selected.request, selected.owner, 30_000);
+          const error = yield* handleConsentSelfService(selected.request, {
+            ...during.context,
+            services: preparedConsentSelfServiceServices(during.prepared, during.repositories),
+          }).pipe(Effect.flip);
+          expect(error.code).toBe('privacy_operation_persistence_unavailable');
+          expect(during.recorded).toHaveLength(1);
+        }
+      }),
+  );
+
+  it.effect('copies selectors and owner facts instead of retaining mutable caller or provider references', () =>
+    Effect.gen(function* immutablePreparedSelectors() {
+      const request = structuredClone(operationRequest);
+      const fact = structuredClone(operationFact);
+      const owner: ConsentSelfServiceAuthorityService = {
+        ports: {
+          ...consentSelfServiceAuthorityUnavailable.ports,
+          verifyOperationCredential: (input) =>
+            Effect.sync(() => {
+              Reflect.set(input.request.path, 'requestRef', 'provider-mutated-selector');
+              return fact;
+            }),
+        },
+      };
+      const unit = yield* preparedFixture(request, owner);
+      Reflect.set(request.path, 'requestRef', 'caller-mutated-selector');
+      Reflect.set(fact.decisionReceipt, 'requestRef', 'provider-mutated-receipt');
+      expect(unit.prepared.payload).toEqual(operationRequest);
+      expect(unit.prepared.fact).toEqual(operationFact);
+      const services = preparedConsentSelfServiceServices(unit.prepared, unit.repositories);
+      const result = yield* handleConsentSelfService(operationRequest, { ...unit.context, services });
+      expect(result.authorization.allowed).toBe(true);
+      expect((yield* handleConsentSelfService(request, { ...unit.context, services }).pipe(Effect.flip)).code).toBe(
+        'privacy_action_rejected',
+      );
+    }),
+  );
+
+  it.effect(
+    'prepares configured owner observations over immutable local snapshots and commits without live owner calls',
+    () =>
+      Effect.gen(function* preparedOwnerAuthority() {
+        yield* TestClock.setTime(Date.parse('2026-09-15T10:00:00.000Z'));
+        let authorityCalls = 0;
+        let businessPhase = false;
+        const owner: ConsentSelfServiceAuthorityService = {
+          forScope: (input) => ({
+            ...consentSelfServiceAuthorityUnavailable.ports,
+            resolveCurrentRetailPortalProfileBinding: () =>
+              Effect.gen(function* observeImmutableLocalData() {
+                expect(businessPhase).toBe(false);
+                expect(input.compositionRevision).toBe('test-composition');
+                authorityCalls += 1;
+                const first = yield* input.subjects.listSubjects(tenantId, legalEntityId);
+                const second = yield* input.subjects.listSubjects(tenantId, legalEntityId);
+                expect(second).toEqual(first);
+                expect(
+                  yield* input.subjects.readCurrentConsent(tenantId, legalEntityId, consentScope.scopeRef),
+                ).toEqual({ outcome: 'ABSENT' });
+                return portalFact;
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ConsentSelfServiceAuthorizationError({
+                      code: 'AUTHORITY_UNAVAILABLE',
+                      reason: cause.reason,
+                    }),
+                ),
+              ),
+          }),
+          ports: consentSelfServiceAuthorityUnavailable.ports,
+        };
+        const unit = yield* preparedFixture(portalRequest, owner);
+        expect(unit.subjectReads()).toBe(1);
+        businessPhase = true;
+        const result = yield* handleConsentSelfService(portalRequest, {
+          ...unit.context,
+          services: preparedConsentSelfServiceServices(unit.prepared, unit.repositories),
+        });
+        expect(result.authorization.allowed).toBe(true);
+        expect(unit.recorded).toEqual([result.decision]);
+        expect(unit.subjectReads()).toBe(2);
+        expect(authorityCalls).toBe(1);
+      }),
+  );
+
+  it.effect('refuses changed Subject, current Consent or Purpose facts before the prepared write', () =>
+    Effect.gen(function* changedPreparedOwnerState() {
+      const unit = yield* preparedFixture();
+      const retainedDecision: ConsentDecision = {
+        actorEvidence: null,
+        decision: 'GRANTED',
+        decisionId: 'decision:concurrent',
+        effectiveAt: '1961-01-01T00:00:00Z',
+        flowEvidenceRefs: [],
+        noticeEvidenceRefs: ['notice:action-test'],
+        provenanceRefs: ['decision:source'],
+        recordedAt: '1961-01-01T00:00:00Z',
+        scope: consentScope,
+      };
+      const changedRepositories = [
+        {
+          ...unit.repositories,
+          operations: {
+            ...unit.repositories.operations,
+            listSubjects: () => Effect.succeed([{ ...unit.subject, updatedAt: '2026-10-01T00:00:00Z' }]),
+          },
+        },
+        {
+          ...unit.repositories,
+          operations: {
+            ...unit.repositories.operations,
+            readCurrentConsent: () => Effect.succeed({ decision: retainedDecision, outcome: 'CURRENT' as const }),
+          },
+        },
+        {
+          ...unit.repositories,
+          purposes: {
+            get: () =>
+              unit.repositories.purposes.get().pipe(
+                Effect.map(
+                  Option.map((purpose) => ({
+                    ...purpose,
+                    governanceOwnerId: '00000000-0000-4000-8000-000000000199',
+                  })),
+                ),
+              ),
+          },
+        },
+      ];
+      for (const repositories of changedRepositories) {
+        const services = preparedConsentSelfServiceServices(unit.prepared, repositories);
+        const error = yield* handleConsentSelfService(operationRequest, { ...unit.context, services }).pipe(
+          Effect.flip,
+        );
+        expect(error.code).toBe('privacy_action_rejected');
+        expect(unit.recorded).toHaveLength(0);
+      }
+    }),
+  );
+
+  it.effect('binds prepared authority to the exact request, principal and credential without live fallback', () =>
+    Effect.gen(function* preparedSelectorBindings() {
+      yield* TestClock.setTime(Date.parse('2026-09-15T10:00:00.000Z'));
+      const unit = yield* preparedFixture();
+      const ports = preparedConsentSelfServicePorts(unit.prepared);
+      const now = DateTime.formatIso(yield* DateTime.now);
+      for (const changed of [
+        { credentialRef: 'another-credential', now, request: operationRequest },
+        {
+          credentialRef: operationPath.credentialRef,
+          now,
+          request: { ...operationRequest, decision: 'GRANTED' as const },
+        },
+        {
+          credentialRef: operationPath.credentialRef,
+          now,
+          request: { ...operationRequest, path: { ...operationPath, requestRef: 'another-request' } },
+        },
+      ]) {
+        expect((yield* ports.verifyOperationCredential(changed).pipe(Effect.flip)).code).toBe('AUTHORITY_CONFLICT');
+      }
+      const portal = yield* preparedFixture(portalRequest, authority(portsFor({ portal: portalFact })));
+      expect(
+        (yield* preparedConsentSelfServicePorts(portal.prepared)
+          .resolveCurrentRetailPortalProfileBinding({
+            principalRef: { principalId: 'another-principal', tenantId },
+            profileRef: portalPath.profileRef,
+            request: portalRequest,
+          })
+          .pipe(Effect.flip)).code,
+      ).toBe('AUTHORITY_CONFLICT');
+      const services = preparedConsentSelfServiceServices(unit.prepared, unit.repositories);
+      expect(
+        (yield* handleConsentSelfService(operationRequest, {
+          ...unit.context,
+          actionInvocationId: 'another-invocation',
+          services,
+        }).pipe(Effect.flip)).code,
+      ).toBe('privacy_action_rejected');
+      for (const changed of [
+        { ...unit.context.scope, legalEntityId: 'another-entity' },
+        { ...unit.context.scope, principalId: 'another-principal' },
+        { ...unit.context.scope, tenantId: 'another-tenant' },
+        { ...unit.context.scope, authBindingId: 'another-binding' },
+        { ...unit.context.scope, authContextRef: 'another-session' },
+        { ...unit.context.scope, authenticationNamespaceId: 'another-namespace' },
+        { ...unit.context.scope, correlationId: 'another-correlation' },
+        { ...unit.context.scope, traceId: 'another-trace' },
+        { ...unit.context.scope, audience: 'another-audience' },
+      ]) {
+        expect(
+          consentSelfServicePreparationScopeMatches(unit.prepared, changed, unit.context.compositionRevision),
+        ).toBe(false);
+      }
+      expect(consentSelfServicePreparationScopeMatches(unit.prepared, unit.context.scope, 'another-composition')).toBe(
+        false,
+      );
+      expect(unit.recorded).toHaveLength(0);
+    }),
+  );
+
+  it.effect('rechecks the actual operation expiry before and after the original persistence call', () =>
+    Effect.gen(function* preparedOperationExpiry() {
+      const at = '2026-09-15T10:00:00.000Z';
+      const owner = authority(
+        portsFor({
+          operation: { ...operationFact, expiresAt: '2026-09-15T10:00:01.000Z' },
+        }),
+      );
+      yield* TestClock.setTime(Date.parse(at));
+      const expiredBefore = yield* preparedFixture(operationRequest, owner);
+      yield* TestClock.adjust(1000);
+      const beforeError = yield* handleConsentSelfService(operationRequest, {
+        ...expiredBefore.context,
+        services: preparedConsentSelfServiceServices(expiredBefore.prepared, expiredBefore.repositories),
+      }).pipe(Effect.flip);
+      expect(beforeError.code).toBe('privacy_action_rejected');
+      expect(expiredBefore.recorded).toHaveLength(0);
+      yield* TestClock.setTime(Date.parse(at));
+      const expiredAfter = yield* preparedFixture(operationRequest, owner, 1000);
+      const afterError = yield* handleConsentSelfService(operationRequest, {
+        ...expiredAfter.context,
+        services: preparedConsentSelfServiceServices(expiredAfter.prepared, expiredAfter.repositories),
+      }).pipe(Effect.flip);
+      expect(afterError.code).toBe('privacy_action_rejected');
+      // The in-memory port records the attempted write. Core's SQL rollback is a native proof.
+      expect(expiredAfter.recorded).toHaveLength(1);
+    }),
+  );
+
+  it.effect('retains actual Party validity from the configured owner and refuses expiry after persistence', () =>
+    Effect.gen(function* preparedPartyExpiry() {
+      const at = '2026-09-15T10:00:00.000Z';
+      yield* TestClock.setTime(Date.parse(at));
+      const party = Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema)({
+        observedAt: at,
+        ownerRevision: 1,
+        partyRef: {
+          moduleId: 'party.registry',
+          resourceId: '00000000-0000-4000-8000-000000000109',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        typeAssertions: [{ assertionId: 'party:person', validFrom: at, validTo: '2026-09-15T10:00:01.000Z' }],
+      });
+      const owner: ConsentSelfServiceAuthorityService = {
+        forScope: (input) => ({
+          ...consentSelfServiceAuthorityUnavailable.ports,
+          resolveCurrentRetailPortalProfileBinding: () =>
+            Effect.sync(() => {
+              input.observePartyEvidence?.(party);
+              return portalFact;
+            }),
+        }),
+        ports: consentSelfServiceAuthorityUnavailable.ports,
+      };
+      const unit = yield* preparedFixture(portalRequest, owner, 1000);
+      expect(unit.prepared.partyEvidence).toEqual([party]);
+      const error = yield* handleConsentSelfService(portalRequest, {
+        ...unit.context,
+        services: preparedConsentSelfServiceServices(unit.prepared, unit.repositories),
+      }).pipe(Effect.flip);
+      expect(error.code).toBe('privacy_operation_persistence_unavailable');
+      expect(unit.recorded).toHaveLength(1);
+    }),
+  );
+
   it.effect('does not turn an acknowledged grant into a newer decision when retried after withdrawal', () =>
     Effect.gen(function* delayedAcknowledgedGrant() {
       yield* TestClock.setTime(new Date('2026-10-23T12:00:00.000Z').getTime());

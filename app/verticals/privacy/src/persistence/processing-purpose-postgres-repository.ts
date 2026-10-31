@@ -1,6 +1,7 @@
 import { ProcessingPurposeRepository } from './processing-purpose-repository.ts';
 import type { ProcessingPurposeRepositoryService } from './processing-purpose-repository.ts';
-import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import type { DataAccessEventInput, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import { capturePrivacyRead } from './privacy-read-evidence.ts';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, eq } from 'drizzle-orm';
 import { flow, Crypto, DateTime, Effect, Option, Schema } from 'effect';
@@ -75,6 +76,7 @@ export const loadPurposeVersions = Effect.fn('ProcessingPurposePostgresRepositor
     tenantId: string,
     legalEntityId: string,
     processingPurposeId: string,
+    readEvidence?: DataAccessEventInput[],
   ) {
     const rows = yield* transaction
       .select()
@@ -88,6 +90,11 @@ export const loadPurposeVersions = Effect.fn('ProcessingPurposePostgresRepositor
       )
       .orderBy(asc(purposeVersions.versionNumber))
       .pipe(Effect.mapError((cause) => unavailable(PERSISTENCE_UNAVAILABLE, cause)));
+    yield* capturePrivacyRead(readEvidence, {
+      accessKind: 'list',
+      queryHash: 'privacy.purpose-versions.for-scope.v1',
+      resultCount: rows.length,
+    });
     const versions = yield* Effect.forEach(
       rows,
       Effect.fn('decodePurposeVersion')(function* decodePurposeVersion(row: (typeof rows)[number]) {
@@ -119,8 +126,12 @@ export const loadPurposeVersions = Effect.fn('ProcessingPurposePostgresRepositor
 
 const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
-  trustedScope: Readonly<{ legalEntityId: string; tenantId: string }>,
+  configuration: Readonly<{
+    readEvidence?: DataAccessEventInput[] | undefined;
+    scope: Readonly<{ legalEntityId: string; tenantId: string }>;
+  }>,
 ): Effect.fn.Return<ProcessingPurposeRepositoryService, never, Crypto.Crypto> {
+  const { readEvidence, scope: trustedScope } = configuration;
   const crypto = yield* Crypto.Crypto;
   const nextIdentifier = (reason: string) =>
     crypto.randomUUIDv4().pipe(Effect.mapError((cause) => unavailable(reason, cause)));
@@ -144,11 +155,22 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
         )
         .limit(1)
         .pipe(Effect.mapError((cause) => unavailable(PERSISTENCE_UNAVAILABLE, cause)));
+      yield* capturePrivacyRead(readEvidence, {
+        accessKind: 'read',
+        queryHash: 'privacy.processing-purpose.for-scope.v1',
+        resultCount: rows.length,
+      });
       const [row] = rows;
       if (row === undefined) {
         return Option.none<ProcessingPurpose>();
       }
-      const versions = yield* loadPurposeVersions(transaction, tenantId, legalEntityId, processingPurposeId);
+      const versions = yield* loadPurposeVersions(
+        transaction,
+        tenantId,
+        legalEntityId,
+        processingPurposeId,
+        readEvidence,
+      );
       return Option.some({
         businessCode: row.businessCode,
         createdAt: iso(row.createdAt),
@@ -401,7 +423,18 @@ export const processingPurposeRepositoryForScope = (
   const { legalEntityId, tenantId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : makeRepository(transaction, { legalEntityId, tenantId }).pipe(
+    : makeRepository(transaction, { scope: { legalEntityId, tenantId } }).pipe(
         Effect.map((repository) => ProcessingPurposeRepository.of(repository)),
       );
+};
+
+/** The same scoped owner reads, with invocation-local result metadata. */
+export const processingPurposeRepositoryWithReadEvidence = (
+  transaction: ScopedTransaction,
+  input: { readonly readEvidence: DataAccessEventInput[]; readonly scope: OperationalScope },
+): Effect.Effect<ProcessingPurposeRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+  const { legalEntityId, tenantId } = input.scope;
+  return legalEntityId === undefined
+    ? Effect.fail(scopeUnavailable())
+    : makeRepository(transaction, { readEvidence: input.readEvidence, scope: { legalEntityId, tenantId } });
 };

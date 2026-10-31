@@ -146,7 +146,7 @@ import { makePrivacyApiRuntime } from '../../api/index.ts';
 import {
   ConsentSelfServiceAuthority,
   consentSelfServiceAuthorityUnavailable,
-} from '../../src/actions/consent-self-service.action.ts';
+} from '../../src/actions/consent-self-service-authority.ts';
 import {
   CommerceCustomerContextConsentWithdrawalService,
   CommerceCustomerContextConsentWithdrawalServiceLive,
@@ -1726,16 +1726,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
           ['Unable to persist the rejected Action invocation', 'ACTION_REJECTION_PERSISTENCE_UNAVAILABLE'],
         ]);
         const published = Schema.decodeUnknownResult(Schema.Union(externalIdentityProblems))(failure);
-        if (Result.isSuccess(published)) {
-          const localDiagnostics = yield* FileSystem.FileSystem;
-          yield* localDiagnostics.writeFileString(
-            `${appRoot}../.codex/1261-completion-20261022/core-reserve-local-problem.json`,
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Union(externalIdentityProblems)))(
-              published.success,
-            ),
-            { mode: 0o600 },
-          );
-        }
         yield* Effect.logInfo(
           'Retained reserve failure category',
           Result.isSuccess(published)
@@ -2927,6 +2917,31 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       outcome: 'ALLOWED_PROFILE',
     });
     expect(withdrawal.decision.decision).toBe('WITHDRAWN');
+    const withdrawalEvidence = yield* evidenceFor(`retained-withdraw:${suffix}`);
+    expect(withdrawalEvidence.invocation.status).toBe('succeeded');
+    // Counts come from each real SQL result, not from the resolved current Consent.
+    // The history has one grant before withdrawal; Purpose retains both V1 and V2.
+    expect(
+      countReads(
+        withdrawalEvidence.accesses.map((read) => JSON.stringify([read.queryHash, read.accessKind, read.resultCount])),
+      ),
+    ).toEqual(
+      countReads(
+        [
+          ['privacy.subject.for-scope.v1', 'list', 1],
+          ['privacy.subject.for-scope.v1', 'list', 1],
+          ['privacy.consent-history.for-scope.v1', 'list', 1],
+          ['privacy.consent-history.for-scope.v1', 'list', 1],
+          ['privacy.consent-history.for-scope.v1', 'list', 1],
+          ['privacy.processing-purpose.for-scope.v1', 'read', 1],
+          ['privacy.processing-purpose.for-scope.v1', 'read', 1],
+          ['privacy.processing-purpose.for-scope.v1', 'read', 1],
+          ['privacy.purpose-versions.for-scope.v1', 'list', 2],
+          ['privacy.purpose-versions.for-scope.v1', 'list', 2],
+          ['privacy.purpose-versions.for-scope.v1', 'list', 2],
+        ].map((read) => JSON.stringify(read)),
+      ),
+    );
     expect(withdrawal.decision.scope).toEqual(grant.scope);
     expect(withdrawal.decision.actorEvidence).toMatchObject({
       actor: { principalId: binding.principalId, tenantId: fixture.tenantId },

@@ -8,7 +8,7 @@ import {
   commerceConsentAuthorityLookup,
   preparedCommerceConsentExecution,
 } from '../src/actions/commerce-consent-authority.ts';
-import { ConsentSelfServiceAuthority } from '../src/actions/consent-self-service.action.ts';
+import { ConsentSelfServiceAuthority } from '../src/actions/consent-self-service-authority.ts';
 import { NoticeChannelDeliveryAuthority } from '../src/actions/record-notice-provision.action.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 

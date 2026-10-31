@@ -10,7 +10,8 @@ import { PrivacySubjectPartyOwner, privacySubjectPartyOwnerUnavailable } from '.
 import { privacyOperationPersistenceFailureCode } from './privacy-operation-persistence-error.ts';
 import { PrivacyOperationRepository, PrivacyOperationPersistenceError } from './privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from './privacy-operation-repository.ts';
-import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import type { DataAccessEventInput, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import { capturePrivacyRead } from './privacy-read-evidence.ts';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
@@ -536,6 +537,7 @@ const PRIVACY_SUBJECT_LABEL = 'Privacy Subject';
 const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   configuration: {
+    readonly readEvidence?: DataAccessEventInput[] | undefined;
     readonly scope: OperationalScope & Readonly<{ legalEntityId: string }>;
     readonly subjectPreparation?: PreparedPrivacySubject;
   },
@@ -565,6 +567,11 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
       .where(and(eq(privacySubjects.tenantId, tenantId), eq(privacySubjects.legalEntityId, legalEntityId)))
       .orderBy(asc(privacySubjects.createdAt))
       .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subjects could not be listed', cause)));
+    yield* capturePrivacyRead(configuration.readEvidence, {
+      accessKind: 'list',
+      queryHash: 'privacy.subject.for-scope.v1',
+      resultCount: rows.length,
+    });
     const subjects = yield* decodeAll(
       PrivacySubjectRecordSchema,
       rows.map(({ record }) => record),
@@ -773,6 +780,11 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
       )
       .limit(1)
       .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Measure Handoff could not be loaded', cause)));
+    yield* capturePrivacyRead(configuration.readEvidence, {
+      accessKind: 'read',
+      queryHash: 'privacy.measure-handoff.for-scope.v1',
+      resultCount: rows.length,
+    });
     const row = rows.at(0);
     return row === undefined
       ? Option.none()
@@ -1017,6 +1029,11 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         )
         .orderBy(asc(consentDecisions.effectiveAt), asc(consentDecisions.recordedAt))
         .pipe(Effect.mapError((cause) => persistenceFailure('Consent history could not be loaded', cause)));
+      yield* capturePrivacyRead(configuration.readEvidence, {
+        accessKind: 'list',
+        queryHash: 'privacy.consent-history.for-scope.v1',
+        resultCount: rows.length,
+      });
       return yield* decodeAll(
         ConsentDecisionSchema,
         rows.map(({ record }) => record),
@@ -3655,6 +3672,20 @@ export const privacyOperationRepositoryForScope = (
     : makeRepository(transaction, { scope: { ...scope, legalEntityId, tenantId } }).pipe(
         Effect.map((repository) => PrivacyOperationRepository.of(repository)),
       );
+};
+
+/** Collect only actual owner SQL observations for the invoking Action. */
+export const privacyOperationRepositoryWithReadEvidence = (
+  transaction: ScopedTransaction,
+  input: { readonly readEvidence: DataAccessEventInput[]; readonly scope: OperationalScope },
+): Effect.Effect<PrivacyOperationRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+  const { legalEntityId, tenantId } = input.scope;
+  return legalEntityId === undefined
+    ? Effect.fail(scopeUnavailable())
+    : makeRepository(transaction, {
+        readEvidence: input.readEvidence,
+        scope: { ...input.scope, legalEntityId, tenantId },
+      });
 };
 
 export const privacyOperationRepositoryForPreparedSubject = Effect.fn('PrivacySubjectPreparation.repository')(

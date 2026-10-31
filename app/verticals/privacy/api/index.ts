@@ -93,7 +93,7 @@ import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-ex
 import { privacyApi, privacyMarkerSchema, privacyOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { privacyConsentAwareActionRuntimeLive } from './consent-aware-action-runtime.ts';
-import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service.action.ts';
+import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service-authority.ts';
 import { PrivacyApplicabilityBusinessFactAuthorityUnavailableLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
 import { DsrIntakeReceiptAuthorityUnavailableLive } from '../src/actions/create-dsr-case.action.ts';
 import { DsrOwnerTaskAuthorityUnavailableLive } from '../src/actions/privacy-dsr-owner-task-authority.ts';
