@@ -366,3 +366,20 @@ it('declares no project-level variable that could carry a database credential', 
   expect(Object.keys(imports)).toStrictEqual(['services']);
   expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);
 });
+
+it('installs Chromium for the warm-up client before running its bounded browser pass', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        verify: Schema.Struct({
+          steps: Schema.Array(Schema.Struct({ name: Schema.String, run: Schema.optional(Schema.String) })),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8')));
+  const { steps } = workflow.jobs.verify;
+  const install = steps.findIndex(({ run }) => run?.includes('pnpm exec playwright-core install chromium') === true);
+  const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);
+  expect(install).toBeGreaterThanOrEqual(0);
+  expect(warmup).toBeGreaterThan(install);
+});

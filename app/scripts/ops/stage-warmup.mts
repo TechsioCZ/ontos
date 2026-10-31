@@ -206,7 +206,13 @@ export const stageWarmup = Effect.gen(function* warmStage() {
     ),
     Effect.timeout('85 seconds'),
     Effect.scoped,
-    Effect.catch(() => Console.warn('::warning title=Stage warm-up::Warm-up budget or browser unavailable')),
+    Effect.catch((error) =>
+      Console.warn(
+        Schema.is(StageWarmupError)(error)
+          ? `::warning title=Stage warm-up::${error.phase} unavailable; native verification still runs`
+          : '::warning title=Stage warm-up::Warm-up budget exhausted; native verification still runs',
+      ),
+    ),
   );
   const durationMs = (yield* Clock.currentTimeMillis) - started;
   return yield* Console.log('stage.warmup.complete', { budgetMs: WARMUP_BUDGET_MS, durationMs });

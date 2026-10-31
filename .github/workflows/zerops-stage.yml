@@ -197,6 +197,11 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
 
+      # Warm-up imports the workspace's pinned playwright-core, which may differ from Shell's verification client.
+      - name: Install headless Chromium for the warm-up client
+        working-directory: app
+        run: mise exec -- pnpm exec playwright-core install chromium
+
       # The operator seed creates independent company-scoped read-only accounts, never administrator copies.
       # Timeouts/permission gaps warn here; the existing verification below remains the broken-app gate.
       - name: Warm real login, declared reads and federation assets
