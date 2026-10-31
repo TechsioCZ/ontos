@@ -1,0 +1,141 @@
+diff --git a/dist/cjs/adapters/node/plugins/resource.js b/dist/cjs/adapters/node/plugins/resource.js
+index 46232f073e3c864537c0969003399b793da2aa77..a70cf0821ab7d4fad17fbf5c793d0f0a588101c4 100644
+--- a/dist/cjs/adapters/node/plugins/resource.js
++++ b/dist/cjs/adapters/node/plugins/resource.js
+@@ -71,7 +71,7 @@ async function getHtmlTemplates(pwd, routes) {
+ function injectTemplates(pwd, routes, htmlTemplatePromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('templates')) {
+-            const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
++            const templates = await (htmlTemplatePromise ||= getHtmlTemplates(pwd, routes));
+             c.set('templates', templates);
+         }
+         await next();
+@@ -118,7 +118,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('serverManifest')) {
+             const monitors = c.get('monitors');
+-            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
++            const serverManifest = await (manifestPromise ||= getServerManifest(pwd, routes, monitors));
+             c.set('serverManifest', serverManifest);
+         }
+         await next();
+@@ -167,18 +167,20 @@ const injectResourcePlugin = ()=>({
+         name: '@modern-js/plugin-inject-resource',
+         setup (api) {
+             api.onPrepare(()=>{
+-                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
++                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
++                const lazy = process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
++                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
+                 let htmlTemplatePromise;
+                 let manifestPromise;
+-                if ((0, utils_namespaceObject.isProd)()) {
++                if ((0, utils_namespaceObject.isProd)() && !lazy) {
+                     manifestPromise = getServerManifest(pwd, routes || [], void 0);
+                     htmlTemplatePromise = getHtmlTemplates(pwd, routes || []);
+                 }
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-server-manifest',
+                     handler: injectServerManifest(pwd, routes, manifestPromise)
+                 });
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-html',
+                     handler: injectTemplates(pwd, routes, htmlTemplatePromise)
+                 });
+diff --git a/dist/esm/adapters/node/plugins/resource.mjs b/dist/esm/adapters/node/plugins/resource.mjs
+index d7ea552f419bda89ba190870227373212061f04a..79ac80608d323453bcbdd8c6c0ada40cf5941158 100644
+--- a/dist/esm/adapters/node/plugins/resource.mjs
++++ b/dist/esm/adapters/node/plugins/resource.mjs
+@@ -21,7 +21,7 @@ async function getHtmlTemplates(pwd, routes) {
+ function injectTemplates(pwd, routes, htmlTemplatePromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('templates')) {
+-            const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
++            const templates = await (htmlTemplatePromise ||= getHtmlTemplates(pwd, routes));
+             c.set('templates', templates);
+         }
+         await next();
+@@ -68,7 +68,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('serverManifest')) {
+             const monitors = c.get('monitors');
+-            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
++            const serverManifest = await (manifestPromise ||= getServerManifest(pwd, routes, monitors));
+             c.set('serverManifest', serverManifest);
+         }
+         await next();
+@@ -117,18 +117,20 @@ const injectResourcePlugin = ()=>({
+         name: '@modern-js/plugin-inject-resource',
+         setup (api) {
+             api.onPrepare(()=>{
+-                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
++                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
++                const lazy = process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
++                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
+                 let htmlTemplatePromise;
+                 let manifestPromise;
+-                if (isProd()) {
++                if (isProd() && !lazy) {
+                     manifestPromise = getServerManifest(pwd, routes || [], void 0);
+                     htmlTemplatePromise = getHtmlTemplates(pwd, routes || []);
+                 }
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-server-manifest',
+                     handler: injectServerManifest(pwd, routes, manifestPromise)
+                 });
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-html',
+                     handler: injectTemplates(pwd, routes, htmlTemplatePromise)
+                 });
+diff --git a/dist/esm-node/adapters/node/plugins/resource.mjs b/dist/esm-node/adapters/node/plugins/resource.mjs
+index 3a903ea85c5637c92e5a2c2804c3e44f1bf314c9..afaeeed6f05b793247801e535f9eb89fd8bbee59 100644
+--- a/dist/esm-node/adapters/node/plugins/resource.mjs
++++ b/dist/esm-node/adapters/node/plugins/resource.mjs
+@@ -22,7 +22,7 @@ async function getHtmlTemplates(pwd, routes) {
+ function injectTemplates(pwd, routes, htmlTemplatePromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('templates')) {
+-            const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
++            const templates = await (htmlTemplatePromise ||= getHtmlTemplates(pwd, routes));
+             c.set('templates', templates);
+         }
+         await next();
+@@ -69,7 +69,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('serverManifest')) {
+             const monitors = c.get('monitors');
+-            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
++            const serverManifest = await (manifestPromise ||= getServerManifest(pwd, routes, monitors));
+             c.set('serverManifest', serverManifest);
+         }
+         await next();
+@@ -118,18 +118,20 @@ const injectResourcePlugin = ()=>({
+         name: '@modern-js/plugin-inject-resource',
+         setup (api) {
+             api.onPrepare(()=>{
+-                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
++                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
++                const lazy = process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
++                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
+                 let htmlTemplatePromise;
+                 let manifestPromise;
+-                if (isProd()) {
++                if (isProd() && !lazy) {
+                     manifestPromise = getServerManifest(pwd, routes || [], void 0);
+                     htmlTemplatePromise = getHtmlTemplates(pwd, routes || []);
+                 }
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-server-manifest',
+                     handler: injectServerManifest(pwd, routes, manifestPromise)
+                 });
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-html',
+                     handler: injectTemplates(pwd, routes, htmlTemplatePromise)
+                 });

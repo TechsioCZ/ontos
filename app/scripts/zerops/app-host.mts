@@ -578,8 +578,15 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
   // owner together, so their shared dependencies load once.
   const ownerIds = units.filter(({ id }) => id !== SHELL_ID).map(({ id }) => id);
-  const shellEnvironment = processEnvironment([SHELL_ID], ownerSecrets, derived);
-  const ownersEnvironment = processEnvironment(ownerIds, ownerSecrets, derived);
+  const shellEnvironment = processEnvironment([SHELL_ID], ownerSecrets, {
+    ...derived,
+    MODERN_SERVER_RENDER_RESOURCES: 'eager',
+  });
+  const ownersEnvironment = processEnvironment(ownerIds, ownerSecrets, {
+    ...derived,
+    // Owner HTML remains renderable, but BFF/contract/federation asset requests never load its page bundles.
+    MODERN_SERVER_RENDER_RESOURCES: 'lazy',
+  });
   if (ownersEnvironment.conflicts.length > 0) {
     return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
   }

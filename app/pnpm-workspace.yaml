@@ -157,6 +157,9 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/core
+  # MODERN_SERVER_RENDER_RESOURCES=lazy defers owner page resources until rendering, never for BFF/static requests.
+  '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.16': patches/@bleedingdev__modern-js-server-core@3.9.3-ultramodern.16.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils (ULTRAMODERN_SKIP_SERVER_TYPECHECK=1
   # skips the BFF server declaration emit and TS-Go check in deploy builds; CI gates typecheck every unit)
   '@bleedingdev/modern-js-server-utils@3.9.3-ultramodern.16': patches/@bleedingdev__modern-js-server-utils@3.9.3-ultramodern.16.patch
