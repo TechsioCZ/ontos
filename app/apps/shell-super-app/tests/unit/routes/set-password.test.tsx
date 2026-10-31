@@ -30,7 +30,6 @@ it.each([false, true])('only calls the credential client when hydrated is %s', (
   const submit = rstest.fn<(form: FormData) => void>();
   render(
     <form onSubmit={(event) => submitCredentialForm(event, hydrated, submit)}>
-      <input aria-label="Probe" name="password" type="password" />
       <button type="submit">Submit</button>
     </form>,
   );
