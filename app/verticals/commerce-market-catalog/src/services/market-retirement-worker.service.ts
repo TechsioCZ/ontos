@@ -19,7 +19,7 @@ import {
   terminalFailureReason,
   validateRetirementAssessment,
 } from '../domain/market-retirement-workflow.ts';
-import type { MarketAdministrationPersistenceUnavailable } from '../persistence/market-administration-persistence.ts';
+import type { MarketAdministrationPersistenceUnavailable } from '../persistence/market-administration-persistence-unavailable.ts';
 import type {
   MarketRetirementAdvanceCommand,
   MarketRetirementAdvanceOutcome,
