@@ -9,6 +9,7 @@ import {
   quotationPublicationRevision,
   recoverCompletedProposalBasis,
   samePreparedQuantity,
+  verifyPreparedBasisMutationWindow,
 } from '../../src/services/purchase-proposal-basis.service.ts';
 import { PurchaseProposalRevisionSchema } from '../../shared/domain/purchasing-approval.ts';
 import { PurchaseLimitEvaluationCurrentFactsSchema } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
@@ -20,6 +21,17 @@ const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
 const id = '44444444-4444-4444-8444-444444444444';
 const at = '2026-10-23T00:00:00.000Z';
+
+it.effect('rejects prepared basis evidence at its exclusive End and when validity is unknown', () =>
+  Effect.gen(function* preparedBasisValidity() {
+    yield* verifyPreparedBasisMutationWindow(1000, 999);
+    for (const boundary of [null, 999, 1000, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const failure = yield* verifyPreparedBasisMutationWindow(boundary, 1000).pipe(Effect.flip);
+      expect(failure.code).toBe('PROPOSAL_NOT_CURRENT');
+    }
+  }),
+);
+
 const ref = (moduleId: string, resourceType: string, resourceId: string) => ({
   moduleId,
   resourceId,

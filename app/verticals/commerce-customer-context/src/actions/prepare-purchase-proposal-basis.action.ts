@@ -9,7 +9,10 @@ import {
   PreparePurchaseProposalBasisResultSchema,
   PreparePurchaseProposalBasisRejected,
 } from '../../shared/actions/prepare-purchase-proposal-basis.ts';
-import { purchaseProposalBasisService } from '../services/purchase-proposal-basis.service.ts';
+import {
+  purchaseProposalBasisService,
+  preparePurchaseProposalBasisActionServices,
+} from '../services/purchase-proposal-basis.service.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
@@ -64,6 +67,7 @@ export const preparePurchaseProposalBasisAction = defineAction(
   },
   handlePreparePurchaseProposalBasis,
   purchaseProposalBasisService,
+  { prepareServices: preparePurchaseProposalBasisActionServices },
 );
 
 // <generated-outbox-message-exports>
