@@ -15,7 +15,11 @@ import type {
   ManageProductPricesBulkPayload,
   ManageProductPricesBulkResult,
 } from '../../shared/actions/manage-product-prices-bulk.ts';
-import { ProductPriceBulkRejected, productPriceBulkServiceForScope } from '../services/product-price-bulk.service.ts';
+import {
+  ProductPriceBulkRejected,
+  productPriceBulkServiceForScope,
+  prepareProductPriceBulkServices,
+} from '../services/product-price-bulk.service.ts';
 import type {
   ProductPriceBulkService,
   ProductPriceBulkTrustedContext,
@@ -136,6 +140,7 @@ export const manageProductPricesBulkAction = defineAction(
   },
   handleManageProductPricesBulk,
   productPriceBulkServiceForScope,
+  { prepareServices: prepareProductPriceBulkServices },
 );
 
 // <generated-outbox-message-exports>

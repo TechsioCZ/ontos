@@ -7,10 +7,13 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 
-import { commitmentConfirmationProductionForScope } from '../../src/integrations/commitment-confirmation-production.ts';
+import {
+  commitmentConfirmationProductionForScope,
+  pricingCommitmentAlgorithmFactoriesLive,
+} from '../../src/integrations/commitment-confirmation-production.ts';
 
 const dependencies = rs.hoisted(() => ({
   gateway: rs.fn<(scope: OperationalScope, revision: string) => void>(),
@@ -119,9 +122,12 @@ const checkFactory = (compositionRevision?: string) =>
     expect(harness.snapshot().ownerQueries).toEqual([]);
   });
 
-it.layer(NodeCrypto.layer)('Pricing production factory composition context', (suite) => {
-  suite.effect('refuses absent revision before proof, gateways, or persistence', () => checkFactory());
-  suite.effect('preserves present revision and installed scope at the owner gateway boundary', () =>
-    checkFactory(revision),
-  );
-});
+it.layer(Layer.merge(NodeCrypto.layer, pricingCommitmentAlgorithmFactoriesLive))(
+  'Pricing production factory composition context',
+  (suite) => {
+    suite.effect('refuses absent revision before proof, gateways, or persistence', () => checkFactory());
+    suite.effect('preserves present revision and installed scope at the owner gateway boundary', () =>
+      checkFactory(revision),
+    );
+  },
+);

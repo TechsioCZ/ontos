@@ -2633,26 +2633,36 @@ const wholeEvaluationFrom = (adapters: Effect.Success<ReturnType<typeof adapters
     tierReader: adapters.tierReader,
   });
 
+const adaptersLayer = (adapters: Effect.Success<ReturnType<typeof adaptersFor>>) =>
+  Layer.mergeAll(
+    Layer.succeed(CurrentPricingDecisionAttemptSource, adapters.attemptSource),
+    Layer.succeed(CurrentPricingDecisionTierSetReader, adapters.tierReader),
+    Layer.succeed(CurrentPricingDecisionFeeSetReader, adapters.feeReader),
+    Layer.succeed(CurrentPricingDecisionDiscountSetReader, adapters.discountReader),
+    Layer.succeed(CurrentPricingDecisionExternalOwnerEvidence, adapters.externalOwnerEvidence),
+    Layer.succeed(CurrentPricingDecisionZeroFloorSetReader, adapters.floorReader),
+    Layer.succeed(CurrentPricingDecisionWholeComposition, adapters.composition),
+    Layer.succeed(ExactPriceResolver, adapters.exactPrice),
+    Layer.succeed(PricingPromotionCurrentEvaluation, adapters.promotion),
+  );
+
 export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
   compositionRevision: string,
+) => scopedAdapters(transaction, scope, compositionRevision).pipe(Effect.map(adaptersLayer));
+
+/** Component consumers in a Read finish use the same adapters, with released SQL between HTTP calls. */
+export const currentPricingDecisionWholeEvaluationAdaptersPerRead = (
+  ownerTransaction: ReadOwnerTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
 ) =>
-  scopedAdapters(transaction, scope, compositionRevision).pipe(
-    Effect.map((adapters) =>
-      Layer.mergeAll(
-        Layer.succeed(CurrentPricingDecisionAttemptSource, adapters.attemptSource),
-        Layer.succeed(CurrentPricingDecisionTierSetReader, adapters.tierReader),
-        Layer.succeed(CurrentPricingDecisionFeeSetReader, adapters.feeReader),
-        Layer.succeed(CurrentPricingDecisionDiscountSetReader, adapters.discountReader),
-        Layer.succeed(CurrentPricingDecisionExternalOwnerEvidence, adapters.externalOwnerEvidence),
-        Layer.succeed(CurrentPricingDecisionZeroFloorSetReader, adapters.floorReader),
-        Layer.succeed(CurrentPricingDecisionWholeComposition, adapters.composition),
-        Layer.succeed(ExactPriceResolver, adapters.exactPrice),
-        Layer.succeed(PricingPromotionCurrentEvaluation, adapters.promotion),
-      ),
-    ),
-  );
+  adaptersFor(
+    currentPricingDecisionOwnerStatePerRead(ownerTransaction, scope, compositionRevision),
+    scope,
+    compositionRevision,
+  ).pipe(Effect.map(adaptersLayer));
 
 /** In an Action: every owner-state read runs in the Action's own transaction. */
 export const currentPricingDecisionWholeEvaluationForScope = (

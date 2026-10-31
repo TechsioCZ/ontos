@@ -1,3 +1,5 @@
+import type { PricingQuotationBackedConfirmationIssuanceService } from './quotation-backed-confirmation-issuance-context.ts';
+
 import {
   PricingCommitmentConfirmationAuthenticityProofSchema,
   PricingCommitmentConfirmationBindingSchema,
@@ -20,7 +22,7 @@ import type {
 import type { PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type { PricingMaterialEvidenceReady } from '@app/pricing-contracts/domain/material-evidence';
 import { PricingMaterialEvidenceReadySchema } from '@app/pricing-contracts/domain/material-evidence';
-import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, Layer, DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import type { PricingQuotationBackedConfirmationBindingRejected } from './quotation-backed-confirmation-binding-rejected.ts';
 import type { PricingQuotationBackedConfirmationBindingUnavailable } from './quotation-backed-confirmation-binding-unavailable.ts';
@@ -34,6 +36,9 @@ const maximumConfirmationLifetimeMilliseconds = 30_000;
 const samePurchase = Schema.toEquivalence(PricingQuotationBindingSchema);
 const sameQuotation = Schema.toEquivalence(PricingQuotationIssuedSchema);
 const sameMaterialEvidence = Schema.toEquivalence(PricingMaterialEvidenceReadySchema);
+
+export type { PricingQuotationBackedConfirmationIssuanceService } from './quotation-backed-confirmation-issuance-context.ts';
+export { PricingQuotationBackedConfirmationIssuance } from './quotation-backed-confirmation-issuance-context.ts';
 
 export interface PricingQuotationBackedConfirmationIssuanceCandidate {
   readonly binding: PricingCommitmentConfirmationBinding;
@@ -80,20 +85,7 @@ interface PricingQuotationBackedConfirmationBindingAuthority {
   >;
 }
 
-export interface PricingQuotationBackedConfirmationIssuanceService {
-  readonly issue: (
-    input: PricingQuotationBackedConfirmationIssuanceCandidate,
-  ) => Effect.Effect<PricingCommitmentConfirmationIssuanceOutcome>;
-}
-
-export class PricingQuotationBackedConfirmationIssuance extends Context.Service<
-  PricingQuotationBackedConfirmationIssuance,
-  PricingQuotationBackedConfirmationIssuanceService
->()(
-  '@app/pricing/services/quotation-backed-confirmation-issuance.service/PricingQuotationBackedConfirmationIssuance',
-) {}
-
-interface PricingQuotationBackedConfirmationIssuanceDependencies {
+export interface PricingQuotationBackedConfirmationIssuanceDependencies {
   readonly bindingAuthority: PricingQuotationBackedConfirmationBindingAuthority;
   readonly proofIssuer: PricingCommitmentConfirmationProofIssuer;
   readonly revalidation: PricingQuotationRevalidationService;
@@ -164,7 +156,7 @@ const invalidSource = (reason: string): PricingCommitmentConfirmationIssuanceOut
  */
 export const makePricingQuotationBackedConfirmationIssuanceService = (
   dependencies: PricingQuotationBackedConfirmationIssuanceDependencies,
-): typeof PricingQuotationBackedConfirmationIssuance.Service => ({
+): PricingQuotationBackedConfirmationIssuanceService => ({
   issue: Effect.fn('PricingQuotationBackedConfirmationIssuance.issue')(function* issueQuotationConfirmation(input) {
     const binding = Schema.decodeOption(PricingCommitmentConfirmationBindingSchema, {
       onExcessProperty: 'error',
@@ -299,3 +291,14 @@ export const makePricingQuotationBackedConfirmationIssuanceService = (
     } satisfies PricingCommitmentConfirmationIssuanceOutcome;
   }),
 });
+
+export class PricingQuotationBackedConfirmationIssuanceFactory extends Context.Service<
+  PricingQuotationBackedConfirmationIssuanceFactory,
+  { readonly make: typeof makePricingQuotationBackedConfirmationIssuanceService }
+>()(
+  '@app/pricing/services/quotation-backed-confirmation-issuance.service/PricingQuotationBackedConfirmationIssuanceFactory',
+) {}
+export const pricingQuotationBackedConfirmationIssuanceFactoryLive = Layer.succeed(
+  PricingQuotationBackedConfirmationIssuanceFactory,
+  { make: makePricingQuotationBackedConfirmationIssuanceService },
+);

@@ -511,3 +511,13 @@ export const finalizePricingMaterialEvidenceForPublication = Effect.fn(
     outcome: 'PRICING_MATERIAL_EVIDENCE_PUBLICATION_AUTHORIZED' as const,
   };
 });
+
+/** Canonical pure admission checks shared by the transaction-local prepared fence. */
+export const preparedPricingOwnerEvidenceChecks = {
+  collectSourceEvidence,
+  observationMatchesExpectation,
+  sameFacts,
+  unverifiable,
+  verifiedExpectations,
+  verifiedTypedAuthority,
+};

@@ -43,6 +43,10 @@ import {
   GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
+import { pricingCommitmentConfirmationVerificationFactoryLive } from '../src/services/commitment-confirmation-verification.service.ts';
+import { pricingQuotationRevalidationFactoryLive } from '../src/services/quotation-revalidation.service.ts';
+import { pricingQuotationBackedConfirmationIssuanceFactoryLive } from '../src/services/quotation-backed-confirmation-issuance.service.ts';
+import { pricingCommitmentConfirmationRenewalFactoryLive } from '../src/services/commitment-confirmation-renewal.service.ts';
 import { pricingCommitmentConfirmationProductionLive } from '../src/integrations/commitment-confirmation-production.ts';
 import { pricingFinalizationCustomerContextGatewayIssuerLive } from '../src/integrations/order-finalization-owner-gateways.ts';
 // <generated-governed-http-handler-support-imports>
@@ -139,6 +143,14 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
   Layer.provideMerge(pricingCommitmentConfirmationProductionLive),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      pricingCommitmentConfirmationVerificationFactoryLive,
+      pricingQuotationRevalidationFactoryLive,
+      pricingQuotationBackedConfirmationIssuanceFactoryLive,
+      pricingCommitmentConfirmationRenewalFactoryLive,
+    ),
+  ),
   Layer.provideMerge(ExternalPriceInputBoundaryFactoryLive),
   Layer.provideMerge(manageQuotationFreshCurrentAuthorityLive),
   Layer.provideMerge(pricingFinalizationCustomerContextGatewayIssuerLive),
@@ -177,7 +189,10 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   commercialFeeDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  commitmentConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  commitmentConfirmationVerificationReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    Layer.provide(pricingCommitmentConfirmationVerificationFactoryLive),
+  ),
   contractualDiscountResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   currencySupportResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   currentPricingDecisionReadApiLive.pipe(

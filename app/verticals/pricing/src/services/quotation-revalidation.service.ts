@@ -9,24 +9,17 @@ import type {
   PricingQuotationRevalidationRequest,
   PricingQuotationReuseBindingProof,
 } from '@app/pricing-contracts/domain/quotation';
-import { Context, Effect, Schema } from 'effect';
+import { Context, Layer, Effect, Schema } from 'effect';
 
 import type { PricingQuotationAuthenticityService } from './quotation-authenticity.service.ts';
 import type { PricingQuotationBindingRevalidationService } from './quotation-binding-revalidation.service.ts';
 import type { PricingQuotationValidityService } from './quotation-validity.service.ts';
 
-interface PricingQuotationRevalidationContract {
+export interface PricingQuotationRevalidationService {
   readonly revalidate: (
     request: PricingQuotationRevalidationRequest,
   ) => Effect.Effect<PricingQuotationRevalidationOutcome>;
 }
-
-class PricingQuotationRevalidation extends Context.Service<
-  PricingQuotationRevalidation,
-  PricingQuotationRevalidationContract
->()('@app/pricing/services/quotation-revalidation.service/PricingQuotationRevalidation') {}
-
-export type PricingQuotationRevalidationService = typeof PricingQuotationRevalidation.Service;
 
 interface PricingQuotationRevalidationDependencies {
   readonly authenticity: PricingQuotationAuthenticityService;
@@ -145,4 +138,13 @@ export const makePricingQuotationRevalidationService = (
       termsAuthority: 'ORIGINAL_QUOTATION' as const,
     };
   }),
+});
+
+/** Stateless owner algorithms; transaction collaborators are supplied by the scoped infrastructure. */
+export class PricingQuotationRevalidationFactory extends Context.Service<
+  PricingQuotationRevalidationFactory,
+  { readonly make: typeof makePricingQuotationRevalidationService }
+>()('@app/pricing/services/quotation-revalidation.service/PricingQuotationRevalidationFactory') {}
+export const pricingQuotationRevalidationFactoryLive = Layer.succeed(PricingQuotationRevalidationFactory, {
+  make: makePricingQuotationRevalidationService,
 });
