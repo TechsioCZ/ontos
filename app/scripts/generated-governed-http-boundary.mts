@@ -2155,6 +2155,28 @@ const hasStableReadFactoryBindings = (
   return [...expectedDeclarations].every(([binding, count]) => (declarations.get(binding) ?? 0) === count);
 };
 
+/** A local Effect.fn call returns an Effect without requiring a redundant constructor or pipe in the caller. */
+const hasOwnerLocalEffectFnReadInvocation = (expression: string, ownerSource: string): boolean => {
+  const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression)?.groups?.name;
+  const initializer = binding === undefined ? undefined : constInitializer(ownerSource, binding);
+  return (
+    binding !== undefined &&
+    initializer !== undefined &&
+    isWholeCallExpression(expression, new RegExp(`^${escapeRegExp(binding)}\\(`, 'u')) &&
+    isEffectFnCallback(initializer) &&
+    /\byield\*|\.pipe\(/u.test(maskNonCode(initializer, true)) &&
+    hasExactValueImport(ownerSource, 'Effect', 'effect') &&
+    hasStableReadFactoryBindings(
+      ownerSource,
+      new Map([
+        ['Effect', 0],
+        [binding, 1],
+      ]),
+      '',
+    )
+  );
+};
+
 const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
   if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
     return false;
@@ -2171,7 +2193,8 @@ const isReadHandlerCallback = (candidate: string | undefined, ownerSource: strin
     (/^Effect\.(?:succeedNone|void)$/u.test(expression) &&
       hasExactValueImport(ownerSource, 'Effect', 'effect') &&
       hasStableReadFactoryBindings(ownerSource, new Map([['Effect', 0]]), '')) ||
-    /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression)
+    /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression) ||
+    hasOwnerLocalEffectFnReadInvocation(expression, ownerSource)
   );
 };
 
