@@ -1,6 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off -- Test-owned scripted session client; expires: 2026-12-31.
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Effect, Exit, Layer, Option, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -90,5 +90,28 @@ it.effect('a session under another role runs no statement and fails as a connect
     expect(Schema.is(ConnectionError)(error?.reason)).toBe(true);
     expect(error?.reason.message).toBe(SESSION_ROLE_MISMATCH_REASON);
     expect(server.statements).toEqual(['select session_user::text as role']);
+  }),
+);
+
+it.effect('every way of running a statement confirms the session role first', () =>
+  Effect.gen(function* everyExecutionPathIsVerified() {
+    const executions = {
+      direct: (client: PgClient.PgClient) => client.unsafe('select 1'),
+      raw: (client: PgClient.PgClient) => client.unsafe('select 1').raw,
+      stream: (client: PgClient.PgClient) => Stream.runCollect(client.unsafe('select 1').stream),
+      unprepared: (client: PgClient.PgClient) => client.unsafe('select 1').unprepared,
+      values: (client: PgClient.PgClient) => client.unsafe('select 1').values,
+      withoutTransform: (client: PgClient.PgClient) => client.unsafe('select 1').withoutTransform,
+    };
+    for (const [name, execute] of Object.entries(executions)) {
+      const server = scriptedServer(0, 'party_registry_runtime');
+      const exit = yield* Effect.gen(function* useForeignSession() {
+        return yield* Effect.exit(execute(yield* verifiedClient));
+      }).pipe(Effect.provide(server.layer));
+      const error = Option.getOrUndefined(Exit.findErrorOption(exit));
+      expect(Schema.is(SqlError)(error), name).toBe(true);
+      expect(error?.reason.message, name).toBe(SESSION_ROLE_MISMATCH_REASON);
+      expect(server.statements, name).toEqual(['select session_user::text as role']);
+    }
   }),
 );

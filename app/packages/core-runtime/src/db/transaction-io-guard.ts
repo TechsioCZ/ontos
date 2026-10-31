@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
 import type { SqlError } from 'effect/sql/SqlError';
-import { Context, Data, Effect, Option, Schema, flow } from 'effect';
+import { Context, Data, Effect, Option, Predicate, Schema, flow } from 'effect';
+import type { Borrower } from 'effect/sql/SqlConnection';
 import { FetchHttpClient } from 'effect/http';
 
 /**
@@ -92,17 +93,19 @@ export const insideDatabaseTransaction =
       );
     });
 
-const statementExecutions = new Set<PropertyKey>([
-  'raw',
-  'unprepared',
-  'values',
-  'valuesUnprepared',
-  'withoutTransform',
-]);
+/** A statement that borrows its connection (no scoped lease) when it runs outside a transaction. */
+const BorrowingStatementSchema = Schema.Struct({
+  borrower: Schema.declare<Borrower>((value): value is Borrower => Predicate.isFunction(value)),
+});
+const isBorrowingStatement = Schema.is(BorrowingStatementSchema);
 
 /**
  * Runs `acquisition` before every statement, transaction or reservation of `client`. A failure is a
  * SqlError, so callers keep the statement's own error channel.
+ *
+ * A statement reaches its connection only through its `acquirer` (pooled checkout) or `borrower` (borrowed
+ * connection), whichever way it runs: yielded directly, `values`, `raw`, `unprepared`, `withoutTransform` or
+ * `stream`. Guarding those two members covers every execution path.
  */
 export const beforePoolAcquisition = (
   client: PgClient.PgClient,
@@ -112,8 +115,16 @@ export const beforePoolAcquisition = (
     new Proxy(statement, {
       get: (target, key, receiver) => {
         const value: unknown = Reflect.get(target, key, receiver);
-        // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- Proxy boundary: the statement's own execution Effect passes through unchanged.
-        return statementExecutions.has(key) && Effect.isEffect(value) ? Effect.andThen(acquisition, value) : value;
+        if (key === 'acquirer' && Effect.isEffect(value)) {
+          // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- Proxy boundary: the statement's own connection checkout passes through unchanged.
+          return Effect.andThen(acquisition, value);
+        }
+        if (key === 'borrower' && isBorrowingStatement(target)) {
+          const { borrower } = target;
+          const guarded: Borrower = (run) => Effect.andThen(acquisition, borrower(run));
+          return guarded;
+        }
+        return value;
       },
     });
   const unsafe: PgClient.PgClient['unsafe'] = (sql, params) => guardStatement(client.unsafe(sql, params));
