@@ -5,7 +5,7 @@ import {
   CounterpartyReadResponseSchema,
   CounterpartyReadUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
-import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -507,17 +507,19 @@ it.effect('retains the actual finite Party role End and fails closed at its excl
     yield* TestClock.setTime(Date.parse(end) - 1);
     yield* assertPreparedCounterpartyRoleCurrent(finite);
     yield* TestClock.setTime(Date.parse(end));
-    expect(yield* Effect.result(assertPreparedCounterpartyRoleCurrent(finite))).toMatchObject({ _tag: 'Failure' });
+    expect(Result.isFailure(yield* Effect.result(assertPreparedCounterpartyRoleCurrent(finite)))).toBe(true);
     const unknown = {
       managedLegalEntityId: legalEntityId,
       outcome: 'ELIGIBLE' as const,
       roleResourceId,
       roleResourceRevision: recordedAt,
     };
-    expect(yield* Effect.result(assertPreparedCounterpartyRoleCurrent(unknown))).toMatchObject({ _tag: 'Failure' });
+    expect(Result.isFailure(yield* Effect.result(assertPreparedCounterpartyRoleCurrent(unknown)))).toBe(true);
     expect(
-      yield* Effect.result(assertPreparedCounterpartyRoleCurrent({ ...unknown, validUntil: 'invalid' })),
-    ).toMatchObject({ _tag: 'Failure' });
+      Result.isFailure(
+        yield* Effect.result(assertPreparedCounterpartyRoleCurrent({ ...unknown, validUntil: 'invalid' })),
+      ),
+    ).toBe(true);
     yield* assertPreparedCounterpartyRoleCurrent({ ...unknown, validUntil: null });
     return yield* Effect.void;
   }),
@@ -545,6 +547,6 @@ it.effect('fails after a write if the observed role reaches its actual End durin
       ),
     );
     expect(wrote).toBe(true);
-    expect(result).toMatchObject({ _tag: 'Failure' });
+    expect(Result.isFailure(result)).toBe(true);
   }),
 );

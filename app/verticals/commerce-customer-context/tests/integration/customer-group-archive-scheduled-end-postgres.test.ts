@@ -546,7 +546,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
           scope.legalEntityId === legalEntityId &&
           target.tenantId === tenantId &&
           known !== undefined
-          ? { managedLegalEntityId: legalEntityId, outcome: 'ELIGIBLE' as const, ...known }
+          ? { managedLegalEntityId: legalEntityId, outcome: 'ELIGIBLE' as const, validUntil: null, ...known }
           : { outcome: 'INDETERMINATE' as const },
       );
     },
