@@ -15,7 +15,7 @@ it.live('pins pnpm to the native mise backend for cross-platform sandbox install
   Effect.gen(function* testEffect1() {
     const miseConfiguration = yield* Effect.tryPromise(() => readFile(path.join(workspaceRoot, '.mise.toml'), 'utf-8'));
     expect(miseConfiguration).not.toMatch(/\[tool_alias\]/u);
-    expect(miseConfiguration).toMatch(/\[tools\][\s\S]*pnpm = \{ version = "12\.11\.2", allow_builds = \["pnpm"\] \}/u);
+    expect(miseConfiguration).toMatch(/\[tools\][\s\S]*pnpm = \{ version = "12\.16\.1", allow_builds = \["pnpm"\] \}/u);
   }),
 );
 
@@ -89,7 +89,7 @@ shift
 printf 'locki %s %s\\n' "$command_name" "$*" >>"$TEST_LOG"
 case "$command_name" in
   --version)
-    printf '%s\\n' 'locki, version 0.0.27'
+    printf 'locki, version %s\\n' "\${TEST_LOCKI_VERSION-0.0.32}"
     ;;
   new)
     if [ "\${ESCAPE_TARGET-}" = "true" ]; then
@@ -185,6 +185,16 @@ it.live('rejects unsafe slugs and alternate options before creating a sandbox', 
   }),
 );
 
+it.live('rejects an older Locki before creating a sandbox', () =>
+  Effect.gen(function* rejectsOldLocki() {
+    const fixture = yield* makeFixture();
+    const result = runWorkflow(fixture, [featureSlug], { TEST_LOCKI_VERSION: '0.0.31' });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('Locki 0.0.32 or newer is required');
+    const log = yield* Effect.tryPromise(() => readFile(fixture.logPath, 'utf-8'));
+    expect(log.includes('locki new')).toBe(false);
+  }),
+);
 it.live('fails before Locki when the source environment is missing', () =>
   Effect.gen(function* testEffect7() {
     const fixture = yield* makeFixture(false);

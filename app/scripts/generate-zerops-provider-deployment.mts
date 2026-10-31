@@ -179,7 +179,7 @@ const renderProvider = (
         # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
+        - sudo apk add --no-cache curl libstdc++ libatomic
         - sh /build/source/app/scripts/install-zerops-node.sh ${toolchain.node} ${toolchain.pnpm}
       buildCommands:
         - cd app && PATH="${nodeBin}:$PATH" pnpm install --frozen-lockfile
@@ -201,6 +201,8 @@ const renderProvider = (
         retryPeriod: 10s
     run:
       base: '${providerRuntimeBase}'
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
       ports:
         - port: ${port}
           protocol: tcp
