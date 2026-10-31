@@ -32,13 +32,24 @@ import {
   evidenceReferences,
   legalEntities,
   principalAuthBindings,
+  principalCompanyMemberships,
   principals,
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
-import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import {
+  BootstrapCompanyMembershipSchema,
+  installBootstrapCompanyMemberships,
+  scopedActionRoleBootstrapRelationships,
+} from '../../../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import { toLegalEntityAccessObjectId } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { buildCompanyMembershipUpdates } from '../../../../packages/core-runtime/src/permissions/company-membership.ts';
+import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
+import { startPortalEnrollmentAction } from '../../src/actions/start-portal-enrollment.action.ts';
+import { claimPortalEnrollmentTransitionAction } from '../../src/actions/claim-portal-enrollment-transition.action.ts';
+import { recordPortalEnrollmentOutcomeAction } from '../../src/actions/record-portal-enrollment-outcome.action.ts';
 import {
   commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
   commercePortalAuthRealmLive,
@@ -198,7 +209,9 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(
     Layer.provide(
       ResendEmailDeliveryLive.pipe(
         Layer.provide(FetchHttpClient.layer),
-        Layer.provide(emailDeliveryConfigurationFor(deliveryFetch)),
+        // FetchHttpClient selects Fetch at send time, not when its layer is built.
+        // Keep this scenario's transport in the realm callback's captured Context.
+        Layer.provideMerge(emailDeliveryConfigurationFor(deliveryFetch)),
       ),
     ),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
@@ -905,84 +918,6 @@ const authenticatedRuntime = (
     (runtime) => Effect.promise(async () => await runtime.dispose()),
   );
 
-it.live(
-  'answers a same-Tenant caller that did not start an Attempt exactly as an absent one',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* foreignPrincipalReadsNothing() {
-        const tenantId = randomUUID();
-        const creatorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-        const fixture = yield* makeEnrollmentAcceptanceFixture(
-          { tenantId },
-          yield* enrollmentApplicationCompositionRevision,
-        );
-        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
-        const runtime = yield* authenticatedRuntime(gateway);
-        const attempt = yield* startAcceptanceEnrollment(
-          fixture,
-          startInputFor(`enrollment-http-${randomUUID()}@example.test`),
-          creatorPrincipalId,
-        );
-
-        /** One portal session of this Tenant reading one Attempt id. */
-        const readAs = Effect.fnUntraced(function* readAs(principalId: string, attemptId: string) {
-          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
-            authBindingId: randomUUID(),
-            authContextRef: `portal-session:${principalId}`,
-            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-            authMethod: 'session',
-            legalEntityId: randomUUID(),
-            principalId,
-            tenantId,
-          });
-          return yield* Effect.promise(
-            async () =>
-              await runtime.handler(
-                new Request(`${ORIGIN}/api/portal-auth/enrollment/${attemptId}`, {
-                  headers: {
-                    authorization: `Bearer ${assertion}`,
-                    origin: ORIGIN,
-                    'x-correlation-id': `enrollment-http-${randomUUID()}`,
-                  },
-                  method: 'GET',
-                }),
-              ),
-          );
-        });
-
-        // A second customer of the very same Tenant, holding the Attempt id, and the same customer
-        // asking for an Attempt that does not exist. The two answers must be indistinguishable.
-        const foreign = yield* readAs(randomUUID(), attempt.portalEnrollmentAttemptId);
-        const absent = yield* readAs(randomUUID(), randomUUID());
-        expect(foreign.status).toBe(404);
-        expect(absent.status).toBe(404);
-        expect(foreign.headers.get('content-type')).toContain('application/problem+json');
-        expect(yield* Effect.promise(async () => await foreign.clone().json())).toStrictEqual(
-          yield* Effect.promise(async () => await absent.clone().json()),
-        );
-
-        // The foreign read resumed nothing either: the Attempt is untouched at the revision it was
-        // started with. Scoping the read alone would leave that resume open to any caller.
-        expect(yield* readEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId)).toStrictEqual({
-          revision: attempt.revision,
-          state: 'IN_PROGRESS',
-        });
-
-        // The customer who started it still reads it, so the 404 above is about the caller and not
-        // about an unreadable Attempt.
-        const owned = yield* readAs(creatorPrincipalId, attempt.portalEnrollmentAttemptId);
-        expect(owned.status).toBe(200);
-        expect(yield* Effect.promise(async () => await owned.clone().json())).toMatchObject({
-          journey: 'RETAIL_SELF_ENROLLMENT',
-          portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-          revision: attempt.revision,
-          state: 'IN_PROGRESS',
-        });
-      }),
-    ),
-  180_000,
-);
-
 it.live('serves the enrollment start route from the installed realm under ordinary governance', () =>
   Effect.scoped(
     Effect.gen(function* governedEnrollmentStart() {
@@ -1058,7 +993,7 @@ interface SignedInPortalAccount {
 }
 
 /** A verified Commerce portal account and one live session for it, removed again on scope close. */
-const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortalAccount() {
+const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortalAccount(existingEmail?: string) {
   const databaseUrl = yield* providerDatabaseUrl;
   const configuration = yield* parseCommercePortalAuthConfig({
     COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(databaseUrl),
@@ -1082,7 +1017,7 @@ const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortal
       },
     },
   }).pipe(Effect.orDie);
-  const email = `enrollment-owner-${randomUUID()}@example.test`;
+  const email = existingEmail ?? `enrollment-owner-${randomUUID()}@example.test`;
   yield* Effect.addFinalizer(() =>
     database.executor
       .transaction((transaction) =>
@@ -1094,14 +1029,16 @@ const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortal
       .pipe(Effect.orDie),
   );
   const headers = new Headers({ origin: ORIGIN });
-  yield* Effect.promise(
-    async () =>
-      await auth.api.signUpEmail({
-        body: { email, name: 'Enrollment owner', password: PORTAL_OWNER_PASSWORD },
-        headers,
-        returnHeaders: true,
-      }),
-  );
+  if (existingEmail === undefined) {
+    yield* Effect.promise(
+      async () =>
+        await auth.api.signUpEmail({
+          body: { email, name: 'Enrollment owner', password: PORTAL_OWNER_PASSWORD },
+          headers,
+          returnHeaders: true,
+        }),
+    );
+  }
   yield* Effect.promise(
     async () => await auth.api.sendVerificationEmail({ body: { email }, headers, returnHeaders: true }),
   );
@@ -1183,6 +1120,127 @@ const startExistingAccountRequest = (
     method: 'POST',
   });
 };
+
+it.live(
+  'answers a same-Tenant caller that did not start an Attempt exactly as an absent one',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* foreignPrincipalReadsNothing() {
+        const tenantId = randomUUID();
+        const creatorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const owner = yield* makeSignedInPortalAccount();
+        const startInput = existingAccountStartInputFor(owner.email);
+        const started = yield* startAcceptanceEnrollment(fixture, startInput, creatorPrincipalId);
+        const claim = yield* commercePortalAuthEnrollmentAccountVerificationClaim(
+          startInput,
+          started.portalEnrollmentAttemptId,
+        );
+        const claimed = yield* fixture.ownerStore
+          .claimTransition(
+            Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+              actorPrincipalId: creatorPrincipalId,
+              expectedRevision: started.revision,
+              leaseDurationMs: 30_000,
+              ownerInvocationId: claim.ownerInvocationId,
+              ownerModuleKey: claim.ownerModuleKey,
+              portalEnrollmentAttemptId: started.portalEnrollmentAttemptId,
+              requestDigest: claim.requestDigest,
+              required: true,
+              tenantId,
+              transitionKey: claim.transitionKey,
+              workerId: START_WORKER_ID,
+            }),
+          )
+          .pipe(
+            Effect.flatMap(
+              claimedOrIndeterminate({
+                ownerInvocationId: claim.ownerInvocationId,
+                portalEnrollmentAttemptId: started.portalEnrollmentAttemptId,
+              }),
+            ),
+          );
+        const realm = yield* Layer.build(yield* configuredRealmLive());
+        const subject = yield* commercePortalAuthEnrollmentSessionSubject(
+          Context.get(realm, CommercePortalAuthService),
+          Context.get(realm, CommercePortalAuthSessionLifecycle),
+          new Headers({ cookie: owner.cookie }),
+        );
+        if (Option.isNone(subject)) {
+          return yield* Effect.die('The owned read requires the genuine verified account session');
+        }
+        const { attempt } = yield* commercePortalAuthEnrollmentAccountVerificationOutcome(
+          claim,
+          claimed.attempt,
+          claimed.operation,
+          subject.value,
+        ).pipe(Effect.flatMap((outcome) => fixture.ownerStore.recordOutcome(outcome)));
+
+        /** One portal session of this Tenant reading one Attempt id. */
+        const readAs = Effect.fnUntraced(function* readAs(principalId: string, attemptId: string) {
+          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: randomUUID(),
+            authContextRef: `portal-session:${principalId}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId: attempt.targetLegalEntityId,
+            principalId,
+            tenantId,
+          });
+          return yield* Effect.promise(
+            async () =>
+              await runtime.handler(
+                new Request(`${ORIGIN}/api/portal-auth/enrollment/${attemptId}`, {
+                  headers: {
+                    authorization: `Bearer ${assertion}`,
+                    cookie: owner.cookie,
+                    origin: ORIGIN,
+                    'x-correlation-id': `enrollment-http-${randomUUID()}`,
+                  },
+                  method: 'GET',
+                }),
+              ),
+          );
+        });
+
+        // A second customer of the very same Tenant, holding the Attempt id, and the same customer
+        // asking for an Attempt that does not exist. The two answers must be indistinguishable.
+        const foreign = yield* readAs(randomUUID(), attempt.portalEnrollmentAttemptId);
+        const absent = yield* readAs(randomUUID(), randomUUID());
+        expect(foreign.status).toBe(404);
+        expect(absent.status).toBe(404);
+        expect(foreign.headers.get('content-type')).toContain('application/problem+json');
+        expect(yield* Effect.promise(async () => await foreign.clone().json())).toStrictEqual(
+          yield* Effect.promise(async () => await absent.clone().json()),
+        );
+
+        // The foreign read resumed nothing either: the Attempt is untouched at the revision it was
+        // started with. Scoping the read alone would leave that resume open to any caller.
+        expect(yield* readEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId)).toStrictEqual({
+          revision: attempt.revision,
+          state: 'IN_PROGRESS',
+        });
+
+        // The customer who started it still reads it, so the 404 above is about the caller and not
+        // about an unreadable Attempt.
+        const owned = yield* readAs(creatorPrincipalId, attempt.portalEnrollmentAttemptId);
+        expect(owned.status).toBe(200);
+        expect(yield* Effect.promise(async () => await owned.clone().json())).toMatchObject({
+          journey: 'EXISTING_ACCOUNT',
+          portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          revision: attempt.revision,
+          state: 'IN_PROGRESS',
+        });
+        return yield* Effect.void;
+      }),
+    ),
+  180_000,
+);
 
 it.live(
   'records the authenticated owner account subject on the transition an Existing-account start claims',
@@ -1887,6 +1945,7 @@ const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSu
       evidenceReferences,
       actionInvocations,
       principalAuthBindings,
+      principalCompanyMemberships,
       tenantModuleStates,
       legalEntities,
       principals,
@@ -1933,6 +1992,15 @@ const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSu
     subjectType: 'user',
     tenantId: subject.tenantId,
   });
+  yield* admin.executor.transaction((transaction) =>
+    installBootstrapCompanyMemberships(transaction, subject.tenantId, [
+      Schema.decodeUnknownSync(BootstrapCompanyMembershipSchema)({
+        affiliation: 'external',
+        legalEntityId: subject.legalEntityId,
+        principalId: subject.principalId,
+      }),
+    ]),
+  );
   return subject;
 });
 
@@ -1942,23 +2010,84 @@ const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedS
   actionKeys: readonly string[] = [START_ACTION_KEY, CLAIM_ACTION_KEY],
 ) {
   const configuration = yield* loadSpiceDbConfig();
-  const client = newSpiceDbGrpcClient(configuration);
+  const client = yield* Effect.acquireRelease(
+    Effect.sync(() => newSpiceDbGrpcClient(configuration)),
+    (resource) => Effect.sync(() => resource.close()),
+  );
   const principalSubject = v1.SubjectReference.create({
     object: v1.ObjectReference.create({ objectId: subject.principalId, objectType: 'principal' }),
   });
   const tenantObject = v1.ObjectReference.create({ objectId: subject.tenantId, objectType: 'tenant' });
   const relationships = [
     v1.Relationship.create({ relation: 'member', resource: tenantObject, subject: principalSubject }),
-    ...actionKeys.map((actionKey) =>
-      v1.Relationship.create({
-        relation: 'executor',
-        resource: v1.ObjectReference.create({
-          objectId: toSpiceDbActionObjectId({ actionKey, tenantId: subject.tenantId }),
-          objectType: 'action',
-        }),
-        subject: principalSubject,
+    v1.Relationship.create({
+      relation: 'tenant',
+      resource: v1.ObjectReference.create({
+        objectId: Schema.decodeUnknownSync(Schema.String)(
+          toLegalEntityAccessObjectId(subject.tenantId, subject.legalEntityId),
+        ),
+        objectType: 'legal_entity',
       }),
-    ),
+      subject: v1.SubjectReference.create({ object: tenantObject }),
+    }),
+    ...buildCompanyMembershipUpdates({
+      affiliation: 'external',
+      companyActive: true,
+      kind: 'human',
+      legalEntityId: subject.legalEntityId,
+      principalId: subject.principalId,
+      principalStatus: 'active',
+      status: 'active',
+      tenantActive: true,
+      tenantId: subject.tenantId,
+    }).map((update) => update.relationship),
+    ...actionKeys.flatMap((actionKey) => {
+      const descriptor = [
+        startPortalEnrollmentAction.descriptor,
+        claimPortalEnrollmentTransitionAction.descriptor,
+        recordPortalEnrollmentOutcomeAction.descriptor,
+      ].find((candidate) => candidate.actionKey === actionKey);
+      if (descriptor === undefined) {
+        throw new Error(`Unsupported enrollment fixture Action: ${actionKey}`);
+      }
+      const roleKey = `enrollment:${subject.principalId}:${actionKey}`;
+      const tenantScope = { roleKey, tenantId: subject.tenantId };
+      const scopes =
+        descriptor.legalEntityScope === 'forbidden'
+          ? [tenantScope]
+          : [tenantScope, { ...tenantScope, legalEntityId: subject.legalEntityId }];
+      return scopes.flatMap((scope) => [
+        ...scopedActionRoleBootstrapRelationships({
+          ...scope,
+          action: {
+            actionKey: descriptor.actionKey,
+            legalEntityScope: descriptor.legalEntityScope,
+            owningModuleKey: descriptor.owningModuleKey,
+            provisioning: 'explicit',
+          },
+        }).map((relationship) =>
+          v1.Relationship.create({
+            relation: relationship.relation,
+            resource: v1.ObjectReference.create({
+              objectId: relationship.resourceId,
+              objectType: relationship.resourceType,
+            }),
+            subject: v1.SubjectReference.create({
+              object: v1.ObjectReference.create({
+                objectId: relationship.subjectId,
+                objectType: relationship.subjectType,
+              }),
+              optionalRelation: relationship.subjectRelation ?? '',
+            }),
+          }),
+        ),
+        v1.Relationship.create({
+          relation: 'member',
+          resource: v1.ObjectReference.create({ objectId: toScopedRoleObjectId(scope), objectType: 'scoped_role' }),
+          subject: principalSubject,
+        }),
+      ]);
+    }),
   ];
   const write = (operation: v1.RelationshipUpdate_Operation) =>
     Effect.promise(
@@ -2008,6 +2137,15 @@ const seedSecondGovernedStartPrincipal = Effect.fnUntraced(function* seedSecondG
     subjectType: 'user',
     tenantId: subject.tenantId,
   });
+  yield* admin.executor.transaction((transaction) =>
+    installBootstrapCompanyMemberships(transaction, subject.tenantId, [
+      Schema.decodeUnknownSync(BootstrapCompanyMembershipSchema)({
+        affiliation: 'external',
+        legalEntityId: subject.legalEntityId,
+        principalId: subject.principalId,
+      }),
+    ]),
+  );
   return subject;
 });
 
@@ -2187,6 +2325,7 @@ it.live(
           authContextRef: `portal-session:${subject.principalId}`,
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           authMethod: 'session',
+          legalEntityId: subject.legalEntityId,
           principalId: subject.principalId,
           tenantId,
         });
@@ -2208,7 +2347,22 @@ it.live(
         );
 
         // The Attempt projection, from the governed `start-portal-enrollment` Action's own result.
-        expect(response.status).toBe(200);
+        const phases = yield* fixture.admin.transaction((transaction) =>
+          transaction.execute<{ readonly action_key: string; readonly status: string }>(
+            sql`select action_key, status from core.action_invocations
+                 where tenant_id = ${tenantId}::uuid order by started_at`,
+            'objects',
+          ),
+        );
+        expect(
+          response.status,
+          JSON.stringify({
+            accounts: (yield* portalAccountsFor(email)).length,
+            attempts: yield* enrollmentAttemptCount(fixture),
+            body: yield* Effect.promise(async () => await response.clone().text()),
+            phases,
+          }),
+        ).toBe(200);
         const started = Schema.decodeUnknownSync(StartedEnrollmentResponseSchema)(
           yield* Effect.promise(async () => await response.clone().json()),
         );
@@ -2251,11 +2405,14 @@ it.live(
         });
 
         // And the caller reads its own committed Attempt back through the mounted read route.
+        const owner = yield* makeSignedInPortalAccount(email);
+        expect(owner.providerSubjectId).toBe(account.id);
         const readAssertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
           authBindingId: subject.authBindingId,
           authContextRef: `portal-session:${subject.principalId}`,
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           authMethod: 'session',
+          legalEntityId: subject.legalEntityId,
           principalId: subject.principalId,
           tenantId,
         });
@@ -2265,6 +2422,7 @@ it.live(
               new Request(`${ORIGIN}/api/portal-auth/enrollment/${startedAttempt.portalEnrollmentAttemptId}`, {
                 headers: {
                   authorization: `Bearer ${readAssertion}`,
+                  cookie: owner.cookie,
                   origin: ORIGIN,
                   'x-correlation-id': `enrollment-http-${randomUUID()}`,
                 },
@@ -2331,6 +2489,7 @@ it.live(
           authContextRef: `portal-session:${first.principalId}`,
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           authMethod: 'session',
+          legalEntityId: first.legalEntityId,
           principalId: first.principalId,
           tenantId,
         });
@@ -2350,6 +2509,7 @@ it.live(
           authContextRef: `portal-session:${second.principalId}`,
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           authMethod: 'session',
+          legalEntityId: second.legalEntityId,
           principalId: second.principalId,
           tenantId,
         });
@@ -2409,6 +2569,7 @@ it.live(
           authContextRef: `portal-session:${subject.principalId}`,
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           authMethod: 'session',
+          legalEntityId: subject.legalEntityId,
           principalId: subject.principalId,
           tenantId,
         });

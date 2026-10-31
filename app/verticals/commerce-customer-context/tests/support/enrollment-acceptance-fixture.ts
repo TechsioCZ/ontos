@@ -327,12 +327,16 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
 export const startEnrollmentAcceptanceAttempt = (
   fixture: EnrollmentAcceptanceFixture,
   input: StartEnrollmentAttemptInput,
-): Effect.Effect<EnrollmentAttemptSnapshot, CommerceEnrollmentAttemptError> =>
-  fixture
-    .run(fixture.scope, (transaction) =>
-      commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).create(input),
-    )
+): Effect.Effect<EnrollmentAttemptSnapshot, CommerceEnrollmentAttemptError> => {
+  // Registration writes verify the Attempt's selling entity against the transaction scope.
+  const scope =
+    input.targetLegalEntityId === undefined
+      ? fixture.scope
+      : { ...fixture.scope, legalEntityId: input.targetLegalEntityId };
+  return fixture
+    .run(scope, (transaction) => commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope).create(input))
     .pipe(Effect.map((created) => created.attempt));
+};
 
 /** Moves an Attempt's still-running leases into the past, as if the worker had disappeared. */
 export const expireEnrollmentAcceptanceLeases = (

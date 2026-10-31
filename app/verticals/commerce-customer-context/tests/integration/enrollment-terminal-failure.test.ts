@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Crypto, Effect, Option, Result, Schema } from 'effect';
@@ -19,7 +17,7 @@ import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/depl
 
 const randomId = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
-it.live('fails only a proven required rejection and releases its original composition marker atomically', () =>
+it.live('fails only a proven required rejection and tracks original in-flight operation markers atomically', () =>
   Effect.scoped(
     Effect.gen(function* terminalFailureAcceptance() {
       const compositionRevision = yield* enrollmentApplicationCompositionRevision;
@@ -35,13 +33,8 @@ it.live('fails only a proven required rejection and releases its original compos
           Effect.gen(function* failureTransaction() {
             const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
               transaction.execute(statement, 'objects');
-            const migration = readFileSync(
-              new URL('../../drizzle/20261024001000_enrollment-terminal-failure/migration.sql', import.meta.url),
-              'utf-8',
-            );
-            for (const statement of migration.split('--> statement-breakpoint')) {
-              yield* execute(sql.raw(statement));
-            }
+            // Exercise the migrated database as deployed. Replaying this historical migration
+            // would collide with its installed function or replace a newer production body.
             yield* execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
             const attemptId = yield* randomId;
             const invocationId = yield* randomId;
@@ -50,14 +43,19 @@ it.live('fails only a proven required rejection and releases its original compos
             yield* execute(sql`insert into commerce_customer_context.portal_enrollment_attempts
         (portal_enrollment_attempt_id, tenant_id, journey, intent_key, intent_digest, composition_revision, created_by_principal_id)
         values (${attemptId}::uuid, ${tenantId}::uuid, 'RETAIL_SELF_ENROLLMENT', ${attemptId}, ${'a'.repeat(64)}, ${compositionRevision}, ${actorId}::uuid)`);
-            const marker = `enrollment-attempt:${tenantId}:${attemptId}`;
+            const marker = (ownerInvocationId: string) =>
+              `enrollment-operation:${tenantId}:${attemptId}:${ownerInvocationId}`;
             const markers = () =>
-              execute(sql`select work_id from core.application_composition_durable_work where work_id = ${marker}`);
+              execute(sql`select work_id from core.application_composition_durable_work
+                where owner_module_key = 'commerce.customer-context' and original_revision = ${compositionRevision}
+                  and work_id like ${`enrollment-operation:${tenantId}:${attemptId}:%`}
+                order by work_id`);
             const fail = (moduleKey = owner, transitionKey = transition, scope = tenantId) =>
               execute(
                 sql`select * from commerce_customer_context.fail_portal_enrollment(${scope}::uuid, ${attemptId}::uuid, ${moduleKey}, ${transitionKey})`,
               );
-            expect(yield* markers()).toEqual([{ work_id: marker }]);
+            // A parked Attempt has no in-flight owner effect and must not pin publication.
+            expect(yield* markers()).toEqual([]);
             expect(yield* fail()).toEqual([{ failed: false }]);
             yield* execute(sql`savepoint unproven_failure`);
             const unproven = yield* execute(
@@ -82,18 +80,20 @@ it.live('fails only a proven required rejection and releases its original compos
         (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id, request_digest, actor_principal_id, status, completed_at)
         values (${tenantId}::uuid, ${attemptId}::uuid, 'party.registry', 'party.candidate.submit', ${unresolvedId}::uuid, ${'c'.repeat(64)}, ${actorId}::uuid, 'INDETERMINATE', now())`);
             expect(yield* fail()).toEqual([{ failed: false }]);
-            expect(yield* markers()).toEqual([{ work_id: marker }]);
+            expect(yield* markers()).toEqual([{ work_id: marker(unresolvedId) }]);
             yield* execute(
               sql`update commerce_customer_context.portal_enrollment_owner_operations set status = 'SUCCEEDED', completed_at = now() where owner_invocation_id = ${unresolvedId}::uuid`,
             );
+            expect(yield* markers()).toEqual([]);
             yield* execute(
               sql`update commerce_customer_context.portal_enrollment_owner_operations set lease_owner = 'fixture-worker', lease_token = ${yield* randomId}::uuid, lease_expires_at = now() + interval '1 minute' where owner_invocation_id = ${invocationId}::uuid`,
             );
             expect(yield* fail()).toEqual([{ failed: false }]);
-            expect(yield* markers()).toEqual([{ work_id: marker }]);
+            expect(yield* markers()).toEqual([{ work_id: marker(invocationId) }]);
             yield* execute(
               sql`update commerce_customer_context.portal_enrollment_owner_operations set lease_owner = null, lease_token = null, lease_expires_at = null where owner_invocation_id = ${invocationId}::uuid`,
             );
+            expect(yield* markers()).toEqual([]);
             expect(yield* fail('another.owner')).toEqual([{ failed: false }]);
             expect(yield* fail(owner, 'another.transition')).toEqual([{ failed: false }]);
             yield* execute(sql`set local role ontos_runtime`);

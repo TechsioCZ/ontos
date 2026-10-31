@@ -113,7 +113,11 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
   const configuration = yield* portalAuthConfiguration();
   return commercePortalAuthRealmLive.pipe(
     Layer.provide(
-      ResendEmailDeliveryLive.pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(emailDeliveryConfiguration)),
+      ResendEmailDeliveryLive.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        // The provider callback captures the transport used at send time as well as the mail port.
+        Layer.provideMerge(emailDeliveryConfiguration),
+      ),
     ),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );

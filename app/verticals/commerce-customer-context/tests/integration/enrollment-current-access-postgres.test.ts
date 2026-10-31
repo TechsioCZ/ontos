@@ -1152,7 +1152,12 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
   expect(wrongAttestation.status).toBe('FAILED');
   expect(wrongAttestation.nextState).toBe('RECONCILIATION_REQUIRED');
   expect(wrongAttestation.resultReference).toBe(outcome.resultReference);
-  const publicAttempt = yield* receiver(`/api/portal-auth/enrollment/${attemptId}`, undefined, native.fixture.manager);
+  const publicAttempt = yield* receiver(
+    `/api/portal-auth/enrollment/${attemptId}`,
+    undefined,
+    native.principal,
+    recipientRealm.cookie,
+  );
   expect(publicAttempt.status).toBe(200);
   const publicProjection = yield* Schema.decodeUnknownEffect(CommercePortalAuthEnrollmentAttemptProjectionSchema)(
     yield* Effect.promise(async () => await publicAttempt.json()),
@@ -1234,7 +1239,14 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
 const durableRetailAttempt = Effect.gen(function* durableRetailAttemptEffect() {
   const receiverArtifact = yield* makeReceiverArtifact();
   const baseSnapshot = yield* makeEnrollmentApplicationCompositionSnapshot(receiverArtifact.marker.buildMarker, []);
-  const native = yield* makeOwnedEnrollmentCurrentAccessFixture(baseSnapshot);
+  const owned = yield* makeOwnedEnrollmentCurrentAccessDatabase(baseSnapshot);
+  const recipientRealm = yield* makeEnrollmentRecipientRealm(owned);
+  const preparedNative = yield* makeEnrollmentCurrentAccessFixture({
+    compositionRevision: owned.snapshot.composition.revision,
+    connections: owned.connections,
+    managerProviderSubjectId: recipientRealm.providerSubjectId,
+  });
+  const native = { ...preparedNative, snapshot: owned.snapshot };
   const started = yield* runAction({
     payload: {
       intentDigest: 'd'.repeat(64),
@@ -1256,7 +1268,9 @@ const durableRetailAttempt = Effect.gen(function* durableRetailAttemptEffect() {
     native.run,
   );
   let { attempt } = started;
-  for (const step of retailSelfEnrollmentStepPlan().slice(0, 3)) {
+  for (const step of retailSelfEnrollmentStepPlan().filter(
+    (plannedStep) => plannedStep.transitionKey !== BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
+  )) {
     const identity = {
       actorPrincipalId: native.fixture.manager.principalId,
       ownerInvocationId: randomUUID(),
@@ -1281,6 +1295,11 @@ const durableRetailAttempt = Effect.gen(function* durableRetailAttemptEffect() {
     const recorded = yield* store.recordOutcome(
       yield* Schema.decodeEffect(RecordEnrollmentOutcomeInputSchema)({
         ...identity,
+        accountSubject: {
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          providerSubjectId: recipientRealm.providerSubjectId,
+          subjectType: 'user',
+        },
         expectedRevision: claimed.attempt.revision,
         leaseToken: claimed.attempt.lease.leaseToken,
         status: 'SUCCEEDED',
@@ -1370,13 +1389,18 @@ const durableRetailAttempt = Effect.gen(function* durableRetailAttemptEffect() {
   expect(completed.recorded.operation.ownerInvocationId).toBe(transition.ownerInvocationId);
   expect(completed.recorded.attempt.state).toBe('COMPLETE');
   expect((yield* store.read(readInput)).state).toBe('COMPLETE');
-  const receiver = yield* makeDefaultCurrentReceiver(native, receiverArtifact).pipe(
+  const receiver = yield* makeDefaultCurrentReceiver(native, receiverArtifact, recipientRealm).pipe(
     Effect.timeoutOrElse({
       duration: '15 seconds',
       orElse: () => Effect.fail(new EnrollmentReceiverAcquisitionFailed({ code: 'startup_timeout' })),
     }),
   );
-  const response = yield* receiver(`/api/portal-auth/enrollment/${attemptId}`, undefined, native.fixture.manager);
+  const response = yield* receiver(
+    `/api/portal-auth/enrollment/${attemptId}`,
+    undefined,
+    native.principal,
+    recipientRealm.cookie,
+  );
   expect(response.status).toBe(200);
   const projection = yield* Schema.decodeUnknownEffect(CommercePortalAuthEnrollmentAttemptProjectionSchema)(
     yield* Effect.promise(async () => await response.json()),
