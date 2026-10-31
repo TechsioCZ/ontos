@@ -10,7 +10,9 @@ describe("credential query guard", () => {
       url.searchParams.set(key, "query-probe");
       const response = proxy(new NextRequest(url));
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toBe("/prihlaseni");
+      expect(new URL(response.headers.get("location") ?? "").href).toBe(
+        "https://store.test/prihlaseni",
+      );
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     },
   );
@@ -23,7 +25,9 @@ describe("credential query guard", () => {
       }),
     );
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("/prihlaseni");
+    expect(new URL(response.headers.get("location") ?? "").href).toBe(
+      "https://ontos-stage-akros.web-revolution.cz/prihlaseni",
+    );
   });
   it("preserves legitimate verification tokens and normal navigation", () => {
     for (const path of ["/overeni-emailu?token=one-use", "/prihlaseni?returnTo=%2Fkosik"]) {
