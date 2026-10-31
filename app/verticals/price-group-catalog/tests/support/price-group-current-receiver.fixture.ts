@@ -62,6 +62,7 @@ import {
   PriceGroupRetirementAcceptanceSchema,
 } from '../../shared/domain/price-group.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { priceGroupPrivateLines } from './price-group-private-lines.ts';
 
 // Executable owner fixture only. No exports, foreign private imports, signing capability,
 // arbitrary payload, executor, callback, or permission mutation crosses this protocol.
@@ -420,14 +421,8 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
 const program = Effect.gen(function* priceGroupCurrentChild() {
   const { pull, send } = yield* connectParent;
   const commands = yield* Queue.bounded<typeof CommandSchema.Type | PriceGroupCurrentFixtureFailure>(8);
-  let bytes = 0;
   yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-    Stream.mapEffect((chunk) => {
-      bytes += chunk.byteLength;
-      return demand(bytes <= 131_072, 'private-input-limit').pipe(Effect.as(chunk));
-    }),
-    Stream.decodeText(),
-    Stream.splitLines,
+    priceGroupPrivateLines,
     Stream.mapEffect((line) =>
       Schema.decodeUnknownEffect(Schema.fromJsonString(CommandSchema), {
         onExcessProperty: 'error',
