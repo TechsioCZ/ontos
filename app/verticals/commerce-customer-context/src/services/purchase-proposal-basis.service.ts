@@ -917,84 +917,6 @@ export const basisCurrentnessMatchesClaim = (
 
 type BasisServices = Effect.Services<ReturnType<typeof purchaseProposalBasisService>>;
 
-const durablePurchaseLimitEvaluationCurrentness = (
-  services: Context.Context<BasisServices>,
-  composition: typeof ActiveApplicationCompositionService.Service,
-): PurchaseLimitEvaluationCurrentnessPortService => ({
-  forOperation: (transaction, actualScope) => {
-    const resolve = (
-      input: Parameters<PurchaseLimitEvaluationCurrentnessPortService['resolveCurrent']>[0],
-      candidateProposal?: typeof PurchaseProposalRevisionSchema.Type,
-    ) =>
-      Effect.gen(function* resolveBasisCurrentness() {
-        if (
-          actualScope.tenantId !== input.scope.tenantId ||
-          actualScope.legalEntityId !== input.scope.legalEntityId ||
-          actualScope.principalId !== input.scope.principalId ||
-          actualScope.trustedStorefrontId !== input.scope.storefrontId
-        ) {
-          return yield* Effect.fail(basisCurrentnessUnavailable());
-        }
-        const active = yield* composition.load.pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-          Effect.mapError(basisCurrentnessUnavailable),
-        );
-        const owner = yield* purchaseProposalBasisService(transaction, actualScope, active.composition.revision).pipe(
-          Effect.mapError(basisCurrentnessUnavailable),
-        );
-        const observation = yield* owner
-          .read({
-            operation: 'CURRENT',
-            sourceRef: input.claimedPurchaseValue.sourceRef,
-            sourceRevision: input.claimedPurchaseValue.sourceRevision,
-          })
-          .pipe(Effect.mapError(basisCurrentnessUnavailable));
-        if (
-          DateTime.isGreaterThan(input.observedAt, observation.observedAt) ||
-          DateTime.toEpochMillis(observation.observedAt) - DateTime.toEpochMillis(input.observedAt) > 30_000
-        ) {
-          return yield* Effect.fail(basisCurrentnessUnavailable());
-        }
-        const { facts } = observation;
-        if (!basisCurrentnessMatchesClaim(observation, input, actualScope, candidateProposal) || facts === null) {
-          return yield* Effect.fail(basisCurrentnessUnavailable());
-        }
-        return facts;
-      }).pipe(Effect.provideContext(services));
-    const bound: PurchaseLimitEvaluationCurrentnessPortService = {
-      forTransaction: (nextTransaction, nextScope) =>
-        Object.is(nextTransaction, transaction) &&
-        nextScope.tenantId === actualScope.tenantId &&
-        nextScope.legalEntityId === actualScope.legalEntityId &&
-        nextScope.principalId === actualScope.principalId &&
-        nextScope.storefrontId === actualScope.trustedStorefrontId
-          ? bound
-          : {
-              resolveCandidate: () => Effect.fail(basisCurrentnessUnavailable()),
-              resolveCurrent: () => Effect.fail(basisCurrentnessUnavailable()),
-            },
-      resolveCandidate: (input) =>
-        input.candidateProposal === undefined
-          ? Effect.fail(basisCurrentnessUnavailable())
-          : resolve(input, input.candidateProposal),
-      resolveCurrent: (input) => resolve(input),
-    };
-    return bound;
-  },
-  resolveCandidate: () => Effect.fail(basisCurrentnessUnavailable()),
-  resolveCurrent: () => Effect.fail(basisCurrentnessUnavailable()),
-});
-
-/** Real transaction-bound Currentness adapter for approval-trigger evaluation. */
-export const purchaseProposalBasisCurrentnessLive = Layer.effect(
-  PurchaseLimitEvaluationCurrentnessPort,
-  Effect.gen(function* basisCurrentnessLayer() {
-    const services = yield* Effect.context<BasisServices>();
-    const composition = yield* ActiveApplicationCompositionService;
-    return durablePurchaseLimitEvaluationCurrentness(services, composition);
-  }),
-);
-
 const observeBasisPreparation = Effect.fn('PurchaseProposalBasis.observePreparation')(function* observePreparation(
   payload: typeof PreparePurchaseProposalBasisPayloadSchema.Type,
   context: ActionServicePreparationContext,
@@ -1418,4 +1340,87 @@ export const completePurchaseProposalBasisActionServices = Effect.fn('PurchasePr
         Effect.provideContext(dependencies),
       );
   },
+);
+
+const durablePurchaseLimitEvaluationCurrentness = (
+  services: Context.Context<BasisServices>,
+  composition: typeof ActiveApplicationCompositionService.Service,
+): PurchaseLimitEvaluationCurrentnessPortService => ({
+  forOperation: (transaction, actualScope) => {
+    const resolve = (
+      input: Parameters<PurchaseLimitEvaluationCurrentnessPortService['resolveCurrent']>[0],
+      candidateProposal?: typeof PurchaseProposalRevisionSchema.Type,
+    ) =>
+      Effect.gen(function* resolveBasisCurrentness() {
+        if (
+          actualScope.tenantId !== input.scope.tenantId ||
+          actualScope.legalEntityId !== input.scope.legalEntityId ||
+          actualScope.principalId !== input.scope.principalId ||
+          actualScope.trustedStorefrontId !== input.scope.storefrontId
+        ) {
+          return yield* Effect.fail(basisCurrentnessUnavailable());
+        }
+        const active = yield* composition.load.pipe(
+          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+          Effect.mapError(basisCurrentnessUnavailable),
+        );
+        const owner = yield* purchaseProposalBasisService(transaction, actualScope, active.composition.revision).pipe(
+          Effect.mapError(basisCurrentnessUnavailable),
+        );
+        const observation = yield* owner
+          .read({
+            operation: 'CURRENT',
+            sourceRef: input.claimedPurchaseValue.sourceRef,
+            sourceRevision: input.claimedPurchaseValue.sourceRevision,
+          })
+          .pipe(Effect.mapError(basisCurrentnessUnavailable));
+        if (
+          DateTime.isGreaterThan(input.observedAt, observation.observedAt) ||
+          DateTime.toEpochMillis(observation.observedAt) - DateTime.toEpochMillis(input.observedAt) > 30_000
+        ) {
+          return yield* Effect.fail(basisCurrentnessUnavailable());
+        }
+        const { facts } = observation;
+        if (!basisCurrentnessMatchesClaim(observation, input, actualScope, candidateProposal) || facts === null) {
+          return yield* Effect.fail(basisCurrentnessUnavailable());
+        }
+        return facts;
+      }).pipe(Effect.provideContext(services));
+    const bound: PurchaseLimitEvaluationCurrentnessPortService = {
+      forTransaction: (nextTransaction, nextScope) =>
+        Object.is(nextTransaction, transaction) &&
+        nextScope.tenantId === actualScope.tenantId &&
+        nextScope.legalEntityId === actualScope.legalEntityId &&
+        nextScope.principalId === actualScope.principalId &&
+        nextScope.storefrontId === actualScope.trustedStorefrontId
+          ? bound
+          : {
+              resolveCandidate: () => Effect.fail(basisCurrentnessUnavailable()),
+              resolveCurrent: () => Effect.fail(basisCurrentnessUnavailable()),
+            },
+      resolveCandidate: (input) =>
+        input.candidateProposal === undefined
+          ? Effect.fail(basisCurrentnessUnavailable())
+          : resolve(input, input.candidateProposal),
+      resolveCurrent: (input) => resolve(input),
+    };
+    return bound;
+  },
+  prepare: (context, source) =>
+    preparePurchaseProposalBasisCurrentness(context, source).pipe(
+      Effect.mapError(basisCurrentnessUnavailable),
+      Effect.provideContext(services),
+    ),
+  resolveCandidate: () => Effect.fail(basisCurrentnessUnavailable()),
+  resolveCurrent: () => Effect.fail(basisCurrentnessUnavailable()),
+});
+
+/** Real transaction-bound Currentness adapter for approval-trigger evaluation. */
+export const purchaseProposalBasisCurrentnessLive = Layer.effect(
+  PurchaseLimitEvaluationCurrentnessPort,
+  Effect.gen(function* basisCurrentnessLayer() {
+    const services = yield* Effect.context<BasisServices>();
+    const composition = yield* ActiveApplicationCompositionService;
+    return durablePurchaseLimitEvaluationCurrentness(services, composition);
+  }),
 );

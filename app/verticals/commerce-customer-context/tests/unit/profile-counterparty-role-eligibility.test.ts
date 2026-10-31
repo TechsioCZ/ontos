@@ -13,6 +13,8 @@ import { expect, it } from 'effect-rstest';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
+  assertPreparedCounterpartyRoleCurrent,
+  withPreparedCounterpartyRoleCurrent,
   classifyProfileCounterpartyRoleEligibility,
   makeProfileCounterpartyRoleEligibilityResolver,
   profileCounterpartyRoleEligibilityResolverFactoryLive,
@@ -120,6 +122,7 @@ it.effect('accepts one exact Current CUSTOMER role and preserves immutable Party
       outcome: 'ELIGIBLE',
       roleResourceId,
       roleResourceRevision: recordedAt,
+      validUntil: null,
     });
   }),
 );
@@ -304,6 +307,7 @@ it.effect(
           outcome: 'ELIGIBLE',
           roleResourceId,
           roleResourceRevision: recordedAt,
+          validUntil: null,
         });
         expect(requests).toHaveLength(invocation * 2);
       }
@@ -481,4 +485,66 @@ it.effect('does not read Party when Shell denies the server credential', () =>
     expect(failure).toHaveProperty('cause.status', 403);
     expect(requests).toBe(1);
   }).pipe(Effect.provide(serverConfig)),
+);
+
+it.effect('retains the actual finite Party role End and fails closed at its exclusive boundary', () =>
+  Effect.gen(function* finiteRoleEnd() {
+    const end = '2026-09-09T10:00:01.000Z';
+    const [originalRole] = response.currentRoles;
+    if (originalRole === undefined) {
+      return yield* Effect.die('Missing test role');
+    }
+    const finite = classifyProfileCounterpartyRoleEligibility(
+      {
+        ...response,
+        currentRoles: [{ ...originalRole, validTo: end }],
+      },
+      { legalEntityId, requestCorrelation: 'finite', tenantId },
+      counterpartyResourceId,
+      now,
+    );
+    expect(finite).toMatchObject({ outcome: 'ELIGIBLE', validUntil: end });
+    yield* TestClock.setTime(Date.parse(end) - 1);
+    yield* assertPreparedCounterpartyRoleCurrent(finite);
+    yield* TestClock.setTime(Date.parse(end));
+    expect(yield* Effect.result(assertPreparedCounterpartyRoleCurrent(finite))).toMatchObject({ _tag: 'Failure' });
+    const unknown = {
+      managedLegalEntityId: legalEntityId,
+      outcome: 'ELIGIBLE' as const,
+      roleResourceId,
+      roleResourceRevision: recordedAt,
+    };
+    expect(yield* Effect.result(assertPreparedCounterpartyRoleCurrent(unknown))).toMatchObject({ _tag: 'Failure' });
+    expect(
+      yield* Effect.result(assertPreparedCounterpartyRoleCurrent({ ...unknown, validUntil: 'invalid' })),
+    ).toMatchObject({ _tag: 'Failure' });
+    yield* assertPreparedCounterpartyRoleCurrent({ ...unknown, validUntil: null });
+    return yield* Effect.void;
+  }),
+);
+
+it.effect('fails after a write if the observed role reaches its actual End during that write', () =>
+  Effect.gen(function* expiryDuringWrite() {
+    const end = '2026-09-09T10:00:01.000Z';
+    const role = {
+      managedLegalEntityId: legalEntityId,
+      outcome: 'ELIGIBLE' as const,
+      roleResourceId,
+      roleResourceRevision: recordedAt,
+      validUntil: end,
+    };
+    yield* TestClock.setTime(Date.parse(end) - 1);
+    let wrote = false;
+    const result = yield* Effect.result(
+      withPreparedCounterpartyRoleCurrent(
+        role,
+        Effect.gen(function* fakeWrite() {
+          wrote = true;
+          yield* TestClock.setTime(Date.parse(end));
+        }),
+      ),
+    );
+    expect(wrote).toBe(true);
+    expect(result).toMatchObject({ _tag: 'Failure' });
+  }),
 );

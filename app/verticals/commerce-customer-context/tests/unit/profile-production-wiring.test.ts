@@ -1,6 +1,9 @@
 import { expect, it } from 'effect-rstest';
 
-import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  getActionServiceFactory,
+  getActionServicePreflight,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
@@ -9,7 +12,10 @@ import { bindRetailPortalProfileAction } from '../../src/actions/bind-retail-por
 import { createCounterpartyPurchasingProfileAction } from '../../src/actions/create-counterparty-purchasing-profile.action.ts';
 import { ensureRetailCustomerProfileAction } from '../../src/actions/ensure-retail-customer-profile.action.ts';
 import { openProfileReconciliationAction } from '../../src/actions/open-profile-reconciliation.action.ts';
-import { reactivateCustomerProfileAction } from '../../src/actions/reactivate-customer-profile.action.ts';
+import {
+  prepareReactivationServices,
+  reactivateCustomerProfileAction,
+} from '../../src/actions/reactivate-customer-profile.action.ts';
 import { recoverRetailPortalProfileBindingAction } from '../../src/actions/recover-retail-portal-profile-binding.action.ts';
 import { resolveProfileReconciliationAction } from '../../src/actions/resolve-profile-reconciliation.action.ts';
 import { revokeRetailPortalProfileBindingAction } from '../../src/actions/revoke-retail-portal-profile-binding.action.ts';
@@ -40,8 +46,9 @@ it('attaches every stable Profile registration to scoped production persistence'
     'profileServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(reactivateCustomerProfileAction).toString()).toContain(
-    'profileServicesForVerifiedScope',
+    'profilePersistenceServicesForTransaction',
   );
+  expect(getActionServicePreflight(reactivateCustomerProfileAction)).toBe(prepareReactivationServices);
   expect(getActionServiceFactory(recoverRetailPortalProfileBindingAction).toString()).toContain(
     'profileServicesForVerifiedScope',
   );

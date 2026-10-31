@@ -39,8 +39,11 @@ import {
   PurchaseLimitStorefrontIdSchema,
 } from '../../shared/domain/purchase-limit-evaluation.ts';
 import { CounterpartyPurchasingProfileRefSchema } from '../../shared/resources/counterparty-purchasing-profile.ts';
-import { preparePurchaseProposalBasisCurrentness } from '../services/purchase-proposal-basis.service.ts';
-import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-counterparty-role-eligibility.ts';
+import { preparePurchaseLimitCurrentness } from '../services/purchase-currentness-preparation.ts';
+import {
+  ProfileCounterpartyRoleEligibilityResolverFactory,
+  withPreparedCounterpartyRoleCurrent,
+} from '../profile-counterparty-role-eligibility.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import { purchaseApprovalTriggerEvidenceSourceForTransaction } from '../persistence/purchase-limit-persistence.ts';
 import { createCreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxMessage as createOutboxMessage } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
@@ -252,6 +255,11 @@ const handleCreatePurchaseProposalRevision = Effect.fn('CreatePurchaseProposalRe
   return result satisfies CreatePurchaseProposalRevisionResult;
 });
 
+const proposalRoleUnavailable = (cause: ProfilePersistenceDependencyFailure) =>
+  Effect.fail(
+    rejectWithCause('CURRENT_STATE_INDETERMINATE', 'Prepared Counterparty role expired or is unavailable', true)(cause),
+  );
+
 const prepareProposalRevisionServices = Effect.fn('CreatePurchaseProposalRevisionAction.prepareServices')(
   function* prepareServices(payload: CreatePurchaseProposalRevisionPayload, context: ActionServicePreparationContext) {
     const { proposal } = payload;
@@ -275,7 +283,7 @@ const prepareProposalRevisionServices = Effect.fn('CreatePurchaseProposalRevisio
     const roleFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
     const [currentnessFactory, role] = yield* Effect.all(
       [
-        preparePurchaseProposalBasisCurrentness(context, proposal.purchaseValue),
+        preparePurchaseLimitCurrentness(context, proposal.purchaseValue),
         roleFactory.make({
           legalEntityId,
           requestCorrelation: scope.correlationId,
@@ -320,19 +328,27 @@ const prepareProposalRevisionServices = Effect.fn('CreatePurchaseProposalRevisio
             ...workflow.forActionInvocation(invocation),
             createProposal: (input) =>
               invocation === context.actionInvocationId
-                ? workflow
-                    .forActionInvocation(invocation)
-                    .createProposal(input)
-                    .pipe(
-                      Effect.tap(prepared.revalidate),
-                      Effect.mapError(
-                        rejectWithCause(
-                          'CURRENT_STATE_INDETERMINATE',
-                          'Prepared proposal evidence expired or changed',
-                          true,
+                ? withPreparedCounterpartyRoleCurrent(
+                    role,
+                    workflow
+                      .forActionInvocation(invocation)
+                      .createProposal(input)
+                      .pipe(
+                        Effect.tap(
+                          prepared
+                            .revalidate()
+                            .pipe(
+                              Effect.mapError(
+                                rejectWithCause(
+                                  'CURRENT_STATE_INDETERMINATE',
+                                  'Prepared proposal evidence expired or changed',
+                                  true,
+                                ),
+                              ),
+                            ),
                         ),
                       ),
-                    )
+                  ).pipe(Effect.catchTag('ProfilePersistenceDependencyFailure', proposalRoleUnavailable))
                 : Effect.fail(
                     new CreatePurchaseProposalRevisionRejected({
                       code: 'PERMISSION_DENIED',

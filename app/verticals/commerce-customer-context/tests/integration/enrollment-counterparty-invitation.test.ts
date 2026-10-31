@@ -7,8 +7,6 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
-import { FetchHttpClient } from 'effect/http';
 import { eq, sql } from 'drizzle-orm';
 import { Config, Context, Deferred, Effect, Fiber, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -86,6 +84,7 @@ import {
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import { makeEnrollmentContinuationHarness } from '../support/enrollment-continuation-harness.ts';
 import { makeCapturingCounterpartyInvitationProofDelivery } from '../support/counterparty-invitation-proof-capture.ts';
+import { localEmailDeliveryLive } from '../support/local-email-delivery.ts';
 import {
   countCounterpartyInvitationClaims,
   issueCounterpartyAccessInvitation,
@@ -134,22 +133,6 @@ const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL')
   Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
-/** Resend is answered locally: creation now awaits delivery, so the transport must accept. */
-const acceptingResendFetch: typeof fetch = (input, init) => {
-  const request = new Request(input, init);
-  expect(request.url).toBe('https://api.resend.com/emails');
-  return Promise.resolve(Response.json({ id: 'accepted' }));
-};
-
-const emailDeliveryConfiguration = Layer.mergeAll(
-  Layer.succeed(ResendEmailDeliveryConfig, {
-    apiKey: Redacted.make('re_commerce_enrollment_counterparty_invitation'),
-    endpoint: 'https://api.resend.com/emails',
-    from: 'no-reply@commerce.example.test',
-  }),
-  Layer.succeed(FetchHttpClient.Fetch, acceptingResendFetch),
-);
-
 const portalAuthConfiguration = Effect.fnUntraced(function* portalAuthConfiguration() {
   const databaseUrl = yield* providerDatabaseUrl;
   return yield* parseCommercePortalAuthConfig({
@@ -161,12 +144,10 @@ const portalAuthConfiguration = Effect.fnUntraced(function* portalAuthConfigurat
 });
 
 /** The realm a host that opted in gets, assembled from the same layer the composition root uses. */
-const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
+const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(requests: Request[]) {
   const configuration = yield* portalAuthConfiguration();
   return commercePortalAuthRealmLive.pipe(
-    Layer.provide(
-      ResendEmailDeliveryLive.pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(emailDeliveryConfiguration)),
-    ),
+    Layer.provide(localEmailDeliveryLive(requests)),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });
@@ -175,7 +156,7 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
  * The enrollment owner preparation authority, assembled from the very layers `api/index.ts`
  * composes for a deployment that opted into both halves of the realm.
  */
-const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorityLive() {
+const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorityLive(requests: Request[]) {
   const configuration = yield* portalAuthConfiguration();
   const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
     apiKey: Redacted.make('enrollment-counterparty-invitation-core-identity'),
@@ -194,7 +175,7 @@ const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorit
     Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
   const accountLookupLive = CommercePortalAuthAccountLookupLive.pipe(Layer.provide(databaseLive));
-  const realmLive = yield* configuredRealmLive();
+  const realmLive = yield* configuredRealmLive(requests);
   const accountCreationReconciliationLive = CommercePortalAuthAccountCreationReconciliationLive.pipe(
     Layer.provide(
       Layer.mergeAll(databaseLive, CommercePortalAuthAccountCreationProviderLive.pipe(Layer.provide(realmLive))),
@@ -226,14 +207,15 @@ const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, ()
 /** The deployed handler tree with both halves of the realm and the configured owner preparation. */
 const deployedRuntime = (
   gateway: AcceptanceGatewayIssuer,
+  requests: Request[],
   loseFirstCommittedClaimAnswer: boolean,
   droppedClaimAnswers: string[],
   preflightDecoration?: Layer.Layer<ActionAuthorizationPreflight, never, ActionAuthorizationPreflight>,
 ) =>
   Effect.acquireRelease(
     Effect.gen(function* buildDeployedRuntime() {
-      const realmLive = yield* configuredRealmLive();
-      const preparationLive = yield* preparationAuthorityLive();
+      const realmLive = yield* configuredRealmLive(requests);
+      const preparationLive = yield* preparationAuthorityLive(requests);
       const ownerRuntime =
         preflightDecoration === undefined
           ? commerceCustomerContextActionRuntimeAwaitingOwnerPreparation
@@ -470,8 +452,10 @@ const invitationScenario = Effect.fnUntraced(function* invitationScenario(option
 
   const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
   const droppedClaimAnswers: string[] = [];
+  const emailRequests: Request[] = [];
   const runtime = yield* deployedRuntime(
     gateway,
+    emailRequests,
     options.loseFirstCommittedClaimAnswer === true,
     droppedClaimAnswers,
     options.preflightDecoration,
@@ -507,6 +491,14 @@ const invitationScenario = Effect.fnUntraced(function* invitationScenario(option
       `The Counterparty invitation start answered ${startResponse.status}: ${JSON.stringify(yield* responseBody(startResponse))}`,
     );
   }
+  expect(emailRequests).toHaveLength(1);
+  const [request] = emailRequests;
+  if (request === undefined) {
+    return yield* Effect.die('Enrollment issued no verification email');
+  }
+  const delivery = yield* Effect.promise(() => request.json());
+  expect(delivery).toMatchObject({ subject: 'Verify your OntOS Commerce email address', to: [email] });
+  expect(delivery.text).toContain('/verify-email?token=');
   const started = Schema.decodeUnknownSync(StartedEnrollmentResponseSchema)(yield* responseBody(startResponse));
   const attemptId = started.attempt.portalEnrollmentAttemptId;
 

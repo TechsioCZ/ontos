@@ -180,10 +180,13 @@ const prepareSubmissionServices = Effect.fn('SubmitPurchaseApprovalRequestAction
             ...workflow.forActionInvocation(invocation),
             submitRequest: (input) =>
               invocation === context.actionInvocationId
-                ? workflow
-                    .forActionInvocation(invocation)
-                    .submitRequest(input)
-                    .pipe(Effect.tap(prepared.revalidate), Effect.mapError(submissionPreparedEvidenceUnavailable))
+                ? prepared
+                    .revalidate()
+                    .pipe(
+                      Effect.mapError(submissionPreparedEvidenceUnavailable),
+                      Effect.andThen(workflow.forActionInvocation(invocation).submitRequest(input)),
+                      Effect.tap(prepared.revalidate().pipe(Effect.mapError(submissionPreparedEvidenceUnavailable))),
+                    )
                 : Effect.fail(
                     new SubmitPurchaseApprovalRequestRejected({
                       code: 'PERMISSION_DENIED',

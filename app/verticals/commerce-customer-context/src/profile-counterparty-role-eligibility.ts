@@ -127,6 +127,7 @@ const classifyEligibleRoles = (
     // Role periods are immutable owner facts. Party Registry currently publishes their canonical
     // recordedAt instant, rather than a synthetic numeric revision, as the evidence version.
     roleResourceRevision: eligibleRole.recordedAt,
+    validUntil: eligibleRole.validTo,
   };
 };
 
@@ -152,6 +153,34 @@ export const classifyProfileCounterpartyRoleEligibility = (
     now,
   );
 };
+
+/** Fail closed on an unknown or expired owner-reported role End; null alone means unbounded. */
+export const assertPreparedCounterpartyRoleCurrent = (role: CounterpartyRoleEligibility) => {
+  if (role.outcome !== 'ELIGIBLE') {
+    return Effect.void;
+  }
+  if (role.validUntil === undefined || (role.validUntil !== null && !isCanonicalInstant(role.validUntil))) {
+    return Effect.fail(dependencyFailure('The prepared Counterparty customer role has no valid owner End evidence'));
+  }
+  const { validUntil } = role;
+  return DateTime.now.pipe(
+    Effect.flatMap((now) =>
+      validUntil === null || DateTime.formatIso(now) < validUntil
+        ? Effect.void
+        : Effect.fail(dependencyFailure('The prepared Counterparty customer role has expired')),
+    ),
+  );
+};
+
+/** Validate before and after the write; a post-write failure must abort its enclosing transaction. */
+export const withPreparedCounterpartyRoleCurrent = <A, E, R>(
+  role: CounterpartyRoleEligibility,
+  write: Effect.Effect<A, E, R>,
+) =>
+  assertPreparedCounterpartyRoleCurrent(role).pipe(
+    Effect.andThen(write),
+    Effect.tap(() => assertPreparedCounterpartyRoleCurrent(role)),
+  );
 
 /**
  * Builds the Commerce adapter over Party Registry's governed Counterparty Read. The scope is

@@ -5,10 +5,18 @@ import { fileURLToPath } from 'node:url';
 import {
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationLive,
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  GatewayAssertionRedemptionService,
+  GatewayAssertionReplayError,
   ContextAccessLive,
   defineScopedRoutine,
   runAction,
 } from '@app/core-runtime';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
+import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { configuredGatewayAssertionRedemptionLive } from '../../api/index.ts';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -17,12 +25,12 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } fro
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { ConfigProvider, Context, Deferred, Effect, Layer, Option, Redacted, Result, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
-import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
@@ -41,6 +49,13 @@ import {
 import { executeInvoiceRecipientResolutionWithAuthorization } from '../../src/api/invoice-recipient-resolution-client.ts';
 import { executeDeliveryDestinationResolutionWithAuthorization } from '../../src/api/delivery-destination-resolution-client.ts';
 import { addSavedAddressAction } from '../../src/actions/add-saved-address.action.ts';
+import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
+import { PaymentTermCatalogGatewayCredentialService } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
+import { PaymentTermDefinitionSchema } from '@app/payment-term-catalog-contracts/payment-term';
+import {
+  CurrentPaymentTermsRequestSchema,
+  CurrentPaymentTermsResponseSchema,
+} from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import {
@@ -49,6 +64,7 @@ import {
 } from '../../src/persistence/address-persistence.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { servePurchaseFixtureHttpServer } from '../support/purchase-fixture-http-server.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -88,6 +104,18 @@ const ensureProfile = defineScopedRoutine({
   ] as const,
   resultSchema: ProfileResultSchema,
   routineKey: 'test.native-profile',
+  schema: 'commerce_customer_context',
+});
+const persistPaymentTerms = defineScopedRoutine({
+  name: 'persist_customer_payment_terms',
+  ownerModuleKey: 'commerce.customer-context',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ] as const,
+  resultSchema: Schema.Struct({ outcome: Schema.String, payload: Schema.Unknown }),
+  routineKey: 'test.retail-payment-terms-seed',
   schema: 'commerce_customer_context',
 });
 const bindProfile = defineScopedRoutine({
@@ -199,6 +227,92 @@ const readBindingAuthority = defineScopedRoutine({
   routineKey: 'profile.binding-authorization-read',
   schema: 'commerce_customer_context',
 });
+const probeNativeGateway = Effect.fn('PurchasePermissionTest.probeNativeGateway')(function* probeNativeGateway(
+  environment: Readonly<{
+    APP_ENV_PATH: string;
+    DATABASE_URL: string;
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: string;
+    ONTOS_GATEWAY_ISSUER: string;
+    ONTOS_GATEWAY_PUBLIC_JWKS: string;
+  }>,
+  marker: typeof ReceiverMarkerSchema.Type,
+  diagnosticToken: string,
+  secondToken: string,
+) {
+  // Probe the same genuine configuration, source and durable redemption as the child, using a
+  // separate freshly signed assertion. This cannot consume any request's assertion or grant access.
+  const diagnosticConfiguration = ConfigProvider.layer(ConfigProvider.fromUnknown(environment));
+  const diagnosticComposition = ActiveApplicationCompositionConfigLive.pipe(
+    Layer.provideMerge(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
+    Layer.provide(diagnosticConfiguration),
+  );
+  const diagnosticContext = yield* Layer.build(
+    Layer.mergeAll(
+      diagnosticComposition,
+      configuredGatewayAssertionRedemptionLive.pipe(Layer.provide(diagnosticConfiguration)),
+    ),
+  );
+  yield* Context.get(diagnosticContext, ActiveApplicationCompositionSource).load.pipe(Effect.orDie);
+  yield* Context.get(diagnosticContext, ActiveApplicationCompositionService).load.pipe(Effect.orDie);
+  const diagnosticVerifier = bindGatewayPrincipalVerifier('commerce-customer-context', marker);
+  const diagnosticAssertion = Redacted.make(`Bearer ${diagnosticToken}`);
+  const verification = yield* diagnosticVerifier
+    .verify(diagnosticAssertion, { environment })
+    .pipe(
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        Context.get(diagnosticContext, ActiveApplicationCompositionService),
+      ),
+      Effect.result,
+    );
+  if (Result.isFailure(verification)) {
+    return yield* Effect.die(verification.failure);
+  }
+  const claims = decodeJwt(diagnosticToken);
+  if (claims.jti === undefined || claims.exp === undefined) {
+    return yield* Effect.die('The diagnostic assertion has no redemption identity');
+  }
+  const redemption = Context.get(diagnosticContext, GatewayAssertionRedemptionService);
+  // Probe redemption separately so a native SQL error retains its cause instead of being
+  // sanitized by the gateway verifier; only the independently signed diagnostic JTI is spent.
+  yield* redemption
+    .consume({
+      audience: 'commerce-customer-context',
+      expiresAtEpochSeconds: claims.exp,
+      issuer: environment.ONTOS_GATEWAY_ISSUER,
+      jti: claims.jti,
+    })
+    .pipe(Effect.orDie);
+  const diagnosticReplay = yield* redemption
+    .consume({
+      audience: 'commerce-customer-context',
+      expiresAtEpochSeconds: claims.exp,
+      issuer: environment.ONTOS_GATEWAY_ISSUER,
+      jti: claims.jti,
+    })
+    .pipe(Effect.result);
+  expect(Result.isFailure(diagnosticReplay)).toBe(true);
+  if (Result.isFailure(diagnosticReplay)) {
+    expect(Schema.is(GatewayAssertionReplayError)(diagnosticReplay.failure)).toBe(true);
+  }
+  const redeemed = yield* diagnosticVerifier
+    .verifyAndRedeem(Redacted.make(`Bearer ${secondToken}`), {
+      environment,
+      redemption,
+    })
+    .pipe(
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        Context.get(diagnosticContext, ActiveApplicationCompositionService),
+      ),
+      Effect.result,
+    );
+  if (Result.isFailure(redeemed)) {
+    return yield* Effect.die(redeemed.failure);
+  }
+  return yield* Effect.void;
+});
+
 const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermissionPlansEffect() {
   const artifact = fileURLToPath(new URL(`../../node_modules/.cache/ontos-1268/${randomUUID()}.mjs`, import.meta.url));
   yield* Effect.addFinalizer(() => Effect.promise(() => rm(artifact, { force: true })));
@@ -247,7 +361,10 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
   });
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
-      actionKeys: [addSavedAddressAction.descriptor.actionKey],
+      actionKeys: [
+        addSavedAddressAction.descriptor.actionKey,
+        changeRetailPaymentTermPreferenceAction.descriptor.actionKey,
+      ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -466,6 +583,187 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
   expect(evidence.invocations.some((invocation) => invocation.status === 'succeeded')).toBe(true);
   expect(evidence.events).toHaveLength(1);
   expect(evidence.outbox).toHaveLength(1);
+  // Bind the optional capability explicitly; the launch baseline remains unchanged.
+  const optionalPermission = 'retail.settings.payment_term_preference.manage' as const;
+  expect(RETAIL_PORTAL_SELF_SERVICE_BASELINE).not.toContain(optionalPermission);
+  const optionalGrant = {
+    permission: optionalPermission,
+    principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
+    target: {
+      kind: 'retail_profile' as const,
+      legalEntityId: fixture.legalEntityId,
+      profileId,
+      tenantId: fixture.tenantId,
+    },
+  };
+  yield* business.mutate({ ...optionalGrant, operation: 'grant' });
+  yield* Effect.addFinalizer(() => business.mutate({ ...optionalGrant, operation: 'revoke' }).pipe(Effect.orDie));
+  const termId = randomUUID();
+  const termRef = {
+    moduleId: 'payment.term-catalog' as const,
+    resourceId: termId,
+    resourceType: 'payment.term-catalog.payment-term' as const,
+    tenantId: fixture.tenantId,
+  };
+  const entitlementRef = {
+    moduleId: 'commerce.customer-context' as const,
+    resourceId: randomUUID(),
+    resourceType: 'commerce.customer-context.customer-payment-term-entitlement' as const,
+    tenantId: fixture.tenantId,
+  };
+  const effectiveFrom = '2027-01-01T00:00:00.000Z';
+  const seeded = yield* fixture
+    .prepareOwner(
+      (transaction) =>
+        transaction.invoke(persistPaymentTerms, [
+          {
+            actionInvocationId: randomUUID(),
+            changed: true,
+            counterpartyResourceId: null,
+            expectedRevision: 1,
+            principalId: fixture.manager.principalId,
+            profileKind: 'RETAIL',
+            profileResourceId: profileId,
+            reason: 'Native optional Payment Term entitlement',
+            state: {
+              entitlements: [
+                {
+                  effectiveFrom,
+                  entitlementRef,
+                  originalEffectiveTo: null,
+                  paymentTermRef: termRef,
+                  semanticRevisionId: termId,
+                  status: 'ACTIVE',
+                },
+              ],
+              preferences: [],
+              profileRef: profile.profileRef,
+              revision: 2,
+            },
+          },
+        ]),
+      'required',
+    )
+    .pipe(Effect.provideContext(context));
+  expect(seeded[0]?.outcome).toBe('APPLIED');
+  let catalogCalls = 0;
+  let beforeCatalogResponse: Effect.Effect<void> = Effect.void;
+  const catalogServer = yield* servePurchaseFixtureHttpServer(
+    snapshot,
+    Effect.gen(function* currentPaymentTerms() {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      expect(request.headers.authorization).toBe('Bearer native-retail-catalog');
+      const input = yield* request.json.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(CurrentPaymentTermsRequestSchema)),
+      );
+      catalogCalls += 1;
+      yield* beforeCatalogResponse;
+      const provenance = {
+        actionInvocationId: randomUUID(),
+        actorPrincipalId: fixture.manager.principalId,
+        at: '2020-01-01T00:00:00.000Z',
+        reason: 'Native retail Catalog fixture',
+      };
+      const definitions = input.references.map(({ paymentTermRef }) =>
+        Schema.decodeUnknownSync(PaymentTermDefinitionSchema)({
+          code: 'NATIVE_RETAIL',
+          compatibilityId: 'immediate.v1',
+          created: provenance,
+          definitionRevisionId: termId,
+          description: 'Native retail Payment Term',
+          lifecycle: { effectiveFrom: '2020-01-01T00:00:00.000Z', effectiveTo: null, state: 'ACTIVE' },
+          metadataRevision: 1,
+          name: 'Immediate',
+          paymentTermRef,
+          retired: null,
+          semanticFingerprint: 'a'.repeat(64),
+          semanticRevisionId: termId,
+          semantics: { calculationRuleVersion: 2, calendarRule: 'NOT_APPLICABLE', kind: 'IMMEDIATE' },
+          updated: provenance,
+        }),
+      );
+      return yield* HttpServerResponse.json(
+        yield* Schema.decodeUnknownEffect(CurrentPaymentTermsResponseSchema)({
+          current: definitions,
+          effectiveAt: input.at,
+          observedAt: input.at,
+          referenceOutcomes: definitions.map((definition) => ({
+            definition,
+            kind: 'USABLE',
+            requestedPaymentTermRef: definition.paymentTermRef,
+          })),
+          truncated: false,
+        }),
+      );
+    }),
+  );
+  if (!Schema.is(Schema.Struct({ port: Schema.Number }))(catalogServer.address)) {
+    return yield* Effect.die('No native Payment Term Catalog port');
+  }
+  const catalogOrigin = new URL(`http://127.0.0.1:${catalogServer.address.port}`);
+  const executePreference = (
+    change: typeof changeRetailPaymentTermPreferenceAction.descriptor.payloadSchema.Type.change,
+    expectedRevision: number,
+    selectedProfile = profile.profileRef,
+  ) =>
+    runAction({
+      payload: { change, expectedRevision, profileRef: selectedProfile },
+      principal,
+      registration: changeRetailPaymentTermPreferenceAction,
+      transport: {
+        correlationId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        targetModuleKey: 'commerce.customer-context',
+      },
+    }).pipe(
+      Effect.provideService(PaymentTermCatalogGatewayCredentialService, {
+        issue: () =>
+          Effect.succeed({ baseUrl: catalogOrigin, credential: Redacted.make('Bearer native-retail-catalog') }),
+      }),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
+          ConfigProvider.fromEnv(),
+        ),
+      ),
+      Effect.provideContext(context),
+    );
+  const selected = yield* executePreference({ _tag: 'SET_PREFERENCE', effectiveFrom, paymentTermRef: termRef }, 2);
+  expect(selected).toMatchObject({ changed: true, state: { revision: 3 } });
+  expect(catalogCalls).toBe(1);
+  const noOp = yield* executePreference({ _tag: 'SET_PREFERENCE', effectiveFrom, paymentTermRef: termRef }, 3);
+  expect(noOp.changed).toBe(false);
+  expect(catalogCalls).toBe(1);
+  const foreignPreference = yield* executePreference(
+    { _tag: 'SET_PREFERENCE', effectiveFrom, paymentTermRef: termRef },
+    3,
+    {
+      ...profile.profileRef,
+      resourceId: Schema.decodeSync(ProfileResultSchema.fields.payload.fields.profileRef.fields.resourceId)(
+        randomUUID(),
+      ),
+    },
+  ).pipe(Effect.result);
+  expect(Result.isFailure(foreignPreference)).toBe(true);
+  expect(catalogCalls).toBe(1);
+  beforeCatalogResponse = Effect.gen(function* concurrentOwnerChange() {
+    beforeCatalogResponse = Effect.void;
+    const cleared = yield* executePreference({ _tag: 'CLEAR_PREFERENCE', effectiveAt: effectiveFrom }, 3).pipe(
+      Effect.orDie,
+    );
+    expect(cleared.changed).toBe(true);
+  });
+  const stale = yield* executePreference(
+    { _tag: 'SET_PREFERENCE', effectiveFrom: '2027-02-01T00:00:00.000Z', paymentTermRef: termRef },
+    3,
+  ).pipe(Effect.result);
+  expect(Result.isFailure(stale)).toBe(true);
+  if (Result.isFailure(stale)) {
+    expect(stale.failure).toMatchObject({ code: 'operation_context_unavailable' });
+  }
+  expect(catalogCalls).toBe(2);
   const [saved] = yield* admin.execute<{ readonly count: number }>(
     sql`select count(*)::integer as count from commerce_customer_context.saved_addresses where saved_address_id=${produced.address.savedAddressRef.resourceId}::uuid and tenant_id=${fixture.tenantId}::uuid`,
     'objects',
@@ -518,9 +816,7 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
   const pair = yield* Effect.promise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const publicJwk = yield* Effect.promise(() => exportJWK(pair.publicKey));
   const issuer = 'https://native-purchase-plan.ontos.test';
-  const source = yield* HttpServer.HttpServer;
-  const snapshotDocument = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(snapshot);
-  yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })));
+  const source = catalogServer;
   if (!Schema.is(Schema.Struct({ port: Schema.Number }))(source.address)) {
     return yield* Effect.die('No composition TCP address');
   }
@@ -542,12 +838,38 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
     stderr: 'pipe',
     stdout: 'pipe',
   });
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
-  const firstLine = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
-  if (Option.isNone(firstLine)) {
-    return yield* Effect.die('Default purchase receiver did not start');
-  }
-  const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReceiverReadySchema))(firstLine.value);
+  // Keep draining both pipes after readiness: the governed-read failure tag and reason are
+  // logged by the real receiver rather than exposed in its intentionally generic HTTP problem.
+  let receiverDiagnostics = '';
+  const appendDiagnostic = (line: string) => {
+    receiverDiagnostics = `${receiverDiagnostics}${line}\n`.slice(-32_768);
+  };
+  const readyLine = yield* Deferred.make<string, Error>();
+  let awaitingReady = true;
+  yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) => {
+      if (awaitingReady) {
+        awaitingReady = false;
+        return Deferred.succeed(readyLine, line).pipe(Effect.asVoid);
+      }
+      return Effect.sync(() => appendDiagnostic(line));
+    }),
+    Effect.ensuring(
+      Deferred.fail(readyLine, new Error('Default purchase receiver closed before readiness')).pipe(Effect.asVoid),
+    ),
+    Effect.forkScoped,
+  );
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) => Effect.sync(() => appendDiagnostic(line))),
+    Effect.forkScoped,
+  );
+  const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReceiverReadySchema))(
+    yield* Deferred.await(readyLine),
+  );
   expect(ready.marker).toEqual(marker);
   const baseUrl = `http://127.0.0.1:${ready.port}`;
   const purchasingContext = {
@@ -595,6 +917,7 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
           .sign(pair.privateKey),
       );
     });
+  yield* probeNativeGateway(environment, marker, yield* freshAssertion(), yield* freshAssertion());
   const invoke = (route: string, input: Readonly<object>, actor = principal, receiverUrl = baseUrl) =>
     Effect.gen(function* invokeDefaultPurchaseRead() {
       const assertion = yield* freshAssertion(actor);
@@ -619,7 +942,10 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
       const before = yield* fixture.evidence(coreEvidenceExecutor);
       const existingIds = new Set(before.accesses.map(({ dataAccessEventId }) => dataAccessEventId));
       const denied = yield* invoke(route, withAddress, actor);
-      expect(denied).toMatchObject({ status: 403 });
+      expect(
+        denied.status,
+        `Unexpected ${route} denial response: ${JSON.stringify(denied.body)}\nReceiver output (bounded):\n${receiverDiagnostics}`,
+      ).toBe(403);
       const after = yield* fixture.evidence(coreEvidenceExecutor);
       const newAccesses = after.accesses.filter(({ dataAccessEventId }) => !existingIds.has(dataAccessEventId));
       expect(newAccesses).toHaveLength(1);

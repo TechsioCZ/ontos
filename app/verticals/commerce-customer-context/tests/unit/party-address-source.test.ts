@@ -12,10 +12,13 @@ import {
 } from '@app/party-registry/api/client';
 import { DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import { AddressBookUnavailable, SavedAddressInvalidSchema } from '../../shared/domain/address-errors.ts';
 import {
   PartyAddressSourceExecutor,
+  preparePartyAddressSource,
+  assertPreparedPartyAddressCurrent,
   partyBackedAddressSourceValidator,
   partyBackedPostalAddressResolver,
 } from '../../src/integrations/party-address-source.ts';
@@ -474,4 +477,34 @@ it.effect('rejects missing required postal fields without requiring optional fie
       yield* partyBackedAddressSourceValidator('complete-optional-fields-absent', execute)(payload);
     }
   }),
+);
+
+it.effect('prepared Party evidence expires at the exclusive earliest owner End', () =>
+  Effect.gen(function* preparedEvidenceExpiry() {
+    const effectiveEnd = DateTime.makeUnsafe('2031-01-01T00:00:00.000Z');
+    const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
+      Effect.succeed({
+        ...currentPostalContactPoint,
+        end: {
+          effectiveEnd,
+          endedByActionInvocationId: '70000000-0000-4000-8000-000000000007',
+          endedByPrincipalId: '80000000-0000-4000-8000-000000000008',
+          provenance: { evidenceReferences: [], method: 'MANUAL_CONFIRMATION', source: 'PARTY_DECLARATION' },
+          reason: 'Scheduled end',
+          recordedAt: currentPostalContactPoint.recordedAt,
+        },
+        validTo: DateTime.makeUnsafe('2032-01-01T00:00:00.000Z'),
+      });
+    const evidence = yield* preparePartyAddressSource(payload, 'prepared-expiry', execute);
+    const end = DateTime.toEpochMillis(effectiveEnd);
+    expect(evidence.validUntil).toBe(end);
+    yield* TestClock.setTime(end - 1);
+    yield* assertPreparedPartyAddressCurrent(evidence);
+    yield* TestClock.setTime(end);
+    const expired = yield* Effect.result(assertPreparedPartyAddressCurrent(evidence));
+    expect(Result.isFailure(expired)).toBe(true);
+    if (Result.isFailure(expired)) {
+      expect(Schema.is(SavedAddressInvalidSchema)(expired.failure)).toBe(true);
+    }
+  }).pipe(Effect.provide(TestClock.layer())),
 );

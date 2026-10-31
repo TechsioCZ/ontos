@@ -19,7 +19,10 @@ import type {
   CreateCounterpartyPurchasingProfileResult,
 } from '../../shared/actions/create-counterparty-purchasing-profile.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
-import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-counterparty-role-eligibility.ts';
+import {
+  ProfileCounterpartyRoleEligibilityResolverFactory,
+  withPreparedCounterpartyRoleCurrent,
+} from '../profile-counterparty-role-eligibility.ts';
 import {
   ProfilePersistenceDependencyFailure,
   profilePersistenceServicesForTransaction,
@@ -197,7 +200,21 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
                   retryable: false,
                 }),
               )
-            : services.create(candidate, actionContext),
+            : withPreparedCounterpartyRoleCurrent(role, services.create(candidate, actionContext)).pipe(
+                Effect.catchTag('ProfilePersistenceDependencyFailure', (cause) =>
+                  Effect.fail(
+                    Object.defineProperty(
+                      new CreateCounterpartyPurchasingProfileRejected({
+                        code: 'DEPENDENCY_UNAVAILABLE',
+                        reason: 'Prepared Counterparty customer-role evidence expired or is unavailable',
+                        retryable: true,
+                      }),
+                      'cause',
+                      { value: cause },
+                    ),
+                  ),
+                ),
+              ),
       } satisfies CreateCounterpartyPurchasingProfileServices);
     };
   },

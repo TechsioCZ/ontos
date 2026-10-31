@@ -20,8 +20,12 @@ import { Effect, Layer, Result, Schema } from 'effect';
 
 import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-error.ts';
-import { verifyCounterpartyInvitationClaimAuthorityForOwnerScope } from './invitation-claim-authority-persistence.ts';
-import { currentOwnerAccessForTransaction } from './access-persistence.ts';
+import {
+  readVerifiedInvitationClaimProof,
+  verifyInvitationInviterCoreAuthority,
+} from './invitation-claim-authority-persistence.ts';
+import { readCounterpartyAccessInvitationForScope, snapshotCurrentOwnerAccess } from './access-persistence.ts';
+import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
 import type { CounterpartyAccessDomainError } from '../../shared/domain/access-error.ts';
 
 const claimActionKey = 'commerce.customer-context.claim-counterparty-access-invitation';
@@ -77,6 +81,22 @@ const decodedClaimPayload = (
   return Result.isSuccess(decoded) ? decoded.success : undefined;
 };
 
+/** Check the remote projection only between two matching, independently released owner snapshots. */
+export const verifyInvitationClaimSnapshotSequence = Effect.fn('InvitationClaimActionPreflight.verifySnapshotSequence')(
+  function* verifySnapshotSequence<Snapshot, ReadFailure, CheckFailure>(
+    load: () => Effect.Effect<Snapshot, ReadFailure>,
+    check: (snapshot: Snapshot) => Effect.Effect<void, CheckFailure>,
+  ) {
+    const snapshot = yield* load();
+    yield* check(snapshot);
+    const current = yield* load();
+    if (stableRevision(snapshot) !== stableRevision(current)) {
+      return yield* actionPermissionCheckUnavailable();
+    }
+    return yield* Effect.void;
+  },
+);
+
 const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.run')(
   function* runInvitationClaimPreflight(
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded Core preflight database seam; expires: 2027-03-31.
@@ -105,37 +125,83 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
       });
     }
 
-    const verifyInScopedTransaction = Effect.fn('InvitationClaimActionPreflight.verifyInScopedTransaction')(
-      function* verifyInScopedTransaction(transaction: ActionAuthorizationPreflightTransaction) {
+    const claim = {
+      claimant: payload.claimant,
+      claimProofReference: payload.claimProofReference,
+      counterpartyRef: payload.counterpartyRef,
+      invitationRef: payload.invitationRef,
+      legalEntityId,
+      scope: payload.scope,
+    };
+    const snapshotInScopedTransaction = Effect.fn('InvitationClaimActionPreflight.snapshotInScopedTransaction')(
+      function* snapshotInScopedTransaction(transaction: ActionAuthorizationPreflightTransaction) {
         yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id', ${input.scope.tenantId}, true), set_config('ontos.legal_entity_id', ${input.scope.legalEntityId}, true)`,
+          sql`select set_config('ontos.tenant_id', ${input.scope.tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
           'objects',
         );
         const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
           transaction.execute(statement, 'objects');
         const invoker = scopedRoutineInvokerFromTransaction(execute, input.scope);
-        const currentOwnerAccess = currentOwnerAccessForTransaction(invoker, {
-          legalEntityId,
-          tenantId: input.scope.tenantId,
-        });
-        return yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
+        const [proof, invitation] = yield* Effect.all(
+          [
+            readVerifiedInvitationClaimProof(invoker, claim),
+            readCounterpartyAccessInvitationForScope(invoker, input.scope.tenantId, {
+              counterpartyRef: payload.counterpartyRef,
+              invitationId: payload.invitationRef.resourceId,
+              scope: payload.scope,
+            }),
+          ],
+          { concurrency: 1 },
+        );
+        if (
+          invitation.invitedBy.principalId !== proof.inviter.principalId ||
+          invitation.invitedBy.tenantId !== proof.inviter.tenantId
+        ) {
+          return yield* actionPermissionCheckUnavailable();
+        }
+        const owner = yield* snapshotCurrentOwnerAccess(
+          invoker,
+          { legalEntityId, tenantId: input.scope.tenantId },
           {
-            contextAccess,
-            currentOwnerAccess,
-            transaction: invoker,
-          },
-          {
-            claimant: payload.claimant,
-            claimProofReference: payload.claimProofReference,
             counterpartyRef: payload.counterpartyRef,
-            invitationRef: payload.invitationRef,
             legalEntityId,
+            permission: 'counterparty.access.manage',
+            principal: proof.inviter,
             scope: payload.scope,
           },
         );
+        if (owner.decision === 'DENIED') {
+          return yield* new CounterpartyAccessContractViolation({
+            code: 'inviter_authority_denied',
+            reason: 'The invitation grantor no longer has current administrative authority',
+          });
+        }
+        if (owner.decision !== 'ALLOWED') {
+          return yield* actionPermissionCheckUnavailable();
+        }
+        return { invitation, owner, proof };
       },
     );
-    return yield* database.transaction(verifyInScopedTransaction);
+    const load = () => database.transaction(snapshotInScopedTransaction);
+    yield* verifyInvitationClaimSnapshotSequence(load, (snapshot) =>
+      verifyInvitationInviterCoreAuthority(contextAccess, {
+        counterpartyRef: payload.counterpartyRef,
+        inviter: snapshot.proof.inviter,
+        legalEntityId,
+        scope: payload.scope,
+      }),
+    );
+    const rechecked = yield* eligibility.resolve(payload.claimant);
+    if (rechecked.decision === 'unavailable') {
+      return yield* actionPermissionCheckUnavailable();
+    }
+    if (rechecked.decision !== 'eligible') {
+      return yield* new CounterpartyAccessContractViolation({
+        code: 'principal_not_eligible',
+        reason: 'The target Principal is not active and eligible in the trusted Tenant',
+      });
+    }
+    return yield* Effect.void;
   },
 );
 

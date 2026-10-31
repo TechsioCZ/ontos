@@ -272,3 +272,31 @@ it.effect('reads Retail Portal permissions before the transaction and never insi
     expect(events.length).toBeGreaterThan(1);
   }),
 );
+
+it.effect('prefetches the requested optional Retail permission before checking owner state', () =>
+  Effect.gen(function* optionalRetailPermissionBeforeTransaction() {
+    const requests: (readonly string[] | undefined)[] = [];
+    const factory: ProfileRetailPermissionReaderFactoryService = {
+      make: () => (request) =>
+        Effect.sync(() => {
+          requests.push(request.requestedPermissions);
+          return { observedAt: '2026-09-09T09:00:00.000Z', permissions: [] };
+        }),
+    };
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(factory);
+    const { operationAt: at, ...request } = input({
+      kind: 'business_permission',
+      permission: 'retail.settings.payment_term_preference.manage',
+      target: { kind: 'retail_profile', legalEntityId, profileId: 'profile-one', tenantId },
+    });
+    const check = yield* overlay.prepare(request);
+    expect(requests).toEqual([['retail.settings.payment_term_preference.manage']]);
+    expect(
+      yield* check(
+        transactionWith(() => []),
+        at,
+      ),
+    ).toBe('unavailable');
+    expect(requests).toHaveLength(1);
+  }),
+);

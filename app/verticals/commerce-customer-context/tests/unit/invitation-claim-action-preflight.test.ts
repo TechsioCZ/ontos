@@ -4,7 +4,10 @@ import { expect, it } from 'effect-rstest';
 
 import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import type { ContextAccessService, ActionAuthorizationPreflightDatabaseService } from '@app/core-runtime';
-import { makeInvitationClaimActionAuthorizationPreflight } from '../../src/persistence/invitation-claim-action-preflight.ts';
+import {
+  makeInvitationClaimActionAuthorizationPreflight,
+  verifyInvitationClaimSnapshotSequence,
+} from '../../src/persistence/invitation-claim-action-preflight.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const otherTenantId = '20000000-0000-4000-8000-000000000002';
@@ -68,8 +71,7 @@ const eligible = {
 };
 
 const noReadDatabase: ActionAuthorizationPreflightDatabaseService = {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: This success stub's generic transaction value is discarded by the preflight; no caller observes the placeholder.
-  transaction: <Value, Failure>(): Effect.Effect<Value, Failure> => Effect.succeed(undefined as Value),
+  transaction: () => Effect.die('Unexpected database access'),
 };
 
 const failedDatabase = new ActionPermissionCheckError({
@@ -121,20 +123,62 @@ it.effect('denies a wrong invitee, Tenant, or storefront before the owner proof 
   }),
 );
 
-it.effect('binds a permit to one invocation and consumes it once', () =>
-  Effect.gen(function* oneShotPermit() {
-    const decision = yield* preflight.prepare(input);
-    expect(decision.outcome).toBe('allowed');
-    if (decision.outcome !== 'allowed') {
-      return;
-    }
-    expect(decision.permit.actionInvocationId).toBe(input.actionInvocationId);
-    expect(decision.permit.actionKey).toBe(input.actionKey);
-    expect(decision.permit.principalId).toBe(claimantId);
-    yield* decision.permit.consume;
-    const replay = yield* Effect.flip(decision.permit.consume);
-    expect(Schema.is(ActionPermissionCheckError)(replay)).toBe(true);
-    expect(JSON.stringify(decision)).not.toContain('raw');
+it.effect('checks Core authority only between released, identical proof and owner snapshots', () =>
+  Effect.gen(function* exactSequence() {
+    const calls: string[] = [];
+    const owner = { invitationRevision: 3, inviter: 'owner', ownerGrantRevision: 9, proof: 'verified' };
+    const load = () =>
+      Effect.sync(() => {
+        calls.push('snapshot');
+        return owner;
+      });
+    const check = () =>
+      Effect.sync(() => {
+        calls.push('remote');
+      });
+    yield* verifyInvitationClaimSnapshotSequence(load, check);
+    expect(calls).toEqual(['snapshot', 'remote', 'snapshot']);
+    let version = 0;
+    const changed = () =>
+      Effect.sync(() => {
+        version += 1;
+        return { ...owner, ownerGrantRevision: version };
+      });
+    const failure = yield* Effect.flip(verifyInvitationClaimSnapshotSequence(changed, check));
+    expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+  }),
+);
+
+it.effect('fails closed when Core denies or proof expires before revalidation', () =>
+  Effect.gen(function* deniedOrExpired() {
+    let reads = 0;
+    const snapshot = { proof: 'verified' };
+    const denied = new ActionPermissionCheckError({ code: 'action_permission_check_failed', reason: 'denied' });
+    const rejected = yield* Effect.flip(
+      verifyInvitationClaimSnapshotSequence(
+        () =>
+          Effect.sync(() => {
+            reads += 1;
+            return snapshot;
+          }),
+        () => Effect.fail(denied),
+      ),
+    );
+    expect(rejected).toBe(denied);
+    expect(reads).toBe(1);
+    reads = 0;
+    const expired = yield* Effect.flip(
+      verifyInvitationClaimSnapshotSequence(
+        () =>
+          Effect.suspend(() => {
+            reads += 1;
+            return reads === 1 ? Effect.succeed(snapshot) : Effect.fail(denied);
+          }),
+        () => Effect.void,
+      ),
+    );
+    expect(expired).toBe(denied);
+    expect(reads).toBe(2);
   }),
 );
 

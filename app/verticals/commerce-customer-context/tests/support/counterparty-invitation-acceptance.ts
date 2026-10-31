@@ -28,7 +28,8 @@ import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permiss
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { PrincipalEligibility } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
 import type { PrincipalEligibilityService } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
-import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import { scopedActionRoleBootstrapRelationships } from '../../../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
@@ -79,22 +80,45 @@ interface SpiceDbRelationshipSpec {
   readonly resourceId: string;
   readonly resourceType: string;
   readonly subjectId: string;
+  readonly subjectRelation?: string | undefined;
   readonly subjectType: string;
 }
 
-/** The `action#executor` relationships one Principal needs for the Actions a scenario runs. */
-const executorOf = (
+const claimActionKey = 'commerce.customer-context.claim-counterparty-access-invitation';
+const startActionKey = 'commerce.customer-context.start-portal-enrollment';
+const transitionActionKey = 'commerce.customer-context.claim-portal-enrollment-transition';
+const actionRoleKey = (principalId: string, actionKey: string) => `invitation:${principalId}:${actionKey}`;
+
+/** Provision exact, scoped role grants and memberships through Core's bootstrap policy helper. */
+export const invitationFixtureRoleRelationships = (
   principalId: string,
   actionKeys: readonly string[],
   realm: CounterpartyInvitationRealm,
 ): readonly SpiceDbRelationshipSpec[] =>
-  actionKeys.map((actionKey) => ({
-    relation: 'executor',
-    resourceId: toSpiceDbActionObjectId({ actionKey, legalEntityId: realm.legalEntityId, tenantId: realm.tenantId }),
-    resourceType: 'action',
-    subjectId: principalId,
-    subjectType: 'principal',
-  }));
+  actionKeys.flatMap((actionKey) => {
+    if (actionKey !== claimActionKey && actionKey !== startActionKey && actionKey !== transitionActionKey) {
+      throw new Error(`Unsupported invitation fixture Action: ${actionKey}`);
+    }
+    const roleKey = actionRoleKey(principalId, actionKey);
+    const action = {
+      actionKey,
+      legalEntityScope: actionKey === claimActionKey ? ('required' as const) : ('optional' as const),
+      owningModuleKey: COMMERCE_MODULE_KEY,
+      provisioning: 'explicit' as const,
+    };
+    const company = { legalEntityId: realm.legalEntityId, roleKey, tenantId: realm.tenantId };
+    const scopes = actionKey === claimActionKey ? [company] : [{ roleKey, tenantId: realm.tenantId }, company];
+    return scopes.flatMap((scope) => [
+      ...scopedActionRoleBootstrapRelationships({ ...scope, action }),
+      {
+        relation: 'member',
+        resourceId: toScopedRoleObjectId(scope),
+        resourceType: 'scoped_role',
+        subjectId: principalId,
+        subjectType: 'principal',
+      },
+    ]);
+  });
 
 const relationshipFor = (spec: SpiceDbRelationshipSpec) =>
   v1.Relationship.create({
@@ -102,6 +126,7 @@ const relationshipFor = (spec: SpiceDbRelationshipSpec) =>
     resource: v1.ObjectReference.create({ objectId: spec.resourceId, objectType: spec.resourceType }),
     subject: v1.SubjectReference.create({
       object: v1.ObjectReference.create({ objectId: spec.subjectId, objectType: spec.subjectType }),
+      optionalRelation: spec.subjectRelation ?? '',
     }),
   });
 
@@ -119,7 +144,21 @@ const seedSpiceDbRelationships = Effect.fnUntraced(function* seedSpiceDbRelation
 ) {
   const configuration = yield* loadSpiceDbConfig();
   const client = newSpiceDbGrpcClient(configuration);
-  const relationships = specs.map(relationshipFor);
+  const relationships = [
+    ...new Map(
+      specs.map((spec) => [
+        [
+          spec.resourceType,
+          spec.resourceId,
+          spec.relation,
+          spec.subjectType,
+          spec.subjectId,
+          spec.subjectRelation ?? '',
+        ].join('\u0000'),
+        relationshipFor(spec),
+      ]),
+    ).values(),
+  ];
   const write = (operation: v1.RelationshipUpdate_Operation) =>
     Effect.promise(
       async () =>
@@ -133,17 +172,25 @@ const seedSpiceDbRelationships = Effect.fnUntraced(function* seedSpiceDbRelation
   yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
 });
 
-/** Revoke only this fixture recipient's explicit invitation-claim executor relationship. */
+/** Revoke only the recipient's scoped invitation-claim role membership. */
 export const revokeCounterpartyInvitationClaimExecutor = Effect.fnUntraced(
   function* revokeCounterpartyInvitationClaimExecutor(realm: CounterpartyInvitationRealm) {
     const configuration = yield* loadSpiceDbConfig();
     const client = newSpiceDbGrpcClient(configuration);
     yield* Effect.addFinalizer(() => Effect.sync(() => client.close()));
-    const relationships = executorOf(
-      realm.recipientPrincipalId,
-      ['commerce.customer-context.claim-counterparty-access-invitation'],
-      realm,
-    ).map(relationshipFor);
+    const relationships = [
+      relationshipFor({
+        relation: 'member',
+        resourceId: toScopedRoleObjectId({
+          legalEntityId: realm.legalEntityId,
+          roleKey: actionRoleKey(realm.recipientPrincipalId, claimActionKey),
+          tenantId: realm.tenantId,
+        }),
+        resourceType: 'scoped_role',
+        subjectId: realm.recipientPrincipalId,
+        subjectType: 'principal',
+      }),
+    ];
     yield* Effect.promise(
       async () =>
         await client.promises.writeRelationships(
@@ -310,8 +357,8 @@ const spiceDbSpecsFor = (
     ...memberOf(realm.inviterPrincipalId),
     ...memberOf(realm.recipientPrincipalId),
     ...memberOf(realm.storefrontPrincipalId),
-    ...executorOf(realm.recipientPrincipalId, grants.recipientActionKeys, realm),
-    ...executorOf(realm.storefrontPrincipalId, grants.storefrontActionKeys, realm),
+    ...invitationFixtureRoleRelationships(realm.recipientPrincipalId, grants.recipientActionKeys, realm),
+    ...invitationFixtureRoleRelationships(realm.storefrontPrincipalId, grants.storefrontActionKeys, realm),
   ];
 };
 

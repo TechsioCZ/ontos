@@ -3,9 +3,14 @@
 // @ontos-action-slug revalidate-order-purchase-approval
 import { createRevalidateOrderPurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxMessage as createOutboxMessage } from './revalidate-order-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
 import { DateTime, Effect, Schema } from 'effect';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  defineAction,
+  defineTenantModuleEntrypoint,
+  OperationContextUnavailable,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
 
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, ActionServicePreflight } from '@app/core-runtime';
 import {
   RevalidateOrderPurchaseApprovalPayloadSchema,
   RevalidateOrderPurchaseApprovalResultSchema,
@@ -13,7 +18,10 @@ import {
 } from '../../shared/actions/revalidate-order-purchase-approval.ts';
 import type { RevalidateOrderPurchaseApprovalPayload } from '../../shared/actions/revalidate-order-purchase-approval.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
-import { orderApprovalFinalizationService } from '../services/order-approval-finalization.service.ts';
+import {
+  prepareOrderApprovalFinalizationEvidence,
+  commitPreparedOrderApprovalFinalization,
+} from '../services/order-approval-finalization.service.ts';
 import {
   purchasingApprovalAuditInstantSchema,
   recordPurchasingApprovalResourceAccess,
@@ -33,7 +41,12 @@ type DomainEvents = Readonly<{
 }>;
 
 interface RevalidateOrderPurchaseApprovalServices {
-  readonly admission: Effect.Success<ReturnType<typeof orderApprovalFinalizationService>>;
+  readonly admission: {
+    readonly revalidate: (
+      payload: RevalidateOrderPurchaseApprovalPayload,
+      actionInvocationId: string,
+    ) => ReturnType<typeof commitPreparedOrderApprovalFinalization>;
+  };
 }
 const handleRevalidateOrderPurchaseApproval = Effect.fn('RevalidateOrderPurchaseApproval.handle')(function* handle(
   payload: RevalidateOrderPurchaseApprovalPayload,
@@ -75,6 +88,49 @@ const handleRevalidateOrderPurchaseApproval = Effect.fn('RevalidateOrderPurchase
   return result;
 });
 
+const samePayload = Schema.toEquivalence(Schema.toType(RevalidateOrderPurchaseApprovalPayloadSchema));
+const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
+
+const prepareOrderRevalidationServices: ActionServicePreflight<
+  RevalidateOrderPurchaseApprovalPayload,
+  RevalidateOrderPurchaseApprovalServices,
+  RevalidateOrderPurchaseApprovalRejected,
+  Effect.Services<ReturnType<typeof prepareOrderApprovalFinalizationEvidence>>
+> = Effect.fn('RevalidateOrderPurchaseApproval.prepareServices')(function* prepareServices(payload, context) {
+  const prepared = yield* prepareOrderApprovalFinalizationEvidence(payload, context);
+  return (transaction, scope, compositionRevision) => {
+    if (
+      !samePrincipal(scope, context.scope) ||
+      scope.correlationId !== context.scope.correlationId ||
+      compositionRevision !== context.compositionRevision
+    ) {
+      return Effect.fail(
+        new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Prepared Order evidence belongs to another operation context',
+        }),
+      );
+    }
+    return Effect.succeed({
+      admission: {
+        revalidate: (input, invocationId) =>
+          samePayload(input, payload) && invocationId === context.actionInvocationId
+            ? commitPreparedOrderApprovalFinalization(transaction, scope, {
+                actionInvocationId: invocationId,
+                prepared,
+              })
+            : Effect.fail(
+                new RevalidateOrderPurchaseApprovalRejected({
+                  code: 'CURRENT_STATE_INDETERMINATE',
+                  reason: 'Prepared Order evidence does not match this invocation and payload',
+                  retryable: true,
+                }),
+              ),
+      },
+    } satisfies RevalidateOrderPurchaseApprovalServices);
+  };
+});
+
 export const revalidateOrderPurchaseApprovalAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -102,10 +158,20 @@ export const revalidateOrderPurchaseApprovalAction = defineAction(
     schemaVersion: '1',
   },
   handleRevalidateOrderPurchaseApproval,
-  (transaction, scope, compositionRevision) =>
-    orderApprovalFinalizationService(transaction, scope, compositionRevision).pipe(
-      Effect.map((admission) => ({ admission })),
-    ),
+  () =>
+    Effect.succeed({
+      admission: {
+        revalidate: () =>
+          Effect.fail(
+            new RevalidateOrderPurchaseApprovalRejected({
+              code: 'CURRENT_STATE_INDETERMINATE',
+              reason: 'Order revalidation requires invocation-local preparation',
+              retryable: true,
+            }),
+          ),
+      },
+    } satisfies RevalidateOrderPurchaseApprovalServices),
+  { prepareServices: prepareOrderRevalidationServices },
 );
 
 // <generated-outbox-message-exports>

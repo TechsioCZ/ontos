@@ -268,8 +268,8 @@ const invitationTarget = (
         tenantId,
       };
 
-const requireInviterAuthority = (
-  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess'>,
+export const verifyInvitationInviterCoreAuthority = (
+  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
   input: {
     readonly counterpartyRef: CounterpartyRef;
     readonly inviter: PrincipalRef;
@@ -277,7 +277,7 @@ const requireInviterAuthority = (
     readonly scope: CounterpartyPermissionScope;
   },
 ): Effect.Effect<void, CounterpartyAccessDomainError> => {
-  const check = ownerScope.contextAccess.businessPermissions;
+  const check = contextAccess.businessPermissions;
   if (check === undefined) {
     return Effect.fail(unavailable());
   }
@@ -299,7 +299,7 @@ const requireInviterAuthority = (
     input.scope.kind === 'storefront'
       ? check({ ...target, trustedStorefrontId: input.scope.storefrontKey })
       : check(target);
-  const verifyCoreAuthority = checked.pipe(
+  return checked.pipe(
     Effect.flatMap(([decision]) => {
       if (decision?.decision === 'allowed') {
         return Effect.void;
@@ -314,6 +314,18 @@ const requireInviterAuthority = (
       );
     }),
   );
+};
+
+const requireInviterAuthority = (
+  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess'>,
+  input: {
+    readonly counterpartyRef: CounterpartyRef;
+    readonly inviter: PrincipalRef;
+    readonly legalEntityId: string;
+    readonly scope: CounterpartyPermissionScope;
+  },
+): Effect.Effect<void, CounterpartyAccessDomainError> => {
+  const verifyCoreAuthority = verifyInvitationInviterCoreAuthority(ownerScope.contextAccess, input);
   if (ownerScope.currentOwnerAccess === undefined) {
     // Invitation authority is owner-governed. Missing current-owner state must fail closed;
     // Core's relationship projection is not a substitute for the owner grant ledger.
@@ -498,24 +510,34 @@ const validateConsumption = Effect.fn('InvitationClaimAuthorityPersistence.valid
  * one-time consume inside its handler transaction, so a concurrent revoke/claim still fails at
  * the existing linearization point.
  */
+export const readVerifiedInvitationClaimProof = Effect.fn('InvitationClaimAuthorityPersistence.readVerifiedClaimProof')(
+  function* readVerifiedClaimProof(
+    transaction: InvitationClaimScopedRoutineInvoker,
+    input: CounterpartyInvitationClaimPreflightInput,
+  ) {
+    yield* validatePreflightTenant(input);
+    const [row] = yield* transaction
+      .invoke(verifyInvitationClaimAuthorityRoutine, [
+        input.invitationRef.resourceId,
+        input.claimProofReference,
+        input.counterpartyRef.resourceId,
+        storefrontId(input.scope),
+        input.claimant.principalId,
+      ])
+      .pipe(Effect.mapError(routineFailure));
+    const proof = yield* validatePreflightOutcome(row);
+    const inviter = yield* validatePreflightBinding(proof, input);
+    return { inviter, proof };
+  },
+);
+
 export const verifyCounterpartyInvitationClaimAuthorityForOwnerScope = Effect.fn(
   'InvitationClaimAuthorityPersistence.verifyClaimAuthority',
 )(function* verifyClaimAuthority(
   ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess' | 'transaction'>,
   input: CounterpartyInvitationClaimPreflightInput,
 ): Effect.fn.Return<void, CounterpartyAccessDomainError> {
-  yield* validatePreflightTenant(input);
-  const [row] = yield* ownerScope.transaction
-    .invoke(verifyInvitationClaimAuthorityRoutine, [
-      input.invitationRef.resourceId,
-      input.claimProofReference,
-      input.counterpartyRef.resourceId,
-      storefrontId(input.scope),
-      input.claimant.principalId,
-    ])
-    .pipe(Effect.mapError(routineFailure));
-  const verifiedRow = yield* validatePreflightOutcome(row);
-  const inviter = yield* validatePreflightBinding(verifiedRow, input);
+  const { inviter } = yield* readVerifiedInvitationClaimProof(ownerScope.transaction, input);
   return yield* requireInviterAuthority(ownerScope, {
     counterpartyRef: input.counterpartyRef,
     inviter,

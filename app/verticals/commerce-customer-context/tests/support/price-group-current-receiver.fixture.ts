@@ -971,7 +971,10 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
             );
             return yield* Context.get(runtime, ActionRuntime)
               .runAction(input)
-              .pipe(Effect.provideService(PartyRegistryRetailPartyResolverFactory, retail.factory));
+              .pipe(
+                Effect.provideService(PartyRegistryRetailPartyResolverFactory, retail.factory),
+                Effect.provideService(RetailPartyDetailExecutor, { execute: readParty }),
+              );
           }),
         );
       return { ...existing, runAction };
