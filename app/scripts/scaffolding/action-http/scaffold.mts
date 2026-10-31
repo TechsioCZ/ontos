@@ -1,3 +1,4 @@
+import { ActionCoreErrorSchema } from '@app/core-runtime';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
@@ -58,6 +59,37 @@ const DomainProblemKindSchema = Schema.Literals([
 type DomainProblemKind = typeof DomainProblemKindSchema.Type;
 const AnnotationMapSchema = Schema.Record(Schema.String, Schema.Unknown);
 type AnnotationMap = typeof AnnotationMapSchema.Type;
+
+interface CustomDomainProblem {
+  readonly mapper: string;
+  readonly module: string;
+  readonly schema: string;
+  readonly specification: string;
+  readonly tag: string;
+}
+const CustomProblemReferenceSchema = Schema.Struct({
+  mapper: Schema.String,
+  module: Schema.String,
+  schema: Schema.String,
+  tag: Schema.String,
+});
+const decodeCustomProblemReference = Schema.decodeUnknownOption(CustomProblemReferenceSchema);
+const ProblemHttpStatusSchema = Schema.Literals([400, 401, 403, 404, 409, 422, 428, 429, 500, 503, 504]);
+type ProblemHttpStatus = typeof ProblemHttpStatusSchema.Type;
+const decodeProblemHttpStatus = Schema.decodeUnknownOption(ProblemHttpStatusSchema);
+const isProblemHttpStatus = Schema.is(ProblemHttpStatusSchema);
+const domainProblemMarker = '// @ontos-action-http-domain-problem ';
+const renderDomainProblemMarkers = (problems: readonly CustomDomainProblem[]) =>
+  problems.map(({ specification }) => `${domainProblemMarker}${specification}\n`).join('');
+
+const groupCustomDomainProblems = (problems: readonly CustomDomainProblem[]) =>
+  [...Map.groupBy(problems, ({ module }) => module)]
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([module, members]) => ({
+      mappers: members.map(({ mapper }) => mapper).toSorted(),
+      module,
+      schemas: members.map(({ schema }) => schema).toSorted(),
+    }));
 
 interface DomainErrorIdentity {
   readonly code: string;
@@ -324,8 +356,10 @@ const domainCodes = (errors: readonly DomainErrorIdentity[], kind: DomainProblem
 export const renderActionHttpContract = (
   vertical: OntosVerticalMetadata,
   action: string,
-  errors: readonly DomainErrorIdentity[],
+  allErrors: readonly DomainErrorIdentity[],
+  customProblems: readonly CustomDomainProblem[] = [],
 ): string => {
+  const errors = allErrors.filter(({ tag }) => !customProblems.some((problem) => problem.tag === tag));
   const type = toPascalCase(action);
   const group = `${toCamelCase(action)}Action`;
   const codes = {
@@ -354,10 +388,12 @@ export const renderActionHttpContract = (
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
-import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+${renderDomainProblemMarkers(customProblems)}import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
-import {
+${groupCustomDomainProblems(customProblems)
+  .map(({ module, schemas }) => `import { ${schemas.join(', ')} } from '../${module.slice('shared/'.length)}';\n`)
+  .join('')}import {
   ${type}PayloadSchema,
   ${type}ResultSchema,
 } from '../actions/${action}.ts';
@@ -386,7 +422,7 @@ export const ${type}ActionCommitIndeterminateProblemSchema = makeProblemDetailsS
 export const ${type}ActionInternalProblemSchema = makeProblemDetailsSchema('${type}ActionInternalProblem', 500);
 
 export type ${type}ActionProblem =
-  | typeof ${type}ActionInvalidProblemSchema.Type
+${customProblems.map(({ schema }) => `  | typeof ${schema}.Type\n`).join('')}  | typeof ${type}ActionInvalidProblemSchema.Type
   | typeof ${type}ActionAuthenticationProblemSchema.Type
   | typeof ${type}ActionForbiddenProblemSchema.Type
   | typeof ${type}ActionNotFoundProblemSchema.Type
@@ -404,7 +440,7 @@ export class ${type}ActionSchemaErrorMiddleware extends HttpApiMiddleware.Servic
 ) {}
 
 const actionErrors = [
-  ${type}ActionInvalidProblemSchema,
+${customProblems.map(({ schema }) => `  ${schema},\n`).join('')}  ${type}ActionInvalidProblemSchema,
   ${type}ActionAuthenticationProblemSchema,
   ${type}ActionForbiddenProblemSchema,
   ${type}ActionNotFoundProblemSchema,
@@ -452,12 +488,16 @@ export const renderActionHttpProblems = (
   vertical: OntosVerticalMetadata,
   action: string,
   errors: readonly DomainErrorIdentity[],
+  customProblems: readonly CustomDomainProblem[] = [],
 ): string => {
   const type = toPascalCase(action);
   const value = `${toCamelCase(action)}Action`;
   const errorsByTag = Map.groupBy(errors, ({ tag }) => tag);
   const domainMaps = [...errorsByTag.entries()]
     .flatMap(([tag, identities]) => {
+      if (customProblems.some((problem) => problem.tag === tag)) {
+        return [];
+      }
       const discriminator = identities[0]?.discriminator ?? '_tag';
       if (discriminator === '_tag') {
         return [];
@@ -477,6 +517,10 @@ export const renderActionHttpProblems = (
     .join('\n\n');
   const domainHandlers = [...errorsByTag.entries()]
     .map(([tag, identities]) => {
+      const custom = customProblems.find((problem) => problem.tag === tag);
+      if (custom !== undefined) {
+        return `    ${tag}: (failure) => ${custom.mapper}(failure),`;
+      }
       const [identity] = identities;
       if (identity === undefined) {
         return '';
@@ -544,10 +588,12 @@ export const renderActionHttpProblems = (
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
-import type { ActionCoreError } from '@app/core-runtime';
+${renderDomainProblemMarkers(customProblems)}import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
-import {
+${groupCustomDomainProblems(customProblems)
+  .map(({ mappers, module }) => `import { ${mappers.join(', ')} } from '../${module}';\n`)
+  .join('')}import {
   ${type}ActionAlreadyCommittedProblemSchema,
   ${type}ActionAuthenticationProblemSchema,
   ${type}ActionCommitIndeterminateProblemSchema,
@@ -1245,7 +1291,8 @@ const validateActionSources = Effect.fn('ActionHttpScaffold.validateActionSource
   for (const expected of [`${type}PayloadSchema`, `${type}ResultSchema`]) {
     if (
       !publicActionSource.includes(`export const ${expected}`) &&
-      !publicActionSource.includes(`export { ${expected}`)
+      !publicActionSource.includes(`export { ${expected}`) &&
+      !publicActionSource.includes(` as ${expected} } from `)
     ) {
       return yield* scaffoldFailure(`public Action contract must export ${expected}`);
     }
@@ -1273,6 +1320,216 @@ const appendDefinedMutations = (mutations: Mutation[], candidates: readonly (Mut
     }
   }
 };
+
+const planPublicActionProjection = Effect.fn('ActionHttpScaffold.planPublicActionProjection')(
+  function* planPublicActionProjection(
+    vertical: OntosVerticalMetadata,
+    action: string,
+    config: ActionHttpScaffoldConfig,
+    publicActionPath: string,
+  ) {
+    if (config.schemaModule === undefined) {
+      if (config.resultSchema !== undefined) {
+        return yield* scaffoldFailure('--result-schema requires --schema-module');
+      }
+      return null;
+    }
+    const modulePath = config.schemaModule;
+    if (!/^shared\/(?:[a-z][a-z0-9-]*\/)*[a-z][a-z0-9-]*\.ts$/u.test(modulePath)) {
+      return yield* scaffoldFailure('--schema-module must name an owner-local shared TypeScript module');
+    }
+    const type = toPascalCase(action);
+    const resultSchema = config.resultSchema ?? `${type}ResultSchema`;
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(resultSchema)) {
+      return yield* scaffoldFailure('--result-schema must be a schema export identifier');
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const schemaPath = resolveContainedPath(vertical.directory, modulePath);
+    const sharedPath = resolveContainedPath(vertical.directory, 'shared');
+    const [realOwner, realShared, realSchema] = yield* Effect.all([
+      fileSystem.realPath(vertical.directory),
+      fileSystem.realPath(sharedPath),
+      fileSystem.realPath(schemaPath),
+    ]).pipe(Effect.mapError((cause) => scaffoldFailure('failed to locate public schema module', cause)));
+    if (
+      realShared !== `${realOwner}/shared` ||
+      !realSchema.startsWith(`${realShared}/`) ||
+      realSchema === publicActionPath
+    ) {
+      return yield* scaffoldFailure('schema module must remain inside the owner shared boundary');
+    }
+    const source = yield* fileSystem
+      .readFileString(schemaPath)
+      .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read public schema module', cause)));
+    if (/from ['"][^'"]*(?:\/src\/|\.action\.ts)/u.test(source)) {
+      return yield* scaffoldFailure('public schema module imports private implementation source');
+    }
+    const module = yield* Effect.tryPromise<unknown, ReturnType<typeof scaffoldFailure>>({
+      catch: (cause) => scaffoldFailure('failed to inspect public schema exports', cause),
+      try: async () => {
+        const loaded: unknown = await import(new URL(`file://${schemaPath}`).href);
+        return loaded;
+      },
+    });
+    const exports = Option.getOrUndefined(decodeRecord(module));
+    for (const exported of [`${type}PayloadSchema`, resultSchema]) {
+      if (exports === undefined || !Schema.isSchema(exports[exported])) {
+        return yield* scaffoldFailure(`public schema module must export schema ${exported}`);
+      }
+    }
+    const relativeModule = `../${modulePath.slice('shared/'.length)}`;
+    const header = `${HEADER}\n// @ontos-action-http-owner ${vertical.moduleId}\n// @ontos-action-http-slug ${action}\n`;
+    const content = `${header}import type { ${type}PayloadSchema } from '${relativeModule}';
+
+export { ${type}PayloadSchema } from '${relativeModule}';
+export { ${resultSchema}${resultSchema === `${type}ResultSchema` ? '' : ` as ${type}ResultSchema`} } from '${relativeModule}';
+export type ${type}Payload = typeof ${type}PayloadSchema.Type;
+`;
+    const mutation = yield* createOrUpdateOwnedGeneratedMutationEffect(publicActionPath, content, (current) =>
+      current.startsWith(header),
+    );
+    return { content, mutation };
+  },
+);
+
+interface HttpStatusAnnotationNode {
+  readonly annotations?: unknown;
+  readonly checks?: readonly HttpStatusAnnotationNode[] | undefined;
+}
+
+interface HttpStatusAnnotation {
+  readonly value: ProblemHttpStatus | undefined;
+}
+
+const findHttpStatusAnnotation = (node: HttpStatusAnnotationNode): HttpStatusAnnotation | undefined => {
+  for (const check of node.checks?.toReversed() ?? []) {
+    if (Predicate.hasProperty(check.annotations, 'httpApiStatus')) {
+      return { value: Option.getOrUndefined(decodeProblemHttpStatus(check.annotations.httpApiStatus)) };
+    }
+    const annotation = findHttpStatusAnnotation(check);
+    if (annotation !== undefined) {
+      return annotation;
+    }
+  }
+  return Predicate.hasProperty(node.annotations, 'httpApiStatus')
+    ? { value: Option.getOrUndefined(decodeProblemHttpStatus(node.annotations.httpApiStatus)) }
+    : undefined;
+};
+
+const customProblemHttpStatus = (ast: SchemaAST.AST): ProblemHttpStatus | undefined => {
+  const annotation = findHttpStatusAnnotation(ast);
+  return annotation === undefined
+    ? Option.getOrUndefined(decodeProblemHttpStatus(ast.context?.annotations?.httpApiStatus))
+    : annotation.value;
+};
+
+const validateCustomProblemSchema = (schema: Schema.Top): boolean => {
+  if (SchemaAST.isUnion(schema.ast)) {
+    return (
+      schema.ast.types.length > 0 &&
+      schema.ast.types.every((member) => validateCustomProblemSchema(Schema.make(member)))
+    );
+  }
+  const { ast } = Schema.toEncoded(schema);
+  if (SchemaAST.isUnion(ast)) {
+    return ast.types.length > 0 && ast.types.every((member) => validateCustomProblemSchema(Schema.make(member)));
+  }
+  if (!SchemaAST.isObjects(ast)) {
+    return false;
+  }
+  const fields = new Map(ast.propertySignatures.map((property) => [property.name, property.type]));
+  const status = fields.get('status');
+  const tag = fields.get('_tag');
+  if (
+    status === undefined ||
+    !SchemaAST.isLiteral(status) ||
+    !isProblemHttpStatus(status.literal) ||
+    customProblemHttpStatus(schema.ast) !== status.literal ||
+    tag === undefined ||
+    !SchemaAST.isLiteral(tag) ||
+    !isString(tag.literal)
+  ) {
+    return false;
+  }
+  return ['detail', 'title', 'type'].every((key) => {
+    const field = fields.get(key);
+    return field !== undefined && SchemaAST.isString(field);
+  });
+};
+const planCustomDomainProblems = Effect.fn('ActionHttpScaffold.planCustomDomainProblems')(function* planCustom(
+  vertical: OntosVerticalMetadata,
+  specifications: readonly string[],
+  errors: readonly DomainErrorIdentity[],
+  artifacts: readonly string[],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  for (const artifact of artifacts) {
+    if (!(yield* fs.exists(artifact))) {
+      continue;
+    }
+    const current = yield* fs.readFileString(artifact);
+    for (const line of current.split('\n').filter((value) => value.startsWith(domainProblemMarker))) {
+      if (!specifications.includes(line.slice(domainProblemMarker.length))) {
+        return yield* scaffoldFailure('existing custom domain Problem requires its exact --domain-problem flag');
+      }
+    }
+  }
+  const problems: CustomDomainProblem[] = [];
+  const coreTags = new Set(collectDomainErrors(ActionCoreErrorSchema.ast).map(({ tag }) => tag));
+  const realShared = yield* fs.realPath(resolveContainedPath(vertical.directory, 'shared'));
+  const realOwner = yield* fs.realPath(vertical.directory);
+  for (const specification of specifications) {
+    const match =
+      /^(?<tag>[A-Za-z_$][A-Za-z0-9_$]*)=(?<module>shared\/(?:[a-z][a-z0-9-]*\/)*[a-z][a-z0-9-]*\.ts)#(?<schema>[A-Za-z_$][A-Za-z0-9_$]*)#(?<mapper>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(
+        specification,
+      );
+    const reference = Option.getOrUndefined(decodeCustomProblemReference(match?.groups));
+    if (reference === undefined) {
+      return yield* scaffoldFailure('domain Problem requires Tag=shared/module.ts#Schema#Mapper');
+    }
+    const { mapper, module, schema, tag } = reference;
+    if (coreTags.has(tag) || !errors.some((error) => error.tag === tag)) {
+      return yield* scaffoldFailure(
+        'domain Problem must name an exact declared domain tag and owner shared schema/mapper exports',
+      );
+    }
+    if (problems.some((problem) => problem.tag === tag || problem.schema === schema || problem.mapper === mapper)) {
+      return yield* scaffoldFailure('domain Problem tags and export names must be unique');
+    }
+    const modulePath = resolveContainedPath(vertical.directory, module);
+    const realModule = yield* fs
+      .realPath(modulePath)
+      .pipe(Effect.mapError((cause) => scaffoldFailure('custom Problem module is unavailable', cause)));
+    if (realShared !== `${realOwner}/shared` || !realModule.startsWith(`${realShared}/`)) {
+      return yield* scaffoldFailure('custom Problem module must remain within owner shared boundary');
+    }
+    const source = yield* fs.readFileString(modulePath);
+    if (/from ['"][^'"]*(?:\/src\/|\.action\.ts)/u.test(source)) {
+      return yield* scaffoldFailure('custom Problem module may not import private Action authority');
+    }
+    const exported = yield* Effect.tryPromise({
+      catch: (cause) => scaffoldFailure('failed to inspect custom domain Problem exports', cause),
+      try: async () => {
+        const namespace: unknown = await import(new URL(`file://${modulePath}`).href);
+        return Option.getOrUndefined(decodeRecord(namespace));
+      },
+    });
+    const problemSchema = exported?.[schema];
+    const projection = exported?.[mapper];
+    if (
+      !Schema.isSchema(problemSchema) ||
+      !validateCustomProblemSchema(problemSchema) ||
+      !Predicate.isFunction(projection) ||
+      Schema.isSchema(projection)
+    ) {
+      return yield* scaffoldFailure(
+        'custom domain Problem requires valid Problem Details schema/status and mapper function exports',
+      );
+    }
+    problems.push({ mapper, module, schema, specification, tag });
+  }
+  return problems;
+});
 
 const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   workspaceRoot: string,
@@ -1302,9 +1559,10 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   if (clientRealPath !== resolveContainedPath(ownerRealPath, clientRoot.published)) {
     return yield* scaffoldFailure('published Action HTTP client root must be the canonical owner file');
   }
+  const publicProjection = yield* planPublicActionProjection(vertical, action, config, publicActionPath);
   const [actionSource, publicActionSource, sharedApi, runtimeRoot, clientRootContent] = yield* Effect.all([
     fileSystem.readFileString(actionPath),
-    fileSystem.readFileString(publicActionPath),
+    publicProjection === null ? fileSystem.readFileString(publicActionPath) : Effect.succeed(publicProjection.content),
     fileSystem.readFileString(sharedApiPath),
     fileSystem.readFileString(runtimeRootPath),
     fileSystem.readFileString(clientRootPath),
@@ -1321,6 +1579,10 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   const errors = yield* tryScaffold('Action domain error schema is not transportable', () =>
     collectDomainErrors(inspected.descriptor.domainErrorSchema.ast),
   );
+  const customProblems = yield* planCustomDomainProblems(vertical, config.domainProblems ?? [], errors, [
+    contractPath,
+    problemsPath,
+  ]);
   const ownsGeneratedActionHttpArtifact = (current: string): boolean =>
     current.startsWith(
       `${HEADER}\n// @ontos-action-http-owner ${vertical.moduleId}\n// @ontos-action-http-slug ${action}\n`,
@@ -1328,12 +1590,12 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   const generated = yield* Effect.all([
     createOrUpdateOwnedGeneratedMutationEffect(
       contractPath,
-      renderActionHttpContract(vertical, action, errors),
+      renderActionHttpContract(vertical, action, errors, customProblems),
       ownsGeneratedActionHttpArtifact,
     ),
     createOrUpdateOwnedGeneratedMutationEffect(
       problemsPath,
-      renderActionHttpProblems(vertical, action, errors),
+      renderActionHttpProblems(vertical, action, errors, customProblems),
       ownsGeneratedActionHttpArtifact,
     ),
     createOrUpdateOwnedGeneratedMutationEffect(
@@ -1391,6 +1653,9 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
       )
     : undefined;
   const mutations: Mutation[] = generated.flatMap(Option.toArray);
+  if (publicProjection !== null) {
+    mutations.push(...Option.toArray(publicProjection.mutation));
+  }
   appendDefinedMutations(mutations, [
     updateMutation(sharedApiPath, sharedApi, nextSharedApi),
     updateMutation(runtimeRootPath, runtimeRoot, nextRuntimeRoot),

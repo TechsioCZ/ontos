@@ -12,7 +12,10 @@ import { Clock, DateTime, Effect, Match, Schema } from 'effect';
 import { marketAffectedUseAssessmentServicesForTransaction } from '../api/market-affected-use-assessment.read.ts';
 import type { MarketAffectedUseAssessmentServices } from '../api/market-affected-use-assessment.read.ts';
 import { marketRetirementReservationForTransaction } from '../persistence/market-retirement-persistence.ts';
-import type { MarketRetirementReservationFailure } from '../persistence/market-retirement-persistence.ts';
+import type {
+  MarketRetirementReservationAttribution,
+  MarketRetirementReservationFailure,
+} from '../persistence/market-retirement-persistence.ts';
 
 export const MarketRetirementAssessmentStaleError = Schema.TaggedError<Error>()('MarketRetirementAssessmentStale', {
   reason: Schema.String,
@@ -41,10 +44,7 @@ export type MarketRetirementReservationServiceFailure =
 export interface MarketRetirementReservationService {
   readonly execute: (
     payload: ReserveMarketRetirementPayload,
-    attribution: Readonly<{
-      readonly actionInvocationId: string;
-      readonly actorPrincipalId: string;
-    }>,
+    attribution: MarketRetirementReservationAttribution,
   ) => Effect.Effect<ReserveMarketRetirementResult, MarketRetirementReservationServiceFailure>;
 }
 
@@ -155,14 +155,17 @@ const validateReserve = Effect.fn('MarketRetirementReservationService.validateRe
     .pipe(
       Effect.mapError((cause) => assessmentUnavailable('Current Market affected-use evidence is unavailable', cause)),
     );
-  yield* Match.value(assessment).pipe(
+  return yield* Match.value(assessment).pipe(
     Match.when({ outcome: 'UNAVAILABLE' }, ({ reason }) => Effect.fail(assessmentUnavailable(reason))),
     Match.when({ outcome: 'STALE' }, ({ reason }) => stale(reason)),
     Match.when({ outcome: 'REJECTED' }, ({ reason }) =>
       Effect.fail(new MarketRetirementLiveReferenceConflictError({ reason })),
     ),
     Match.when({ outcome: 'VERIFIED' }, (verified) =>
-      currentTimeMillis.pipe(Effect.flatMap((nowMillis) => validateVerifiedAssessment(verified, payload, nowMillis))),
+      currentTimeMillis.pipe(
+        Effect.flatMap((nowMillis) => validateVerifiedAssessment(verified, payload, nowMillis)),
+        Effect.as(verified),
+      ),
     ),
     Match.exhaustive,
   );
@@ -178,19 +181,29 @@ export const marketRetirementReservationServiceFromAuthorities = (
       return reservation.execute(payload, attribution);
     }
     return validateReserve(payload, assessmentServices, currentTimeMillis).pipe(
-      Effect.flatMap(() => reservation.execute(payload, attribution)),
+      Effect.flatMap((originalAssessment) =>
+        reservation.execute(
+          payload,
+          payload.sourceActionInvocationId === undefined ? attribution : { ...attribution, originalAssessment },
+        ),
+      ),
     );
   },
 });
 
 export const marketRetirementReservationServiceFactory: ReadServiceFactory<MarketRetirementReservationService> = (
   transaction,
+  _scope,
+  compositionRevision,
 ) =>
   marketAffectedUseAssessmentServicesForTransaction(transaction).pipe(
     Effect.map((assessmentServices) =>
-      marketRetirementReservationServiceFromAuthorities(
-        assessmentServices,
-        marketRetirementReservationForTransaction(transaction),
-      ),
+      marketRetirementReservationServiceFromAuthorities(assessmentServices, {
+        execute: (payload, attribution) =>
+          marketRetirementReservationForTransaction(transaction).execute(
+            payload,
+            compositionRevision === undefined ? attribution : { ...attribution, compositionRevision },
+          ),
+      }),
     ),
   );

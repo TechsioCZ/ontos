@@ -78,6 +78,17 @@ const serve = Effect.scoped(
               Effect.flatMap(send),
             );
           }
+          if (command.type === 'SET_CCC_STATE') {
+            const actual = yield* owner.setCustomerContextState(command.state);
+            return yield* send({ state: actual.state, type: 'CCC_STATE_SET' });
+          }
+          if (command.type === 'CLOSE_STOREFRONT') {
+            yield* owner.closeStorefront();
+            return yield* send({ type: 'STOREFRONT_CLOSED' });
+          }
+          if (command.type === 'EVIDENCE') {
+            return yield* owner.evidence().pipe(Effect.flatMap((value) => send({ ...value, type: 'EVIDENCE' })));
+          }
           return yield* unavailable();
         }),
       ),

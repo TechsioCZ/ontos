@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
@@ -242,7 +243,7 @@ describe('Storefront association Current application validation', () => {
           servingModuleKey: 'commerce.storefront-registry',
         }),
       );
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preflights revise and never calls persistence for any typed validation failure', () =>
@@ -294,6 +295,6 @@ describe('Storefront association Current application validation', () => {
         expect(persistenceCalls).toHaveLength(0);
         expect(collector.snapshot().dataAccessEvents).toHaveLength(0);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

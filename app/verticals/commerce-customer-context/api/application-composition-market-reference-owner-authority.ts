@@ -34,6 +34,8 @@ const absentOwnerEvidence = (
   snapshot: ActiveApplicationCompositionSnapshot,
 ): Effect.Effect<MarketAffectedUseSourceEvidence, ReadHandlerUnavailable> => {
   const { revision } = snapshot.composition;
+  // UNIMPLEMENTED is the retained evidence identity for absence from this Composition.
+  // It proves neither that owner code never existed nor that historical obligations ended.
   const sourceId = `application-composition:${moduleId}:UNIMPLEMENTED`;
   return Schema.decodeEffect(MarketAffectedUseSourceEvidenceSchema)({
     completenessEvidence: {

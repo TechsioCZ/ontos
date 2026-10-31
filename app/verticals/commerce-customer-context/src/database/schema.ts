@@ -1512,6 +1512,14 @@ export const marketRetirementReservations = commerceCustomerContextSchema.table.
   'market_retirement_reservations',
   {
     marketRetirementReservationId: uuid('market_retirement_reservation_id').defaultRandom().primaryKey(),
+    // Legacy reservations remain unbound; never infer their original actor from the last finisher.
+    compositionRevision: text('composition_revision'),
+    originalActorPrincipalId: uuid('original_actor_principal_id'),
+    originalAssessment: jsonb('original_assessment').$type<DatabaseJsonObject>(),
+    originalReason: text('original_reason'),
+    originalReservationVersion: integer('original_reservation_version'),
+    releaseGuardHash: text('release_guard_hash'),
+    sourceActionInvocationId: uuid('source_action_invocation_id'),
     ...scopeColumns(),
     assessmentDigest: text('assessment_digest').notNull(),
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }).notNull(),
@@ -1528,6 +1536,27 @@ export const marketRetirementReservations = commerceCustomerContextSchema.table.
   },
   (table) => [
     scopeIdentity('ccc_market_retirement_reservations_scope_id_uk', table, table.marketRetirementReservationId),
+    uniqueIndex('ccc_market_retirement_reservations_source_uk')
+      .on(table.tenantId, table.legalEntityId, table.originalActorPrincipalId, table.sourceActionInvocationId)
+      .where(sql`${table.sourceActionInvocationId} is not null`),
+    check(
+      'ccc_market_retirement_reservations_source_ck',
+      sql`(
+      ${table.sourceActionInvocationId} is null and ${table.originalActorPrincipalId} is null
+      and ${table.originalReason} is null and ${table.compositionRevision} is null
+      and ${table.releaseGuardHash} is null and ${table.originalReservationVersion} is null
+      and ${table.originalAssessment} is null
+    ) or (
+      ${table.sourceActionInvocationId} is not null and ${table.originalActorPrincipalId} is not null
+      and ${table.originalReason} is not null and length(btrim(${table.originalReason})) between 1 and 500
+      and ${table.originalReason} = btrim(${table.originalReason})
+      and ${table.compositionRevision} is not null and ${table.compositionRevision} ~ '^[a-f0-9]{64}$'
+      and ${table.releaseGuardHash} is not null and ${table.releaseGuardHash} ~ '^[a-f0-9]{64}$'
+      and ${table.originalReservationVersion} is not null and ${table.originalReservationVersion} = 1
+      and ${table.originalAssessment} is not null and jsonb_typeof(${table.originalAssessment}) = 'object'
+      and (${table.originalAssessment}->>'outcome') is not distinct from 'VERIFIED'
+    )`,
+    ),
     unique('ccc_market_retirement_reservations_action_uk').on(
       table.tenantId,
       table.legalEntityId,

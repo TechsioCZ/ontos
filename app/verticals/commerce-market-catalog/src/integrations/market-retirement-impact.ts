@@ -1,3 +1,7 @@
+import { ReserveMarketRetirementConflictProblemSchema } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
+import type { MarketRetirementStoredBasis } from '../../shared/market-retirement-admission.ts';
+import { MarketRetirementReserveBasisSchema } from '../../shared/market-retirement-admission.ts';
+import type { OperationalScope } from '@app/core-runtime';
 import type {
   MarketAffectedUseAssessmentRequest,
   MarketAffectedUseAssessmentResponse,
@@ -8,8 +12,7 @@ import type {
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import { executeReserveMarketRetirementWithAuthorization } from '@app/customer-market-retirement-contracts/reserve-market-retirement/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
 
 import type {
   MarketRetirementImpactAssessment,
@@ -18,8 +21,12 @@ import type {
 import { MarketRetirementImpactAssessmentRejected } from '../actions/market-retirement-impact-assessment-rejected.ts';
 import { MarketRetirementImpactAssessmentStale } from '../actions/market-retirement-impact-assessment-stale.ts';
 import { MarketRetirementImpactAssessmentUnavailable } from '../actions/market-retirement-impact-assessment-unavailable.ts';
+import { MarketRetirementImpactAuthorityFactory } from '../services/market-retirement-impact-authority.ts';
 import type { MarketRetirementImpactAuthority } from '../services/market-retirement-impact-authority.ts';
-import { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
+import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import { executeMarketRetirementReservationRecoveryWithAuthorization } from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery/client';
+import type { MarketRetirementReservationRecoveryResponse } from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
+import type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 
 type ExecuteMarketAffectedUseAssessment<Failure> = (
   payload: MarketAffectedUseAssessmentRequest,
@@ -41,21 +48,6 @@ type ExecuteMarketRetirementReservation<Failure> = (
 ) => Effect.Effect<ReserveMarketRetirementResult, Failure>;
 
 const CUSTOMER_CONTEXT_MODULE_KEY = 'commerce.customer-context' as const;
-const httpUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Service URL must be an HTTP(S) URL without credentials, query, or fragment',
-  ),
-);
-const productionClientConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
-  shellGatewayBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
 const GatewayFailureSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   message: Schema.optionalKey(Schema.String),
@@ -97,15 +89,49 @@ const errorText = (cause: unknown): string => {
   return 'The Customer Context Market retirement reservation gateway is unavailable';
 };
 
+const definiteReservationFailure = (
+  cause: unknown,
+): Option.Option<MarketRetirementImpactAssessmentRejected | MarketRetirementImpactAssessmentStale> => {
+  if (!Schema.is(ReserveMarketRetirementConflictProblemSchema)(cause)) {
+    return Option.none();
+  }
+  return Match.value(cause.code).pipe(
+    Match.when('ASSESSMENT_STALE', () =>
+      Option.some(stale('The original Customer Context reservation basis is stale')),
+    ),
+    Match.when(
+      Match.is('LIVE_REFERENCE_CONFLICT', 'RESERVATION_STATE_CONFLICT', 'RETIREMENT_RESERVATION_CONFLICT'),
+      () => Option.some(rejected('Customer Context definitively rejected the original reservation')),
+    ),
+    Match.orElse(() => Option.none()),
+  );
+};
 const mapReservationFailure = (
   cause: unknown,
-): MarketRetirementImpactAssessmentRejected | MarketRetirementImpactAssessmentUnavailable => {
+):
+  | MarketRetirementImpactAssessmentRejected
+  | MarketRetirementImpactAssessmentStale
+  | MarketRetirementImpactAssessmentUnavailable => {
+  if (
+    Schema.is(MarketRetirementImpactAssessmentRejected)(cause) ||
+    Schema.is(MarketRetirementImpactAssessmentStale)(cause) ||
+    Schema.is(MarketRetirementImpactAssessmentUnavailable)(cause)
+  ) {
+    return cause;
+  }
+  const known = definiteReservationFailure(cause);
+  if (Option.isSome(known)) {
+    return known.value;
+  }
   const code = Schema.is(GatewayFailureSchema)(cause) ? cause.code : undefined;
-  return code === 'RETIREMENT_RESERVATION_CONFLICT' ||
+  if (
+    code === 'RETIREMENT_RESERVATION_CONFLICT' ||
     code === 'RESERVATION_STATE_CONFLICT' ||
     code === 'action_request_hash_conflict'
-    ? rejected(errorText(cause))
-    : unavailable(errorText(cause), cause);
+  ) {
+    return rejected(errorText(cause));
+  }
+  return unavailable(errorText(cause), cause);
 };
 
 const identityMatches = (
@@ -373,52 +399,315 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
   };
 };
 
-export const makeMarketRetirementImpactAuthorityFromPublishedClient = () =>
-  makeMarketRetirementImpactAuthority(
-    (payload, { compositionRevision, legalEntityId, requestCorrelation }) =>
-      productionClientConfiguration.pipe(
-        Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
-          issueApiKeyGatewayContext(
-            { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
-            { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation },
-          ).pipe(
-            Effect.filterOrFail(
-              (response) => response.compositionRevision === compositionRevision,
-              () => unavailable('Customer Context gateway returned a different composition revision'),
-            ),
-            Effect.flatMap(({ apiBaseUrl, token }) =>
-              executeMarketAffectedUseAssessmentWithAuthorization(payload, `Bearer ${token}`, requestCorrelation, {
-                baseUrl: new URL(apiBaseUrl, shellGatewayBaseUrl),
-                compositionRevision,
-              }),
-            ),
-          ),
-        ),
-      ),
-    (payload, { compositionRevision, idempotencyKey, legalEntityId, requestCorrelation }) =>
-      productionClientConfiguration.pipe(
-        Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
-          issueApiKeyGatewayContext(
-            { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
-            { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation },
-          ).pipe(
-            Effect.filterOrFail(
-              (response) => response.compositionRevision === compositionRevision,
-              () => unavailable('Customer Context gateway returned a different composition revision'),
-            ),
-            Effect.flatMap(({ apiBaseUrl, token }) =>
-              executeReserveMarketRetirementWithAuthorization(payload, `Bearer ${token}`, requestCorrelation, {
-                baseUrl: new URL(apiBaseUrl, shellGatewayBaseUrl),
-                compositionRevision,
-                idempotencyKey,
-              }),
-            ),
-          ),
-        ),
-      ),
+const toResult = (
+  response: Extract<MarketRetirementReservationRecoveryResponse, { readonly outcome: 'FOUND' }>,
+): ReserveMarketRetirementResult => ({
+  assessmentDigest: response.assessmentDigest,
+  lifecycle: response.lifecycle,
+  marketRef: response.marketRef,
+  marketRevision: response.marketRevision,
+  reservationToken: response.reservationToken,
+  reservationVersion: response.reservationVersion,
+  tenantId: response.tenantId,
+});
+const expectedLifecycle = (operation: ReserveMarketRetirementPayload['operation']) =>
+  Match.value(operation).pipe(
+    Match.when('RESERVE', () => 'RESERVED' as const),
+    Match.when('COMMIT', () => 'COMMITTED' as const),
+    Match.when('RELEASE', () => 'RELEASED' as const),
+    Match.exhaustive,
   );
 
-export const MarketRetirementImpactAuthorityLive = Layer.succeed(
-  MarketRetirementImpactAuthorityService,
-  makeMarketRetirementImpactAuthorityFromPublishedClient(),
+export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
+  basis,
+  compositionRevision,
+  crypto,
+  originalCompositionRevision,
+  releaseGuardHash,
+  retirement,
+  scope,
+  sourceActionInvocationId,
+}: {
+  readonly basis?: MarketRetirementStoredBasis;
+  readonly compositionRevision: string;
+  readonly crypto: Crypto.Crypto;
+  readonly originalCompositionRevision: string;
+  readonly releaseGuardHash: string;
+  readonly retirement: RetireMarketPayload;
+  readonly scope: OperationalScope;
+  readonly sourceActionInvocationId: string;
+}) => {
+  const gateway = (operationKey: string) =>
+    acquireOwnerGatewayContext(
+      scope,
+      crypto,
+      { audience: 'commerce-customer-context', operationKey },
+      compositionRevision,
+    );
+  const recover = () =>
+    Effect.gen(function* recoverOriginalReservation() {
+      const credential = yield* gateway('commerce.customer-context.api.market-retirement-reservation-recovery');
+      const response = yield* executeMarketRetirementReservationRecoveryWithAuthorization(
+        {
+          marketRef: retirement.marketRef,
+          sourceActionInvocationId,
+          tenantId: scope.tenantId,
+        },
+        Redacted.value(credential.authorization),
+        scope.correlationId,
+        { baseUrl: credential.apiUrl, compositionRevision },
+      );
+      if (
+        response.sourceActionInvocationId !== sourceActionInvocationId ||
+        response.tenantId !== scope.tenantId ||
+        response.marketRef.resourceId !== retirement.marketRef.resourceId ||
+        response.marketRef.moduleId !== retirement.marketRef.moduleId ||
+        response.marketRef.resourceType !== retirement.marketRef.resourceType ||
+        response.marketRef.tenantId !== retirement.marketRef.tenantId
+      ) {
+        return yield* unavailable('Recovery does not identify the exact original source effect');
+      }
+      if (
+        response.outcome === 'FOUND' &&
+        (response.sourceActionInvocationId !== sourceActionInvocationId ||
+          response.originalActorPrincipalId !== scope.principalId ||
+          response.tenantId !== scope.tenantId ||
+          response.marketRef.resourceId !== retirement.marketRef.resourceId ||
+          response.marketRef.tenantId !== retirement.marketRef.tenantId ||
+          response.compositionRevision !== originalCompositionRevision ||
+          response.originalReason !== retirement.reason ||
+          response.marketRevision !== retirement.expectedRevision ||
+          response.releaseGuardHash !== releaseGuardHash ||
+          response.evaluatedAt !== DateTime.formatIso(retirement.effectiveAt) ||
+          response.originalReservationVersion !== 1)
+      ) {
+        return yield* unavailable('Recovered reservation does not match its immutable original source effect');
+      }
+      return response;
+    }).pipe(
+      Effect.mapError((cause) => unavailable('The original retirement reservation could not be recovered', cause)),
+    );
+  const execute = Effect.fn('MarketRetirement.executeBound')(function* executeBoundReservation(
+    payload: ReserveMarketRetirementPayload,
+    idempotencyKey: string,
+  ) {
+    const credential = yield* gateway('commerce.customer-context.reserve-market-retirement');
+    return yield* executeReserveMarketRetirementWithAuthorization(
+      payload,
+      Redacted.value(credential.authorization),
+      scope.correlationId,
+      { baseUrl: credential.apiUrl, compositionRevision, idempotencyKey },
+    );
+  });
+  const recoverAfterExecuteFailure = Effect.fn('MarketRetirement.recoverAfterExecuteFailure')(
+    function* recoverAfterExecuteFailure(
+      payload: ReserveMarketRetirementPayload,
+      cause: Effect.Error<ReturnType<typeof execute>>,
+    ) {
+      const recovered = yield* recover();
+      if (recovered.outcome === 'FOUND' && recovered.lifecycle === expectedLifecycle(payload.operation)) {
+        return toResult(recovered);
+      }
+      const terminal = definiteReservationFailure(cause);
+      if (recovered.outcome === 'NOT_FOUND' && Option.isSome(terminal)) {
+        return yield* terminal.value;
+      }
+      return yield* unavailable('Original reservation settlement remains pending', cause);
+    },
+  );
+  const executeRecoverably = Effect.fn('MarketRetirement.executeOrRecover')(function* executeOrRecover(
+    payload: ReserveMarketRetirementPayload,
+    idempotencyKey: string,
+  ) {
+    const prior = yield* recover();
+    if (prior.outcome === 'FOUND') {
+      if (prior.lifecycle === expectedLifecycle(payload.operation)) {
+        if (payload.operation === 'RESERVE' && prior.assessmentDigest !== payload.assessmentDigest) {
+          return yield* stale('The original reservation belongs to different assessment evidence');
+        }
+        return toResult(prior);
+      }
+      if (payload.operation === 'RESERVE' || prior.lifecycle !== 'RESERVED') {
+        return yield* unavailable('The original reservation is in an incompatible terminal state');
+      }
+    } else if (payload.operation !== 'RESERVE') {
+      return yield* unavailable('An absent reservation cannot prove a delayed original request has settled');
+    }
+    return yield* execute(payload, idempotencyKey).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) => recoverAfterExecuteFailure(payload, cause),
+        onSuccess: Effect.succeed,
+      }),
+    );
+  });
+  const authority = makeMarketRetirementImpactAuthority(
+    Effect.fn('MarketRetirement.assessExactOwner')(function* assessExactOwner(
+      payload: Parameters<ExecuteMarketAffectedUseAssessment<never>>[0],
+      context: Parameters<ExecuteMarketAffectedUseAssessment<never>>[1],
+    ) {
+      if (
+        payload.tenantId !== scope.tenantId ||
+        context.compositionRevision !== compositionRevision ||
+        context.legalEntityId !== scope.legalEntityId
+      ) {
+        return yield* unavailable('Retirement requires the original trusted scope');
+      }
+      const credential = yield* gateway('commerce.customer-context.api.market-affected-use-assessment');
+      return yield* executeMarketAffectedUseAssessmentWithAuthorization(
+        payload,
+        Redacted.value(credential.authorization),
+        scope.correlationId,
+        { baseUrl: credential.apiUrl, compositionRevision },
+      );
+    }),
+    (payload, context) => {
+      if (
+        context.compositionRevision !== compositionRevision ||
+        context.legalEntityId !== scope.legalEntityId ||
+        payload.tenantId !== scope.tenantId
+      ) {
+        return Effect.fail(unavailable('Reservation requires the original trusted scope'));
+      }
+      return executeRecoverably(
+        payload.operation === 'RESERVE' ? { ...payload, releaseGuardHash, sourceActionInvocationId } : payload,
+        context.idempotencyKey,
+      );
+    },
+  );
+  const reserveOriginal = Effect.fn('MarketRetirementImpactAuthority.reserveOriginal')(function* reserveOriginal(
+    input: Parameters<MarketRetirementImpactAuthority['reserveRetirementImpact']>[0],
+  ) {
+    if (
+      input.actionInvocationId !== sourceActionInvocationId ||
+      input.compositionRevision !== originalCompositionRevision ||
+      compositionRevision !== originalCompositionRevision ||
+      input.legalEntityId !== scope.legalEntityId ||
+      input.marketRef.resourceId !== retirement.marketRef.resourceId ||
+      input.marketRef.tenantId !== scope.tenantId ||
+      input.expectedMarketRevision !== retirement.expectedRevision ||
+      input.effectiveAt !== DateTime.formatIso(retirement.effectiveAt) ||
+      input.reason !== retirement.reason
+    ) {
+      return yield* unavailable('Reservation must remain bound to the exact original retirement admission');
+    }
+    if (basis === undefined) {
+      return yield* unavailable('The original reserve basis has not been durably prepared');
+    }
+    const original = yield* recover();
+    if (original.outcome === 'FOUND') {
+      if (
+        original.lifecycle !== 'RESERVED' ||
+        original.reservationVersion !== original.originalReservationVersion ||
+        original.assessmentDigest !== basis.reserve.assessmentDigest
+      ) {
+        return yield* unavailable('The original reservation is not the exact unsettled prepared effect');
+      }
+      return {
+        ...basis.assessment,
+        reservation: { token: original.reservationToken, version: original.originalReservationVersion },
+      };
+    }
+    const reserve = yield* Schema.decodeUnknownEffect(MarketRetirementReserveBasisSchema)(basis.reserve).pipe(
+      Effect.mapError((cause) => unavailable('The original reserve basis cannot be decoded', cause)),
+    );
+    const reserved = yield* executeRecoverably(
+      {
+        ...reserve,
+        marketRef: retirement.marketRef,
+        marketRevision: retirement.expectedRevision,
+        operation: 'RESERVE',
+        reason: retirement.reason,
+        releaseGuardHash,
+        sourceActionInvocationId,
+        tenantId: scope.tenantId,
+      },
+      `${sourceActionInvocationId}:reserve`,
+    );
+    if (reserved.lifecycle !== 'RESERVED' || !reservationResultMatches(reserved, basis.assessment)) {
+      return yield* stale('The original RESERVE result differs from its prepared basis');
+    }
+    return {
+      ...basis.assessment,
+      reservation: { token: reserved.reservationToken, version: reserved.reservationVersion },
+    };
+  });
+  return {
+    ...authority,
+    cleanupOriginal: (releaseProof: string) =>
+      recover().pipe(
+        Effect.flatMap((original) => {
+          if (original.outcome === 'NOT_FOUND') {
+            return Effect.fail(
+              unavailable('Cleanup remains pending until a delayed original reservation is excluded or recovered'),
+            );
+          }
+          if (original.lifecycle === 'RELEASED') {
+            return Effect.void;
+          }
+          if (original.lifecycle !== 'RESERVED') {
+            return Effect.fail(
+              unavailable('An owner-aborted retirement cannot release a committed foreign reservation'),
+            );
+          }
+          return executeRecoverably(
+            {
+              marketRef: original.marketRef,
+              marketRevision: original.marketRevision,
+              operation: 'RELEASE',
+              reason: original.originalReason,
+              releaseProof,
+              reservationToken: original.reservationToken,
+              reservationVersion: original.originalReservationVersion,
+              tenantId: original.tenantId,
+            },
+            `${sourceActionInvocationId}:release`,
+          ).pipe(Effect.asVoid);
+        }),
+      ),
+    reserveRetirementImpact: reserveOriginal,
+  };
+};
+
+/** Crypto is captured at the native Layer root; configuration and HTTP stay lazy per attempt. */
+export const MarketRetirementImpactAuthorityLive = Layer.effect(
+  MarketRetirementImpactAuthorityFactory,
+  Effect.gen(function* retirementAuthorityFactory() {
+    const crypto = yield* Crypto.Crypto;
+    return {
+      forAdmission: (attempt) => makeMarketRetirementImpactAuthorityFromPublishedClient({ ...attempt, crypto }),
+      prepareBasis: Effect.fn('MarketRetirementImpact.prepareBasis')(function* prepareBasis(attempt) {
+        const { compositionRevision, retirement, scope } = attempt;
+        if (scope.legalEntityId === undefined || retirement.marketRef.tenantId !== scope.tenantId) {
+          return yield* unavailable(
+            'The original retirement basis requires exact trusted Tenant and Legal Entity scope',
+          );
+        }
+        const credential = yield* acquireOwnerGatewayContext(
+          scope,
+          crypto,
+          {
+            audience: 'commerce-customer-context',
+            operationKey: 'commerce.customer-context.api.market-affected-use-assessment',
+          },
+          compositionRevision,
+        ).pipe(Effect.mapError((cause) => unavailable('The original retirement gateway is unavailable', cause)));
+        const request = requestFor({
+          effectiveAt: DateTime.formatIso(retirement.effectiveAt),
+          expectedMarketRevision: retirement.expectedRevision,
+          marketRef: retirement.marketRef,
+        });
+        const response = yield* executeMarketAffectedUseAssessmentWithAuthorization(
+          request,
+          Redacted.value(credential.authorization),
+          scope.correlationId,
+          { baseUrl: credential.apiUrl, compositionRevision },
+        ).pipe(Effect.mapError((cause) => unavailable('The original retirement basis is unavailable', cause)));
+        const verified = yield* toVerifiedAssessment(request, response);
+        const reserve = yield* Schema.encodeEffect(MarketRetirementReserveBasisSchema)(verified.response).pipe(
+          Effect.mapError((cause) => unavailable('The original retirement basis cannot be retained', cause)),
+        );
+        return { assessment: verified.assessment, reserve };
+      }),
+    };
+  }),
 );

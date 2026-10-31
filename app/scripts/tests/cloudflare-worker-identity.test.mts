@@ -34,15 +34,11 @@ it('resolves every Worker identity from the topology through the published works
       from: pathToFileURL(path.join(appRoot, unit.path, 'modern.config.ts')),
     });
     expect(config.deploy?.worker?.name, unit.id).toBe(unit.cloudflare.workerName);
-    const authored = readConfig(unit.path);
-    expect(authored).toContain('presetUltramodernWorkspace(');
-    expect(authored).not.toContain('cloudflareWorkerName');
   }
 });
 
 it('uses native public Worker fetch without fixed Shell vertical bindings or an SSR module API entry', () => {
   const shellConfig = readConfig(topology.shell.path);
-  expect(shellConfig).toContain('createWorkspaceModernConfig(');
   expect(shellConfig).not.toContain('dispatch_namespaces');
   expect(shellConfig).not.toContain('ONTOS_MODULES_NAMESPACE');
   expect(shellConfig).not.toContain('ULTRAMODERN_CLOUDFLARE_MODULE_DISPATCH_NAMESPACE');

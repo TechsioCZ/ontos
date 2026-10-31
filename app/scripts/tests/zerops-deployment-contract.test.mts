@@ -361,6 +361,10 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
     expect(block).toContain(`install-zerops-node.sh ${node} ${pnpm}\n`);
     expect(block).toContain(`cp -a "$HOME/.local/node-${node}/bin" "$HOME/.local/node-${node}/lib" `);
     expect(block).toContain('node scripts/verify-zerops-workspace-install.mts');
+    expect(block).toContain('sudo apk add --no-cache curl libstdc++ libatomic');
+    expect(block).toContain(
+      "    run:\n      base: 'nodejs@24'\n      prepareCommands:\n        - sudo apk add --no-cache libatomic\n",
+    );
     expect(block).toMatch(/start: sh -c '.*PATH="\$PWD\/[^"]*node\/bin:\$PATH" exec /u);
     expect(block).not.toContain('initCommands');
     expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);

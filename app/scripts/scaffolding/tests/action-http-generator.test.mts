@@ -46,6 +46,9 @@ const AUTHORIZATION_FLAG = '--authorization';
 const NODE_MODULE_FLAG = '--input-type=module';
 const SHARED_CLIENT_PREFIX = '../src/api/';
 const OUTSIDE_CLIENT_PATH = 'outside-owner-client.ts';
+const SCHEMA_MODULE_FLAG = '--schema-module';
+const RESULT_SCHEMA_FLAG = '--result-schema';
+const CANONICAL_SCHEMA_MODULE = 'shared/action-contracts.ts';
 const NEXT_ACTION = 'revise-rate';
 
 const vertical = {
@@ -493,6 +496,98 @@ const withPublishedClientFixture = (shared: boolean) => (run: (root: string) => 
   );
 
 it.live(
+  'adopts canonical shared schemas without duplicating or replacing the existing Action',
+  Effect.fn(function* adoptsCanonicalSchemas() {
+    yield* withPublishedClientFixture(false)(
+      Effect.fn(function* adoptFixture(root) {
+        const privateAction = yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'));
+        const canonicalPath = `${OWNER_DIRECTORY}/shared/action-contracts.ts`;
+        const publicSource = yield* Effect.promise(() => readFile(path.join(root, PUBLIC_ACTION_PATH), 'utf-8'));
+        yield* write(root, canonicalPath, publicSource.replaceAll('ChangeRateResultSchema', 'SharedRateResultSchema'));
+        yield* write(
+          root,
+          PRIVATE_ACTION_PATH,
+          privateAction
+            .replace("from '../../shared/actions/change-rate.ts'", "from '../../shared/action-contracts.ts'")
+            .replace(
+              'ChangeRatePayloadSchema, ChangeRateResultSchema',
+              'ChangeRatePayloadSchema, SharedRateResultSchema as ChangeRateResultSchema',
+            ),
+        );
+        yield* Effect.promise(() => rm(path.join(root, PUBLIC_ACTION_PATH)));
+        const adoptedPrivate = yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'));
+        const args = [
+          VERTICAL_FLAG,
+          OWNER_SLUG,
+          '--action',
+          FIXTURE_ACTION,
+          SCHEMA_MODULE_FLAG,
+          CANONICAL_SCHEMA_MODULE,
+          RESULT_SCHEMA_FLAG,
+          'SharedRateResultSchema',
+        ];
+        yield* scaffoldFixture(root, ACTION_HTTP_COMMAND, args);
+        const projection = yield* Effect.promise(() => readFile(path.join(root, PUBLIC_ACTION_PATH), 'utf-8'));
+        expect(projection).toContain(
+          "export { SharedRateResultSchema as ChangeRateResultSchema } from '../action-contracts.ts'",
+        );
+        expect(projection).not.toContain('Schema.Struct');
+        expect(yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'))).toBe(
+          adoptedPrivate,
+        );
+        const first = yield* snapshotTree(root, ['node_modules']);
+        yield* scaffoldFixture(root, ACTION_HTTP_COMMAND, args);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(first);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'rejects unsafe schema adoption and unrelated projections without partial writes',
+  Effect.fn(function* rejectsUnsafeSchemaAdoption() {
+    yield* withPublishedClientFixture(false)(
+      Effect.fn(function* rejectFixture(root) {
+        yield* write(
+          root,
+          `${OWNER_DIRECTORY}/shared/action-contracts.ts`,
+          "import { Schema } from 'effect';\nexport const ChangeRatePayloadSchema = Schema.Struct({ rate: Schema.Number });\nexport const ChangeRateResultSchema = Schema.Struct({ accepted: Schema.Boolean });\n",
+        );
+        yield* write(root, 'outside-schemas.ts', 'export const escaped = true;\n');
+        yield* Effect.promise(() =>
+          symlink(
+            path.join(root, 'outside-schemas.ts'),
+            path.join(root, OWNER_DIRECTORY, 'shared', 'escaped-schemas.ts'),
+          ),
+        );
+        for (const extra of [
+          [SCHEMA_MODULE_FLAG, 'shared/escaped-schemas.ts'],
+          [SCHEMA_MODULE_FLAG, '../private.ts'],
+          [SCHEMA_MODULE_FLAG, 'shared/../src/actions/change-rate.action.ts'],
+          [SCHEMA_MODULE_FLAG, 'src/actions/change-rate.action.ts'],
+          [SCHEMA_MODULE_FLAG, CANONICAL_SCHEMA_MODULE, RESULT_SCHEMA_FLAG, 'MissingSchema'],
+          [SCHEMA_MODULE_FLAG, CANONICAL_SCHEMA_MODULE],
+          [RESULT_SCHEMA_FLAG, 'ChangeRateResultSchema'],
+        ]) {
+          const before = yield* snapshotTree(root, ['node_modules']);
+          const outcome = yield* Effect.exit(
+            scaffoldFixture(root, ACTION_HTTP_COMMAND, [
+              VERTICAL_FLAG,
+              OWNER_SLUG,
+              '--action',
+              FIXTURE_ACTION,
+              ...extra,
+            ]),
+          );
+          expect(Exit.isFailure(outcome)).toBe(true);
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        }
+      }),
+    );
+  }),
+);
+
+it.live(
   'Action HTTP composes a complete API-only module with one real Action runtime binding',
   Effect.fn(function* completeActionRuntimeProgram() {
     for (const withRead of [false, true]) {
@@ -841,6 +936,175 @@ it.live(
           `${client}\n// <generated-action-http-client-exports>\nexport * from './change-rate-action-client.ts';\n// </generated-action-http-client-exports>\n`,
         );
         yield* assertHttpRefused(root);
+      }),
+    );
+  }),
+);
+
+const CUSTOM_PROBLEM_FLAG = '--domain-problem';
+const CUSTOM_PROBLEM_MODULE = 'shared/domain-problems.ts';
+const CUSTOM_PROBLEM_SCHEMA = 'ChangeRateOriginalProblemSchema';
+const CUSTOM_PROBLEM_TAG_PREFIX = 'ChangeRateNotImplemented=';
+const CUSTOM_PROBLEM_SPEC =
+  'ChangeRateNotImplemented=shared/domain-problems.ts#ChangeRateOriginalProblemSchema#mapChangeRateOriginalProblem';
+const customProblemSource = `import { Schema } from 'effect';
+import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+const originalProblem = makeProblemDetailsSchema('ChangeRateOriginalProblem', 503, { original: Schema.String });
+const checkedProblem = makeProblemDetailsSchema('ChangeRateCheckedProblem', 503).check(Schema.makeFilter(() => true).annotate({ httpApiStatus: 409 }).and(Schema.makeFilter(() => true), { httpApiStatus: 503 }));
+export const ChangeRateOriginalProblemSchema = Schema.Union([originalProblem, makeProblemDetailsSchema('ChangeRateConflictProblem', 409, { original: Schema.String }), checkedProblem]);
+export const OtherProblemSchema = makeProblemDetailsSchema('ChangeRateOtherProblem', 422);
+export const mapOtherProblem = failure => OtherProblemSchema.make({ detail: failure.code, status: 422, title: 'Rejected', type: 'https://ontos.dev/problems/other' });
+export const InvalidProblemSchema = Schema.Struct({ _tag: Schema.Literal('Invalid'), status: Schema.Literal(200), detail: Schema.String, title: Schema.String, type: Schema.String });
+export const InvalidProblemUnionSchema = Schema.Union([originalProblem, InvalidProblemSchema]);
+export const MissingStatusAnnotationSchema = Schema.Struct({ _tag: Schema.Literal('MissingStatus'), status: Schema.Literal(503), detail: Schema.String, title: Schema.String, type: Schema.String });
+export const MismatchedStatusSchema = originalProblem.annotate({ httpApiStatus: 409 });
+export const ClearedStatusSchema = originalProblem.annotate({ httpApiStatus: undefined });
+export const InvalidCheckedStatusSchema = originalProblem.check(Schema.makeFilter(() => true).annotate({ httpApiStatus: 503 }).and(Schema.makeFilter(() => true), { httpApiStatus: 409 }));
+export const InvalidCheckedStatusUnionSchema = Schema.Union([originalProblem, InvalidCheckedStatusSchema]);
+export const invalidMapper = 3;
+export const mapChangeRateOriginalProblem = failure => originalProblem.make({ original: failure.reason, detail: 'Original effect pending', status: 503, title: 'Pending', type: 'https://ontos.dev/problems/original-pending' });
+`;
+
+it.live(
+  'adopts and preserves exact custom domain Problem schema/mapper projections across regeneration',
+  Effect.fn(function* preserveDomainProblem() {
+    yield* withPublishedClientFixture(false)(
+      Effect.fn(function* customFixture(root) {
+        yield* write(root, `${OWNER_DIRECTORY}/${CUSTOM_PROBLEM_MODULE}`, customProblemSource);
+        const actionSource = yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'));
+        yield* write(
+          root,
+          PRIVATE_ACTION_PATH,
+          actionSource.replace(
+            'domainErrorSchema: ChangeRateNotImplemented,',
+            "domainErrorSchema: Schema.Union([ChangeRateNotImplemented, Schema.Struct({ _tag: Schema.Literal('ChangeRateOtherFailure'), code: Schema.Literal('other_failure') })]),",
+          ),
+        );
+        const flags = [
+          VERTICAL_FLAG,
+          OWNER_SLUG,
+          '--action',
+          FIXTURE_ACTION,
+          CUSTOM_PROBLEM_FLAG,
+          CUSTOM_PROBLEM_SPEC,
+          CUSTOM_PROBLEM_FLAG,
+          'ChangeRateOtherFailure=shared/domain-problems.ts#OtherProblemSchema#mapOtherProblem',
+        ];
+        yield* scaffoldFixture(root, ACTION_HTTP_COMMAND, flags);
+        const contract = yield* Effect.promise(() =>
+          readFile(path.join(root, OWNER_DIRECTORY, 'shared/apis/change-rate-action.ts'), 'utf-8'),
+        );
+        const problems = yield* Effect.promise(() =>
+          readFile(path.join(root, OWNER_DIRECTORY, 'api/change-rate-action-problems.ts'), 'utf-8'),
+        );
+        expect(contract).toContain('typeof ChangeRateOriginalProblemSchema.Type');
+        expect(contract).toContain(`@ontos-action-http-domain-problem ${CUSTOM_PROBLEM_SPEC}`);
+        expect(contract).toContain(
+          "import { ChangeRateOriginalProblemSchema, OtherProblemSchema } from '../domain-problems.ts';",
+        );
+        expect(contract).not.toContain('export { ChangeRateOriginalProblemSchema');
+        expect(contract).not.toContain('export { OtherProblemSchema');
+        expect(contract).toContain("export { ChangeRatePayloadSchema } from '../actions/change-rate.ts';");
+        expect(contract).toContain('export const ChangeRateActionInvalidProblemSchema');
+        expect(contract).toContain('  OtherProblemSchema,');
+        expect(contract).toContain('  ChangeRateOriginalProblemSchema,');
+        expect(contract).toContain('typeof OtherProblemSchema.Type');
+        expect(contract.lastIndexOf('\nimport ')).toBeLessThan(contract.indexOf('\nexport '));
+        expect(problems).toContain(
+          "import { mapChangeRateOriginalProblem, mapOtherProblem } from '../shared/domain-problems.ts';",
+        );
+        expect(contract).not.toContain(String.raw`\n`);
+        expect(problems).toContain('ChangeRateNotImplemented: (failure) => mapChangeRateOriginalProblem(failure)');
+        const before = yield* snapshotTree(root, ['node_modules']);
+        yield* scaffoldFixture(root, ACTION_HTTP_COMMAND, flags);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        const omitted = yield* Effect.exit(scaffoldHttp(root));
+        expect(Exit.isFailure(omitted)).toBe(true);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'rejects private/traversing/escaped/invalid/unknown-tag custom Problems before any writes',
+  Effect.fn(function* rejectDomainProblems() {
+    yield* withPublishedClientFixture(false)(
+      Effect.fn(function* invalidCustomFixture(root) {
+        yield* write(root, `${OWNER_DIRECTORY}/${CUSTOM_PROBLEM_MODULE}`, customProblemSource);
+        yield* write(root, 'outside-problem.ts', customProblemSource);
+        yield* Effect.promise(() =>
+          symlink(path.join(root, 'outside-problem.ts'), path.join(root, OWNER_DIRECTORY, 'shared/escaped-problem.ts')),
+        );
+        yield* write(
+          root,
+          `${OWNER_DIRECTORY}/shared/private-problem.ts`,
+          "export { missing } from '../src/actions/change-rate.action.ts';\n",
+        );
+        for (const specification of [
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_TAG_PREFIX, 'ActionPermissionDenied='),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_MODULE, 'src/private.ts'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_MODULE, 'shared/../src/private.ts'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_MODULE, 'shared/escaped-problem.ts'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_MODULE, 'shared/private-problem.ts'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'MissingSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'InvalidProblemSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'InvalidProblemUnionSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'MissingStatusAnnotationSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'MismatchedStatusSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'ClearedStatusSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'InvalidCheckedStatusSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_SCHEMA, 'InvalidCheckedStatusUnionSchema'),
+          CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_TAG_PREFIX, '*='),
+          CUSTOM_PROBLEM_SPEC.replace('mapChangeRateOriginalProblem', 'invalidMapper'),
+        ]) {
+          const before = yield* snapshotTree(root, ['node_modules']);
+          const result = yield* Effect.exit(
+            scaffoldFixture(root, ACTION_HTTP_COMMAND, [
+              VERTICAL_FLAG,
+              OWNER_SLUG,
+              '--action',
+              FIXTURE_ACTION,
+              CUSTOM_PROBLEM_FLAG,
+              specification,
+            ]),
+          );
+          expect(Exit.isFailure(result)).toBe(true);
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        }
+      }),
+    );
+  }),
+);
+
+it.live(
+  'rejects a declared Core error tag as an owner custom projection before writes',
+  Effect.fn(function* rejectCoreProjection() {
+    yield* withPublishedClientFixture(false)(
+      Effect.fn(function* declaredCoreFixture(root) {
+        yield* write(root, `${OWNER_DIRECTORY}/${CUSTOM_PROBLEM_MODULE}`, customProblemSource);
+        const actionSource = yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'));
+        yield* write(
+          root,
+          PRIVATE_ACTION_PATH,
+          actionSource.replace(
+            'domainErrorSchema: ChangeRateNotImplemented,',
+            "domainErrorSchema: Schema.Struct({ _tag: Schema.Literal('ActionPermissionDenied'), code: Schema.Literal('action_permission_denied') }),",
+          ),
+        );
+        const beforeCoreOverride = yield* snapshotTree(root, ['node_modules']);
+        const coreOverride = yield* Effect.exit(
+          scaffoldFixture(root, ACTION_HTTP_COMMAND, [
+            VERTICAL_FLAG,
+            OWNER_SLUG,
+            '--action',
+            FIXTURE_ACTION,
+            CUSTOM_PROBLEM_FLAG,
+            CUSTOM_PROBLEM_SPEC.replace(CUSTOM_PROBLEM_TAG_PREFIX, 'ActionPermissionDenied='),
+          ]),
+        );
+        expect(Exit.isFailure(coreOverride)).toBe(true);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeCoreOverride);
       }),
     );
   }),

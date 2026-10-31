@@ -204,10 +204,12 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
     if (runBase === undefined) {
       return yield* Effect.fail(failure(`Missing run base for ${templateId}`));
     }
+    const runPreparation = /^ {6}prepareCommands:\n(?: {8}[^\n]*\n)+/mu.exec(template.slice(runStart))?.[0]?.trimEnd();
     return [
       buildAndDeploy,
       '    run:',
       `      base: ${runBase}`,
+      ...(runPreparation === undefined ? [] : [runPreparation]),
       '      ports:',
       `        - port: ${OUTBOX_WORKER_HOST_HEALTH_PORT}`,
       '          protocol: tcp',

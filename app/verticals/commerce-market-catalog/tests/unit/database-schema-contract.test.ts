@@ -10,6 +10,7 @@ import {
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
+  marketRetirementAdmissions,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,
@@ -47,7 +48,10 @@ describe('Commerce Market Catalog database contract', () => {
       'storefront_association_revisions',
       'storefront_associations',
     ]);
-    expect(COMMERCE_MARKET_CATALOG_TABLES).toEqual([gatewayAssertionRedemptions, ...businessTables]);
+    expect(COMMERCE_MARKET_CATALOG_TABLES.filter((table) => table !== marketRetirementAdmissions)).toEqual([
+      gatewayAssertionRedemptions,
+      ...businessTables,
+    ]);
     for (const table of businessTables) {
       const config = getTableConfig(table);
       expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);

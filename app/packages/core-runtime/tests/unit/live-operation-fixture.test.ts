@@ -1,4 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Layer, Predicate, Redacted, Result, Schema } from 'effect';
 import { assert, expect, it, rs } from 'effect-rstest';
@@ -10,6 +12,7 @@ import {
 
 import { legalEntities, principalAuthBindings, principals, tenantModuleStates, tenants } from '../../src/db/schema.ts';
 import {
+  toContextPermissionAccessObjectId,
   toIdentityNamespaceAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
@@ -53,6 +56,11 @@ type FixtureInsertRow =
   | typeof tenants.$inferInsert;
 type FixtureInsertValues = FixtureInsertRow | readonly FixtureInsertRow[];
 
+class FixtureModuleStateUpdateFailure extends Schema.TaggedError<FixtureModuleStateUpdateFailure>()(
+  'FixtureModuleStateUpdateFailure',
+  {},
+) {}
+
 const transport = rs.hoisted(() => ({
   checkPermission: rs.fn<(request: v1.CheckPermissionRequest) => Promise<v1.CheckPermissionResponse>>(),
   insert: rs.fn<(table: FixtureInsertTable, value: FixtureInsertValues) => void>(),
@@ -67,7 +75,18 @@ const transport = rs.hoisted(() => ({
       readonly superuser: boolean;
     }[]
   >(),
-  selectRows: rs.fn<(table: FixtureReadTable) => readonly FixtureReadRow[]>(),
+  selectRows: rs.fn<(table: FixtureReadTable, predicate?: SQL) => readonly FixtureReadRow[]>(),
+  updateRows:
+    rs.fn<
+      (
+        table: typeof tenantModuleStates,
+        values: { readonly state: string },
+        predicate: SQL,
+      ) => Effect.Effect<
+        readonly { readonly moduleKey: string; readonly tenantId: string }[],
+        FixtureModuleStateUpdateFailure
+      >
+    >(),
   writeRelationships: rs.fn<(request: v1.WriteRelationshipsRequest) => Promise<v1.WriteRelationshipsResponse>>(),
 }));
 
@@ -77,21 +96,37 @@ const fixtureInsert = (table: FixtureInsertTable) => ({
 
 const fixtureSelect = () => ({
   from: (table: FixtureReadTable) => ({
-    where: () => Effect.sync(() => transport.selectRows(table)),
+    where: (predicate?: SQL) => Effect.sync(() => transport.selectRows(table, predicate)),
+  }),
+});
+
+const fixtureUpdate = (table: typeof tenantModuleStates) => ({
+  set: (values: { readonly state: string }) => ({
+    where: (predicate: SQL) => ({
+      returning: () => transport.updateRows(table, values, predicate),
+    }),
   }),
 });
 
 // Only external connections are replaced. The public fixture generates its actors and provisions its real tuples.
 rs.mock('../../src/db/client.ts', () => ({
   ...rs.requireActual('../../src/db/client.ts'),
-  makeCoreDatabase: () =>
-    Effect.succeed({
+  makeCoreDatabase: () => {
+    const executor = {
+      execute: () => Effect.sync(() => transport.nativeRows()),
+      insert: fixtureInsert,
+      select: fixtureSelect,
+      update: fixtureUpdate,
+    };
+    return Effect.succeed({
       executor: {
-        execute: () => Effect.sync(() => transport.nativeRows()),
-        insert: fixtureInsert,
-        select: fixtureSelect,
+        ...executor,
+        transaction: <Value, Failure, Requirements>(
+          operation: (transaction: typeof executor) => Effect.Effect<Value, Failure, Requirements>,
+        ) => operation(executor),
       },
-    }),
+    });
+  },
 }));
 rs.mock('../../src/permissions/config.ts', () => ({
   ...rs.requireActual('../../src/permissions/config.ts'),
@@ -165,6 +200,102 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
         ]);
       }
       expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite + 2);
+      expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+      yield* fixture.close();
+    }),
+  );
+
+  suite.effect('updates one configured module in its fixed Tenant and returns authoritative readback', () =>
+    Effect.gen(function* changeConfiguredModuleState() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const moduleKey = 'commerce.customer-context';
+      const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: [moduleKey] });
+      const originalHandoff = yield* Schema.encodeEffect(
+        Schema.fromJsonString(LiveOperationFixtureRuntimeHandoffSchema),
+      )(fixture.runtimeHandoff);
+      const beforeInsert = transport.insert.mock.calls.length;
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      const beforeUpdate = transport.updateRows.mock.calls.length;
+      const beforeSelect = transport.selectRows.mock.calls.length;
+      transport.updateRows.mockReturnValue(Effect.succeed([{ moduleKey, tenantId: fixture.tenantId }]));
+      for (const state of ['suspended', 'active'] as const) {
+        transport.selectRows.mockReturnValue([{ moduleKey, state, tenantId: fixture.tenantId }]);
+        expect(yield* fixture.setConfiguredModuleState(moduleKey, state)).toEqual({ moduleKey, state });
+        const update = transport.updateRows.mock.lastCall;
+        assert(update !== undefined);
+        expect(update[0]).toBe(tenantModuleStates);
+        expect(update[1]).toEqual({ state });
+        expect(new PgDialect().sqlToQuery(update[2]).params).toEqual([fixture.tenantId, moduleKey]);
+        const read = transport.selectRows.mock.lastCall;
+        assert(read !== undefined && read[1] !== undefined);
+        expect(read[0]).toBe(tenantModuleStates);
+        expect(new PgDialect().sqlToQuery(read[1]).params).toEqual([fixture.tenantId, moduleKey]);
+      }
+      expect(transport.updateRows).toHaveBeenCalledTimes(beforeUpdate + 2);
+      expect(transport.selectRows).toHaveBeenCalledTimes(beforeSelect + 2);
+      expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(LiveOperationFixtureRuntimeHandoffSchema))(
+          fixture.runtimeHandoff,
+        ),
+      ).toBe(originalHandoff);
+      yield* fixture.close();
+    }),
+  );
+
+  suite.effect('rejects unknown module keys, unsupported states and extra setter inputs before mutation', () =>
+    Effect.gen(function* rejectUnboundedModuleStateMutation() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const moduleKey = 'commerce.customer-context';
+      const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: [moduleKey] });
+      const beforeUpdate = transport.updateRows.mock.calls.length;
+      const beforeSelect = transport.selectRows.mock.calls.length;
+      for (const key of ['commerce.unknown', '*', '', 'commerce.customer-context.*']) {
+        const failure = yield* Effect.flip(fixture.setConfiguredModuleState(key, 'suspended'));
+        expect(failure.reason).toBe('Invalid configured fixture module state mutation');
+      }
+      for (const state of ['quarantined', 'read_only', 'unknown', '*']) {
+        const failure = yield* Effect.flip(
+          // @ts-expect-error Runtime callers cannot request unsupported or unknown module states.
+          fixture.setConfiguredModuleState(moduleKey, state),
+        );
+        expect(failure.reason).toBe('Invalid configured fixture module state mutation');
+      }
+      const extra = yield* Effect.flip(
+        // @ts-expect-error Extra tenant selectors must not alter the captured fixture scope.
+        fixture.setConfiguredModuleState(moduleKey, 'suspended', { tenantId: 'foreign' }),
+      );
+      expect(extra.reason).toBe('Invalid configured fixture module state mutation');
+      expect(transport.updateRows).toHaveBeenCalledTimes(beforeUpdate);
+      expect(transport.selectRows).toHaveBeenCalledTimes(beforeSelect);
+      yield* fixture.close();
+    }),
+  );
+
+  suite.effect('preserves typed update and authoritative readback failures without inserting missing modules', () =>
+    Effect.gen(function* rejectUnverifiedModuleStateMutation() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const moduleKey = 'commerce.customer-context';
+      const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: [moduleKey] });
+      const beforeInsert = transport.insert.mock.calls.length;
+      transport.updateRows.mockReturnValueOnce(Effect.fail(new FixtureModuleStateUpdateFailure({})));
+      const failed = yield* Effect.flip(fixture.setConfiguredModuleState(moduleKey, 'suspended'));
+      expect(failed.reason).toBe('Unable to persist configured fixture module state');
+      transport.updateRows.mockReturnValueOnce(Effect.succeed([]));
+      const missing = yield* Effect.flip(fixture.setConfiguredModuleState(moduleKey, 'suspended'));
+      expect(missing.reason).toBe('Configured fixture module state update did not match exactly one existing row');
+      transport.updateRows.mockReturnValue(Effect.succeed([{ moduleKey, tenantId: fixture.tenantId }]));
+      for (const rows of [
+        [],
+        [{ moduleKey, state: 'active', tenantId: fixture.tenantId }],
+        [{ moduleKey, state: 'suspended', tenantId: 'foreign' }],
+        [{ moduleKey: 'commerce.unknown', state: 'suspended', tenantId: fixture.tenantId }],
+      ]) {
+        transport.selectRows.mockReturnValue(rows);
+        const contradictory = yield* Effect.flip(fixture.setConfiguredModuleState(moduleKey, 'suspended'));
+        expect(contradictory.reason).toBe('Configured fixture module state readback did not match the update');
+      }
       expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
       yield* fixture.close();
     }),
@@ -902,6 +1033,91 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
     }),
   );
 
+  suite.effect('binds the reader provider identity and grants only its selected Action without extra access', () =>
+    Effect.gen(function* grantSelectedReaderAction() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const beforeInsert = transport.insert.mock.calls.length;
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      const selectedKey = 'commerce.catalog.activate-local-override';
+      const fixture = yield* makeLiveOperationFixture({
+        ...configuration,
+        actionExecutor: 'manager-only',
+        managerProviderSubjectId: 'manager-user-1',
+        moduleAccess: 'configured-modules',
+        moduleKeys: ['commerce.catalog', 'privacy.core'],
+        readerActionKeys: [selectedKey],
+        readerProviderSubjectId: 'reader-user-2',
+      });
+      const bindings = transport.insert.mock.calls
+        .slice(beforeInsert)
+        .filter(([table]) => table === principalAuthBindings)
+        .flatMap(([, rows]) => (Array.isArray(rows) ? rows : [rows]));
+      expect(bindings).toMatchObject([
+        { principalId: fixture.manager.principalId, providerSubjectId: 'manager-user-1' },
+        { principalId: fixture.legalEntityOnly.principalId, providerSubjectId: fixture.legalEntityOnly.authBindingId },
+        { principalId: fixture.denied.principalId, providerSubjectId: fixture.denied.authBindingId },
+        { principalId: fixture.reader.principalId, providerSubjectId: 'reader-user-2' },
+      ]);
+      const relations = transport.writeRelationships.mock.calls[beforeWrite]?.[0].updates.flatMap((update) =>
+        update.relationship === undefined ? [] : [update.relationship],
+      );
+      expect(relations?.filter((item) => item.subject?.object?.objectId === fixture.reader.principalId)).toEqual([
+        ...['member', 'party_identity_reader'].map((relation) =>
+          v1.Relationship.create({
+            relation,
+            resource: { objectId: fixture.tenantId, objectType: 'tenant' },
+            subject: { object: { objectId: fixture.reader.principalId, objectType: 'principal' } },
+          }),
+        ),
+        ...buildExplicitActionGrantRelationships([
+          { actionKey: selectedKey, principalIds: [fixture.reader.principalId] },
+        ]),
+      ]);
+      expect(relations?.filter((item) => item.resource?.objectType === 'action')).toEqual([
+        ...buildExplicitActionGrantRelationships(
+          configuration.actionKeys.map((actionKey) => ({
+            actionKey,
+            principalIds: [fixture.manager.principalId],
+          })),
+        ),
+        ...buildExplicitActionGrantRelationships([
+          { actionKey: selectedKey, principalIds: [fixture.reader.principalId] },
+        ]),
+      ]);
+      yield* fixture.close();
+    }),
+  );
+
+  suite.effect('rejects unbounded reader Action selection and malformed provider identities before provisioning', () =>
+    Effect.gen(function* refuseInvalidReaderOptions() {
+      const selectedKey = 'commerce.catalog.activate-local-override';
+      const beforeInsert = transport.insert.mock.calls.length;
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      for (const options of [
+        { readerActionKeys: [selectedKey] },
+        { readerActionKeys: [] },
+        { actionExecutor: 'tenant-membership', readerActionKeys: [selectedKey] },
+        { actionExecutor: 'manager-only', readerActionKeys: [selectedKey, selectedKey] },
+        { actionExecutor: 'manager-only', readerActionKeys: ['core.identity.bind-self-api-key'] },
+        { actionExecutor: 'manager-only', actionKeys: [], readerActionKeys: [selectedKey] },
+        {
+          actionExecutor: 'manager-only',
+          actionKeys: ['commerce.catalog.*'],
+          readerActionKeys: ['commerce.catalog.*'],
+        },
+        { actionExecutor: 'manager-only', actionKeys: [''], readerActionKeys: [''] },
+        { actionExecutor: 'manager-only', actionKeys: ['not an action'], readerActionKeys: ['not an action'] },
+        { readerProviderSubjectId: '' },
+        { readerProviderSubjectId: 'x'.repeat(501) },
+      ] as const) {
+        const failure = yield* Effect.flip(makeLiveOperationFixture({ ...configuration, ...options }));
+        expect(failure.reason).toBe('Invalid live operation fixture configuration');
+      }
+      expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+    }),
+  );
+
   suite.effect('keeps default and explicit tenant-membership provisioning unchanged', () =>
     Effect.gen(function* provisionDefaultActions() {
       for (const input of [configuration, { ...configuration, actionExecutor: 'tenant-membership' as const }]) {
@@ -918,6 +1134,110 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
           ]),
         );
       }
+    }),
+  );
+
+  suite.effect('grants and verifies only the explicit named permission for the exact fixture actor and scope', () =>
+    Effect.gen(function* grantExactContextPermission() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      transport.checkPermission.mockResolvedValue(permissionResponse(true));
+      const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: ['commerce.customer-context'] });
+      const target = { moduleId: 'commerce.customer-context', permission: 'market.catalog.read' };
+      const objectId = toContextPermissionAccessObjectId(fixture.tenantId, fixture.legalEntityId, target);
+      assert(objectId !== undefined);
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      const beforeInsert = transport.insert.mock.calls.length;
+      const beforeCheck = transport.checkPermission.mock.calls.length;
+      expect(
+        transport.writeRelationships.mock.lastCall?.[0].updates.some(
+          (update) => update.relationship?.resource?.objectType === 'context_permission',
+        ),
+      ).toBe(false);
+      yield* fixture.grantContextPermissionAccess(target, fixture.manager.principalId);
+      expect(transport.writeRelationships.mock.lastCall?.[0].updates).toEqual([
+        v1.RelationshipUpdate.create({
+          operation: v1.RelationshipUpdate_Operation.TOUCH,
+          relationship: v1.Relationship.create({
+            relation: 'tenant',
+            resource: { objectId, objectType: 'context_permission' },
+            subject: { object: { objectId: fixture.tenantId, objectType: 'tenant' } },
+          }),
+        }),
+        v1.RelationshipUpdate.create({
+          operation: v1.RelationshipUpdate_Operation.TOUCH,
+          relationship: v1.Relationship.create({
+            relation: 'grantee',
+            resource: { objectId, objectType: 'context_permission' },
+            subject: { object: { objectId: fixture.manager.principalId, objectType: 'principal' } },
+          }),
+        }),
+      ]);
+      expect(transport.checkPermission.mock.lastCall?.[0]).toMatchObject({
+        consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+        permission: 'access',
+        resource: { objectId, objectType: 'context_permission' },
+        subject: { object: { objectId: fixture.manager.principalId, objectType: 'principal' } },
+      });
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite + 1);
+      expect(transport.checkPermission).toHaveBeenCalledTimes(beforeCheck + 1);
+      expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+      yield* fixture.close();
+    }),
+  );
+
+  suite.effect('rejects foreign actors, unconfigured modules and supplied context scope before grant I/O', () =>
+    Effect.gen(function* rejectUnboundedContextPermission() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: ['commerce.customer-context'] });
+      const target = { moduleId: 'commerce.customer-context', permission: 'market.catalog.read' };
+      const foreignId = '00000000-0000-4000-8000-000000000099';
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      const beforeCheck = transport.checkPermission.mock.calls.length;
+      for (const attempted of [
+        { ...target, moduleId: 'commerce.unknown' },
+        { ...target, moduleId: 'commerce.*' },
+        { ...target, moduleId: '' },
+        { ...target, permission: '*' },
+        { ...target, permission: '' },
+        { ...target, permission: 'market catalog read' },
+        { ...target, tenantId: foreignId },
+        { ...target, legalEntityId: foreignId },
+        { ...target, principalId: fixture.reader.principalId },
+      ]) {
+        const failure = yield* Effect.flip(
+          fixture.grantContextPermissionAccess(attempted, fixture.manager.principalId),
+        );
+        expect(failure.reason).toBe('Invalid live fixture context permission grant');
+      }
+      for (const principalId of [foreignId, '*', '']) {
+        const failure = yield* Effect.flip(fixture.grantContextPermissionAccess(target, principalId));
+        expect(failure.reason).toBe('Invalid live fixture context permission grant');
+      }
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+      expect(transport.checkPermission).toHaveBeenCalledTimes(beforeCheck);
+      yield* fixture.close();
+    }),
+  );
+
+  suite.effect('preserves named permission write and verification failures without broader grants', () =>
+    Effect.gen(function* failClosedContextPermissionGrant() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: ['commerce.customer-context'] });
+      const target = { moduleId: 'commerce.customer-context', permission: 'market.catalog.read' };
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      const beforeCheck = transport.checkPermission.mock.calls.length;
+      transport.writeRelationships.mockRejectedValueOnce(new Error('unit-only context grant failure'));
+      const writeFailure = yield* Effect.flip(
+        fixture.grantContextPermissionAccess(target, fixture.manager.principalId),
+      );
+      expect(writeFailure.reason).toBe('Unable to grant live fixture context permission access');
+      expect(transport.checkPermission).toHaveBeenCalledTimes(beforeCheck);
+      transport.checkPermission.mockResolvedValueOnce(permissionResponse(false));
+      const denied = yield* Effect.flip(fixture.grantContextPermissionAccess(target, fixture.manager.principalId));
+      expect(denied.reason).toBe('Live fixture authorization does not match its exact declared grants');
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite + 2);
+      expect(transport.checkPermission).toHaveBeenCalledTimes(beforeCheck + 1);
+      yield* fixture.close();
     }),
   );
 
@@ -1066,7 +1386,13 @@ const safeNative = {
 const prepareAttachment = Effect.gen(function* prepareAttachment() {
   transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
   const before = transport.insert.mock.calls.length;
-  const creator = yield* makeLiveOperationFixture({ ...attachmentConfiguration, managerProviderSubjectId: 'user-1' });
+  const creator = yield* makeLiveOperationFixture({
+    ...attachmentConfiguration,
+    actionExecutor: 'manager-only',
+    managerProviderSubjectId: 'user-1',
+    readerActionKeys: ['commerce.catalog.activate-local-override'],
+    readerProviderSubjectId: 'user-2',
+  });
   const seeded = transport.insert.mock.calls.slice(before);
   transport.nativeRows.mockReturnValue([safeNative]);
   transport.selectRows.mockImplementation((table) =>
@@ -1142,6 +1468,31 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, ConfigProvider.layer(ConfigProvider.fr
       }),
     );
 
+    suite.effect(
+      'runtime-only attachment rejects module-state administration without a mutation or admin capability',
+      () =>
+        Effect.gen(function* rejectAttachedModuleStateMutation() {
+          const { creator } = yield* prepareAttachment;
+          const runtime = yield* makeLiveOperationFixtureRuntime({
+            configuration: creator.runtimeHandoff.configuration,
+            handoff: creator.runtimeHandoff,
+            runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+          });
+          const beforeUpdate = transport.updateRows.mock.calls.length;
+          const beforeInsert = transport.insert.mock.calls.length;
+          const failure = yield* Effect.flip(runtime.setConfiguredModuleState('party.registry', 'suspended'));
+          expect(failure.reason).toBe('Configured module state mutation requires the fixture creator');
+          expect(transport.updateRows).toHaveBeenCalledTimes(beforeUpdate);
+          expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(LiveOperationFixtureRuntimeHandoffSchema))(
+            runtime.runtimeHandoff,
+          );
+          expect(encoded).not.toContain('adminConnectionString');
+          yield* runtime.close();
+          yield* creator.close();
+        }),
+    );
+
     suite.effect('refuses foreign targets, configuration drift and unsafe native roles before setup capabilities', () =>
       Effect.gen(function* refuseUnsafeAttachment() {
         const { creator } = yield* prepareAttachment;
@@ -1150,6 +1501,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, ConfigProvider.layer(ConfigProvider.fr
           { ...original, target: { ...original.target, database: 'foreign' } },
           { ...original, configuration: { ...original.configuration, compositionRevision: 'b'.repeat(64) } },
           { ...original, configuration: { ...original.configuration, managerProviderSubjectId: 'other-user' } },
+          { ...original, configuration: { ...original.configuration, readerProviderSubjectId: 'other-reader' } },
+          { ...original, configuration: { ...original.configuration, readerActionKeys: [] } },
           { ...original, manager: { ...original.manager, tenantId: '00000000-0000-4000-8000-000000000001' } },
         ];
         const beforeInsert = transport.insert.mock.calls.length;
@@ -1186,6 +1539,56 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, ConfigProvider.layer(ConfigProvider.fr
         expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
         yield* creator.close();
       }),
+    );
+
+    suite.effect(
+      'rejects persisted reader subject substitution and invalid reader handoff selection without writes',
+      () =>
+        Effect.gen(function* refuseReaderIdentitySubstitution() {
+          const { creator, seeded } = yield* prepareAttachment;
+          const beforeInsert = transport.insert.mock.calls.length;
+          const beforeWrite = transport.writeRelationships.mock.calls.length;
+          const malformed = yield* Effect.result(
+            Schema.decodeUnknownEffect(LiveOperationFixtureRuntimeHandoffSchema)({
+              ...creator.runtimeHandoff,
+              configuration: {
+                ...creator.runtimeHandoff.configuration,
+                readerActionKeys: ['core.identity.unselected'],
+              },
+            }),
+          );
+          expect(Result.isFailure(malformed)).toBe(true);
+          transport.selectRows.mockImplementation((table) => {
+            const selected: FixtureReadRow[] = [];
+            for (const [insertedTable, rows] of seeded) {
+              if (insertedTable !== table) {
+                continue;
+              }
+              for (const row of Array.isArray(rows) ? rows : [rows]) {
+                selected.push(
+                  table === principalAuthBindings &&
+                    'principalId' in row &&
+                    row.principalId === creator.reader.principalId
+                    ? { ...row, providerSubjectId: 'substituted-reader' }
+                    : row,
+                );
+              }
+            }
+            return selected;
+          });
+          const failure = yield* Effect.flip(
+            makeLiveOperationFixtureRuntime({
+              configuration: creator.runtimeHandoff.configuration,
+              handoff: creator.runtimeHandoff,
+              runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+            }),
+          );
+          assert(Predicate.isTagged(failure, 'LiveOperationFixtureError'));
+          expect(failure.reason).toBe('Runtime fixture identities are not the active persisted creator state');
+          expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+          expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+          yield* creator.close();
+        }),
     );
 
     suite.effect('refuses inactive, contradictory or missing persisted creator identities', () =>

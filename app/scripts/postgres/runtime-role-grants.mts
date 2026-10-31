@@ -1,3 +1,13 @@
+import type { DatabaseTableGrant } from '../../packages/core-runtime/src/db/database-identities.ts';
+
+export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
+  {
+    privileges: ['select', 'insert', 'update'],
+    reason: 'Market retirement transitions preserve durable aborted and committed admission fences without deletion',
+    table: 'commerce_market_catalog.market_retirement_admissions',
+  },
+] as const satisfies readonly DatabaseTableGrant[];
+
 export const PRICING_RUNTIME_TABLE_GRANTS = [
   { privileges: ['select'], table: 'contractual_discount_action_invocation_receipts' },
   { privileges: ['select'], table: 'contractual_discount_revisions' },

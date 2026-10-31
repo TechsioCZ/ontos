@@ -11,7 +11,9 @@
     "./market-subject-restrictions-current": "./src/apis/market-subject-restrictions-current.ts",
     "./market-subject-restrictions-current/client": "./src/api/market-subject-restrictions-current-client.ts",
     "./reserve-market-retirement": "./src/apis/reserve-market-retirement.ts",
-    "./reserve-market-retirement/client": "./src/api/reserve-market-retirement-client.ts"
+    "./reserve-market-retirement/client": "./src/api/reserve-market-retirement-client.ts",
+    "./market-retirement-reservation-recovery": "./src/apis/market-retirement-reservation-recovery.ts",
+    "./market-retirement-reservation-recovery/client": "./src/api/market-retirement-reservation-recovery-client.ts"
   },
   "scripts": {
     "test:unit": "rstest --project unit",
@@ -31,7 +33,8 @@
     "moduleApis": [
       "market-affected-use-assessment",
       "market-subject-restrictions-current",
-      "reserve-market-retirement"
+      "reserve-market-retirement",
+      "market-retirement-reservation-recovery"
     ],
     "moduleId": "commerce.customer-context",
     "packageName": "@app/commerce-customer-context"

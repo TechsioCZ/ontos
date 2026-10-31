@@ -33,12 +33,12 @@ chmod 0644 "$tls_dir"/*.pem
 docker run --rm --network=host \
   -e SPICEDB_DATASTORE_ENGINE \
   -e SPICEDB_DATASTORE_CONN_URI \
-  authzed/spicedb:v1.56.0 datastore migrate head
+  authzed/spicedb:v1.57.0@sha256:a170d372c9f6b921bb6849064df6ca3566dd5b174882c1a2c4300c2ae1d60efd datastore migrate head
 
 schema_count="$(
   docker run --rm --network=host \
     -e SPICEDB_DATASTORE_CONN_URI \
-    postgres:18.6-alpine sh -c \
+    postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5 sh -c \
     'psql "$SPICEDB_DATASTORE_CONN_URI" --no-psqlrc --tuples-only --no-align --command "select count(*) from namespace_config"'
 )"
 
@@ -58,7 +58,7 @@ exec docker run --rm --name spicedb --network=host \
   -e SPICEDB_GRPC_PRESHARED_KEY \
   -v "$tls_dir:/tls:ro" \
   ${bootstrap_mount:+-v "$bootstrap_mount"} \
-  authzed/spicedb:v1.56.0 serve \
+  authzed/spicedb:v1.57.0@sha256:a170d372c9f6b921bb6849064df6ca3566dd5b174882c1a2c4300c2ae1d60efd serve \
   ${bootstrap_flag:+"$bootstrap_flag"} \
   --grpc-tls-cert-path=/tls/grpc-cert.pem \
   --grpc-tls-key-path=/tls/grpc-key.pem \

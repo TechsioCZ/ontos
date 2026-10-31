@@ -23,6 +23,7 @@ import {
   MarketRetirementReservationConflictError,
   marketAffectedUseAssessmentRepositoryForInvoker,
   marketRetirementReservationForTransaction,
+  marketRetirementReservationRecoveryForInvoker,
 } from '../../src/persistence/market-retirement-persistence.ts';
 
 const firstTenantId = 'e4100000-0000-4000-8000-000000000001';
@@ -651,6 +652,183 @@ it.live('serializes a purchase-proposal source mutation racing RESERVE without a
         expect(isReservationConflict(reserveAttempt)).toBe(true);
         expect(Exit.isSuccess(proposalWriteAttempt)).toBe(true);
         expect(state).toEqual({ proposal_count: 1, reservation_count: 0 });
+      }
+    }),
+  ),
+);
+
+it.live('rejects missing and null operations without releasing a source-bound reservation', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectsNullOperationBeforeRelease() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
+      const boundRevision = 'b'.repeat(64);
+      const marketId = 'market-retirement-null-operation-regression';
+      const sourceInvocationId = 'e4350000-0000-4000-8000-000000000001';
+      const boundSources = compositionSourceEvidence.map((evidence) => ({
+        ...evidence,
+        completenessEvidence: {
+          ...evidence.completenessEvidence,
+          ownerRevision: boundRevision,
+          scope: {
+            declaredScopeRef: `application-composition:${boundRevision}`,
+            kind: 'SAFELY_BROADER_SCOPE' as const,
+            predicateRef: evidence.completenessEvidence.scope.predicateRef,
+          },
+        },
+        digest: createHash('sha256')
+          .update(
+            `${boundRevision}\0${evidence.sourceId.includes('commerce.cart') ? 'commerce.cart' : 'commerce.order'}\0UNIMPLEMENTED`,
+          )
+          .digest('hex'),
+        generation: boundRevision,
+        ownerRevision: boundRevision,
+      }));
+
+      // Runtime ACL and admin trigger proofs are separate transactions with exact expected SQLSTATEs.
+      for (const probe of [
+        { database: runtime, kind: 'runtime_acl' },
+        { database: admin, kind: 'admin_trigger' },
+      ] as const) {
+        yield* inOwnerScope(probe.database, firstTenantId, firstLegalEntityId, (transaction) =>
+          Effect.gen(function* probeOperationDispatch() {
+            // The entire source-bound fixture rolls back; immutable evidence is never deleted.
+            yield* transaction.execute(sql`savepoint null_operation_fixture`, 'objects');
+            const invoker = invokerFor(transaction, firstTenantId, firstLegalEntityId);
+            const assessment = yield* makeMarketAffectedUseAssessmentServices(
+              marketAffectedUseAssessmentRepositoryForInvoker(invoker).assess,
+              () => Effect.succeed({ sourceEvidence: boundSources }),
+            ).assess({
+              evaluatedAt,
+              marketRef: {
+                moduleId: 'commerce.market-catalog',
+                resourceId: marketId,
+                resourceType: 'commerce.market-catalog.market',
+                tenantId: firstTenantId,
+              },
+              marketRevision: 7,
+              tenantId: firstTenantId,
+            });
+            if (assessment.outcome !== 'VERIFIED') {
+              return yield* Effect.die('Expected complete source-bound retirement fixture');
+            }
+            const boundPayload = {
+              ...reserveInput(assessment),
+              releaseGuardHash: 'c'.repeat(64),
+              sourceActionInvocationId: sourceInvocationId,
+            };
+            const attribution = {
+              actionInvocationId: 'e4350000-0000-4000-8000-000000000002',
+              actorPrincipalId,
+              compositionRevision: boundRevision,
+            };
+            yield* transaction.execute(sql`savepoint mismatched_original_assessment`, 'objects');
+            const mismatch = yield* marketRetirementReservationForTransaction(invoker)
+              .execute(boundPayload, {
+                ...attribution,
+                originalAssessment: {
+                  ...assessment,
+                  // Deliberately forged retained reference: digest/source identity alone cannot vouch for it.
+                  retainedHistoryReferences: [
+                    {
+                      kind: 'RETAINED_HISTORY',
+                      marketRef: assessment.marketRef,
+                      marketRevision: assessment.marketRevision,
+                      ownerResourceRef: {
+                        moduleId: 'commerce.customer-context',
+                        resourceId: 'forged-history',
+                        resourceType: 'commerce.customer-context.market-bootstrap-policy',
+                        tenantId: firstTenantId,
+                      },
+                      ownerResourceRevision: 'forged-revision',
+                    },
+                  ],
+                },
+              })
+              .pipe(Effect.exit);
+            yield* transaction.execute(sql`rollback to savepoint mismatched_original_assessment`, 'objects');
+            expect(isReservationConflict(mismatch)).toBe(true);
+            const reservation = yield* marketRetirementReservationForTransaction(invoker).execute(boundPayload, {
+              ...attribution,
+              originalAssessment: assessment,
+            });
+            yield* transaction.execute(sql`savepoint immutable_original_assessment`, 'objects');
+            const mutated = yield* transaction
+              .execute(
+                sql`update commerce_customer_context.market_retirement_reservations
+            set original_assessment = jsonb_set(original_assessment, '{assessmentDigest}', to_jsonb(${'d'.repeat(64)}::text))
+            where market_retirement_reservation_id = ${reservation.reservationToken}::uuid`,
+                'objects',
+              )
+              .pipe(Effect.exit);
+            yield* transaction.execute(sql`rollback to savepoint immutable_original_assessment`, 'objects');
+            expect(Exit.isFailure(mutated)).toBe(true);
+            if (Exit.isFailure(mutated)) {
+              const metadata = Option.getOrUndefined(findPostgresFailure(mutated.cause));
+              if (probe.kind === 'runtime_acl') {
+                expect(metadata, 'Runtime must reject direct UPDATE before the trigger').toMatchObject({
+                  code: '42501',
+                });
+              } else {
+                expect(metadata, 'Admin fixture must exercise the immutable trigger').toMatchObject({ code: '23514' });
+              }
+            }
+            const finishTuple = {
+              actionInvocationId: 'e4350000-0000-4000-8000-000000000003',
+              actorPrincipalId,
+              marketRef: reservation.marketRef,
+              marketRevision: reservation.marketRevision,
+              reason: 'Malformed operation must never select RELEASE',
+              reservationToken: reservation.reservationToken,
+              reservationVersion: reservation.reservationVersion,
+              tenantId: reservation.tenantId,
+            };
+            for (const operation of [{}, { operation: null }]) {
+              yield* transaction.execute(sql`savepoint invalid_operation_probe`, 'objects');
+              // Deliberately bypass the client codec: the SQL routine is an independent boundary.
+              const attempted = yield* transaction
+                .execute(
+                  sql`select result from commerce_customer_context.reserve_market_retirement(
+                  ${firstTenantId}::uuid, ${firstLegalEntityId}::uuid,
+                  ${JSON.stringify({ ...finishTuple, ...operation })}::jsonb
+                )`,
+                  'objects',
+                )
+                .pipe(Effect.exit);
+              yield* transaction.execute(sql`rollback to savepoint invalid_operation_probe`, 'objects');
+              expect(Exit.isFailure(attempted)).toBe(true);
+              if (Exit.isFailure(attempted)) {
+                expect(
+                  Option.exists(
+                    findPostgresFailure(attempted.cause),
+                    ({ code, constraint }) =>
+                      code === '22023' && constraint === 'market_retirement_reservation_invalid',
+                  ),
+                ).toBe(true);
+              }
+              const persisted = yield* marketRetirementReservationRecoveryForInvoker(invoker, actorPrincipalId).recover(
+                {
+                  marketRef: reservation.marketRef,
+                  sourceActionInvocationId: sourceInvocationId,
+                  tenantId: firstTenantId,
+                },
+              );
+              expect(persisted.outcome).toBe('FOUND');
+              if (persisted.outcome === 'FOUND') {
+                expect(persisted.lifecycle).toBe('RESERVED');
+                expect(persisted.reservationVersion).toBe(1);
+              }
+            }
+            // Nearby valid dispatch still commits the exact same reservation without an abort proof.
+            const committed = yield* marketRetirementReservationForTransaction(invoker).execute(
+              finishInput('COMMIT', reservation),
+              { actionInvocationId: 'e4350000-0000-4000-8000-000000000004', actorPrincipalId },
+            );
+            expect(committed).toMatchObject({ lifecycle: 'COMMITTED', reservationVersion: 2 });
+            return yield* transaction.execute(sql`rollback to savepoint null_operation_fixture`, 'objects');
+          }),
+        );
       }
     }),
   ),
