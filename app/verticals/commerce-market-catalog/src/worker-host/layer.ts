@@ -4,8 +4,14 @@ import { Layer } from 'effect';
 import type { OutboxRuntime } from '@app/core-runtime';
 import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
-import type { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import {
+  OutboxWorkerInfrastructureLive,
+  ResourceContainmentRelationshipMutationLive,
+} from '@app/core-runtime/outbox/worker';
+import type {
+  OutboxWorkerLegalEntityScopeFanout,
+  ResourceContainmentRelationshipMutation,
+} from '@app/core-runtime/outbox/worker';
 import { MarketRetirementImpactAuthorityLive } from '../integrations/market-retirement-impact.ts';
 import type { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
 import type { MarketRetirementIntentStoreService } from '../services/market-retirement-worker.service.ts';
@@ -22,7 +28,8 @@ export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEn
 type MarketCatalogWorkerServices =
   | MarketRetirementImpactAuthorityService
   | MarketRetirementIntentStoreService
-  | OutboxRuntime;
+  | OutboxRuntime
+  | ResourceContainmentRelationshipMutation;
 
 /** Handler dependencies stay in `RIn`; `entry.ts` composes the scope fan-out once at the worker root. */
 export const outboxWorkerLayer: Layer.Layer<
@@ -33,4 +40,5 @@ export const outboxWorkerLayer: Layer.Layer<
   OutboxWorkerInfrastructureLive,
   MarketRetirementIntentStoreLive,
   MarketRetirementImpactAuthorityLive,
+  ResourceContainmentRelationshipMutationLive,
 );

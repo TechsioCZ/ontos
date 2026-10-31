@@ -36,7 +36,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
         ),
       ),
     ),
-    outboxWorkerDefinitionLayer.pipe(Layer.provide(OutboxWorkerLegalEntityScopeFanoutLive)),
+    outboxWorkerDefinitionLayer.pipe(Layer.provideMerge(OutboxWorkerLegalEntityScopeFanoutLive)),
   ).pipe(
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),

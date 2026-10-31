@@ -3,9 +3,14 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import { toBusinessPermissionAccessObjectId } from '../../src/permissions/context-access.ts';
+import {
+  toBusinessPermissionAccessObjectId,
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
+} from '../../src/permissions/context-access.ts';
 import {
   makeResourceContainmentRelationshipMutation,
+  ownerResourceModuleContainment,
   ResourceContainmentMutationUnavailable,
 } from '../../src/permissions/resource-containment-mutation.ts';
 import type { ResourceContainmentRelationship } from '../../src/permissions/resource-containment-mutation.ts';
@@ -224,6 +229,75 @@ it.effect('rejects cross-tenant and dual-catalog containment relationships', () 
     expect(failures.every((failure) => Predicate.isTagged(failure, 'ResourceContainmentMutationUnavailable'))).toBe(
       true,
     );
+    expect(requests).toHaveLength(0);
+  }),
+);
+
+const marketResource = {
+  moduleId: 'commerce.market-catalog',
+  resourceId: '74000000-0000-4000-8000-000000000001',
+  resourceType: 'commerce.market-catalog.market',
+} as const;
+const otherLegalEntityId = '20000000-0000-4000-8000-000000000002';
+
+const moduleEdge = (
+  resourceObjectId: string | undefined,
+  moduleObjectId: string | undefined,
+): Extract<ResourceContainmentRelationship, { readonly relation: 'module' }> => {
+  if (resourceObjectId === undefined || moduleObjectId === undefined) {
+    throw new Error('Expected canonical resource and module access object IDs');
+  }
+  return {
+    container: { objectId: moduleObjectId, objectType: 'module_access' },
+    relation: 'module',
+    resource: { objectId: resourceObjectId, objectType: 'resource' },
+  };
+};
+
+it.effect('touches the exact resource#module edge of an owner resource', () =>
+  Effect.gen(function* touchOwnerResourceModuleEdge() {
+    const { requests, service } = makeHarness();
+    const relationship = ownerResourceModuleContainment(tenantId, legalEntityId, marketResource);
+    if (relationship === undefined) {
+      throw new Error('Expected a module containment relationship');
+    }
+    expect(relationship).toEqual(
+      moduleEdge(
+        toResourceAccessObjectId(tenantId, legalEntityId, marketResource),
+        toModuleAccessObjectId(tenantId, legalEntityId, marketResource.moduleId),
+      ),
+    );
+    yield* service.touch({ relationships: [relationship] });
+    expect(requests[0]?.updates.map(({ operation, relationship: written }) => [operation, written?.relation])).toEqual([
+      [v1.RelationshipUpdate_Operation.TOUCH, 'module'],
+    ]);
+  }),
+);
+
+it.effect('rejects module edges across Legal Entity, module, or namespace boundaries', () =>
+  Effect.gen(function* rejectForeignModuleEdges() {
+    const { requests, service } = makeHarness();
+    const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, marketResource);
+    const foreignNamespace = toResourceAccessObjectId(tenantId, legalEntityId, {
+      ...marketResource,
+      resourceType: 'demo.merchandise.product',
+    });
+    const candidates = [
+      moduleEdge(resourceObjectId, toModuleAccessObjectId(tenantId, otherLegalEntityId, marketResource.moduleId)),
+      moduleEdge(resourceObjectId, toModuleAccessObjectId(otherTenantId, legalEntityId, marketResource.moduleId)),
+      moduleEdge(resourceObjectId, toModuleAccessObjectId(tenantId, legalEntityId, 'demo.merchandise')),
+      moduleEdge(foreignNamespace, toModuleAccessObjectId(tenantId, legalEntityId, marketResource.moduleId)),
+      moduleEdge(toModuleAccessObjectId(tenantId, legalEntityId, marketResource.moduleId), resourceObjectId),
+    ];
+    const failures = yield* Effect.all(
+      candidates.map((relationship) => Effect.flip(service.touch({ relationships: [relationship] }))),
+    );
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'ResourceContainmentMutationUnavailable'))).toBe(
+      true,
+    );
+    expect(
+      ownerResourceModuleContainment(tenantId, legalEntityId, { ...marketResource, resourceType: 'other.market' }),
+    ).toBeUndefined();
     expect(requests).toHaveLength(0);
   }),
 );

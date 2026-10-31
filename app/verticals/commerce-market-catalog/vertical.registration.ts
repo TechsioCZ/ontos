@@ -8,6 +8,8 @@ import { activateMarketAction } from './src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
 import { completeMarketRetirementWorker } from './src/workers/complete-market-retirement.worker.ts';
 import { createMarketAction } from './src/actions/create-market.action.ts';
+import { projectAssociationContainmentWorker } from './src/workers/project-association-containment.worker.ts';
+import { projectMarketContainmentWorker } from './src/workers/project-market-containment.worker.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
 import { retireMarketAction } from './src/actions/retire-market.action.ts';
 import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
@@ -61,6 +63,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
   outboxWorkers: [
     // <generated-module-registration-workers>
     completeMarketRetirementWorker,
+    projectAssociationContainmentWorker,
+    projectMarketContainmentWorker,
     // </generated-module-registration-workers>
   ],
 });

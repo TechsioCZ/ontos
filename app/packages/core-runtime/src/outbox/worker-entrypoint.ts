@@ -74,6 +74,7 @@ export {
   createResourceContainmentRelationshipMutationClient,
   makeResourceContainmentRelationshipMutation,
   makeResourceContainmentRelationshipMutationLive,
+  ownerResourceModuleContainment,
 } from '../permissions/resource-containment-mutation.ts';
 export { defineOutboxWorkerEntry, OutboxWorkerInfrastructureLive, startOutboxWorkerHost } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';

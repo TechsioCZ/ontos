@@ -471,6 +471,7 @@ export {
   createResourceContainmentRelationshipMutationClient,
   makeResourceContainmentRelationshipMutation,
   makeResourceContainmentRelationshipMutationLive,
+  ownerResourceModuleContainment,
 } from './permissions/resource-containment-mutation.ts';
 export type {
   ResourceContainmentRelationship,
