@@ -368,13 +368,43 @@ const isExecutableCallback = (candidate: string | undefined, ownerSource?: strin
   return initializer !== undefined && initializer !== candidate && isExecutableCallback(initializer);
 };
 
+interface DirectArrowExpression {
+  readonly annotation: string;
+  readonly output: string;
+  readonly parameters: readonly string[];
+}
+
+const sourceParameters = (source: string, opening: number, closing: number): readonly string[] =>
+  separatedSource(
+    source,
+    topLevelSeparators(maskNonCode(source), ',', opening + 1, closing, true),
+    opening + 1,
+    closing,
+  ).filter((parameter) => parameter !== '');
+
+const directArrowExpression = (source: string | undefined): DirectArrowExpression | undefined => {
+  const closing = source?.startsWith('(') === true ? matchingDelimiterEnd(source, 0, '(', ')') : undefined;
+  if (source === undefined || closing === undefined) {
+    return undefined;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(source), '=', closing + 1, source.length, true);
+  if (arrow === undefined || source.slice(arrow, arrow + 2) !== '=>') {
+    return undefined;
+  }
+  return {
+    annotation: source.slice(closing + 1, arrow).trim(),
+    output: source.slice(arrow + 2).trim(),
+    parameters: sourceParameters(source, 0, closing),
+  };
+};
+
 const callbackReturnedExpression = (handlerSource: string): string | undefined => {
   const structure = maskNonCode(handlerSource);
   const arrow = structure.indexOf('=>');
   if (arrow === -1) {
     return undefined;
   }
-  const body = handlerSource.slice(arrow + 2).trim();
+  const body = directArrowExpression(handlerSource)?.output ?? handlerSource.slice(arrow + 2).trim();
   if (!body.startsWith('{')) {
     return body;
   }
@@ -2155,14 +2185,10 @@ const hasStableReadFactoryBindings = (
   return [...expectedDeclarations].every(([binding, count]) => (declarations.get(binding) ?? 0) === count);
 };
 
-/** A local Effect.fn call returns an Effect without requiring a redundant constructor or pipe in the caller. */
-const hasOwnerLocalEffectFnReadInvocation = (expression: string, ownerSource: string): boolean => {
-  const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression)?.groups?.name;
-  const initializer = binding === undefined ? undefined : constInitializer(ownerSource, binding);
+const hasStableOwnerLocalEffectFn = (binding: string, ownerSource: string): boolean => {
+  const initializer = constInitializer(ownerSource, binding);
   return (
-    binding !== undefined &&
     initializer !== undefined &&
-    isWholeCallExpression(expression, new RegExp(`^${escapeRegExp(binding)}\\(`, 'u')) &&
     isEffectFnCallback(initializer) &&
     /\byield\*|\.pipe\(/u.test(maskNonCode(initializer, true)) &&
     hasExactValueImport(ownerSource, 'Effect', 'effect') &&
@@ -2175,6 +2201,50 @@ const hasOwnerLocalEffectFnReadInvocation = (expression: string, ownerSource: st
       '',
     )
   );
+};
+
+/** A local Effect.fn call returns an Effect without requiring a redundant constructor or pipe in the caller. */
+const hasOwnerLocalEffectFnReadInvocation = (expression: string, ownerSource: string): boolean => {
+  const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression)?.groups?.name;
+  return (
+    binding !== undefined &&
+    isWholeCallExpression(expression, new RegExp(`^${escapeRegExp(binding)}\\(`, 'u')) &&
+    hasStableOwnerLocalEffectFn(binding, ownerSource)
+  );
+};
+
+/** A readonly inline service method can retain a stable local Effect.fn's exact return type. */
+const hasTypedReadServiceEffectInvocation = (callback: string, expression: string, source: string): boolean => {
+  const invocation = /^(?<context>[A-Za-z_$][A-Za-z0-9_$]*)\.services\.(?<method>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(
+    expression,
+  )?.groups;
+  const arrow = directArrowExpression(callback);
+  const contextName = invocation?.context;
+  const method = invocation?.method;
+  if (
+    arrow === undefined ||
+    contextName === undefined ||
+    method === undefined ||
+    !isWholeCallExpression(
+      expression,
+      new RegExp(`^${escapeRegExp(contextName)}\\.services\\.${escapeRegExp(method)}\\(`, 'u'),
+    )
+  ) {
+    return false;
+  }
+  const imported = namedSourceImport(source, 'ReadLoadContext', true);
+  if (imported?.modulePath !== CORE_RUNTIME_MODULE) {
+    return false;
+  }
+  const parameter = arrow.parameters.find((value) => new RegExp(`^${escapeRegExp(contextName)}\\s*:`, 'u').test(value));
+  const contract =
+    parameter === undefined
+      ? undefined
+      : new RegExp(
+          `^${escapeRegExp(contextName)}\\s*:\\s*ReadLoadContext\\s*<\\s*\\{\\s*readonly\\s+${escapeRegExp(method)}\\s*:\\s*\\([\\s\\S]*\\)\\s*=>\\s*ReturnType\\s*<\\s*typeof\\s+(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\\s*>\\s*;?\\s*\\}\\s*>$`,
+          'u',
+        ).exec(parameter)?.groups;
+  return contract?.binding !== undefined && hasStableOwnerLocalEffectFn(contract.binding, source);
 };
 
 const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
@@ -2194,38 +2264,9 @@ const isReadHandlerCallback = (candidate: string | undefined, ownerSource: strin
       hasExactValueImport(ownerSource, 'Effect', 'effect') &&
       hasStableReadFactoryBindings(ownerSource, new Map([['Effect', 0]]), '')) ||
     /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression) ||
-    hasOwnerLocalEffectFnReadInvocation(expression, ownerSource)
+    hasOwnerLocalEffectFnReadInvocation(expression, ownerSource) ||
+    hasTypedReadServiceEffectInvocation(resolved, expression, ownerSource)
   );
-};
-
-interface DirectArrowExpression {
-  readonly annotation: string;
-  readonly output: string;
-  readonly parameters: readonly string[];
-}
-
-const sourceParameters = (source: string, opening: number, closing: number): readonly string[] =>
-  separatedSource(
-    source,
-    topLevelSeparators(maskNonCode(source), ',', opening + 1, closing, true),
-    opening + 1,
-    closing,
-  ).filter((parameter) => parameter !== '');
-
-const directArrowExpression = (source: string | undefined): DirectArrowExpression | undefined => {
-  const closing = source?.startsWith('(') === true ? matchingDelimiterEnd(source, 0, '(', ')') : undefined;
-  if (source === undefined || closing === undefined) {
-    return undefined;
-  }
-  const [arrow] = topLevelSeparators(maskNonCode(source), '=', closing + 1, source.length, true);
-  if (arrow === undefined || source.slice(arrow, arrow + 2) !== '=>') {
-    return undefined;
-  }
-  return {
-    annotation: source.slice(closing + 1, arrow).trim(),
-    output: source.slice(arrow + 2).trim(),
-    parameters: sourceParameters(source, 0, closing),
-  };
 };
 
 const identifierParameterType = (parameter: string | undefined): string | undefined =>

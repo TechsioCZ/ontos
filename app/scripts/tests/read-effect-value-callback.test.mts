@@ -256,3 +256,60 @@ for (const [name, replacement] of [
     expect(accepts(readSource.replace(replacement === '' ? `${load},` : load, replacement))).toBe(false);
   });
 }
+
+const serviceInvocation = 'context.services.load(input)';
+const typedServiceLoad = `load: (input: StockListRequest, context: ReadLoadContext<{
+  readonly load: (input: StockListRequest) => ReturnType<typeof loadStockSnapshot>;
+}>) => context.services.load(input)`;
+const withTypedServiceLoad = (declaration = localEffectLoad, loadExpression = typedServiceLoad) =>
+  readSource
+    .replace(effectImport, `${effectImport}\nimport type { ReadLoadContext } from '@app/core-runtime';`)
+    .replace('export const stockListRead', `${declaration}export const stockListRead`)
+    .replace(load, loadExpression);
+
+it('accepts a readonly typed service method retaining an exact stable local Effect.fn result', () => {
+  expect(accepts(withTypedServiceLoad())).toBe(true);
+});
+
+for (const [name, source] of [
+  [
+    'uncalled service method',
+    withTypedServiceLoad(localEffectLoad, typedServiceLoad.replace(serviceInvocation, 'context.services.load')),
+  ],
+  [
+    'computed service method',
+    withTypedServiceLoad(
+      localEffectLoad,
+      typedServiceLoad.replace(serviceInvocation, "context.services['load'](input)"),
+    ),
+  ],
+  [
+    'optional service method',
+    withTypedServiceLoad(
+      localEffectLoad,
+      typedServiceLoad.replace(serviceInvocation, 'context.services.load?.(input)'),
+    ),
+  ],
+  [
+    'mutable method contract',
+    withTypedServiceLoad(localEffectLoad, typedServiceLoad.replace('readonly load:', 'load:')),
+  ],
+  ['plain return helper', withTypedServiceLoad('const loadStockSnapshot = () => ({ items: [] });\n')],
+  ['foreign return helper', withTypedServiceLoad("import { loadStockSnapshot } from '../foreign-owner.ts';\n")],
+  [
+    'mutated return helper',
+    withTypedServiceLoad(`${localEffectLoad}Object.assign(loadStockSnapshot, { call: undefined });\n`),
+  ],
+  ['reassigned return helper', withTypedServiceLoad(`${localEffectLoad}loadStockSnapshot = () => undefined;\n`)],
+  [
+    'non-Core context type',
+    withTypedServiceLoad().replace(
+      "import type { ReadLoadContext } from '@app/core-runtime';",
+      "import type { ReadLoadContext } from './foreign-runtime.ts';",
+    ),
+  ],
+] as const) {
+  it(`rejects a service load with ${name}`, () => {
+    expect(accepts(source)).toBe(false);
+  });
+}
