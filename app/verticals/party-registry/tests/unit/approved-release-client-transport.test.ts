@@ -5,7 +5,7 @@ import { FetchHttpClient } from 'effect/http';
 
 import { loadCounterpartiesClient } from '../../src/api/counterparties-search-client.ts';
 
-it.effect('a cached valid issuer release overrides caller transport options on every generated client attempt', () =>
+it.effect('each client attempt obtains a fresh assertion and uses its approved issuer release', () =>
   Effect.gen(function* approvedReleaseClientTransport() {
     const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
     const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
@@ -61,7 +61,7 @@ it.effect('a cached valid issuer release overrides caller transport options on e
 
     expect(yield* invocation).toEqual([]);
     expect(yield* invocation).toEqual([]);
-    expect(issuerRequests).toHaveLength(1);
+    expect(issuerRequests).toHaveLength(2);
     for (const request of issuerRequests) {
       expect(yield* Effect.promise(() => request.json())).toEqual({
         audience: 'party-registry',
@@ -74,7 +74,7 @@ it.effect('a cached valid issuer release overrides caller transport options on e
     ]);
     expect(ownerRequests.map((request) => request.headers.get('authorization'))).toEqual([
       'Bearer approved-1',
-      'Bearer approved-1',
+      'Bearer approved-2',
     ]);
     for (const request of ownerRequests) {
       expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
