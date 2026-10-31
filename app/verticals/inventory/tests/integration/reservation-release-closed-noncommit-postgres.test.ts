@@ -55,7 +55,7 @@ import { ActionInvocationIdSchema, LegalEntityIdSchema } from '../../shared/doma
 import { StockItemSchema } from '../../shared/domain/stock-item.ts';
 import { StockLocationSchema } from '../../shared/domain/stock-location.ts';
 import { StockPositionSchema } from '../../shared/domain/stock-position.ts';
-import { INVENTORY_TABLES, inventoryRelations } from '../../src/database/schema.ts';
+import { INVENTORY_TABLES, gatewayAssertionRedemptions, inventoryRelations } from '../../src/database/schema.ts';
 import { makeDrizzleCatalogToStockBindingPersistence } from '../../src/persistence/catalog-to-stock-binding-repository.ts';
 import { commitmentProtectionPersistenceForScope } from '../../src/persistence/commitment-protection-repository.ts';
 import { currentStockEvidenceForAvailabilityDependenciesForScope } from '../../src/persistence/current-stock-evidence-for-availability-repository.ts';
@@ -697,8 +697,9 @@ it.live(
         // The exact owner verifier checks forced RLS, private trigger denial, routine grants and no CREATE/BYPASSRLS.
         const runtimeRole = sql.identifier(isolated.connections.runtime.user);
         yield* admin.execute(sql`grant usage on schema inventory to ${runtimeRole}`, 'objects');
+        // The migrations already grant the gateway assertion redemption table its exact SELECT, INSERT, DELETE.
         yield* Effect.forEach(
-          INVENTORY_TABLES,
+          INVENTORY_TABLES.filter((table) => table !== gatewayAssertionRedemptions),
           (table) =>
             admin.execute(sql`grant select,insert,update,delete on table ${table} to ${runtimeRole}`, 'objects'),
           { concurrency: 1 },
