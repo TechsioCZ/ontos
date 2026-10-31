@@ -667,7 +667,6 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
     );
     yield* getActionHandler(revalidatePurchaseApprovalAction)(
       revalidatePayload,
-      // @ts-expect-error -- The direct-handler test supplies the exact runtime doubles used by this path while the generic service map remains intentionally narrower.
       contextFor(
         revalidateCollector,
         makeWorkflow({ revalidate: () => Effect.succeed(revalidateResult) }),
@@ -767,7 +766,6 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
     const revalidateExit = yield* Effect.exit(
       getActionHandler(revalidatePurchaseApprovalAction)(
         revalidatePayload,
-        // @ts-expect-error -- This fail-closed direct invocation intentionally uses the rejecting test service map rather than production composition.
         contextFor(
           revalidateCollector,
           makeWorkflow({

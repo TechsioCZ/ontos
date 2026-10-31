@@ -145,6 +145,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
                 outcome: 'ELIGIBLE' as const,
                 roleResourceId: roleId,
                 roleResourceRevision: '2026-01-01T00:00:00.000Z',
+                validUntil: null,
               }
             : { outcome: 'INDETERMINATE' as const },
         ),
