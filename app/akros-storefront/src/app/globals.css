@@ -1,5 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
+/* Lazily loaded extended Inter coverage; only fetched when a page renders beyond the preloaded core. */
+@import "../fonts/inter-extended.generated.css";
 @import "../tokens/_akros-typography.css";
 @import "../tokens/components/atoms/_akros-icon.css";
 @import "../tokens/components/molecules/_akros-accordion.css";

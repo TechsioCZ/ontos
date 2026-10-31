@@ -9,14 +9,27 @@ import "./globals.css";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
 
-// Inter subset to Latin, Latin-1, Latin Extended-A and typographic punctuation/symbols (Czech copy and
-// product names): 146 kB instead of the full 352 kB file on the critical path. Other glyphs use the fallback.
+// Inter is split into two pre-built files (see app/scripts/fonts/subset-fonts.mjs): a preloaded core
+// with ASCII, Latin-1, Latin Extended-A and the punctuation Czech copy needs, plus a lazily fetched
+// extended file behind unicode-range. Together they keep the complete non-CJK coverage of the
+// upstream InterVariable-latin.woff2, so every character the shop can render keeps the same outlines,
+// widths and metrics. The extended face lives in fonts/inter-extended.generated.css.
+//
+// next/font/local only accepts literal option values, so the core range is written out below;
+// `node app/scripts/fonts/subset-fonts.mjs` rewrites it when the subset changes.
 const inter = localFont({
-  src: "../fonts/InterVariable-latin.woff2",
+  src: "../fonts/InterVariable-core.woff2",
   weight: "400 900",
   style: "normal",
   display: "swap",
   variable: "--font-akros",
+  declarations: [
+    {
+      prop: "unicode-range",
+      value:
+        "U+0020-007E, U+00A0-00AC, U+00AE-0148, U+014A-017F, U+0192, U+0218-021B, U+2010, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+20AC",
+    },
+  ],
 });
 
 export const metadata: Metadata = {
