@@ -35,7 +35,7 @@
     "zerops:materialize": "node ./scripts/materialize-ontos-zerops-runtime.mjs",
     "contract:check": "ultramodern-create ultramodern validate",
     "typecheck": "ultramodern-create ultramodern typecheck --build tsconfig.json",
-    "check": "pnpm typecheck:lint-rules && pnpm test:lint-rules && pnpm action:test:unit && pnpm database-access:check && pnpm lean-core:check && pnpm module-entrypoints:check && pnpm check:module-contracts && pnpm quality:check && pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm api:check:ontos && pnpm contract:check && pnpm performance:readiness",
+    "check": "node ./scripts/check.mts",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts",
