@@ -77,6 +77,7 @@ import { InvoiceRecipientResolutionApi } from './apis/invoice-recipient-resoluti
 import { MarketAffectedUseAssessmentApi } from './apis/market-affected-use-assessment.ts';
 import { MarketBootstrapPolicyCurrentApi } from './apis/market-bootstrap-policy-current.ts';
 import { MarketBootstrapResolutionApi } from './apis/market-bootstrap-resolution.ts';
+import { MarketRetirementReservationApi } from './apis/market-retirement-reservation.ts';
 import { MarketSubjectRestrictionsCurrentApi } from './apis/market-subject-restrictions-current.ts';
 import { MigrateCounterpartyPriceGroupActionApi } from './apis/migrate-counterparty-price-group-action.ts';
 import { MigrateCustomerPriceGroupActionApi } from './apis/migrate-customer-price-group-action.ts';
@@ -405,6 +406,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(MarketAffectedUseAssessmentApi)
   .addHttpApi(MarketBootstrapPolicyCurrentApi)
   .addHttpApi(MarketBootstrapResolutionApi)
+  .addHttpApi(MarketRetirementReservationApi)
   .addHttpApi(MarketSubjectRestrictionsCurrentApi)
   .addHttpApi(MigrateCounterpartyPriceGroupActionApi)
   .addHttpApi(MigrateCustomerPriceGroupActionApi)
