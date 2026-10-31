@@ -11,6 +11,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { CurrentMarketCatalogApi } from './apis/current-market-catalog.ts';
 import { EligibleMarketTuplesApi } from './apis/eligible-market-tuples.ts';
 import { MarketHistoryApi } from './apis/market-history.ts';
+import { MarketRetirementStatusApi } from './apis/market-retirement-status.ts';
 import { PricingCurrentMarketEvidenceApi } from './apis/pricing-current-market-evidence.ts';
 import { ResolveCommerceMarketApi } from './apis/resolve-commerce-market.ts';
 import { VerifyMarketEligibilityV1Api } from './apis/verify-market-eligibility-v1.ts';
@@ -45,6 +46,7 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(CurrentMarketCatalogApi)
   .addHttpApi(EligibleMarketTuplesApi)
   .addHttpApi(MarketHistoryApi)
+  .addHttpApi(MarketRetirementStatusApi)
   .addHttpApi(PricingCurrentMarketEvidenceApi)
   .addHttpApi(ResolveCommerceMarketApi)
   .addHttpApi(VerifyMarketEligibilityV1Api)
