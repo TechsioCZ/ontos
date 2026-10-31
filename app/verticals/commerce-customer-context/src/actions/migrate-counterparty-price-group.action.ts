@@ -37,6 +37,7 @@ import type {
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
+import { preparePriceGroupActionServices } from './price-group-action-preparation.ts';
 
 const MigrateCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupCatalogRejected,
@@ -366,4 +367,5 @@ export const migrateCounterpartyPriceGroupAction = defineAction(
   },
   handleMigrateCounterpartyPriceGroup,
   priceGroupActionServicesForTransaction,
+  { prepareServices: preparePriceGroupActionServices },
 );
