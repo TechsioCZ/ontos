@@ -15,6 +15,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
 import type {
   ArrowFunctionExpression,
+  CallExpression,
   Expression,
   Function as AstFunction,
   ImportDeclaration,
@@ -24,6 +25,9 @@ import type {
   TSTypeAnnotation,
   TSTypeReference,
 } from 'oxc-parser';
+
+import { actionPreparationBoundaries } from './action-preparation-boundaries.mts';
+import type { PreparationSource } from './action-preparation-boundaries.mts';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
@@ -222,18 +226,69 @@ const isScopeProjection = (expression: Expression): boolean =>
   ((expression.computed && expression.property.type === 'Literal' && expression.property.value === 'scope') ||
     (!expression.computed && expression.property.type === 'Identifier' && expression.property.name === 'scope'));
 
+const effectContainerReceiver = (call: CallExpression, preparation?: PreparationSource): Expression | undefined =>
+  call.callee.type === 'MemberExpression' &&
+  call.callee.object.type === 'CallExpression' &&
+  preparation?.effectCall(call.callee.object, 'succeed') === true
+    ? call.callee.object
+    : undefined;
+
+const recordExecutorCycle = (
+  visiting: ReadonlyMap<ImplementationFunction, ReadonlySet<string>>,
+  cyclic: Map<ImplementationFunction, Set<string>>,
+): void => {
+  for (const [implementation, keys] of visiting) {
+    const states = cyclic.get(implementation) ?? new Set<string>();
+    for (const key of keys) {
+      states.add(key);
+    }
+    cyclic.set(implementation, states);
+  }
+};
+
+const executorRecursion = (
+  node: ImplementationFunction,
+  key: string,
+  visiting: ReadonlyMap<ImplementationFunction, ReadonlySet<string>>,
+  cyclic: Map<ImplementationFunction, Set<string>>,
+  preparation?: PreparationSource,
+): boolean | undefined => {
+  const active = visiting.get(node);
+  if (active?.has(key) === true) {
+    if (preparation === undefined) {
+      return true;
+    }
+    recordExecutorCycle(visiting, cyclic);
+    return false;
+  }
+  // Bound state growth without merging distinct executor parameter positions.
+  return active !== undefined && active.size >= 32 ? true : undefined;
+};
+
 /** Follow direct value escapes without confusing a method which closes over a transaction with the transaction. */
 const returnsExecutorValue = (
   node: ImplementationFunction,
   names: ReadonlySet<string>,
   functions: ReadonlyMap<string, ImplementationFunction>,
   program: Program,
-  visiting: ReadonlySet<ImplementationFunction> = new Set(),
+  visiting: ReadonlyMap<ImplementationFunction, ReadonlySet<string>> = new Map(),
+  preparation?: PreparationSource,
+  cache = preparation?.executorEscapes ?? new Map<ImplementationFunction, Map<string, boolean>>(),
+  cyclic = new Map<ImplementationFunction, Set<string>>(),
 ): boolean => {
-  if (visiting.has(node)) {
-    return true;
+  const key = [...names].join('\0');
+  const cached = cache.get(node)?.get(key);
+  if (cached !== undefined) {
+    return cached;
   }
-  const nextVisiting = new Set([...visiting, node]);
+  const recursive = executorRecursion(node, key, visiting, cyclic, preparation);
+  if (recursive !== undefined) {
+    return recursive;
+  }
+  const nextVisiting = new Map<ImplementationFunction, ReadonlySet<string>>([
+    ...visiting,
+    [node, new Set([...(visiting.get(node) ?? []), key])],
+  ]);
   const aliases = new Set(names);
   const exposes = (expression: Expression | null | undefined): boolean => {
     if (expression === null || expression === undefined) {
@@ -248,6 +303,10 @@ const returnsExecutorValue = (
         { type: 'TSNonNullExpression' },
         (value) => exposes(value.expression),
       ),
+      Match.when(
+        { type: 'YieldExpression' },
+        (value) => preparation !== undefined && value.delegate && exposes(value.argument),
+      ),
       Match.when({ type: 'MemberExpression' }, (value) => !isScopeProjection(value) && exposes(value.object)),
       Match.when({ type: 'ObjectExpression' }, (value) =>
         value.properties.some((property) =>
@@ -261,14 +320,29 @@ const returnsExecutorValue = (
       Match.when({ type: 'LogicalExpression' }, (value) => exposes(value.left) || exposes(value.right)),
       Match.when({ type: 'SequenceExpression' }, (value) => exposes(value.expressions.at(-1))),
       Match.when({ type: 'CallExpression' }, (value) => {
+        if (exposes(effectContainerReceiver(value, preparation))) {
+          return true;
+        }
         const exposedArguments = value.arguments.map((argument) =>
           exposes(argument.type === 'SpreadElement' ? argument.argument : argument),
         );
         if (!exposedArguments.some(Boolean)) {
           return false;
         }
-        const local = value.callee.type === 'Identifier' ? functions.get(value.callee.name) : undefined;
-        if (local === undefined) {
+        if (preparation?.safeCalls.has(value.start) === true) {
+          return false;
+        }
+        const resolved = preparation?.callable(value.callee);
+        const local =
+          resolved?.[1] ??
+          (preparation === undefined
+            ? functions.get(value.callee.type === 'Identifier' ? value.callee.name : '')
+            : undefined);
+        if (
+          local === undefined ||
+          (preparation !== undefined &&
+            local.params.some((parameter, index) => exposedArguments[index] && parameter.type !== 'Identifier'))
+        ) {
           return true;
         }
         const parameterNames = new Set(
@@ -276,7 +350,16 @@ const returnsExecutorValue = (
             exposedArguments[index] && parameter.type === 'Identifier' ? [parameter.name] : [],
           ),
         );
-        return returnsExecutorValue(local, parameterNames, functions, program, nextVisiting);
+        return returnsExecutorValue(
+          local,
+          parameterNames,
+          functions,
+          resolved?.[0].program ?? program,
+          nextVisiting,
+          resolved?.[0] ?? preparation,
+          cache,
+          cyclic,
+        );
       }),
       Match.orElse(() => false),
     );
@@ -313,8 +396,39 @@ const returnsExecutorValue = (
       }
     },
   }).visit(program);
+  // A cycle starts with no proven returned executor. Never persist a provisional negative:
+  // a caller can still find a direct escape after the recursive edge has been visited.
+  if (escaped || cyclic.get(node)?.has(key) !== true) {
+    const results = cache.get(node) ?? new Map<string, boolean>();
+    results.set(key, escaped);
+    cache.set(node, results);
+  }
   return escaped;
 };
+
+const isPrivateExecutorParameter = (
+  parameter: ParamPattern,
+  executorNames: ReadonlySet<string>,
+  nested: boolean,
+  preparation?: PreparationSource,
+): boolean =>
+  parameter.type === 'Identifier' &&
+  [...executorNames].some((name) => typeReferenceNamed(parameter.typeAnnotation, name)) &&
+  (!nested || preparation?.coreType(parameter.typeAnnotation, 'ScopedTransactionExecutor') === true);
+
+const isPreparationExecutorConsumer = (
+  implementation: ImplementationFunction,
+  preparation?: PreparationSource,
+): boolean =>
+  preparation?.factories.has(implementation.start) === true ||
+  preparation?.privateConsumers.has(implementation.start) === true;
+
+const consumesPrivateExecutor = (
+  implementation: ImplementationFunction,
+  privateImplementation: boolean,
+  nested: boolean,
+  preparation?: PreparationSource,
+): boolean => (!nested && privateImplementation) || isPreparationExecutorConsumer(implementation, preparation);
 
 /**
  * Core passes the scoped executor only to a private owner service factory. The factory may name that
@@ -324,6 +438,7 @@ const scopedTransactionExposureIndexes = (
   file: string,
   source: string,
   privateImplementation = false,
+  preparation?: PreparationSource,
 ): readonly number[] => {
   if (!scopedTransactionExecutor.test(source)) {
     return [];
@@ -352,7 +467,7 @@ const scopedTransactionExposureIndexes = (
     }
   }
 
-  const allowedFactoryParameters: Span[] = [];
+  const allowedFactoryParameters: Span[] = [...(preparation?.callbackInputs ?? [])];
   const allowScopedFactoryParameter = (parameters: readonly ParamPattern[]): void => {
     const span = scopedFactoryTransactionSpan(parameters, executorNames);
     if (span !== undefined) {
@@ -392,7 +507,7 @@ const scopedTransactionExposureIndexes = (
     const nested = implementations.some(
       (parent) => parent !== implementation && parent.start <= implementation.start && implementation.end <= parent.end,
     );
-    if (!privateImplementation || nested) {
+    if (!consumesPrivateExecutor(implementation, privateImplementation, nested, preparation)) {
       if (!nested) {
         allowScopedFactoryParameter(implementation.params);
       }
@@ -400,15 +515,24 @@ const scopedTransactionExposureIndexes = (
     }
     // A private implementation consumes the executor. Its parameter spelling and the layout of
     // its scope input do not turn that input into a handler dependency or a returned service field.
-    const executorParameters = implementation.params.filter(
-      (parameter) =>
-        parameter.type === 'Identifier' &&
-        [...executorNames].some((name) => typeReferenceNamed(parameter.typeAnnotation, name)),
+    const executorParameters = implementation.params.filter((parameter) =>
+      isPrivateExecutorParameter(parameter, executorNames, nested, preparation),
     );
     const names = new Set(
       executorParameters.flatMap((parameter) => (parameter.type === 'Identifier' ? [parameter.name] : [])),
     );
-    if (!returnsExecutorValue(implementation, names, functions, parsed.program)) {
+    if (
+      !returnsExecutorValue(
+        implementation,
+        names,
+        functions,
+        parsed.program,
+        new Map(),
+        nested || !privateImplementation || isPreparationExecutorConsumer(implementation, preparation)
+          ? preparation
+          : undefined,
+      )
+    ) {
       allowedFactoryParameters.push(
         ...executorParameters.flatMap((parameter) =>
           parameter.type === 'Identifier' && parameter.typeAnnotation !== null && parameter.typeAnnotation !== undefined
@@ -473,10 +597,15 @@ const scopedTransactionExposureIndexes = (
   return EffectArray.sort([...new Set(invalidReferences)], Order.Number);
 };
 
-const containsGlobalDatabaseCapability = (file: string, source: string, privateImplementation: boolean): boolean =>
+const containsGlobalDatabaseCapability = (
+  file: string,
+  source: string,
+  privateImplementation: boolean,
+  preparation?: PreparationSource,
+): boolean =>
   globalDatabaseImplementationImport.test(source) ||
   hiddenCapability.test(source) ||
-  scopedTransactionExposureIndexes(file, source, privateImplementation).length > 0;
+  scopedTransactionExposureIndexes(file, source, privateImplementation, preparation).length > 0;
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
@@ -484,6 +613,7 @@ const globalDatabaseCapabilityClosure = (
   path: Path.Path,
   root: string,
   packageExports: ReadonlyMap<string, string>,
+  preparations: ReadonlyMap<string, PreparationSource>,
 ): ReadonlySet<string> => {
   const importersByDependency = new Map<string, Set<string>>();
   const unsupported = path.join(root, '.unsupported-workspace-export');
@@ -496,7 +626,9 @@ const globalDatabaseCapabilityClosure = (
     // owning source line; recursively treating every safe Core type dependency as a
     // database leak makes generated Action and Read registrations impossible.
     if (!relative.startsWith(coreRuntimeSourcePrefix)) {
-      if (containsGlobalDatabaseCapability(file, source, !isGovernedAdapter(relative, source))) {
+      if (
+        containsGlobalDatabaseCapability(file, source, !isGovernedAdapter(relative, source), preparations.get(file))
+      ) {
         closure.add(file);
         pending.push(file);
       }
@@ -560,6 +692,7 @@ interface SourceCheckContext {
   readonly governedAdapter: boolean;
   readonly packageExports: ReadonlyMap<string, string>;
   readonly path: Path.Path;
+  readonly preparation?: PreparationSource;
   readonly record: (violation: DatabaseAccessViolation) => void;
   readonly relative: string;
   readonly root: string;
@@ -685,7 +818,7 @@ const recordScopedTransactionExposure = (context: SourceCheckContext): void => {
   if (!context.governedAdapter) {
     return;
   }
-  for (const index of scopedTransactionExposureIndexes(context.file, context.source)) {
+  for (const index of scopedTransactionExposureIndexes(context.file, context.source, false, context.preparation)) {
     context.record({
       file: context.relative,
       line: sourceLine(context.source, index),
@@ -832,12 +965,16 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     const sourceFiles = new Set(files);
     const packageExports = yield* workspaceSourceExports(root, files);
     const testSourceFiles = nativeTestSourceFiles(root, sources, path, packageExports);
+    const preparations = actionPreparationBoundaries(sources, (file, specifier) =>
+      resolveLocalSource(sourceFiles, path, root, file, specifier, packageExports),
+    );
     const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(
       sources,
       sourceFiles,
       path,
       root,
       packageExports,
+      preparations,
     );
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
@@ -856,6 +993,7 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         governedAdapter: isGovernedAdapter(relative, source),
         packageExports,
         path,
+        preparation: preparations.get(file),
         record,
         relative,
         root,
