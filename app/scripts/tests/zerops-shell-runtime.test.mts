@@ -6,16 +6,19 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { systemError } from 'effect/PlatformError';
 import { expect, it } from 'effect-rstest';
 
-import { shellRuntime, startUnitProcess } from '../zerops/app-host.mts';
+import { processEnvironment, shellRuntime, startUnitProcess } from '../zerops/app-host.mts';
 import { SHELL_ID, workspaceRoot } from '../zerops/hosted-units.mts';
 
-it.effect('defaults to Node and accepts only explicit node or bun runtime settings', () =>
+it.effect('defaults to Node and lets the live override win over the validated deployment default', () =>
   Effect.gen(function* runtimeConfiguration() {
     for (const [environment, expected] of [
       [{}, 'node'],
       [{ ONTOS_SHELL_RUNTIME: '' }, 'node'],
       [{ ONTOS_SHELL_RUNTIME: 'node' }, 'node'],
       [{ ONTOS_SHELL_RUNTIME: 'bun' }, 'bun'],
+      [{ ONTOS_SHELL_RUNTIME_DEFAULT: 'bun' }, 'bun'],
+      [{ ONTOS_SHELL_RUNTIME: 'node', ONTOS_SHELL_RUNTIME_DEFAULT: 'bun' }, 'node'],
+      [{ ONTOS_SHELL_RUNTIME: 'bun', ONTOS_SHELL_RUNTIME_DEFAULT: 'node' }, 'bun'],
     ] as const) {
       expect(
         yield* shellRuntime.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment)))),
@@ -27,9 +30,24 @@ it.effect('defaults to Node and accepts only explicit node or bun runtime settin
         Effect.exit,
       );
       expect(exit._tag).toBe('Failure');
+      const invalidDefault = yield* shellRuntime.pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_RUNTIME_DEFAULT: value }))),
+        Effect.exit,
+      );
+      expect(invalidDefault._tag).toBe('Failure');
     }
   }),
 );
+
+it('keeps both runtime settings under supervisor control rather than owner secrets', () => {
+  const { environment } = processEnvironment(
+    [SHELL_ID],
+    { [SHELL_ID]: { ONTOS_SHELL_RUNTIME: 'bun', ONTOS_SHELL_RUNTIME_DEFAULT: 'bun' } },
+    {},
+  );
+  expect(environment.ONTOS_SHELL_RUNTIME).toBeUndefined();
+  expect(environment.ONTOS_SHELL_RUNTIME_DEFAULT).toBeUndefined();
+});
 
 it.live('spawns only the isolated Shell with Bun, preserving arguments, environment and scoped exit handling', () =>
   Effect.gen(function* unitSpawning() {

@@ -134,8 +134,9 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         EMAIL_PROVIDER: smtp
         NODE_ENV: production
-        # Shell only. Both binaries ship, so rollback needs an env change and restart, not a rebuild.
-        ONTOS_SHELL_RUNTIME: node
+        # YAML variables are read-only in Zerops. Keep ONTOS_SHELL_RUNTIME as an editable service override.
+        # Both binaries ship, so rollback is ONTOS_SHELL_RUNTIME=node plus a restart, without a rebuild.
+        ONTOS_SHELL_RUNTIME_DEFAULT: node
         # Private, container-local directory where composition publication retains its legacy completion evidence.
         ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
         # Every owner in a process shares one pool per database configuration and role. Small pools

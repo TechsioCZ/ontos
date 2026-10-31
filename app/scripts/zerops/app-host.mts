@@ -111,6 +111,7 @@ const SUPERVISOR_ONLY_KEYS: readonly string[] = [
   'DATABASE_ADMIN_URL',
   'ONTOS_OWNER_SECRETS_JSON',
   'ONTOS_SHELL_RUNTIME',
+  'ONTOS_SHELL_RUNTIME_DEFAULT',
   'PARTY_REGISTRY_DB_PASSWORD',
   'PARTY_REGISTRY_WORKER_DB_PASSWORD',
   'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
@@ -259,10 +260,16 @@ export const routeRequest = (
 
 type ChildEnvironment = NonNullable<ChildProcess.CommandOptions['env']>;
 
-/** Invalid values fail before any child starts; changing this setting never changes owner or worker runtimes. */
-export const shellRuntime = Config.schema(Schema.Literals(['node', 'bun']), 'ONTOS_SHELL_RUNTIME').pipe(
-  Config.withDefault('node'),
-);
+const ShellRuntime = Schema.Literals(['node', 'bun']);
+
+/**
+ * Zerops makes YAML-defined variables read-only. Keep the live override out of YAML so operators can change it
+ * and restart without rebuilding. Both settings fail closed on invalid values and affect only the Shell.
+ */
+export const shellRuntime = Config.all({
+  deploymentDefault: Config.schema(ShellRuntime, 'ONTOS_SHELL_RUNTIME_DEFAULT').pipe(Config.withDefault('node')),
+  override: Config.option(Config.schema(ShellRuntime, 'ONTOS_SHELL_RUNTIME')),
+}).pipe(Config.map(({ deploymentDefault, override }) => Option.getOrElse(override, () => deploymentDefault)));
 
 /** Starts one long-running child in the current Scope. Its exit, for any reason, fails the returned effect. */
 const startChild = Effect.fn('AppHost.startChild')(function* startChild(
@@ -288,7 +295,7 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
 });
 
 /** Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. */
-export const startUnitProcess = (ids: readonly string[], runtime: 'node' | 'bun', env: ChildEnvironment) =>
+export const startUnitProcess = (ids: readonly string[], runtime: typeof ShellRuntime.Type, env: ChildEnvironment) =>
   startChild(
     ids.length === 1 ? (ids[0] ?? 'owners') : 'owners',
     runtime === 'bun' && ids.length === 1 && ids[0] === SHELL_ID

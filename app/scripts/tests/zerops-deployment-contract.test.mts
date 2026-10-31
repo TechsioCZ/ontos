@@ -137,7 +137,8 @@ it('ships checksum-pinned Bun beside Node with the Shell pilot off and no runtim
   expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
     `mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'`,
   );
-  expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBe('node');
+  expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME_DEFAULT'])).toBe('node');
+  expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBeUndefined();
   expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([]);
   const installer = readFileSync(new URL('../install-zerops-bun.sh', import.meta.url), 'utf-8');
   expect(installer).toContain('bun-linux-x64-musl-baseline');
