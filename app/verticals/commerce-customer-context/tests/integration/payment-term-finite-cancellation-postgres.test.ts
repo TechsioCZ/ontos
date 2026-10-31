@@ -290,6 +290,16 @@ const copyOwnerBookkeeping = Effect.fn('FiniteEntitlement.copyOwnerBookkeeping')
 });
 
 // Actual CLI/full immutable journal. Child-only configuration never changes the source database.
+/** Core migrates through its own convergent db:migrate; a plain `drizzle-kit migrate` replays both of its lineages. */
+const ownerMigrationCommand = (owner: 'ccc' | 'core', command: 'migrate' | 'verify', configuration: string) => {
+  if (owner === 'core') {
+    return ['db:migrate'];
+  }
+  return command === 'migrate'
+    ? ['exec', 'drizzle-kit', 'migrate', '--config', configuration]
+    : ['exec', 'node', 'scripts/verify-db-schema.mts'];
+};
+
 const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migrateOwner(
   connections: {
     readonly admin: { readonly connectionString: string };
@@ -320,6 +330,7 @@ const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migra
     configuration,
     `export default { dialect:'postgresql', out:process.env.ONTOS_CCC_ENTITLEMENT_MIGRATIONS, schema:process.env.ONTOS_CCC_ENTITLEMENT_SCHEMA, dbCredentials:{url:process.env.DATABASE_ADMIN_URL}, migrations:{schema:'drizzle',table:process.env.ONTOS_ENTITLEMENT_JOURNAL} };`,
   );
+  const ownerCommand = ownerMigrationCommand(owner, command, configuration);
   const child = yield* ChildProcess.make(
     'mise',
     [
@@ -328,10 +339,7 @@ const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migra
       'pnpm',
       '--filter',
       owner === 'core' ? '@app/core-runtime' : '@app/commerce-customer-context',
-      'exec',
-      ...(command === 'migrate'
-        ? ['drizzle-kit', 'migrate', '--config', configuration]
-        : ['node', 'scripts/verify-db-schema.mts']),
+      ...ownerCommand,
     ],
     {
       cwd: new URL('../../../../', import.meta.url).pathname,
