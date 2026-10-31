@@ -307,6 +307,24 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   }
 });
 
+it('reserves the application working set without changing CPU, free-memory scaling or replica limits', () => {
+  const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
+    parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
+  );
+  const app = Schema.decodeUnknownSync(Schema.instanceOf(YAMLMap))(
+    services.items.find((service) => isMap(service) && service.get('hostname') === 'app'),
+  );
+
+  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(3);
+  expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
+  expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
+  expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
+  expect(app.getIn(['verticalAutoscaling', 'minCpu'])).toBe(1);
+  expect(app.getIn(['verticalAutoscaling', 'maxCpu'])).toBe(2);
+  expect(app.get('minContainers')).toBe(1);
+  expect(app.get('maxContainers')).toBe(1);
+});
+
 it('declares no project-level variable that could carry a database credential', () => {
   const deployment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
     parse(readZeropsDeploymentYaml()),

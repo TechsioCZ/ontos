@@ -8,12 +8,13 @@ services:
   - hostname: app
     type: nodejs@24
     enableSubdomainAccess: true
-    # One container runs the Shell, every owner and the Outbox host; memory scales up before it runs out.
+    # The combined working set needs 3 GiB at startup. Reactive scaling from 2 GiB allowed
+    # memory.high reclaim and swap-in to stall login prefetch before additional RAM arrived.
     verticalAutoscaling:
       cpuMode: SHARED
       minCpu: 1
       maxCpu: 2
-      minRam: 2
+      minRam: 3
       maxRam: 4
       minFreeRamGB: 0.5
       minDisk: 10
