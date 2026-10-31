@@ -31,8 +31,8 @@ import {
   purchasingApprovalPermissionTarget,
 } from './purchasing-approval-action-support.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
-import { PurchaseApprovalTriggerEvidenceSourceFactory } from './trigger-purchase-approval.action.ts';
-import type { PurchaseApprovalTriggerEvidenceSource } from './trigger-purchase-approval.action.ts';
+import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../services/purchase-approval-trigger-evidence-source.ts';
+import type { PurchaseApprovalTriggerEvidenceSource } from '../services/purchase-approval-trigger-evidence-source.ts';
 import { PurchaseLimitCounterpartyRefSchema } from '../../shared/domain/purchase-limit-policy.ts';
 import {
   PurchaseLimitEvaluationContextSchema,

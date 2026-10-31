@@ -34,7 +34,7 @@ import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-co
 import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
 import { customerPriceGroupAssignmentStoreForTransaction } from '../persistence/price-group-persistence.ts';
 import { readCurrentPurchaseApprovalRevalidationRoutine } from '../persistence/purchasing-approval-persistence.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profilePersistenceServicesForTransaction } from '../persistence/profile-persistence.ts';
 import { purchaseCurrencyPolicyPortForRepository } from './purchase-currency-policy.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from './purchase-currency-pricing.ts';
 import {
@@ -270,7 +270,7 @@ export const loadPurchasePricingContextSnapshot = Effect.fn('OrderFinalizationPr
       kind: 'PROFILE',
       profileRef: proposal.identity.profileRef,
     }).pipe(Effect.mapError(unavailable));
-    const profiles = yield* profileServicesForVerifiedScope(transaction, scope).pipe(Effect.mapError(unavailable));
+    const profiles = profilePersistenceServicesForTransaction(transaction, { ...scope, legalEntityId });
     const profileInput = { authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const }, profileRef };
     const profile = yield* profiles.customerProfileRead
       .readProfile(profileInput, scope.tenantId)

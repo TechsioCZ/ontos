@@ -1,3 +1,4 @@
+import { unusedApprovalPreparationLayer } from '../support/unused-approval-preparation.ts';
 import { Effect, Exit, Layer, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
@@ -77,8 +78,8 @@ import { reroutePurchaseApprovalRequestAction } from '../../src/actions/reroute-
 import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-purchase-approval.action.ts';
 import { submitPurchaseApprovalRequestAction } from '../../src/actions/submit-purchase-approval-request.action.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
-import type { PurchaseApprovalTriggerEvidenceSource } from '../../src/actions/trigger-purchase-approval.action.ts';
-import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../../src/actions/trigger-purchase-approval.action.ts';
+import type { PurchaseApprovalTriggerEvidenceSource } from '../../src/services/purchase-approval-trigger-evidence-source.ts';
+import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../../src/services/purchase-approval-trigger-evidence-source.ts';
 import { purchasingApprovalCommercialFixture } from './purchasing-approval-fixtures.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -462,7 +463,6 @@ const expectCommittedEvidence = (
 };
 
 it.effect('successful Purchasing Approval Actions commit audit, metadata-only access, and events', () =>
-  // @ts-expect-error -- Direct-handler evidence tests intentionally omit production-only service Layers and supply explicit context doubles for each exercised path.
   Effect.gen(function* verifyApprovalActionEvidence() {
     const createProposalPayload: CreatePurchaseProposalRevisionPayload = {
       idempotencyKey: 'proposal-idempotency-1',
@@ -545,7 +545,6 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
     );
     yield* getActionHandler(submitPurchaseApprovalRequestAction)(
       submitPayload,
-      // @ts-expect-error -- The direct-handler test supplies the exact runtime doubles used by this path while the generic service map remains intentionally narrower.
       contextFor(
         submitCollector,
         makeWorkflow({ submitRequest: () => Effect.succeed(submitResult) }),
@@ -683,11 +682,10 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       'revalidation-1',
       'counterparty-1',
     ]);
-  }),
+  }).pipe(Effect.provide(unusedApprovalPreparationLayer)),
 );
 
 it.effect('does not let forged favorable submission or revalidation evidence bypass owner currentness', () =>
-  // @ts-expect-error -- Direct-handler rejection tests intentionally omit production-only service Layers and supply rejecting context doubles.
   Effect.gen(function* rejectsForgedApprovalEvidence() {
     const submitPayload: SubmitPurchaseApprovalRequestPayload = {
       counterpartyRef,
@@ -747,7 +745,6 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
     const submitExit = yield* Effect.exit(
       getActionHandler(submitPurchaseApprovalRequestAction)(
         submitPayload,
-        // @ts-expect-error -- This fail-closed direct invocation intentionally uses the rejecting test service map rather than production composition.
         contextFor(
           submitCollector,
           makeWorkflow({
@@ -788,11 +785,10 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
     expect(Exit.isFailure(revalidateExit)).toBe(true);
     expect(submitWorkflowCalls).toBe(0);
     expect(revalidateWorkflowCalls).toBe(0);
-  }),
+  }).pipe(Effect.provide(unusedApprovalPreparationLayer)),
 );
 
 it.effect('fails closed when proposal candidate currentness is not owner-configured', () =>
-  // @ts-expect-error -- This direct-handler failure test intentionally omits the production candidate-currentness Layer.
   Effect.gen(function* rejectsWithoutCandidateOwner() {
     const { loadCandidateCurrent: _loadCandidateCurrent, ...currentnessWithoutCandidate } = currentness;
     const payload: CreatePurchaseProposalRevisionPayload = {
@@ -843,7 +839,7 @@ it.effect('fails closed when proposal candidate currentness is not owner-configu
     expect(workflowCalls).toBe(0);
     expect(collector.snapshot().dataAccessEvents).toHaveLength(0);
     expect(collector.snapshot().auditEvidence).toEqual({});
-  }),
+  }).pipe(Effect.provide(unusedApprovalPreparationLayer)),
 );
 
 it.effect('consumes the exact Order commit once and keeps replay idempotent', () =>
@@ -1285,6 +1281,7 @@ it.effect(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          unusedApprovalPreparationLayer,
           Layer.succeed(PurchaseApprovalTriggerEvidenceSourceFactory, {
             make: () => Effect.die('Approval target unit must not resolve owner services'),
           }),
