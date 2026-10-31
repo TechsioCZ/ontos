@@ -1,7 +1,20 @@
 #!/usr/bin/env node
 import nodePath from 'node:path';
 
-import { Array as EffectArray, Clock, Console, Effect, FileSystem, Order, Path, Result, Schema, Stream } from 'effect';
+import {
+  Array as EffectArray,
+  Clock,
+  Console,
+  Duration,
+  Effect,
+  FileSystem,
+  Option,
+  Order,
+  Path,
+  Result,
+  Schema,
+  Stream,
+} from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -985,6 +998,118 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
   );
 });
 
+const RUN_PREFIX = 'run-';
+const RUN_RECORD_SUFFIX = '.complete.json';
+const ABANDONED_RUN_MILLIS = Duration.toMillis(Duration.days(1));
+const RunRecordSchema = Schema.Struct({
+  completedAt: CountSchema,
+  status: Schema.Literals(['reported', 'error', 'interrupted']),
+});
+type RunStatus = (typeof RunRecordSchema.Type)['status'];
+
+/** Mark a run as no longer being written; the record sits beside the run so the run directory stays raw evidence. */
+const recordRun = Effect.fn('qualityAudit.recordRun')(function* recordRunEffect(
+  runDirectory: string,
+  status: RunStatus,
+) {
+  yield* writeJson(`${runDirectory}${RUN_RECORD_SUFFIX}`, {
+    completedAt: yield* Clock.currentTimeMillis,
+    status,
+  });
+});
+
+const readRunRecord = (output: string, entry: string) =>
+  Effect.gen(function* readRunRecordEffect() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const record = yield* decodeReport(
+      RunRecordSchema,
+      yield* fs.readFileString(path.join(output, entry)),
+      'run record',
+    );
+    return { ...record, run: entry.slice(0, -RUN_RECORD_SUFFIX.length) };
+  }).pipe(Effect.option);
+
+/** Newest modification time of a run directory and its direct entries; unknown times count as current activity. */
+const lastActivity = (directory: string) =>
+  Effect.gen(function* lastActivityEffect() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const entries = yield* fs.readDirectory(directory);
+    const infos = yield* Effect.forEach(
+      [directory, ...entries.map((entry) => path.join(directory, entry))],
+      (file) => fs.stat(file),
+      { concurrency: 1 },
+    );
+    return Math.max(
+      ...infos.map((info) =>
+        Option.match(info.mtime, { onNone: () => Number.POSITIVE_INFINITY, onSome: (date) => date.getTime() }),
+      ),
+    );
+  }).pipe(Effect.orElseSucceed(() => Number.POSITIVE_INFINITY));
+
+/**
+ * Delete superseded runs once the current run has finished and written its summary. A completion record older than
+ * the current run's start proves that no audit is still writing that run. Runs without a record may belong to a
+ * concurrent audit, so they are deleted only after a day without activity. A failed current run keeps the newest
+ * successful run beside it for comparison.
+ */
+const pruneRuns = Effect.fn('qualityAudit.pruneRuns')(function* pruneRunsEffect(
+  output: string,
+  runDirectory: string,
+  startedAt: number,
+  status: RunStatus,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const current = path.basename(runDirectory);
+  const entries = (yield* fs.readDirectory(output)).filter((entry) => entry.startsWith(RUN_PREFIX));
+  const records = EffectArray.getSomes(
+    yield* Effect.forEach(
+      entries.filter((entry) => entry.endsWith(RUN_RECORD_SUFFIX)),
+      (entry) => readRunRecord(output, entry),
+      { concurrency: 1 },
+    ),
+  );
+  const lastGood =
+    status === 'reported'
+      ? undefined
+      : EffectArray.sort(
+          records.filter((record) => record.status === 'reported'),
+          Order.mapInput(Order.Number, (record: (typeof records)[number]) => -record.completedAt),
+        )[0]?.run;
+  const superseded = records.filter(
+    (record) => record.run !== current && record.run !== lastGood && record.completedAt < startedAt,
+  );
+  const recorded = new Set(records.map((record) => record.run));
+  const now = yield* Clock.currentTimeMillis;
+  const abandoned = yield* Effect.forEach(
+    entries.filter((entry) => !entry.endsWith(RUN_RECORD_SUFFIX) && entry !== current && !recorded.has(entry)),
+    (entry) =>
+      Effect.gen(function* abandonedRun() {
+        const directory = path.join(output, entry);
+        const info = yield* fs.stat(directory);
+        return info.type === 'Directory' && (yield* lastActivity(directory)) < now - ABANDONED_RUN_MILLIS
+          ? [directory]
+          : [];
+      }).pipe(Effect.orElseSucceed(() => [])),
+    { concurrency: 1 },
+  );
+  yield* Effect.forEach(
+    superseded,
+    (record) =>
+      Effect.gen(function* removeSupersededRun() {
+        const directory = path.join(output, record.run);
+        yield* fs.remove(directory, { force: true, recursive: true });
+        yield* fs.remove(`${directory}${RUN_RECORD_SUFFIX}`, { force: true });
+      }),
+    { concurrency: 1 },
+  );
+  yield* Effect.forEach(abandoned.flat(), (directory) => fs.remove(directory, { force: true, recursive: true }), {
+    concurrency: 1,
+  });
+});
+
 const createConsumerPath = Effect.fn('qualityAudit.createConsumerPath')(function* createConsumerPathEffect(
   root: string,
 ) {
@@ -1007,6 +1132,7 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const provenance = yield* readSourceProvenance(root);
+  const startedAt = yield* Clock.currentTimeMillis;
   yield* fs.makeDirectory(output, { recursive: true });
   const runDirectory = yield* fs.makeTempDirectory({
     directory: output,
@@ -1066,10 +1192,16 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
       onFailure: (issue) => [errorResult('setup', runDirectory, String(issue))],
       onSuccess: (collected) => collected,
     }),
+    Effect.onInterrupt(() => Effect.ignore(recordRun(runDirectory, 'interrupted'))),
   );
   yield* writeSummary(output, runDirectory, results);
-  yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
   const errors = results.filter((result) => result.status === 'error');
+  const status = errors.length > 0 ? 'error' : 'reported';
+  yield* recordRun(runDirectory, status);
+  yield* pruneRuns(output, runDirectory, startedAt, status).pipe(
+    Effect.catch((error) => Console.error(`Quality audit retention skipped: ${String(error)}`)),
+  );
+  yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
   if (errors.length > 0) {
     yield* Effect.forEach(errors, (result) => Console.error(`${result.name}: ${result.diagnostic}`), {
       concurrency: 1,

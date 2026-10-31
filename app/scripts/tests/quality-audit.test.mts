@@ -1,18 +1,20 @@
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, Match, Schema } from 'effect';
+import { Array as EffectArray, Clock, Config, Duration, Effect, Match, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -409,6 +411,7 @@ it.live(
     }
     writeFileSync(path.join(root, 'quality-audit/jscpd.json'), '{invalid unrelated config');
     yield* runFixture(root, output, 'knip');
+    const lastGood = yield* summary(output);
     writeFileSync(path.join(root, KNIP_CONFIG), '{invalid');
     const invalidConfigError = yield* Effect.flip(runFixture(root, output, 'knip'));
     expect(invalidConfigError.message).toMatch(/analysis failed/u);
@@ -419,7 +422,59 @@ it.live(
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
     expect(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8')).toBe('keep');
     expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(/Malformed .*configs\/knip\.json/u);
-    expect(readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0).toBe(true);
+    expect(readFileSync(path.join(lastGood.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0).toBe(true);
+  }),
+);
+
+const RUN_INVENTORY = 'source-inventory.json';
+const sortedRuns = (entries: readonly string[]) => EffectArray.sort(entries, Order.String);
+const runEntries = (output: string) => sortedRuns(readdirSync(output).filter((entry) => entry.startsWith('run-')));
+const recordedRun = (report: { readonly runDirectory: string }) => {
+  const name = path.basename(report.runDirectory);
+  return [name, `${name}.complete.json`];
+};
+
+it.live(
+  'finished audits delete superseded runs but keep in-progress runs and the last good run after a failure',
+  Effect.fn(function* testRunRetention() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const jscpdConfig = path.join(root, 'quality-audit/jscpd.json');
+    const validJscpdConfig = readFileSync(jscpdConfig, 'utf-8');
+    yield* runFixture(root, output, 'jscpd');
+    const superseded = yield* summary(output);
+    // Another audit in this checkout is still writing one run; another stopped without a record over a day ago.
+    const inProgressRun = 'run-in-progress';
+    const inProgress = path.join(output, inProgressRun);
+    mkdirSync(inProgress);
+    writeFileSync(path.join(inProgress, RUN_INVENTORY), '{}');
+    const abandoned = path.join(output, 'run-abandoned');
+    mkdirSync(abandoned);
+    writeFileSync(path.join(abandoned, RUN_INVENTORY), '{}');
+    const stoppedAt = new Date((yield* Clock.currentTimeMillis) - Duration.toMillis(Duration.hours(25)));
+    utimesSync(path.join(abandoned, RUN_INVENTORY), stoppedAt, stoppedAt);
+    utimesSync(abandoned, stoppedAt, stoppedAt);
+
+    yield* runFixture(root, output, 'jscpd');
+    const good = yield* summary(output);
+    expect(good.status).toBe('reported');
+    expect(existsSync(superseded.runDirectory)).toBe(false);
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), inProgressRun]));
+
+    writeFileSync(jscpdConfig, '{invalid');
+    const failure = yield* Effect.flip(runFixture(root, output, 'jscpd'));
+    expect(failure.message).toMatch(/analysis failed/u);
+    const failed = yield* summary(output);
+    expect(failed.status).toBe('error');
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), ...recordedRun(failed), inProgressRun]));
+    expect(readFileSync(path.join(good.runDirectory, 'jscpd/report.json'), 'utf-8').length > 0).toBe(true);
+
+    writeFileSync(jscpdConfig, validJscpdConfig);
+    yield* runFixture(root, output, 'jscpd');
+    const latest = yield* summary(output);
+    expect(latest.status).toBe('reported');
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(latest), inProgressRun]));
+    expect(readFileSync(path.join(inProgress, RUN_INVENTORY), 'utf-8')).toBe('{}');
   }),
 );
 
