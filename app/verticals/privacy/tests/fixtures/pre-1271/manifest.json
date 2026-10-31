@@ -32,6 +32,26 @@
     {
       "path": "app/verticals/privacy/src/persistence/privacy-operation-repository.ts",
       "sha256": "7e186e6fb0d4fafcad863c5a889b82e110a55835986fca342b137d7f733bd008"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/consent-self-service.action.ts",
+      "sha256": "57c7b62a4b7c8e671095e2a9d1d2815cb2c14f25bb0e04fdf29d96fdc730c342"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/record-owner-execution-outcome.action.ts",
+      "sha256": "98ca866649136f2833596ff1cbcfd5aec5000e3d81c478089228d9c313d5926d"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/record-anti-resurrection-protection.action.ts",
+      "sha256": "bc7b620239c8e6904338d06aba81c2ed910dccf47b2d86f73efb5658441b2e5f"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/privacy-owner-execution-authority.ts",
+      "sha256": "4d307ee49b4a319128ebd5c3edebb54349ed1e232425ccf99ca404601b08015b"
+    },
+    {
+      "path": "app/verticals/privacy/src/actions/privacy-anti-resurrection-enforcement-authority.ts",
+      "sha256": "3cc8c28cd118afca041d797f29c815bc0d445f44ff03295fe43b8b3e91ec6576"
     }
   ]
 }

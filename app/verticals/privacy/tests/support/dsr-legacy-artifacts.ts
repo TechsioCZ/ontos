@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // TEST infrastructure only. Preparation never opens a database or starts an owner.
 // The old owner is the pre-#1271 Privacy producer: the pinned merge-base product files substituted into the
 // current workspace and dependencies. It proves a historical producer's records against the current consumer,
@@ -19,6 +20,12 @@ const historicalPaths = [
   'shared/privacy-queries.ts',
   // Keep the historical repository's caller from importing the current prepared-subject constructor.
   'src/actions/create-privacy-subject.action.ts',
+  // Pin the callers of the old repository too; current preflight/evidence factories do not exist there.
+  'src/actions/consent-self-service.action.ts',
+  'src/actions/record-owner-execution-outcome.action.ts',
+  'src/actions/record-anti-resurrection-protection.action.ts',
+  'src/actions/privacy-owner-execution-authority.ts',
+  'src/actions/privacy-anti-resurrection-enforcement-authority.ts',
   'src/actions/record-dsr-deadline.action.ts',
   'src/actions/dispatch-privacy-measure.action.ts',
   'src/persistence/privacy-operation-postgres-repository.ts',
