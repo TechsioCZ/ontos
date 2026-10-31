@@ -22,6 +22,8 @@ import {
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
   MODULE_MANIFEST_API_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
   MODULE_MANIFEST_PERMISSION_SLOT_END,
@@ -30,6 +32,8 @@ import {
   MODULE_MANIFEST_IMPORT_SLOT_START,
   MODULE_REGISTRATION_ACTION_SLOT_END,
   MODULE_REGISTRATION_ACTION_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_END,
   MODULE_REGISTRATION_API_SLOT_END,
   MODULE_REGISTRATION_API_SLOT_START,
   MODULE_REGISTRATION_COMPONENT_SLOT_END,
@@ -421,6 +425,10 @@ export const ${valueName} = defineOntosModuleManifest({
       ${MODULE_MANIFEST_COMPONENT_SLOT_END}
     },
     events: [],
+    operationContracts: [
+      ${MODULE_MANIFEST_OPERATION_SLOT_START}
+      ${MODULE_MANIFEST_OPERATION_SLOT_END}
+    ],
     reports: [
       ${MODULE_MANIFEST_REPORT_SLOT_START}
       ${MODULE_MANIFEST_REPORT_SLOT_END}
@@ -458,6 +466,12 @@ export const ${valueName} = defineOntosModuleManifest({
       ],
       timelines: [],
     },
+  },
+  requirements: {
+    coreCapabilities: [],
+    intrinsic: [],
+    operations: [],
+    schemaVersion: '1',
   },
 });
 `;
@@ -501,6 +515,10 @@ export const ${prefix}Registration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: ${prefix}Manifest,
+  reads: [
+    ${MODULE_REGISTRATION_READ_SLOT_START}
+    ${MODULE_REGISTRATION_READ_SLOT_END}
+  ],
   outboxWorkers: [
     ${MODULE_REGISTRATION_WORKER_SLOT_START}
     ${MODULE_REGISTRATION_WORKER_SLOT_END}

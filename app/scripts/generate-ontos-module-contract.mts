@@ -18,6 +18,7 @@ import {
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
   OntosModuleIdSchema,
+  canonicalOntosPublicApiKey,
   extractVerticalRuntimeSafeDescriptors,
 } from '../packages/core-runtime/src/index.ts';
 import type { OntosModuleManifest, VerticalRuntimeRegistration } from '../packages/core-runtime/src/index.ts';
@@ -408,7 +409,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         return Effect.fail(failure(`public API ${key} is not an HttpApi`));
       }
       return Effect.succeed({
-        key: `${owner.manifest.module.id}.${toKebab(key)}`,
+        key: canonicalOntosPublicApiKey(owner.manifest.module.id, key),
         operationKeys: deriveApiOperationKeys(value),
       });
     });
@@ -423,26 +424,27 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           workspaceRoot,
         }),
     });
+    const publicSurface = {
+      actions: safeRuntime.actions,
+      api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
+      businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
+      components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
+      events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
+      reports: owner.manifest.publicSurface.reports,
+      resourceTypes: owner.manifest.publicSurface.resourceTypes,
+      search: owner.manifest.publicSurface.search,
+      shellContributions: owner.manifest.publicSurface.shellContributions,
+    };
+    if (owner.manifest.publicSurface.operationContracts !== undefined) {
+      Object.assign(publicSurface, { operationContracts: safeRuntime.operationContracts });
+    }
+    const manifest = { activation: owner.manifest.activation, module: owner.manifest.module, publicSurface };
+    if (safeRuntime.requirements !== undefined) {
+      Object.assign(manifest, { requirements: safeRuntime.requirements });
+    }
     const contract = {
-      deployment: {
-        appId,
-        buildMarker: releaseIdentity.buildMarker,
-      },
-      manifest: {
-        activation: owner.manifest.activation,
-        module: owner.manifest.module,
-        publicSurface: {
-          actions: safeRuntime.actions,
-          api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
-          businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
-          components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
-          events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
-          reports: owner.manifest.publicSurface.reports,
-          resourceTypes: owner.manifest.publicSurface.resourceTypes,
-          search: owner.manifest.publicSurface.search,
-          shellContributions: owner.manifest.publicSurface.shellContributions,
-        },
-      },
+      deployment: { appId, buildMarker: releaseIdentity.buildMarker },
+      manifest,
       runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },
       schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
     } as const;

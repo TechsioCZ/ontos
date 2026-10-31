@@ -66,6 +66,8 @@ export const MODULE_MANIFEST_ACTION_SLOT_START = '// <generated-module-manifest-
 export const MODULE_MANIFEST_ACTION_SLOT_END = '// </generated-module-manifest-actions>';
 export const MODULE_MANIFEST_API_SLOT_START = '// <generated-module-manifest-apis>';
 export const MODULE_MANIFEST_API_SLOT_END = '// </generated-module-manifest-apis>';
+export const MODULE_MANIFEST_OPERATION_SLOT_START = '// <generated-module-manifest-operation-contracts>';
+export const MODULE_MANIFEST_OPERATION_SLOT_END = '// </generated-module-manifest-operation-contracts>';
 export const MODULE_MANIFEST_PERMISSION_SLOT_START = '// <generated-module-manifest-business-permissions>';
 export const MODULE_MANIFEST_PERMISSION_SLOT_END = '// </generated-module-manifest-business-permissions>';
 export const MODULE_MANIFEST_COMPONENT_SLOT_START = '// <generated-module-manifest-components>';
@@ -90,6 +92,8 @@ export const MODULE_REGISTRATION_IMPORT_SLOT_START = '// <generated-module-regis
 export const MODULE_REGISTRATION_IMPORT_SLOT_END = '// </generated-module-registration-imports>';
 export const MODULE_REGISTRATION_ACTION_SLOT_START = '// <generated-module-registration-actions>';
 export const MODULE_REGISTRATION_ACTION_SLOT_END = '// </generated-module-registration-actions>';
+export const MODULE_REGISTRATION_READ_SLOT_START = '// <generated-module-registration-reads>';
+export const MODULE_REGISTRATION_READ_SLOT_END = '// </generated-module-registration-reads>';
 export const MODULE_REGISTRATION_API_SLOT_START = '// <generated-module-registration-apis>';
 export const MODULE_REGISTRATION_API_SLOT_END = '// </generated-module-registration-apis>';
 export const MODULE_REGISTRATION_COMPONENT_SLOT_START = '// <generated-module-registration-components>';
@@ -843,7 +847,16 @@ export const toCamelCase = (slug: string): string => {
 export const toTitle = (slug: string): string => words(slug).map(capitalise).join(' ');
 export const topicToSlug = (topic: string): string => topic.replaceAll('.', '-');
 
+const isModuleReadImport = (candidate: string): boolean =>
+  /^import \{ [a-z][A-Za-z0-9]*Read \} from '\.\/src\/api\/[a-z][a-z0-9-]*\.read\.ts';$/u.test(candidate);
+
+export const isModuleRegistrationImport = (candidate: string): boolean =>
+  isModuleReadImport(candidate) ||
+  /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(candidate) ||
+  /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(candidate);
+
 export const isModuleManifestImport = (candidate: string): boolean =>
+  isModuleReadImport(candidate) ||
   /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';|import \{ [a-z][A-Za-z0-9]*Permission \} from '\.\/shared\/permissions\/[a-z][a-z0-9-]*\.ts';)$/u.test(
     candidate,
   );

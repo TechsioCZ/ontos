@@ -39,6 +39,7 @@ const CUSTOM_FEDERATION_EXPOSE = './cards/UnitCard.v2';
 const DOCUMENTS_APP_ID = 'documents-center';
 const DOCUMENTS_MODULE_ID = 'documents.center';
 const MODULE_CONTRACT_COMMAND = 'module-contract';
+const MODULE_API_COMMAND = 'module-api';
 const MODULE_ID = 'property.registry';
 const PROPERTY_MANIFEST_PATH = 'verticals/property-registry/vertical.manifest.ts';
 const PROPERTY_PACKAGE_PATH = 'verticals/property-registry/package.json';
@@ -50,11 +51,14 @@ const PROPERTY_PACKAGE_NAME = '@app/property-registry';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const PROPERTY_BUILD_MARKER = 'property-build';
 const PROPERTY_DIRECTORY = 'verticals/property-registry';
+const DOCUMENTS_DIRECTORY = 'verticals/documents-center';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
 const MfBoundaryIdSchema = Schema.String.pipe(Schema.brand('MfBoundaryId'));
 const OperationKeySchema = Schema.String.pipe(Schema.brand('OperationKey'));
+const PublicApiKeySchema = Schema.String.pipe(Schema.brand('PublicApiKey'));
+const EntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 // The package document is rewritten by the tests, so undeclared owner fields must round-trip.
 const JsonRestSchema = [Schema.Record(Schema.String, Schema.Json)] as const;
@@ -96,6 +100,21 @@ const ModuleContractDocumentSchema = Schema.Struct({
     }),
   }),
   schemaVersion: Schema.String,
+});
+const VersionedOperationDocumentSchema = Schema.Struct({
+  manifest: Schema.Struct({
+    publicSurface: Schema.Struct({
+      operationContracts: Schema.Array(
+        Schema.Struct({
+          apiKey: PublicApiKeySchema,
+          entrypoint: Schema.Struct({ entrypointKey: EntrypointKeySchema }),
+          operationKey: OperationKeySchema,
+          schemaVersion: Schema.String,
+        }),
+      ),
+    }),
+    requirements: Schema.Struct({ schemaVersion: Schema.String }),
+  }),
 });
 const decodeModulePackage = (source: string) => Schema.decodeUnknownEffect(ModulePackageSchema)(JSON.parse(source));
 const decodeModuleContract = (source: string) =>
@@ -228,7 +247,7 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
               role: 'remote',
             },
             package: '@app/documents-center',
-            path: 'verticals/documents-center',
+            path: DOCUMENTS_DIRECTORY,
           },
         ],
       }),
@@ -259,6 +278,159 @@ const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, 
     workspaceRoot: root,
   }).pipe(Effect.provide(NodeServices.layer));
 });
+
+it.live(
+  'generates exact versioned operation claims and safely upgrades missing legacy owner slots without partial writes',
+  Effect.fn(function* versionedOperationProjection() {
+    yield* withFixture(
+      Effect.fn(function* verifyVersionedOperationProjection(root) {
+        yield* scaffold(root);
+        yield* linkFixtureDependencies(root, appRoot, { '@app/shared-contracts': 'packages/shared-contracts' });
+        const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
+        const registrationPath = path.join(root, PROPERTY_DIRECTORY, 'vertical.registration.ts');
+        const manifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+        const registration = yield* Effect.promise(() => readFile(registrationPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(
+            manifestPath,
+            manifest.replace(
+              /\s*operationContracts: \[\s*\/\/ <generated-module-manifest-operation-contracts>\s*\/\/ <\/generated-module-manifest-operation-contracts>\s*\],/u,
+              '',
+            ),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            registrationPath,
+            registration.replace(
+              /\s*reads: \[\s*\/\/ <generated-module-registration-reads>\s*\/\/ <\/generated-module-registration-reads>\s*\],/u,
+              '',
+            ),
+          ),
+        );
+        const flags = [
+          VERTICAL_FLAG,
+          APP_ID,
+          '--name',
+          'current-details',
+          AUTHORIZATION_FLAG,
+          'context_permission',
+          '--permission',
+          'module.access',
+        ];
+        yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const firstTree = yield* snapshotTree(root);
+        yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        expect(yield* snapshotTree(root)).toEqual(firstTree);
+        const actionFlags = [
+          '--action',
+          'record-change',
+          '--legal-entity-scope',
+          'optional',
+          AUTHORIZATION_FLAG,
+          'action_execution',
+          '--provisioning',
+          'tenant_membership_default',
+        ];
+        yield* runScaffoldEffect('action', [VERTICAL_FLAG, APP_ID, ...actionFlags], { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const producerPackagePath = path.join(root, 'verticals/documents-center/package.json');
+        const producerPackage = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+        )(yield* Effect.promise(() => readFile(producerPackagePath, 'utf-8')));
+        yield* Effect.promise(() =>
+          writeFile(producerPackagePath, JSON.stringify({ ...producerPackage, exports: {} }, null, 2)),
+        );
+        yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
+        yield* runScaffoldEffect('action', [VERTICAL_FLAG, DOCUMENTS_APP_ID, ...actionFlags], {
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          'outbox-message',
+          [VERTICAL_FLAG, DOCUMENTS_APP_ID, '--action', 'record-change', '--topic', 'documents.center.changed'],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          'outbox-worker',
+          [
+            VERTICAL_FLAG,
+            APP_ID,
+            '--worker',
+            'observe-document-change',
+            '--producer',
+            DOCUMENTS_APP_ID,
+            '--topic',
+            'documents.center.changed',
+            AUTHORIZATION_FLAG,
+            'owner_local_background',
+          ],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        yield* linkFixtureDependencies(root, root, { '@app/documents-center': DOCUMENTS_DIRECTORY });
+        const mixedOwner = yield* snapshotTree(root);
+        yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        expect(yield* snapshotTree(root)).toEqual(mixedOwner);
+        const emitted = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        const text = yield* Effect.promise(() => readFile(emitted.path, 'utf-8'));
+        const document = yield* Schema.decodeUnknownEffect(VersionedOperationDocumentSchema)(JSON.parse(text));
+        expect(document.manifest.requirements.schemaVersion).toBe('1');
+        expect(document.manifest.publicSurface.operationContracts).toEqual([
+          {
+            apiKey: 'property.registry.current-details',
+            entrypoint: { entrypointKey: 'property.registry.api.current-details' },
+            operationKey: 'currentDetails.execute',
+            schemaVersion: '1',
+          },
+        ]);
+        expect(text).not.toMatch(/registration"|inputSchema|serviceFactory|src\/api/u);
+        const mixedRegistration = yield* Effect.promise(() => readFile(registrationPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(
+            registrationPath,
+            mixedRegistration.replace(
+              "from './src/api/current-details.read.ts'",
+              "from '../foreign/src/api/current-details.read.ts'",
+            ),
+          ),
+        );
+        const beforeImportFailure = yield* snapshotTree(root);
+        yield* expectFailure(
+          runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+          (error) => expect(String(error)).toMatch(/Read import conflicts/u),
+        );
+        expect(yield* snapshotTree(root)).toEqual(beforeImportFailure);
+        yield* Effect.promise(() => writeFile(registrationPath, mixedRegistration));
+        const currentManifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(manifestPath, currentManifest.replace('// </generated-module-manifest-operation-contracts>', '')),
+        );
+        const beforeFailure = yield* snapshotTree(root);
+        yield* expectFailure(
+          runScaffoldEffect(
+            MODULE_API_COMMAND,
+            [VERTICAL_FLAG, APP_ID, '--name', 'another-details', AUTHORIZATION_FLAG, 'authenticated_principal'],
+            { workspaceRoot: root },
+          ).pipe(Effect.provide(NodeServices.layer)),
+          (error) => expect(String(error)).toMatch(/conflicting operation binding slot/u),
+        );
+        expect(yield* snapshotTree(root)).toEqual(beforeFailure);
+      }),
+    );
+  }),
+);
 
 it.live(
   'module-contract help is exact and write-free',

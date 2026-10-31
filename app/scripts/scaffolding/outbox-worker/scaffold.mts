@@ -18,6 +18,7 @@ import {
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
   insertSortedSlot,
+  isModuleRegistrationImport,
   patchJsonObjectProperty,
   readJsonEffect,
   requireCanonicalSlug,
@@ -563,13 +564,7 @@ const planOutboxWorkerScaffoldEffect = (
           MODULE_REGISTRATION_IMPORT_SLOT_START,
           MODULE_REGISTRATION_IMPORT_SLOT_END,
           [registrationImport],
-          (candidate) =>
-            /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(
-              candidate,
-            ) ||
-            /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
-              candidate,
-            ),
+          isModuleRegistrationImport,
         ),
         MODULE_REGISTRATION_WORKER_SLOT_START,
         MODULE_REGISTRATION_WORKER_SLOT_END,

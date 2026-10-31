@@ -3,14 +3,22 @@ import type { Effect } from 'effect';
 
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
+import type { AnyReadRegistration } from '../reads/definition.ts';
+import { isReadRegistration } from '../reads/definition.ts';
 import type {
   OntosActionContract,
   OntosManifestActionValue,
   OntosModuleId,
   OntosModuleManifest,
   OntosOutboxSubscriptionContract,
+  OntosOperationContract,
+  OntosModuleRequirements,
 } from './manifest.ts';
-import { OntosActionContractSchema } from './manifest.ts';
+import {
+  OntosActionContractSchema,
+  copyOntosModuleRequirements,
+  projectOntosModuleOperationContracts,
+} from './manifest.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
 const runtimeRegistrationBrand: unique symbol = Symbol('@app/core-runtime/modules/runtime-registration');
@@ -18,7 +26,9 @@ const runtimeRegistrationBrand: unique symbol = Symbol('@app/core-runtime/module
 interface PrivateVerticalRuntime {
   readonly actions: readonly OntosManifestActionValue[];
   readonly entrypoints: VerticalRuntimeEntrypointBindings;
+  readonly operationContracts: readonly OntosOperationContract[];
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
+  readonly requirements?: OntosModuleRequirements;
   readonly shellContributions: OntosShellContributions;
 }
 
@@ -57,6 +67,7 @@ export interface VerticalRuntimeRegistrationInput<Manifest extends OntosModuleMa
   readonly entrypoints?: VerticalRuntimeEntrypointBindings;
   readonly manifest: Manifest;
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
+  readonly reads?: readonly AnyReadRegistration[];
 }
 
 type EntrypointImportBoundary = Parameters<typeof Effect.promise<object>>[0];
@@ -89,7 +100,7 @@ const assertUnique = (values: readonly string[], label: string): void => {
 };
 
 const validateRuntimeActions = (input: VerticalRuntimeRegistrationInput): void => {
-  const allowed = new Set(['actions', 'entrypoints', 'manifest', 'outboxWorkers']);
+  const allowed = new Set(['actions', 'entrypoints', 'manifest', 'outboxWorkers', 'reads']);
   for (const key of Reflect.ownKeys(input)) {
     if (!Predicate.isString(key) || !allowed.has(key)) {
       failRuntimeRegistration(`runtime registration contains unsupported field ${String(key)}`);
@@ -108,6 +119,34 @@ const validateRuntimeActions = (input: VerticalRuntimeRegistrationInput): void =
       failRuntimeRegistration('runtime Action must be the same value published by the manifest');
     }
   }
+};
+
+const validateRuntimeOperationContracts = (
+  input: VerticalRuntimeRegistrationInput,
+  workers: readonly AnyOutboxWorkerRegistration[],
+): readonly OntosOperationContract[] => {
+  const reads = input.reads ?? [];
+  for (const read of reads) {
+    if (!isReadRegistration(read) || read.descriptor.owningModuleKey !== input.manifest.module.id) {
+      failRuntimeRegistration('runtime Reads must be genuine owner-local defineRead values');
+    }
+  }
+  const registrations = [...input.actions, ...reads, ...workers];
+  const entrypointKeys = registrations.map((registration) => registration.descriptor.entrypoint.entrypointKey);
+  assertUnique(entrypointKeys, 'runtime operation entrypoint');
+  const entrypoints = new Set(entrypointKeys);
+  for (const requirement of input.manifest.requirements?.operations ?? []) {
+    if (!entrypoints.has(requirement.entrypointKey)) {
+      failRuntimeRegistration('operation requirement must bind an actual registered Action, Read, or Worker');
+    }
+  }
+  const operationRegistrations = new Set([...input.actions, ...reads]);
+  for (const binding of input.manifest.publicSurface.operationContracts ?? []) {
+    if (!operationRegistrations.has(binding.registration)) {
+      failRuntimeRegistration('public operation contract must bind the same private runtime registration value');
+    }
+  }
+  return projectOntosModuleOperationContracts(input.manifest);
 };
 
 const validateRuntimeEntrypoints = (entrypoints: VerticalRuntimeEntrypointBindings): void => {
@@ -136,7 +175,8 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
   }
   const entrypoints = input.entrypoints ?? emptyEntrypoints();
   validateRuntimeEntrypoints(entrypoints);
-  return new VerticalRuntimeRegistrationValue(input.manifest.module.id, {
+  const operationContracts = validateRuntimeOperationContracts(input, workers);
+  const runtime: PrivateVerticalRuntime = {
     actions: Object.freeze([...input.actions]),
     entrypoints: Object.freeze({
       api: Object.freeze({ ...entrypoints.api }),
@@ -145,9 +185,14 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
       reports: Object.freeze({ ...entrypoints.reports }),
       search: Object.freeze({ ...entrypoints.search }),
     }),
+    operationContracts,
     outboxWorkers: workers,
     shellContributions: input.manifest.publicSurface.shellContributions,
-  });
+  };
+  if (input.manifest.requirements !== undefined) {
+    Object.assign(runtime, { requirements: copyOntosModuleRequirements(input.manifest.requirements) });
+  }
+  return new VerticalRuntimeRegistrationValue(input.manifest.module.id, Object.freeze(runtime));
 };
 
 const requirePrivateRuntime = (registration: VerticalRuntimeRegistration): PrivateVerticalRuntime => {
@@ -176,7 +221,9 @@ export const getVerticalRuntimeEntrypoints = (
 export interface VerticalRuntimeSafeDescriptors {
   readonly actions: readonly OntosActionContract[];
   readonly moduleId: OntosModuleId;
+  readonly operationContracts: readonly OntosOperationContract[];
   readonly outboxSubscriptions: readonly OntosOutboxSubscriptionContract[];
+  readonly requirements?: OntosModuleRequirements;
   readonly shellContributions: OntosShellContributions;
 }
 
@@ -185,7 +232,7 @@ export const extractVerticalRuntimeSafeDescriptors = (
   registration: VerticalRuntimeRegistration,
 ): VerticalRuntimeSafeDescriptors => {
   const runtime = requirePrivateRuntime(registration);
-  return Object.freeze({
+  const descriptors: VerticalRuntimeSafeDescriptors = {
     actions: Object.freeze(
       runtime.actions
         .map(({ descriptor }) =>
@@ -206,6 +253,7 @@ export const extractVerticalRuntimeSafeDescriptors = (
         .toSorted((left, right) => left.actionKey.localeCompare(right.actionKey)),
     ),
     moduleId: registration.moduleId,
+    operationContracts: runtime.operationContracts,
     outboxSubscriptions: Object.freeze(
       runtime.outboxWorkers
         .map(({ descriptor }) =>
@@ -225,5 +273,9 @@ export const extractVerticalRuntimeSafeDescriptors = (
         .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
     ),
     shellContributions: runtime.shellContributions,
-  });
+  };
+  if (runtime.requirements !== undefined) {
+    Object.assign(descriptors, { requirements: runtime.requirements });
+  }
+  return Object.freeze(descriptors);
 };

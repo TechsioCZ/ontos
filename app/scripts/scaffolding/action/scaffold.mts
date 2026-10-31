@@ -24,6 +24,7 @@ import {
   ensureUniqueMutationPaths,
   insertSortedSlot,
   isModuleManifestImport,
+  isModuleRegistrationImport,
   requireCanonicalSlug,
   requireCoreModuleKey,
   resolveContainedPath,
@@ -314,13 +315,7 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
             MODULE_REGISTRATION_IMPORT_SLOT_START,
             MODULE_REGISTRATION_IMPORT_SLOT_END,
             [ownerImport],
-            (candidate) =>
-              /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
-                candidate,
-              ) ||
-              /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(
-                candidate,
-              ),
+            isModuleRegistrationImport,
           ),
           MODULE_REGISTRATION_ACTION_SLOT_START,
           MODULE_REGISTRATION_ACTION_SLOT_END,
