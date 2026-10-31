@@ -304,7 +304,7 @@
       "archived": "Archived",
       "counterparty": "Counterparty",
       "empty": "No authorized results found.",
-      "label": "Search this tenant and selected legal entity",
+      "label": "Search",
       "legal_entity": "Legal Entity",
       "partial": "Some search providers are temporarily unavailable. The available results are shown.",
       "party": "Party",
@@ -315,11 +315,10 @@
       },
       "selection_required": "Sign in and select a tenant before searching.",
       "seoDescription": "Search authorized resources in the selected OntOS context.",
-      "submit": "Search",
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
       "clear": "Clear search",
-      "placeholder": "Search…"
+      "placeholder": "Search customers and contacts…"
     },
     "resource": {
       "forbidden": "You do not have permission to view this resource.",

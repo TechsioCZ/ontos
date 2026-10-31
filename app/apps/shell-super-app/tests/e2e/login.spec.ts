@@ -318,11 +318,12 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
 }) => {
   await login(page, 'en', authentication.credentials);
 
-  // The sidebar search is controlled: typed text reaches the query only through the renderer's change event.
+  // The top-bar search is controlled: typed text reaches the query only through the renderer's change event.
   await waitForInteractiveAccountMenu(page);
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
-  await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('Unit 1');
-  await sidebar.getByRole('button', { exact: true, name: 'Search' }).click();
+  const header = page.locator('header[aria-label="Dashboard header"]');
+  const searchbox = header.getByRole('searchbox', { exact: true, name: 'Search' });
+  await searchbox.fill('Unit 1');
+  await searchbox.press('Enter');
   await expect(page).toHaveURL(/\/en\/search\?q=Unit%201$/u);
 
   const expectPersistentShell = async (path: string, status: string) => {

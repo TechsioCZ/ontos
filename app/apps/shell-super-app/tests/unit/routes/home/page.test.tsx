@@ -1,5 +1,5 @@
 import { getDocumentCompositionRevision } from '@app/shared-contracts';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Result, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
@@ -95,8 +95,9 @@ const translations = new Map(
     'shell.modules.state.readOnly': 'Read only',
     'shell.modules.unavailable': 'Module access unavailable',
     'shell.moduleTarget.reload_required': 'Reload this page to continue',
-    'shell.search.label': 'Search this legal entity',
-    'shell.search.submit': 'Search',
+    'shell.search.clear': 'Clear search',
+    'shell.search.label': 'Search',
+    'shell.search.placeholder': 'Search customers and contacts…',
   }),
 );
 
@@ -342,13 +343,27 @@ it.live('successful legal-entity switch performs a full document reload', () =>
   }),
 );
 
-it.live('search submission navigates to the localized Shell search route', () =>
-  Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
+it.live('top-bar search submits on Enter to the localized Shell search route', () =>
+  Effect.gen(function* topBarSearchSubmitsOnEnter() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() => user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
+    const header = screen.getByRole('banner', { name: 'Dashboard header' });
+    const searchbox = within(header).getByRole('searchbox', { name: 'Search' });
+    expect(searchbox.getAttribute('placeholder')).toBe('Search customers and contacts…');
+    expect(
+      within(screen.getByRole('complementary', { name: 'Dashboard sidebar' })).queryByRole('searchbox'),
+    ).toBeNull();
+    yield* Effect.promise(() => user.type(searchbox, 'Unit 1{Enter}'));
     expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
+  }),
+);
+
+it.live('"/" focuses the top-bar search outside text fields', () =>
+  Effect.gen(function* slashFocusesTopBarSearch() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() => user.keyboard('/'));
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search' }));
   }),
 );
 

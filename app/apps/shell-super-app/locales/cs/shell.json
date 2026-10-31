@@ -304,7 +304,7 @@
       "archived": "Archivováno",
       "counterparty": "Obchodní protistrana",
       "empty": "Nebyly nalezeny žádné autorizované výsledky.",
-      "label": "Hledat v tenantovi a vybraném právním subjektu",
+      "label": "Hledat",
       "legal_entity": "Právní subjekt",
       "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
       "party": "Subjekt",
@@ -315,11 +315,10 @@
       },
       "selection_required": "Před vyhledáváním se přihlaste a vyberte tenanta.",
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
-      "submit": "Hledat",
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
       "clear": "Vymazat hledání",
-      "placeholder": "Hledat…"
+      "placeholder": "Hledat zákazníky a kontakty…"
     },
     "resource": {
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
