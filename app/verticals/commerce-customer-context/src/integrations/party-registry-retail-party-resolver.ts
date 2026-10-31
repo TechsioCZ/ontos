@@ -12,12 +12,10 @@ import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/e
 import { acquireRetailPartyGateway } from '../enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
+import { RetailPartyDetailExecutor } from './retail-party-detail-executor.ts';
+import type { RetailPartyResolutionExecutor } from './retail-party-detail-executor.ts';
 
 type RetailPartyResolver = NonNullable<ProfilePersistenceDependencies['resolveRetailParty']>;
-type RetailPartyResolutionExecutor = (
-  payload: Parameters<typeof executePartyDetailWithAuthorization>[0],
-  requestCorrelation: string,
-) => ReturnType<typeof executePartyDetailWithAuthorization>;
 type RetailPartyResolution = Effect.Success<ReturnType<RetailPartyResolver>>;
 
 export interface PartyRegistryRetailPartyResolverFactoryInput {
@@ -165,6 +163,8 @@ export const preparedRetailPartyResolution: Effect.Effect<
   never,
   ActiveApplicationCompositionService | Scope.Scope
 > = Effect.gen(function* prepareRetailPartyResolution() {
+  const transport = yield* Effect.serviceOption(RetailPartyDetailExecutor);
+  const execute = Option.getOrUndefined(transport)?.execute;
   const compositions = yield* ActiveApplicationCompositionService;
   let prepared: {
     readonly request: Parameters<RetailPartyResolver>[0];
@@ -225,7 +225,7 @@ export const preparedRetailPartyResolution: Effect.Effect<
           partyResourceId: payload.subject.partyRef.resourceId,
           tenantId: scope.tenantId,
         };
-        const result = yield* makePartyRegistryRetailPartyResolver(scope)(request);
+        const result = yield* makePartyRegistryRetailPartyResolver(scope, execute)(request);
         prepared = { request, result, scope };
         // Owner evidence is not a grant: ordinary native Action authorization still applies.
         return { outcome: 'not_applicable' } as const;

@@ -1,4 +1,5 @@
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
+import type { ActionRuntimeService } from '@app/core-runtime';
 import type { Issue } from 'effect/SchemaIssue';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
 import { Socket } from 'effect/socket';
@@ -6,6 +7,7 @@ import { NodeSocket, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } fro
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ContextAccessLive,
+  ActiveApplicationCompositionService,
   findPostgresFailure,
   CorePersistenceLive,
   DatabaseConfig,
@@ -17,6 +19,8 @@ import {
   TenantModuleStateServiceLive,
   defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
+  ActionRuntime,
+  ActionAuthorizationPreflight,
   makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
@@ -101,8 +105,9 @@ import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-
 import { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 import {
   PartyRegistryRetailPartyResolverFactory,
-  partyRegistryRetailPartyResolverFactoryLive,
+  preparedRetailPartyResolution,
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
   profileCounterpartyRoleEligibilityResolverFactoryLive,
@@ -887,16 +892,10 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
         }),
       ),
     );
-  const factories = yield* Layer.build(
-    Layer.mergeAll(partyRegistryRetailPartyResolverFactoryLive, profileCounterpartyRoleEligibilityResolverFactoryLive),
-  );
-  const retailFactory = Context.get(factories, PartyRegistryRetailPartyResolverFactory);
+  const factories = yield* Layer.build(profileCounterpartyRoleEligibilityResolverFactoryLive);
   const counterpartyFactory = Context.get(factories, ProfileCounterpartyRoleEligibilityResolverFactory);
   const profileReader = profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive));
   const ownerServices = Layer.mergeAll(
-    Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-      make: (input) => retailFactory.make(input, readParty),
-    }),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (input) => counterpartyFactory.make(input, readCounterparty),
     }),
@@ -946,7 +945,39 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     composition,
     ownerServices,
   ).pipe(Layer.provideMerge(databaseIdentities));
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const baseActions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provideMerge(ownerServices),
+  );
+  // Match the native API's invocation scope. Party HTTP runs in preflight and only
+  // its single-use prepared result reaches transaction-scoped profile persistence.
+  const actions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* preparedActionRuntime() {
+      const existing = yield* ActionRuntime;
+      const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
+      const compositions = yield* ActiveApplicationCompositionService;
+      const runAction: ActionRuntimeService['runAction'] = (input) =>
+        Effect.scoped(
+          Effect.gen(function* runPreparedAction() {
+            const scope = yield* Effect.scope;
+            const retail = yield* preparedRetailPartyResolution.pipe(
+              Effect.provideService(RetailPartyDetailExecutor, { execute: readParty }),
+              Effect.provideService(ActiveApplicationCompositionService, compositions),
+            );
+            const runtime = yield* Layer.buildWithScope(makeActionRuntimeLive(ultramodernDeliveryUnit), scope).pipe(
+              Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, retail.preflight)),
+            );
+            return yield* Context.get(runtime, ActionRuntime)
+              .runAction(input)
+              .pipe(Effect.provideService(PartyRegistryRetailPartyResolverFactory, retail.factory));
+          }),
+        );
+      return { ...existing, runAction };
+    }),
+  ).pipe(
+    Layer.provide(baseActions),
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(ownerServices),

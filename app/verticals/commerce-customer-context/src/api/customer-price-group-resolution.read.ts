@@ -9,7 +9,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
+import type { OperationalScope, ReadFinishContext, ReadLoadContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
@@ -107,9 +107,7 @@ const verificationReference = (input: {
   return `commerce.customer-context.customer-price-group.verification:v1:sha256:${digest}`;
 };
 
-export const resolveCustomerPriceGroupFromServices = Effect.fn(
-  'CustomerPriceGroupResolutionRead.resolveCustomerPriceGroupFromServices',
-)(function* resolve(
+export const loadCustomerPriceGroupResolution = Effect.fn('CustomerPriceGroupResolutionRead.load')(function* load(
   input: CustomerPriceGroupResolutionRequest,
   tenantId: string,
   services: CustomerPriceGroupResolutionServices,
@@ -125,47 +123,78 @@ export const resolveCustomerPriceGroupFromServices = Effect.fn(
   if (lookup._tag === 'profile_not_found') {
     return yield* notFound();
   }
-  const resolution = yield* resolveCustomerPriceGroupAt(
-    input.profile,
-    lookup.assignments,
-    effectiveAt,
-    services.catalog,
-  ).pipe(Effect.mapError(unavailable));
-  const observedAt = yield* services.now;
   const generation = currentSetGeneration(input.profile, lookup.assignments);
-  const predicateRef = customerPriceGroupResolutionPredicateRef(input.profile, effectiveAt);
-  const ownerRevision = generation;
-  const verificationRef = verificationReference({ generation, observedAt, predicateRef });
   return {
-    completenessEvidence: {
-      observedAt,
-      ownerRevision,
-      scope: { kind: 'EXACT_PREDICATE', predicateRef },
-    },
-    currentnessEvidence: {
-      evaluatedAt: effectiveAt,
-      generation,
-      observedAt,
-      ownerRevision,
-      predicateRef,
-      revalidatedAt: observedAt,
-      verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
-    },
+    assignments: lookup.assignments,
+    catalog: services.catalog,
     effectiveAt,
     generation,
-    observedAt,
-    profile: input.profile,
-    resolution,
-    verificationReceipt: {
-      generation,
-      issuedAt: observedAt,
-      ownerModuleId: CUSTOMER_CONTEXT_MODULE_ID,
-      ownerRevision,
-      predicateRef,
-      verificationRef,
-    },
-  } satisfies CustomerPriceGroupResolutionResponse;
+  };
 });
+
+type CustomerPriceGroupResolutionSnapshot = Effect.Success<ReturnType<typeof loadCustomerPriceGroupResolution>>;
+
+export const revalidateCustomerPriceGroupResolution = Effect.fn('CustomerPriceGroupResolutionRead.revalidate')(
+  function* revalidate(
+    input: CustomerPriceGroupResolutionRequest,
+    tenantId: string,
+    services: CustomerPriceGroupResolutionServices,
+    generation: string,
+  ) {
+    const current = yield* loadCustomerPriceGroupResolution(input, tenantId, services);
+    if (current.generation !== generation) {
+      return yield* unavailable('Customer PriceGroup assignments changed during catalog resolution');
+    }
+    return yield* services.now;
+  },
+);
+
+export const resolveCustomerPriceGroupFromSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.resolveSnapshot')(
+  function* resolve<Failure, Requirements>(
+    input: CustomerPriceGroupResolutionRequest,
+    snapshot: CustomerPriceGroupResolutionSnapshot,
+    revalidate: Effect.Effect<PriceGroupInstant, Failure, Requirements>,
+  ) {
+    const { assignments, catalog, effectiveAt, generation } = snapshot;
+    const resolution = yield* resolveCustomerPriceGroupAt(input.profile, assignments, effectiveAt, catalog).pipe(
+      Effect.mapError(unavailable),
+    );
+    const observedAt = yield* revalidate;
+    const predicateRef = customerPriceGroupResolutionPredicateRef(input.profile, effectiveAt);
+    const ownerRevision = generation;
+    const verificationRef = verificationReference({ generation, observedAt, predicateRef });
+    const result = {
+      completenessEvidence: {
+        observedAt,
+        ownerRevision,
+        scope: { kind: 'EXACT_PREDICATE', predicateRef },
+      },
+      currentnessEvidence: {
+        evaluatedAt: effectiveAt,
+        generation,
+        observedAt,
+        ownerRevision,
+        predicateRef,
+        revalidatedAt: observedAt,
+        verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
+      },
+      effectiveAt,
+      generation,
+      observedAt,
+      profile: input.profile,
+      resolution,
+      verificationReceipt: {
+        generation,
+        issuedAt: observedAt,
+        ownerModuleId: CUSTOMER_CONTEXT_MODULE_ID,
+        ownerRevision,
+        predicateRef,
+        verificationRef,
+      },
+    } satisfies CustomerPriceGroupResolutionResponse;
+    return result;
+  },
+);
 
 const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -212,6 +241,36 @@ export const customerPriceGroupResolutionServicesForTransaction = (
   });
 };
 
+const finishCustomerPriceGroupResolution = Effect.fn('CustomerPriceGroupResolutionRead.finish')(function* finish(
+  input: CustomerPriceGroupResolutionRequest,
+  context: ReadFinishContext<undefined, CustomerPriceGroupResolutionSnapshot>,
+) {
+  // Only immutable rows and the catalog adapter escape load. No transaction-scoped
+  // database service survives the commit, and the HTTP call holds no SQL connection.
+  const result = yield* resolveCustomerPriceGroupFromSnapshot(
+    input,
+    context.loaded,
+    context.transaction((transaction) =>
+      customerPriceGroupResolutionServicesForTransaction(transaction, context.scope, context.compositionRevision).pipe(
+        Effect.flatMap((services) =>
+          revalidateCustomerPriceGroupResolution(input, context.scope.tenantId, services, context.loaded.generation),
+        ),
+      ),
+    ),
+  );
+  return {
+    evidence: {
+      resultCount:
+        result.resolution._tag === 'NONE'
+          ? 0
+          : result.resolution._tag === 'INCONSISTENT'
+            ? result.resolution.currentAssignmentCount
+            : 1,
+    },
+    result,
+  };
+});
+
 export const customerPriceGroupResolutionRead = defineRead(
   {
     accessKind: 'detail',
@@ -231,23 +290,11 @@ export const customerPriceGroupResolutionRead = defineRead(
     schemaVersion: '1',
   },
   {
+    finish: finishCustomerPriceGroupResolution,
     load: (
       input: CustomerPriceGroupResolutionRequest,
       context: ReadLoadContext<CustomerPriceGroupResolutionServices>,
-    ) =>
-      resolveCustomerPriceGroupFromServices(input, context.scope.tenantId, context.services).pipe(
-        Effect.map((result) => ({
-          evidence: {
-            resultCount:
-              result.resolution._tag === 'NONE'
-                ? 0
-                : result.resolution._tag === 'INCONSISTENT'
-                  ? result.resolution.currentAssignmentCount
-                  : 1,
-          },
-          result,
-        })),
-      ),
+    ) => loadCustomerPriceGroupResolution(input, context.scope.tenantId, context.services),
   },
   customerPriceGroupResolutionServicesForTransaction,
   customerPriceGroupReadPermission,

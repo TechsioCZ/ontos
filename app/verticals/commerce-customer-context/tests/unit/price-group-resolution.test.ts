@@ -10,8 +10,12 @@ import {
 import {
   customerPriceGroupResolutionPermission,
   customerPriceGroupResolutionRead,
-  resolveCustomerPriceGroupFromServices,
+  loadCustomerPriceGroupResolution,
+  revalidateCustomerPriceGroupResolution,
+  resolveCustomerPriceGroupFromSnapshot,
 } from '../../src/api/customer-price-group-resolution.read.ts';
+import type { CustomerPriceGroupResolutionServices } from '../../src/api/customer-price-group-resolution.read.ts';
+import type { CustomerPriceGroupResolutionRequest } from '../../shared/apis/customer-price-group-resolution.ts';
 import {
   CustomerPriceGroupResolutionRequestSchema,
   CustomerPriceGroupResolutionResponseSchema,
@@ -29,6 +33,19 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { resolveCustomerPriceGroupAt } from '../../shared/domain/price-group-resolution.ts';
+
+const resolveCustomerPriceGroupFromServices = Effect.fn('PriceGroupResolutionTest.resolve')(function* resolve(
+  input: CustomerPriceGroupResolutionRequest,
+  tenant: string,
+  services: CustomerPriceGroupResolutionServices,
+) {
+  const snapshot = yield* loadCustomerPriceGroupResolution(input, tenant, services);
+  return yield* resolveCustomerPriceGroupFromSnapshot(
+    input,
+    snapshot,
+    revalidateCustomerPriceGroupResolution(input, tenant, services, snapshot.generation),
+  );
+});
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const requestedEffectiveAt = '2026-02-15T00:00:00.000Z';
@@ -110,6 +127,92 @@ const unreachableStore: CustomerPriceGroupAssignmentStorePort = {
   remove: unavailableStore,
   resolve: unavailableStore,
 };
+
+it.effect('releases the owner snapshot before catalog I/O and revalidates the current set afterwards', () =>
+  Effect.gen(function* phasedResolution() {
+    let inTransaction = true;
+    let catalogCalls = 0;
+    const events: string[] = [];
+    const services: CustomerPriceGroupResolutionServices = {
+      catalog: {
+        resolveCurrent: () =>
+          Effect.sync(() => {
+            expect(inTransaction).toBe(false);
+            catalogCalls += 1;
+            events.push('catalog');
+            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
+          }),
+      },
+      now: Effect.succeed(observedAt),
+      profileValidation: {
+        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+      },
+      store: {
+        ...unreachableStore,
+        resolve: () =>
+          Effect.sync(() => {
+            expect(inTransaction).toBe(true);
+            events.push('snapshot');
+            return { _tag: 'found', assignments: [assignment('current')] } as const;
+          }),
+      },
+    };
+    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
+    const snapshot = yield* loadCustomerPriceGroupResolution(input, tenantId, services);
+    expect(catalogCalls).toBe(0);
+    inTransaction = false;
+    const result = yield* resolveCustomerPriceGroupFromSnapshot(
+      input,
+      snapshot,
+      Effect.sync(() => {
+        inTransaction = true;
+      }).pipe(
+        Effect.andThen(revalidateCustomerPriceGroupResolution(input, tenantId, services, snapshot.generation)),
+        Effect.ensuring(
+          Effect.sync(() => {
+            inTransaction = false;
+          }),
+        ),
+      ),
+    );
+    expect(result.resolution._tag).toBe('ASSIGNED');
+    expect(events).toEqual(['snapshot', 'catalog', 'snapshot']);
+    expect(catalogCalls).toBe(1);
+  }),
+);
+
+it.effect('fails closed when an assignment changes while the catalog request is in flight', () =>
+  Effect.gen(function* concurrentAssignmentChange() {
+    let assignments = [assignment('current')];
+    const services: CustomerPriceGroupResolutionServices = {
+      catalog: {
+        resolveCurrent: () =>
+          Effect.sync(() => {
+            assignments = [];
+            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
+          }),
+      },
+      now: Effect.succeed(observedAt),
+      profileValidation: {
+        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+      },
+      store: {
+        ...unreachableStore,
+        resolve: () => Effect.sync(() => ({ _tag: 'found' as const, assignments })),
+      },
+    };
+    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
+    const snapshot = yield* loadCustomerPriceGroupResolution(input, tenantId, services);
+    const failure = yield* Effect.flip(
+      resolveCustomerPriceGroupFromSnapshot(
+        input,
+        snapshot,
+        revalidateCustomerPriceGroupResolution(input, tenantId, services, snapshot.generation),
+      ),
+    );
+    expect(failure._tag).toBe('ReadHandlerUnavailable');
+  }),
+);
 
 it.effect('resolves NONE only when there is no current temporal assignment', () =>
   Effect.gen(function* noCurrentAssignment() {
