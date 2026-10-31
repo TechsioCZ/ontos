@@ -1,15 +1,20 @@
+import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { DateTime, Effect, Layer, Redacted, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import type { NoticePresentationRequest } from '../../shared/apis/notice-presentation.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '@app/commerce-customer-context/portal-auth/contracts';
-import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
+import { TestClock } from 'effect/testing';
+import { PrivacySubjectOwnerEvidenceSchema, PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
 import {
   CommerceCustomerContextNoticeSubjectAuthorityService,
+  prepareNoticeSubjectAuthority,
+  resolvePreparedNoticeSubject,
+  checkPreparedNoticeSubjectValidity,
   CommerceCustomerContextNoticeSubjectAuthorityServiceLive,
 } from '../../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 import {
@@ -33,12 +38,12 @@ const scope: OperationalScope = {
   }),
   correlationId: 'profile-consent-unit',
 };
-const partyRef = {
+const partyRef = Schema.decodeSync(PrivacyPartyRefSchema)({
   moduleId: 'party.registry',
   resourceId: '20000000-0000-4000-8000-000000000001',
   resourceType: 'party.registry.party',
   tenantId,
-};
+});
 const profileRef = {
   moduleId: 'commerce.customer-context',
   resourceId: 'profile:original',
@@ -439,5 +444,59 @@ it.effect('rejects unsupported credential kinds before acquiring any foreign-own
       expect(Result.isFailure(proof.result)).toBe(true);
       expect(proof.calls).toEqual([]);
     }
+  }),
+);
+
+it.effect('binds prepared Notice authority to the exact Subject, Principal and live Party assertion interval', () =>
+  Effect.gen(function* preparedNoticeAuthority() {
+    const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const validTo = DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(observedAt), { seconds: 30 }));
+    const partyEvidence = Schema.decodeSync(PrivacySubjectOwnerEvidenceSchema)({
+      observedAt,
+      ownerRevision: 1,
+      partyRef: Schema.decodeSync(PrivacyPartyRefSchema)(partyRef),
+      typeAssertions: [{ assertionId: 'prepared:person:assertion', validFrom: observedAt, validTo }],
+    });
+    let calls = 0;
+    const prepared = yield* prepareNoticeSubjectAuthority({
+      compositionRevision: 'a'.repeat(64),
+      records: [subject],
+      scope,
+      target: request,
+    }).pipe(
+      Effect.provideService(CommerceCustomerContextNoticeSubjectAuthorityService, {
+        forScope: () => ({
+          resolve: () => {
+            calls += 1;
+            return Effect.succeed({ evidenceRefs: ['prepared:person:assertion'], partyEvidence });
+          },
+        }),
+      }),
+    );
+    const input = { scope, subjects: { listSubjects: () => Effect.succeed([subject]) } };
+    expect((yield* resolvePreparedNoticeSubject(prepared, { scope: input, target: request })).evidenceRefs).toEqual([
+      'prepared:person:assertion',
+    ]);
+    expect(
+      yield* resolvePreparedNoticeSubject(prepared, {
+        scope: input,
+        target: { ...request, retailProfileId: 'different-profile' },
+      }).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(
+      yield* resolvePreparedNoticeSubject(prepared, {
+        scope: { ...input, scope: { ...scope, principalId: '90000000-0000-4000-8000-000000000001' } },
+        target: request,
+      }).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(
+      yield* resolvePreparedNoticeSubject(prepared, {
+        scope: { ...input, subjects: { listSubjects: () => Effect.succeed([{ ...subject, updatedAt: validTo }]) } },
+        target: request,
+      }).pipe(Effect.isFailure),
+    ).toBe(true);
+    yield* TestClock.adjust('30 seconds');
+    expect(yield* checkPreparedNoticeSubjectValidity(prepared).pipe(Effect.isFailure)).toBe(true);
+    expect(calls).toBe(1);
   }),
 );

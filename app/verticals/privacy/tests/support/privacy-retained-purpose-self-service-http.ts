@@ -22,6 +22,14 @@ import {
 import { ExternalGatewayContextRequestSchema } from '@app/shared-contracts/external-identity';
 import { ConsentSelfServiceAuthorizationError } from '../../shared/domain/privacy-consent-self-service.ts';
 
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
+
+const commerceModuleKey = 'commerce.customer-context';
+const privacyModuleKey = 'privacy.core';
 const uuid = Schema.String.check(Schema.isUUID());
 const localOrigin = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
@@ -61,6 +69,28 @@ export const retainedConsentAccountActionKeys = [
   'privacy.core.record-consent-decision',
   'privacy.core.consent-self-service',
 ] as const;
+/** Exact fixture role policy; Action identity and scope links use the canonical Core builders. */
+export const buildRetainedConsentAccountActionRelationships = (
+  account: Pick<RetainedConsentAccountTransport, 'legalEntityId' | 'principalId' | 'tenantId'>,
+): readonly v1.Relationship[] => {
+  const { legalEntityId, principalId, tenantId } = account;
+  const roleKey = `retained-consent-account:${principalId}`;
+  const scope = { legalEntityId, tenantId };
+  const actions = retainedConsentAccountActionKeys.map((actionKey) => ({ ...scope, actionKey }));
+  return [
+    ...buildActionAuthorizationRelationships(actions),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      actions.map((action) => ({ ...action, roleKey })),
+      [{ ...scope, moduleKeys: [commerceModuleKey, privacyModuleKey] }],
+    ),
+    v1.Relationship.create({
+      relation: 'member',
+      resource: { objectId: toScopedRoleObjectId({ ...scope, roleKey }), objectType: 'scoped_role' },
+      subject: { object: { objectId: principalId, objectType: 'principal' } },
+    }),
+  ];
+};
+
 class RetainedAccountPermissionError extends Schema.TaggedError<RetainedAccountPermissionError>()(
   'RetainedAccountPermissionError',
   { stage: Schema.String },
@@ -251,20 +281,7 @@ export const installRetainedAccountEntrypoints = Effect.fn('RetainedConsent.inst
         resource: { objectId: legalEntityId, objectType: 'legal_entity' },
         subject,
       }),
-      ...retainedConsentAccountActionKeys.map((actionKey) =>
-        v1.Relationship.create({
-          relation: 'executor',
-          resource: {
-            objectId: toSpiceDbActionObjectId({
-              actionKey,
-              legalEntityId: account.legalEntityId,
-              tenantId: account.tenantId,
-            }),
-            objectType: 'action',
-          },
-          subject,
-        }),
-      ),
+      ...buildRetainedConsentAccountActionRelationships(account),
       v1.Relationship.create({
         relation: 'module',
         resource: { objectId: partyObjectId, objectType: 'resource' },
@@ -276,7 +293,7 @@ export const installRetainedAccountEntrypoints = Effect.fn('RetainedConsent.inst
         subject,
       }),
     ];
-    for (const moduleId of ['commerce.customer-context', partyModuleKey, 'privacy.core']) {
+    for (const moduleId of [commerceModuleKey, partyModuleKey, privacyModuleKey]) {
       const objectId = toModuleAccessObjectId(account.tenantId, account.legalEntityId, moduleId);
       if (objectId === undefined) {
         return yield* permissionFailure('module-object');
@@ -336,7 +353,7 @@ export const installRetainedAccountEntrypoints = Effect.fn('RetainedConsent.inst
         v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
       );
     }
-    for (const moduleId of ['commerce.customer-context', partyModuleKey, 'privacy.core']) {
+    for (const moduleId of [commerceModuleKey, partyModuleKey, privacyModuleKey]) {
       const objectId = toModuleAccessObjectId(account.tenantId, account.legalEntityId, moduleId);
       if (objectId === undefined) {
         return yield* permissionFailure('module-verification-object');

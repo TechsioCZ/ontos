@@ -1,3 +1,11 @@
+import {
+  checkPreparedSubjectValidity,
+  resolvePreparedSubjectParty,
+  validatePreparedSubjectIntent,
+  validateRetainedSubjectWriteIntent,
+  privacySubjectPreparationScopeMatches,
+} from './privacy-subject-preparation.ts';
+import type { PreparedPrivacySubject } from './privacy-subject-preparation.ts';
 import { PrivacySubjectPartyOwner, privacySubjectPartyOwnerUnavailable } from './privacy-subject-party-owner.ts';
 import { privacyOperationPersistenceFailureCode } from './privacy-operation-persistence-error.ts';
 import { PrivacyOperationRepository, PrivacyOperationPersistenceError } from './privacy-operation-repository.ts';
@@ -360,7 +368,6 @@ const encode = <A, I>(schema: Schema.Codec<A, I>, value: A): I => Result.getOrTh
 const DSR_OWNER_TASK_LABEL = 'DSR Owner Task';
 
 const consentEquivalent = Schema.toEquivalence(ConsentDecisionSchema);
-const subjectEquivalent = Schema.toEquivalence(PrivacySubjectRecordSchema);
 const retentionWorkEquivalent = Schema.toEquivalence(RetentionEvaluationWorkSchema);
 const applicabilityPolicyEquivalent = Schema.toEquivalence(PrivacyApplicabilityPolicySchema);
 const representationEquivalent = Schema.toEquivalence(RepresentationSchema);
@@ -524,10 +531,16 @@ const dsrFinalResponseIsCurrent = (input: {
 
 const privacyMeasureHandoffLabel = 'Privacy Measure Handoff';
 
+const PRIVACY_SUBJECT_LABEL = 'Privacy Subject';
+
 const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
-  trustedScope: OperationalScope & Readonly<{ legalEntityId: string }>,
+  configuration: {
+    readonly scope: OperationalScope & Readonly<{ legalEntityId: string }>;
+    readonly subjectPreparation?: PreparedPrivacySubject;
+  },
 ): Effect.fn.Return<PrivacyOperationRepositoryService, never, Crypto.Crypto> {
+  const { scope: trustedScope, subjectPreparation } = configuration;
   const partyOwner = Option.getOrElse(
     yield* Effect.serviceOption(PrivacySubjectPartyOwner),
     () => privacySubjectPartyOwnerUnavailable,
@@ -555,7 +568,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
     const subjects = yield* decodeAll(
       PrivacySubjectRecordSchema,
       rows.map(({ record }) => record),
-      'Privacy Subject',
+      PRIVACY_SUBJECT_LABEL,
     );
     return subjects;
   });
@@ -2030,7 +2043,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
     ),
     createSubject: Effect.fn('PrivacyOperationPostgresRepository.createSubject')(function* createSubjectEffect(
       { legalEntityId, tenantId },
-      { actionInvocationId: _actionInvocationId, subject },
+      { actionInvocationId, subject },
     ) {
       yield* assertScope(tenantId, legalEntityId);
       const rows = yield* transaction
@@ -2046,15 +2059,22 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         .limit(1)
         .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subject could not be loaded', cause)));
       const row = rows.at(0);
+      if (subjectPreparation !== undefined) {
+        const current =
+          row === undefined ? undefined : yield* decode(PrivacySubjectRecordSchema, row.record, PRIVACY_SUBJECT_LABEL);
+        yield* validatePreparedSubjectIntent(subjectPreparation, { actionInvocationId, current, subject });
+      }
       if (row !== undefined) {
-        const current = yield* decode(PrivacySubjectRecordSchema, row.record, 'Privacy Subject');
-        const { ownerAdmission: _retainedAdmission, ...retainedIntent } = current;
-        const { ownerAdmission: _callerAdmission, ...proposedIntent } = subject;
-        if (!subjectEquivalent(retainedIntent, proposedIntent)) {
-          return yield* conflict('Privacy Subject identity conflict');
-        }
+        const current = yield* decode(PrivacySubjectRecordSchema, row.record, PRIVACY_SUBJECT_LABEL);
+        yield* validateRetainedSubjectWriteIntent(current, subject);
         if (current.subject.kind === 'DATA_SUBJECT') {
-          yield* partyOwner.resolve(current.subject.partyRef, trustedScope, false);
+          yield* subjectPreparation === undefined
+            ? partyOwner.resolve(current.subject.partyRef, trustedScope, false)
+            : resolvePreparedSubjectParty(subjectPreparation, {
+                partyRef: current.subject.partyRef,
+                scope: trustedScope,
+                write: false,
+              });
         }
         return current;
       }
@@ -2062,7 +2082,16 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
       const { ownerAdmission: _suppliedAdmission, ...intent } = subject;
       const recordedSubject =
         subject.subject.kind === 'DATA_SUBJECT'
-          ? { ...intent, ownerAdmission: yield* partyOwner.resolve(subject.subject.partyRef, trustedScope, true) }
+          ? {
+              ...intent,
+              ownerAdmission: yield* subjectPreparation === undefined
+                ? partyOwner.resolve(subject.subject.partyRef, trustedScope, true)
+                : resolvePreparedSubjectParty(subjectPreparation, {
+                    partyRef: subject.subject.partyRef,
+                    scope: trustedScope,
+                    write: true,
+                  }),
+            }
           : intent;
       yield* transaction
         .insert(privacySubjects)
@@ -2076,6 +2105,9 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
           updatedAt: date(subject.updatedAt),
         })
         .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subject could not be created', cause)));
+      if (subjectPreparation !== undefined) {
+        yield* checkPreparedSubjectValidity(subjectPreparation);
+      }
       return recordedSubject;
     }),
     // Compatibility for the pinned legacy producer and existing owner callers.
@@ -3620,7 +3652,27 @@ export const privacyOperationRepositoryForScope = (
   const { legalEntityId, tenantId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : makeRepository(transaction, { ...scope, legalEntityId, tenantId }).pipe(
+    : makeRepository(transaction, { scope: { ...scope, legalEntityId, tenantId } }).pipe(
         Effect.map((repository) => PrivacyOperationRepository.of(repository)),
       );
 };
+
+export const privacyOperationRepositoryForPreparedSubject = Effect.fn('PrivacySubjectPreparation.repository')(
+  function* preparedRepository(
+    transaction: ScopedTransaction,
+    input: { readonly prepared: PreparedPrivacySubject; readonly revision: string; readonly scope: OperationalScope },
+  ): Effect.fn.Return<PrivacyOperationRepositoryService, OperationContextUnavailable, Crypto.Crypto> {
+    const { prepared, revision, scope } = input;
+    if (
+      scope.legalEntityId === undefined ||
+      revision !== prepared.compositionRevision ||
+      !privacySubjectPreparationScopeMatches(prepared.scope, scope)
+    ) {
+      return yield* scopeUnavailable();
+    }
+    return yield* makeRepository(transaction, {
+      scope: { ...scope, legalEntityId: scope.legalEntityId },
+      subjectPreparation: prepared,
+    });
+  },
+);

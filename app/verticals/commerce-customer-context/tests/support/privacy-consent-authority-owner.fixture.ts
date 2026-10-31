@@ -17,11 +17,8 @@ import {
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import {
-  ResendEmailDeliveryConfigLive,
-  ResendEmailDeliveryLive,
-  RESEND_EMAILS_ENDPOINT,
-} from '@app/email-delivery/resend';
+import { RESEND_EMAILS_ENDPOINT } from '@app/email-delivery/resend';
+import { localEmailDeliveryLive } from './local-email-delivery.ts';
 import {
   PartyRegistryRetailPartyResolverFactory,
   makePartyRegistryRetailPartyResolver,
@@ -76,7 +73,7 @@ import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } fr
 
 import {
   makeCommerceCustomerContextApiRuntime,
-  productionActionRuntimeLive,
+  commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
   productionReadRuntimeLive,
   commercePortalAuthRealmLive,
   commercePortalAuthVerificationHttpExecutorLive,
@@ -89,6 +86,13 @@ import {
   GatewayAssertionRedemptionLive,
   gatewayAssertionRedemptionPgClient,
 } from '../../api/auth/gateway-assertion-redemption.ts';
+import { CommerceCoreIdentityClientConfigLive } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
+import { CommercePortalAuthAccountCreationProviderLive } from '../../api/portal-auth/provider/account-create.ts';
+import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import { CommercePortalAuthAccountCreationReconciliationLive } from '../../src/portal-auth/persistence/portal-auth-account-creation-reconciliation.ts';
+import { commerceEnrollmentOwnerTransitionPreparationLive } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
+import { CommerceEnrollmentPreparationSubjectResolverLive } from '../../src/enrollment/orchestration/preparation-subject.ts';
 import { CommercePortalAuthConfigLive } from '../../api/portal-auth/provider/config.ts';
 import { commercePortalAuthVerificationApiLive } from '../../api/portal-auth/verification-http/server.ts';
 import { commercePortalAuthVerificationWorkloadAuthorizationLive } from '../../api/portal-auth/verification-http/workload-authorization.ts';
@@ -157,6 +161,8 @@ interface OwnedVerificationInbox {
   expectedAddress?: string;
   link?: Redacted.Redacted;
 }
+const verificationBodyStage = 'verification-body';
+const verificationNotDeliveredStage = 'verification-not-delivered';
 const invalidDeliveryMessage = 'Invalid owned delivery';
 const providerSchemaInventory = 'provider-schema-inventory';
 const providerAdminDatabase = 'provider-admin-database';
@@ -318,8 +324,8 @@ const commandFailureStageSchema = Schema.Literals([
   'session-body',
   'session-cookie',
   'sign-out',
-  'verification-body',
-  'verification-not-delivered',
+  verificationBodyStage,
+  verificationNotDeliveredStage,
   'verification-required',
   'verification-required-body',
 ]);
@@ -878,6 +884,7 @@ const serve = Effect.scoped(
       return yield* failed('email-endpoint');
     }
     const mailbox: OwnedVerificationInbox = {};
+    const deliveredEmailRequests: Request[] = [];
     const continuationObservation: ContinuationObservation = {
       continuation: 'NOT_OBSERVED',
       coreReadAuthentication: 'NOT_OBSERVED',
@@ -1019,6 +1026,26 @@ const serve = Effect.scoped(
       mailbox.link = Redacted.make(link);
       return Response.json({ id: 'owned-native-verification-delivery' });
     };
+    const observeDeliveredEmail = Effect.fn('RetainedConsentOwner.observeDeliveredEmail')(
+      function* observeDeliveredEmail(delivery: Request) {
+        // Parse the bytes captured by the installed Resend transport through the same
+        // exact-recipient/link checks. This consumes no new provider operation.
+        const response = yield* Effect.tryPromise({
+          catch: () => failed(verificationBodyStage),
+          try: async () => await localInboxFetch(delivery),
+        });
+        if (!response.ok) {
+          // Surface only the receiver's actual closed status. No address, body or token
+          // crosses the private command reply. An empty capture queue has no such status.
+          const status = yield* Schema.decodeUnknownEffect(failureHttpStatusSchema)(response.status).pipe(
+            Effect.mapError(() => failed(verificationBodyStage)),
+          );
+          yield* Ref.set(commandObservation, Option.some({ httpStatus: status, problemCode: 'UNKNOWN_PROBLEM' }));
+          return yield* failed(verificationNotDeliveredStage);
+        }
+        return yield* Effect.void;
+      },
+    );
     const compositionSource = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer));
     const core = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
     const ownerTransactions = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
@@ -1085,19 +1112,39 @@ const serve = Effect.scoped(
       Layer.provideMerge(
         Layer.mergeAll(
           CommercePortalAuthConfigLive,
-          // The realm uses the deployment's installed mail transport; this owner fixture installs Resend.
-          // Its TEST configuration is fixed by this fixture, so a configuration failure is a fixture defect.
-          ResendEmailDeliveryLive.pipe(
-            Layer.provide(FetchHttpClient.layer),
-            Layer.provide(ResendEmailDeliveryConfigLive),
-            Layer.orDie,
-          ),
+          // Bind the capture Fetch when each send executes, including provider callbacks
+          // that run in their captured Effect context rather than this HTTP request's fiber.
+          localEmailDeliveryLive(deliveredEmailRequests),
         ),
       ),
     );
+    // The Action preflight must observe the same provider realm as the public account
+    // route, not a separately environment-selected realm with another delivery context.
+    const coreIdentity = CommerceCoreIdentityClientLive.pipe(Layer.provideMerge(CommerceCoreIdentityClientConfigLive));
+    const providerDatabase = CommercePortalAuthDatabaseLive.pipe(Layer.provide(CommercePortalAuthConfigLive));
+    const accountLookup = CommercePortalAuthAccountLookupLive.pipe(Layer.provide(providerDatabase));
+    const accountReconciliation = CommercePortalAuthAccountCreationReconciliationLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          providerDatabase,
+          CommercePortalAuthAccountCreationProviderLive.pipe(Layer.provide(configuredRealm)),
+        ),
+      ),
+    );
+    const preparationSubject = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(ownerTransactions, coreIdentity)),
+    );
+    const preparationAuthority = commerceEnrollmentOwnerTransitionPreparationLive.pipe(
+      Layer.provide(Layer.mergeAll(ownerTransactions, accountLookup, accountReconciliation, preparationSubject)),
+      Layer.provide(DatabaseConfigLive),
+    );
+    const preparedActionRuntime = commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
+      Layer.provide(preparationAuthority),
+      Layer.merge(serverParty),
+    );
     const configuredRuntime = makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive.pipe(Layer.merge(serverParty)),
-      productionActionRuntimeLive.pipe(Layer.merge(serverParty)),
+      preparedActionRuntime,
       replay,
       configuredRealm,
       Layer.empty,
@@ -1200,6 +1247,7 @@ const serve = Effect.scoped(
           Effect.sync(() => {
             delete mailbox.link;
             delete mailbox.expectedAddress;
+            deliveredEmailRequests.length = 0;
           }),
         ],
         { discard: true },
@@ -1339,9 +1387,13 @@ const serve = Effect.scoped(
               Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('verification_required') })),
             ),
           );
+          yield* Effect.forEach(deliveredEmailRequests.splice(0), observeDeliveredEmail, {
+            concurrency: 1,
+            discard: true,
+          });
           const delivered = yield* Effect.sync(() => Option.fromUndefinedOr(mailbox.link));
           if (Option.isNone(delivered)) {
-            return yield* failed('verification-not-delivered');
+            return yield* failed(verificationNotDeliveredStage);
           }
           const link = new URL(Redacted.value(delivered.value));
           yield* Ref.set(commandOperation, 'VERIFY_EMAIL');
@@ -1353,7 +1405,7 @@ const serve = Effect.scoped(
             return yield* failed('public-verification');
           }
           yield* Effect.tryPromise({
-            catch: () => failed('verification-body'),
+            catch: () => failed(verificationBodyStage),
             try: async () => await verify.json(),
           }).pipe(
             Effect.flatMap(

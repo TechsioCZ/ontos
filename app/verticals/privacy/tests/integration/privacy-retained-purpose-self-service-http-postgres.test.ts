@@ -115,6 +115,7 @@ import {
   executeRecordNoticeProvisionWithAuthorization,
 } from '@app/privacy/api/client';
 import { CreatePrivacySubjectPayloadSchema } from '../../shared/actions/create-privacy-subject.ts';
+import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
 import { CreateProcessingPurposePayloadSchema } from '../../shared/actions/create-processing-purpose.ts';
 import { CreateNoticeVersionPayloadSchema } from '../../shared/actions/create-notice-version.ts';
 import { RecordConsentDecisionPayloadSchema } from '../../shared/actions/record-consent-decision.ts';
@@ -162,7 +163,10 @@ import {
   PrivacyNoticePresentationUnavailableLive,
 } from '../../src/services/privacy-notice-presentation.service.ts';
 import type { PrivacyNoticePresentationConfiguration } from '../../src/services/privacy-notice-presentation.service.ts';
-import { NoticeChannelDeliveryAuthorityForAcknowledgementsLive } from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
+import {
+  NoticeChannelDeliveryAuthorityForAcknowledgementsLive,
+  privacyNoticeInformationStepLive,
+} from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import type { RetainedConsentAccountTransport } from '../support/privacy-retained-purpose-self-service-http.ts';
 
@@ -982,7 +986,8 @@ const startRetainedPrivacyHttp = Effect.fn('RetainedConsent.startActualPrivacyHt
       Effect.map((actual) => ({ forScope: actual.forScope, ports: consentSelfServiceAuthorityUnavailable.ports })),
     ),
   ).pipe(Layer.provide(withdrawal));
-  const owners = Layer.mergeAll(party, notice, presentation, channel, authority).pipe(
+  const informationStep = privacyNoticeInformationStepLive.pipe(Layer.provide(Layer.merge(notice, presentation)));
+  const owners = Layer.mergeAll(party, notice, presentation, channel, authority, informationStep).pipe(
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(NodeCrypto.layer),
     Layer.orDie,
@@ -1624,14 +1629,13 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     { legalEntityId: fixture.legalEntityId, principalId: principal.principalId, tenantId: fixture.tenantId },
     actualPartyRef,
   );
-  // Enrollment's governed Actions are Tenant-only. The selling entity remains
-  // an explicit journey input, rather than a selected Legal Entity on the caller.
-  // Enrollment forbids selected LE; the actual session endpoint selects one, so retain
-  // the genuine API-key tenant assertion for this exact declared tenant-only Action.
+  // Retail registration requires a verified LE matching its declared enrollment target.
+  // Obtain that exact scope from the real issuer instead of a tenant-only assertion.
   const credential = yield* issueApiKeyGatewayContext(
     {
       audience: 'commerce-customer-context',
       compositionRevision: admitted.composition.revision,
+      legalEntityId: fixture.legalEntityId,
     },
     {
       apiKey: issued.secret,
@@ -2234,15 +2238,11 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     const publicSubject = yield* executeCreatePrivacySubjectWithAuthorization(
       yield* Schema.decodeUnknownEffect(CreatePrivacySubjectPayloadSchema)({
         subject: { kind: 'DATA_SUBJECT', partyRef: actualPartyRef },
-        subjectRef: {
-          moduleId: 'privacy.core',
-          resourceId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
-          resourceType: 'privacy.core.privacy-subject',
-          tenantId: fixture.tenantId,
-        },
+        subjectRef: privacySubjectRefForParty(actualPartyRef),
       }),
       ...(yield* privacyTransport('manager', `retained-subject:${suffix}`)),
     );
+    expect(publicSubject.subjectRef).toEqual(privacySubjectRefForParty(actualPartyRef));
     expect(publicSubject.subject).toEqual({ kind: 'DATA_SUBJECT', partyRef: actualPartyRef });
     expect(publicSubject.ownerAdmission?.partyRef).toEqual(actualPartyRef);
     const scopeRef = `retained-consent:${suffix}`;
@@ -2404,8 +2404,8 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         actionKey: `privacy.core.${noticeAction}`,
         resultHash: expect.any(String),
       });
-      // Counting retains duplicate observations, so losing either Subject read (or either
-      // Provision by-id read) fails even when the other has the same query identity.
+      // Count each real SQL observation, including the preparation snapshot and final
+      // revalidation. Equal query identities must not collapse distinct observations.
       const observedReads = facts.accesses.map((row) => {
         expect(row).toMatchObject({
           authBindingId: binding.authBindingId,
@@ -2766,6 +2766,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       'record-notice-provision',
       [
         ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
+        ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
         subjectRead,
         subjectRead,
         ['privacy.notice-provision.by-id.v1', 'read', 0],
@@ -2789,6 +2790,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       `retained-provision-retained:${suffix}`,
       'record-notice-provision',
       [
+        ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
         ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
         subjectRead,
         subjectRead,
