@@ -36,7 +36,7 @@ const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
-const createDevelopmentContractMiddleware =
+export const createDevelopmentContractMiddleware =
   (moduleUrl: string) =>
   ({ unshift }: DevelopmentMiddlewareSetup) => {
     unshift((request, response, next) => {
