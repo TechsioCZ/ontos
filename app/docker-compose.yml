@@ -3,7 +3,7 @@ name: ontos
 services:
   ontos-db:
     container_name: ontos-db
-    image: postgres:18.6-alpine
+    image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -23,7 +23,7 @@ services:
 
   ontos-spicedb:
     container_name: ontos-spicedb
-    image: authzed/spicedb:v1.56.0
+    image: authzed/spicedb:v1.57.0@sha256:a170d372c9f6b921bb6849064df6ca3566dd5b174882c1a2c4300c2ae1d60efd
     command:
       - serve
       - --datastore-engine=memory

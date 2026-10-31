@@ -199,7 +199,11 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
   Effect.gen(function* generatesHost() {
     const root = yield* makeFixture();
     const owner = `zerops:\n  - setup: 'ledger'\n    build:\n      buildCommands:\n        - cd app && pnpm run zerops:materialize --app 'ledger' --package '@app/ledger' --package-dir 'verticals/ledger'\n      deployFiles:\n        - 'app/.zerops/runtime/ledger'\n    deploy:\n      readinessCheck:\n        httpGet:\n          port: 4110\n          path: '/ledger-api/ledger/readiness'\n    run:\n      base: 'nodejs@24'\n      envVariables:\n        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}\n        PORT: '4110'\n        ULTRAMODERN_ZEROPS_SERVICE: ledger\n      start: sh -c 'cd app/.zerops/runtime/ledger && exec npm run serve'\n`;
-    const { deployment, hostEntry } = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, owner));
+    const preparation = '      prepareCommands:\n        - sudo apk add --no-cache libatomic\n';
+    const preparedOwner = owner.replace('      envVariables:', `${preparation}      envVariables:`);
+    const { deployment, hostEntry } = yield* Effect.tryPromise(() =>
+      generateOutboxWorkerDeployment(root, preparedOwner),
+    );
     const [, host] = deployment.split(`setup: '${OUTBOX_WORKER_HOST.stageSetup}'`);
     // The dedicated worker stays for the Zerops target; the host runs it on the Cloudflare target.
     expect(deployment).toContain("setup: 'ledger-worker'");
@@ -207,6 +211,8 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(host).toContain("deployFiles:\n        - 'app/.zerops/runtime/outbox-worker-host'");
     expect(host).toContain("OUTBOX_WORKER_HEALTH_PORT: '4100'");
     expect(host).toContain('ULTRAMODERN_ZEROPS_SERVICE: outbox-worker-host');
+    expect(host).toContain(preparation);
+    expect(deployment.split(preparation)).toHaveLength(4);
     expect(host).toContain('DATABASE_URL: postgresql://ontos_runtime:');
     expect(host).not.toContain('4110');
     expect(host?.match(/path: '\/live'/gu)).toHaveLength(2);
