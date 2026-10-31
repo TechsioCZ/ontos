@@ -107,7 +107,7 @@ it.effect('redacts real server and client request objects when the application l
       entries.push(JSON.stringify(Logger.formatStructured.log(options)));
     });
     yield* Effect.logInfo(HttpServerRequest.fromWeb(new Request(url)), HttpClientRequest.get(url.href)).pipe(
-      Effect.provide(Logger.layer([logger])),
+      Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
       Effect.provideService(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
     );
     expect(entries).toHaveLength(1);
