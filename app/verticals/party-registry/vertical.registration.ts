@@ -53,6 +53,9 @@ import { updateContactPointAction } from './src/actions/update-contact-point.act
 import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
+import { guestPartyResolutionRead } from './src/api/guest-party-resolution.read.ts';
+import { partyDetailRead } from './src/api/party-detail.read.ts';
+import { partyContactPointDetailRead } from './src/api/party-contact-point-detail.read.ts';
 // </generated-module-registration-imports>
 
 export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
@@ -155,6 +158,13 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     projectPartyUpdatedToSearchWorker,
     rebuildSearchWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    guestPartyResolutionRead,
+    partyDetailRead,
+    partyContactPointDetailRead,
+    // </generated-module-registration-reads>
   ],
 });
 

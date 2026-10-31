@@ -8,6 +8,7 @@ import { createPriceGroupAction } from './src/actions/create-price-group.action.
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
 import { reconcilePriceGroupContainmentProjectionWorker } from './src/workers/reconcile-price-group-containment-projection.worker.ts';
 import { retirePriceGroupAction } from './src/actions/retire-price-group.action.ts';
+import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-registration-imports>
 
 export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
@@ -47,6 +48,11 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
     // <generated-module-registration-workers>
     reconcilePriceGroupContainmentProjectionWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    validatePriceGroupCompatibilityRead,
+    // </generated-module-registration-reads>
   ],
 });
 

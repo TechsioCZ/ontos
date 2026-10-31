@@ -3,10 +3,12 @@
 // @ontos-module-id party.registry
 import {
   defineOntosModuleManifest,
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
   ShellSearchContributionSchema,
 } from '@app/core-runtime';
+import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 
@@ -74,6 +76,10 @@ import { updateContactPointAction } from './src/actions/update-contact-point.act
 import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
+import { guestPartyResolutionRead } from './src/api/guest-party-resolution.read.ts';
+import { partyDetailRead } from './src/api/party-detail.read.ts';
+import { partyContactPointDetailRead } from './src/api/party-contact-point-detail.read.ts';
+import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -87,7 +93,7 @@ const pageContribution = (value: PageContributionInput) =>
 const searchContribution = (value: SearchContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
-export const partyRegistryManifest = defineOntosModuleManifest({
+export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
     preservesHistoryWhenInactive: true,
@@ -166,6 +172,21 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    operationContracts: [
+      // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'guest-party-resolution',
+        operationKey: 'guestPartyResolution.execute',
+        registration: guestPartyResolutionRead,
+      },
+      { apiKey: 'party-detail', operationKey: 'partyDetail.execute', registration: partyDetailRead },
+      {
+        apiKey: 'party-contact-point-detail',
+        operationKey: 'partyContactPointDetail.execute',
+        registration: partyContactPointDetailRead,
+      },
+      // </generated-module-manifest-operation-contracts>
+    ],
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
@@ -295,5 +316,26 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       ],
       timelines: [],
     },
+  },
+  requirements: {
+    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+    intrinsic: [],
+    operations: [
+      {
+        condition: 'party.registry.condition.persisted-original-privacy-owner-outcome',
+        entrypointKey: executePrivacyMeasureWorker.descriptor.entrypoint.entrypointKey,
+        evidence: [
+          'party.registry.evidence.privacy.original-owner-outcome',
+          'party.registry.evidence.privacy.exact-execution-correlation',
+        ],
+        key: 'party.registry.requirement.privacy-report-owner-outcome',
+        provider: {
+          entrypointKey: 'privacy.core.record-owner-execution-outcome',
+          moduleId: 'privacy.core',
+          schemaVersion: '1',
+        },
+      },
+    ],
+    schemaVersion: '1',
   },
 });

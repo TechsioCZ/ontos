@@ -2,6 +2,12 @@ import { Schema } from 'effect';
 
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
+/** Required compatibility claim; providers advertise it only with executed closure enforcement. */
+export const ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY = Object.freeze({
+  id: 'ontos.module-dependency-contracts',
+  version: '1',
+} as const);
+
 export const OntosModuleIdSchema = Schema.String.check(
   Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u),
 ).pipe(Schema.brand('OntosModuleId'), Schema.decodeTo(Schema.String));

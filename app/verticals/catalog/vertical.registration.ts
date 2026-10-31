@@ -86,6 +86,12 @@ import { setProductUnitTargetDivisibilityAction } from './src/actions/set-produc
 import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
 import { setVariantLocalizedFactsAction } from './src/actions/set-variant-localized-facts.action.ts';
 import { updateProductAction } from './src/actions/update-product.action.ts';
+import { selectionEvidenceRead } from './src/api/selection-evidence.read.ts';
+import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts';
+import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
+import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
+import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
+import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
 // </generated-module-registration-imports>
 
 export const catalogRegistration = defineVerticalRuntimeRegistration({
@@ -338,6 +344,16 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    selectionEvidenceRead,
+    quantityPreparationRead,
+    quantityBasisCompatibilityRead,
+    pricingPurposeEquivalenceRead,
+    productVariantSnapshotRead,
+    manufacturerRelationCurrentRead,
+    // </generated-module-registration-reads>
   ],
 });
 
