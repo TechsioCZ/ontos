@@ -903,6 +903,13 @@ export const privacyConsentPrincipal = {
   principalId: demoId(principalResource, 'privacy-consent-authority'),
 } as const;
 
+export const marketRetirementPrincipal = {
+  apiKeyName: 'market-retirement-authority',
+  displayName: 'Market · retirement authority',
+  legalEntityId: akrosDemoLegalEntityId,
+  principalId: demoId(principalResource, 'market-retirement-authority'),
+} as const;
+
 export const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
 /** Exact company-scoped native reads; the Actions below are granted one by one. */
 const commercePortalRole: DemoRole = {
@@ -982,6 +989,49 @@ export const privacyConsentAuthorityRelationships = (actions: readonly DemoActio
     actions,
     privacyConsentPrincipal.legalEntityId,
   );
+
+export const marketRetirementActionKeys: readonly string[] = ['commerce.customer-context.reserve-market-retirement'];
+
+/** Market reads share one permission; retirement execution is restricted to exact company-scoped descriptors. */
+export const marketRetirementRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const { legalEntityId, principalId } = marketRetirementPrincipal;
+  const marketModule = toModuleAccessObjectId(demoTenantId, legalEntityId, 'commerce.market-catalog') ?? '';
+  const roleId = toScopedRoleObjectId({
+    legalEntityId,
+    roleKey: demoPrincipalRoleKey(principalId),
+    tenantId: demoTenantId,
+  });
+  return [
+    ...principalRelationships(
+      principalId,
+      {
+        actionKeys: { [commerceModule]: marketRetirementActionKeys },
+        contextPermissions: { [commerceModule]: ['market.catalog.read'] },
+        label: 'Market retirement authority',
+        modules: { [commerceModule]: 'read' },
+        restrictedModules: [commerceModule],
+      },
+      actions.filter(
+        ({ actionKey, legalEntityScope, owningModuleKey, provisioning }) =>
+          marketRetirementActionKeys.includes(actionKey) &&
+          owningModuleKey === commerceModule &&
+          legalEntityScope === 'required' &&
+          provisioning === 'explicit',
+      ),
+      legalEntityId,
+    ),
+    {
+      relation: 'legal_entity',
+      resourceId: marketModule,
+      resourceType: 'module_access',
+      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      subjectType: 'legal_entity',
+    },
+    // Both CCC reads check resource#read on a Market-owner resource linked to this exact company module.
+    // reader_role supplies module->read_all and module->access, never resource#write or Market Actions.
+    roleRelationship('module_access', marketModule, 'reader_role', roleId),
+  ];
+};
 
 const intakeName = 'crm-party-intake';
 
@@ -1108,6 +1158,7 @@ export const demoPermissionRelationships = (
     ...companyPermissionRelationships(actions),
     ...commercePortalRelationships(actions),
     ...privacyConsentAuthorityRelationships(actions),
+    ...marketRetirementRelationships(actions),
     ...crmIntakeRelationships(actions),
   ];
   const all = [
