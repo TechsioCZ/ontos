@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Effect, Layer, Match } from 'effect';
+import { ConfigProvider, Effect, Exit, Layer, Match } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { systemError } from 'effect/PlatformError';
 import { expect, it } from 'effect-rstest';
@@ -29,12 +29,12 @@ it.effect('defaults to Node and lets the live override win over the validated de
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_RUNTIME: value }))),
         Effect.exit,
       );
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
       const invalidDefault = yield* shellRuntime.pipe(
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_RUNTIME_DEFAULT: value }))),
         Effect.exit,
       );
-      expect(invalidDefault._tag).toBe('Failure');
+      expect(Exit.isFailure(invalidDefault)).toBe(true);
     }
   }),
 );
@@ -89,7 +89,7 @@ it.live('spawns only the isolated Shell with Bun, preserving arguments, environm
         NODE_ENV: 'production',
       }).pipe(Effect.flatten, Effect.scoped, Effect.provide(spawnerLayer), Effect.exit);
       expect(spawned).toBe(true);
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
     }
   }),
 );

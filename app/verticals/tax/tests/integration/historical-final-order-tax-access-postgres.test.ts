@@ -39,6 +39,11 @@ import { Config, ConfigProvider, Context, Crypto, Data, Effect, Layer, Schema, p
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { FinalizeOrderTaxResultSchema } from '../../shared/actions/order-tax-finalization.ts';
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
@@ -271,17 +276,20 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
       relationship('context_permission', permission, 'grantee', 'principal', actor.principalId),
     );
   }
-  for (const registration of [declareSellerVatRegimeAction, finalizeOrderTaxAction]) {
-    ownedRelations.push(
-      relationship(
-        'action',
-        `ak_${Buffer.from(registration.descriptor.actionKey).toString('base64url')}`,
-        'executor',
-        'principal',
-        principalId,
-      ),
-    );
-  }
+  const actionScope = { legalEntityId: sellerId, tenantId };
+  const role = { ...actionScope, roleKey: 'tax-historical-access' };
+  const scopedActions = [declareSellerVatRegimeAction, finalizeOrderTaxAction].map(({ descriptor }) => ({
+    ...actionScope,
+    actionKey: descriptor.actionKey,
+  }));
+  ownedRelations.push(
+    relationship('scoped_role', toScopedRoleObjectId(role), 'member', 'principal', principalId),
+    ...buildActionAuthorizationRelationships(scopedActions),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      scopedActions.map((action) => ({ ...action, roleKey: role.roleKey })),
+      [{ ...actionScope, moduleKeys: [MODULE] }],
+    ),
+  );
   relationshipsWritten = true;
   yield* changeRelationships(ownedRelations, v1.RelationshipUpdate_Operation.TOUCH);
   const moduleStates = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
