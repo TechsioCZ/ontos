@@ -1,5 +1,18 @@
 import { asc, eq, sql } from 'drizzle-orm';
-import { Config, Crypto, DateTime, Effect, Exit, Option, Redacted, Ref, Schema, Scope, Stream } from 'effect';
+import {
+  Array as EffectArray,
+  Config,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { PlatformError } from 'effect';
 
@@ -28,6 +41,7 @@ export class IsolatedNativeDatabaseError extends Schema.TaggedError<IsolatedNati
 const unavailable = (reason = 'The isolated native test database is unavailable', cause?: unknown) =>
   new IsolatedNativeDatabaseError({ cause: Redacted.make(cause), reason });
 const prefix = 'ontos_test_party_gateway_';
+const emptyCloneRowsSchema = Schema.Array(Schema.Struct({ populated: Schema.Literal(false) }));
 
 const replaceDatabase = (configuration: DatabaseConfigValue, database: string) => {
   const url = new URL(configuration.connectionString);
@@ -380,16 +394,24 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         'objects',
       )
       .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
+    // Keep the exact per-table emptiness proof, but avoid hundreds of serial driver round trips.
+    // Bounded UNION batches also keep PostgreSQL's planner stack independent of the schema's total size.
     yield* Effect.forEach(
-      tables,
-      Effect.fn('IsolatedNativeDatabase.assertEmpty')(function* assertEmpty(table) {
-        const [row] = yield* clone.executor
+      EffectArray.chunksOf(tables, 64),
+      Effect.fn('IsolatedNativeDatabase.assertEmpty')(function* assertEmpty(batch) {
+        const rows = yield* clone.executor
           .execute<{ readonly populated: boolean }>(
-            sql`select exists(select 1 from ${sql.identifier(table.schemaname)}.${sql.identifier(table.tablename)} limit 1) as populated`,
+            sql.join(
+              batch.map(
+                (table) =>
+                  sql`select exists(select 1 from ${sql.identifier(table.schemaname)}.${sql.identifier(table.tablename)} limit 1) as populated`,
+              ),
+              sql` union all `,
+            ),
             'objects',
           )
           .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
-        if (row?.populated !== false) {
+        if (rows.length !== batch.length || !Schema.is(emptyCloneRowsSchema)(rows)) {
           return yield* unavailable('Schema-only clone contains source data');
         }
         return yield* Effect.void;

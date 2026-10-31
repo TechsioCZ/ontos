@@ -124,49 +124,34 @@ const MigrationReceiptSchema = Schema.Struct({
   count: Schema.Int,
   digest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{32}$/u)),
 });
-const approvalFreshJournalReceipt = Effect.fn('ApprovalFreshProofTests.journalReceipt')(function* receipt(
-  connection: MigrationConnection,
-  owner: 'core' | 'commerce_customer_context',
-) {
-  const table =
-    owner === 'core' ? 'drizzle.__drizzle_migrations_core' : 'drizzle.__drizzle_migrations_commerce_customer_context';
-  const child = yield* ChildProcess.make(
-    'docker',
-    [
-      'exec',
-      '-i',
-      '-e',
-      'PGPASSWORD',
-      'ontos-db',
-      'psql',
-      '--host',
-      'localhost',
-      databaseUsernameArgument,
-      connection.user,
-      '--dbname',
-      connection.database,
-      '--tuples-only',
-      '--no-align',
-      '--quiet',
-      '--command',
-      `set time zone 'UTC'; select json_build_object('count', count(*)::integer, 'digest', md5(coalesce(jsonb_agg(to_jsonb(journal) order by to_jsonb(journal)::text)::text,'[]'))) from ${table} journal`,
-    ],
-    {
-      env: {
-        PATH: yield* Config.String('PATH'),
-        PGPASSWORD: decodeURIComponent(new URL(connection.connectionString).password),
-      },
-      stderr: 'pipe',
-      stdout: 'pipe',
-    },
-  );
-  const [status, output] = yield* Effect.all(
-    [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.runCollect), Stream.runDrain(child.stderr)],
-    { concurrency: 3 },
-  );
-  expect(Number(status)).toBe(0);
-  return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MigrationReceiptSchema))(output.join('').trim());
-});
+const approvalFreshJournalReceipt = Effect.fn('ApprovalFreshProofTests.journalReceipt')(
+  (connection: MigrationConnection, owner: 'core' | 'commerce_customer_context') =>
+    Effect.scoped(
+      Effect.gen(function* receipt() {
+        const client = yield* PgClient.make({ url: Redacted.make(connection.connectionString) }).pipe(
+          Effect.provide(Reactivity.layer),
+        );
+        const admin = yield* makeWithDefaults({ relations: commerceCustomerContextRelations }).pipe(
+          Effect.provideService(PgClient.PgClient, client),
+        );
+        const table = sql.identifier(
+          owner === 'core' ? '__drizzle_migrations_core' : '__drizzle_migrations_commerce_customer_context',
+        );
+        return yield* admin.transaction(
+          Effect.fn('ApprovalFreshProofTests.readJournal')(function* readJournal(transaction) {
+            yield* transaction.execute(sql`set local time zone 'UTC'`, 'objects');
+            const [row] = yield* transaction.execute<{ readonly receipt: unknown }>(
+              sql`select json_build_object('count', count(*)::integer, 'digest',
+                md5(coalesce(jsonb_agg(to_jsonb(journal) order by to_jsonb(journal)::text)::text,'[]'))) as receipt
+                from drizzle.${table} journal`,
+              'objects',
+            );
+            return yield* Schema.decodeUnknownEffect(MigrationReceiptSchema)(row?.receipt);
+          }),
+        );
+      }),
+    ),
+);
 const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.copyMigrationJournal')(function* copy(
   source: MigrationConnection,
   target: MigrationConnection,
@@ -223,6 +208,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '--set',
       'ON_ERROR_STOP=1',
       '--quiet',
+      '--single-transaction',
     ],
     {
       env: {
@@ -263,16 +249,26 @@ const runApprovalFreshMigrationCommand = Effect.fn('ApprovalFreshProofTests.migr
     configuration,
     "export default { dialect:'postgresql', out:process.env.ONTOS_QUANTITY_MIGRATIONS, schema:process.env.ONTOS_QUANTITY_SCHEMA, dbCredentials:{url:process.env.DATABASE_ADMIN_URL}, migrations:{schema:'drizzle',table:'__drizzle_migrations_commerce_customer_context'} };",
   );
-  const args =
-    owner === 'core'
-      ? ['--filter', '@app/core-runtime', command === 'migrate' ? 'db:migrate' : 'db:verify']
-      : [
-          '--filter',
-          '@app/commerce-customer-context',
-          ...(command === 'migrate' ? ['exec', 'drizzle-kit', 'migrate', '--config', configuration] : ['db:verify']),
-        ];
-  const child = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', ...args], {
-    cwd: new URL('../../../../', import.meta.url).pathname,
+  // Execute the package scripts' actual entrypoints in the inherited mise runtime. Repeated
+  // pnpm workspace discovery is not part of the migration proof and dominated fixture setup.
+  const ownerDirectory = new URL(owner === 'core' ? '../../../../packages/core-runtime/' : '../../', import.meta.url)
+    .pathname;
+  const drizzleMigration = owner === 'commerce_customer_context' && command === 'migrate';
+  const executable = drizzleMigration
+    ? new URL('../../node_modules/.bin/drizzle-kit', import.meta.url).pathname
+    : process.execPath;
+  let args: readonly string[];
+  if (drizzleMigration) {
+    args = ['migrate', '--config', configuration];
+  } else if (owner !== 'core') {
+    args = ['scripts/verify-db-schema.mts'];
+  } else if (command === 'migrate') {
+    args = ['../../scripts/migration-convergence-cli.mts', 'core'];
+  } else {
+    args = ['../../scripts/verify-core-db-schema.mts'];
+  }
+  const child = yield* ChildProcess.make(executable, args, {
+    cwd: ownerDirectory,
     env: {
       APP_ENV_PATH: '/dev/null',
       DATABASE_ADMIN_URL: connections.admin.connectionString,
@@ -661,7 +657,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
               }
               authorityEntries += 1;
               yield* awaitAuthorityPause();
-              const { at } = yield* owner.nativeNow();
+              const at = yield* owner.observationNow();
               return {
                 bindingEvidence: {
                   binding,
@@ -2060,7 +2056,7 @@ it.live('component consumption selects exact P2 once, retains P1 and rejects com
       const stale = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
         yield* Effect.flip(test.consumeComponent({ ...claim, revalidationRef: p1.revalidation.revalidationRef })),
       );
-      expect(stale.code).toBe('PERMISSION_DENIED');
+      expect(stale.code, stale.reason).toBe('PERMISSION_DENIED');
       expect(yield* test.readRequest()).toEqual(before);
       expect(yield* test.readProofs()).toEqual(proofs);
       const consumed = yield* test.consumeComponent(claim);
