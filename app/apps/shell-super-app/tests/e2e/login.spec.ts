@@ -122,14 +122,14 @@ const test = base.extend<Record<never, never>, { authentication: AuthenticationF
 });
 
 test('preserves a validated return destination query and fragment after sign-in', async ({ authentication, page }) => {
-  const returnTo = encodeURIComponent('/cs/hledat?q=100%25#matched');
+  const returnTo = encodeURIComponent('/cs/profile?q=100%25#matched');
   await page.goto(`/cs/login?returnTo=${returnTo}`);
   const form = page.locator('form[data-hydrated="true"]');
   await form.locator('input[name="login"]').fill(authentication.credentials.email);
   await form.locator('input[name="password"]').fill(authentication.credentials.password);
   await form.locator('button[type="submit"]').click();
   await expect(page).toHaveURL(
-    (url) => url.pathname === '/cs/hledat' && url.searchParams.get('q') === '100%' && url.hash === '#matched',
+    (url) => url.pathname === '/cs/profile' && url.searchParams.get('q') === '100%' && url.hash === '#matched',
   );
 });
 
