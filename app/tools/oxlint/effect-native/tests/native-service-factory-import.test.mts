@@ -6,13 +6,15 @@ import { expect, it } from 'effect-rstest';
 import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
 
 const fixtureRoot = 'tools/oxlint/anti-slop/effect/fixtures/no-service-constructor-imports/transaction-bound-factory';
-const valid = ['owner.ts', 'valid-reference.ts'];
+const valid = ['owner.ts', 'valid-reference.ts', 'valid-action-preflight.ts'];
 const invalid = [
   'invalid-constructor.ts',
   'invalid-escape.ts',
   'invalid-lookalike.ts',
   'invalid-eager-argument.ts',
   'invalid-handler-slot.ts',
+  'invalid-preflight-lookalike.ts',
+  'invalid-preflight-mutation.ts',
 ];
 const ruleCode = 'anti-slop-effect(no-service-constructor-imports)';
 
