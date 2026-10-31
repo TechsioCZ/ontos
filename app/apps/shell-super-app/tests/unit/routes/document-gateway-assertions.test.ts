@@ -106,9 +106,35 @@ it.live('obtains every audience of a client-side navigation in one batch that co
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
     expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({ audiences, compositionRevision: revision });
     expect(gatewayRequests()).toHaveLength(0);
-    // Still fresh: warming again asks nothing.
+    // Consumed slots need fresh tokens even though the original tokens have not expired.
     yield* warmDocumentGatewayAssertions(revision, audiences);
-    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
+    yield* askAssertion({ audience: 'warm-a', compositionRevision: revision });
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(2);
+  }),
+);
+
+it.live('claims a seeded token once under concurrency and cannot resurrect it by seeding again', () =>
+  Effect.gen(function* claimOnce() {
+    yield* resetDocumentGatewayAssertions;
+    const seeded = assertion('single-use');
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
+    let issued = 0;
+    platformFetch.mockImplementation(async () => {
+      issued += 1;
+      return Response.json({ ...withoutAudience(seeded), token: `fresh-single-${issued}` });
+    });
+    yield* seedDocumentGatewayAssertions(revision, [seeded]);
+    const answers = yield* Effect.forEach(
+      [1, 2, 3],
+      () => askAssertion({ audience: 'single-use', compositionRevision: revision }),
+      { concurrency: 'unbounded' },
+    );
+    expect(new Set(answers.map(({ body }) => body.token)).size).toBe(3);
+    expect(answers.filter(({ body }) => body.token === seeded.token)).toHaveLength(1);
+    yield* seedDocumentGatewayAssertions(revision, [seeded]);
+    const later = yield* askAssertion({ audience: 'single-use', compositionRevision: revision });
+    expect(later.body.token).not.toBe(seeded.token);
+    expect(gatewayRequests()).toHaveLength(3);
   }),
 );
 

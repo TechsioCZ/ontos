@@ -20,8 +20,8 @@ import {
  *
  * Every remote bundles its own copy of the generated clients, so a cache inside those clients would be one cache
  * per remote. `fetch` is the seam they all share: module reads (`/module-api/…/reads/…` and `…/search/…`) are
- * answered from memory, concurrent identical reads share one request, and gateway assertions are reused across
- * remotes until shortly before they expire. Any other module request is a write: once it settles, every cached
+ * answered from memory and concurrent identical reads share one request. Each physical downstream request
+ * uses its own single-use gateway assertion. Any other module request is a write: once it settles, every cached
  * read is dropped and `moduleWriteEvent` is dispatched, so a user never sees their own change missing.
  *
  * The reads a page makes right after it opens are remembered per path (in `localStorage`, without credentials), so
@@ -32,8 +32,6 @@ import {
 const READ_FRESH_MILLIS = 20_000;
 /** A write can start follow-up work in other modules (a won opportunity issues an invoice); reads this soon after are not kept. */
 const WRITE_QUIET_MILLIS = 5000;
-/** Matches the Shell issuer: an assertion is reused until this close to its expiry. */
-const ASSERTION_REUSE_MARGIN_MILLIS = 15_000;
 /** Reads that start this long after a page's first read belong to user interaction, not to opening the page. */
 const VISIT_RECORD_MILLIS = 4000;
 const RECORDED_READS_LIMIT = 24;
@@ -81,7 +79,7 @@ const DocumentGatewayRequestJson = Schema.fromJsonString(
 );
 const GatewayAssertionJson = Schema.fromJsonString(GatewayContextResponseSchema);
 const textEncoder = new TextEncoder();
-const GatewayResponseJson = Schema.fromJsonString(Schema.Struct({ expiresAt: Schema.Finite, token: Schema.String }));
+const GatewayResponseJson = Schema.fromJsonString(Schema.Struct({ token: Schema.String }));
 
 interface Visit {
   readonly pathname: string;
@@ -90,7 +88,6 @@ interface Visit {
 }
 
 interface CacheState {
-  readonly assertions: Map<string, BufferedFiber>;
   /** Issued assertion token to its audience, so a recorded read knows which assertion to ask for later. */
   readonly audiences: Map<string, string>;
   /** A context switch or sign-out rejects pending work rather than restarting it under the old authority. */
@@ -312,6 +309,17 @@ const serveRead = Effect.fn('BrowserRequestCache.serveRead')(function* serveRead
   read: ModuleRead,
   record: boolean,
 ): Effect.fn.Return<BufferedResponse, ModuleRequestFailed> {
+  // A lost or overtaken attempt may already have redeemed its token.
+  const retry = (): Effect.Effect<BufferedResponse, ModuleRequestFailed> =>
+    read.audience === undefined
+      ? Effect.fail(new ModuleRequestFailed())
+      : makeOperationGateway(read.audience)
+          .invoke((authorization) => {
+            const headers = new Headers(read.init.headers);
+            headers.set('authorization', authorization);
+            return serveRead(state, { ...read, init: { ...read.init, headers } }, false);
+          })
+          .pipe(Effect.mapError((cause) => new ModuleRequestFailed({ cause })));
   const now = yield* Clock.currentTimeMillis;
   if (record) {
     yield* recordRead(state, read, now);
@@ -324,7 +332,7 @@ const serveRead = Effect.fn('BrowserRequestCache.serveRead')(function* serveRead
       return yield* new ModuleRequestFailed();
     }
     if (state.generation !== generation) {
-      return yield* serveRead(state, read, false);
+      return yield* retry();
     }
     if (Exit.isSuccess(exit)) {
       return exit.value;
@@ -335,16 +343,8 @@ const serveRead = Effect.fn('BrowserRequestCache.serveRead')(function* serveRead
   if (state.contextGeneration !== contextGeneration) {
     return yield* new ModuleRequestFailed();
   }
-  return state.generation === generation ? response : yield* serveRead(state, read, false);
+  return state.generation === generation ? response : yield* retry();
 });
-
-const assertionUsable = (response: BufferedResponse, now: number) =>
-  isOk(response)
-    ? Schema.decodeEffect(GatewayResponseJson)(textDecoder.decode(response.body)).pipe(
-        Effect.map(({ expiresAt }) => expiresAt * 1000 - now > ASSERTION_REUSE_MARGIN_MILLIS),
-        Effect.orElseSucceed(() => false),
-      )
-    : Effect.succeed(false);
 
 const rememberAudience = (state: CacheState, requestBody: string, response: BufferedResponse) =>
   Effect.all(
@@ -412,30 +412,16 @@ const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* ser
   if (Option.isSome(documentAnswer)) {
     return documentAnswer.value;
   }
-  const now = yield* Clock.currentTimeMillis;
-  const shared = state.assertions.get(request.body);
-  if (shared !== undefined) {
-    const exit = yield* Fiber.await(shared);
-    if (state.contextGeneration !== contextGeneration) {
-      return yield* new ModuleRequestFailed();
-    }
-    if (Exit.isSuccess(exit) && (yield* assertionUsable(exit.value, now))) {
-      return exit.value;
-    }
-  }
-  const fiber = yield* Effect.forkDetach(bufferedFetch(state, request.url, request.init));
-  state.assertions.set(request.body, fiber);
-  const exit = yield* Fiber.await(fiber);
+  // Issuance is never coalesced: each response authorizes exactly one downstream attempt.
+  const response = yield* bufferedFetch(state, request.url, request.init);
   if (state.contextGeneration !== contextGeneration) {
     return yield* new ModuleRequestFailed();
   }
-  if (Exit.isSuccess(exit) && isOk(exit.value)) {
-    yield* rememberAudience(state, request.body, exit.value);
+  if (isOk(response)) {
+    yield* rememberAudience(state, request.body, response);
     yield* noteSingleAudience(request.body);
-  } else if (state.assertions.get(request.body) === fiber) {
-    state.assertions.delete(request.body);
   }
-  return yield* exit;
+  return response;
 });
 
 const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestInit | undefined) =>
@@ -526,7 +512,6 @@ export const clearBrowserRequestCache = Effect.sync(() => {
     state.contextGeneration += 1;
     state.quietUntil = 0;
     state.reads.clear();
-    state.assertions.clear();
     state.audiences.clear();
     delete state.visit;
   }
@@ -542,7 +527,6 @@ export const installBrowserRequestCache = (): void => {
     return;
   }
   const state: CacheState = {
-    assertions: new Map(),
     audiences: new Map(),
     contextGeneration: 0,
     generation: 0,

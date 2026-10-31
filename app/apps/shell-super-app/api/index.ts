@@ -997,22 +997,6 @@ const mediaAttachmentResolved = (
 ) => decodeResponse(MediaAttachmentResponseSchema, resolution.result, shellInternalProblem);
 const mediaAttachmentUnavailable = () => failShellProblem(shellCapabilityUnavailableProblem());
 
-// Reusable gateway assertions belong to the session that is signing out. Drop them while the
-// session still resolves; a session that no longer resolves cannot reach its entries anyway.
-const forgetSessionGatewayAssertions = Effect.fn('shell.authentication.forgetGatewayAssertions')(
-  function* forgetSessionGatewayAssertionsEffect(headers: Headers) {
-    const authentication = yield* AuthenticationService;
-    const gatewayIssuer = yield* GatewayIssuer;
-    const session = yield* Effect.option(authentication.resolveShellContext(headers));
-    if (Option.isSome(session) && session.value.state !== 'anonymous') {
-      const { authContextRef } = session.value.principal;
-      if (authContextRef !== undefined) {
-        yield* gatewayIssuer.forgetAuthContext(authContextRef);
-      }
-    }
-  },
-);
-
 const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'authentication', (handlers) =>
   handlers
     .handle(
@@ -1061,7 +1045,6 @@ const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'au
       Effect.fn('shell.authentication.signOut')(({ request }) =>
         Effect.gen(function* signOutHandler() {
           const authentication = yield* AuthenticationService;
-          yield* forgetSessionGatewayAssertions(requestHeaders(request.headers));
           const result = yield* authentication.signOut(requestHeaders(request.headers));
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
           return {

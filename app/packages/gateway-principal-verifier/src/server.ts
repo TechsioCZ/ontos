@@ -1,8 +1,5 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import type {
-  GatewayAssertionRedemption,
-  GatewayAssertionRedemptionInput,
-} from '@app/core-runtime/auth/gateway-assertion-redemption';
+import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -29,7 +26,6 @@ import {
   DateTime,
   Duration,
   Effect,
-  HashSet,
   Layer,
   Option,
   Redacted,
@@ -121,6 +117,7 @@ const unavailableError = (): ActionPrincipalUnavailableError =>
   ActionPrincipalUnavailableErrorSchema.make({
     reason: 'Action identity verification is unavailable',
   });
+const mapRedemptionReplay = () => Effect.fail(invalidError());
 const mapRedemptionUnavailable = () => Effect.fail(unavailableError());
 const mapConfigurationFailure = () => Effect.fail(configurationError());
 
@@ -454,48 +451,6 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
   },
 );
 
-const MAX_REDEEMED_ASSERTIONS = 4096;
-
-const usableAt = (now: number, expiresAtEpochSeconds: number) =>
-  now < expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS;
-
-/**
- * Redemption is idempotent for an identical (issuer, audience, jti) until the assertion expires:
- * the Shell reuses one assertion per principal context and audience within its validity window.
- * The first presentation is recorded durably; later ones within the window skip the durable write,
- * and a durable replay of the same key is accepted unless the assertion has expired meanwhile.
- */
-const redeemReusableAssertion = Effect.fn('GatewayPrincipalVerifier.redeemReusableAssertion')(
-  function* redeemReusableAssertionEffect(
-    redeemed: Ref.Ref<HashSet.HashSet<GatewayAssertionRedemptionInput>>,
-    redemption: GatewayAssertionRedemption,
-    input: GatewayAssertionRedemptionInput,
-    options: GatewayPrincipalVerificationOptions,
-  ): Effect.fn.Return<void, ActionPrincipalError> {
-    const now = yield* currentEpochSeconds(options);
-    if (HashSet.has(yield* Ref.get(redeemed), input) && usableAt(now, input.expiresAtEpochSeconds)) {
-      return;
-    }
-    yield* redemption.consume(input).pipe(
-      Effect.catchTags({
-        GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,
-        GatewayAssertionReplayError: () =>
-          currentEpochSeconds(options).pipe(
-            Effect.flatMap((replayedAt) =>
-              usableAt(replayedAt, input.expiresAtEpochSeconds) ? Effect.void : Effect.fail(invalidError()),
-            ),
-          ),
-      }),
-    );
-    yield* Ref.update(redeemed, (entries) => {
-      const retained = entries.pipe(
-        HashSet.filter((entry: GatewayAssertionRedemptionInput) => usableAt(now, entry.expiresAtEpochSeconds)),
-      );
-      return HashSet.add(HashSet.size(retained) < MAX_REDEEMED_ASSERTIONS ? retained : HashSet.empty(), input);
-    });
-  },
-);
-
 const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(
   function* verifyWithRuntimeServices(
     expectedAudience: string,
@@ -513,8 +468,6 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   expectedDeployment: ReceivingGatewayDeployment,
 ) => {
   const receivingDeployment = Object.freeze({ ...expectedDeployment });
-  // Assertions this audience binding already redeemed, by (issuer, audience, jti), with their expiry.
-  const redeemedAssertions = Ref.makeUnsafe(HashSet.empty<GatewayAssertionRedemptionInput>());
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationEnvironmentOptions,
@@ -595,11 +548,11 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   > {
     return verifyPrincipal(authorization, options).pipe(
       Effect.tap(({ expiresAtEpochSeconds, issuer, jti }) =>
-        redeemReusableAssertion(
-          redeemedAssertions,
-          options.redemption,
-          { audience: expectedAudience, expiresAtEpochSeconds, issuer, jti },
-          options,
+        options.redemption.consume({ audience: expectedAudience, expiresAtEpochSeconds, issuer, jti }).pipe(
+          Effect.catchTags({
+            GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,
+            GatewayAssertionReplayError: mapRedemptionReplay,
+          }),
         ),
       ),
       Effect.map(({ assertion, compositionRevision, principal }) =>

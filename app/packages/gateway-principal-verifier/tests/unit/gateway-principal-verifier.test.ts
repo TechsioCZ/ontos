@@ -14,14 +14,12 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
-  GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
 } from '@app/shared-contracts';
 
 import {
   ActionPrincipalConfigurationErrorSchema,
-  ActionPrincipalExpiredErrorSchema,
   ActionPrincipalInvalidErrorSchema,
   ActionPrincipalScopeErrorSchema,
   ActionPrincipalUnavailableErrorSchema,
@@ -169,34 +167,11 @@ it.effect('attaches the redeemed token as the scope assertion only after redempt
     const signatureOnly = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), verificationOptions);
     expect(readVerifiedGatewayScopeAssertion(signatureOnly)).toBeUndefined();
 
-    // An already-recorded valid assertion is an idempotent reuse under the redemption contract.
-    // An unavailable durable redemption must still fail before provenance can be attached.
-    const unavailable = yield* Effect.exit(
-      verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
-        ...verificationOptions,
-        redemption: {
-          consume: () =>
-            Effect.fail(new GatewayAssertionRedemptionUnavailableError({ reason: 'Redemption is unavailable' })),
-        },
-      }),
-    );
-    expect(Exit.isFailure(unavailable)).toBe(true);
-
-    // Recorded assertions are reusable while valid. Expiry during redemption must still refuse attachment.
-    let replayTime = currentTimeSeconds;
     const replayed = yield* Effect.exit(
       verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
         ...verificationOptions,
-        currentTimeSeconds: Effect.sync(() => replayTime),
         redemption: {
-          consume: ({ expiresAtEpochSeconds }) =>
-            Effect.sync(() => {
-              replayTime = expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS;
-            }).pipe(
-              Effect.andThen(
-                Effect.fail(new GatewayAssertionReplayError({ reason: 'The assertion was already used' })),
-              ),
-            ),
+          consume: () => Effect.fail(new GatewayAssertionReplayError({ reason: 'The assertion was already used' })),
         },
       }),
     );
@@ -559,93 +534,63 @@ it.effect('empty and malformed audience bindings fail closed as configuration er
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
-it.effect('reuses a redeemed assertion within its validity window with one durable redemption', () =>
-  Effect.gen(function* reuseRedeemedAssertion() {
+it.effect('redeems every presentation and rejects replay across verifier instances', () =>
+  Effect.gen(function* singleUseRedemption() {
+    const fixture = yield* makeFixture('party-registry');
+    let redemptions = 0;
+    const redemption = {
+      consume: () =>
+        Effect.suspend(() => {
+          redemptions += 1;
+          return redemptions === 1
+            ? Effect.void
+            : Effect.fail(new GatewayAssertionReplayError({ reason: 'Already used' }));
+        }),
+    };
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const options = {
+      currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+      environment: fixture.environment,
+      redemption,
+    };
+    const authorization = Redacted.make(`Bearer ${fixture.token}`);
+    expect(yield* verifier.verifyAndRedeem(authorization, options)).toEqual(principal);
+    expect(isInvalidError(yield* Effect.flip(verifier.verifyAndRedeem(authorization, options)))).toBe(true);
+    const restarted = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    expect(isInvalidError(yield* Effect.flip(restarted.verifyAndRedeem(authorization, options)))).toBe(true);
+    expect(redemptions).toBe(3);
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('redemption failures remain sanitized and distinguish replay from unavailability', () =>
+  Effect.gen(function* verifyRedemptionFailures() {
     const fixture = yield* makeFixture('party-registry');
     const verifier = bindGatewayPrincipalVerifier('party-registry', {
       appId: 'party-registry',
       buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
     });
-    let redemptions = 0;
-    const redeemAt = (seconds: number) =>
+    const verify = (redemption: Parameters<typeof verifier.verifyAndRedeem>[1]['redemption']) =>
       verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
-        currentTimeSeconds: Effect.succeed(seconds),
-        environment: fixture.environment,
-        redemption: {
-          consume: () =>
-            Effect.sync(() => {
-              redemptions += 1;
-            }),
-        },
-      });
-
-    const reused = yield* Effect.all([redeemAt(currentTimeSeconds), redeemAt(1_700_000_200), redeemAt(1_700_000_320)]);
-    expect(reused).toEqual([principal, principal, principal]);
-    expect(redemptions).toBe(1);
-
-    // Expiry stays enforced for a reused assertion: past exp plus clock skew it is refused.
-    const expired = yield* Effect.flip(redeemAt(1_700_000_331));
-    expect(Schema.is(ActionPrincipalExpiredErrorSchema)(expired)).toBe(true);
-    expect(redemptions).toBe(1);
-
-    // A different audience binding still rejects the assertion before any redemption.
-    const otherAudience = yield* Effect.flip(
-      bindGatewayPrincipalVerifier('billing', {
-        appId: 'billing',
-        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
-      }).verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
         currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-        environment: fixture.environment,
-        redemption: {
-          consume: () =>
-            Effect.sync(() => {
-              redemptions += 1;
-            }),
-        },
-      }),
-    );
-    expect(isScopeError(otherAudience)).toBe(true);
-    expect(redemptions).toBe(1);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
-);
-
-it.effect('redemption failures remain sanitized and replay is accepted only while the assertion is valid', () =>
-  Effect.gen(function* verifyRedemptionFailures() {
-    const fixture = yield* makeFixture('party-registry');
-    const verify = (
-      redemption: Parameters<ReturnType<typeof bindGatewayPrincipalVerifier>['verifyAndRedeem']>[1]['redemption'],
-      currentTime: Effect.Effect<number> = Effect.succeed(currentTimeSeconds),
-    ) =>
-      bindGatewayPrincipalVerifier('party-registry', {
-        appId: 'party-registry',
-        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
-      }).verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
-        currentTimeSeconds: currentTime,
         environment: fixture.environment,
         redemption,
       });
-    const durableReplay = {
-      consume: () =>
-        Effect.fail(
-          new GatewayAssertionReplayError({
-            reason: 'fixture replay details must be discarded',
-          }),
-        ),
-    };
 
-    // Another verifier instance already recorded this (issuer, audience, jti): reuse is permitted.
-    expect(yield* verify(durableReplay)).toEqual(principal);
-
-    // Verification passed, but the assertion expired before its durable replay was evaluated.
-    let clockReads = 0;
     const replayFailure = yield* Effect.flip(
-      verify(
-        durableReplay,
-        Effect.sync(() => {
-          clockReads += 1;
-          return clockReads <= 2 ? currentTimeSeconds : 1_700_000_331;
-        }),
-      ),
+      verify({
+        consume: () =>
+          Effect.fail(
+            new GatewayAssertionReplayError({
+              reason: 'fixture replay details must be discarded',
+            }),
+          ),
+      }),
     );
     expect(isInvalidError(replayFailure)).toBe(true);
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(replayFailure)).not.toMatch(

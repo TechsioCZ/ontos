@@ -1,4 +1,5 @@
 import { definePageData, modulePagePreload, moduleWriteEvent } from '@app/shared-contracts/page-data';
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { waitFor } from '@testing-library/react';
 import { Clock, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -64,6 +65,7 @@ beforeEach(async () => {
   globalThis.history.replaceState(null, '', '/en/home');
   globalThis.localStorage.clear();
   platformFetch.mockReset();
+  issueDocumentGatewayContexts.mockReturnValue(Effect.succeed({ assertions: [] }));
   platformFetch.mockImplementation(async () => Response.json({ value: 'fresh' }));
   await browserRuntime.runPromise(
     clearBrowserRequestCache.pipe(
@@ -225,7 +227,24 @@ it.live('a timed-out declared owner cannot pollute replay or quarantine another 
 
 it.live('a mutation restarts prepared reads that were still in flight, never returning the old answer as fresh', () =>
   Effect.gen(function* writeInvalidation() {
+    yield* pinDocumentCompositionRevision(revision);
     const old = yield* Deferred.make<Response>();
+    const authorizations: (string | null)[] = [];
+    platformFetch.mockImplementation(async (input, init) => {
+      const { url } = new Request(input, init);
+      if (url.endsWith('/auth/gateway-context')) {
+        return Response.json({
+          apiBaseUrl: base,
+          compositionRevision: revision,
+          expiresAt: 4_102_444_800,
+          token: 'retry-token',
+        });
+      }
+      if (url.includes('/reads/')) {
+        authorizations.push(new Headers(init?.headers).get('authorization'));
+      }
+      return Response.json({ value: 'fresh' });
+    });
     platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(old)));
     const preparing = yield* prepareRead('mutated').pipe(Effect.forkChild);
     yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
@@ -233,10 +252,11 @@ it.live('a mutation restarts prepared reads that were still in flight, never ret
     yield* Deferred.succeed(old, Response.json({ value: 'old' }));
     const response = yield* Fiber.join(preparing);
     expect(yield* Effect.promise(() => response.json())).toEqual({ value: 'fresh' });
-    expect(platformFetch).toHaveBeenCalledTimes(3);
+    expect(platformFetch).toHaveBeenCalledTimes(4);
+    expect(authorizations).toEqual(['Bearer retry-token']);
     yield* read('mutated');
     // Reads during write quiet time are joinable but are not retained as fresh settled data.
-    expect(platformFetch).toHaveBeenCalledTimes(4);
+    expect(platformFetch).toHaveBeenCalledTimes(5);
   }),
 );
 

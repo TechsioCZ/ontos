@@ -35,7 +35,7 @@ afterEach(() => {
   }
 });
 
-it.effect('reuses a still-valid browser assertion per audience and redacts the transport bundle', () =>
+it.effect('acquires a fresh browser assertion for every provider attempt and redacts the transport bundle', () =>
   Effect.gen(function* acquireFreshReferences() {
     yield* pinDocumentCompositionRevision(compositionRevision);
     const requests: Request[] = [];
@@ -63,8 +63,8 @@ it.effect('reuses a still-valid browser assertion per audience and redacts the t
       decoded.map((entry) => ({ audience: entry.audience, authorization: Redacted.value(entry.authorization) })),
     ).toEqual([
       { audience: 'party-registry', authorization: 'Bearer fresh-attempt-1' },
-      { audience: 'party-registry', authorization: 'Bearer fresh-attempt-1' },
-      { audience: 'billing', authorization: 'Bearer fresh-attempt-2' },
+      { audience: 'party-registry', authorization: 'Bearer fresh-attempt-2' },
+      { audience: 'billing', authorization: 'Bearer fresh-attempt-3' },
     ]);
     const calls = yield* Effect.forEach(
       requests,
@@ -79,10 +79,12 @@ it.effect('reuses a still-valid browser assertion per audience and redacts the t
         (request) => request.url === 'https://shell.example.test/shell-super-app-api/auth/gateway-context',
       ),
     ).toBe(true);
-    expect(calls).toEqual(['party-registry', 'billing'].map((audience) => ({ audience, compositionRevision })));
+    expect(calls).toEqual(
+      ['party-registry', 'party-registry', 'billing'].map((audience) => ({ audience, compositionRevision })),
+    );
     const second = yield* acquisition;
-    expect(Redacted.value(second)).toBe(Redacted.value(bundle));
-    expect(requests.length).toBe(2);
+    expect(Redacted.value(second)).not.toBe(Redacted.value(bundle));
+    expect(requests.length).toBe(6);
   }),
 );
 
