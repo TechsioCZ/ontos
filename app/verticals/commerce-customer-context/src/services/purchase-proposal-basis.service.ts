@@ -1253,6 +1253,134 @@ const validatePreparedBasisScope = (
         }),
       );
 
+type PreparedBasisCurrentnessObservation = Effect.Success<ReturnType<typeof finishPurchaseProposalBasisRead>>;
+type BasisCurrentnessInput = Parameters<PurchaseLimitEvaluationCurrentnessPortService['resolveCurrent']>[0];
+
+export const preparedBasisCurrentnessWindowOpen = (
+  preparedAt: number,
+  observedAt: number,
+  validUntil: number,
+  now: number,
+): boolean =>
+  [preparedAt, observedAt, validUntil, now].every(Number.isFinite) &&
+  preparedAt <= observedAt &&
+  observedAt <= now &&
+  observedAt - preparedAt <= 30_000 &&
+  now < validUntil;
+
+const preparedBasisCurrentnessForTransaction = Effect.fn('PurchaseProposalBasis.preparedCurrentnessForTransaction')(
+  function* preparedCurrentnessForTransaction(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    revision: string,
+    context: ActionServicePreparationContext,
+    loaded: PurchaseProposalBasisReadSnapshot,
+    observation: PreparedBasisCurrentnessObservation,
+  ) {
+    yield* validatePreparedBasisScope(context, scope, revision);
+    const owner = yield* purchaseProposalBasisService(transaction, scope, revision);
+    const request = {
+      operation: 'CURRENT' as const,
+      sourceRef: loaded.basis.proposal.purchaseValue.sourceRef,
+      sourceRevision: loaded.basis.proposal.purchaseValue.sourceRevision,
+    };
+    const revalidate = Effect.fn('PurchaseProposalBasis.revalidatePreparedCurrentness')(
+      function* revalidatePreparedCurrentness() {
+        const current = yield* owner
+          .loadRead(request, loaded.operationTime)
+          .pipe(Effect.mapError(basisCurrentnessUnavailable));
+        const now = yield* DateTime.now;
+        const preparedAt = DateTime.toEpochMillis(observation.observedAt);
+        if (
+          !purchaseProposalBasisReadSnapshotMatches(loaded, current) ||
+          DateTime.toEpochMillis(now) < preparedAt ||
+          !DateTime.isGreaterThan(observation.validUntil, now)
+        ) {
+          return yield* Effect.fail(basisCurrentnessUnavailable());
+        }
+        return yield* Effect.void;
+      },
+    );
+    const resolve = Effect.fn('PurchaseProposalBasis.resolvePreparedCurrentness')(function* resolvePreparedCurrentness(
+      input: BasisCurrentnessInput,
+      candidateProposal?: typeof PurchaseProposalRevisionSchema.Type,
+    ) {
+      yield* revalidate();
+      const observedAt = DateTime.toEpochMillis(input.observedAt);
+      const preparedAt = DateTime.toEpochMillis(observation.observedAt);
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      if (
+        !preparedBasisCurrentnessWindowOpen(
+          preparedAt,
+          observedAt,
+          DateTime.toEpochMillis(observation.validUntil),
+          now,
+        ) ||
+        !basisCurrentnessMatchesClaim(observation, input, scope, candidateProposal) ||
+        observation.facts === null
+      ) {
+        return yield* Effect.fail(basisCurrentnessUnavailable());
+      }
+      return observation.facts;
+    });
+    const unavailablePort: PurchaseLimitEvaluationCurrentnessPortService = {
+      resolveCandidate: () => Effect.fail(basisCurrentnessUnavailable()),
+      resolveCurrent: () => Effect.fail(basisCurrentnessUnavailable()),
+    };
+    const bound: PurchaseLimitEvaluationCurrentnessPortService = {
+      forOperation: (candidate, candidateScope) =>
+        Object.is(candidate, transaction) &&
+        candidateScope.tenantId === scope.tenantId &&
+        candidateScope.legalEntityId === scope.legalEntityId &&
+        candidateScope.principalId === scope.principalId &&
+        candidateScope.trustedStorefrontId === scope.trustedStorefrontId
+          ? bound
+          : unavailablePort,
+      forTransaction: (candidate, candidateScope) =>
+        Object.is(candidate, transaction) &&
+        candidateScope.tenantId === scope.tenantId &&
+        candidateScope.legalEntityId === scope.legalEntityId &&
+        candidateScope.principalId === scope.principalId &&
+        candidateScope.storefrontId === scope.trustedStorefrontId
+          ? bound
+          : unavailablePort,
+      resolveCandidate: (input) =>
+        input.candidateProposal === undefined
+          ? Effect.fail(basisCurrentnessUnavailable())
+          : resolve(input, input.candidateProposal),
+      resolveCurrent: (input) => resolve(input),
+    };
+    return { currentness: bound, revalidate };
+  },
+);
+
+/** Observe real owners after releasing SQL, then recheck the retained basis in the commit transaction. */
+export const preparePurchaseProposalBasisCurrentness = Effect.fn('PurchaseProposalBasis.prepareCurrentness')(
+  function* prepareCurrentness(
+    context: ActionServicePreparationContext,
+    source: { readonly sourceRef: string; readonly sourceRevision: string },
+  ) {
+    const request = { ...source, operation: 'CURRENT' as const };
+    const loaded = yield* context.transaction((transaction) =>
+      purchaseProposalBasisService(transaction, context.scope, context.compositionRevision).pipe(
+        Effect.flatMap((owner) => owner.loadRead(request)),
+      ),
+    );
+    const observation = yield* finishPurchaseProposalBasisRead(
+      request,
+      context.scope,
+      context.compositionRevision,
+      loaded,
+      Effect.void,
+    );
+    const dependencies = yield* Effect.context<BasisServices>();
+    return (transaction: ScopedTransactionExecutor, scope: OperationalScope, revision: string) =>
+      preparedBasisCurrentnessForTransaction(transaction, scope, revision, context, loaded, observation).pipe(
+        Effect.provideContext(dependencies),
+      );
+  },
+);
+
 export const preparePurchaseProposalBasisActionServices = Effect.fn('PurchaseProposalBasis.prepareActionServices')(
   function* prepareActionServices(
     payload: typeof PreparePurchaseProposalBasisPayloadSchema.Type,
