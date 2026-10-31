@@ -14,6 +14,53 @@ import { openSignedInPage } from '../../../../src/routes/sign-in-return.ts';
 
 afterEach(cleanup);
 
+it.effect('preserves a validated destination query and fragment through real router navigation', () =>
+  Effect.gen(function* preservesSavedSearchAndHash() {
+    const root = createRootRoute();
+    const login = createRoute({
+      component: () => createElement('h1', null, 'Login'),
+      getParentRoute: () => root,
+      path: '$lang/login',
+    });
+    const search = createRoute({
+      component: () => createElement('h1', null, 'Search'),
+      getParentRoute: () => root,
+      path: '$lang/search',
+    });
+    const history = createMemoryHistory({ initialEntries: ['/cs/login'] });
+    const router = createRouter({
+      history,
+      isServer: false,
+      rewrite: {
+        input: ({ url }) => {
+          const target = new URL(url);
+          if (target.pathname === '/cs/hledat') {
+            target.pathname = '/cs/search';
+          }
+          return target;
+        },
+        output: ({ url }) => {
+          const target = new URL(url);
+          if (target.pathname === '/cs/search') {
+            target.pathname = '/cs/hledat';
+          }
+          return target;
+        },
+      },
+      routeTree: root.addChildren([login, search]),
+    });
+    render(createElement(RouterProvider, { router }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Login' })).toBeDefined()));
+    const returnTo = encodeURIComponent('/cs/hledat?q=100%25#matched');
+    yield* openSignedInPage(router, `https://stage.test/cs/login?returnTo=${returnTo}`, 'cs');
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Search' })).toBeDefined()));
+    expect(router.state.location.pathname).toBe('/cs/search');
+    expect(router.state.location.search).toEqual({ q: '100%' });
+    expect(router.state.location.hash).toBe('matched');
+    expect(history.location.pathname).toBe('/cs/hledat');
+  }),
+);
+
 it.effect('replaces a missing saved destination with Home using the real router', () =>
   Effect.gen(function* recoversMissingReturnRoute() {
     const root = createRootRoute();

@@ -1,4 +1,5 @@
 import { toaster } from '@techsio/ui-kit/molecules/toast';
+import { defaultParseSearch } from '@tanstack/react-router';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Redacted, Schema } from 'effect';
@@ -91,6 +92,10 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
     clearCache: clearCacheMock,
     invalidate: invalidateMock,
     navigate: navigateMock,
+    options: {
+      parseSearch: defaultParseSearch,
+    },
+    origin: 'https://shell.invalid',
     state: routerState,
   }),
 }));
@@ -404,7 +409,11 @@ it.effect('returns to the protected page that sent the visitor to sign-in, with 
     yield* Effect.promise(() =>
       waitFor(() => {
         expect(clearCacheMock).toHaveBeenCalledTimes(1);
-        expect(navigateMock).toHaveBeenCalledWith({ href: '/en/prehledy/statistiky?group=month' });
+        expect(navigateMock).toHaveBeenCalledWith({
+          hash: '',
+          search: { group: 'month' },
+          to: '/en/prehledy/statistiky',
+        });
         expect(navigateMock).toHaveBeenCalledTimes(1);
       }),
     );
@@ -423,7 +432,11 @@ it.effect.each(['cs', 'en'])('opens Home when the saved return page no longer ex
 
     yield* Effect.promise(() =>
       waitFor(() => {
-        expect(navigateMock).toHaveBeenNthCalledWith(1, { href: `/${language}/retired-dashboard` });
+        expect(navigateMock).toHaveBeenNthCalledWith(1, {
+          hash: '',
+          search: {},
+          to: `/${language}/retired-dashboard`,
+        });
         expect(navigateMock).toHaveBeenNthCalledWith(2, { replace: true, to: `/${language}/` });
       }),
     );
@@ -445,7 +458,7 @@ it.effect.each(['resolved', 'forbidden', 'unavailable'])(
         waitFor(() => {
           expect(getSubmit().hasAttribute('disabled')).toBe(false);
           expect(navigateMock).toHaveBeenCalledTimes(1);
-          expect(navigateMock).toHaveBeenCalledWith({ href: '/en/prehledy/statistiky' });
+          expect(navigateMock).toHaveBeenCalledWith({ hash: '', search: {}, to: '/en/prehledy/statistiky' });
         }),
       );
     }),

@@ -83,16 +83,27 @@ export const signInReturnPath = (href: string, language: string): string | undef
 
 /** Returns to a protected deep link after sign-in, or Home when that saved page no longer exists. */
 export const openSignedInPage = Effect.fn('SignInReturn.openSignedInPage')(function* openSignedInPageEffect(
-  router: Pick<AnyRouter, 'clearCache' | 'navigate' | 'state'>,
+  router: Pick<AnyRouter, 'clearCache' | 'navigate' | 'options' | 'origin' | 'rewrite' | 'state'>,
   href: string,
   language: string,
 ) {
   // Cached pages may still contain anonymous loader data from before sign-in.
   router.clearCache();
   const returnPath = signInReturnPath(href, language);
-  yield* Effect.tryPromise(() =>
-    router.navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath }),
-  );
+  const target = returnPath === undefined ? undefined : new URL(returnPath, router.origin);
+  yield* Effect.tryPromise(() => {
+    if (target === undefined) {
+      return router.navigate({ to: `/${language}/` });
+    }
+    // `to` is the router's canonical path, while returnTo is the browser's localized path.
+    // Keep query and fragment separate so a path rewrite cannot discard them.
+    const canonical = new URL(router.rewrite?.input?.({ url: new URL(target) }) ?? target);
+    return router.navigate({
+      hash: target.hash.slice(1),
+      search: router.options.parseSearch(target.search),
+      to: canonical.pathname,
+    });
+  });
   if (
     returnPath !== undefined &&
     router.state.matches.some(
