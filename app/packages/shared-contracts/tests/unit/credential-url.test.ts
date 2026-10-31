@@ -55,6 +55,8 @@ it('keeps localized deep links but rejects external, normalized, encoded and sou
     '/cs/prehledy/statistiky?group=month',
     '/cs/modules/crm#recent',
     '/cs/crm?q=two%20words',
+    '/cs/crm?q=100%25',
+    '/cs/crm?q=encoded%2520text',
   ]) {
     expect(isSafeSignInReturnPath(path, 'cs')).toBe(true);
   }

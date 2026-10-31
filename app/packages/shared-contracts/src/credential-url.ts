@@ -50,10 +50,12 @@ export const authenticationQueryRedactions: readonly RegExp[] = [/./u];
 
 /** Reject browser URL normalization tricks, encoded source code and credentials before saving a return path. */
 export const isSafeSignInReturnPath = (path: string, language: string): boolean => {
-  if (!/^(?:cs|en)$/u.test(language) || !path.startsWith(`/${language}/`)) {
+  if (!/^(?:cs|en)$/u.test(language) || !path.startsWith(`/${language}/`) || hasControlCharacter(path)) {
     return false;
   }
-  let decoded = path;
+  const requested = new URL(path, RETURN_ORIGIN);
+  // Query values are data, not route syntax. Preserve escaped percent signs and search text verbatim.
+  let decoded = path.split(/[?#]/u)[0] ?? '';
   for (let pass = 0; pass < 4; pass += 1) {
     const next = decodePath(decoded);
     if (next === undefined) {
@@ -73,6 +75,7 @@ export const isSafeSignInReturnPath = (path: string, language: string): boolean 
     url.origin === RETURN_ORIGIN &&
     url.pathname.startsWith(`/${language}/`) &&
     !isAuthenticationPath(url.pathname) &&
-    !hasCredentialQuery(url)
+    !hasCredentialQuery(url) &&
+    !hasCredentialQuery(requested)
   );
 };
