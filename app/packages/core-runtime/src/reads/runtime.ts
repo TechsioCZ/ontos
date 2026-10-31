@@ -1,9 +1,9 @@
-import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { transportIdentifier } from '../actions/string-schemas.ts';
-import { computeCanonicalValueHash } from '../actions/repository.ts';
+import { computeCanonicalValueHash, trackTransactionSettlement } from '../actions/repository.ts';
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
@@ -913,42 +913,6 @@ const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionEr
  * Recover the settlement SqlError only when every other defect is one of this body's own captured
  * failures, so an outage keeps its connection classification. Other defects and interruption stay.
  */
-const makeReadSettlementRecovery = () => {
-  const bodyFailures = new Set<unknown>();
-  return {
-    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-      body.pipe(
-        Effect.tapCause((cause) =>
-          Effect.sync(() => {
-            for (const reason of cause.reasons) {
-              if (Cause.isFailReason(reason)) {
-                bodyFailures.add(reason.error);
-              }
-            }
-          }),
-        ),
-      ),
-    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
-      transaction.pipe(
-        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
-          let settlement: SqlError | undefined;
-          for (const reason of cause.reasons) {
-            if (Cause.isInterruptReason(reason)) {
-              return Effect.failCause(cause);
-            }
-            if (Cause.isDieReason(reason)) {
-              if (isSqlError(reason.defect)) {
-                settlement = reason.defect;
-              } else if (!bodyFailures.has(reason.defect)) {
-                return Effect.failCause(cause);
-              }
-            }
-          }
-          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
-        }),
-      ),
-  };
-};
 
 type ReadEvidenceCaptureMode = ReadRegistration<
   Schema.ConstraintDecoder<unknown>,
@@ -1356,7 +1320,7 @@ const readRuntimeFromDependencies = <
     const readTransaction = <Value, Failure, Environment>(
       body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
     ) => {
-      const settlement = makeReadSettlementRecovery();
+      const settlement = trackTransactionSettlement();
       return database.executor
         .transaction((transaction) =>
           // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.

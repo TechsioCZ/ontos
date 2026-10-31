@@ -19,7 +19,7 @@ import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
-import { defineAction } from '../../src/actions/definition.ts';
+import { defineAction, getActionHandler, getActionServiceFactory } from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPolicyDenied,
@@ -2193,6 +2193,86 @@ const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemo
   );
 });
 
+const ownerSnapshotUnavailable = () =>
+  new OperationContextUnavailable({
+    code: 'operation_context_unavailable',
+    reason: 'Owner snapshot unavailable',
+  });
+
+const testActionServicePreparation = Effect.fn('ActionRuntimeIntegration.prepareServices')(function* prepareServices() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+  const key = 'prepared-owner-services';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  const phases: string[] = [];
+  const base = makeRegistration({ actionKey: 'shell.test.prepared-owner-services', moduleStateKey });
+  const action = defineAction(base.descriptor, getActionHandler(base), getActionServiceFactory(base), {
+    prepareServices: Effect.fn('ActionRuntimeIntegration.prepareOwnerServices')(
+      function* prepareOwnerServices(payload, context) {
+        expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+        const before = yield* context.transaction((transaction) =>
+          Effect.gen(function* loadSnapshot() {
+            expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+            phases.push('snapshot');
+            const rows = yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, tenantId))
+              .pipe(Effect.mapError(() => new TestPersistenceError({ reason: 'snapshot unavailable' })));
+            return rows[0]?.tenantId;
+          }),
+        );
+        yield* refuseInsideDatabaseTransaction('outbound-fetch', 'https://owner.fixture.invalid/read');
+        phases.push('remote');
+        const capturedValue = payload.value;
+        return (transaction, scope, revision) =>
+          Effect.gen(function* revalidateSnapshot() {
+            expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+            const rows = yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, tenantId))
+              .pipe(Effect.mapError(ownerSnapshotUnavailable));
+            expect(rows[0]?.tenantId).toBe(before);
+            expect(capturedValue).toBe('prepared-value');
+            expect(context.compositionRevision).toBe(revision);
+            expect(context.scope.principalId).toBe(scope.principalId);
+            phases.push('commit');
+            return { transaction };
+          });
+      },
+    ),
+  });
+  yield* withDatabase((database) =>
+    Effect.gen(function* preparedAction() {
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        openActionRuntimeOptions,
+      );
+      const result = yield* runtime
+        .runAction({
+          payload: { value: 'prepared-value' },
+          principal,
+          registration: action,
+          transport: transport(key, moduleStateKey),
+        })
+        .pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({
+              ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
+            }),
+          ),
+        );
+      expect(result.value).toBe('prepared-value');
+      expect(phases).toEqual(['snapshot', 'remote', 'commit']);
+      expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+    }),
+  );
+});
+
 it.layer(
   Layer.merge(
     Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))).pipe(
@@ -2205,6 +2285,10 @@ it.layer(
     excludeTestServices: true,
   },
 )('Action runtime', (suite) => {
+  suite.effect(
+    'prepares invocation-local remote facts between guarded owner transactions',
+    testActionServicePreparation,
+  );
   suite.effect(
     'marks the Action transaction, refuses remote I/O, and leaves preflight outside it',
     testGuardedActionRemoteIo,

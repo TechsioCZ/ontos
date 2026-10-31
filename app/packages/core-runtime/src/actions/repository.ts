@@ -432,6 +432,44 @@ const isPromotedSqlFailure = Schema.is(
  * persistence failure from a transaction body (including installation of its operational scope).
  * An unrelated defect or interruption keeps the complete cause in its original channel.
  */
+/** Recover driver-promoted SQL settlement failures without swallowing body failures or interruption. */
+export const trackTransactionSettlement = () => {
+  const bodyFailures = new Set<unknown>();
+  return {
+    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      body.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            for (const reason of cause.reasons) {
+              if (Cause.isFailReason(reason)) {
+                bodyFailures.add(reason.error);
+              }
+            }
+          }),
+        ),
+      ),
+    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+      transaction.pipe(
+        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+          let settlement: SqlError | undefined;
+          for (const reason of cause.reasons) {
+            if (Cause.isInterruptReason(reason)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.isDieReason(reason)) {
+              if (isSqlError(reason.defect)) {
+                settlement = reason.defect;
+              } else if (!bodyFailures.has(reason.defect)) {
+                return Effect.failCause(cause);
+              }
+            }
+          }
+          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
+        }),
+      ),
+  };
+};
+
 export const recoverSqlTransactionError = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | SqlError, R> =>

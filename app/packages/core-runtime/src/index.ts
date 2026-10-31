@@ -522,6 +522,8 @@ export type {
   ActionResourcePermissionTargetResolver,
   ActionRequirements,
   ActionServiceFactory,
+  ActionServicePreflight,
+  ActionServicePreparation,
   ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
@@ -561,6 +563,8 @@ export {
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
+  ActionOwnerTransaction,
+  ActionServicePreparationContext,
   ActionTransportMetadata,
   CommittedActionDomainRejection,
   TrustedPrincipalContext,
