@@ -53,6 +53,28 @@ try {
     assert.equal(globalThis.ontosLoaderLoads, undefined);
     assert.equal(context.middlewares.length, 0);
     assert.equal(context.renderMiddlewares.length, 2);
+    // The production render plugin mounts these after the BFF and static responders.
+    const { Hono } = fromTools('hono');
+    const app = new Hono();
+    app.get('/api/ping', c => c.text('api'));
+    app.get('/static/client.js', c => c.text('client'));
+    for (const middleware of context.renderMiddlewares) app.use('*', middleware.handler);
+    app.get('/document', c => c.json({ owner: c.get('serverManifest').renderBundles.index.owner }));
+    assert.equal(await (await app.request('/api/ping')).text(), 'api');
+    assert.equal(await (await app.request('/static/client.js')).text(), 'client');
+    assert.equal(globalThis.ontosRenderLoads, undefined);
+    assert.equal(globalThis.ontosLoaderLoads, undefined);
+    await writeFile(path.join(directory, 'bundles/other.js'), 'globalThis.ontosOtherRenderLoads = 1; exports.owner = "other";');
+    const other = { ...context, middlewares: [], renderMiddlewares: [],
+      routes: [{ ...context.routes[0], bundle: 'bundles/other.js', entryName: 'other' }] };
+    let prepareOther;
+    injectResourcePlugin().setup({
+      getServerContext: () => other,
+      onPrepare: callback => { prepareOther = callback; },
+    });
+    await prepareOther();
+    assert.deepEqual(await (await app.request('/document')).json(), { owner: 'fixture' });
+    assert.equal(globalThis.ontosOtherRenderLoads, undefined);
   } else {
     assert.equal(context.renderMiddlewares.length, 0);
     assert.equal(context.middlewares.length, 2);
