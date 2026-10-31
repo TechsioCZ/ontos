@@ -1,22 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
-import { sql } from 'drizzle-orm';
-import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { ActionCommitIndeterminate } from '@app/core-runtime';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
-import {
-  makeTestDatabaseFromClient,
-  makeTestPgClient,
-} from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { ExternalIdentityClient } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
 import type { ExternalIdentityClientPort } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationReconciliationService } from '../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
-import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
+import { BindRetailPortalProfileActionConflictProblemSchema } from '../../shared/apis/bind-retail-portal-profile-action.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
@@ -29,8 +22,9 @@ import {
   CommerceEnrollmentOwnerEffectRegistryLive,
 } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 import type { CommerceEnrollmentOwnerEffectContext } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
-import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../src/enrollment/orchestration/owner-transaction-runner.ts';
-import { CommerceEnrollmentOwnerEffectRejected } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { ProfileRetailPermissionReaderFactory } from '../../src/integrations/retail-permission-reader.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerReconciliationInput } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import {
@@ -46,25 +40,23 @@ import {
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot, EnrollmentOwnerOperationSnapshot } from '../../shared/enrollment-contracts.ts';
-import { ENROLLMENT_TEST_COMPOSITION_REVISION } from '../support/enrollment-composition-authority.ts';
+import {
+  enrollmentProfileReconciliationLayer,
+  makeEnrollmentProfileReconciliationFixture,
+} from '../support/enrollment-profile-reconciliation.fixture.ts';
+
+type NativeProfileFixture = Effect.Success<ReturnType<typeof makeEnrollmentProfileReconciliationFixture>>;
 
 /**
- * Reconciling the two Commerce-owned Retail self-enrollment transitions after their Action response
- * was lost.
- *
- * The governed Action runtime resolves commit state but republishes no Action result, so the owner
- * verdict — which profile, which binding — has to come from Commerce's own durable rows. Every
- * scenario below writes those rows through the very SECURITY DEFINER routines the Actions run, then
- * reconciles through the deployed registry with no second dispatch available: the Action clients in
- * these entries would have to reach a Commerce BFF that is not running here, so any answer other
- * than an owner read would fail rather than resolve.
+ * The real registered Actions and Core invocation recovery establish command authority. The
+ * deployed registry then reads the exact owner result. Only the remote Party fact and the
+ * bounded Shell issuer are test-owned; neither supplies a command execution verdict.
  */
 
 const REQUEST_DIGEST = 'a'.repeat(64);
 const RESULT_DIGEST = 'b'.repeat(64);
 const CANDIDATE_DIGEST = 'c'.repeat(64);
 const INTENT_DIGEST = 'd'.repeat(64);
-const at = DateTime.makeUnsafe('2026-01-01T00:00:00.000Z');
 
 const ensureTransition: JourneyTransitionSpec = {
   ownerModuleKey: COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
@@ -79,7 +71,7 @@ const bindTransition: JourneyTransitionSpec = {
 
 const unreachable = (operationName: string) => () => Effect.die(`${operationName} is not part of this scenario`);
 
-/** Neither Commerce-owned transition reconciles through Core; reaching it here is the bug. */
+/** Neither transition calls the Core identity owner. Native invocation recovery is a separate path. */
 const coreClient: ExternalIdentityClientPort = {
   activatePrincipalBinding: unreachable('activatePrincipalBinding'),
   changePrincipalBindingStatus: unreachable('changePrincipalBindingStatus'),
@@ -90,58 +82,48 @@ const coreClient: ExternalIdentityClientPort = {
 };
 
 /**
- * The deployed registry over the production owner transaction runner — the same wiring
- * `api/index.ts` composes. Without the runner the registry falls back to the fail-closed answer, so
- * this layer is what the scenarios below are actually asserting about.
+ * The deployed registry reads through real native scoped owner transactions. Its recovery client
+ * reaches the actual HTTP handler and Core resolver before any owner result can establish success.
  */
-const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      Layer.succeed(ExternalIdentityClient, coreClient),
-      Layer.succeed(CommerceCoreIdentityClientConfig, {
-        apiKey: Redacted.make('enrollment-profile-reconciliation'),
-        baseUrl: 'https://core-identity.invalid',
-      }),
-      Layer.succeed(CommercePortalAuthAccountLookupService, {
-        existsByEmail: unreachable('existsByEmail'),
-        existsByProviderSubject: unreachable('existsByProviderSubject'),
-        subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
-        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
-      }),
-      Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
-        reissueVerificationEmail: unreachable('reissueVerificationEmail'),
-      }),
-      CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
-        Layer.provide(
-          ActionAuthorizationPreflightDatabaseLive.pipe(
-            Layer.provideMerge(CorePersistenceLive),
-            Layer.provide(DatabaseConfigLive),
-          ),
-        ),
+const registryLive = (native: NativeProfileFixture) =>
+  CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(ExternalIdentityClient, coreClient),
+        Layer.succeed(CommerceCoreIdentityClientConfig, {
+          apiKey: Redacted.make('enrollment-profile-reconciliation'),
+          baseUrl: 'https://core-identity.invalid',
+        }),
+        Layer.succeed(CommercePortalAuthAccountLookupService, {
+          existsByEmail: unreachable('existsByEmail'),
+          existsByProviderSubject: unreachable('existsByProviderSubject'),
+          subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
+          verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
+        }),
+        Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
+          reissueVerificationEmail: unreachable('reissueVerificationEmail'),
+        }),
+        Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
+          run: native.run,
+          runWorker: () => Effect.die('Profile reconciliation must not discover worker work'),
+        }),
+        Layer.succeed(ProfileRetailPermissionReaderFactory, native.reader),
       ),
     ),
-  ),
-);
+  );
 
-interface Scenario {
-  readonly actorPrincipalId: string;
-  readonly attemptId: string;
-  readonly bindInvocationId: string;
-  readonly ensureInvocationId: string;
-  readonly legalEntityId: string;
-  readonly partyResourceId: string;
-  readonly tenantId: string;
-}
-
-const scenario = (): Scenario => ({
-  actorPrincipalId: randomUUID(),
-  attemptId: randomUUID(),
-  bindInvocationId: randomUUID(),
-  ensureInvocationId: randomUUID(),
-  legalEntityId: randomUUID(),
-  partyResourceId: `retail-reconciliation-party-${randomUUID()}`,
-  tenantId: randomUUID(),
-});
+type Scenario = Pick<
+  NativeProfileFixture,
+  | 'actorPrincipalId'
+  | 'at'
+  | 'attemptId'
+  | 'bindInvocationId'
+  | 'compositionRevision'
+  | 'ensureInvocationId'
+  | 'legalEntityId'
+  | 'partyResourceId'
+  | 'tenantId'
+>;
 
 const operation = (
   identities: Scenario,
@@ -152,20 +134,20 @@ const operation = (
     Partial<EnrollmentOwnerOperationSnapshot>,
 ): EnrollmentOwnerOperationSnapshot => ({
   actorPrincipalId: Schema.decodeSync(EnrollmentPrincipalIdSchema)(identities.actorPrincipalId),
-  createdAt: at,
+  createdAt: identities.at,
   ownerModuleKey: Schema.decodeSync(EnrollmentModuleKeySchema)(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY),
   portalEnrollmentAttemptId: Schema.decodeSync(EnrollmentAttemptIdSchema)(identities.attemptId),
   requestDigest: REQUEST_DIGEST,
   required: true,
   revision: 1,
   tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(identities.tenantId),
-  updatedAt: at,
+  updatedAt: identities.at,
   ...overrides,
 });
 
 const attemptFor = (identities: Scenario): EnrollmentAttemptSnapshot => ({
-  compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
-  createdAt: at,
+  compositionRevision: identities.compositionRevision,
+  createdAt: identities.at,
   createdByPrincipalId: Schema.decodeSync(EnrollmentPrincipalIdSchema)(identities.actorPrincipalId),
   intentDigest: INTENT_DIGEST,
   intentKey: Schema.decodeSync(EnrollmentKeySchema)(
@@ -177,7 +159,7 @@ const attemptFor = (identities: Scenario): EnrollmentAttemptSnapshot => ({
   state: 'RECONCILIATION_REQUIRED',
   targetLegalEntityId: Schema.decodeSync(EnrollmentLegalEntityIdSchema)(identities.legalEntityId),
   tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(identities.tenantId),
-  updatedAt: at,
+  updatedAt: identities.at,
 });
 
 /** The durable journey subject, exactly as the preparation resolver rebuilds it from the Attempt. */
@@ -215,7 +197,7 @@ const contextFor = (
 const reconciliationFor = (identities: Scenario, transition: JourneyTransitionSpec, ownerInvocationId: string) => ({
   ...Schema.decodeUnknownSync(CommerceEnrollmentOwnerTransitionSchema)({
     actorPrincipalId: identities.actorPrincipalId,
-    compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
+    compositionRevision: identities.compositionRevision,
     correlationId: `enrollment-profile-reconciliation-${identities.attemptId}`,
     expectedRevision: 5,
     ownerInvocationId,
@@ -258,6 +240,7 @@ const indeterminateBind = (identities: Scenario): EnrollmentOwnerOperationSnapsh
   });
 
 const reconcileThrough = (
+  native: NativeProfileFixture,
   transition: JourneyTransitionSpec,
   context: CommerceEnrollmentOwnerEffectContext,
   reconciliation: CommerceEnrollmentOwnerReconciliationInput,
@@ -269,174 +252,220 @@ const reconcileThrough = (
         ? Effect.die('The registry declares no owner effect for this Commerce-owned transition')
         : resolved.value.reconcile(reconciliation),
     ),
-    Effect.provide(registryLive),
-  );
-
-interface RoutineRow extends Record<string, unknown> {
-  readonly outcome: string;
-  readonly payload: { readonly profileRef?: { readonly resourceId: string } } | null;
-}
-
-type OwnerDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
-
-/** The runtime role, the only role a governed Action ever reaches an owner routine through. */
-const ownerDatabase = Effect.gen(function* acquireOwnerDatabase() {
-  const connections = yield* loadDatabaseConnectionPair();
-  const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 2 });
-  return yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
-});
-
-const scopedRoutineCall = (
-  transaction: Parameters<Parameters<OwnerDatabase['transaction']>[0]>[0],
-  identities: Scenario,
-  statement: ReturnType<typeof sql>,
-) =>
-  transaction
-    .execute(
-      sql`select set_config('ontos.tenant_id', ${identities.tenantId}, true), set_config('ontos.legal_entity_id', ${identities.legalEntityId}, true)`,
-      'objects',
-    )
-    .pipe(Effect.flatMap(() => transaction.execute<RoutineRow>(statement, 'objects')));
-
-const firstRoutineRow = (rows: readonly RoutineRow[]) =>
-  rows[0] === undefined ? Effect.die('The owner routine returned no row') : Effect.succeed(rows[0]);
-
-/**
- * One owner routine call under the same transaction-local scope the governed Action installs — the
- * Action's own write path, with only the HTTP in front of it removed.
- */
-const runOwnerRoutine = (
-  runtime: OwnerDatabase,
-  identities: Scenario,
-  statement: ReturnType<typeof sql>,
-): Effect.Effect<RoutineRow> =>
-  runtime
-    .transaction((transaction) => scopedRoutineCall(transaction, identities, statement))
-    .pipe(Effect.flatMap(firstRoutineRow), Effect.orDie);
-
-const ensureProfileStatement = (identities: Scenario) =>
-  sql`select * from commerce_customer_context.ensure_retail_profile(
-        ${identities.tenantId}::uuid, ${identities.legalEntityId}::uuid, ${identities.partyResourceId}::text,
-        null::text, 'AUTHENTICATED'::text, ${'2026-01-01T00:00:00.000Z'}::timestamptz,
-        'AUTHORIZED_ONBOARDING'::text, ${randomUUID()}::uuid, ${identities.actorPrincipalId}::uuid)`;
-
-const bindProfileStatement = (identities: Scenario, profileId: string) =>
-  sql`select * from commerce_customer_context.mutate_retail_portal_binding(
-        ${identities.tenantId}::uuid, ${identities.legalEntityId}::uuid, ${profileId}::uuid,
-        ${identities.actorPrincipalId}::uuid, ${randomUUID()}::uuid, ${identities.attemptId}::text,
-        null::text, null::integer, 'BIND'::text, ${'2026-01-01T00:00:00.000Z'}::timestamptz,
-        'Retail self-enrollment established the portal profile binding'::text,
-        ${randomUUID()}::uuid, ${identities.actorPrincipalId}::uuid)`;
-
-const profileIdOf = (row: RoutineRow): string => {
-  const resourceId = row.payload?.profileRef?.resourceId;
-  if (resourceId === undefined) {
-    throw new Error(`The ensure routine returned no profile reference (${row.outcome})`);
-  }
-  return resourceId;
-};
-
-it.live('reconciles a committed Retail Customer Profile ensure whose response was lost', () =>
-  Effect.scoped(
-    Effect.gen(function* lostEnsureResponse() {
-      const runtime = yield* ownerDatabase;
-      const identities = scenario();
-      const ensured = yield* runOwnerRoutine(runtime, identities, ensureProfileStatement(identities));
-      expect(ensured.outcome).toBe('PROFILE_CREATED');
-      const profileId = profileIdOf(ensured);
-
-      const resolution = yield* reconcileThrough(
-        ensureTransition,
-        contextFor(identities, [indeterminateEnsure(identities)]),
-        reconciliationFor(identities, ensureTransition, identities.ensureInvocationId),
-      );
-
-      // Answering from the Action runtime alone reports every lost ensure response as
-      // `commit_resolution_unavailable`, so this reconciliation fails and the Attempt stays in
-      // RECONCILIATION_REQUIRED with portal access already half granted. This assertion is what the
-      // owner read by (Tenant, Legal Entity, Party) buys.
-      expect(resolution.status).toBe('SUCCEEDED');
-      expect(String(resolution.outcomeCode)).toBe('retail_customer_profile_ensured');
-      expect(String(resolution.resultReference)).toBe(profileId);
-    }),
-  ),
-);
-
-it.live('leaves a Retail Customer Profile ensure that never committed open for a retry', () =>
-  Effect.scoped(
-    Effect.gen(function* ensureNeverCommitted() {
-      const identities = scenario();
-
-      // No owner write at all: the ensure Action and the owner routine commit in the same
-      // transaction, so a Party with no profile is a transition that never committed.
-      const failure = yield* Effect.flip(
-        reconcileThrough(
-          ensureTransition,
-          contextFor(identities, [indeterminateEnsure(identities)]),
-          reconciliationFor(identities, ensureTransition, identities.ensureInvocationId),
-        ),
-      );
-
-      // A rejection is the owner saying "dispatch this again"; `commit_resolution_unavailable` would
-      // be the owner saying "I cannot tell", which is what leaves the Attempt stuck forever.
-      const rejection = Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure) ? failure.code : 'not-a-rejection';
-      expect(rejection).toBe('commerce_profile_commit_open');
-    }),
-  ),
-);
-
-it.live(
-  'retains a committed Retail Portal Profile Binding as pending when its response was lost before grants settled',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* lostBindResponse() {
-        const runtime = yield* ownerDatabase;
-        const identities = scenario();
-        const ensured = yield* runOwnerRoutine(runtime, identities, ensureProfileStatement(identities));
-        const profileId = profileIdOf(ensured);
-        const bound = yield* runOwnerRoutine(runtime, identities, bindProfileStatement(identities, profileId));
-        expect(bound.outcome).toBe('BINDING_ACTIVATED');
-
-        const resolution = yield* reconcileThrough(
-          bindTransition,
-          contextFor(identities, [succeededEnsure(identities, profileId), indeterminateBind(identities)]),
-          reconciliationFor(identities, bindTransition, identities.bindInvocationId),
-        );
-
-        // #1232: the committed binding is real progress, but no worker has made its grants Current.
-        expect(resolution).toMatchObject({
-          actorPrincipalId: identities.actorPrincipalId,
-          failureCode: 'owner_reconciliation_required',
-          nextState: 'RECONCILIATION_REQUIRED',
-          outcomeCode: RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
-          status: 'FAILED',
-        });
-        expect(resolution.resultReference).toBeUndefined();
-        expect(String(resolution.reconciliationRef).length).toBeGreaterThan(0);
+    Effect.tapError(() =>
+      Effect.logWarning('ENROLLMENT_PROFILE_RECONCILIATION_HTTP', {
+        nativeStates: native.recoveries.map(({ result }) => result.state),
+        responses: native.httpRequests.map(({ kind, status }) => ({ kind, status })),
       }),
     ),
-);
+    Effect.provide(registryLive(native)),
+    Effect.provide(native.transport),
+  );
 
-it.live('leaves a Retail Portal Profile Binding that never committed open for a retry', () =>
-  Effect.scoped(
-    Effect.gen(function* bindNeverCommitted() {
-      const runtime = yield* ownerDatabase;
-      const identities = scenario();
-      const ensured = yield* runOwnerRoutine(runtime, identities, ensureProfileStatement(identities));
-      const profileId = profileIdOf(ensured);
+/** Recovery must use the original key and real caller, never merely find a matching owner row. */
+const expectNativeRecovery = (
+  native: NativeProfileFixture,
+  transition: JourneyTransitionSpec,
+  idempotencyKey: string,
+  retryStatus?: 200 | 409,
+) => {
+  const requestCount = retryStatus === undefined ? 1 : 2;
+  expect(native.issuances).toHaveLength(requestCount);
+  expect(new Set(native.issuances).size).toBe(requestCount);
+  expect(native.recoveries).toHaveLength(1);
+  expect(native.redemptionCount()).toBe(requestCount);
+  expect(native.httpRequests).toHaveLength(requestCount);
+  expect(native.httpRequests[0]).toMatchObject({
+    actionKey: transition.transitionKey,
+    idempotencyKey,
+    kind: 'recovery',
+    status: 200,
+  });
+  if (retryStatus !== undefined) {
+    expect(native.httpRequests[1]).toMatchObject({
+      actionKey: transition.transitionKey,
+      idempotencyKey,
+      kind: 'retry',
+      status: retryStatus,
+    });
+  }
+  expect(native.httpRequests.map(({ jti }) => jti)).toEqual(native.issuances);
+  expect(native.redeemedAssertions()).toEqual(native.issuances);
+  expect(native.recoveries[0]?.input).toMatchObject({
+    actionKey: transition.transitionKey,
+    idempotencyKey,
+    principal: {
+      authMethod: 'api_key',
+      legalEntityId: native.legalEntityId,
+      principalId: native.actorPrincipalId,
+      tenantId: native.tenantId,
+    },
+  });
+};
 
-      const failure = yield* Effect.flip(
-        reconcileThrough(
-          bindTransition,
-          contextFor(identities, [succeededEnsure(identities, profileId), indeterminateBind(identities)]),
-          reconciliationFor(identities, bindTransition, identities.bindInvocationId),
-        ),
-      );
+it.layer(enrollmentProfileReconciliationLayer, { excludeTestServices: true })((nativeIt) => {
+  nativeIt.effect('reconciles a committed Retail Customer Profile ensure whose response was lost', () =>
+    Effect.scoped(
+      Effect.gen(function* lostEnsureResponse() {
+        const native = yield* makeEnrollmentProfileReconciliationFixture();
+        native.loseNextAcknowledgement();
+        const lost = yield* Effect.flip(native.ensure());
+        expect(Schema.is(ActionCommitIndeterminate)(lost)).toBe(true);
+        if (!Schema.is(ActionCommitIndeterminate)(lost)) {
+          return yield* Effect.die('The registered ensure did not reach the controlled lost acknowledgement');
+        }
+        const profile = yield* native.readProfile();
+        expect(Option.isSome(profile)).toBe(true);
+        if (Option.isNone(profile)) {
+          return yield* Effect.die('The native ensure committed no Retail Customer Profile');
+        }
+        const resolution = yield* reconcileThrough(
+          native,
+          ensureTransition,
+          contextFor(native, [indeterminateEnsure(native)]),
+          reconciliationFor(native, ensureTransition, native.ensureInvocationId),
+        );
 
-      // A rejection is the owner saying "dispatch this again"; `commit_resolution_unavailable` would
-      // be the owner saying "I cannot tell", which is what leaves the Attempt stuck forever.
-      const rejection = Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure) ? failure.code : 'not-a-rejection';
-      expect(rejection).toBe('commerce_profile_commit_open');
-    }),
-  ),
-);
+        expectNativeRecovery(native, ensureTransition, native.ensureInvocationId);
+        expect(native.recoveries[0]?.result).toMatchObject({
+          invocationId: lost.invocationId,
+          retryCommand: false,
+          state: 'COMMITTED',
+        });
+        expect(resolution.status).toBe('SUCCEEDED');
+        expect(String(resolution.outcomeCode)).toBe('retail_customer_profile_ensured');
+        expect(String(resolution.resultReference)).toBe(profile.value.profileRef.resourceId);
+        return yield* Effect.void;
+      }),
+    ),
+  );
+
+  nativeIt.effect('retries an uncommitted Retail Customer Profile ensure only under its original command key', () =>
+    Effect.scoped(
+      Effect.gen(function* ensureNeverCommitted() {
+        const native = yield* makeEnrollmentProfileReconciliationFixture();
+        // A real profile exists, but another command created it. Its existence cannot prove that
+        // the original key committed. Native recovery must answer NOT_STARTED before a real retry.
+        const differentKey = randomUUID();
+        const differentCommand = yield* native.ensure(differentKey);
+        expect(differentCommand.outcome).toBe('PROFILE_CREATED');
+        const differentExecution = yield* native.resolveCommand(ensureTransition.transitionKey, differentKey);
+        const resolution = yield* reconcileThrough(
+          native,
+          ensureTransition,
+          contextFor(native, [indeterminateEnsure(native)]),
+          reconciliationFor(native, ensureTransition, native.ensureInvocationId),
+        );
+        expectNativeRecovery(native, ensureTransition, native.ensureInvocationId, 200);
+        expect(native.recoveries[0]?.result).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+        expect(resolution.status).toBe('SUCCEEDED');
+        expect(resolution.resultReference).toBe(differentCommand.profileRef.resourceId);
+        const execution = yield* native.resolveCommand(ensureTransition.transitionKey, native.ensureInvocationId);
+        expect(execution).toMatchObject({
+          actionKey: ensureTransition.transitionKey,
+          retryCommand: false,
+          state: 'COMMITTED',
+        });
+        if (execution.state !== 'COMMITTED' || differentExecution.state !== 'COMMITTED') {
+          return yield* Effect.die('The exact ensure commands did not commit separately');
+        }
+        expect(execution.invocationId).not.toBe(differentExecution.invocationId);
+        return yield* Effect.void;
+      }),
+    ),
+  );
+
+  nativeIt.effect(
+    'retains a committed Retail Portal Profile Binding as pending when its response was lost before grants settled',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* lostBindResponse() {
+          const native = yield* makeEnrollmentProfileReconciliationFixture();
+          const ensured = yield* native.ensure();
+          expect(ensured.outcome).toBe('PROFILE_CREATED');
+          native.loseNextAcknowledgement();
+          const lost = yield* Effect.flip(native.bind(ensured.profileRef));
+          expect(Schema.is(ActionCommitIndeterminate)(lost)).toBe(true);
+          if (!Schema.is(ActionCommitIndeterminate)(lost)) {
+            return yield* Effect.die('The registered binding did not reach the controlled lost acknowledgement');
+          }
+          const resolution = yield* reconcileThrough(
+            native,
+            bindTransition,
+            contextFor(native, [succeededEnsure(native, ensured.profileRef.resourceId), indeterminateBind(native)]),
+            reconciliationFor(native, bindTransition, native.bindInvocationId),
+          );
+
+          expectNativeRecovery(native, bindTransition, native.bindInvocationId);
+          expect(native.recoveries[0]?.result).toMatchObject({
+            invocationId: lost.invocationId,
+            retryCommand: false,
+            state: 'COMMITTED',
+          });
+          // No worker runs here. A committed native binding with pending grants is not Current.
+          expect(resolution).toMatchObject({
+            actorPrincipalId: native.actorPrincipalId,
+            failureCode: 'owner_reconciliation_required',
+            nextState: 'RECONCILIATION_REQUIRED',
+            outcomeCode: RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
+            status: 'FAILED',
+          });
+          expect(resolution.resultReference).toBeUndefined();
+          expect(String(resolution.reconciliationRef).length).toBeGreaterThan(0);
+          return yield* Effect.void;
+        }),
+      ),
+  );
+
+  nativeIt.effect('preserves the binding owned by a different command when the original-key retry conflicts', () =>
+    Effect.scoped(
+      Effect.gen(function* bindNeverCommitted() {
+        const native = yield* makeEnrollmentProfileReconciliationFixture();
+        const ensured = yield* native.ensure();
+        expect(ensured.outcome).toBe('PROFILE_CREATED');
+        // Even an exact owner binding created under another key is not this command's result.
+        const differentKey = randomUUID();
+        const differentCommand = yield* native.bind(ensured.profileRef, differentKey);
+        expect(differentCommand.outcome).toBe('BINDING_ACTIVATED');
+        const differentExecution = yield* native.resolveCommand(bindTransition.transitionKey, differentKey);
+        const bindingBefore = yield* native.readBinding(ensured.profileRef);
+        expect(Option.isSome(bindingBefore)).toBe(true);
+        if (Option.isNone(bindingBefore)) {
+          return yield* Effect.die('The different command committed no binding to preserve');
+        }
+        expect(bindingBefore.value.bindingRef).toEqual(differentCommand.bindingRef);
+        const failure = yield* Effect.flip(
+          reconcileThrough(
+            native,
+            bindTransition,
+            contextFor(native, [succeededEnsure(native, ensured.profileRef.resourceId), indeterminateBind(native)]),
+            reconciliationFor(native, bindTransition, native.bindInvocationId),
+          ),
+        );
+        expectNativeRecovery(native, bindTransition, native.bindInvocationId, 409);
+        expect(native.recoveries[0]?.result).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+        const unavailable = yield* Schema.decodeUnknownEffect(CommerceEnrollmentOwnerEffectUnavailable)(failure);
+        expect(unavailable.code).toBe('commerce_profile_unavailable');
+        const conflict = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ cause: BindRetailPortalProfileActionConflictProblemSchema }),
+        )(failure);
+        expect(conflict.cause).toMatchObject({
+          code: 'BINDING_CONFLICT',
+          status: 409,
+        });
+        const execution = yield* native.resolveCommand(bindTransition.transitionKey, native.bindInvocationId);
+        expect(execution).toMatchObject({
+          retryCommand: true,
+          state: 'RETRYABLE',
+        });
+        if (execution.state !== 'RETRYABLE' || differentExecution.state !== 'COMMITTED') {
+          return yield* Effect.die('Core did not retain the distinct retryable original and committed binding command');
+        }
+        expect(execution.invocationId).not.toBe(differentExecution.invocationId);
+        expect(yield* native.resolveCommand(bindTransition.transitionKey, differentKey)).toEqual(differentExecution);
+        expect(yield* native.readBinding(ensured.profileRef)).toEqual(bindingBefore);
+        return yield* Effect.void;
+      }),
+    ),
+  );
+});
