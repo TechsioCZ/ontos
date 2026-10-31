@@ -7,6 +7,7 @@ import {
   AUTH_OPERATION_TIMEOUT_MS,
   authenticationRequestId,
   observeAuthenticationPhase,
+  observeSignInPhase,
   withAuthenticationTimeout,
 } from '../../api/auth/observability.ts';
 
@@ -101,4 +102,17 @@ describe('Shell authentication observability', () => {
     expect(authenticationRequestId(new Headers({ 'x-request-id': 'a'.repeat(65) }))).toBe('invalid');
     expect(authenticationRequestId(new Headers())).toBe('missing');
   });
+});
+
+it.effect('records a native sign-in phase even on failure without leaking the failed value', () => {
+  const entries: string[] = [];
+  return Effect.gen(function* failedNativePhase() {
+    const exit = yield* Effect.fail(credentials).pipe(observeSignInPhase('credential-verify'), Effect.exit);
+    expect(exit).toEqual(Exit.fail(credentials));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toContain('credential-verify');
+    expect(entries[0]).toContain('durationMs');
+    expect(entries[0]).not.toContain(credentials.email);
+    expect(entries[0]).not.toContain(credentials.password);
+  }).pipe(Effect.provide(capturedLoggerLayer(entries)));
 });

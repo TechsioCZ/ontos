@@ -5,6 +5,7 @@ import { OutboxPollerConfigError } from './errors.ts';
 import type { OutboxWorkerDescriptorError } from './errors.ts';
 import type { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 import type { OutboxWorkerHealth } from './health.ts';
+import { observeRuntimeJob } from '../observability/runtime-jobs.ts';
 import { runOutboxCycle } from './runtime.ts';
 import type { OutboxCycleError, OutboxCycleResult, OutboxRuntime, RunOutboxCycleInput } from './runtime.ts';
 
@@ -210,5 +211,12 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
     }),
   );
 
-  return tick.pipe(Effect.repeat(Schedule.spaced(Duration.millis(input.config.pollIntervalMs))), Effect.asVoid);
+  return tick.pipe(
+    observeRuntimeJob(
+      'outbox-poll',
+      input.registrations.map((registration) => registration.descriptor.workerKey).join(','),
+    ),
+    Effect.repeat(Schedule.spaced(Duration.millis(input.config.pollIntervalMs))),
+    Effect.asVoid,
+  );
 }

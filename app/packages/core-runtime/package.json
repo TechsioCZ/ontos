@@ -23,6 +23,7 @@
       "workerd": "./src/modules/active-application-composition-source.workerd.ts",
       "default": "./src/modules/active-application-composition-source.node.ts"
     },
+    "./observability/runtime-jobs": "./src/observability/runtime-jobs.ts",
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
     "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",

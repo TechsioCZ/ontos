@@ -18,7 +18,12 @@ import { Cause, Context, Effect, Layer, Predicate, Redacted, Result, Schema } fr
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
 import { AuthConfig } from './config.ts';
-import { AUTH_OPERATION_TIMEOUT_MS, observeAuthenticationPhase, withAuthenticationTimeout } from './observability.ts';
+import {
+  AUTH_OPERATION_TIMEOUT_MS,
+  observeAuthenticationPhase,
+  observeSignInPhase,
+  withAuthenticationTimeout,
+} from './observability.ts';
 import { BetterAuthFramework, FORBIDDEN_IDENTITY_CODE, IDENTITY_UNAVAILABLE_CODE } from './better-auth-framework.ts';
 import { observeGatewayPhase } from './gateway-timing.ts';
 import type { AuthConfigValue } from './config.ts';
@@ -935,6 +940,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
             resolver.resolveDefaultBetterAuthUser(result.response.user.id).pipe(
               Effect.mapError(mapResolverError),
               observeAuthenticationPhase('sign-in.principal', requestHeaders),
+              observeSignInPhase('principal-resolution'),
               Effect.map((principal) => ({
                 identity: toSafeIdentity(result.response.user.email, principal),
                 setCookieHeaders: setCookieHeaders(result.headers),

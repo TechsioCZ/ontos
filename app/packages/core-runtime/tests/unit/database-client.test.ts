@@ -2,7 +2,7 @@ import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
 
 import { PgClient } from '@effect/sql-pg';
-import { ConfigProvider, Context, Deferred, Effect, Exit, Layer, Predicate, Redacted, Scope } from 'effect';
+import { ConfigProvider, Context, Deferred, Effect, Exit, Fiber, Layer, Predicate, Redacted, Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -552,4 +552,22 @@ it.live('closes shared pools when the runtime registry shuts down with owner sco
       ConfigProvider.fromUnknown({ ONTOS_DATABASE_POOL_SHARED: 'true' }),
     ),
   ),
+);
+
+it.live('reports native pool occupancy and waiters, then returns to idle after a reservation', () =>
+  Effect.gen(function* poolStatistics() {
+    const fake = yield* fakePostgres;
+    const client = yield* ownerClient(fake.url('ontos_runtime'), yield* Effect.scope, { maxConnections: 1 });
+    const statistics = client.poolStatistics ?? Effect.die('The pinned driver must expose native pool statistics');
+    expect(yield* statistics).toEqual({ idle: 0, inUse: 0, total: 0, waiting: 0 });
+    const reservation = yield* Scope.make();
+    yield* client.reserve.pipe(Scope.provide(reservation));
+    expect(yield* statistics).toEqual({ idle: 0, inUse: 1, total: 1, waiting: 0 });
+    const waiting = yield* client.reserve.pipe(Effect.scoped, Effect.forkScoped);
+    yield* Effect.yieldNow;
+    expect(yield* statistics).toEqual({ idle: 0, inUse: 1, total: 1, waiting: 1 });
+    yield* Scope.close(reservation, Exit.void);
+    yield* Fiber.join(waiting);
+    expect(yield* statistics).toEqual({ idle: 1, inUse: 0, total: 1, waiting: 0 });
+  }).pipe(Effect.scoped, sharedPools),
 );

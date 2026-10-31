@@ -1,3 +1,4 @@
+import { observeRuntimeJob } from '@app/core-runtime/observability/runtime-jobs';
 import { matchOutboxMessages } from '@app/core-runtime';
 import type {
   ApplicationCompositionAuthorityError,
@@ -66,6 +67,7 @@ const installedOutboxMatcherTick = installedModuleCatalog.pipe(
 );
 
 const installedOutboxMatcherLoop = installedOutboxMatcherTick.pipe(
+  observeRuntimeJob('outbox-match'),
   Effect.repeat(Schedule.spaced(Duration.millis(1000))),
   Effect.asVoid,
 );

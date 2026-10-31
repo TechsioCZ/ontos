@@ -1,3 +1,4 @@
+import { observeRuntimeJob } from '@app/core-runtime/observability/runtime-jobs';
 import type { DatabaseConfigError } from '@app/core-runtime';
 import type { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import type { DeliveryReadScope, listDeliveries } from '@app/email-delivery/deliveries';
@@ -183,6 +184,7 @@ const dispatch = Effect.fn('EmailTransport.dispatch')(function* dispatch(request
   }
   return yield* EmailDeliveryRequests.pipe(
     Effect.flatMap((requests) => requests.dispatch),
+    observeRuntimeJob('email-dispatch'),
     Effect.flatMap((result) => json({ ...result }, result.configured ? 200 : 503)),
   );
 });

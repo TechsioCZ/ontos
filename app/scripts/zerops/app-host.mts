@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { startProcessObservability } from './process-observability.mts';
+import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
@@ -294,7 +296,10 @@ const runChild = (name: string, command: string, args: readonly string[], cwd: s
       }
       return yield* Effect.void;
     }),
-  ).pipe(Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))));
+  ).pipe(
+    observeRuntimeJob('supervisor-child', name),
+    Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
+  );
 
 // ---------------------------------------------------------------------------------------------------------------
 // HTTP
@@ -542,6 +547,7 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
 // Host
 
 export const runAppHost = Effect.gen(function* runAppHost() {
+  yield* startProcessObservability('supervisor');
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
@@ -590,7 +596,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Console.log(
       `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
     );
-  });
+  }).pipe(observeRuntimeJob('composition-publish'));
 
   // ONTOS_APP_HOST_PUBLISH=false starts and observes every unit without migrating or taking the authority, so a new
   // environment can be checked beside the one that still holds it.

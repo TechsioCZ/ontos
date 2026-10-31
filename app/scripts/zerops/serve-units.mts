@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { startProcessObservability } from './process-observability.mts';
 import { startProcessDatabasePools } from './process-database-pools.mts';
 import { startProcessCompositionValidation } from './process-composition-validation.mts';
 /**
@@ -59,6 +60,7 @@ const serveUnit = (unit: HostedUnit) =>
 
 const command = Command.make('serve-units', { ids: Argument.String('app-id').pipe(Argument.atLeast(1)) }, ({ ids }) =>
   Effect.gen(function* serveUnits() {
+    yield* startProcessObservability(ids.length === 1 && ids[0] === 'shell-super-app' ? 'shell' : 'owners');
     const units = yield* readHostedUnits;
     const selected = ids.map((id) => units.find((unit) => unit.id === id));
     const unknown = ids.filter((_, index) => selected[index] === undefined);

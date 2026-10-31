@@ -120,12 +120,16 @@ const clientOnSharedPool = Effect.fnUntraced(function* clientOnSharedPool(
     Effect.tap(([duration]) =>
       Duration.toMillis(duration) < 1000
         ? Effect.void
-        : Effect.logWarning('Shared database pool checkout waited at least one second').pipe(
-            Effect.annotateLogs({
-              elapsedMs: Duration.toMillis(duration),
-              maxConnections,
-            }),
-          ),
+        : Effect.gen(function* reportSlowCheckout() {
+            const statistics = yield* pool.poolStatistics ?? Effect.void;
+            yield* Effect.logWarning('Shared database pool checkout waited at least one second').pipe(
+              Effect.annotateLogs({
+                elapsedMs: Duration.toMillis(duration),
+                maxConnections,
+                poolState: statistics ?? 'unavailable',
+              }),
+            );
+          }),
     ),
     Effect.map(([, connection]) => connection),
   );
@@ -150,6 +154,7 @@ const clientOnSharedPool = Effect.fnUntraced(function* clientOnSharedPool(
     listen: pool.listen,
     notify: pool.notify,
     [PgClient.TypeId]: PgClient.TypeId,
+    poolStatistics: pool.poolStatistics,
   });
   return pgClient;
 });

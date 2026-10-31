@@ -1,6 +1,8 @@
 import { Clock, DateTime, Duration, Effect, Option, Schedule } from 'effect';
 import type { Scope } from 'effect';
 
+import { observeRuntimeJob } from '../observability/runtime-jobs.ts';
+
 import type { GatewayAssertionRedemptionUnavailableError } from './gateway-assertion-redemption-unavailable-error.ts';
 
 /**
@@ -26,6 +28,7 @@ export const startGatewayAssertionRedemptionCleanup = Effect.fn('GatewayAssertio
       Effect.catchTag('GatewayAssertionRedemptionUnavailableError', (failure) =>
         Effect.logWarning('Gateway assertion evidence cleanup failed', { owner, reason: failure.reason }),
       ),
+      observeRuntimeJob('gateway-assertion-cleanup', owner, 50),
     );
     // Delay the first cleanup too. Layer acquisition and the first request do no pruning.
     yield* tick.pipe(
