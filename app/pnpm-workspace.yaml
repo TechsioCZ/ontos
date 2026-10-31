@@ -159,6 +159,7 @@ allowBuilds:
 patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/core
   # MODERN_SERVER_RENDER_RESOURCES=lazy defers owner page resources until rendering, never for BFF/static requests.
+  # MODERN_SERVER_IMMUTABLE_ASSETS=true caches bounded positive metadata in immutable production containers.
   '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.16': patches/@bleedingdev__modern-js-server-core@3.9.3-ultramodern.16.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils (ULTRAMODERN_SKIP_SERVER_TYPECHECK=1
   # skips the BFF server declaration emit and TS-Go check in deploy builds; CI gates typecheck every unit)
@@ -183,3 +184,6 @@ patchedDependencies:
   oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch
   # Read-only native pool counters. No acquisition, codec, transaction or sizing changes.
   '@effect/sql-pg@4.0.7': patches/@effect__sql-pg@4.0.7.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/runtime-extensions
+  # Preserve negotiation/406 while skipping probes for explicitly absent compressed assets; retain immutable MF lists.
+  '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.16': patches/@bleedingdev__modern-js-server-runtime-extensions@3.9.3-ultramodern.16.patch

@@ -135,6 +135,16 @@ it('fails the application build whose Zephyr upload fails', () => {
   expect(app.getIn(['build', 'envVariables', 'ZE_FAIL_BUILD'])).toBe('true');
 });
 
+it('excludes compressed asset copies from both CI archives and the final Zerops package', () => {
+  const deployIgnore = readFileSync(new URL('../../../.deployignore', import.meta.url), 'utf-8');
+  const workflow = readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8');
+  for (const extension of ['br', 'gz']) {
+    expect(deployIgnore).toContain(`app/apps/*/dist/**/*.${extension}`);
+    expect(deployIgnore).toContain(`app/verticals/*/dist/**/*.${extension}`);
+    expect(workflow).toContain(`--exclude='*.${extension}'`);
+  }
+});
+
 it('bakes the public origins the app runs with into its bundles, including the AKROS storefront', () => {
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
   const buildApp = readFileSync(new URL('../zerops/build-app.sh', import.meta.url), 'utf-8');

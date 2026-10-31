@@ -1,32 +1,30 @@
 diff --git a/dist/cjs/adapters/node/plugins/resource.js b/dist/cjs/adapters/node/plugins/resource.js
-index 46232f073e3c864537c0969003399b793da2aa77..a70cf0821ab7d4fad17fbf5c793d0f0a588101c4 100644
+index 46232f073e3c864537c0969003399b793da2aa77..02a3531fd17f32cf3175bea89ed05a448e12fd62 100644
 --- a/dist/cjs/adapters/node/plugins/resource.js
 +++ b/dist/cjs/adapters/node/plugins/resource.js
-@@ -71,7 +71,7 @@ async function getHtmlTemplates(pwd, routes) {
+@@ -71,6 +71,7 @@ async function getHtmlTemplates(pwd, routes) {
  function injectTemplates(pwd, routes, htmlTemplatePromise) {
      return async (c, next)=>{
          if (routes && !c.get('templates')) {
--            const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
-+            const templates = await (htmlTemplatePromise ||= getHtmlTemplates(pwd, routes));
++            if ((0, utils_namespaceObject.isProd)()) htmlTemplatePromise ||= getHtmlTemplates(pwd, routes);
+             const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
              c.set('templates', templates);
          }
-         await next();
-@@ -118,7 +118,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+@@ -118,6 +119,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
      return async (c, next)=>{
          if (routes && !c.get('serverManifest')) {
              const monitors = c.get('monitors');
--            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
-+            const serverManifest = await (manifestPromise ||= getServerManifest(pwd, routes, monitors));
++            if ((0, utils_namespaceObject.isProd)()) manifestPromise ||= getServerManifest(pwd, routes, monitors);
+             const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
              c.set('serverManifest', serverManifest);
          }
-         await next();
-@@ -167,18 +167,20 @@ const injectResourcePlugin = ()=>({
+@@ -167,18 +169,20 @@ const injectResourcePlugin = ()=>({
          name: '@modern-js/plugin-inject-resource',
          setup (api) {
              api.onPrepare(()=>{
 -                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
 +                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
-+                const lazy = process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
++                const lazy = (0, utils_namespaceObject.isProd)() && process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
 +                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
                  let htmlTemplatePromise;
                  let manifestPromise;
@@ -45,35 +43,90 @@ index 46232f073e3c864537c0969003399b793da2aa77..a70cf0821ab7d4fad17fbf5c793d0f0a
                      name: 'inject-html',
                      handler: injectTemplates(pwd, routes, htmlTemplatePromise)
                  });
+diff --git a/dist/cjs/adapters/node/plugins/static.js b/dist/cjs/adapters/node/plugins/static.js
+index ec5a91c20707563db417d3d58c8e89cd3afc8763..2e425eadf66d7c6ab7367d3123f498162e94c512 100644
+--- a/dist/cjs/adapters/node/plugins/static.js
++++ b/dist/cjs/adapters/node/plugins/static.js
+@@ -53,6 +53,25 @@ const isPathInside = (target, root)=>{
+     const relative = external_path_default().relative(external_path_default().resolve(root), external_path_default().resolve(target));
+     return '' === relative || !relative.startsWith(`..${external_path_default().sep}`) && '..' !== relative && !external_path_default().isAbsolute(relative);
+ };
++// Release files are immutable only when the host explicitly opts in. Never retain missing paths.
++const immutableAssetMetadata = new Map();
++const getStaticAssetMetadata = (filename)=>{
++    const immutable = 'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS;
++    if (!immutable) return utils_namespaceObject.fs.lstat(filename);
++    if (immutableAssetMetadata.has(filename)) return immutableAssetMetadata.get(filename);
++    const pending = utils_namespaceObject.fs.lstat(filename).catch(()=>{
++        if (immutableAssetMetadata.get(filename) === pending) immutableAssetMetadata.delete(filename);
++        return null;
++    });
++    if (immutable) {
++        if (immutableAssetMetadata.size >= 8192) immutableAssetMetadata.delete(immutableAssetMetadata.keys().next().value);
++        immutableAssetMetadata.set(filename, pending);
++    }
++    return pending;
++};
++const staticAssetExists = (filename)=>'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS
++    ? getStaticAssetMetadata(filename).then(Boolean)
++    : utils_namespaceObject.fs.pathExists(filename);
+ async function serveStaticAsset(context, asset, respond) {
+     let { filename } = asset;
+     const { kind } = asset;
+@@ -73,7 +92,7 @@ async function serveStaticAsset(context, asset, respond) {
+     } catch  {
+         return null;
+     }
+-    if ('static' === kind && !await utils_namespaceObject.fs.pathExists(filename)) return null;
++    if ('static' === kind && !await staticAssetExists(filename)) return null;
+     if (respond) return respond(asset, (representation)=>serveStaticAsset(context, {
+             ...asset,
+             ...representation,
+@@ -82,7 +101,7 @@ async function serveStaticAsset(context, asset, respond) {
+         }));
+     const mimeType = (0, mime_namespaceObject.getMimeType)(asset.mimeFilename ?? filename);
+     if ('static' === kind && mimeType) context.header('Content-Type', mimeType);
+-    const size = 'static' === kind ? (await utils_namespaceObject.fs.lstat(filename)).size : void 0;
++    const size = 'static' === kind ? (await getStaticAssetMetadata(filename))?.size : void 0;
+     const data = 'static' === kind ? await fileReader_namespaceObject.fileReader.readFileFromSystem(filename, 'buffer') : await fileReader_namespaceObject.fileReader.readFile(filename, 'buffer');
+     if ('static' === kind && (asset.contentLength ?? true)) context.header('Content-Length', String(true === asset.contentLength && data ? data.byteLength : size));
+     if (null === data) return null;
+@@ -202,7 +221,7 @@ function createStaticMiddleware(options) {
+         else {
+             const filepath = external_path_default().join(pwd, pathname.replace(pathPrefix, ()=>''));
+             if (!isPathInside(filepath, pwd)) return next();
+-            if (!await utils_namespaceObject.fs.pathExists(filepath)) return next();
++            if (!await staticAssetExists(filepath)) return next();
+             const asset = {
+                 filename: filepath,
+                 kind: 'static'
 diff --git a/dist/esm/adapters/node/plugins/resource.mjs b/dist/esm/adapters/node/plugins/resource.mjs
-index d7ea552f419bda89ba190870227373212061f04a..79ac80608d323453bcbdd8c6c0ada40cf5941158 100644
+index d7ea552f419bda89ba190870227373212061f04a..e649eee186aa3fc117936c0274929d436180cfe2 100644
 --- a/dist/esm/adapters/node/plugins/resource.mjs
 +++ b/dist/esm/adapters/node/plugins/resource.mjs
-@@ -21,7 +21,7 @@ async function getHtmlTemplates(pwd, routes) {
+@@ -21,6 +21,7 @@ async function getHtmlTemplates(pwd, routes) {
  function injectTemplates(pwd, routes, htmlTemplatePromise) {
      return async (c, next)=>{
          if (routes && !c.get('templates')) {
--            const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
-+            const templates = await (htmlTemplatePromise ||= getHtmlTemplates(pwd, routes));
++            if (isProd()) htmlTemplatePromise ||= getHtmlTemplates(pwd, routes);
+             const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
              c.set('templates', templates);
          }
-         await next();
-@@ -68,7 +68,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+@@ -68,6 +69,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
      return async (c, next)=>{
          if (routes && !c.get('serverManifest')) {
              const monitors = c.get('monitors');
--            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
-+            const serverManifest = await (manifestPromise ||= getServerManifest(pwd, routes, monitors));
++            if (isProd()) manifestPromise ||= getServerManifest(pwd, routes, monitors);
+             const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
              c.set('serverManifest', serverManifest);
          }
-         await next();
-@@ -117,18 +117,20 @@ const injectResourcePlugin = ()=>({
+@@ -117,18 +119,20 @@ const injectResourcePlugin = ()=>({
          name: '@modern-js/plugin-inject-resource',
          setup (api) {
              api.onPrepare(()=>{
 -                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
 +                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
-+                const lazy = process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
++                const lazy = isProd() && process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
 +                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
                  let htmlTemplatePromise;
                  let manifestPromise;
@@ -92,35 +145,90 @@ index d7ea552f419bda89ba190870227373212061f04a..79ac80608d323453bcbdd8c6c0ada40c
                      name: 'inject-html',
                      handler: injectTemplates(pwd, routes, htmlTemplatePromise)
                  });
+diff --git a/dist/esm/adapters/node/plugins/static.mjs b/dist/esm/adapters/node/plugins/static.mjs
+index 3691d3552c3dbfd05560fc89db1df09b32048492..800e7bbabece8ac13626fea61ad69d2b1bf2d8c9 100644
+--- a/dist/esm/adapters/node/plugins/static.mjs
++++ b/dist/esm/adapters/node/plugins/static.mjs
+@@ -8,6 +8,25 @@ const isPathInside = (target, root)=>{
+     const relative = path.relative(path.resolve(root), path.resolve(target));
+     return '' === relative || !relative.startsWith(`..${path.sep}`) && '..' !== relative && !path.isAbsolute(relative);
+ };
++// Release files are immutable only when the host explicitly opts in. Never retain missing paths.
++const immutableAssetMetadata = new Map();
++const getStaticAssetMetadata = (filename)=>{
++    const immutable = 'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS;
++    if (!immutable) return fs.lstat(filename);
++    if (immutableAssetMetadata.has(filename)) return immutableAssetMetadata.get(filename);
++    const pending = fs.lstat(filename).catch(()=>{
++        if (immutableAssetMetadata.get(filename) === pending) immutableAssetMetadata.delete(filename);
++        return null;
++    });
++    if (immutable) {
++        if (immutableAssetMetadata.size >= 8192) immutableAssetMetadata.delete(immutableAssetMetadata.keys().next().value);
++        immutableAssetMetadata.set(filename, pending);
++    }
++    return pending;
++};
++const staticAssetExists = (filename)=>'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS
++    ? getStaticAssetMetadata(filename).then(Boolean)
++    : fs.pathExists(filename);
+ async function serveStaticAsset(context, asset, respond) {
+     let { filename } = asset;
+     const { kind } = asset;
+@@ -28,7 +47,7 @@ async function serveStaticAsset(context, asset, respond) {
+     } catch  {
+         return null;
+     }
+-    if ('static' === kind && !await fs.pathExists(filename)) return null;
++    if ('static' === kind && !await staticAssetExists(filename)) return null;
+     if (respond) return respond(asset, (representation)=>serveStaticAsset(context, {
+             ...asset,
+             ...representation,
+@@ -37,7 +56,7 @@ async function serveStaticAsset(context, asset, respond) {
+         }));
+     const mimeType = getMimeType(asset.mimeFilename ?? filename);
+     if ('static' === kind && mimeType) context.header('Content-Type', mimeType);
+-    const size = 'static' === kind ? (await fs.lstat(filename)).size : void 0;
++    const size = 'static' === kind ? (await getStaticAssetMetadata(filename))?.size : void 0;
+     const data = 'static' === kind ? await fileReader.readFileFromSystem(filename, 'buffer') : await fileReader.readFile(filename, 'buffer');
+     if ('static' === kind && (asset.contentLength ?? true)) context.header('Content-Length', String(true === asset.contentLength && data ? data.byteLength : size));
+     if (null === data) return null;
+@@ -157,7 +176,7 @@ function createStaticMiddleware(options) {
+         else {
+             const filepath = path.join(pwd, pathname.replace(pathPrefix, ()=>''));
+             if (!isPathInside(filepath, pwd)) return next();
+-            if (!await fs.pathExists(filepath)) return next();
++            if (!await staticAssetExists(filepath)) return next();
+             const asset = {
+                 filename: filepath,
+                 kind: 'static'
 diff --git a/dist/esm-node/adapters/node/plugins/resource.mjs b/dist/esm-node/adapters/node/plugins/resource.mjs
-index 3a903ea85c5637c92e5a2c2804c3e44f1bf314c9..afaeeed6f05b793247801e535f9eb89fd8bbee59 100644
+index 3a903ea85c5637c92e5a2c2804c3e44f1bf314c9..f03e7351c020c39f682f649daada2034cd1384d2 100644
 --- a/dist/esm-node/adapters/node/plugins/resource.mjs
 +++ b/dist/esm-node/adapters/node/plugins/resource.mjs
-@@ -22,7 +22,7 @@ async function getHtmlTemplates(pwd, routes) {
+@@ -22,6 +22,7 @@ async function getHtmlTemplates(pwd, routes) {
  function injectTemplates(pwd, routes, htmlTemplatePromise) {
      return async (c, next)=>{
          if (routes && !c.get('templates')) {
--            const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
-+            const templates = await (htmlTemplatePromise ||= getHtmlTemplates(pwd, routes));
++            if (isProd()) htmlTemplatePromise ||= getHtmlTemplates(pwd, routes);
+             const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
              c.set('templates', templates);
          }
-         await next();
-@@ -69,7 +69,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+@@ -69,6 +70,7 @@ function injectServerManifest(pwd, routes, manifestPromise) {
      return async (c, next)=>{
          if (routes && !c.get('serverManifest')) {
              const monitors = c.get('monitors');
--            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
-+            const serverManifest = await (manifestPromise ||= getServerManifest(pwd, routes, monitors));
++            if (isProd()) manifestPromise ||= getServerManifest(pwd, routes, monitors);
+             const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
              c.set('serverManifest', serverManifest);
          }
-         await next();
-@@ -118,18 +118,20 @@ const injectResourcePlugin = ()=>({
+@@ -118,18 +120,20 @@ const injectResourcePlugin = ()=>({
          name: '@modern-js/plugin-inject-resource',
          setup (api) {
              api.onPrepare(()=>{
 -                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
 +                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
-+                const lazy = process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
++                const lazy = isProd() && process.env.MODERN_SERVER_RENDER_RESOURCES === 'lazy';
 +                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
                  let htmlTemplatePromise;
                  let manifestPromise;
@@ -139,3 +247,60 @@ index 3a903ea85c5637c92e5a2c2804c3e44f1bf314c9..afaeeed6f05b793247801e535f9eb89f
                      name: 'inject-html',
                      handler: injectTemplates(pwd, routes, htmlTemplatePromise)
                  });
+diff --git a/dist/esm-node/adapters/node/plugins/static.mjs b/dist/esm-node/adapters/node/plugins/static.mjs
+index f8646376d2aa693f7ab5023b068f24bab1cfb495..b63cdd7b24cec78daa6fc416ba6ec76fe7ce9e46 100644
+--- a/dist/esm-node/adapters/node/plugins/static.mjs
++++ b/dist/esm-node/adapters/node/plugins/static.mjs
+@@ -9,6 +9,25 @@ const isPathInside = (target, root)=>{
+     const relative = path.relative(path.resolve(root), path.resolve(target));
+     return '' === relative || !relative.startsWith(`..${path.sep}`) && '..' !== relative && !path.isAbsolute(relative);
+ };
++// Release files are immutable only when the host explicitly opts in. Never retain missing paths.
++const immutableAssetMetadata = new Map();
++const getStaticAssetMetadata = (filename)=>{
++    const immutable = 'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS;
++    if (!immutable) return fs.lstat(filename);
++    if (immutableAssetMetadata.has(filename)) return immutableAssetMetadata.get(filename);
++    const pending = fs.lstat(filename).catch(()=>{
++        if (immutableAssetMetadata.get(filename) === pending) immutableAssetMetadata.delete(filename);
++        return null;
++    });
++    if (immutable) {
++        if (immutableAssetMetadata.size >= 8192) immutableAssetMetadata.delete(immutableAssetMetadata.keys().next().value);
++        immutableAssetMetadata.set(filename, pending);
++    }
++    return pending;
++};
++const staticAssetExists = (filename)=>'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS
++    ? getStaticAssetMetadata(filename).then(Boolean)
++    : fs.pathExists(filename);
+ async function serveStaticAsset(context, asset, respond) {
+     let { filename } = asset;
+     const { kind } = asset;
+@@ -29,7 +48,7 @@ async function serveStaticAsset(context, asset, respond) {
+     } catch  {
+         return null;
+     }
+-    if ('static' === kind && !await fs.pathExists(filename)) return null;
++    if ('static' === kind && !await staticAssetExists(filename)) return null;
+     if (respond) return respond(asset, (representation)=>serveStaticAsset(context, {
+             ...asset,
+             ...representation,
+@@ -38,7 +57,7 @@ async function serveStaticAsset(context, asset, respond) {
+         }));
+     const mimeType = getMimeType(asset.mimeFilename ?? filename);
+     if ('static' === kind && mimeType) context.header('Content-Type', mimeType);
+-    const size = 'static' === kind ? (await fs.lstat(filename)).size : void 0;
++    const size = 'static' === kind ? (await getStaticAssetMetadata(filename))?.size : void 0;
+     const data = 'static' === kind ? await fileReader.readFileFromSystem(filename, 'buffer') : await fileReader.readFile(filename, 'buffer');
+     if ('static' === kind && (asset.contentLength ?? true)) context.header('Content-Length', String(true === asset.contentLength && data ? data.byteLength : size));
+     if (null === data) return null;
+@@ -158,7 +177,7 @@ function createStaticMiddleware(options) {
+         else {
+             const filepath = path.join(pwd, pathname.replace(pathPrefix, ()=>''));
+             if (!isPathInside(filepath, pwd)) return next();
+-            if (!await fs.pathExists(filepath)) return next();
++            if (!await staticAssetExists(filepath)) return next();
+             const asset = {
+                 filename: filepath,
+                 kind: 'static'

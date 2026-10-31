@@ -65,11 +65,26 @@ try {
   for (const { handler } of handlers) {
     await Promise.all(requests.map((request) => handler(request, async () => {})));
   }
-  assert.equal(globalThis.ontosRenderLoads, 1);
-  assert.equal(globalThis.ontosLoaderLoads, 1);
+  if (mode !== 'development') assert.equal(globalThis.ontosRenderLoads, 1);
+  assert.equal(globalThis.ontosLoaderLoads, mode === 'development' ? 3 : 1);
   assert.equal(requests[0].get('serverManifest').renderBundles.index.owner, 'fixture');
   assert.equal(requests[0].get('serverManifest').loaderBundles.index.fixture, true);
-  assert.equal(requests[0].get('serverManifest'), requests[1].get('serverManifest'));
+  if (mode === 'development') {
+    assert.notEqual(requests[0].get('serverManifest'), requests[1].get('serverManifest'));
+    await writeFile(path.join(directory, 'index.html'), '<html>updated template</html>');
+    // Modern's development rebuild resets its file-reader storage before the next request.
+    const fromCore = createRequire(nodeEntry);
+    const readerRoot = path.resolve(path.dirname(fromCore.resolve('@modern-js/runtime-utils/fileReader')), '../../..');
+    const reader = format === 'cjs' ? fromCore('@modern-js/runtime-utils/fileReader')
+      : await import(pathToFileURL(path.join(readerRoot, 'dist/esm-node/node/fileReader.mjs')).href);
+    await reader.fileReader.reset();
+    const values = new Map();
+    const freshRequest = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
+    await handlers[1].handler(freshRequest, async () => {});
+    assert.equal(Object.values(freshRequest.get('templates'))[0], '<html>updated template</html>');
+  } else {
+    assert.equal(requests[0].get('serverManifest'), requests[1].get('serverManifest'));
+  }
   assert.equal(Object.values(requests[0].get('templates'))[0], '<html>owner template</html>');
   console.log('render resources passed');
 } finally {
@@ -78,12 +93,15 @@ try {
 `;
 
 for (const format of ['cjs', 'esm', 'esm-node']) {
-  for (const mode of ['lazy', 'eager']) {
-    it.effect(`keeps ${format} ${mode} render resources scoped to one owner and loads them once`, () =>
+  for (const mode of ['lazy', 'eager', 'development']) {
+    it.effect(`preserves the ${format} ${mode} render-resource lifetime`, () =>
       Effect.gen(function* verifyRenderResources() {
         const result = yield* collectToolingProcess(
           ChildProcess.make(process.execPath, ['--input-type=module', '--eval', renderResourcesProbe, format, mode], {
-            env: { MODERN_SERVER_RENDER_RESOURCES: mode, NODE_ENV: 'production' },
+            env: {
+              MODERN_SERVER_RENDER_RESOURCES: mode,
+              NODE_ENV: mode === 'development' ? 'development' : 'production',
+            },
             extendEnv: true,
             stderr: 'pipe',
             stdin: 'ignore',

@@ -116,6 +116,10 @@ describe('routeRequest', () => {
     expect(Option.getOrUndefined(routeRequest('/_m/crm', owners))).toEqual({ path: '/', port: 4125 });
   });
 
+  it('keeps owner document routes reachable for lazy rendering', () => {
+    expect(Option.getOrUndefined(routeRequest('/_m/crm/cs', owners))).toEqual({ path: '/cs', port: 4125 });
+  });
+
   it('returns none for an unknown app id', () => {
     expect(Option.isNone(routeRequest('/_m/unknown/x', owners))).toBe(true);
   });
@@ -193,6 +197,20 @@ const derivedValue = (derived: ReturnType<typeof derivedEnvironment>, key: strin
   new Map<string, unknown>(Object.entries(derived)).get(key);
 
 describe('derivedEnvironment', () => {
+  it('uses immutable release metadata without compression probes or production debug request logs', () => {
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map());
+    expect(derivedValues.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
+    expect(derivedValues.MODERN_SERVER_PRECOMPRESSED_ASSETS).toBe('false');
+    expect(derivedValues.MODERN_SERVER_LOG_LEVEL).toBe('info');
+    const secrets = {
+      crm: { MODERN_SERVER_IMMUTABLE_ASSETS: 'false' },
+      [PARTY_REGISTRY]: { MODERN_SERVER_IMMUTABLE_ASSETS: 'different' },
+    };
+    const hosted = processEnvironment(['crm', PARTY_REGISTRY], secrets, derivedValues);
+    expect(hosted.conflicts).toEqual([]);
+    expect(hosted.environment.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
+  });
+
   it('uses the public origin as the issuer and auth URL', () => {
     const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]));
     expect(derivedValues.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);
