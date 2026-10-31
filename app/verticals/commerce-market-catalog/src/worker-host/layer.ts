@@ -2,7 +2,8 @@
 // @ontos-outbox-worker-host-owner commerce.market-catalog
 import { Layer } from 'effect';
 import type { OutboxRuntime } from '@app/core-runtime';
-import { defineDatabaseIdentityEnrollment, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { MarketRetirementImpactAuthorityLive } from '../integrations/market-retirement-impact.ts';

@@ -18,7 +18,7 @@ import type {
   MarketRetirementIntentPersistence,
   MarketRetirementIntentSnapshot,
 } from '../persistence/market-retirement-intent-persistence.ts';
-import { marketRetirementIntentPersistenceForScope } from '../persistence/market-retirement-intent-persistence.ts';
+import { marketRetirementIntentPersistenceForScope } from '../persistence/market-retirement-intent-scope.ts';
 import { createRetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxMessage as createOutboxMessage } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
 import {
   MODULE_KEY,

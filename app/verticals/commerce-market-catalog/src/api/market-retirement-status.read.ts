@@ -14,7 +14,7 @@ import {
 import type { MarketRetirementStatusRequest } from '../../shared/apis/market-retirement-status.ts';
 import { marketRetirementOutcome } from '../domain/market-retirement-workflow.ts';
 import type { MarketRetirementIntentPersistence } from '../persistence/market-retirement-intent-persistence.ts';
-import { marketRetirementIntentPersistenceForScope } from '../persistence/market-retirement-intent-persistence.ts';
+import { marketRetirementIntentPersistenceForScope } from '../persistence/market-retirement-intent-scope.ts';
 
 const commerceMarketCatalogModuleKey = 'commerce.market-catalog';
 
