@@ -61,6 +61,7 @@ text-end
 text-fg-primary
 text-fg-secondary
 text-label-sm
+text-md
 text-sm
 text-xl
 text-xs

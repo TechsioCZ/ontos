@@ -39,7 +39,7 @@ export const CrmDashboard = (props: CrmDashboardProps) => {
     <div className="salesinsights:flex salesinsights:min-w-0 salesinsights:flex-col salesinsights:gap-4">
       <header className="salesinsights:flex salesinsights:flex-wrap salesinsights:items-start salesinsights:justify-between salesinsights:gap-3">
         <div className="salesinsights:flex salesinsights:min-w-0 salesinsights:flex-col salesinsights:gap-1">
-          <h2 className="salesinsights:font-semibold salesinsights:text-md">{t(`${key}.title`)}</h2>
+          <h2 className="salesinsights:font-semibold text-md">{t(`${key}.title`)}</h2>
           <p className="salesinsights:text-sm">{t(`${key}.description`)}</p>
           <StatusText showIcon size="sm" status="default">
             {t(`${key}.scope`)}

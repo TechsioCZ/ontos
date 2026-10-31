@@ -356,7 +356,7 @@ const usePropertyRecords = (input: RecordsInput) => {
   };
 };
 const secondaryTextClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
-const relatedCardClass = 'propertyportfolio:min-w-0 propertyportfolio:space-y-250';
+const relatedCardClass = 'propertyportfolio:min-w-0 space-y-250';
 const detailHeadingClass = 'propertyportfolio:font-semibold';
 const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
@@ -503,7 +503,7 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
       }
     >
       <form
-        className="propertyportfolio:grid propertyportfolio:gap-250"
+        className="propertyportfolio:grid gap-250"
         id="property-record-editor"
         noValidate
         onSubmit={(event) => {
@@ -792,11 +792,11 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
   const archive = unit?.archive ?? property.archive;
   const note = unit === undefined ? property.note : unit.note;
   return (
-    <div className="propertyportfolio:space-y-200">
+    <div className="space-y-200">
       <h2 className="propertyportfolio:text-xl propertyportfolio:font-semibold">{unit?.name ?? property.name}</h2>
       <p className={secondaryTextClass}>{unit === undefined ? property.address : unit.code}</p>
       {unit === undefined ? (
-        <dl className="propertyportfolio:grid propertyportfolio:gap-200 propertyportfolio:sm:grid-cols-2">
+        <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">
           <div>
             <dt className={secondaryTextClass}>{t(`${key}.editor.propertyType`)}</dt>
             <dd>{property.propertyType ?? t(`${key}.notProvided`)}</dd>
@@ -817,7 +817,7 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
           </div>
         </dl>
       ) : (
-        <dl className="propertyportfolio:grid propertyportfolio:gap-200 propertyportfolio:sm:grid-cols-2">
+        <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">
           <div>
             <dt className={secondaryTextClass}>{t(`${key}.kind`)}</dt>
             <dd>{unit.unitKind ?? t(`${key}.notProvided`)}</dd>
@@ -844,7 +844,7 @@ const RecordsUnavailable = ({ failure, view }: { readonly failure: string; reado
   const { model } = view;
   const { key, t } = model;
   return (
-    <div className="propertyportfolio:space-y-200">
+    <div className="space-y-200">
       <output>{t(`${key}.${model.pending ? 'loading' : failure}`)}</output>
       {!model.pending && (
         <Button onClick={() => model.loadSummary()} theme="outlined" variant="secondary">
@@ -862,7 +862,7 @@ const RecordsEquipment = ({ view }: { readonly view: RecordsView }) => {
     return null;
   }
   return (
-    <div className="propertyportfolio:space-y-300">
+    <div className="space-y-300">
       <RecordsTables kind="assets" view={view} />
       {asset !== undefined && (
         <section aria-label={asset.name} className={relatedCardClass}>
@@ -914,7 +914,7 @@ const RecordsFinance = ({ view }: { readonly view: RecordsView }) => {
     return <RecordsUnavailable failure="financeUnavailable" view={view} />;
   }
   return (
-    <div className="propertyportfolio:space-y-250">
+    <div className="space-y-250">
       <p>
         {finance.state.invoices.length === 0
           ? t(`${key}.financialEmpty`)
@@ -978,7 +978,7 @@ const RecordsSource = ({ tab, view }: { readonly tab: RelatedTab; readonly view:
     return <p>{t(`${key}.emptyRelated`)}</p>;
   }
   return (
-    <ul className="propertyportfolio:space-y-200">
+    <ul className="space-y-200">
       {source.items.map((item) => (
         <li key={item.href}>
           <Link href={item.href}>{item.label}</Link>
@@ -1003,7 +1003,7 @@ const RecordsTabContent = ({ tab, view }: { readonly tab: PropertyTab; readonly 
     Match.when('finance', () => <RecordsFinance view={view} />),
     Match.when('discussion', () => <RecordDiscussion section="comments" subject={subject} />),
     Match.when('documents', () => (
-      <div className="propertyportfolio:space-y-300">
+      <div className="space-y-300">
         <RecordsSource tab="documents" view={view} />
         <RecordDiscussion section="documents" subject={subject} />
       </div>
@@ -1020,7 +1020,7 @@ const RecordsFilters = ({ view }: { readonly view: RecordsView }) => {
     (model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0) +
     (model.records?.units.filter((item) => item.archive !== undefined).length ?? 0);
   return (
-    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-250">
+    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center gap-250">
       <FormCheckbox
         checked={search.includeClosed === true}
         disabled={editor.busy}
@@ -1135,9 +1135,7 @@ const RecordsPageContent = (input: RecordsInput) => {
   return (
     <>
       <UltramodernRouteHead />
-      <h1 className="propertyportfolio:mb-300 propertyportfolio:text-3xl propertyportfolio:font-semibold">
-        {t(`${key}.title`)}
-      </h1>
+      <h1 className="mb-300 propertyportfolio:text-3xl propertyportfolio:font-semibold">{t(`${key}.title`)}</h1>
       {confirmation !== undefined && (
         <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} view={view} />
       )}
@@ -1153,7 +1151,7 @@ const RecordsPageContent = (input: RecordsInput) => {
       ) : (
         <PropertyWorkspace
           actions={
-            <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-200">
+            <div className="propertyportfolio:flex propertyportfolio:flex-wrap gap-200">
               {unit === undefined ? <RecordsPropertyActions view={view} /> : <RecordsUnitActions view={view} />}
             </div>
           }
