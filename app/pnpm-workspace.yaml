@@ -182,7 +182,8 @@ patchedDependencies:
   oxlint@1.81.0: patches/oxlint@1.81.0.patch
   # upstream: https://github.com/millionco/react-doctor (require array evidence before suggesting Set membership)
   oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch
-  # Read-only native pool counters. No acquisition, codec, transaction or sizing changes.
+  # upstream: https://github.com/Effect-TS/effect/tree/main/packages/sql-pg (read-only native pool counters)
+  # No acquisition, codec, transaction or sizing changes.
   '@effect/sql-pg@4.0.7': patches/@effect__sql-pg@4.0.7.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/runtime-extensions
   # Preserve negotiation/406 while skipping probes for explicitly absent compressed assets; retain immutable MF lists.

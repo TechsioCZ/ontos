@@ -2287,18 +2287,21 @@ const nativeScopedReadFactoryTypes = (
     source,
     new RegExp(`\\btype\\s+${escapeRegExp(transactionType)}\\s*=\\s*`, 'u'),
   );
+  // The native transaction itself and its invoke-only projection retain Core's Read factory ABI.
+  const nativeTransaction = 'Parameters<ReadServiceFactory<Readonly<Record<string,never>>>>[0]';
+  const normalizedTransaction = transactionAlias?.replaceAll(/\s+/gu, '').replaceAll('"', "'");
   return scopeImport?.imported === 'OperationalScope' &&
     scopeImport.modulePath === CORE_RUNTIME_MODULE &&
     factoryTypeImport?.imported === 'ReadServiceFactory' &&
     factoryTypeImport.modulePath === CORE_RUNTIME_MODULE &&
-    transactionAlias?.replaceAll(/\s+/gu, '').replaceAll('"', "'") ===
-      "Pick<Parameters<ReadServiceFactory<Readonly<Record<string,never>>>>[0],'invoke'>"
+    (normalizedTransaction === nativeTransaction || normalizedTransaction === `Pick<${nativeTransaction},'invoke'>`)
     ? { scopeType, transactionType }
     : undefined;
 };
 
 const hasNativeScopedReadServiceFactoryExport = (source: string, binding: string): boolean => {
-  const arrow = directArrowExpression(constInitializer(source, binding));
+  const initializer = constInitializer(source, binding);
+  const arrow = directArrowExpression(initializer);
   const nativeTypes = arrow === undefined ? undefined : nativeScopedReadFactoryTypes(source, arrow.parameters);
   if (arrow === undefined || nativeTypes === undefined) {
     return false;
@@ -2307,7 +2310,7 @@ const hasNativeScopedReadServiceFactoryExport = (source: string, binding: string
   return (
     outputType !== undefined &&
     topLevelSeparators(maskNonCode(outputType), '>', 0, outputType.length, true)[0] === outputType.length - 1 &&
-    isWholeCallExpression(arrow.output, /^Effect\.succeed\(/u) &&
+    isReadHandlerCallback(initializer, source) &&
     hasExactValueImport(source, 'Effect', 'effect') &&
     hasExactlyOne(maskNonCode(source), new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*=`, 'gu')) &&
     hasStableReadFactoryBindings(
