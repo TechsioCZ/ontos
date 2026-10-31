@@ -372,6 +372,7 @@ export interface ActionRuntimeOptions {
   ) => Effect.Effect<string, ActionTransactionError>;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
+  readonly resolveServicePreflight?: typeof getActionServicePreflight;
 }
 
 const logInvocationPersistenceFailure = (
@@ -1049,6 +1050,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   } = options;
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
+  const resolveServicePreflight = options.resolveServicePreflight ?? getActionServicePreflight;
   const installScope = options.installScope ?? installOperationalScope;
   const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
   /**
@@ -1960,7 +1962,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ),
         );
     };
-    const prepareServices = getActionServicePreflight(input.registration);
+    const prepareServices = resolveServicePreflight(input.registration);
     const preparationExit =
       prepareServices === undefined
         ? Exit.succeed(resolveServiceFactory(input.registration))

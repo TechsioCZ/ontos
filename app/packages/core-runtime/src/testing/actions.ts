@@ -7,7 +7,7 @@ import type { Connection } from 'effect/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
-import { getActionServiceFactory } from '../actions/definition.ts';
+import { getActionServiceFactory, getActionServicePreflight } from '../actions/definition.ts';
 import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
@@ -524,6 +524,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       },
       resolveCompositionRevision: () => Effect.succeed(options.compositionRevision ?? 'a'.repeat(64)),
       resolveServiceFactory,
+      // Explicit lifecycle-only service bindings replace both acquisition phases.
+      // Unbound registrations still execute the real preparation and guarded factory.
+      resolveServicePreflight: (registration) =>
+        bindings.has(registration) ? undefined : getActionServicePreflight(registration),
     };
     if (Option.isSome(authorizationPreflight)) {
       runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
