@@ -1870,6 +1870,30 @@ it('recognizes canonical Effect.result observation without permitting capability
   ]);
 });
 
+it('recognizes canonical optional service lookup without permitting capability escape', () => {
+  inspectProcessCapabilityCases([
+    { before: 'Effect.serviceOption(Service);', expected: 0, name: 'optional-service-direct' },
+    {
+      before: "import { Effect as E } from 'effect'; E.serviceOption(Service);",
+      expected: 0,
+      name: 'optional-service-renamed-import',
+    },
+    { before: 'const lookup = Effect.serviceOption; void lookup;', expected: 1, name: 'optional-service-extraction' },
+    { before: "Effect['serviceOption'](Service);", expected: 1, name: 'optional-service-computed' },
+    { before: 'Effect?.serviceOption(Service);', expected: 1, name: 'optional-service-optional' },
+    { before: 'Effect.serviceOption(...services);', expected: 1, name: 'optional-service-spread' },
+    { before: 'Effect.serviceOption();', expected: 1, name: 'optional-service-missing-tag' },
+    { before: 'Effect.serviceOption(Service, other);', expected: 1, name: 'optional-service-extra-argument' },
+    { before: 'Effect.serviceOption = replacement;', expected: 1, name: 'optional-service-write-before' },
+    { after: 'Effect.serviceOption = replacement;', expected: 1, name: 'optional-service-write-after' },
+    {
+      before: 'const alias = Effect; alias.serviceOption(Service);',
+      expected: 1,
+      name: 'optional-service-object-alias',
+    },
+  ]);
+});
+
 it('closes real executable HTTP observations without admitting evaluator or capability escape', () => {
   const fetchSource = "const fetch = globalThis.fetch; fetch('https://example.test');";
   const mapSource =

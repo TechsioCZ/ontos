@@ -880,6 +880,10 @@ function effectProcessUse(node: Syntax, source: ProcessSource): boolean {
   const member = processMember(node, source);
   const slot = staticProcessMember(member ?? undefined);
   if (member === null || slot === null || writtenProcessNode(member, source)) return false;
+  if (slot === "serviceOption") {
+    const call = directProcessCall(member, source);
+    return call !== null && call.arguments.length === 1 && call.arguments[0].type !== "SpreadElement";
+  }
   if (EFFECT_PROCESS_CALLS.has(slot)) return directProcessCall(member, source) !== null;
   if (EFFECT_PROCESS_VALUES.has(slot)) return true;
   if (EFFECT_PIPE_TRANSFORMS.has(slot)) {
