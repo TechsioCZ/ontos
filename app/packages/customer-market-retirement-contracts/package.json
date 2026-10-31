@@ -8,6 +8,8 @@
     ".": "./src/index.ts",
     "./market-affected-use-assessment": "./src/apis/market-affected-use-assessment.ts",
     "./market-affected-use-assessment/client": "./src/api/market-affected-use-assessment-client.ts",
+    "./market-retirement-reservation": "./src/apis/market-retirement-reservation.ts",
+    "./market-retirement-reservation/client": "./src/api/market-retirement-reservation-client.ts",
     "./market-subject-restrictions-current": "./src/apis/market-subject-restrictions-current.ts",
     "./market-subject-restrictions-current/client": "./src/api/market-subject-restrictions-current-client.ts",
     "./reserve-market-retirement": "./src/apis/reserve-market-retirement.ts",
@@ -30,6 +32,7 @@
     "appId": "commerce-customer-context",
     "moduleApis": [
       "market-affected-use-assessment",
+      "market-retirement-reservation",
       "market-subject-restrictions-current",
       "reserve-market-retirement"
     ],

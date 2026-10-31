@@ -8,6 +8,7 @@ import {
 import type {
   MarketAffectedUseAssessmentRequest,
   MarketAffectedUseAssessmentResponse,
+  MarketRetirementReservationRequest,
   ReserveMarketRetirementPayload,
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts';
@@ -47,6 +48,13 @@ const assessMarketRetirementAffectedUseRoutine = defineScopedRoutine({
   schema: ROUTINE_SCHEMA,
 });
 
+const readReservationParameters = [
+  { source: 'tenantId', type: 'uuid' },
+  { source: 'legalEntityId', type: 'uuid' },
+  { source: 'input', type: 'text' },
+  { source: 'input', type: 'uuid' },
+] as const;
+
 const reserveMarketRetirementRoutine = defineScopedRoutine({
   name: 'reserve_market_retirement',
   ownerModuleKey: MODULE_KEY,
@@ -56,9 +64,19 @@ const reserveMarketRetirementRoutine = defineScopedRoutine({
   schema: ROUTINE_SCHEMA,
 });
 
+const readMarketRetirementReservationRoutine = defineScopedRoutine({
+  name: 'read_market_retirement_reservation',
+  ownerModuleKey: MODULE_KEY,
+  parameters: readReservationParameters,
+  resultSchema: RoutineResultSchema,
+  routineKey: 'market-retirement.read-reservation',
+  schema: ROUTINE_SCHEMA,
+});
+
 export const marketRetirementRoutineAllowlist = Object.freeze([
   assessMarketRetirementAffectedUseRoutine,
   reserveMarketRetirementRoutine,
+  readMarketRetirementReservationRoutine,
 ]);
 
 export const MarketRetirementReservationConflictError = Schema.TaggedError<Error>()(
@@ -228,4 +246,28 @@ export const marketRetirementReservationForTransaction = (
       ),
       Effect.withSpan('commerce.customer-context.market-retirement.reserve'),
     ),
+});
+
+export interface MarketRetirementReservationServices {
+  /** The reservation created by exactly one RESERVE Action Invocation, if it exists in the trusted scope. */
+  readonly readByReservationInvocation: (
+    input: MarketRetirementReservationRequest,
+  ) => Effect.Effect<Option.Option<ReserveMarketRetirementResult>, ReadHandlerUnavailable>;
+}
+
+export const marketRetirementReservationServicesForInvoker = (
+  invoker: ScopedRoutineInvoker,
+): MarketRetirementReservationServices => ({
+  readByReservationInvocation: (input) =>
+    invoker
+      .invoke(readMarketRetirementReservationRoutine, [input.marketRef.resourceId, input.reservationInvocationId])
+      .pipe(
+        Effect.mapError((cause) => unavailableAffectedUse('Market retirement reservation is unavailable', cause)),
+        Effect.flatMap((rows) =>
+          rows.length === 0
+            ? Effect.succeedNone
+            : decodeJson(rows, ReserveMarketRetirementResultDecoder, unavailableAffectedUse).pipe(Effect.asSome),
+        ),
+        Effect.withSpan('commerce.customer-context.market-retirement.read-reservation'),
+      ),
 });

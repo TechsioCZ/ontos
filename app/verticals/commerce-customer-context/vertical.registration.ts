@@ -200,6 +200,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'market-affected-use-assessment': () => import('./src/api/market-affected-use-assessment-client.ts'),
       'market-bootstrap-policy-current': () => import('./src/api/market-bootstrap-policy-current-client.ts'),
       'market-bootstrap-resolution': () => import('./src/api/market-bootstrap-resolution-client.ts'),
+      'market-retirement-reservation': () => import('./src/api/market-retirement-reservation-client.ts'),
       'market-subject-restrictions-current': () => import('./src/api/market-subject-restrictions-current-client.ts'),
       'order-commitment-approval-evidence': () => import('./src/api/order-commitment-approval-evidence-client.ts'),
       'order-service-approval-evidence': () => import('./src/api/order-service-approval-evidence-client.ts'),
