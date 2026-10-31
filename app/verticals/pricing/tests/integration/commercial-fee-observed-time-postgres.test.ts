@@ -13,6 +13,7 @@ import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-read
 import {
   defineRead,
   defineTenantModuleEntrypoint,
+  ReadHandlerExecutionError,
   ReadHandlerUnavailable,
   findPostgresFailure,
   ScopedRoutineInvocationError,
@@ -24,6 +25,7 @@ import { PricingEvaluationAttemptSchema } from '@app/pricing-contracts/domain/ma
 import { PricingCommercialFeeCalculationInputSchema } from '@app/pricing-contracts/domain/commercial-fee';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, DateTime, Effect, Layer, Logger, Option, Schema } from 'effect';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -967,14 +969,22 @@ it.live('settles real Core Fee evidence and rolls back a SQL-aborted pseudo-succ
         Effect.provideContext(Context.merge(context, loggerContext)),
         Effect.flip,
       );
-      expect(failure).toMatchObject({ code: 'read_evidence_persistence_failed' });
-      expect(
-        findPostgresFailure(failure, ({ code }) => code === '25P02').pipe(
-          Option.map(({ code }) => code),
-          Option.getOrUndefined,
-        ),
-      ).toBe('25P02');
-      expect(logLevels).toEqual([]);
+      // The split Read lifecycle settles the owner transaction before its evidence transaction.
+      // An aborted owner transaction must therefore fail before evidence persistence even begins.
+      expect(Schema.is(ReadHandlerExecutionError)(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        code: 'read_handler_execution_failed',
+        reason: 'The governed read transaction failed',
+      });
+      const settlement = yield* Schema.decodeUnknownEffect(Schema.Struct({ cause: Schema.toType(SqlError) }))(failure);
+      // No evidence INSERT is attempted after this failed COMMIT, so PostgreSQL does not emit 25P02 here.
+      // The native driver's checked COMMIT must instead retain its exact aborted-transaction failure.
+      expect(Schema.is(UnknownError)(settlement.cause.reason)).toBe(true);
+      expect(settlement.cause.reason).toMatchObject({
+        message: 'PgClient: COMMIT rolled back an aborted transaction',
+        operation: 'commit',
+      });
+      expect(logLevels).toEqual(['Error']);
       expect(yield* fixture.evidenceCount()).toBe(before + 1);
       const [provisional] = provisionalReads;
       if (provisional === undefined) {
