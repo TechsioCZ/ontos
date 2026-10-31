@@ -321,7 +321,7 @@ interface ReadCurrentPurchaseLimitPolicyInput {
   readonly tenantId: string;
 }
 
-interface CurrentPurchaseLimitPolicyState {
+export interface CurrentPurchaseLimitPolicyState {
   readonly counterpartyPolicies: readonly PurchaseLimitPolicySnapshot[];
   readonly principalOverrides: readonly PurchaseLimitPolicySnapshot[];
   readonly result: EffectivePurchaseLimitPolicyResult;
