@@ -207,9 +207,9 @@ it.layer(services, { excludeTestServices: true })('Tax durable gateway redemptio
           }
           expect(yield* test.runtime.unsafe('select jti from tax.gateway_assertion_redemptions')).toHaveLength(1);
           yield* redemption.consume(assertion('33333333-3333-4333-8333-333333333333', now + 300));
-          expect(yield* test.runtime.unsafe('select jti::text from tax.gateway_assertion_redemptions')).toEqual([
-            { jti: '33333333-3333-4333-8333-333333333333' },
-          ]);
+          expect(
+            yield* test.runtime.unsafe('select jti::text from tax.gateway_assertion_redemptions order by jti'),
+          ).toEqual([{ jti: '22222222-2222-4222-8222-222222222222' }, { jti: '33333333-3333-4333-8333-333333333333' }]);
           yield* test.admin.unsafe('drop table tax.gateway_assertion_redemptions');
           const unavailable = yield* redemption
             .consume(assertion('44444444-4444-4444-8444-444444444444', now + 300))
