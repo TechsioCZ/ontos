@@ -255,7 +255,6 @@ it.effect('mints a fresh provider audience assertion for every exact workload ca
       },
     };
     const issuer: GatewayIssuer['Service'] = {
-      forgetAuthContext: () => Effect.void,
       issue: ({ audience, compositionRevision: revision, principal }) => {
         issueCalls.push({ audience, compositionRevision: revision, principal });
         return Effect.succeed({
@@ -322,7 +321,6 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
       authorizePrincipal: (principal) => Effect.succeed(principal),
     };
     const issuer: GatewayIssuer['Service'] = {
-      forgetAuthContext: () => Effect.void,
       issue: ({ audience, compositionRevision: revision, principal }) => {
         issueCalls.push({ audience, compositionRevision: revision, principal });
         return Effect.succeed({
@@ -377,7 +375,6 @@ it.effect('refuses a provider workload assertion when its captured composition r
       authorizePrincipal: (principal) => Effect.succeed(principal),
     };
     const issuer: GatewayIssuer['Service'] = {
-      forgetAuthContext: () => Effect.void,
       issue: (input) => {
         issueRevisions.push(input.compositionRevision);
         return Effect.fail(
@@ -524,7 +521,6 @@ it.effect('routes the production deployment client to the verification path the 
       },
     };
     const issuer: GatewayIssuer['Service'] = {
-      forgetAuthContext: () => Effect.void,
       issue: ({ audience, compositionRevision: revision, principal }) => {
         expect(audience).toBe(providerEndpointAudience);
         expect(revision).toBe(compositionRevision);

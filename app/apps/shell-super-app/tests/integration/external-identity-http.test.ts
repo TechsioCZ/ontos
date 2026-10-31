@@ -367,7 +367,6 @@ const makeServer = (
     const admissionService = makeSubjectAdmissionService(providerAudiences);
     const authenticationAdmissionService = makeAuthenticationAdmissionService();
     const gatewayIssuer: GatewayIssuer['Service'] = {
-      forgetAuthContext: () => Effect.void,
       issue: (input) => {
         expect(input.compositionRevision).toBe(compositionRevision);
         return Effect.succeed({

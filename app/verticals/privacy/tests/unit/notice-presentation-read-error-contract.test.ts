@@ -324,11 +324,11 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
       expect(presented.headers.get('cache-control')).toBe('no-store');
       expect(redemptions).toBe(1);
       expect(ownerCalls).toBe(1);
-      // Reusable assertions are the user-approved trade-off (fb57a2a48): a still-valid replay is admitted again.
       const replayed = yield* request(`${path}?${query}`, `Bearer ${token}`);
-      expect(replayed.status).toBe(409);
-      expect(redemptions).toBe(1);
-      expect(ownerCalls).toBe(2);
+      expect(replayed.status).toBe(401);
+      expect(replayed.headers.get('www-authenticate')).toBe('Bearer');
+      expect(redemptions).toBe(2);
+      expect(ownerCalls).toBe(1);
       expect(harness.snapshot().ownerQueries).toEqual([]);
       expect(harness.snapshot().evidenceWrites).toBe(0);
     }),

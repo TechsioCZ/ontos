@@ -981,8 +981,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     }),
   );
 
-  suite.effect('valid reused assertions still enter each Action and generated Read lifecycle', () =>
-    Effect.gen(function* reuseAssertionsWithoutBypassingLifecycles() {
+  suite.effect('replayed assertions are challenged before a second Action or generated Read lifecycle', () =>
+    Effect.gen(function* rejectAssertionReplays() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
       const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
@@ -1001,22 +1001,22 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           'idempotency-key': 'second-redemption',
         }),
       );
-      expect(replayedAction.status).toBe(403);
-      expect(replayedAction.headers.get('www-authenticate')).toBeNull();
+      expect(replayedAction.status).toBe(401);
+      expect(replayedAction.headers.get('www-authenticate')).toBe('Bearer');
       expect(replayedAction.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
-      expect(harness.snapshot().invocations.length).toBe(2);
+      expect(harness.snapshot().invocations.length).toBe(1);
       const actionAssertionReadReplay = yield* handle(app, decisionRequest(yield* nextUuid, assertion.token));
-      expect(actionAssertionReadReplay.status).toBe(404);
-      expect(actionAssertionReadReplay.headers.get('www-authenticate')).toBeNull();
-      expect(readCount()).toBe(1);
+      expect(actionAssertionReadReplay.status).toBe(401);
+      expect(actionAssertionReadReplay.headers.get('www-authenticate')).toBe('Bearer');
+      expect(readCount()).toBe(0);
       const firstRead = yield* handle(app, decisionRequest(yield* nextUuid, assertion.otherToken));
       expect(firstRead.status).toBe(404);
-      expect(readCount()).toBe(2);
+      expect(readCount()).toBe(1);
       const replayedRead = yield* handle(app, decisionRequest(yield* nextUuid, assertion.otherToken));
-      expect(replayedRead.status).toBe(404);
-      expect(replayedRead.headers.get('www-authenticate')).toBeNull();
+      expect(replayedRead.status).toBe(401);
+      expect(replayedRead.headers.get('www-authenticate')).toBe('Bearer');
       expect(replayedRead.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
-      expect(readCount()).toBe(3);
+      expect(readCount()).toBe(1);
     }),
   );
 
