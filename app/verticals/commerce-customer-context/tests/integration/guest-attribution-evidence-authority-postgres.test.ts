@@ -41,6 +41,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Brand,
   Config,
+  ConfigProvider,
   Context,
   Crypto,
   DateTime,
@@ -586,7 +587,16 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
             registration: attributeGuestRetailCustomerAction,
             transport: { correlationId: yield* nextId, idempotencyKey, targetModuleKey: 'commerce.customer-context' },
           })
-          .pipe(Effect.provideContext(ownerContext));
+          .pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.orElse(
+                ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
+                ConfigProvider.fromEnv(),
+              ),
+            ),
+            Effect.provideContext(ownerContext),
+          );
       });
     const attributions = Effect.fn('GuestAuthorityTest.attributionRows')(function* attributionRows(
       root: string,
