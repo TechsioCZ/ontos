@@ -14,7 +14,10 @@ import {
   PrivacyNoticeAcknowledgementRefSchema,
   PrivacyNoticeVersionIdSchema,
 } from '../../shared/resources/privacy-notice-acknowledgement.ts';
-import { noticeAcknowledgementServicesForScope } from '../services/privacy-notice-acknowledgement-authority.service.ts';
+import {
+  noticeAcknowledgementServicesForScope,
+  prepareNoticeAcknowledgementServices,
+} from '../services/privacy-notice-acknowledgement-authority.service.ts';
 import type { NoticeAcknowledgementServices } from '../services/privacy-notice-acknowledgement-authority.service.ts';
 
 const domainEvents = {} as const;
@@ -70,6 +73,7 @@ export const acknowledgePrivacyNoticeAction = defineAction(
   },
   handleAcknowledgePrivacyNotice,
   noticeAcknowledgementServicesForScope,
+  { prepareServices: prepareNoticeAcknowledgementServices },
 );
 
 // <generated-outbox-message-exports>

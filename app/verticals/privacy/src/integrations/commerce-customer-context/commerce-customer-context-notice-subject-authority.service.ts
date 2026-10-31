@@ -2,7 +2,7 @@
 import { commerceCustomerContextApi } from '@app/commerce-customer-context/api';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { Context, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Match, Option, Redacted, Schema, DateTime } from 'effect';
 import { CommerceRetailCustomerProfileSchema } from '@app/commerce-customer-context/resources/retail-customer-profile';
 import { RetailPortalProfileBindingSchema } from '@app/commerce-customer-context/resources/retail-portal-profile-binding';
 
@@ -11,6 +11,12 @@ import { PrivacyNoticeAcknowledgementError } from '../../../shared/resources/pri
 import type { NoticePresentationRequest } from '../../../shared/apis/notice-presentation.ts';
 import type { PrivacySubjectOwnerEvidence, PrivacySubjectRecord } from '../../../shared/domain/privacy-subject.ts';
 import type { PrivacyOperationRepositoryService } from '../../persistence/privacy-operation-repository.ts';
+import {
+  PrivacySubjectRecordSchema,
+  isPrivacyInstantAtOrBefore,
+  isPrivacyInstantBefore,
+} from '../../../shared/domain/privacy-subject.ts';
+import { privacySubjectPreparationScopeMatches } from '../../persistence/privacy-subject-preparation.ts';
 import { PrivacySubjectPartyOwner } from '../../persistence/privacy-subject-party-owner.ts';
 
 // These operations use the native client's default decoded-only response mode.
@@ -50,11 +56,13 @@ export type NoticeSubjectCredentialAcquisition = (scope: OperationalScope) => Ef
   PrivacyNoticeAcknowledgementError
 >;
 export interface NoticeSubjectAuthorityScope {
+  readonly compositionRevision?: string;
   readonly scope: OperationalScope;
   readonly subjects: Pick<PrivacyOperationRepositoryService, 'listSubjects'>;
 }
 export interface NoticeSubjectAuthorityEvidence {
   readonly evidenceRefs: readonly string[];
+  readonly partyEvidence?: PrivacySubjectOwnerEvidence;
 }
 export interface CommerceCustomerContextNoticeSubjectAuthorityServiceContract {
   readonly forScope: (input: NoticeSubjectAuthorityScope) => {
@@ -283,6 +291,9 @@ const makeCommerceCustomerContextNoticeSubjectAuthorityService = Effect.fn('Noti
         const { scope } = input;
         const client = Effect.gen(function* freshOwnerClient() {
           const transport = yield* acquire(scope);
+          if (input.compositionRevision !== undefined && transport.compositionRevision !== input.compositionRevision) {
+            return yield* unavailable();
+          }
           return yield* makeGovernedEffectBffClient(
             {
               api: commerceCustomerContextApi,
@@ -359,7 +370,9 @@ const makeCommerceCustomerContextNoticeSubjectAuthorityService = Effect.fn('Noti
           const binding1 = yield* observeBinding(observedPrincipal);
           return yield* Effect.all(
             {
-              party1: partyOwner.resolve(subject.partyRef, scope, false).pipe(Effect.mapError(unavailable)),
+              party1: partyOwner
+                .resolve(subject.partyRef, scope, false, input.compositionRevision)
+                .pipe(Effect.mapError(unavailable)),
               retained: resolveStoredSubject(input, target),
             },
             { concurrency: 2 },
@@ -381,7 +394,9 @@ const makeCommerceCustomerContextNoticeSubjectAuthorityService = Effect.fn('Noti
             const original = yield* resolveStoredSubject(input, target);
             const { party0, profile0 } = yield* Effect.all(
               {
-                party0: partyOwner.resolve(original.subject.partyRef, scope, false).pipe(Effect.mapError(unavailable)),
+                party0: partyOwner
+                  .resolve(original.subject.partyRef, scope, false, input.compositionRevision)
+                  .pipe(Effect.mapError(unavailable)),
                 profile0: observeProfile(original.subject, target.retailProfileId),
               },
               { concurrency: 2 },
@@ -417,6 +432,7 @@ const makeCommerceCustomerContextNoticeSubjectAuthorityService = Effect.fn('Noti
                   ...party1.typeAssertions.map((assertion) => assertion.assertionId),
                 ]),
               ],
+              partyEvidence: party1,
             };
           }),
         };
@@ -434,4 +450,97 @@ export const CommerceCustomerContextNoticeSubjectAuthorityServiceLive = (acquire
 export const CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive = Layer.succeed(
   CommerceCustomerContextNoticeSubjectAuthorityService,
   { forScope: () => ({ resolve: () => Effect.fail(unavailable()) }) },
+);
+
+export interface PreparedNoticeSubjectAuthority {
+  readonly compositionRevision: string | undefined;
+  readonly evidence: NoticeSubjectAuthorityEvidence;
+  readonly record: PrivacySubjectRecord;
+  readonly scope: OperationalScope;
+  readonly target: Pick<NoticePresentationRequest, 'privacySubjectRef' | 'retailProfileId'>;
+}
+export interface NoticeSubjectPreparationInput {
+  readonly compositionRevision: string | undefined;
+  readonly records: readonly PrivacySubjectRecord[];
+  readonly scope: OperationalScope;
+  readonly target: PreparedNoticeSubjectAuthority['target'];
+}
+
+export const checkPreparedNoticeSubjectValidity = Effect.fn('NoticeSubjectAuthority.checkPreparedValidity')(
+  function* checkValidity(
+    prepared: PreparedNoticeSubjectAuthority,
+  ): Effect.fn.Return<void, PrivacyNoticeAcknowledgementError> {
+    const party = prepared.evidence.partyEvidence;
+    if (party === undefined) {
+      return yield* unavailable();
+    }
+    const now = DateTime.formatIso(yield* DateTime.now);
+    if (
+      !isPrivacyInstantAtOrBefore(party.observedAt, now) ||
+      party.typeAssertions.some(
+        (assertion) =>
+          !isPrivacyInstantAtOrBefore(assertion.validFrom, now) ||
+          (assertion.validTo !== null && !isPrivacyInstantBefore(now, assertion.validTo)),
+      )
+    ) {
+      return yield* unavailable();
+    }
+    return yield* Effect.void;
+  },
+);
+
+/** Plain immutable admission data. The caller's SQL services and the HTTP client never escape. */
+export const observeNoticeSubjectPreparation = Effect.fn('NoticeSubjectAuthority.observePreparation')(
+  function* observePreparation(
+    input: NoticeSubjectPreparationInput,
+    live: CommerceCustomerContextNoticeSubjectAuthorityServiceContract,
+  ): Effect.fn.Return<PreparedNoticeSubjectAuthority, PrivacyNoticeAcknowledgementError> {
+    const { compositionRevision, records, scope, target } = input;
+    const snapshots = { listSubjects: () => Effect.succeed(records) };
+    const original = yield* resolveStoredSubject({ scope, subjects: snapshots }, target);
+    const authorityScope: NoticeSubjectAuthorityScope = { scope, subjects: snapshots };
+    if (compositionRevision !== undefined) {
+      Object.assign(authorityScope, { compositionRevision });
+    }
+    const evidence = yield* live
+      .forScope(authorityScope)
+      .resolve({ ...target, privacySubjectRef: original.record.subjectRef });
+    return { compositionRevision, evidence, record: original.record, scope, target };
+  },
+);
+
+export const prepareNoticeSubjectAuthority = Effect.fn('NoticeSubjectAuthority.prepare')(
+  function* prepareSubjectAuthority(
+    input: NoticeSubjectPreparationInput,
+  ): Effect.fn.Return<
+    PreparedNoticeSubjectAuthority,
+    PrivacyNoticeAcknowledgementError,
+    CommerceCustomerContextNoticeSubjectAuthorityService
+  > {
+    const live = yield* CommerceCustomerContextNoticeSubjectAuthorityService;
+    return yield* observeNoticeSubjectPreparation(input, live);
+  },
+);
+
+export const resolvePreparedNoticeSubject = Effect.fn('NoticeSubjectAuthority.resolvePrepared')(
+  function* resolvePrepared(
+    prepared: PreparedNoticeSubjectAuthority,
+    input: { readonly scope: NoticeSubjectAuthorityScope; readonly target: PreparedNoticeSubjectAuthority['target'] },
+  ): Effect.fn.Return<NoticeSubjectAuthorityEvidence, PrivacyNoticeAcknowledgementError> {
+    const { scope, target } = input;
+    if (
+      !privacySubjectPreparationScopeMatches(prepared.scope, scope.scope) ||
+      (scope.compositionRevision !== undefined && scope.compositionRevision !== prepared.compositionRevision) ||
+      !sameRef(target.privacySubjectRef, prepared.target.privacySubjectRef) ||
+      target.retailProfileId !== prepared.target.retailProfileId
+    ) {
+      return yield* conflict();
+    }
+    const current = yield* resolveStoredSubject(scope, target);
+    if (!Schema.toEquivalence(PrivacySubjectRecordSchema)(prepared.record, current.record)) {
+      return yield* conflict();
+    }
+    yield* checkPreparedNoticeSubjectValidity(prepared);
+    return prepared.evidence;
+  },
 );

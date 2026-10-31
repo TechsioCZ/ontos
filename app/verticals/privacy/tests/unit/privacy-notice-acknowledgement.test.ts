@@ -36,8 +36,15 @@ import {
   NoticeChannelDeliveryAuthorityForAcknowledgementsLive,
   privacyNoticeAcknowledgementChannel,
   makePrivacyNoticeInformationStep,
+  privacyNoticeInformationStepLive,
+  acknowledgePreparedNotice,
 } from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
-import { CommerceCustomerContextNoticeSubjectAuthorityService } from '../../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
+import {
+  CommerceCustomerContextNoticeSubjectAuthorityService,
+  observeNoticeSubjectPreparation,
+} from '../../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
+import type { PreparedNoticeSubjectAuthority } from '../../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
+import { PrivacySubjectRecordSchema, PrivacySubjectOwnerEvidenceSchema } from '../../shared/domain/privacy-subject.ts';
 import {
   PrivacyNoticePresentationService,
   makePrivacyNoticePresentationService,
@@ -174,6 +181,7 @@ const operations = Effect.fn('NoticeUnit.operations')(function* unitOperations(
   selectedScope: OperationalScope = scope,
   dependencies = unit.dependencies,
   acknowledgements = unit.acknowledgements,
+  preparedSubject?: PreparedNoticeSubjectAuthority,
 ) {
   const informationStep = yield* makePrivacyNoticeInformationStep.pipe(
     Effect.provideService(PrivacyNoticePresentationService, dependencies.integrity),
@@ -181,8 +189,104 @@ const operations = Effect.fn('NoticeUnit.operations')(function* unitOperations(
       forScope: () => dependencies.subjectAuthority,
     }),
   );
-  return informationStep.forScope({ acknowledgements, repository: dependencies.repository, scope: selectedScope });
+  return informationStep.forScope({
+    acknowledgements,
+    preparedSubject,
+    repository: dependencies.repository,
+    scope: selectedScope,
+  });
 });
+
+it.effect('retains both preparation and commit Subject observations without repeating remote authority', () =>
+  Effect.gen(function* preparedReadEvidence() {
+    const unit = yield* fixture();
+    const presented = yield* (yield* operations(unit)).present(target);
+    const retainedSubject = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+      createdAt: now,
+      subject: {
+        kind: 'DATA_SUBJECT',
+        partyRef: {
+          moduleId: 'party.registry',
+          resourceId: '20000000-0000-4000-8000-000000000001',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+      },
+      subjectRef: target.privacySubjectRef,
+      updatedAt: now,
+    });
+    const partyEvidence = Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema)({
+      observedAt: now,
+      ownerRevision: 1,
+      partyRef: retainedSubject.subject.kind === 'DATA_SUBJECT' ? retainedSubject.subject.partyRef : null,
+      typeAssertions: [{ assertionId: 'unit:prepared-person', validFrom: now, validTo: '2026-10-20T12:00:30.000Z' }],
+    });
+    let subjectReads = 0;
+    let remoteCalls = 0;
+    const dependencies = {
+      ...unit.dependencies,
+      repository: {
+        ...unit.dependencies.repository,
+        listSubjects: () =>
+          Effect.sync(() => {
+            subjectReads += 1;
+            return [retainedSubject];
+          }),
+      },
+    };
+    const records = yield* dependencies.repository.listSubjects();
+    const preparationRead: DataAccessEventInput = {
+      accessKind: 'list',
+      queryHash: 'privacy.subject.for-scope.v1',
+      resultCount: records.length,
+      servingModuleKey: 'privacy.core',
+    };
+    const compositionRevision = 'a'.repeat(64);
+    const subject = yield* observeNoticeSubjectPreparation(
+      { compositionRevision, records, scope, target },
+      {
+        forScope: () => ({
+          resolve: () =>
+            Effect.sync(() => {
+              remoteCalls += 1;
+              return { evidenceRefs: ['unit:prepared-owner'], partyEvidence };
+            }),
+        }),
+      },
+    );
+    const services = yield* operations(unit, scope, dependencies, unit.acknowledgements, subject);
+    const payload = { acknowledged: true as const, presentationReceipt: presented.presentationReceipt };
+    const acknowledge = acknowledgePreparedNotice(
+      {
+        context: { actionInvocationId: invocationId, compositionRevision, scope },
+        payload,
+        readEvidence: [preparationRead],
+        subject,
+      },
+      services,
+    );
+    expect(remoteCalls).toBe(1);
+    const result = yield* acknowledge(payload, invocationId);
+    expect(result.readEvidence).toEqual([
+      preparationRead,
+      preparationRead,
+      {
+        accessKind: 'list',
+        queryHash: 'privacy.notice-version.for-scope.v1',
+        resultCount: 1,
+        servingModuleKey: 'privacy.core',
+      },
+    ]);
+    expect(subjectReads).toBe(2);
+    expect(remoteCalls).toBe(1);
+    expect(unit.authorityCalls()).toBe(1);
+    expect(unit.records.size).toBe(1);
+    expect(Result.isFailure(yield* acknowledge(payload, otherInvocationId).pipe(Effect.result))).toBe(true);
+    expect(subjectReads).toBe(2);
+    expect(remoteCalls).toBe(1);
+    expect(unit.records.size).toBe(1);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);
 
 it.effect('serves exact immutable wording without proof and retains one acknowledgement on a fresh invocation', () =>
   Effect.gen(function* exactInformationStep() {
@@ -483,6 +587,98 @@ it.effect(
       expect(fact.provision.provisionId).toBe(
         `privacy-notice-acknowledgement:${acknowledged.acknowledgementRef.resourceId}`,
       );
+      const acknowledgement = unit.records.values().next().value;
+      if (acknowledgement === undefined) {
+        return yield* new PrivacyNoticeAcknowledgementError({
+          code: 'privacy_notice_acknowledgement_unavailable',
+          reason: 'Expected retained unit acknowledgement',
+        });
+      }
+      const retainedSubject = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+        createdAt: now,
+        subject: {
+          kind: 'DATA_SUBJECT',
+          partyRef: {
+            moduleId: 'party.registry',
+            resourceId: '20000000-0000-4000-8000-000000000001',
+            resourceType: 'party.registry.party',
+            tenantId,
+          },
+        },
+        subjectRef: target.privacySubjectRef,
+        updatedAt: now,
+      });
+      const partyEvidence = Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema)({
+        observedAt: now,
+        ownerRevision: 1,
+        partyRef: retainedSubject.subject.kind === 'DATA_SUBJECT' ? retainedSubject.subject.partyRef : null,
+        typeAssertions: [{ assertionId: 'unit:prepared-person', validFrom: now, validTo: '2026-10-20T12:00:30.000Z' }],
+      });
+      const preparedSubject = yield* observeNoticeSubjectPreparation(
+        {
+          compositionRevision: 'a'.repeat(64),
+          records: [retainedSubject],
+          scope,
+          target: acknowledgement,
+        },
+        {
+          forScope: () => ({ resolve: () => Effect.succeed({ evidenceRefs: ['unit:prepared-owner'], partyEvidence }) }),
+        },
+      );
+      const preparedInput = {
+        acknowledgements: unit.acknowledgements,
+        prepared: { acknowledgement, readEvidence: [], subject: preparedSubject },
+        provisions,
+        scope,
+        subjects: { listSubjects: () => Effect.succeed([retainedSubject]) },
+      };
+      const preparedChannel = authority.forScope(preparedInput);
+      const callsBeforePreparedCommit = unit.authorityCalls();
+      expect(yield* preparedChannel.resolve(request, context)).toEqual(fact);
+      expect(unit.authorityCalls()).toBe(callsBeforePreparedCommit);
+      expect(
+        Result.isFailure(
+          yield* preparedChannel.resolve({ ...request, providedLanguage: 'cs' }, context).pipe(Effect.result),
+        ),
+      ).toBe(true);
+      expect(
+        Result.isFailure(
+          yield* authority
+            .forScope({ ...preparedInput, scope: { ...scope, legalEntityId: '10000000-0000-4000-8000-000000000099' } })
+            .resolve(request, context)
+            .pipe(Effect.result),
+        ),
+      ).toBe(true);
+      expect(
+        Result.isFailure(
+          yield* authority
+            .forScope({
+              ...preparedInput,
+              subjects: {
+                listSubjects: () => Effect.succeed([{ ...retainedSubject, updatedAt: '2026-10-20T12:00:01.000Z' }]),
+              },
+            })
+            .resolve(request, context)
+            .pipe(Effect.result),
+        ),
+      ).toBe(true);
+      expect(
+        Result.isFailure(
+          yield* authority
+            .forScope({
+              ...preparedInput,
+              acknowledgements: {
+                findById: () => Effect.succeed(Option.some({ ...acknowledgement, businessInteractionRef: 'changed' })),
+              },
+            })
+            .resolve(request, context)
+            .pipe(Effect.result),
+        ),
+      ).toBe(true);
+      yield* TestClock.adjust(30_000);
+      expect(Result.isFailure(yield* preparedChannel.resolve(request, context).pipe(Effect.result))).toBe(true);
+      expect(unit.authorityCalls()).toBe(callsBeforePreparedCommit);
+      yield* TestClock.setTime(Date.parse(now));
       reads.length = 0;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
@@ -574,6 +770,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
         transport: { correlationId: 'notice-evidence-first', idempotencyKey: 'notice-evidence-first' },
       })
       .pipe(
+        Effect.provide(privacyNoticeInformationStepLive),
         Effect.provideService(PrivacyNoticePresentationService, unit.dependencies.integrity),
         Effect.provideService(CommerceCustomerContextNoticeSubjectAuthorityService, {
           forScope: () => unit.dependencies.subjectAuthority,
@@ -589,6 +786,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
         transport: { correlationId: 'notice-evidence-retained', idempotencyKey: 'notice-evidence-retained' },
       })
       .pipe(
+        Effect.provide(privacyNoticeInformationStepLive),
         Effect.provideService(PrivacyNoticePresentationService, unit.dependencies.integrity),
         Effect.provideService(CommerceCustomerContextNoticeSubjectAuthorityService, {
           forScope: () => unit.dependencies.subjectAuthority,
@@ -666,6 +864,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
         transport: { correlationId: 'notice-evidence-rejected', idempotencyKey: 'notice-evidence-rejected' },
       })
       .pipe(
+        Effect.provide(privacyNoticeInformationStepLive),
         Effect.provideService(PrivacyNoticePresentationService, unit.dependencies.integrity),
         Effect.provideService(CommerceCustomerContextNoticeSubjectAuthorityService, {
           forScope: () => unit.dependencies.subjectAuthority,

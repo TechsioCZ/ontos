@@ -108,6 +108,7 @@ import { DsrDeadlineAuthorityUnavailableLive } from '../src/actions/record-dsr-d
 import { DsrDeliveryAuthorityUnavailableLive } from '../src/actions/record-dsr-delivery-evidence.action.ts';
 import { DsrVerificationAuthorityUnavailableLive } from '../src/actions/record-dsr-verification.action.ts';
 import { NoticeChannelDeliveryAuthorityUnavailableLive } from '../src/actions/record-notice-provision.action.ts';
+import { privacyNoticeInformationStepLive } from '../src/services/privacy-notice-acknowledgement-authority.service.ts';
 import { PrivacyNoticePresentationUnavailableLive } from '../src/services/privacy-notice-presentation.service.ts';
 import { CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive } from '../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
@@ -193,7 +194,17 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   ProcessingInterventionAuthorityUnavailableLive,
   PrivacySubjectPartyOwnerUnavailableLive,
 );
+const noticeInformationStepLive = privacyNoticeInformationStepLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      nodeCryptoLayer,
+      PrivacyNoticePresentationUnavailableLive,
+      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+    ),
+  ),
+);
 const productionReadRuntimeLive = ReadRuntimeLive.pipe(
+  Layer.provideMerge(noticeInformationStepLive),
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
@@ -207,6 +218,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   ),
 );
 const productionActionRuntimeLive = privacyConsentAwareActionRuntimeLive.pipe(
+  Layer.provideMerge(noticeInformationStepLive),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
