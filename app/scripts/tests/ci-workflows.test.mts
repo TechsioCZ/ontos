@@ -725,7 +725,7 @@ it('pins the native VPN client and preserves cleanup outputs after a failed conn
   expect(action.outputs['state-directory']?.value).toBe(expression('steps.prepare.outputs.state-directory'));
   expect(action.outputs['cli-path']?.value).toBe(expression('steps.prepare.outputs.cli-path'));
   const prepare = action.runs.steps.find((step) => step.id === 'prepare');
-  expect(prepare?.run).toContain('npm install --global @zerops/zcli@1.1.0');
+  expect(prepare?.run).toContain('npm install --global @zerops/zcli@1.1.3');
   expect(prepare?.run).toContain('wireguard-tools systemd-resolved iputils-ping');
   expect(prepare?.run).toContain('getBinaryPath()');
   expect(prepare?.run).toContain('chmod 700 "$state_directory"');
@@ -1811,6 +1811,7 @@ const GateCommandsWorkflowSchema = Schema.Struct({
     'static-contracts': Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
+          name: Schema.optional(Schema.String),
           parallel: Schema.optional(Schema.Array(Schema.Struct({ run: Schema.String }))),
           run: Schema.optional(Schema.String),
         }),
@@ -1826,6 +1827,10 @@ const GateCommandsWorkflowSchema = Schema.Struct({
   }),
 });
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+const readRootScripts = () =>
+  Schema.decodeUnknownSync(RootScriptsSchema)(
+    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
+  );
 
 const readGateCommandJobs = () =>
   Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
@@ -1833,6 +1838,18 @@ const gateCommands = () =>
   readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include.map(({ commands }) =>
     commands.split('\n').filter(Boolean),
   );
+
+it('verifies the exact Tunnel download and checksum before allowing a deployment', () => {
+  const step = readGateCommandJobs()['static-contracts'].steps.find(
+    ({ name }) => name === 'Verify the pinned Cloudflare Tunnel binary',
+  );
+  expect(step?.run).toContain('readFileSync("zerops.yaml", "utf8")');
+  expect(step?.run).toContain(String.raw`service.build.buildCommands.join("\n")`);
+  expect(step?.run).toContain('bash -euo pipefail -c "$commands"');
+  expect(step?.run).toContain('app/.zerops/runtime/cloudflared/cloudflared --version');
+  expect(step?.run).toContain('mktemp -d "$RUNNER_TEMP/ontos-cloudflared.XXXXXX"');
+  expect(step?.run).toContain('trap \'rm -rf -- "$scratch"\' EXIT');
+});
 
 it('runs every workspace gate check in some workspace-gate entry', () => {
   const commands = gateCommands().flat();
@@ -1842,12 +1859,14 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm test:lint-rules',
     'pnpm api:check:ontos',
     'pnpm test:scripts',
-    'pnpm module-entrypoints:check',
     'pnpm test:deployment-impact',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
   }
+  // The module entrypoint boundary check runs inside the deployment impact gate.
+  const { scripts } = readRootScripts();
+  expect(scripts['test:deployment-impact']).toContain(scripts['module-entrypoints:check']);
   const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
     parallel ? parallel.map((step) => step.run) : [run ?? ''],
   );
@@ -1855,9 +1874,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
 });
 
 it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
-  const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
-  );
+  const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:unit']).toBe(
     'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component',
@@ -1915,9 +1932,7 @@ const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
 
 it('runs the root integration suite once and every package integration suite in exactly one shard', () => {
-  const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
-  );
+  const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:integration']).toBe(
     'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
@@ -2087,7 +2102,11 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     const node = jobs['node-artifact-build'];
     const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(node.env);
     const service = node.services['proof-postgres'];
-    expect(service?.image).toBe(expression("matrix.proof == 'node' && 'postgres:18.6-alpine' || ''"));
+    expect(service?.image).toBe(
+      expression(
+        "matrix.proof == 'node' && 'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5' || ''",
+      ),
+    );
     expect(service?.ports).toContain('5433:5432');
     const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
     expect(admin.username).toBe(service?.env.POSTGRES_USER);

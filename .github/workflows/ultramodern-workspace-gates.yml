@@ -85,12 +85,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -183,10 +183,10 @@ jobs:
               pnpm typecheck:lint-rules
               pnpm test:lint-rules
               pnpm api:check:ontos
+          # `pnpm test:deployment-impact` runs the module entrypoint boundary check first.
           - name: Repository Tooling, Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests
             commands: |
               pnpm test:scripts
-              pnpm module-entrypoints:check
               pnpm test:deployment-impact
               pnpm test:generation
           # The root `pnpm test:unit` (every package's test:unit, then every package's test:component) in
@@ -205,12 +205,12 @@ jobs:
               pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
@@ -255,12 +255,12 @@ jobs:
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -283,6 +283,28 @@ jobs:
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
+
+      - name: Verify the pinned Cloudflare Tunnel binary
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        timeout-minutes: 5
+        run: |
+          commands="$(mise exec -- node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { parse } from "yaml";
+            const service = parse(readFileSync("zerops.yaml", "utf8")).zerops.find(({ setup }) => setup === "cloudflared");
+            if (!Array.isArray(service?.build?.buildCommands) || service.build.buildCommands.length === 0) {
+              throw new Error("Cloudflare Tunnel build commands are missing");
+            }
+            process.stdout.write(service.build.buildCommands.join("\n"));
+          ')"
+          scratch="$(mktemp -d "$RUNNER_TEMP/ontos-cloudflared.XXXXXX")"
+          trap 'rm -rf -- "$scratch"' EXIT
+          (
+            cd "$scratch"
+            bash -euo pipefail -c "$commands"
+            app/.zerops/runtime/cloudflared/cloudflared --version
+          )
 
       # Share one install across independent checks and retain a log for each check.
       # Keep the memory-heavy API analyzer and Commerce build outside this group.
@@ -373,12 +395,12 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -477,12 +499,12 @@ jobs:
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -647,7 +669,7 @@ jobs:
 
       - name: Upload browser failure diagnostics
         if: failure() && matrix.suite == 'browser'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shell-browser-failure-diagnostics
           path: |
@@ -707,7 +729,7 @@ jobs:
     # Only the proving shard starts PostgreSQL; its complete handler layers acquire real pools.
     services:
       proof-postgres:
-        image: ${{ matrix.proof == 'node' && 'postgres:18.6-alpine' || '' }}
+        image: ${{ matrix.proof == 'node' && 'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5' || '' }}
         env:
           POSTGRES_DB: ontos_proof
           POSTGRES_PASSWORD: ontos_proof_admin
@@ -727,12 +749,12 @@ jobs:
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -766,7 +788,7 @@ jobs:
             | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
 
       - name: Upload the shard's build outputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: node-units-${{ matrix.shard }}
           path: ${{ runner.temp }}/units.tar.zst
@@ -784,7 +806,7 @@ jobs:
 
       - name: Download every shard's Node build outputs
         if: matrix.proof == 'node'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/units
@@ -859,12 +881,12 @@ jobs:
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -917,7 +939,7 @@ jobs:
             | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
 
       - name: Upload the shard's build outputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cloudflare-units-${{ matrix.shard }}
           path: ${{ runner.temp }}/units.tar.zst
@@ -994,7 +1016,7 @@ jobs:
 
       - name: Download every shard's Cloudflare build outputs
         if: matrix.proof != 'none'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: cloudflare-units-*
           path: ${{ runner.temp }}/units
@@ -1194,12 +1216,12 @@ jobs:
       OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1323,12 +1345,12 @@ jobs:
       DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -1337,7 +1359,7 @@ jobs:
 
       - name: Download the initial provider quiescence receipt
         if: vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: initial-composition-cutover-receipt
           path: app/.initial-composition-cutover
@@ -1365,7 +1387,7 @@ jobs:
 
       - name: Archive the approved snapshot for the unchanged Shell
         if: needs.deploy-target.outputs.target == 'cloudflare' && !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: retained-approved-shell-snapshot
           path: ${{ runner.temp }}/retained-approved-shell-snapshot.json
@@ -1416,13 +1438,13 @@ jobs:
     steps:
       - name: Harden Runner
         if: env.INFRASTRUCTURE == 'true'
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
         if: env.INFRASTRUCTURE == 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1439,7 +1461,7 @@ jobs:
 
       - name: Download the initial provider retirement receipt for migration
         if: needs.deploy-plan.outputs.migrator == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: initial-composition-cutover-receipt
           path: app/.initial-composition-cutover
@@ -1450,7 +1472,7 @@ jobs:
         if: env.INFRASTRUCTURE == 'true'
         # mise owns Node, so its shims must learn the globally installed zcli binary.
         run: |
-          npm install --global @zerops/zcli@1.1.0
+          npm install --global @zerops/zcli@1.1.3
           mise reshim
 
       # app/zerops.yaml describes stage. Every push reads a copy that names the deploying environment, so
@@ -1539,7 +1561,7 @@ jobs:
 
       - name: Retain native legacy completion evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/legacy-completion-evidence
@@ -1573,12 +1595,12 @@ jobs:
       ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1594,7 +1616,7 @@ jobs:
 
       - name: Download the initial provider quiescence receipt for Node publication
         if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: initial-composition-cutover-receipt
           path: app/.initial-composition-cutover
@@ -1605,7 +1627,7 @@ jobs:
         if: needs.deploy-plan.outputs.any == 'true'
         # mise owns Node, so its shims must learn the globally installed zcli binary.
         run: |
-          npm install --global @zerops/zcli@1.1.0
+          npm install --global @zerops/zcli@1.1.3
           mise reshim
 
       - name: Materialize the environment's zerops.yaml
@@ -1702,7 +1724,7 @@ jobs:
 
       - name: Retain native legacy completion evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/legacy-completion-evidence
@@ -1730,7 +1752,7 @@ jobs:
       workers_dev_subdomain: ${{ steps.configuration.outputs.workers_dev_subdomain }}
     steps:
       - name: Checkout the edge placement
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: app/topology/cloudflare-placement.json
@@ -1796,12 +1818,12 @@ jobs:
       cloudflare_retirements: ${{ steps.impact.outputs.cloudflare_retirements }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1898,12 +1920,12 @@ jobs:
         unit: ${{ fromJSON(needs.edge-plan.outputs.cloudflare) }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -1969,7 +1991,7 @@ jobs:
           tar --null --files-from="$files" --create --zstd --file "$RUNNER_TEMP/edge-unit.tar.zst"
 
       - name: Upload the edge unit's build output
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: edge-unit-${{ matrix.unit.id }}
           path: ${{ runner.temp }}/edge-unit.tar.zst
@@ -2001,12 +2023,12 @@ jobs:
       deployments: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -2016,7 +2038,7 @@ jobs:
 
       - name: Download the planned edge units' build outputs
         if: needs.edge-plan.outputs.cloudflare != '[]'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: edge-unit-*
           path: ${{ runner.temp }}/edge-units
@@ -2097,7 +2119,7 @@ jobs:
 
       - name: Archive the exact retained Shell release receipt
         if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shell-artifact-release-receipt
           path: ${{ runner.temp }}/application-release-receipts/shell-super-app.json
@@ -2106,7 +2128,7 @@ jobs:
 
       - name: Download the approved snapshot captured before migration
         if: ${{ !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app') }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: retained-approved-shell-snapshot
           path: ${{ runner.temp }}/retained-approved-shell
@@ -2134,7 +2156,7 @@ jobs:
             --candidate-file "$RUNNER_TEMP/active-application-composition-candidate.json"
 
       - name: Upload the approved complete Application Composition candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: approved-application-composition-candidate
           path: ${{ runner.temp }}/active-application-composition-candidate.json
@@ -2188,12 +2210,12 @@ jobs:
       DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -2207,14 +2229,14 @@ jobs:
           printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
 
       - name: Download this deployment's complete approved candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: approved-application-composition-candidate
           path: app/.composition-candidate
 
       - name: Download the initial provider quiescence receipt
         if: vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: initial-composition-cutover-receipt
           path: app/.initial-composition-cutover
@@ -2250,7 +2272,7 @@ jobs:
 
       - name: Retain native legacy completion evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: legacy-completion-evidence-${{ github.job }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/legacy-completion-evidence
@@ -2277,12 +2299,12 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout the approved source revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -2292,14 +2314,14 @@ jobs:
 
       - name: Download the exact changed Shell build
         if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: edge-unit-shell-super-app
           path: ${{ runner.temp }}/shell-build
 
       - name: Download the exact retained Shell receipt
         if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: shell-artifact-release-receipt
           path: ${{ runner.temp }}/shell-receipt

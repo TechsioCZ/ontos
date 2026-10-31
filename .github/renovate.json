@@ -1,0 +1,61 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "dependencyDashboard": true,
+  "ignoreUnstable": true,
+  "minimumReleaseAge": "1 day",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "bump",
+  "schedule": ["before 5am"],
+  "timezone": "Etc/UTC",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^app\\/(?:zerops\\.yaml|scripts\\/run-zerops-spicedb\\.sh)$/"],
+      "matchStrings": ["(?<depName>authzed/spicedb|postgres):(?<currentValue>v?\\d+\\.\\d+(?:\\.\\d+)?(?:-alpine)?)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github\\/(?:actions|workflows)\\/.+\\.yml$/"],
+      "matchStrings": ["npm install --global (?<depName>@zerops/zcli)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^app\\/scripts\\/locki-feature\\.sh$/"],
+      "matchStrings": ["minimum_locki_version='(?<currentValue>\\d+\\.\\d+\\.\\d+)'"],
+      "depNameTemplate": "locki",
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^app\\/zerops\\.yaml$/"],
+      "matchStrings": ["https://github\\.com/(?<depName>cloudflare/cloudflared)/releases/download/(?<currentValue>\\d+\\.\\d+\\.\\d+)/cloudflared-linux-amd64"],
+      "datasourceTemplate": "github-releases"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["docker"],
+      "pinDigests": true
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "labels": ["dependencies", "github-actions", "security"]
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "npm minor and patch updates",
+      "labels": ["dependencies", "npm"]
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "labels": ["dependencies", "major"]
+    }
+  ]
+}
