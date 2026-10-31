@@ -20,6 +20,8 @@ import {
   actionInvocations,
   auditEvents,
   dataAccessEvents,
+  domainEvents,
+  outboxMessages,
   principalAuthBindings,
   principals,
   tenantModuleStateChanges,
@@ -128,10 +130,13 @@ const withDatabase = <Value, Failure>(
 
 const cleanup = withDatabase((database) =>
   Effect.gen(function* cleanTenantModuleStateFixtures() {
-    // Keep dependent evidence ahead of its referenced identity rows.
+    // Keep dependent evidence ahead of its referenced identity rows. A module state change emits a
+    // domain event with an outbox message (deleting the message cascades to its deliveries).
     for (const table of [
       dataAccessEvents,
       auditEvents,
+      outboxMessages,
+      domainEvents,
       tenantModuleStateChanges,
       tenantModuleStates,
       actionInvocations,
