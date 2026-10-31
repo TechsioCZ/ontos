@@ -10,6 +10,7 @@ import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
 // @ontos-codesmith-core-read-client-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -27,6 +28,7 @@ import type {
   SwitchLegalEntityResponse,
   SwitchTenantPayload,
   SwitchTenantResponse,
+  SwitchToTenantContextResponse,
   TenantAccessForbiddenProblem,
   TenantAuthenticationRequiredProblem,
   TenantCapabilityUnavailableProblem,
@@ -40,11 +42,15 @@ import type {
   SignInResponse,
   SignOutResponse,
   ResolveModuleTargetPayload,
+  ResolveModuleTargetsPayload,
   ResolvedModuleTarget,
+  ResolvedModuleTargets,
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellComposition,
   ShellCompositionRequest,
+  ShellDocumentContext,
+  ShellDocumentContextRequest,
   ShellReloadRequiredProblem,
   ShellInternalProblem,
   IdentityProblem,
@@ -55,6 +61,7 @@ import type {
   IdentityListPayload,
   IssueApiKeyPayload,
   IssueManagedApiKeyPayload,
+  ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
   PrincipalMutationResponse,
   RotateApiKeyPayload,
@@ -213,6 +220,11 @@ export const availableLegalEntities = (
 ): AvailableLegalEntitiesClientEffect =>
   invokeShellAuthenticationClient(options, (client) => client.legalEntities.availableLegalEntities({}));
 
+export const switchToTenantContext = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<SwitchToTenantContextResponse, SwitchTenantClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchToTenantContext({}));
+
 export const switchLegalEntity = (
   payload: SwitchLegalEntityPayload,
   options: ShellAuthenticationClientOptions = {},
@@ -225,11 +237,41 @@ export const shellComposition = (
 ): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({ query: payload }));
 
+/** Server rendering's one read of a document's session, legal entities, tenants, composition, capability and assertions. */
+export const documentContext = (
+  payload: ShellDocumentContextRequest,
+  options: ShellAuthenticationClientOptions = {},
+): ShellAuthenticationClientEffect<ShellDocumentContext> =>
+  invokeShellAuthenticationClient(options, (client) => client.documentContext.documentContext({ payload }));
+
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
+
+/** Several targets of one release in one request; each answers its own target or problem. */
+export const resolveModuleTargets = (
+  payload: ResolveModuleTargetsPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ResolvedModuleTargets, ShellTargetClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTargets({ payload }));
+
+/** Gateway assertions for a document's module audiences, one per audience, in one request. */
+export const issueDocumentGatewayContexts = (
+  payload: DocumentGatewayContextsRequest,
+  options: ShellAuthenticationClientOptions = {},
+) =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.documentGateway.issueDocumentGatewayContexts({ payload }),
+  );
+
+/** Navigation capability only: the server still authorizes the people page and every write. */
+export const canManageDemoAccounts = (options: ShellAuthenticationClientOptions = {}) =>
+  invokeShellAuthenticationClient(options, (client) => client.identity.demoAccountCapability({ payload: {} })).pipe(
+    Effect.map(({ canManage }) => canManage),
+    Effect.orElseSucceed(() => false),
+  );
 
 export const searchResources = (
   payload: ShellSearchPayload,
@@ -310,10 +352,14 @@ export const issueManagedApiKey = (
   );
 
 export const listManagedApiKeys = (
-  payload: IdentityListPayload,
+  payload: ManagedApiKeyListPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.identity.listManagedApiKeys({ payload }));
+  invokeShellAuthenticationClient(options, (client) =>
+    payload.scope === 'company-agent'
+      ? client.identity.listManagedApiKeys({ payload })
+      : client.identity.listManagedApiKeys({ payload }),
+  );
 
 export const setSelfApiKeyStatus = (
   payload: SetApiKeyStatusPayload,

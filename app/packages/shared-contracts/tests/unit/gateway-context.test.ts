@@ -4,6 +4,8 @@ import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
   ApiKeyGatewayHeadersSchema,
+  ApiKeyGatewayContextRequestSchema,
+  ApiKeyGatewayReadRequestSchema,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
@@ -14,6 +16,8 @@ import {
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
+  gatewayContextAuthorizationEntrypoints,
+  shellGatewayContextContract,
 } from '../../src/gateway-context.ts';
 import { issueApiKeyGatewayContext } from '../../src/gateway-context-api-key.ts';
 
@@ -21,7 +25,11 @@ const endpointStatuses = (
   endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
 ) =>
   [...endpoint.error]
-    .map((schema) => Schema.resolveAnnotationsKey(schema)?.httpApiStatus)
+    // Effect's built-in HttpApiError schemas annotate the schema; the Problem schemas annotate their key.
+    .map(
+      (schema) =>
+        Schema.resolveAnnotations(schema)?.httpApiStatus ?? Schema.resolveAnnotationsKey(schema)?.httpApiStatus,
+    )
     .toSorted((left, right) => Number(left) - Number(right));
 
 const problemTag = (schema: Schema.Top) => {
@@ -260,6 +268,48 @@ it('schemas publish only the required public field names', () => {
   expect(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()).toEqual(['alg', 'kid', 'typ']);
 });
 
+it('classifies every Shell token-issuing endpoint as a capability issuer with its credential', () => {
+  expect(
+    gatewayContextAuthorizationEntrypoints.map(({ authorization, entrypointKey, path }) => ({
+      credential: authorization.credential,
+      entrypointKey,
+      path,
+    })),
+  ).toEqual([
+    {
+      credential: 'session',
+      entrypointKey: 'shell.gateway-context.issue.session',
+      path: '/shell-super-app-api/auth/gateway-context',
+    },
+    {
+      credential: 'api_key',
+      entrypointKey: 'shell.gateway-context.issue.api-key',
+      path: '/shell-super-app-api/auth/api-key/gateway-context',
+    },
+    {
+      credential: 'api_key',
+      entrypointKey: 'shell.gateway-read.issue.api-key',
+      path: '/shell-super-app-api/auth/api-key/gateway-read',
+    },
+    {
+      credential: 'session',
+      entrypointKey: 'shell.gateway-contexts.issue.session',
+      path: '/shell-super-app-api/auth/gateway-contexts',
+    },
+    {
+      credential: 'session',
+      entrypointKey: 'shell.document-context.issue.session',
+      path: '/shell-super-app-api/shell/document-context',
+    },
+  ]);
+  for (const entrypoint of gatewayContextAuthorizationEntrypoints) {
+    expect(entrypoint.authorization.kind).toBe('capability_issuance');
+    expect(entrypoint.surface).toBe('capability_issuance');
+    expect(entrypoint.owner).toBe(shellGatewayContextContract.ownerId);
+    expect(entrypoint.deployment).toBe(shellGatewayContextContract.ownerId);
+  }
+});
+
 it('publishes the exact API-key credential boundary and failure statuses', () => {
   expect(Object.keys(ApiKeyGatewayHeadersSchema.fields)).toEqual(['x-api-key']);
   expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext)).toEqual([
@@ -370,5 +420,65 @@ it.effect('issues API-key gateway context through the server-only credential bou
       compositionRevision: claims.compositionRevision,
       legalEntityId: '20000000-0000-4000-8000-000000000001',
     });
+  }),
+);
+
+it('lets server API keys bind the active revision without weakening session revision pinning', () => {
+  const payload = { audience: 'merchandise' };
+  expect(Schema.decodeSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
+  expect(() => Schema.decodeUnknownSync(GatewayContextRequestSchema)(payload)).toThrow();
+  expect(() =>
+    Schema.decodeSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
+  ).toThrow();
+});
+
+it('declares the combined gateway protocol as whole-body JSON bytes rather than a shared owner DTO', () => {
+  const decode = Schema.decodeUnknownSync(ApiKeyGatewayReadRequestSchema);
+  const payload = new TextEncoder().encode(
+    '{"audience":"merchandise","query":{"view":{"storefront":true}},"readName":"records"}',
+  );
+  expect(decode(payload)).toBe(payload);
+  expect(() => decode({ audience: 'merchandise', query: {}, readName: 'records' })).toThrow();
+  expect(() => decode(new TextDecoder().decode(payload))).toThrow();
+  expect(endpointStatuses(GatewayContextApiGroup.endpoints.readWithApiKeyGatewayContext)).toEqual([
+    400, 400, 401, 403, 409, 429, 500, 503,
+  ]);
+});
+
+it.effect('isolates API-key transport options between concurrent requests', () =>
+  Effect.gen(function* isolatedApiKeyGatewayTransport() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(
+        Response.json({
+          apiBaseUrl: '/payment-term-catalog-api',
+          compositionRevision: claims.compositionRevision,
+          expiresAt: claims.exp,
+          token: 'fresh-signed-assertion',
+        }),
+      );
+    };
+    const targets = [
+      { apiKey: 'first-key', baseUrl: 'https://first.example.test', requestCorrelation: 'first-request' },
+      { apiKey: 'second-key', baseUrl: 'https://second.example.test', requestCorrelation: 'second-request' },
+    ];
+    yield* Effect.forEach(
+      targets,
+      (target) =>
+        issueApiKeyGatewayContext(
+          { audience: 'payment-term-catalog' },
+          { ...target, apiKey: Redacted.make(target.apiKey) },
+        ),
+      { concurrency: 'unbounded' },
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(requests).toHaveLength(targets.length);
+    for (const target of targets) {
+      const request = requests.find((candidate) => new URL(candidate.url).origin === target.baseUrl);
+      expect(request?.headers.get('x-api-key')).toBe(target.apiKey);
+      expect(request?.headers.get('x-correlation-id')).toBe(target.requestCorrelation);
+      expect(request?.headers.get('cookie')).toBeNull();
+      expect(request?.headers.get('authorization')).toBeNull();
+    }
   }),
 );

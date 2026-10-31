@@ -1,8 +1,9 @@
 import {
-  DATABASE_IDENTITIES,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-} from '@app/core-runtime';
+} from '@app/party-registry-identity-contracts';
+
 import type { DatabaseRoleGrants } from '@app/core-runtime';
 import { is, sql } from 'drizzle-orm';
 import type { PgPolicy, PgTable } from 'drizzle-orm/pg-core';
@@ -75,7 +76,7 @@ interface ExpectedTablePrivileges {
 
 const NO_PRIVILEGES: ExpectedTablePrivileges = { columns: new Map(), table: new Set() };
 
-const runtimeRoles = DATABASE_IDENTITIES.map((identity) => identity.role);
+const runtimeRoles = PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT.identities.map((identity) => identity.role);
 
 const textArray = (values: readonly string[]) =>
   sql`array[${sql.join(
@@ -329,7 +330,9 @@ export const routineMismatches = Effect.fn('DatabaseRoleContract.routineMismatch
   const declaredByRoutine = new Map(
     canonical.flatMap(({ declared, routine }) => (routine === null ? [] : [[routine, declared] as const])),
   );
-  const mismatches: string[] = [];
+  const mismatches: string[] = canonical.flatMap(({ declared, routine }) =>
+    declared.startsWith(`${schema}.`) && routine === null ? [`Required routine ${declared} is missing`] : [],
+  );
   for (const row of routines) {
     if (row.owner !== owner) {
       mismatches.push(`Routine ${row.routine} is owned by ${row.owner}, expected ${owner}`);

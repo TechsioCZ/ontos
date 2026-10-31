@@ -1,0 +1,23 @@
+diff --git a/package.json b/package.json
+index cec065aa1c44f033a61fe9c79934054ce7e6c506..24c63d3d0de840d53d92819a9e9f044322f81df3 100644
+--- a/package.json
++++ b/package.json
+@@ -18,6 +18,18 @@
+   "types": "dist/src/index.d.ts",
+   "exports": {
+     "./package.json": "./package.json",
++    "./v1/core": {
++      "types": "./dist/src/authzedapi/authzed/api/v1/core.d.ts",
++      "default": "./dist/src/authzedapi/authzed/api/v1/core.js"
++    },
++    "./v1/permissions": {
++      "types": "./dist/src/authzedapi/authzed/api/v1/permission_service.d.ts",
++      "default": "./dist/src/authzedapi/authzed/api/v1/permission_service.js"
++    },
++    "./v1/schema": {
++      "types": "./dist/src/authzedapi/authzed/api/v1/schema_service.d.ts",
++      "default": "./dist/src/authzedapi/authzed/api/v1/schema_service.js"
++    },
+     ".": {
+       "types": {
+         "import": "./dist/src/index.d.ts",

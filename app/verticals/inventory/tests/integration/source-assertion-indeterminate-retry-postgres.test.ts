@@ -67,7 +67,7 @@ import { makeDrizzleStockItemRepository } from '../../src/persistence/stock-item
 import { stockLocationPersistenceForScope } from '../../src/persistence/stock-location-repository.ts';
 import { stockPositionPersistenceForScope } from '../../src/persistence/stock-position-repository.ts';
 import {
-  importSourceAssertionOwnerAuthorizationOverlay,
+  authorizeImportSourceAssertionOwner,
   importSourceAssertionOwnerAuthorizationOverlayLive,
 } from '../../src/persistence/import-source-assertion-owner-authorization.ts';
 
@@ -344,25 +344,25 @@ it.live(
                 },
               ],
             };
-            expect(yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, input)).toBe('allowed');
+            expect(yield* authorizeImportSourceAssertionOwner(transaction, input)).toBe('allowed');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 operationKey: 'commerce.inventory.stock-issue',
               }),
             ).toBe('unavailable');
+            expect(yield* authorizeImportSourceAssertionOwner(transaction, { ...input, targets: [] })).toBe(
+              'unavailable',
+            );
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, { ...input, targets: [] }),
-            ).toBe('unavailable');
-            expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 operationKey: 'commerce.inventory.core-neutral-control',
                 targets: [],
               }),
             ).toBe('allowed');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 operation: 'read',
                 operationKey: 'commerce.inventory.core-neutral-control',
@@ -370,26 +370,26 @@ it.live(
               }),
             ).toBe('allowed');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 operationKey: 'commerce.inventory.core-neutral-control',
                 targets: [{ kind: 'tenant', permission: 'access', tenantId }],
               }),
             ).toBe('allowed');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 scope: { ...scope, legalEntityId: fixture.legalEntityId },
               }),
             ).toBe('denied');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 targets: [...input.targets, ...input.targets],
               }),
             ).toBe('unavailable');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 targets: [{ kind: 'module', moduleId: 'commerce.inventory' }],
               }),
@@ -401,19 +401,19 @@ it.live(
                 target.target.kind === 'inventory_resource',
             );
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 targets: [{ ...target, permission: 'inventory.stock.issue' }],
               }),
             ).toBe('denied');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 targets: [{ ...target, target: { ...target.target, tenantId: yield* nextId } }],
               }),
             ).toBe('denied');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 targets: [
                   {
@@ -427,7 +427,7 @@ it.live(
               }),
             ).toBe('denied');
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 ...input,
                 targets: [
                   {
@@ -655,7 +655,7 @@ it.live(
             const duplicate = yield* assertions.append(stored.value).pipe(Effect.flip);
             expect(Option.isSome(findPostgresFailure(duplicate, ({ code }) => code === '23505'))).toBe(true);
             expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+              yield* authorizeImportSourceAssertionOwner(transaction, {
                 operation: 'action',
                 operationAt: composition.observedAt,
                 operationKey: importSourceAssertionAction.descriptor.actionKey,

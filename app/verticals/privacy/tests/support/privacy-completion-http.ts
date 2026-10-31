@@ -3,6 +3,8 @@ import nodePath from 'node:path';
 import { build } from 'esbuild';
 // Explicit TEST assembly: production Privacy defaults remain unavailable.
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -397,11 +399,23 @@ const serve = Effect.scoped(
     const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
       Layer.provideMerge(authority),
       Layer.provide(infrastructure),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          DatabaseConfigLive,
+          NodeCrypto.layer,
+          makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+        ),
+      ),
     );
     const read = ReadRuntimeLive.pipe(
       Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, entrypoint, scope)),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          DatabaseConfigLive,
+          NodeCrypto.layer,
+          makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+        ),
+      ),
     );
     const api = makePrivacyApiRuntime(read, action, redemption);
     const handler = yield* Effect.acquireRelease(

@@ -1,4 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
+import { ObjectReference } from '@authzed/authzed-node/v1/core';
+import { CheckPermissionRequest } from '@authzed/authzed-node/v1/permissions';
+import { WriteSchemaRequest } from '@authzed/authzed-node/v1/schema';
 import { Cause, Effect, Fiber, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -34,6 +37,14 @@ const gateway = (answer: () => Response | 'hang') => {
 
 const ndjson = (frames: readonly Schema.Json[]) =>
   new Response(frames.map((frame) => `${Schema.encodeSync(JsonText)(frame)}\n`).join(''));
+
+it.effect('message-only package exports retain the official SDK codec identities', () =>
+  Effect.sync(() => {
+    expect(ObjectReference).toBe(v1.ObjectReference);
+    expect(CheckPermissionRequest).toBe(v1.CheckPermissionRequest);
+    expect(WriteSchemaRequest).toBe(v1.WriteSchemaRequest);
+  }),
+);
 
 it.effect('posts canonical proto3 JSON with the preshared key to the gateway route', () =>
   Effect.gen(function* checksGatewayRequest() {
@@ -166,5 +177,34 @@ it.effect('a gateway that never replies is aborted at the deadline', () =>
     const failure = yield* Fiber.join(fiber);
     expect(Cause.isTimeoutError(failure.cause)).toBe(true);
     expect(requests.map(({ signal }) => signal.aborted)).toStrictEqual([true]);
+  }),
+);
+
+it.effect('reads the live schema through the native schema read route', () =>
+  Effect.gen(function* readsNativeSchema() {
+    const { requests, withGateway } = gateway(() => Response.json({ schemaText: 'definition principal {}' }));
+    const response = yield* rpc.readSchema(v1.ReadSchemaRequest.create({})).pipe(withGateway);
+    expect(response.schemaText).toBe('definition principal {}');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.pathname).toBe('/v1/schema/read');
+    expect(requests[0]?.request.headers['authorization']).toBe('Bearer test-key');
+  }),
+);
+
+it.effect('uses the native semantic schema diff route with the exact observed revision', () =>
+  Effect.gen(function* diffsNativeSchema() {
+    const { requests, withGateway } = gateway(() => Response.json({ diffs: [] }));
+    const response = yield* rpc
+      .diffSchema(
+        v1.DiffSchemaRequest.create({
+          comparisonSchema: 'definition principal {}',
+          consistency: {
+            requirement: { atExactSnapshot: { token: 'schema-read-token' }, oneofKind: 'atExactSnapshot' },
+          },
+        }),
+      )
+      .pipe(withGateway);
+    expect(response.diffs).toEqual([]);
+    expect(requests[0]?.url.pathname).toBe('/v1/schema/diffschema');
   }),
 );

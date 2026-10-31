@@ -13,6 +13,7 @@ import {
   defineMicroverticalPolicy,
   denyPolicy,
   isVerifiedGatewayPrincipalContext,
+  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import { InitializePopulationAuthorityPayloadSchema } from '../../shared/actions/initialize-population-authority.ts';
 import { CreateCartDraftPayloadSchema } from '../../shared/actions/create-cart-draft.ts';
@@ -176,9 +177,8 @@ const authorizeCartOwner = Effect.fn('CartDraftAuthorityPolicy.authorizeCartOwne
   Effect.catchTag('CartDraftRejected', (failure) => Effect.succeed(deniedOwnerDecision(failure))),
 );
 
-export const cartOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
-  authorize: authorizeCartOwner,
-};
+export const cartOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService =
+  transactionalOwnerAuthorization(authorizeCartOwner);
 export const CartOwnerAuthorizationOverlayLive = Layer.succeed(
   OwnerAuthorizationOverlay,
   cartOwnerAuthorizationOverlay,

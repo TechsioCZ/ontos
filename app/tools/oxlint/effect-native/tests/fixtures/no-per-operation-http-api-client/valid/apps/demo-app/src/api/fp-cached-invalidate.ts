@@ -5,7 +5,7 @@
 // module-level factory's return value, so it escapes the call — see
 // `invalid/evasion-per-request-layer.ts` for the same member used *inside* an operation.
 import { Effect } from 'effect';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 export const makeInvalidatableClient = () =>

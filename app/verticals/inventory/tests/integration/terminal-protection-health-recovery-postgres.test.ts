@@ -4,6 +4,7 @@ import {
   makeBusinessPermissionRelationshipMutationLive,
   runAction,
   findPostgresFailure,
+  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -436,8 +437,9 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
     protectionRef: protection.ref,
   };
   // Test-owned exact admission for these three real owner Actions; production remains unchanged.
-  const ownerAuthorization = Layer.succeed(OwnerAuthorizationOverlay, {
-    authorize: (transaction, input) => {
+  const ownerAuthorization = Layer.succeed(
+    OwnerAuthorizationOverlay,
+    transactionalOwnerAuthorization((transaction, input) => {
       if (
         input.operation !== 'action' ||
         input.owningModuleKey !== 'commerce.inventory' ||
@@ -475,8 +477,8 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
           );
       }
       return Effect.succeed('unavailable' as const);
-    },
-  });
+    }),
+  );
   const recoveryCalls = yield* Ref.make(0);
   const recoveryAuthority = Layer.succeed(InventoryEffectRecoveryAuthorityPort, {
     recoverOriginal: (record) =>

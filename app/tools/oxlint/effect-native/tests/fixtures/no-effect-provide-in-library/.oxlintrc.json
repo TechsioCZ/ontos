@@ -10,9 +10,22 @@
           "apps/*/api/index.ts",
           "verticals/*/api/index.ts",
           "packages/core-runtime/src/outbox/process.ts",
+          "verticals/work-tasks/scripts/prune-demo-leftovers.mts",
+          "**/valid/verticals/work-tasks/scripts/prune-demo-leftovers.mts",
           "**/valid/allowlisted-composition-root.ts"
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/native-run-main-disabled.mts"],
+      "rules": {
+        "effect-native/no-effect-provide-in-library": [
+          "error",
+          { "includeTests": true, "rootFiles": [], "allowOuterRunSeam": false }
+        ]
+      }
+    }
+  ]
 }

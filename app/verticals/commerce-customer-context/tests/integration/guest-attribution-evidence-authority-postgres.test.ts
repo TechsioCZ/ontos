@@ -3,10 +3,12 @@ import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../support/database-identities.ts';
+import {
   ActionRuntime,
   loadDatabaseConnectionPair,
-  loadDatabaseConfig,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   ContextAccessLive,
@@ -39,6 +41,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Brand,
   Config,
+  ConfigProvider,
   Context,
   Crypto,
   DateTime,
@@ -237,7 +240,9 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     )(physicalIdentity);
     const identityUrls: Record<string, string> = {};
     for (const databaseIdentity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-      const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: databaseIdentity });
+      const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity: databaseIdentity }).pipe(
+        Effect.map(({ runtime }) => runtime),
+      );
       const address = new URL(canonical.connectionString);
       const exactSourceAndOwnedTarget = [
         canonical.database === sourceConnections.runtime.database,
@@ -363,7 +368,10 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const issuerContext = yield* Layer.build(
       PgClient.layer({ maxConnections: 2, url: Redacted.make(issuerUrl) }).pipe(Layer.provide(Reactivity.layer)),
     );
-    const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(Context.get(issuerContext, PgClient.PgClient));
+    const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(
+      Context.get(issuerContext, PgClient.PgClient),
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    );
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
         actionExecutor: 'manager-only',
@@ -579,7 +587,16 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
             registration: attributeGuestRetailCustomerAction,
             transport: { correlationId: yield* nextId, idempotencyKey, targetModuleKey: 'commerce.customer-context' },
           })
-          .pipe(Effect.provideContext(ownerContext));
+          .pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.orElse(
+                ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
+                ConfigProvider.fromEnv(),
+              ),
+            ),
+            Effect.provideContext(ownerContext),
+          );
       });
     const attributions = Effect.fn('GuestAuthorityTest.attributionRows')(function* attributionRows(
       root: string,

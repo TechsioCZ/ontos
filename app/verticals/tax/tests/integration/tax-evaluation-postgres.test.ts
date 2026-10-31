@@ -79,6 +79,9 @@ import {
   shippingCharge,
 } from '../unit/tax-evaluation-fixtures.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
@@ -111,7 +114,11 @@ const runScoped = <Value, Failure>(
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* runTaxOwnerScopedOperation() {
-      const scopedTransaction = yield* installOperationalScope(transaction, scope);
+      const scopedTransaction = yield* installOperationalScope(
+        transaction,
+        scope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       return yield* operation(scopedTransaction);
     }),
   );

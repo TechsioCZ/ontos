@@ -1,11 +1,7 @@
 import { fileURLToPath } from 'node:url';
 
-import {
-  DatabaseConfig,
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
@@ -80,7 +76,10 @@ const prepare = Effect.fn('CurrentPartySchema.prepare')(function* prepareCurrent
     PATH: yield* Config.String('PATH'),
   };
   if (phase === 'verify') {
-    const request = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: PARTY_REGISTRY_REQUEST_IDENTITY });
+    const { runtime: request } = yield* loadDatabaseConnectionPair({
+      envPath: '/dev/null',
+      identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+    });
     if (
       request.database !== expectedDatabase ||
       request.host !== connections.admin.host ||

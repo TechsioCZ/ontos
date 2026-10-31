@@ -7,6 +7,7 @@ import {
   CommercePortalAuthSessionMfaMethodSchema,
   CommercePortalAuthSignInInputSchema,
 } from '../../api/portal-auth/session/contracts.ts';
+import { EnrollmentResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } from '../portal-auth-contracts.ts';
 
 /**
@@ -166,7 +167,26 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
       success: Schema.Union([
         Schema.Struct({ state: Schema.Literal('anonymous') }),
         Schema.Struct({
+          account: Schema.Struct({ email: Schema.String, name: Schema.String }),
           session: CommercePortalAuthSessionSnapshotSchema,
+          state: Schema.Literal('authenticated'),
+        }),
+      ]),
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get('getCustomerAccount', '/api/portal-auth/customer-account', {
+      error: getSessionErrors,
+      success: Schema.Union([
+        Schema.Struct({ state: Schema.Literal('anonymous') }),
+        Schema.Struct({
+          account: Schema.Struct({
+            email: Schema.String,
+            id: CommercePortalAuthProviderSubjectIdSchema,
+            name: Schema.String,
+            partyId: EnrollmentResourceIdSchema.check(Schema.isUUID()),
+            tenantId: EnrollmentTenantIdSchema,
+          }),
           state: Schema.Literal('authenticated'),
         }),
       ]),

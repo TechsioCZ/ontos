@@ -1,0 +1,206 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+// One series per chart: counts or one currency, never mixed currencies or filter-dependent series colors.
+import { EmptyState, SectionCard, formatNumber, surfaceTileClassName } from '@app/admin-ui';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { Chart } from '@techsio/ui-kit/molecules/chart';
+import { Component, useState } from 'react';
+import type { ReactElement } from 'react';
+
+import { normalizeStatus, statusMeaningLabels, statusMeanings } from '../../../../../shared/domain/reports.ts';
+import type { SalesReport } from '../../../../../shared/domain/reports.ts';
+
+import { useFormatDecimalMoney, totalIn } from './report-format.ts';
+
+const shortMonths = ['led', 'úno', 'bře', 'dub', 'kvě', 'čvn', 'čvc', 'srp', 'zář', 'říj', 'lis', 'pro'];
+const shortMonth = (key: string) => `${shortMonths[Number(key.slice(5, 7)) - 1] ?? key.slice(5, 7)} ${key.slice(2, 4)}`;
+
+class ChartBoundary extends Component<{ readonly children: ReactElement }, { readonly failed: boolean }> {
+  constructor(props: { readonly children: ReactElement }) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  override render() {
+    return this.state.failed ? (
+      <p className="text-fg-secondary text-sm">Graf se nepodařilo vykreslit; čísla najdete v datové tabulce níže.</p>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
+  const { t } = useModernI18n();
+  const formatDecimalMoney = useFormatDecimalMoney();
+  const [chosenCurrency, setChosenCurrency] = useState<string | undefined>();
+  const currency =
+    chosenCurrency !== undefined && report.currencies.includes(chosenCurrency) ? chosenCurrency : report.currencies[0];
+  if (report.count === 0) {
+    return (
+      <SectionCard title={t('crm.ciWorkflow.monthlyTrend')}>
+        <EmptyState
+          description="Pro zvolené filtry neexistuje žádná započtená objednávka."
+          title={t('crm.ciWorkflow.noData')}
+        />
+      </SectionCard>
+    );
+  }
+  // Approved mapping (R04): columns per meaning; otherwise per raw source status (no unapproved categories).
+  const statusKey = (row: SalesReport['rows'][number]) =>
+    report.mappingApproved ? row.meaning : normalizeStatus(row.order.rawStatus);
+  const meanings: readonly { readonly key: string; readonly label: string }[] = report.mappingApproved
+    ? statusMeanings.flatMap((meaning) =>
+        report.rows.some((row) => row.meaning === meaning)
+          ? [{ key: meaning, label: statusMeaningLabels[meaning] }]
+          : [],
+      )
+    : [...new Map(report.rows.map((row) => [statusKey(row), row.order.rawStatus] as const)).entries()].map(
+        ([key, raw]) => ({ key, label: `Ze zdroje: ${raw}` }),
+      );
+  const counts = new Map<string, number>();
+  for (const row of report.rows) {
+    const key = `${row.month}|${statusKey(row)}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const countData = report.byMonth.map((month) => ({ count: month.count, month: shortMonth(month.key) }));
+  const valueData =
+    currency === undefined
+      ? []
+      : report.byMonth.flatMap((month) => {
+          const total = totalIn(month.totals, currency);
+          // A month with orders but no supplied amount in this currency is missing data, not a zero value.
+          return total === undefined && month.count > 0
+            ? []
+            : [{ month: shortMonth(month.key), value: Number(total?.amount ?? '0') }];
+        });
+  const firstMonth = report.byMonth[0]?.label ?? '';
+  const lastMonth = report.byMonth.at(-1)?.label ?? '';
+  return (
+    <section aria-label={t('crm.ciWorkflow.orderChartData')} className="flex min-w-0 flex-col gap-150">
+      <div className="grid min-w-0 grid-cols-1 gap-250 xl:grid-cols-2">
+        <SectionCard title={t('crm.ciWorkflow.monthlyOrderCounts')}>
+          <p className="text-fg-secondary text-sm">
+            Spárované objednávky bez duplicit. Podrobné rozdělení podle stavů je v datové tabulce a souhrnu.
+          </p>
+          <ChartBoundary>
+            <Chart
+              ariaDescription={`Počet objednávek od ${firstMonth} do ${lastMonth}. Přesná čísla včetně stavů jsou v datové tabulce pod grafy.`}
+              ariaLabel="Počet objednávek po měsících"
+              data={countData}
+              formatValue={(value) => (Number.isInteger(value) ? formatNumber(value) : '')}
+              height={260}
+              type="bar"
+              x="month"
+              y="count"
+            />
+          </ChartBoundary>
+        </SectionCard>
+        <SectionCard
+          actions={
+            report.currencies.length > 1 ? (
+              <fieldset
+                aria-label={t('crm.ciWorkflow.chartCurrency')}
+                className="inline-flex rounded-button-sm border border-border-primary p-50"
+              >
+                {report.currencies.map((entry) => (
+                  <Button
+                    aria-pressed={entry === currency}
+                    key={entry}
+                    onClick={() => setChosenCurrency(entry)}
+                    size="sm"
+                    theme={entry === currency ? 'solid' : 'borderless'}
+                    variant={entry === currency ? 'primary' : 'secondary'}
+                  >
+                    {entry}
+                  </Button>
+                ))}
+              </fieldset>
+            ) : undefined
+          }
+          title={currency === undefined ? 'Hodnota objednávek' : `Hodnota objednávek v ${currency}`}
+        >
+          {currency === undefined ? (
+            <EmptyState
+              description="Zdroj u započtených objednávek neposkytl částku a měnu."
+              title={t('crm.ciWorkflow.noData')}
+            />
+          ) : (
+            <>
+              <p className="text-fg-secondary text-sm">
+                Součet importovaných částek jen v {currency}; ostatní měny se nikdy nepřičítají. Nejde o tržbu. Měsíce
+                bez poskytnuté částky v této měně se nevykreslují.
+              </p>
+              <ChartBoundary>
+                <Chart
+                  ariaDescription={`Hodnota objednávek v ${currency} od ${firstMonth} do ${lastMonth}. Přesné částky jsou v datové tabulce pod grafy.`}
+                  ariaLabel={`Hodnota objednávek v ${currency} po měsících`}
+                  data={valueData}
+                  formatValue={(value) => formatDecimalMoney(String(value), currency)}
+                  height={260}
+                  type="bar"
+                  x="month"
+                  y="value"
+                />
+              </ChartBoundary>
+            </>
+          )}
+        </SectionCard>
+      </div>
+      <details className={`${surfaceTileClassName} p-200`}>
+        <summary className="cursor-pointer font-medium text-sm">
+          Zobrazit datovou tabulku grafů (měsíce, stavy, měny)
+        </summary>
+        <div className="overflow-x-auto pt-150">
+          <table className="w-full border-collapse text-sm">
+            <caption className="sr-only">Přesná měsíční data obou grafů a stavy objednávek</caption>
+            <thead>
+              <tr className="border-border-primary border-b text-left">
+                <th className="py-100 pr-200" scope="col">
+                  Měsíc
+                </th>
+                <th className="py-100 pr-200" scope="col">
+                  Objednávky
+                </th>
+                {meanings.map((meaning) => (
+                  <th className="py-100 pr-200" key={meaning.key} scope="col">
+                    {meaning.label}
+                  </th>
+                ))}
+                {report.currencies.map((entry) => (
+                  <th className="py-100 pr-200" key={entry} scope="col">
+                    Hodnota {entry}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {report.byMonth.map((month) => (
+                <tr className="border-border-primary border-b" key={month.key}>
+                  <th className="py-100 pr-200 text-left font-normal" scope="row">
+                    {month.label}
+                  </th>
+                  <td className="py-100 pr-200 tabular-nums">{formatNumber(month.count)}</td>
+                  {meanings.map((meaning) => (
+                    <td className="py-100 pr-200 tabular-nums" key={meaning.key}>
+                      {formatNumber(counts.get(`${month.key}|${meaning.key}`) ?? 0)}
+                    </td>
+                  ))}
+                  {report.currencies.map((entry) => {
+                    const total = totalIn(month.totals, entry);
+                    return (
+                      <td className="py-100 pr-200 tabular-nums" key={entry}>
+                        {total === undefined ? '—' : formatDecimalMoney(total.amount, entry)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  );
+};

@@ -558,6 +558,25 @@ export interface EffectiveCustomerGroupMembershipsResult {
   readonly profile: CommerceCustomerProfileSubject;
 }
 
+interface CounterpartyCustomerGroupMembershipsQuery {
+  readonly businessCodes: readonly string[];
+  /** Party counterparty resource ids; a counterparty without a purchasing profile has no memberships. */
+  readonly counterpartyResourceIds: readonly string[];
+  readonly effectiveAt: CustomerGroupIsoTimestamp;
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+}
+
+export interface CounterpartyCustomerGroupMembershipsResult {
+  /** The groups carrying one of the requested business codes, whatever their state. */
+  readonly groups: readonly CommerceCustomerGroup[];
+  /** Memberships of those groups effective at the query instant, keyed by counterparty resource id. */
+  readonly items: readonly {
+    readonly counterpartyResourceId: string;
+    readonly membership: CommerceCustomerGroupMembership;
+  }[];
+}
+
 export interface CustomerGroupPersistence {
   readonly archive: (
     command: ArchiveCustomerGroupCommand,
@@ -565,6 +584,9 @@ export interface CustomerGroupPersistence {
   readonly assign: (
     command: AssignCustomerGroupCommand,
   ) => Effect.Effect<AssignCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
+  readonly counterpartyMemberships: (
+    query: CounterpartyCustomerGroupMembershipsQuery,
+  ) => Effect.Effect<CounterpartyCustomerGroupMembershipsResult, CustomerGroupPersistenceUnavailableError>;
   readonly create: (
     command: CreateCustomerGroupCommand,
   ) => Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;

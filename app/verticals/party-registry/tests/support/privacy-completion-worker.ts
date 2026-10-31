@@ -16,7 +16,7 @@ import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { outboxWorkerHandlerLayers } from '../../src/worker-host/layer.ts';
+import { outboxWorkerDatabaseIdentityEnrollmentLive, outboxWorkerHandlerLayers } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import {
   PrivacyMeasureOwnerGateway,
@@ -161,9 +161,10 @@ const run = Effect.scoped(
       Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
       Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
       Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),
+      Layer.provide(outboxWorkerHandlerLayers.searchIngestionRegistry),
       Layer.provide(OutboxRepositoryLive),
       Layer.provide(CorePersistenceLive),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(Layer.mergeAll(DatabaseConfigLive, outboxWorkerDatabaseIdentityEnrollmentLive, NodeCrypto.layer)),
     );
     const context = yield* Layer.build(runtime);
     const advances =
@@ -209,12 +210,38 @@ const run = Effect.scoped(
             Effect.forkScoped,
           )
         : undefined;
+    // Shell's installed-catalog matcher runs concurrently and skip-locks the same unmatched messages. While its
+    // transaction is open this worker's match skips them, and the claim would then miss their uncommitted
+    // deliveries. Match again until no unmatched message remains, so every cycle claims what was dispatched.
+    const unmatchedRemain = native<{ readonly unmatched: boolean }>`
+      select exists(select 1 from core.outbox_messages where matched_at is null) as unmatched`.pipe(
+      Effect.map(([probe]) => probe?.unmatched === true),
+      Effect.mapError(() => new PrivacyCompletionWorkerFailure({ reason: 'Unmatched Outbox messages are unreadable' })),
+    );
+    const matchSettled = Effect.fn('PrivacyCompletionWorker.matchSettled')(function* matchSettled(
+      attempt: number,
+    ): Effect.fn.Return<
+      Effect.Success<ReturnType<typeof matchOutboxMessages>>,
+      Effect.Error<ReturnType<typeof matchOutboxMessages>> | PrivacyCompletionWorkerFailure,
+      Effect.Services<ReturnType<typeof matchOutboxMessages>>
+    > {
+      const matched = yield* matchOutboxMessages({ compositionRevision: revision });
+      if (attempt >= 100 || !(yield* unmatchedRemain)) {
+        return matched;
+      }
+      yield* Effect.sleep('10 millis');
+      const later = yield* matchSettled(attempt + 1);
+      return {
+        deliveriesCreated: matched.deliveriesCreated + later.deliveriesCreated,
+        messagesMatched: matched.messagesMatched + later.messagesMatched,
+      };
+    });
     for (const [index, advance] of advances.entries()) {
       if (index > 0) {
         yield* Queue.take(acknowledgements);
       }
       const result = yield* Effect.gen(function* actualCycle() {
-        const matched = yield* matchOutboxMessages({ compositionRevision: revision });
+        const matched = yield* matchSettled(0);
         const cycle = yield* runOutboxCycle({
           claimOwner: `privacy-completion-${process.pid}`,
           compositionRevision: revision,

@@ -101,6 +101,7 @@ describe('create Variant recovery response', () => {
           Effect.fail(
             new ActionAlreadyCommitted({ code: 'action_already_committed', invocationId, reason: 'committed' }),
           ),
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
         runAction: () => Effect.die('No write may run during recovery'),
       };
       const recovered = yield* services
@@ -145,6 +146,7 @@ describe('create Variant recovery response', () => {
           Effect.fail(
             new ActionAlreadyCommitted({ code: 'action_already_committed', invocationId, reason: 'committed' }),
           ),
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
         runAction: () => Effect.die('No write may run during recovery'),
       };
       const recovered = yield* services

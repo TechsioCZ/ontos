@@ -1,18 +1,45 @@
-import { Array as EffectArray, Order } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry-identity-contracts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import {
-  BEARER_ASSERTION_ROLE_SETTINGS,
-  DATABASE_IDENTITIES,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+import { Array as EffectArray, Order, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { parseSync } from 'oxc-parser';
+
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../apps/shell-super-app/api/database-identity-enrollment.ts';
+import { BEARER_ASSERTION_ROLE_SETTINGS } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   DATABASE_ROLE_GRANT_MANIFEST,
+  DatabaseRoleGrantManifestConfigurationError,
   TRUST_ROUTINES,
+  defineDatabaseRoleGrantManifest,
   manifestEntryForRole,
 } from '../postgres/database-role-manifest.mts';
 
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
+const FIXTURE_OWNER_MODULE_KEY = 'fixture.owner';
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
+
+it('keeps Shell runtime composition inside its declaration root and uses package contracts for other owners', () => {
+  const shellRoot = fileURLToPath(new URL('../../apps/shell-super-app/', import.meta.url));
+  const entry = path.join(shellRoot, 'api/index.ts');
+  const imports = parseSync(entry, readFileSync(entry, 'utf-8')).module.staticImports;
+  for (const statement of imports) {
+    const specifier = statement.moduleRequest.value;
+    if (specifier.startsWith('.')) {
+      expect(path.relative(shellRoot, path.resolve(path.dirname(entry), specifier)), specifier).not.toMatch(
+        /^\.\.(?:\/|$)/u,
+      );
+    }
+  }
+});
+
+it('keeps the Shell gateway identity graph equal to the application migration enrollment', () => {
+  expect(SHELL_DATABASE_IDENTITY_ENROLLMENT).toEqual(APP_DATABASE_IDENTITY_ENROLLMENT);
+});
 
 it('gives every database identity exactly one grant manifest entry', () => {
   expect(DATABASE_ROLE_GRANT_MANIFEST).toHaveLength(DATABASE_IDENTITIES.length);
@@ -21,6 +48,117 @@ it('gives every database identity exactly one grant manifest entry', () => {
     expect(manifestEntryForRole(identity.role)?.identity).toBe(identity);
   }
   expect(manifestEntryForRole('ontos_admin')).toBeUndefined();
+});
+
+it('rejects an enrolled owner without explicit application grant descriptors', () => {
+  const enrollment = defineDatabaseIdentityEnrollment([
+    PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR,
+    {
+      moduleKey: FIXTURE_OWNER_MODULE_KEY,
+      policyPrefix: 'fixture_owner',
+      request: {
+        ...PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request,
+        cloudflareHyperdrive: null,
+        gatewayScopeAudiences: ['fixture-owner'],
+        id: 'fixture_request',
+        ownerModuleKey: FIXTURE_OWNER_MODULE_KEY,
+        role: 'fixture_runtime',
+        urlKey: 'FIXTURE_DATABASE_URL',
+      },
+      schemas: ['fixture_owner'],
+      worker: {
+        ...PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.worker,
+        id: 'fixture_worker',
+        ownerModuleKey: FIXTURE_OWNER_MODULE_KEY,
+        role: 'fixture_worker',
+        urlKey: 'FIXTURE_WORKER_DATABASE_URL',
+      },
+    },
+  ]);
+  const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+    entry.kind === 'legacy_shared'
+      ? { ...entry, revokedSchemas: enrollment.owners.flatMap(({ schemas }) => schemas) }
+      : entry,
+  );
+  expect(() => defineDatabaseRoleGrantManifest(enrollment, entries)).toThrow(
+    new DatabaseRoleGrantManifestConfigurationError({
+      reason: 'Enrolled identity fixture_request (fixture_runtime) has no grant descriptor',
+    }),
+  );
+});
+
+it('rejects duplicate or missing grant descriptors instead of publishing a partial catalog', () => {
+  expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, [])).toThrow(
+    DatabaseRoleGrantManifestConfigurationError,
+  );
+  expect(() =>
+    defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, [
+      ...DATABASE_ROLE_GRANT_MANIFEST,
+      ...DATABASE_ROLE_GRANT_MANIFEST,
+    ]),
+  ).toThrow(DatabaseRoleGrantManifestConfigurationError);
+});
+
+it('rejects grant identities whose roles or authority facts differ from application enrollment', () => {
+  for (const replacement of [
+    { role: 'unregistered_runtime' },
+    { id: 'unregistered_request' },
+    { ownerModuleKey: FIXTURE_OWNER_MODULE_KEY },
+    { urlKey: 'UNREGISTERED_DATABASE_URL' },
+    { scopeAuthority: 'session_setting' as const },
+  ]) {
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+      entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request.id
+        ? { ...entry, identity: { ...entry.identity, ...replacement } }
+        : entry,
+    );
+    expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+      DatabaseRoleGrantManifestConfigurationError,
+    );
+  }
+});
+
+it('rejects schemas outside the enrolled owner mapping', () => {
+  const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+    entry.kind === 'explicit' && entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request.id
+      ? { ...entry, grants: { ...entry.grants, schemas: [...entry.grants.schemas, 'foreign_owner'] } }
+      : entry,
+  );
+  expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+    DatabaseRoleGrantManifestConfigurationError,
+  );
+});
+
+it('rejects table, sequence, and routine grants without their declared schema usage', () => {
+  for (const grants of [
+    { tables: [{ privileges: ['select'] as const, reason: 'invalid fixture', table: 'contacts.unmapped' }] },
+    {
+      sequences: [{ privileges: ['usage'] as const, reason: 'invalid fixture', sequence: 'contacts.unmapped' }],
+    },
+    { routines: ['contacts.unmapped()'] },
+  ]) {
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+      entry.kind === 'explicit' && entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.worker.id
+        ? { ...entry, grants: { ...entry.grants, ...grants } }
+        : entry,
+    );
+    expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+      DatabaseRoleGrantManifestConfigurationError,
+    );
+  }
+});
+
+it('rejects undeclared trust executors and missing enrolled trust routines', () => {
+  for (const routines of [[], ['trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)']]) {
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+      entry.kind === 'explicit' && entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request.id
+        ? { ...entry, grants: { ...entry.grants, routines } }
+        : entry,
+    );
+    expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+      DatabaseRoleGrantManifestConfigurationError,
+    );
+  }
 });
 
 it('names explicit tables once each as schema.table inside the granted schemas', () => {
@@ -97,7 +235,7 @@ it('derives trust routine executors from the identity flags', () => {
       expect(executors, routine.signature).toEqual([]);
     }
   }
-  expect(TRUST_ROUTINES).toHaveLength(7);
+  expect(TRUST_ROUTINES).toHaveLength(8);
   expect(new Set(TRUST_ROUTINES.map(({ signature }) => signature)).size).toBe(TRUST_ROUTINES.length);
 });
 
@@ -119,3 +257,56 @@ it('pins the bearer-assertion logging settings exactly on the roles that handle 
     expect(entry.databaseTemporary, entry.identity.role).toBe(entry.kind === 'legacy_shared');
   }
 });
+
+const MigrationSnapshotIdSchema = Schema.String.pipe(Schema.brand('MigrationSnapshotId'));
+const snapshotSchema = Schema.Struct({
+  ddl: Schema.Array(
+    Schema.Struct({
+      entityType: Schema.String,
+      name: Schema.optionalKey(Schema.String),
+      schema: Schema.optionalKey(Schema.String),
+      table: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  id: MigrationSnapshotIdSchema,
+  prevIds: Schema.Array(MigrationSnapshotIdSchema),
+});
+const readSnapshot = (root: string, folder: string) =>
+  Schema.decodeUnknownSync(snapshotSchema)(
+    JSON.parse(readFileSync(new URL(`../../${root}/${folder}/snapshot.json`, import.meta.url), 'utf-8')),
+  );
+
+for (const [root, history] of [
+  [
+    'packages/core-runtime/drizzle',
+    [
+      '20261023213100_person-invitation-email',
+      '20261024090000_trusted-gateway-scope',
+      '20261024090100_dedicated-identity-core-policies',
+      '20261024090200_legal-entity-scope',
+      '20261024223832_gateway-identity-attestation',
+    ],
+  ],
+  [
+    'verticals/party-registry/drizzle',
+    ['20260914161805_marvelous_spirit', '20261024090300_party-gateway-scope-rls', '20261024090400_legal-entity-scope'],
+  ],
+  [
+    'verticals/party-registry/drizzle-contacts',
+    ['20260905112323_furry_dormammu', '20261024090301_contacts-gateway-scope-rls'],
+  ],
+] as const) {
+  it(`appends hardening to the complete DEMO ${root} history without dropping existing entities`, () => {
+    const snapshots = history.map((folder) => readSnapshot(root, folder));
+    const priorIds = new Set<string>();
+    for (const [index, snapshot] of snapshots.entries()) {
+      expect(priorIds.has(snapshot.id)).toBe(false);
+      priorIds.add(snapshot.id);
+      const previous = snapshots[index - 1];
+      if (previous !== undefined) {
+        expect(snapshot.prevIds).toEqual([previous.id]);
+        expect(snapshot.ddl).toEqual(expect.arrayContaining([...previous.ddl]));
+      }
+    }
+  });
+}

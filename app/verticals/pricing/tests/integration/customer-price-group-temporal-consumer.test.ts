@@ -12,15 +12,14 @@ import {
   priceGroupDedicatedUrlMatches,
 } from '@app/commerce-customer-context/testing/price-group-temporal-protocol';
 
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import {
-  loadDatabaseConfig,
   loadDatabaseConnectionPair,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
-import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import type { DatabaseIdentity, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -442,9 +441,9 @@ const makeTemporalNative = Effect.fn('TemporalNative.make')(function* makeTempor
   });
   const sourceConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const dedicatedUrl = Effect.fn('PricingTemporal.retargetDedicatedUrl')(function* retargetDedicatedUrl(
-    identity: typeof PARTY_REGISTRY_REQUEST_IDENTITY,
+    identity: DatabaseIdentity,
   ) {
-    const configured = yield* loadDatabaseConfig({ envPath: '/dev/null', identity });
+    const { runtime: configured } = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity });
     const role = identity.id === PARTY_REGISTRY_REQUEST_IDENTITY.id ? 'party_registry_runtime' : 'shell_gateway_issuer';
     yield* requireCondition(
       configured.user === identity.role &&

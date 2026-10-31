@@ -2,10 +2,12 @@ import { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Context, DateTime, Duration, Effect, Option, Result, Schema } from 'effect';
+import { Context, DateTime, Duration, Effect, Option, Redacted, Result, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
+import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
+import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';
 import {
@@ -52,6 +54,8 @@ import type {
 } from './contracts.ts';
 import { CommercePortalAuthSessionEvidenceRejected, CommercePortalAuthSessionInvalidRequest } from './errors.ts';
 import { CommercePortalAuthSessionLifecycle } from './lifecycle.ts';
+import { CommerceCustomerAuthority, CustomerAuthorityRejected } from './customer-authority.ts';
+import type { RetailPortalPermissionCode } from '../../../shared/domain/profile-contracts.ts';
 import type { CommercePortalAuthSessionEvidenceFailure, CommercePortalAuthSessionFailure } from './lifecycle.ts';
 
 const httpBridgeTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds);
@@ -195,6 +199,7 @@ const answerEvidenceFailure = (
 };
 
 interface AuthSessionResponse {
+  readonly account: { readonly email: string; readonly name: string };
   readonly createdAt: Date;
   readonly expiresAt: Date;
   readonly providerSubjectId: string;
@@ -210,7 +215,7 @@ const ProviderSessionResponseSchema = Schema.Struct({
     expiresAt: ProviderDateSchema,
     id: Schema.String,
   }),
-  user: Schema.Struct({ id: Schema.String }),
+  user: Schema.Struct({ email: Schema.String, id: Schema.String, name: Schema.String }),
 });
 type ProviderSessionResponse = typeof ProviderSessionResponseSchema.Type;
 
@@ -231,6 +236,7 @@ const readSessionResponse = (value: ProviderSessionResponse): AuthSessionRespons
   return createdAt === null || expiresAt === null
     ? null
     : {
+        account: { email: value.user.email, name: value.user.name },
         createdAt,
         expiresAt,
         providerSubjectId: value.user.id,
@@ -624,8 +630,68 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
   if (Result.isFailure(evidence)) {
     return yield* answerEvidenceFailure(evidence.failure);
   }
-  return { session: toSessionSnapshot(evidence.success), state: 'authenticated' } as const;
+  return {
+    account: providerSession.value.session.account,
+    session: toSessionSnapshot(evidence.success),
+    state: 'authenticated',
+  } as const;
 });
+
+/** The live session proves the account; the redeemed gateway assertion supplies only tenant/LE scope. */
+export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.admitCustomerAccount')(
+  function* admitCustomerAccountEffect(
+    request: HttpServerRequest.HttpServerRequest,
+    permission: RetailPortalPermissionCode = 'retail.profile.read',
+  ) {
+    const current = yield* getSession(request);
+    if (current.state === 'anonymous') {
+      return current;
+    }
+    const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
+      authentication: () => authenticationProblem('authentication_failed'),
+      unavailable: () => unavailableProblem(),
+    });
+    if (principal.legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId).pipe(
+      Effect.catch(answerUnavailable()),
+    );
+    const authority = yield* CommerceCustomerAuthority;
+    const customerAuthority = yield* authority
+      .admit({
+        legalEntityId: principal.legalEntityId,
+        permission,
+        providerSubjectId: current.session.providerSubjectId,
+        sessionRef: current.session.sessionRef,
+        tenantId: principal.tenantId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Schema.is(CustomerAuthorityRejected)(cause) ? forbiddenProblem('account_disabled') : unavailableProblem(),
+        ),
+      );
+    return {
+      account: {
+        ...current.account,
+        id: current.session.providerSubjectId,
+        partyId: customerAuthority.partyId,
+        tenantId,
+      },
+      customerAuthority,
+      session: current.session,
+      state: 'authenticated',
+      workloadPrincipal: principal,
+    } as const;
+  },
+);
+
+const getCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.getCustomerAccount')(
+  function* getCustomerAccountEffect(request: HttpServerRequest.HttpServerRequest) {
+    const current = yield* admitCustomerAccount(request);
+    return current.state === 'anonymous' ? current : ({ account: current.account, state: 'authenticated' } as const);
+  },
+);
 
 const portalAuthSessionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthSessionSchemaErrorMiddleware,
@@ -641,7 +707,8 @@ export const portalAuthSessionApiLive = HttpApiBuilder.group(
       .handle('signIn', ({ payload, request }) => signIn(payload, request))
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
-      .handle('getSession', ({ request }) => getSession(request)),
+      .handle('getSession', ({ request }) => getSession(request))
+      .handle('getCustomerAccount', ({ request }) => getCustomerAccount(request)),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /**
@@ -664,7 +731,8 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('signIn', ({ payload, request }) => signIn(payload, request))
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
-      .handle('getSession', ({ request }) => getSession(request)),
+      .handle('getSession', ({ request }) => getSession(request))
+      .handle('getCustomerAccount', () => Effect.fail(unavailableProblem())),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */

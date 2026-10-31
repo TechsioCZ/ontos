@@ -441,7 +441,7 @@ it.effect('publishes a minimum Party projection and keeps full role history sepa
             resourceType: 'party.registry.counterparty',
           },
         },
-        { kind: 'tenant', permission: 'manage_party_identity' },
+        { kind: 'legal_entity', permission: 'read_counterparty' },
       ],
     });
     expect(counterpartyRoleHistoryPermissionTarget({ counterpartyRef })).toEqual(

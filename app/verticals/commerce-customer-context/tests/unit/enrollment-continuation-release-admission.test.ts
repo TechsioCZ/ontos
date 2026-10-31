@@ -11,7 +11,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Exit, Layer, Option, Ref, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -25,7 +25,15 @@ import { CommerceEnrollmentOwnerEffectRegistry } from '../../src/enrollment/orch
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import type { CommerceEnrollmentOwnerTransactionRunnerService } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CommerceEnrollmentPreparationSubjectResolver } from '../../src/enrollment/orchestration/preparation-subject.ts';
-import { EnrollmentAttemptIdSchema, EnrollmentTenantIdSchema } from '../../shared/enrollment-contracts.ts';
+import {
+  EnrollmentAttemptIdSchema,
+  EnrollmentTenantIdSchema,
+  ReconcileEnrollmentResolutionSchema,
+} from '../../shared/enrollment-contracts.ts';
+import type {
+  EnrollmentAttemptState,
+  EnrollmentOwnerOperationStatusSchema,
+} from '../../shared/enrollment-contracts.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 
 const appId = 'commerce-customer-context';
@@ -42,7 +50,7 @@ const sweepInput = (compositionRevision: string) => ({
   revision: 1,
 });
 
-const attemptRow = (compositionRevision: string, state: 'COMPLETE' | 'IN_PROGRESS') => ({
+const attemptRow = (compositionRevision: string, state: EnrollmentAttemptState) => ({
   attempt_outcome: 'FOUND',
   authentication_namespace_id: null,
   completed_at: null,
@@ -93,23 +101,52 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   initial: Option.Option<ActiveApplicationCompositionSnapshot>,
   compiled: Readonly<{ appId: string; buildMarker: string }>,
   persistedRevision: string,
-  persistedState: 'COMPLETE' | 'IN_PROGRESS' = 'IN_PROGRESS',
+  persistedState: 'COMPLETE' | 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' = 'IN_PROGRESS',
   afterClaim?: Effect.Effect<void>,
+  readmissionRevision?: string,
+  verificationRequired = persistedState === 'VERIFICATION_REQUIRED',
 ) {
   const source = yield* Ref.make(initial);
+  let admittedRevision = persistedRevision;
+  let currentState = persistedState;
+  let currentRevision = 1;
+  const verificationWrites: (readonly unknown[])[] = [];
   const dueRows = yield* Ref.make<readonly object[]>([]);
   const routines: string[] = [];
   const worker: string[] = [];
   const claimRevisions: unknown[] = [];
   const durableClaims: object[] = [];
-  const calls = { claimRevisions, durableClaims, loads: 0, owner: 0, registry: 0, routines, subject: 0, worker };
+  const calls = {
+    claimRevisions,
+    durableClaims,
+    loads: 0,
+    owner: 0,
+    registry: 0,
+    routines,
+    subject: 0,
+    verificationWrites,
+    worker,
+  };
   const invoke: EnrollmentAttemptScopedRoutineInvoker['invoke'] = (routine, values) =>
     Effect.gen(function* invokeOwnerRoutine() {
       calls.routines.push(routine.name);
+      if (routine.name === 'admit_portal_enrollment_attempt') {
+        const admitted = values.at(1) === readmissionRevision;
+        if (admitted && readmissionRevision !== undefined) {
+          admittedRevision = readmissionRevision;
+        }
+        return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([{ admitted }]);
+      }
+      if (routine.name === 'set_portal_enrollment_verification_state') {
+        verificationWrites.push(values);
+        currentState = values.at(2) === true ? 'VERIFICATION_REQUIRED' : 'IN_PROGRESS';
+        currentRevision += 1;
+        return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([{ updated: true }]);
+      }
       if (routine.name === 'claim_portal_enrollment_transition' && afterClaim !== undefined) {
         const leaseToken = '60000000-0000-4000-8000-000000000001';
         const claim = {
-          ...attemptRow(persistedRevision, persistedState),
+          ...attemptRow(admittedRevision, persistedState),
           attempt_outcome: 'CLAIMED',
           lease_expires_at: '2099-09-17T10:00:00.000Z',
           lease_owner: values.at(2),
@@ -132,8 +169,32 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
         yield* afterClaim;
         return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([claim]);
       }
+      if (
+        persistedState === 'VERIFICATION_REQUIRED' &&
+        routine.name === 'read_portal_enrollment_owner_operation' &&
+        values.at(2) === 'provider.account.create'
+      ) {
+        const row = attemptRow(admittedRevision, persistedState);
+        return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([
+          {
+            ...row,
+            actor_principal_id: row.created_by_principal_id,
+            operation_outcome: 'FOUND',
+            owner_invocation_id: '50000000-0000-4000-8000-000000000002',
+            owner_module_key: 'commerce.portal-auth',
+            portal_enrollment_owner_operation_id: '50000000-0000-4000-8000-000000000001',
+            request_digest: 'a'.repeat(64),
+            required: true,
+            revision: 2,
+            status: 'SUCCEEDED',
+            transition_key: 'provider.account.create',
+          },
+        ]);
+      }
       const rows =
-        routine.name === 'read_portal_enrollment_attempt' ? [attemptRow(persistedRevision, persistedState)] : [];
+        routine.name === 'read_portal_enrollment_attempt'
+          ? [{ ...attemptRow(admittedRevision, currentState), revision: currentRevision }]
+          : [];
       return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
     });
   const dialect = new PgDialect();
@@ -190,6 +251,7 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
           calls.registry += 1;
           return Option.some(registeredOwner);
         }),
+      verificationRequired: () => Effect.succeed(verificationRequired),
     }),
     Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
       resolve: () =>
@@ -201,6 +263,8 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   );
   return {
     calls,
+    currentRevision: () => currentRevision,
+    currentState: () => currentState,
     layer: CommerceEnrollmentContinuationLive(compiled).pipe(Layer.provide(dependencies)),
     setDueRevision: (compositionRevision: string) =>
       Ref.set(dueRows, [
@@ -460,7 +524,7 @@ it.effect('preserves a durable pending claim without owner effects when the capt
   }),
 );
 
-it.effect('rejects a different persisted original revision before resolution, claiming, or relabeling due work', () =>
+it.effect('requires native readmission before resolving a parked Attempt from an earlier release', () =>
   Effect.gen(function* rejectsAttemptFromAnotherRelease() {
     const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
     const originalRevision = 'b'.repeat(64);
@@ -469,7 +533,10 @@ it.effect('rejects a different persisted original revision before resolution, cl
       const continuation = yield* CommerceEnrollmentContinuation;
       const pass = yield* continuation.openSweepPass;
       expect(yield* Effect.flip(pass.advance(attemptInput))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
-      expect(scripted.calls.routines).toStrictEqual(['read_portal_enrollment_attempt']);
+      expect(scripted.calls.routines).toStrictEqual([
+        'read_portal_enrollment_attempt',
+        'admit_portal_enrollment_attempt',
+      ]);
       expect(scripted.calls.registry).toBe(0);
       expect(scripted.calls.subject).toBe(0);
       expect(scripted.calls.owner).toBe(0);
@@ -478,11 +545,312 @@ it.effect('rejects a different persisted original revision before resolution, cl
       );
       expect(scripted.calls.worker).toStrictEqual([]);
       yield* scripted.setDueRevision(originalRevision);
-      expect(yield* Effect.flip(pass.listDue(dueInput))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
+      expect((yield* pass.listDue(dueInput)).map((row) => row.compositionRevision)).toStrictEqual([originalRevision]);
       expect(scripted.calls.worker).toHaveLength(1);
       expect(yield* pass.claimSweep(sweepInput(release.composition.revision))).toStrictEqual(Option.some(1));
       expect(scripted.calls.claimRevisions).toStrictEqual([release.composition.revision]);
       expect(scripted.calls.loads).toBe(1);
     }).pipe(Effect.provide(scripted.layer));
+  }),
+);
+
+it.effect('re-reads native admitted authority before any owner preparation under the new release', () =>
+  Effect.gen(function* readmitsParkedAttemptBeforeOwnerResolution() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      'b'.repeat(64),
+      'IN_PROGRESS',
+      Effect.void,
+      release.composition.revision,
+    );
+    yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput)),
+      Effect.provide(scripted.layer),
+    );
+    expect(scripted.calls.routines.slice(0, 3)).toStrictEqual([
+      'read_portal_enrollment_attempt',
+      'admit_portal_enrollment_attempt',
+      'read_portal_enrollment_attempt',
+    ]);
+    expect(scripted.calls.durableClaims[0]).toMatchObject({ composition_revision: release.composition.revision });
+    expect(scripted.calls.owner).toBe(1);
+  }),
+);
+
+it.effect('an unverified signup halts before subject resolution, Party claim or any owner lease', () =>
+  Effect.gen(function* noPreVerificationOwnerClaim() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'VERIFICATION_REQUIRED',
+    );
+    const result = yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput)),
+      Effect.provide(scripted.layer),
+    );
+    expect(result).toMatchObject({ halt: { reason: 'VERIFICATION_REQUIRED' }, outcome: 'HALTED' });
+    expect(scripted.calls.subject).toBe(0);
+    expect(scripted.calls.registry).toBe(0);
+    expect(scripted.calls.owner).toBe(0);
+    expect(scripted.calls.routines).not.toContain('claim_portal_enrollment_transition');
+    expect(scripted.calls.routines).not.toContain('set_portal_enrollment_verification_state');
+  }),
+);
+
+it.effect('verified HTTP continuation commits the native wake and yields before downstream owner preparation', () =>
+  Effect.gen(function* verifiedWakeDoesNotOwnTheWholeJourney() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'VERIFICATION_REQUIRED',
+      undefined,
+      undefined,
+      false,
+    );
+    const exit = yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) =>
+        Effect.exit(continuation.advance(attemptInput, { yieldAfterVerification: true })),
+      ),
+      Effect.provide(scripted.layer),
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (Exit.isSuccess(exit)) {
+      expect(exit.value).toMatchObject({ halt: { reason: 'VERIFICATION_ACCEPTED' }, outcome: 'HALTED' });
+    }
+    expect(scripted.currentState()).toBe('IN_PROGRESS');
+    expect(scripted.currentRevision()).toBe(2);
+    expect(scripted.calls.verificationWrites).toStrictEqual([[attemptId, 1, false]]);
+    expect(scripted.calls.subject).toBe(0);
+    expect(scripted.calls.registry).toBe(0);
+    expect(scripted.calls.owner).toBe(0);
+    expect(scripted.calls.routines).not.toContain('claim_portal_enrollment_transition');
+  }),
+);
+
+it.effect('the HTTP yield policy cannot wake an unverified provider subject', () =>
+  Effect.gen(function* yieldPolicyStillRequiresVerification() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'VERIFICATION_REQUIRED',
+    );
+    const result = yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput, { yieldAfterVerification: true })),
+      Effect.provide(scripted.layer),
+    );
+    expect(result).toMatchObject({ halt: { reason: 'VERIFICATION_REQUIRED' }, outcome: 'HALTED' });
+    expect(scripted.currentState()).toBe('VERIFICATION_REQUIRED');
+    expect(scripted.calls.verificationWrites).toStrictEqual([]);
+    expect(scripted.calls.subject).toBe(0);
+    expect(scripted.calls.owner).toBe(0);
+  }),
+);
+
+it.effect('already-running explicit recovery still advances without any background discovery budget', () =>
+  Effect.gen(function* yieldPolicyDoesNotDisableExplicitRecovery() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'IN_PROGRESS',
+      Effect.void,
+    );
+    yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput, { yieldAfterVerification: true })),
+      Effect.provide(scripted.layer),
+    );
+    expect(scripted.calls.owner).toBe(1);
+    expect(scripted.calls.durableClaims).toHaveLength(1);
+    expect(scripted.calls.verificationWrites).toStrictEqual([]);
+    expect(scripted.calls.worker).toStrictEqual([]);
+  }),
+);
+
+it.effect('reconciles admitted owner work without treating current verification as a new claim gate', () =>
+  Effect.gen(function* settlesAlreadyAdmittedOwnerWork() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    for (const initial of [
+      'INDETERMINATE',
+      'RECONCILIATION_REQUIRED',
+      'FAILED',
+      'EXPIRED',
+      'LEASED',
+      'RECOVERED',
+    ] as const) {
+      let status: typeof EnrollmentOwnerOperationStatusSchema.Type = 'INDETERMINATE';
+      if (initial === 'EXPIRED' || initial === 'LEASED') {
+        status = 'IN_PROGRESS';
+      } else if (initial !== 'RECOVERED') {
+        status = initial;
+      }
+      let state: EnrollmentAttemptState = 'RECONCILIATION_REQUIRED';
+      let revision = 1;
+      const calls = { claims: 0, dispatches: 0, ownerReads: 0, records: 0, verification: 0 };
+      const pendingCode = 'owner_reconciliation_required';
+      const ownerInvocationId = '50000000-0000-4000-8000-000000000002';
+      const row = () => attemptRow(release.composition.revision, state);
+      const ownerRow = (provider: boolean) => {
+        let leaseExpiresAt: string | null = null;
+        if (!provider && status === 'IN_PROGRESS') {
+          leaseExpiresAt = initial === 'LEASED' ? '2099-09-17T10:00:00.000Z' : '1960-09-17T10:00:00.000Z';
+        }
+        return {
+          ...row(),
+          actor_principal_id: row().created_by_principal_id,
+          failure_code: !provider && status === 'FAILED' ? pendingCode : null,
+          lease_expires_at: leaseExpiresAt,
+          lease_owner: !provider && status === 'IN_PROGRESS' ? 'abandoned-worker' : null,
+          lease_token: !provider && status === 'IN_PROGRESS' ? '60000000-0000-4000-8000-000000000001' : null,
+          operation_outcome: 'FOUND',
+          owner_invocation_id: provider ? '50000000-0000-4000-8000-000000000005' : ownerInvocationId,
+          owner_module_key: provider ? 'commerce.portal-auth' : 'party.registry',
+          portal_enrollment_owner_operation_id: provider
+            ? '50000000-0000-4000-8000-000000000003'
+            : '50000000-0000-4000-8000-000000000004',
+          request_digest: 'a'.repeat(64),
+          required: true,
+          revision,
+          status: provider ? 'SUCCEEDED' : status,
+          transition_key: provider ? 'provider.account.create' : 'party.candidate.submit',
+        };
+      };
+      const projection = () => {
+        const operation = ownerRow(false);
+        return {
+          ...row(),
+          attempt_outcome: 'RECORDED',
+          failure_code: operation.failure_code,
+          operation_actor_principal_id: operation.actor_principal_id,
+          operation_id: operation.portal_enrollment_owner_operation_id,
+          operation_revision: operation.revision,
+          operation_status: operation.status,
+          owner_invocation_id: ownerInvocationId,
+          owner_module_key: operation.owner_module_key,
+          request_digest: operation.request_digest,
+          required: true,
+          revision,
+          transition_key: operation.transition_key,
+        };
+      };
+      const invoke: EnrollmentAttemptScopedRoutineInvoker['invoke'] = (routine, values) =>
+        Effect.sync(() => {
+          let rows: readonly object[] = [];
+          if (routine.name === 'read_portal_enrollment_attempt') {
+            rows = [{ ...row(), revision }];
+          } else if (routine.name === 'read_portal_enrollment_owner_operation') {
+            if (values.at(2) === 'provider.account.create') {
+              rows = [ownerRow(true)];
+            } else if (values.at(2) === 'party.candidate.submit') {
+              rows = [ownerRow(false)];
+            }
+          } else if (routine.name === 'claim_portal_enrollment_transition') {
+            calls.claims += 1;
+            status = 'INDETERMINATE';
+            revision += 1;
+            rows = [{ ...projection(), attempt_outcome: 'INDETERMINATE' }];
+          } else if (routine.name === 'reconcile_portal_enrollment_outcome') {
+            calls.records += 1;
+            status = initial === 'RECOVERED' ? 'SUCCEEDED' : 'FAILED';
+            state = initial === 'RECOVERED' ? 'IN_PROGRESS' : 'RECONCILIATION_REQUIRED';
+            revision += 1;
+            rows = [projection()];
+          } else if (routine.name === 'set_portal_enrollment_verification_state') {
+            state = 'VERIFICATION_REQUIRED';
+            revision += 1;
+            rows = [{ updated: true }];
+          }
+          return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
+        });
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(release) }),
+        Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
+          run: (_scope, operation) => operation({ invoke }),
+          runWorker: () => Effect.die('This owner-local test does not list due work'),
+        }),
+        Layer.succeed(CommerceEnrollmentOwnerEffectRegistry, {
+          resolve: () =>
+            Effect.succeedSome({
+              dispatch: Option.some({
+                effect: () =>
+                  Effect.sync(() => {
+                    calls.dispatches += 1;
+                    return { status: 'SUCCEEDED' as const };
+                  }),
+                requestDigest: 'a'.repeat(64),
+              }),
+              reconcile: (input) =>
+                Effect.sync(() => {
+                  calls.ownerReads += 1;
+                  expect(input.ownerInvocationId).toBe(ownerInvocationId);
+                  return Schema.decodeSync(ReconcileEnrollmentResolutionSchema)({
+                    actorPrincipalId: input.actorPrincipalId,
+                    failureCode: pendingCode,
+                    reconciliationRef: '70000000-0000-4000-8000-000000000001',
+                    status: initial === 'RECOVERED' ? 'SUCCEEDED' : 'FAILED',
+                  });
+                }),
+            }),
+          verificationRequired: () =>
+            Effect.sync(() => {
+              calls.verification += 1;
+              return true;
+            }),
+        }),
+        Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
+          resolve: () =>
+            Effect.succeed({
+              partyCandidateDigest: 'a'.repeat(64),
+              partyRef: Option.none(),
+              portalEnrollmentAttemptId: attemptId,
+              principalRef: {
+                moduleId: 'core.identity',
+                resourceId: row().created_by_principal_id,
+                resourceType: 'core.identity.principal',
+                tenantId,
+              },
+              sellingLegalEntityRef: {
+                moduleId: 'core.identity',
+                resourceId: '80000000-0000-4000-8000-000000000001',
+                resourceType: 'core.identity.legal-entity',
+                tenantId,
+              },
+            }),
+        }),
+      );
+      let haltReason = 'RECONCILIATION_REQUIRED';
+      let expectedOwnerReads = 2;
+      if (initial === 'LEASED') {
+        haltReason = 'IN_FLIGHT';
+        expectedOwnerReads = 0;
+      } else if (initial === 'RECOVERED') {
+        haltReason = 'VERIFICATION_REQUIRED';
+        expectedOwnerReads = 1;
+      }
+      yield* Effect.gen(function* repeatRecovery() {
+        const continuation = yield* CommerceEnrollmentContinuation;
+        for (let pass = 0; pass < 2; pass += 1) {
+          expect(yield* continuation.advance(attemptInput)).toMatchObject({
+            halt: { reason: haltReason },
+            outcome: 'HALTED',
+          });
+        }
+      }).pipe(
+        Effect.provide(CommerceEnrollmentContinuationLive({ appId, buildMarker }).pipe(Layer.provide(dependencies))),
+      );
+      expect(calls.verification).toBe(initial === 'RECOVERED' ? 2 : 0);
+      expect(calls.dispatches).toBe(0);
+      expect(calls.claims).toBe(initial === 'EXPIRED' ? 1 : 0);
+      expect(calls.ownerReads).toBe(expectedOwnerReads);
+      expect(calls.records).toBe(initial === 'FAILED' || initial === 'LEASED' ? 0 : 1);
+    }
   }),
 );

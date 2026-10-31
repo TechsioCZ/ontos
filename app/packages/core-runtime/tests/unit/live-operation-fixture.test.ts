@@ -5,8 +5,9 @@ import { assert, expect, it, rs } from 'effect-rstest';
 
 import {
   buildActionAuthorizationRelationships,
-  buildExplicitActionGrantRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
 } from '../../src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
 
 import { legalEntities, principalAuthBindings, principals, tenantModuleStates, tenants } from '../../src/db/schema.ts';
 import {
@@ -112,6 +113,67 @@ const configuration = {
   compositionRevision: 'a'.repeat(64),
   runtimeConnectionString: Redacted.make('postgresql://unit:unit@127.0.0.1/unit'),
 };
+
+interface FixtureActionScope {
+  readonly legalEntityId?: string;
+  readonly tenantId: string;
+}
+
+const actionGraphTypes: ReadonlySet<string> = new Set(['action', 'action_grant', 'scoped_role']);
+const actionGraph = (relationships: readonly v1.Relationship[] | undefined) =>
+  relationships?.filter(({ resource }) => actionGraphTypes.has(resource?.objectType ?? ''));
+
+/** The exact scoped Actions, grant links, role grants and role memberships the fixture must write. */
+const expectedActionGraph = (input: {
+  readonly actionKeys: readonly string[];
+  readonly actionsWritten?: boolean;
+  readonly members: readonly string[];
+  readonly roleKey: string;
+  readonly scopes: readonly FixtureActionScope[];
+}) => {
+  const actions = input.scopes.flatMap((scope) => input.actionKeys.map((actionKey) => ({ ...scope, actionKey })));
+  return [
+    ...(input.actionsWritten === true ? [] : buildActionAuthorizationRelationships(actions)),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      actions.map((action) => ({ ...action, roleKey: input.roleKey })),
+      input.scopes.map((scope) => ({ ...scope, moduleKeys: [] })),
+    ),
+    ...input.scopes.flatMap((scope) =>
+      input.members.map((principalId) =>
+        v1.Relationship.create({
+          relation: 'member',
+          resource: { objectId: toScopedRoleObjectId({ ...scope, roleKey: input.roleKey }), objectType: 'scoped_role' },
+          subject: { object: { objectId: principalId, objectType: 'principal' } },
+        }),
+      ),
+    ),
+  ];
+};
+
+const executorScopes = (fixture: {
+  readonly legalEntityId: string;
+  readonly secondaryLegalEntity?: { readonly legalEntityId: string } | undefined;
+  readonly tenantId: string;
+}): readonly FixtureActionScope[] => [
+  { tenantId: fixture.tenantId },
+  { legalEntityId: fixture.legalEntityId, tenantId: fixture.tenantId },
+  ...(fixture.secondaryLegalEntity === undefined
+    ? []
+    : [{ legalEntityId: fixture.secondaryLegalEntity.legalEntityId, tenantId: fixture.tenantId }]),
+];
+
+const managerActionGraph = (fixture: {
+  readonly legalEntityId: string;
+  readonly manager: { readonly principalId: string };
+  readonly secondaryLegalEntity?: { readonly legalEntityId: string } | undefined;
+  readonly tenantId: string;
+}) =>
+  expectedActionGraph({
+    actionKeys: configuration.actionKeys,
+    members: [fixture.manager.principalId],
+    roleKey: 'live-fixture-executor',
+    scopes: executorScopes(fixture),
+  });
 
 const commerceProvisioningNamespace = 'ontos.commerce.portal.better-auth.v1';
 const namespaceResourceType = 'identity_namespace';
@@ -264,12 +326,15 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       const updates = transport.writeRelationships.mock.calls[beforeWrite]?.[0].updates;
       expect(updates?.every((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
       const tuples = updates?.flatMap((update) => (update.relationship === undefined ? [] : [update.relationship]));
-      expect(tuples).toHaveLength(7);
-      expect(tuples?.filter(({ resource }) => resource?.objectType === 'action')).toEqual(
-        buildExplicitActionGrantRelationships(
-          configuration.actionKeys.map((actionKey) => ({ actionKey, principalIds: [existingServiceId] })),
-        ),
-      );
+      const serviceScope = { legalEntityId: fixture.legalEntityId, tenantId: fixture.tenantId };
+      const serviceActions = expectedActionGraph({
+        actionKeys: configuration.actionKeys,
+        members: [existingServiceId],
+        roleKey: `live-fixture-service-${existingServiceId}`,
+        scopes: [serviceScope],
+      });
+      expect(tuples).toHaveLength(5 + serviceActions.length);
+      expect(actionGraph(tuples)).toEqual(serviceActions);
       expect(
         tuples?.some(({ relation }) =>
           ['identity_admin', 'counterparty_manager', 'counterparty_reader'].includes(relation),
@@ -286,7 +351,7 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
         checks
           .filter((request) => request.resource?.objectType === 'action')
           .map((request) => request.resource?.objectId),
-      ).toEqual(configuration.actionKeys.map(toSpiceDbActionObjectId));
+      ).toEqual(configuration.actionKeys.map((actionKey) => toSpiceDbActionObjectId({ ...serviceScope, actionKey })));
       yield* fixture.close();
     }),
   );
@@ -719,11 +784,7 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       }
       expect(relations?.some(({ resource }) => resource?.objectType === 'context_permission')).toBe(false);
       expect(relations?.some(({ resource }) => resource?.objectType === 'resource')).toBe(false);
-      expect(relations?.filter(({ resource }) => resource?.objectType === 'action')).toEqual(
-        buildExplicitActionGrantRelationships(
-          configuration.actionKeys.map((actionKey) => ({ actionKey, principalIds: [fixture.manager.principalId] })),
-        ),
-      );
+      expect(actionGraph(relations)).toEqual(managerActionGraph(fixture));
       const beforeClose = transport.writeRelationships.mock.calls.length;
       yield* fixture.close();
       expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeClose);
@@ -835,12 +896,7 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
           ?.filter(({ relation, resource }) => resource?.objectId === entityObject && relation !== 'tenant')
           .map(({ relation }) => relation),
       ).toEqual(['member', 'counterparty_manager', 'counterparty_reader']);
-      const actions = relations?.filter(({ resource }) => resource?.objectType === 'action');
-      expect(actions).toEqual(
-        buildExplicitActionGrantRelationships(
-          configuration.actionKeys.map((actionKey) => ({ actionKey, principalIds: [fixture.manager.principalId] })),
-        ),
-      );
+      expect(actionGraph(relations)).toEqual(managerActionGraph(fixture));
       yield* fixture.close();
     }),
   );
@@ -880,24 +936,16 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       const fixture = yield* makeLiveOperationFixture({ ...configuration, actionExecutor: 'manager-only' });
       yield* fixture.close();
       expect(transport.writeRelationships).toHaveBeenCalledTimes(before + 1);
-      const actions = transport.writeRelationships.mock.calls[before]?.[0].updates.flatMap((update) =>
-        update.relationship?.resource?.objectType === 'action' ? [update.relationship] : [],
-      );
-      expect(actions).toEqual(
-        buildExplicitActionGrantRelationships(
-          configuration.actionKeys.map((actionKey) => ({
-            actionKey,
-            principalIds: [fixture.manager.principalId],
-          })),
+      const actions = actionGraph(
+        transport.writeRelationships.mock.calls[before]?.[0].updates.flatMap((update) =>
+          update.relationship === undefined ? [] : [update.relationship],
         ),
       );
-      expect(actions).toHaveLength(configuration.actionKeys.length);
-      for (const action of actions ?? []) {
-        expect(action.subject?.object?.objectType).toBe('principal');
-        expect(action.subject?.optionalRelation).toBe('');
-        expect(action.subject?.object?.objectId).not.toBe(fixture.denied.principalId);
-        expect(action.subject?.object?.objectId).not.toBe(fixture.reader.principalId);
-        expect(action.subject?.object?.objectId).not.toBe(fixture.legalEntityOnly.principalId);
+      expect(actions).toEqual(managerActionGraph(fixture));
+      const members = actions?.filter(({ resource }) => resource?.objectType === 'scoped_role');
+      expect(members).toHaveLength(executorScopes(fixture).length);
+      for (const member of members ?? []) {
+        expect(member.subject?.object).toEqual({ objectId: fixture.manager.principalId, objectType: 'principal' });
       }
     }),
   );
@@ -909,13 +957,21 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
         const before = transport.writeRelationships.mock.calls.length;
         const fixture = yield* makeLiveOperationFixture(input);
         yield* fixture.close();
-        const actions = transport.writeRelationships.mock.calls[before]?.[0].updates.flatMap((update) =>
-          update.relationship?.resource?.objectType === 'action' ? [update.relationship] : [],
+        const actions = actionGraph(
+          transport.writeRelationships.mock.calls[before]?.[0].updates.flatMap((update) =>
+            update.relationship === undefined ? [] : [update.relationship],
+          ),
         );
+        // Every Tenant member executes in each scope; the Action's scope access still bounds the company scope.
         expect(actions).toEqual(
-          buildActionAuthorizationRelationships(configuration.actionKeys, [
-            { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-          ]),
+          expectedActionGraph({
+            actionKeys: configuration.actionKeys,
+            members: [fixture.manager, fixture.legalEntityOnly, fixture.denied, fixture.reader].map(
+              ({ principalId }) => principalId,
+            ),
+            roleKey: 'live-fixture-executor',
+            scopes: executorScopes(fixture),
+          }),
         );
       }
     }),
@@ -1045,6 +1101,55 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
           expect(failure.reason).toBe('Invalid live operation fixture configuration');
         }
       }),
+  );
+
+  suite.effect(
+    'live fixture rejects Legal Entity-only Action grants outside its published catalog before opening services',
+    () =>
+      Effect.gen(function* rejectUnpublishedFixtureActionGrants() {
+        for (const actionKeys of [[], ['example.records.create']]) {
+          const failure = yield* Effect.flip(
+            makeLiveOperationFixture({
+              actionKeys,
+              authenticationNamespaceId: 'fixture-release-unit',
+              compositionRevision: 'a'.repeat(64),
+              legalEntityOnlyActionKeys: ['example.records.create', 'example.records.update'],
+              runtimeConnectionString: Redacted.make('postgresql://unit:unit@127.0.0.1/unit'),
+            }),
+          );
+          expect(Predicate.isTagged(failure, 'LiveOperationFixtureError')).toBe(true);
+          expect(failure.reason).toBe('Legal Entity-only fixture Action keys must be included in actionKeys');
+        }
+      }),
+  );
+
+  suite.effect('grants the Legal Entity-only actor only its company Action subset', () =>
+    Effect.gen(function* grantLegalEntityOnlySubset() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const before = transport.writeRelationships.mock.calls.length;
+      const subset = configuration.actionKeys.slice(0, 1);
+      const fixture = yield* makeLiveOperationFixture({
+        ...configuration,
+        actionExecutor: 'manager-only',
+        legalEntityOnlyActionKeys: subset,
+      });
+      yield* fixture.close();
+      const actions = actionGraph(
+        transport.writeRelationships.mock.calls[before]?.[0].updates.flatMap((update) =>
+          update.relationship === undefined ? [] : [update.relationship],
+        ),
+      );
+      expect(actions).toEqual([
+        ...managerActionGraph(fixture),
+        ...expectedActionGraph({
+          actionKeys: subset,
+          actionsWritten: true,
+          members: [fixture.legalEntityOnly.principalId],
+          roleKey: 'live-fixture-legal-entity-only',
+          scopes: [{ legalEntityId: fixture.legalEntityId, tenantId: fixture.tenantId }],
+        }),
+      ]);
+    }),
   );
 });
 

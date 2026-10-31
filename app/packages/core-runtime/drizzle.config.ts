@@ -2,6 +2,6 @@ import { defineWorkspaceDrizzleConfig } from './src/environment/drizzle-config.t
 
 export default defineWorkspaceDrizzleConfig({
   out: './drizzle',
-  schema: './src/db/schema.ts',
+  schema: '../../database/core-schema.cts',
   table: '__drizzle_migrations_core',
 });

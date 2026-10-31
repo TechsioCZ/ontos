@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 import { TaxRuleHistoryRequestSchema, TaxRuleHistoryResponseSchema } from '../../shared/apis/tax-rule-history.ts';
 import type { TaxRuleHistoryRequest, TaxRuleHistoryResponse } from '../../shared/apis/tax-rule-history.ts';
@@ -28,7 +28,7 @@ const taxRuleHistoryEntrypoint = defineTenantModuleEntrypoint({
 
 export const readTaxRuleHistory = (
   input: TaxRuleHistoryRequest,
-  context: ReadHandlerContext<TaxRuleHistoryServices>,
+  context: ReadLoadContext<TaxRuleHistoryServices>,
 ): Effect.Effect<ReadHandlerResult<TaxRuleHistoryResponse>, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   context.services.governed.taxRuleHistory(input).pipe(
     Effect.catchTag('TaxGovernancePersistenceUnavailable', () =>
@@ -67,7 +67,7 @@ export const taxRuleHistoryRead = defineRead(
     resultSchema: TaxRuleHistoryResponseSchema,
     schemaVersion: '1',
   },
-  readTaxRuleHistory,
+  { load: readTaxRuleHistory },
   (transaction, scope) => Effect.succeed({ governed: taxGovernedReadsForScope(transaction, scope) }),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

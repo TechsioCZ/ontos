@@ -24,7 +24,8 @@ import {
   priceGroupDedicatedUrlMatches,
 } from '../support/price-group-temporal-protocol.ts';
 
-import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import type { DatabaseIdentity, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../support/database-identities.ts';
 import {
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationLive,
@@ -32,9 +33,8 @@ import {
   ReadResultValidationError,
   ReadEvidenceValidationError,
   ReadHandlerExecutionError,
-  loadDatabaseConfig,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  loadDatabaseConnectionPair,
 } from '@app/core-runtime';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -958,9 +958,11 @@ const makeTemporalNative = Effect.fn('TemporalNative.make')(function* makeTempor
     onSome: (certificate) => ({ ...fixedSpice, caCertificate: certificate }),
   });
   const dedicatedUrl = Effect.fn('TemporalNative.retargetDedicatedUrl')(function* retargetDedicatedUrl(
-    identity: typeof PARTY_REGISTRY_REQUEST_IDENTITY,
+    identity: DatabaseIdentity,
   ) {
-    const configured = yield* loadDatabaseConfig({ envPath: '/dev/null', identity });
+    const configured = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity }).pipe(
+      Effect.map(({ runtime }) => runtime),
+    );
     const address = new URL(configured.connectionString);
     address.pathname = `/${owned.certificate.name}`;
     yield* requireCondition(

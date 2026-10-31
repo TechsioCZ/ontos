@@ -13,7 +13,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import { eq, like, sql } from 'drizzle-orm';
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
@@ -195,7 +195,12 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
   return commercePortalAuthRealmLive.pipe(
-    Layer.provide(emailDeliveryConfigurationFor(deliveryFetch)),
+    Layer.provide(
+      ResendEmailDeliveryLive.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(emailDeliveryConfigurationFor(deliveryFetch)),
+      ),
+    ),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });
@@ -769,7 +774,9 @@ it.live('records the created portal account on the transition the start route cl
         tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
       });
       expect(observed.accountSubject).toStrictEqual(recorded.attempt.accountSubject);
-      expect(observed.state).toBe('IN_PROGRESS');
+      expect(observed.state).toBe('VERIFICATION_REQUIRED');
+      expect(observed.lease).toBeUndefined();
+      expect(recorded.operation.lease).toBeUndefined();
 
       // A retry presenting the same Idempotency-Key replays that `CLAIMED` answer verbatim. The
       // journal is what refuses it a second account: the transition is recorded, so the route
@@ -1946,7 +1953,7 @@ const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedS
       v1.Relationship.create({
         relation: 'executor',
         resource: v1.ObjectReference.create({
-          objectId: toSpiceDbActionObjectId(actionKey),
+          objectId: toSpiceDbActionObjectId({ actionKey, tenantId: subject.tenantId }),
           objectType: 'action',
         }),
         subject: principalSubject,
@@ -2208,13 +2215,13 @@ it.live(
         const startedAttempt = started.attempt;
         expect(started.outcome).toBe('CREATED');
         expect(startedAttempt.journey).toBe('RETAIL_SELF_ENROLLMENT');
-        expect(startedAttempt.state).toBe('IN_PROGRESS');
+        expect(startedAttempt.state).toBe('VERIFICATION_REQUIRED');
         expect(startedAttempt.targetLegalEntityId).toBe(subject.legalEntityId);
 
         // The Attempt itself committed. A rolled-back result hash leaves this row absent entirely.
         expect(yield* enrollmentAttemptCount(fixture)).toBe(1);
         expect(yield* readEnrollmentAcceptanceAttempt(fixture, startedAttempt.portalEnrollmentAttemptId)).toStrictEqual(
-          { revision: startedAttempt.revision, state: 'IN_PROGRESS' },
+          { revision: startedAttempt.revision, state: 'VERIFICATION_REQUIRED' },
         );
 
         // The `claim-portal-enrollment-transition` Action committed too — its result carries the

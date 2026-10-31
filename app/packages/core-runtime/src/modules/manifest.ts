@@ -7,6 +7,10 @@ import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
+import { OntosExternalIdentityProviderSchema } from '../auth/external-identity-provider.ts';
+import type { OntosExternalIdentityProviderInput } from '../auth/external-identity-provider.ts';
+import { OntosMcpContributionSchema } from './mcp-contribution.ts';
+import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
@@ -145,12 +149,70 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
   workerKey: OntosModuleIdSchema,
 });
 
+/** Internal matching authority also carries Core-owned workers; public module contracts stay tenant-only. */
+export const OutboxSubscriptionAuthoritySchema = Schema.Union([
+  OntosOutboxSubscriptionContractSchema,
+  Schema.Struct({
+    consumerModuleKey: OntosModuleIdSchema.check(Schema.isPattern(/^core\./u)),
+    entrypoint: Schema.Struct({
+      access: Schema.Literal('background'),
+      authorization: Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
+      entrypointKey: OntosModuleIdSchema,
+      moduleKey: OntosModuleIdSchema.check(Schema.isPattern(/^core\./u)),
+      role: Schema.Literal('worker'),
+      scope: Schema.Literal('system'),
+    }),
+    producerModuleKey: OntosModuleIdSchema.check(Schema.isPattern(/^core\./u)),
+    topic: OntosModuleIdSchema,
+    workerKey: OntosModuleIdSchema,
+  }),
+]);
+
+const reservedAuthenticationCookieRealms = new Set(['better-auth', 'shell', 'staff', 'ontos']);
+const unprefixedCookieName = (name: string): string => name.replace(/^__(?:Secure|Host)-/u, '');
+
+/** Reviewed credential transport, limited to exact cookie names and exact owner-relative API routes. */
+export const OntosApiCookieTransportSchema = Schema.Struct({
+  cookieNames: Schema.Array(
+    Schema.String.check(Schema.isPattern(/^(?:__(?:Secure|Host)-)?[a-z][a-z0-9-]*\.[a-z][a-z0-9_.-]*$/u)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  realmPrefix: Schema.String.check(
+    Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u),
+    Schema.makeFilter((value) =>
+      reservedAuthenticationCookieRealms.has(value) ? 'Shell and staff cookie realms are reserved' : undefined,
+    ),
+  ),
+  routes: Schema.Array(
+    Schema.Struct({
+      method: Schema.Literals(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+      path: Schema.String.check(Schema.isPattern(/^\/api\/[a-z0-9]+(?:[/-][a-z0-9]+)*$/u)),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+}).check(
+  Schema.makeFilter(({ cookieNames, realmPrefix, routes }) => {
+    if (cookieNames.some((name) => !unprefixedCookieName(name).startsWith(`${realmPrefix}.`))) {
+      return 'Every declared cookie must belong to its isolated realm prefix';
+    }
+    if (new Set(cookieNames).size !== cookieNames.length) {
+      return 'Cookie transport must not repeat cookie names';
+    }
+    return new Set(routes.map(({ method, path }) => `${method} ${path}`)).size === routes.length
+      ? undefined
+      : 'Cookie transport must not repeat routes';
+  }),
+);
+
 export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   actions: Schema.Array(OntosActionContractSchema),
   api: Schema.Array(OntosApiContractSchema),
+  apiCookieTransport: Schema.optionalKey(Schema.Array(OntosApiCookieTransportSchema)),
   businessPermissions: Schema.optionalKey(Schema.Array(BusinessPermissionDescriptorSchema)),
   components: Schema.Array(OntosComponentContractSchema),
   events: Schema.Array(OntosPublicEventContractSchema),
+  /** External identity providers the module's own sign-in offers (absent: none). */
+  externalIdentityProviders: Schema.optionalKey(Schema.Array(OntosExternalIdentityProviderSchema)),
+  /** MCP tools the module offers to agents (absent: none). */
+  mcp: Schema.optionalKey(OntosMcpContributionSchema),
   reports: Schema.Array(OntosReportDescriptorSchema),
   resourceTypes: Schema.Array(OntosResourceTypeSchema),
   search: Schema.Array(OntosSearchDescriptorSchema),
@@ -212,9 +274,14 @@ export interface OntosAuthoredPublicEvent<
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
   readonly api: Readonly<Record<string, HttpApi.Constraint>>;
+  readonly apiCookieTransport?: readonly (typeof OntosApiCookieTransportSchema.Type)[];
   readonly businessPermissions?: readonly BusinessPermissionDescriptor[];
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
+  /** External identity providers the module's own sign-in offers. */
+  readonly externalIdentityProviders?: readonly OntosExternalIdentityProviderInput[];
+  /** MCP tool contribution; the contract generator derives schemas and handler paths from the module's own values. */
+  readonly mcp?: OntosMcpContributionInput;
   readonly reports: readonly OntosReportDescriptor[];
   readonly resourceTypes: readonly OntosResourceType[];
   readonly search: readonly OntosSearchDescriptor[];
@@ -291,9 +358,12 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
     [
       'actions',
       'api',
+      'apiCookieTransport',
       'businessPermissions',
       'components',
       'events',
+      'externalIdentityProviders',
+      'mcp',
       'reports',
       'resourceTypes',
       'search',
@@ -422,6 +492,22 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     'public event key',
   );
 
+  // External identity providers stay as authored (spread with the public surface); they only have to decode.
+  assertUnique(
+    (input.publicSurface.externalIdentityProviders ?? []).map(
+      (provider) => exactDecode(OntosExternalIdentityProviderSchema, provider).authenticationNamespaceId,
+    ),
+    'external identity provider namespace',
+  );
+
+  const apiCookieTransport = input.publicSurface.apiCookieTransport?.map((policy) =>
+    exactDecode(OntosApiCookieTransportSchema, policy),
+  );
+  assertUnique(
+    (apiCookieTransport ?? []).map(({ realmPrefix }) => realmPrefix),
+    'API cookie realm',
+  );
+
   const search = input.publicSurface.search.map((descriptor) => exactDecode(OntosSearchDescriptorSchema, descriptor));
   assertUnique(
     search.map(({ key }) => key),
@@ -498,6 +584,11 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       }),
     },
   };
+  if (apiCookieTransport !== undefined) {
+    Object.assign(manifest.publicSurface, {
+      apiCookieTransport: Object.freeze(apiCookieTransport.map((policy) => freezePlain(policy))),
+    });
+  }
   return Object.freeze(manifest);
 };
 

@@ -5,6 +5,8 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   loadDatabaseConnectionPair,
   ContextAccessLive,
   CorePersistenceLive,
@@ -140,6 +142,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(Reactivity.layer),
   Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
 );
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());

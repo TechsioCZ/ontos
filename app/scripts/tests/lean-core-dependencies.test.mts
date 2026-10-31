@@ -24,9 +24,6 @@ it.live(
         // Market Catalog: allowed exact owner-client composition seam.
         'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts':
           "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
-        // Shell: allowed documented composition seams.
-        'apps/shell-super-app/api/auth/commerce-external-identity.ts':
-          "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
         // Shell: violates via the bare Commerce package specifier (no subpath), resolved against the
         // exports map's "." entry, which points at Commerce's private src.
         'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts':
@@ -192,6 +189,14 @@ const hostImports = {
   ]),
 };
 const hostExports = { '.': './src/index.ts', './transport': './src/transport.ts' };
+const typeAdapterPath = './src/transport.types.ts';
+const typesFirstHostImports = {
+  '#transport': Object.fromEntries([
+    ['types', typeAdapterPath],
+    ['workerd', workerAdapterPath],
+    ['node', nodeAdapterPath],
+  ]),
+};
 const hostSources = {
   'src/driver.ts': nodeDriverSource,
   'src/index.ts': "export { Effect } from 'effect';",
@@ -208,8 +213,88 @@ interface HostGraphControl {
   readonly sources?: Readonly<Record<string, string>>;
 }
 
+const authzedPublicMessagesSource = [
+  "export { ObjectReference } from '@authzed/authzed-node/v1/core';",
+  "export { Consistency } from '@authzed/authzed-node/v1/permissions';",
+  "export { ReadSchemaRequest } from '@authzed/authzed-node/v1/schema';",
+].join('\n');
+
+const effectMetadataPublicImports = {
+  'effect/Match': "export { value } from 'effect/Match';",
+  'effect/Option': "export { getOrNull } from 'effect/Option';",
+  'effect/Result': "export { getOrThrow } from 'effect/Result';",
+  'effect/Schema': "export { String } from 'effect/Schema';",
+};
+
 const hostGraphControls: readonly HostGraphControl[] = [
+  {
+    name: 'allows the three explicit Authzed message exports in shared Core source',
+    rejected: false,
+    sources: { 'src/shared.ts': authzedPublicMessagesSource },
+  },
+  {
+    name: 'allows the three explicit Authzed message exports in the Workerd branch',
+    rejected: false,
+    sources: { 'src/transport.worker.ts': authzedPublicMessagesSource },
+  },
+  ...Object.entries(effectMetadataPublicImports).flatMap(([specifier, source]): HostGraphControl[] => [
+    {
+      name: `allows the pinned public metadata module ${specifier} in shared Core source`,
+      rejected: false,
+      sources: { 'src/shared.ts': source },
+    },
+    {
+      name: `allows the pinned public metadata module ${specifier} in the Workerd branch`,
+      rejected: false,
+      sources: { 'src/transport.worker.ts': source },
+    },
+  ]),
+  ...[
+    '@authzed/authzed-node/v1/debug',
+    '@authzed/authzed-node/v1/core/private',
+    '@authzed/authzed-node/dist/src/authzedapi/authzed/api/v1/core.js',
+    '@authzed/authzed-node/package.json',
+    'effect/Effect',
+    'effect/Match/internal',
+    'effect/Option/private',
+    'effect/Result.js',
+    'effect/Schema/internal',
+    'effect/internal/schema',
+    'effect/unstable/schema',
+    'effect/UnknownModule',
+    'effect/match',
+    '@foreign/Schema',
+  ].map((specifier) => ({
+    name: `rejects unpinned Core external specifier ${specifier}`,
+    rejected: true,
+    sources: { 'src/shared.ts': `import '${specifier}';` },
+  })),
   { name: 'allows a consumed native Node conditional entry and its runtime descendants', rejected: false },
+  {
+    imports: typesFirstHostImports,
+    name: 'allows types-first declaration resolution while proving distinct Node and Workerd runtime branches',
+    rejected: false,
+    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['types', typeAdapterPath],
+        ['workerd', workerAdapterPath],
+        ['node', nodeAdapterPath],
+        ['default', nodeAdapterPath],
+      ]),
+    },
+    name: 'a types-first declaration does not authorize a default browser fallback into Node',
+    rejected: true,
+    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
+  },
+  {
+    imports: typesFirstHostImports,
+    name: 'a types condition does not conceal a runtime import from shared source into the Node driver',
+    rejected: true,
+    sources: { 'src/transport.types.ts': driverReExportSource },
+  },
   {
     name: 'does not treat a type-only worker reference as a runtime Node dependency',
     rejected: false,
@@ -441,7 +526,7 @@ for (const control of hostGraphControls) {
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const manifest = {
-        dependencies: { '@effect/platform-node': '4.0.0-rc.117', effect: '4.0.0-rc.117' },
+        dependencies: { '@effect/platform-node': '4.0.5', effect: '4.0.5' },
         exports: control.exports ?? hostExports,
         imports: control.imports ?? hostImports,
       };

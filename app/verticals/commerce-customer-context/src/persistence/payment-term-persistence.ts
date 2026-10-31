@@ -1043,6 +1043,23 @@ export const paymentTermsReconciliationOwnerEvidenceVerifierForTransaction = (
     }),
 });
 
+/** Reuse the domain decision to avoid a remote lookup for an already-complete local change. */
+const requestsForPaymentChange = (
+  state: CustomerPaymentTermsState,
+  expectedRevision: number,
+  changes: readonly CustomerPaymentTermsChange[],
+  requests: readonly PaymentTermDefinitionRequest[],
+): readonly PaymentTermDefinitionRequest[] => {
+  const local = changeCustomerPaymentTerms({ catalogDefinitions: [], changes, expectedRevision, state });
+  return local._tag === 'CHANGED' && !local.changed ? [] : requests;
+};
+
+export const customerChangeDefinitionRequests = (
+  state: CustomerPaymentTermsState,
+  payload: ChangeCustomerPaymentTermsPayload,
+): readonly PaymentTermDefinitionRequest[] =>
+  requestsForPaymentChange(state, payload.expectedRevision, payload.changes, definitionRequestsForChanges(payload));
+
 export const makeChangeCustomerPaymentTermsServices = (
   persistence: PaymentTermsPersistenceContext,
   catalog: PaymentTermCatalogPort = unavailablePaymentTermCatalogPort,
@@ -1060,7 +1077,7 @@ export const makeChangeCustomerPaymentTermsServices = (
       payload.profileRef,
       payload.counterpartyRef.resourceId,
     ).pipe(Effect.mapError(mapReadFailureToAction));
-    const definitionRequests = definitionRequestsForChanges(payload);
+    const definitionRequests = customerChangeDefinitionRequests(state, payload);
     const definitions =
       definitionRequests.length === 0
         ? []
@@ -1278,6 +1295,27 @@ const retailDefinitionRequests = (
       ]
     : [];
 
+export const retailChangeDefinitionRequests = (
+  state: CustomerPaymentTermsState,
+  payload: ChangeRetailPaymentTermPreferencePayload,
+): readonly PaymentTermDefinitionRequest[] =>
+  requestsForPaymentChange(state, payload.expectedRevision, [payload.change], retailDefinitionRequests(payload.change));
+
+export const loadCustomerChangeSnapshot = (
+  transaction: CustomerPaymentTermsScopedRoutineInvoker,
+  scope: PaymentTermsPersistenceContext['scope'],
+  payload: ChangeCustomerPaymentTermsPayload,
+) =>
+  readState(transaction, scope, payload.profileRef, payload.counterpartyRef.resourceId).pipe(
+    Effect.mapError(mapReadFailureToAction),
+  );
+
+export const loadRetailChangeSnapshot = (
+  transaction: CustomerPaymentTermsScopedRoutineInvoker,
+  scope: PaymentTermsPersistenceContext['scope'],
+  payload: ChangeRetailPaymentTermPreferencePayload,
+) => readState(transaction, scope, payload.profileRef, null).pipe(Effect.mapError(mapRetailReadStateFailure));
+
 const mapRetailChangeOutcome = (
   outcome: ReturnType<typeof changeCustomerPaymentTerms>,
 ): Effect.Effect<
@@ -1335,7 +1373,7 @@ const makeRetailPaymentTermPreferenceServices = (
       const state = yield* readState(persistence.invoker, persistence.scope, payload.profileRef, null).pipe(
         Effect.mapError(mapRetailReadStateFailure),
       );
-      const requests = retailDefinitionRequests(payload.change);
+      const requests = retailChangeDefinitionRequests(state, payload);
       const definitions =
         requests.length === 0
           ? []
@@ -1481,17 +1519,9 @@ const definitionRequestsForResolution = (
   return [...definitionRequests.values()];
 };
 
-export const makePaymentTermsResolutionServices = (
-  persistence: PaymentTermsPersistenceContext,
-  ports: CustomerPaymentTermsPersistencePorts = {},
-): PaymentTermsResolutionServices => ({
-  resolve: Effect.fn('CustomerPaymentTermsPersistence.resolve')(function* resolveCurrentPaymentTerms(input) {
-    if (input.purchasingContext.sellingLegalEntityId !== persistence.scope.legalEntityId) {
-      return yield* readUnavailable('The purchasing context is outside the scoped Payment Terms capability');
-    }
-    const catalog = ports.catalog ?? unavailablePaymentTermCatalogPort;
-    const policy = ports.policy ?? unavailableCustomerCommercePaymentTermsPolicyPort;
-    const state = yield* readState(
+export const loadPaymentTermsResolutionState = Effect.fn('CustomerPaymentTermsPersistence.loadResolutionState')(
+  function* loadResolutionState(persistence: PaymentTermsPersistenceContext, input: PaymentTermsResolutionRequest) {
+    return yield* readState(
       persistence.invoker,
       persistence.scope,
       input.profileRef,
@@ -1505,7 +1535,16 @@ export const makePaymentTermsResolutionServices = (
         ),
       ),
     );
-    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- The scope-verified owner read intentionally gates any external policy call for nonexistent or mismatched profiles.
+  },
+);
+
+export const finishPaymentTermsResolution = Effect.fn('CustomerPaymentTermsPersistence.finishResolution')(
+  function* finishResolution(
+    input: PaymentTermsResolutionRequest,
+    state: CustomerPaymentTermsState,
+    policy: CustomerCommercePaymentTermsPolicyPort,
+    catalog: PaymentTermCatalogPort,
+  ) {
     const policyResolution = yield* policy
       .resolve(input)
       .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
@@ -1538,6 +1577,20 @@ export const makePaymentTermsResolutionServices = (
           ...commonResolutionInput,
           explicitChoice: input.explicitChoice,
         });
+  },
+);
+export const makePaymentTermsResolutionServices = (
+  persistence: PaymentTermsPersistenceContext,
+  ports: CustomerPaymentTermsPersistencePorts = {},
+): PaymentTermsResolutionServices => ({
+  resolve: Effect.fn('CustomerPaymentTermsPersistence.resolve')(function* resolveCurrentPaymentTerms(input) {
+    if (input.purchasingContext.sellingLegalEntityId !== persistence.scope.legalEntityId) {
+      return yield* readUnavailable('The purchasing context is outside the scoped Payment Terms capability');
+    }
+    const catalog = ports.catalog ?? unavailablePaymentTermCatalogPort;
+    const policy = ports.policy ?? unavailableCustomerCommercePaymentTermsPolicyPort;
+    const state = yield* loadPaymentTermsResolutionState(persistence, input);
+    return yield* finishPaymentTermsResolution(input, state, policy, catalog);
   }),
 });
 

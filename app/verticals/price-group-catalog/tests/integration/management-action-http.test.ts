@@ -9,7 +9,7 @@ import {
   PriceGroupIdempotencyReuseConflict,
   PriceGroupSemanticIdentityConflict,
 } from '../../shared/domain/price-group-errors.ts';
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
@@ -18,6 +18,7 @@ import { mapCreatePriceGroupDefinitionRevisionActionProblem } from '../../api/cr
 import { mapRetirePriceGroupActionProblem } from '../../api/retire-price-group-action-problems.ts';
 import { recoverPriceGroupActionCommittedRetry } from '../../api/action-http-runner.ts';
 import type { CreatePriceGroupDefinitionRevisionPayload } from '../../shared/actions/create-price-group-definition-revision.ts';
+import { CreatePriceGroupPayloadSchema } from '../../shared/actions/create-price-group.ts';
 import type { CreatePriceGroupPayload } from '../../shared/actions/create-price-group.ts';
 import type { RetirePriceGroupPayload } from '../../shared/actions/retire-price-group.ts';
 import { executeCreatePriceGroupWithAuthorization } from '../../src/api/create-price-group-action-client.ts';
@@ -330,7 +331,11 @@ describe('Price Group management Action HTTP boundary', () => {
           idempotencyKey: 'invalid-create',
         }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
 
-      const invalidPeriod = yield* invoke({ ...payload, effectiveTo: payload.effectiveFrom });
+      // Creation now encodes an open-ended period directly. A finite end cannot enter the typed client.
+      const invalidPeriod = yield* Schema.encodeUnknownEffect(CreatePriceGroupPayloadSchema)({
+        ...payload,
+        effectiveTo: payload.effectiveFrom,
+      }).pipe(Effect.result);
       const duplicateCompatibility = yield* invoke({
         ...payload,
         compatibilityContracts: [...payload.compatibilityContracts, ...payload.compatibilityContracts],

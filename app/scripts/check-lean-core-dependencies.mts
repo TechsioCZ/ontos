@@ -202,6 +202,9 @@ const commerceVocabulary = /commerce|storefront|better[-_]?auth/iu;
 
 const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node',
+  '@authzed/authzed-node/v1/core',
+  '@authzed/authzed-node/v1/permissions',
+  '@authzed/authzed-node/v1/schema',
   '@effect/platform-node',
   '@effect/sql-pg',
   '@noble/hashes/sha2.js',
@@ -213,10 +216,15 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
+  // Public metadata modules of the same pinned Effect dependency; descendants remain unapproved.
+  'effect/Match',
+  'effect/Option',
+  'effect/Result',
+  'effect/Schema',
   'pg',
 ]);
 
-// Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
+// Effect 4 platform modules (formerly `effect/*`) are published as top-level subpaths.
 const effectPlatformSubpath =
   /^effect\/(?:ai|cli|cluster|devtools|encoding|eventlog|http|http-api|net|observability|persistence|process|reactivity|rpc|schema|socket|sql|workers|workflow)(?:\/|$)/u;
 
@@ -302,10 +310,14 @@ type SourceHost = typeof SourceHostSchema.Type;
 const hasSupportedConditions = (target: PackageImportTarget): boolean =>
   Predicate.isString(target) ||
   Object.keys(target).every(
-    (condition) => Schema.is(SourceHostSchema)(condition) || condition === 'import' || condition === 'default',
+    (condition) =>
+      Schema.is(SourceHostSchema)(condition) ||
+      condition === 'types' ||
+      condition === 'import' ||
+      condition === 'default',
   );
 
-/** Native conditional maps select the first matching property; default is not a fallback reordered by this gate. */
+/** Native runtime maps skip TypeScript's types condition and select the first matching runtime property. */
 const selectHostTarget = (target: PackageImportTarget, host: SourceHost): string | undefined => {
   if (Predicate.isString(target)) {
     return target;
@@ -725,18 +737,6 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     importer: 'apps/shell-super-app/src/api/vertical-clients.ts',
     reason: 'Commerce publishes this as its sanctioned read-only API client for Shell composition.',
     specifier: `${commercePackageSpecifierPrefix}/api/client`,
-  },
-  {
-    importer: 'apps/shell-super-app/api/auth/commerce-external-identity.ts',
-    reason:
-      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
-    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
-  },
-  {
-    importer: 'apps/shell-super-app/api/auth/external-identity/commerce-admission-observation.ts',
-    reason:
-      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
-    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
   },
 ];
 

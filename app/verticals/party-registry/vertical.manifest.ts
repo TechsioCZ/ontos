@@ -40,6 +40,7 @@ import { partyRelationshipResourceDescriptor } from './shared/resources/party-re
 import { partyResourceDescriptor } from './shared/resources/party.ts';
 import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
 // <generated-module-manifest-imports>
+import { acceptRetailEnrollmentEvidenceAction } from './src/actions/accept-retail-enrollment-evidence.action.ts';
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
 import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
@@ -55,7 +56,10 @@ import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.a
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
+import { CustomerListApi } from './shared/apis/customer-list.ts';
+import { CustomersPage } from './src/routes/[lang]/prodej/zakaznici/page.tsx';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
+import { DuplicateCandidateListApi } from './shared/apis/duplicate-candidate-list.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
@@ -75,6 +79,11 @@ import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
 // </generated-module-manifest-imports>
+import { partyRegistryMcpContribution } from './shared/mcp/contribution.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+const MODULE_ACCESS_PERMISSION = 'module.access' as const;
+const CUSTOMERS_PAGE_KEY = 'party.registry.page.customers' as const;
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -97,13 +106,14 @@ export const partyRegistryManifest = defineOntosModuleManifest({
   module: {
     description: 'Party Registry business capability.',
     displayName: 'Party Registry',
-    id: 'party.registry',
+    id: PARTY_REGISTRY_MODULE_ID,
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      acceptRetailEnrollmentEvidenceAction,
       addContactPointAction,
       addPartyOfficialIdentifierAction,
       archiveOrganizationEngagementAction,
@@ -143,7 +153,9 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'ares-lookup': AresLookupApi,
       'counterparty-read': CounterpartyReadApi,
       'counterparty-role-history': CounterpartyRoleHistoryApi,
+      'customer-list': CustomerListApi,
       'duplicate-candidate-detail': DuplicateCandidateDetailApi,
+      'duplicate-candidate-list': DuplicateCandidateListApi,
       'guest-party-resolution': GuestPartyResolutionApi,
       'organization-engagement-profile': OrganizationEngagementProfileApi,
       'party-contact-point-detail': PartyContactPointDetailApi,
@@ -163,9 +175,11 @@ export const partyRegistryManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-contacts': ContactsPage,
+      'page-customers': CustomersPage,
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: partyRegistryMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
@@ -192,14 +206,14 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       {
         accessFiltering: 'resource_permission',
         key: 'party.registry.counterparties',
-        owningModuleId: 'party.registry',
+        owningModuleId: PARTY_REGISTRY_MODULE_ID,
         requestFilters: ['includeArchived', 'role'],
         resourceType: 'party.registry.counterparty',
       },
       {
         accessFiltering: 'tenant_scope',
         key: 'party.registry.parties',
-        owningModuleId: 'party.registry',
+        owningModuleId: PARTY_REGISTRY_MODULE_ID,
         requestFilters: ['includeArchived'],
         resourceType: 'party.registry.party',
         tenantPermission: 'read_party_identity',
@@ -211,21 +225,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       navigation: [
         // <generated-module-shell-navigation>
         navigationContribution({
-          contributionKey: 'party.registry.navigation.contacts',
+          contributionKey: 'party.registry.navigation.customers',
           entrypoint: {
             access: 'read',
-            authorization: {
-              kind: 'context_permission',
-              permission: 'module.access',
-            },
-            entrypointKey: 'party.registry.page.contacts',
-            moduleKey: 'party.registry',
+            authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
+            entrypointKey: CUSTOMERS_PAGE_KEY,
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
-          pageKey: 'party.registry.page.contacts',
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--domain]',
+          label: { cs: 'Zákazníci', en: 'Customers' },
+          order: 470,
+          pageKey: CUSTOMERS_PAGE_KEY,
         }),
         // </generated-module-shell-navigation>
       ],
@@ -238,15 +251,29 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: {
               kind: 'context_permission',
-              permission: 'module.access',
+              permission: MODULE_ACCESS_PERMISSION,
             },
             entrypointKey: 'party.registry.page.contacts',
-            moduleKey: 'party.registry',
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'page',
             scope: 'tenant',
           },
           expose: './PageContacts',
           routePath: '/contacts',
+        }),
+        pageContribution({
+          componentKey: 'party.registry.page-customers',
+          contributionKey: CUSTOMERS_PAGE_KEY,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
+            entrypointKey: CUSTOMERS_PAGE_KEY,
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageCustomers',
+          routePath: '/prodej/zakaznici',
         }),
         // </generated-module-shell-pages>
       ],
@@ -267,10 +294,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: {
               kind: 'context_permission',
-              permission: 'module.access',
+              permission: MODULE_ACCESS_PERMISSION,
             },
             entrypointKey: 'party.registry.search.counterparties',
-            moduleKey: 'party.registry',
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'search',
             scope: 'tenant',
           },
@@ -282,10 +309,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: {
               kind: 'context_permission',
-              permission: 'module.access',
+              permission: MODULE_ACCESS_PERMISSION,
             },
             entrypointKey: 'party.registry.search.parties',
-            moduleKey: 'party.registry',
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'search',
             scope: 'tenant',
           },

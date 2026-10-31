@@ -9,6 +9,7 @@ import type { SqlError } from 'effect/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
+import { guardPoolAcquisition } from '../../src/db/transaction-io-guard.ts';
 import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from './sql-connection.ts';
 
@@ -20,11 +21,16 @@ export const privacyMeasureDeferredCases = [
 ] as const;
 
 /** Scripted SQL connection fixture; Drizzle and Effect own query and transaction execution. */
+/** Behind the same pool guard as the production Core database. */
 export const makeTestDatabase = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
   Effect.scoped(
-    makeWithDefaults({ relations: coreRelations }).pipe(
+    Effect.flatMap(Effect.service(PgClient.PgClient), (client) =>
+      makeWithDefaults({ relations: coreRelations }).pipe(
+        Effect.provideService(PgClient.PgClient, guardPoolAcquisition(client)),
+      ),
+    ).pipe(
       Effect.provide(
         scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
       ),
@@ -81,6 +87,27 @@ export const makeTestPgClient = Effect.fn('TestDatabase.makeTestPgClient')(funct
     ),
   );
 });
+
+/**
+ * Acquires one native pool and its Drizzle database under the caller's service key.
+ * Build this Layer in the fixture scope before registering row cleanup; the pool's
+ * separate resource scope then remains usable until all later cleanup finishes.
+ */
+export const layerTestDatabase = <Relations extends AnyRelations, Self>(
+  key: Context.Key<Self, TestDatabaseFromClient<Relations>>,
+  input: {
+    readonly connectionString: string;
+    readonly poolOptions?: Omit<PgClient.PgPoolConfig, 'url'>;
+    readonly relations: Relations;
+  },
+) =>
+  Layer.effect(
+    key,
+    Effect.gen(function* acquireTestDatabaseLayer() {
+      const client = yield* makeTestPgClient(input.connectionString, input.poolOptions);
+      return yield* makeTestDatabaseFromClient(client, input.relations);
+    }),
+  );
 
 /** Scoped single-session client, for tests that observe one backend or hold an explicit transaction. */
 export const makeTestPgSession = Effect.fn('TestDatabase.makeTestPgSession')(function* makeTestPgSession(

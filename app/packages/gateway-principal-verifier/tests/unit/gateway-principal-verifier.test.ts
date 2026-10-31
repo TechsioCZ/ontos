@@ -1,3 +1,4 @@
+import { HttpServerRequest } from 'effect/http';
 import {
   ActiveApplicationCompositionService,
   GatewayAssertionRedemptionUnavailableError,
@@ -8,10 +9,14 @@ import {
 } from '@app/core-runtime';
 import { Clock, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rs } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GATEWAY_ASSERTION_VERSION,
+  REFERENCE_GATEWAY_CREDENTIALS_HEADER,
+} from '@app/shared-contracts';
 
 import {
   ActionPrincipalConfigurationErrorSchema,
@@ -21,6 +26,7 @@ import {
   GatewayPrincipalVerifierConfiguration,
   GatewayPrincipalVerifierLive,
   bindGatewayPrincipalVerifier,
+  makeReferenceGatewayCredentialSource,
 } from '../../src/server.ts';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 
@@ -528,6 +534,40 @@ it.effect('empty and malformed audience bindings fail closed as configuration er
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
+it.effect('redeems every presentation and rejects replay across verifier instances', () =>
+  Effect.gen(function* singleUseRedemption() {
+    const fixture = yield* makeFixture('party-registry');
+    let redemptions = 0;
+    const redemption = {
+      consume: () =>
+        Effect.suspend(() => {
+          redemptions += 1;
+          return redemptions === 1
+            ? Effect.void
+            : Effect.fail(new GatewayAssertionReplayError({ reason: 'Already used' }));
+        }),
+    };
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const options = {
+      currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+      environment: fixture.environment,
+      redemption,
+    };
+    const authorization = Redacted.make(`Bearer ${fixture.token}`);
+    expect(yield* verifier.verifyAndRedeem(authorization, options)).toEqual(principal);
+    expect(isInvalidError(yield* Effect.flip(verifier.verifyAndRedeem(authorization, options)))).toBe(true);
+    const restarted = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    expect(isInvalidError(yield* Effect.flip(restarted.verifyAndRedeem(authorization, options)))).toBe(true);
+    expect(redemptions).toBe(3);
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
 it.effect('redemption failures remain sanitized and distinguish replay from unavailability', () =>
   Effect.gen(function* verifyRedemptionFailures() {
     const fixture = yield* makeFixture('party-registry');
@@ -641,4 +681,148 @@ it.effect('malformed Ed25519 public keys fail during configuration acquisition',
       { concurrency: 'unbounded' },
     );
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('imports verification keys once for configuration and the first and later assertions', () =>
+  Effect.gen(function* reuseImportedVerificationKey() {
+    const fixture = yield* makeFixture('party-registry');
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const importKey = rs.spyOn(globalThis.crypto.subtle, 'importKey');
+    yield* Effect.addFinalizer(() => Effect.sync(() => importKey.mockRestore()));
+    const services = yield* Layer.build(
+      GatewayPrincipalVerifierLive.pipe(
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(fixture.environment))),
+      ),
+    );
+    const configuration = Context.get(services, GatewayPrincipalVerifierConfiguration);
+    yield* configuration.configuration;
+    expect(importKey).toHaveBeenCalledTimes(1);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const resolved = yield* verifier
+        .verify(Redacted.make(`Bearer ${fixture.token}`), {
+          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        })
+        .pipe(Effect.provideService(GatewayPrincipalVerifierConfiguration, configuration));
+      expect(resolved).toEqual(principal);
+    }
+    expect(importKey).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+const referenceScope = { ...principal, legalEntityId: '70000000-0000-4000-8000-000000000001' };
+const referenceSource = (fixture: Effect.Success<ReturnType<typeof makeFixture>>, header?: string) =>
+  makeReferenceGatewayCredentialSource(referenceScope).pipe(
+    Effect.provideService(
+      HttpServerRequest.HttpServerRequest,
+      HttpServerRequest.fromWeb(
+        new Request('https://owner.example.test/apply', {
+          headers: header === undefined ? {} : { [REFERENCE_GATEWAY_CREDENTIALS_HEADER]: header },
+        }),
+      ),
+    ),
+    Effect.provideServiceEffect(
+      GatewayPrincipalVerifierConfiguration,
+      Effect.gen(function* referenceVerificationConfiguration() {
+        const services = yield* Layer.build(GatewayPrincipalVerifierLive).pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(fixture.environment)),
+        );
+        return Context.get(services, GatewayPrincipalVerifierConfiguration);
+      }).pipe(Effect.scoped),
+    ),
+    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+  );
+const referenceHeader = (audience: string, token: string) =>
+  Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+    { apiBaseUrl: 'https://attacker.example.test/untrusted-route', audience, authorization: `Bearer ${token}` },
+  ]);
+
+it.effect(
+  'reference credentials retain captured verification services, use composition routing, and pop once per request',
+  () =>
+    Effect.gen(function* forwardReferences() {
+      yield* TestClock.setTime(currentTimeSeconds * 1000);
+      const fixture = yield* makeFixture('party-registry', GATEWAY_ASSERTION_VERSION, referenceScope);
+      const header = yield* referenceHeader('party-registry', fixture.token);
+      const source = yield* referenceSource(fixture, header);
+      // This execution occurs after factory providers have left scope; issue has no service requirements.
+      const issued = yield* source.issue('party-registry');
+      const snapshot = yield* gatewayComposition;
+      expect(issued).toEqual({
+        apiBaseUrl: new URL(
+          '/party-registry-api',
+          snapshot.composition.modules.find((module) => module.deployment.appId === 'party-registry')?.backend.baseUrl,
+        ).href,
+        authorization: `Bearer ${fixture.token}`,
+        compositionRevision: snapshot.composition.revision,
+      });
+      expect(issued.apiBaseUrl).not.toContain('attacker');
+      expect(isUnavailableError(yield* Effect.flip(source.issue('party-registry')))).toBe(true);
+      const independentRequest = yield* referenceSource(fixture, header);
+      expect((yield* independentRequest.issue('party-registry')).authorization).toBe(issued.authorization);
+      const missing = yield* referenceSource(fixture);
+      expect(isUnavailableError(yield* Effect.flip(missing.issue('party-registry')))).toBe(true);
+    }),
+);
+
+it.effect('reference forwarding rejects mismatched signed actor, session, tenant, legal entity and binding', () =>
+  Effect.gen(function* rejectMixedIdentity() {
+    yield* TestClock.setTime(currentTimeSeconds * 1000);
+    for (const signedScope of [
+      { ...referenceScope, principalId: '40000000-0000-4000-8000-000000000002' },
+      { ...referenceScope, authContextRef: 'another-signed-session' },
+      { ...referenceScope, tenantId: '50000000-0000-4000-8000-000000000002' },
+      { ...referenceScope, legalEntityId: '70000000-0000-4000-8000-000000000002' },
+      { ...referenceScope, authBindingId: '30000000-0000-4000-8000-000000000002' },
+    ]) {
+      const fixture = yield* makeFixture('party-registry', GATEWAY_ASSERTION_VERSION, signedScope);
+      const source = yield* referenceSource(fixture, yield* referenceHeader('party-registry', fixture.token));
+      expect(isInvalidError(yield* Effect.flip(source.issue('party-registry')))).toBe(true);
+      expect(isUnavailableError(yield* Effect.flip(source.issue('party-registry')))).toBe(true);
+    }
+  }),
+);
+
+it.effect(
+  'reference forwarding rejects malformed transport headers, unapproved audiences and relabeled signed tokens',
+  () =>
+    Effect.gen(function* rejectReferenceTransport() {
+      yield* TestClock.setTime(currentTimeSeconds * 1000);
+      const fixture = yield* makeFixture('party-registry', GATEWAY_ASSERTION_VERSION, referenceScope);
+      for (const header of [
+        'not-json',
+        '{}',
+        '[{"audience":"party/registry","authorization":"Bearer token"}]',
+        '[{"audience":"party-registry","authorization":""}]',
+      ]) {
+        expect(isInvalidError(yield* Effect.flip(referenceSource(fixture, header)))).toBe(true);
+      }
+      const unknown = yield* referenceSource(fixture, yield* referenceHeader('unapproved-owner', fixture.token));
+      expect(isInvalidError(yield* Effect.flip(unknown.issue('unapproved-owner')))).toBe(true);
+      const relabeled = yield* referenceSource(fixture, yield* referenceHeader('billing', fixture.token));
+      expect(isScopeError(yield* Effect.flip(relabeled.issue('billing')))).toBe(true);
+      const unauthorizedRequest = yield* referenceSource(
+        fixture,
+        yield* referenceHeader('party-registry', fixture.token),
+      );
+      expect(isUnavailableError(yield* Effect.flip(unauthorizedRequest.issue('billing')))).toBe(true);
+      expect((yield* unauthorizedRequest.issue('party-registry')).authorization).toBe(`Bearer ${fixture.token}`);
+    }),
+);
+
+it.effect('reference forwarding verifies real signatures and the current composition revision before forwarding', () =>
+  Effect.gen(function* rejectInvalidSignatureAndRelease() {
+    yield* TestClock.setTime(currentTimeSeconds * 1000);
+    const fixture = yield* makeFixture('party-registry', GATEWAY_ASSERTION_VERSION, referenceScope);
+    const otherKey = yield* makeFixture('party-registry', GATEWAY_ASSERTION_VERSION, referenceScope);
+    const wrongSignature = yield* referenceSource(fixture, yield* referenceHeader('party-registry', otherKey.token));
+    expect(isInvalidError(yield* Effect.flip(wrongSignature.issue('party-registry')))).toBe(true);
+    const stale = yield* makeFixture('party-registry', GATEWAY_ASSERTION_VERSION, referenceScope, {
+      compositionRevision: 'f'.repeat(64),
+    });
+    const staleSource = yield* referenceSource(stale, yield* referenceHeader('party-registry', stale.token));
+    expect(isScopeError(yield* Effect.flip(staleSource.issue('party-registry')))).toBe(true);
+  }),
 );

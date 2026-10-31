@@ -8,10 +8,12 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
-  loadDatabaseConfig,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
+import {
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
@@ -143,9 +145,9 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
     }
     const urls: Record<string, string> = {};
     for (const identity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-      const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity }).pipe(
-        Effect.mapError(() => identityFailure('Canonical fixture identity configuration was unavailable')),
-      );
+      const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity })
+        .pipe(Effect.map(({ runtime }) => runtime))
+        .pipe(Effect.mapError(() => identityFailure('Canonical fixture identity configuration was unavailable')));
       const address = new URL(canonical.connectionString);
       if (
         canonical.database !== source.runtime.database ||
@@ -398,7 +400,10 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
       url: Redacted.make(nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL),
     }).pipe(Layer.provideMerge(Reactivity.layer)),
   );
-  const registrar = makeGatewayScopeGrantRegistrar(Context.get(issuerServices, PgClient.PgClient));
+  const registrar = makeGatewayScopeGrantRegistrar(
+    Context.get(issuerServices, PgClient.PgClient),
+    PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  );
   const transport = yield* Config.all({
     PATH: Config.String('PATH'),
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),

@@ -8,7 +8,9 @@ import {
 } from '@app/core-runtime';
 import type {
   OperationalScope,
-  ReadHandlerContext,
+  ReadLoadContext,
+  ReadFinishContext,
+  ScopedTransactionExecutor,
   ReadHandlerResult,
   ResolvedReadConditionalPermissionRequirement,
 } from '@app/core-runtime';
@@ -44,6 +46,7 @@ import type { PurchaseCurrencyPricingPortService } from '../../shared/domain/pur
 import { purchaseCurrencyPolicyPortForRepository } from '../integrations/purchase-currency-policy.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from '../integrations/purchase-currency-pricing.ts';
 import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
+import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
 
 export interface PurchaseCurrencyResolutionServices {
   /** Resolves Current Commerce policy, pricing support, and trusted purchasing context. */
@@ -58,7 +61,7 @@ export interface PurchaseCurrencyResolutionServices {
 
 const moduleKey = 'commerce.customer-context';
 
-/* oxlint-disable effect-native/no-dependency-parameters -- These owner-local ports are captured only inside the governed Read transaction; tracked in #333; remove when ReadServiceFactory supports transaction-scoped Layer construction. */
+/* oxlint-disable effect-native/no-dependency-parameters -- These owner-local domain ports are composed in the released Read finish phase; no scoped persistence service escapes SQL; tracked in #333. */
 const purchaseCurrencyResolutionServicesFromPorts = (
   scope: PurchaseCurrencyTrustedScope,
   contextPort: PurchaseCurrencyPurchasingContextPortService,
@@ -211,26 +214,21 @@ const completePurchaseCurrencyResolutionRead = (
     ? Effect.succeed({ evidence: { resultCount: 1 }, result })
     : Effect.fail(result);
 
-export const handlePurchaseCurrencyResolution = Effect.fn(
-  'PurchaseCurrencyResolutionRead.handlePurchaseCurrencyResolution',
-)(function* purchaseCurrencyResolutionReadEffect(
+const validatePurchaseCurrencyScope = Effect.fn('PurchaseCurrencyResolutionRead.validateScope')(function* validateScope(
   input: PurchaseCurrencyResolutionRequest,
-  context: ReadHandlerContext<PurchaseCurrencyResolutionServices>,
-): Effect.fn.Return<
-  ReadHandlerResult<PurchaseCurrencyResolutionResponse>,
-  PurchaseCurrencyDependencyUnavailable | PurchaseCurrencyResolutionFailure | ReadPermissionDenied
-> {
+  scope: OperationalScope,
+) {
   if (
-    input.purchasingContext.tenantId !== context.scope.tenantId ||
-    input.purchasingContext.sellingLegalEntityId !== context.scope.legalEntityId ||
-    (input.subject.kind === 'PROFILE' && input.subject.profileRef.tenantId !== context.scope.tenantId)
+    input.purchasingContext.tenantId !== scope.tenantId ||
+    input.purchasingContext.sellingLegalEntityId !== scope.legalEntityId ||
+    (input.subject.kind === 'PROFILE' && input.subject.profileRef.tenantId !== scope.tenantId)
   ) {
     return yield* new ReadPermissionDenied({
       code: 'read_permission_denied',
       reason: 'The purchase subject is outside the trusted Tenant context',
     });
   }
-  const storefrontId = context.scope.trustedStorefrontId;
+  const storefrontId = scope.trustedStorefrontId;
   if (storefrontId === undefined) {
     return yield* PurchaseCurrencyDependencyUnavailable.make({
       code: 'purchasing_context_unavailable',
@@ -244,6 +242,19 @@ export const handlePurchaseCurrencyResolution = Effect.fn(
       reason: 'The requested Storefront differs from the trusted operational context',
     });
   }
+  return yield* Effect.void;
+});
+
+export const handlePurchaseCurrencyResolution = Effect.fn(
+  'PurchaseCurrencyResolutionRead.handlePurchaseCurrencyResolution',
+)(function* purchaseCurrencyResolutionReadEffect(
+  input: PurchaseCurrencyResolutionRequest,
+  context: ReadLoadContext<PurchaseCurrencyResolutionServices>,
+): Effect.fn.Return<
+  ReadHandlerResult<PurchaseCurrencyResolutionResponse>,
+  PurchaseCurrencyDependencyUnavailable | PurchaseCurrencyResolutionFailure | ReadPermissionDenied
+> {
+  yield* validatePurchaseCurrencyScope(input, context.scope);
   const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const current = yield* context.services.loadCurrent(input, observedAt);
   const result = resolvePurchaseCurrencyReadOutcome(input, current, observedAt);
@@ -321,6 +332,53 @@ export const purchaseCurrencyResolutionPermission = defineReadConditionalPermiss
   select: ({ subject }) => subject,
 });
 
+const currencySnapshotUnavailable = (cause?: unknown) =>
+  Object.defineProperty(
+    PurchaseCurrencyDependencyUnavailable.make({
+      code: 'currency_policy_unavailable',
+      reason: 'Current Purchase Currency policy changed or became unavailable during dependency resolution',
+      retryable: true,
+    }),
+    'cause',
+    { value: cause },
+  );
+
+const loadPurchaseCurrencyPolicySnapshot = Effect.fn('PurchaseCurrencyResolutionRead.loadPolicySnapshot')(
+  function* loadPolicySnapshot(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    input: PurchaseCurrencyResolutionRequest,
+  ) {
+    yield* validatePurchaseCurrencyScope(input, scope);
+    const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
+    return yield* repository.loadPurchaseCurrencyPolicyState.pipe(Effect.mapError(currencySnapshotUnavailable));
+  },
+);
+type PurchaseCurrencyPolicySnapshot = Effect.Success<ReturnType<typeof loadPurchaseCurrencyPolicySnapshot>>;
+
+/** The final owner transaction rejects changed policy generations and exact validity End boundaries. */
+export const verifyPurchaseCurrencyReadSnapshot = Effect.fn('PurchaseCurrencyResolutionRead.verifySnapshot')(
+  function* verifySnapshot(
+    loaded: PurchaseCurrencyPolicySnapshot,
+    current: PurchaseCurrencyPolicySnapshot,
+    response: PurchaseCurrencyResolutionResponse,
+    now: number,
+  ) {
+    if (stableRevision(current) !== stableRevision(loaded)) {
+      return yield* currencySnapshotUnavailable();
+    }
+    for (const boundary of [
+      response.evidence.policyCompleteness.nextApplicabilityBoundary,
+      response.evidence.pricingSupport.nextApplicabilityBoundary,
+    ]) {
+      if (boundary !== undefined && DateTime.toEpochMillis(DateTime.makeUnsafe(boundary)) <= now) {
+        return yield* currencySnapshotUnavailable();
+      }
+    }
+    return yield* Effect.void;
+  },
+);
+
 export const purchaseCurrencyResolutionRead = defineRead(
   {
     accessKind: 'detail',
@@ -339,45 +397,72 @@ export const purchaseCurrencyResolutionRead = defineRead(
     resultSchema: PurchaseCurrencyResolutionResponseSchema,
     schemaVersion: '1',
   },
-  handlePurchaseCurrencyResolution,
-  Effect.fn('PurchaseCurrencyResolutionRead.serviceFactory')(
-    function* purchaseCurrencyResolutionServiceFactory(transaction, scope, compositionRevision) {
-      if (compositionRevision === undefined) {
+  {
+    load: (
+      input: PurchaseCurrencyResolutionRequest,
+      context: ReadLoadContext<{
+        readonly load: (
+          input: PurchaseCurrencyResolutionRequest,
+        ) => ReturnType<typeof loadPurchaseCurrencyPolicySnapshot>;
+      }>,
+    ) => context.services.load(input),
+    finish: Effect.fn('PurchaseCurrencyResolutionRead.finish')(function* finish(
+      input: PurchaseCurrencyResolutionRequest,
+      context: ReadFinishContext<undefined, PurchaseCurrencyPolicySnapshot>,
+    ) {
+      const { compositionRevision, loaded, scope } = context;
+      const { legalEntityId, trustedStorefrontId } = scope;
+      if (compositionRevision === undefined || legalEntityId === undefined || trustedStorefrontId === undefined) {
         return yield* new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason: 'Cross-owner Read credentials require a verified composition revision',
+          reason:
+            'Purchase Currency Resolution requires a verified composition and trusted Legal Entity/Storefront scope',
         });
       }
-      if (scope.legalEntityId === undefined) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Purchase Currency Resolution requires a trusted Legal Entity scope',
-        });
-      }
-      const storefrontId = scope.trustedStorefrontId;
-      if (storefrontId === undefined) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Purchase Currency Resolution requires a trusted Storefront scope',
-        });
-      }
-      const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
       const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment({
         compositionRevision,
-        legalEntityId: scope.legalEntityId,
+        legalEntityId,
         requestCorrelation: scope.correlationId,
       });
-      return purchaseCurrencyResolutionServicesFromPorts(
-        {
-          legalEntityId: scope.legalEntityId,
-          storefrontId,
-          tenantId: scope.tenantId,
-        },
+      const services = purchaseCurrencyResolutionServicesFromPorts(
+        { legalEntityId, storefrontId: trustedStorefrontId, tenantId: scope.tenantId },
         contextPort,
-        purchaseCurrencyPolicyPortForRepository(repository),
+        purchaseCurrencyPolicyPortForRepository({ loadPurchaseCurrencyPolicyState: Effect.succeed(loaded) }),
         pricingPort,
       );
+      const response = yield* handlePurchaseCurrencyResolution(input, { ...context, services });
+      yield* context.transaction((transaction) =>
+        loadPurchaseCurrencyPolicySnapshot(transaction, scope, input).pipe(
+          Effect.flatMap((current) =>
+            DateTime.now.pipe(
+              Effect.flatMap((now) =>
+                verifyPurchaseCurrencyReadSnapshot(loaded, current, response.result, DateTime.toEpochMillis(now)),
+              ),
+            ),
+          ),
+        ),
+      );
+      return response;
+    }),
+  },
+  Effect.fn('PurchaseCurrencyResolutionRead.serviceFactory')(
+    function* makeSnapshotServices(transaction, scope, compositionRevision) {
+      if (
+        compositionRevision === undefined ||
+        scope.legalEntityId === undefined ||
+        scope.trustedStorefrontId === undefined
+      ) {
+        return yield* new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason:
+            'Purchase Currency Resolution requires a verified composition and trusted Legal Entity/Storefront scope',
+        });
+      }
+      return {
+        load: (input: PurchaseCurrencyResolutionRequest) =>
+          loadPurchaseCurrencyPolicySnapshot(transaction, scope, input),
+      };
     },
   ),
   purchaseCurrencyResolutionPermission,

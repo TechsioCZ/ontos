@@ -1,13 +1,13 @@
 /// <reference types="node" />
+import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 import { PgClient } from '@effect/sql-pg';
-import { Array as EffectArray, Effect, Order, Predicate } from 'effect';
-import type { Redacted } from 'effect';
+import { Array as EffectArray, Effect, Order, Predicate, Redacted, Schema } from 'effect';
+import type { Reactivity } from 'effect/reactivity';
 
-import {
-  DATABASE_IDENTITIES,
-  SHARED_RUNTIME_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+import type { DatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
+
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type {
   DatabaseIdentity,
   DatabaseRoleGrants,
@@ -20,6 +20,7 @@ import {
   quoteIdentifier,
   runtimeRoleQueryFailure,
 } from './database-login-roles.mts';
+import type { DatabaseLoginCredentials } from './database-login-roles.mts';
 import { DATABASE_ROLE_GRANT_MANIFEST, TRUST_ROUTINES } from './database-role-manifest.mts';
 import type { DatabaseRoleGrantManifestEntry } from './database-role-manifest.mts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from './runtime-role-grants.mts';
@@ -34,7 +35,29 @@ const TRUST_TABLES = [
 ] as const;
 const RUNTIME_ROLES = DATABASE_IDENTITIES.map(({ role }) => role);
 const runtimeRoleList = RUNTIME_ROLES.map(quoteIdentifier).join(', ');
-const SHARED_RUNTIME_SCHEMAS = ['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'] as const;
+const SHARED_RUNTIME_SCHEMAS = [
+  'core',
+  'auth',
+  'catalog',
+  'inventory',
+  'tax',
+  'privacy',
+  'property_portfolio',
+  'property_leasing',
+  'legal_agreements',
+  'work_tasks',
+  'demo_workforce',
+  'demo_tagging',
+  'demo_crm',
+  'demo_sales_pipeline',
+  'demo_merchandise',
+  'demo_email',
+  'facility_operations',
+  'demo_sales_insights',
+  'finance_billing',
+  'crm_activities',
+  'projects',
+] as const;
 
 export interface ExplicitManifestEntry {
   readonly grants: DatabaseRoleGrants;
@@ -110,16 +133,19 @@ const textArrayLiteral = (values: readonly string[]): string => `{${values.map(t
 
 const qualifiedRelation = (relation: string): string => relation.split('.').map(quoteIdentifier).join('.');
 
-/** A column list narrows SELECT, INSERT or UPDATE; DELETE always applies to the whole table. */
-const tableGrantTarget = (privilege: DatabaseTablePrivilege, columns: DatabaseTableGrant['columns']): string => {
+/** Missing migration columns are skipped without widening a column grant to the whole table. */
+export const tableGrantTarget = (
+  privilege: DatabaseTablePrivilege,
+  columns: DatabaseTableGrant['columns'],
+  existingColumns: readonly string[],
+): string | undefined => {
   const columnList = privilege === 'delete' ? undefined : columns?.[privilege];
-  return columnList === undefined ? privilege : `${privilege} (${columnList.map(quoteIdentifier).join(', ')})`;
+  if (columnList === undefined) {
+    return privilege;
+  }
+  const present = columnList.filter((column) => existingColumns.includes(column));
+  return present.length === 0 ? undefined : `${privilege} (${present.map(quoteIdentifier).join(', ')})`;
 };
-
-const grantTablePrivilege =
-  (client: PgClient.PgClient, table: string, columns: DatabaseTableGrant['columns'], role: string) =>
-  (privilege: DatabaseTablePrivilege): Effect.Effect<readonly object[], RuntimeRoleBootstrapError> =>
-    query(client, `grant ${tableGrantTarget(privilege, columns)} on table ${qualifiedRelation(table)} to ${role}`);
 
 const roleSettingStatement = (role: string, setting: string): string => {
   const separator = setting.indexOf('=');
@@ -131,23 +157,18 @@ export const bootstrapFailure = (reason: string): RuntimeRoleBootstrapError =>
 
 export const connectAdmin = (connectionString: Redacted.Redacted) =>
   PgClient.makeClient({ url: connectionString }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new RuntimeRoleBootstrapError({
-          reason: `Unable to connect to the administrative PostgreSQL database: ${cause.message}`,
-        }),
-    ),
+    Effect.mapError(() => bootstrapFailure('Unable to connect to the administrative PostgreSQL database')),
   );
 
 const resetLoginRole = (
   client: PgClient.PgClient,
   database: string,
   entry: DatabaseRoleGrantManifestEntry,
-  password: Redacted.Redacted,
+  credentials: DatabaseLoginCredentials,
 ): Effect.Effect<void, RuntimeRoleBootstrapError> =>
   Effect.gen(function* resetLoginRoleEffect() {
     const { role } = entry.identity;
-    yield* ensureDatabaseLoginRole(client, { database, password, role });
+    yield* ensureDatabaseLoginRole(client, { credentials, database, role });
     const memberships = yield* query<{ granted_role: string; grantor: string; member: string }>(
       client,
       `select granted.rolname as granted_role, member_role.rolname as member, grantor.rolname as grantor
@@ -214,14 +235,23 @@ export const grantSharedRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
-    // Restore the Catalog redemption ledger's owner migration grants after broad shared-schema grants.
-    if (yield* exists(client, tableExistsQuery, 'catalog.gateway_assertion_redemptions')) {
-      yield* query(client, 'revoke all on table catalog.gateway_assertion_redemptions from public, ontos_runtime');
-      yield* query(
-        client,
-        'grant select, insert, delete on table catalog.gateway_assertion_redemptions to ontos_runtime',
-      );
-    }
+    // Restore every shared owner's redemption ledger to its owner migration grants after broad shared-schema grants:
+    // replay receipts allow insertion and expiry pruning, never alteration of a redeemed assertion.
+    yield* Effect.forEach(
+      sharedRuntimeGrantedSchemas(entry),
+      (schema) =>
+        Effect.gen(function* restoreRedemptionLedgerGrantsEffect() {
+          const redemptions = `${schema}.gateway_assertion_redemptions`;
+          if (yield* exists(client, tableExistsQuery, redemptions)) {
+            yield* query(client, `revoke all on table ${qualifiedRelation(redemptions)} from public, ontos_runtime`);
+            yield* query(
+              client,
+              `grant select, insert, delete on table ${qualifiedRelation(redemptions)} to ontos_runtime`,
+            );
+          }
+        }),
+      { concurrency: 1, discard: true },
+    );
     // Privacy's immutable ledgers must retain the restrictions installed by their owner migrations.
     const privacyLedgers = yield* query<{ table_name: string }>(
       client,
@@ -329,10 +359,31 @@ export const grantExplicitRole = (
       ({ columns, privileges, table }) =>
         Effect.gen(function* grantExplicitTableEffect() {
           if (yield* exists(client, tableExistsQuery, table)) {
-            yield* Effect.forEach(privileges, grantTablePrivilege(client, table, columns, role), {
-              concurrency: 1,
-              discard: true,
-            });
+            const attributes =
+              columns === undefined
+                ? []
+                : yield* query<{ attname: string }>(
+                    client,
+                    `select attname from pg_catalog.pg_attribute
+                where attrelid = pg_catalog.to_regclass($1) and attnum > 0 and not attisdropped`,
+                    [table],
+                  );
+            const existingColumns: string[] = [];
+            for (const { attname } of attributes) {
+              existingColumns.push(attname);
+            }
+            const targets: string[] = [];
+            for (const privilege of privileges) {
+              const target = tableGrantTarget(privilege, columns, existingColumns);
+              if (target !== undefined) {
+                targets.push(target);
+              }
+            }
+            // One GRANT accepts the same per-privilege column lists. Keep this inside the
+            // existing bootstrap transaction, after revocation and before exact assertions.
+            if (targets.length > 0) {
+              yield* query(client, `grant ${targets.join(', ')} on table ${qualifiedRelation(table)} to ${role}`);
+            }
           }
         }),
       { concurrency: 1, discard: true },
@@ -441,6 +492,7 @@ export const assertLoginRole = (
     const { role } = entry.identity;
     const [attributes] = yield* query<{
       rolbypassrls: boolean;
+      rolcanlogin: boolean;
       rolcreatedb: boolean;
       rolcreaterole: boolean;
       rolinherit: boolean;
@@ -448,12 +500,13 @@ export const assertLoginRole = (
       rolsuper: boolean;
     }>(
       client,
-      `select rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication, rolinherit
+      `select rolsuper, rolbypassrls, rolcanlogin, rolcreatedb, rolcreaterole, rolreplication, rolinherit
          from pg_catalog.pg_roles where rolname = $1`,
       [role],
     );
     if (
       attributes === undefined ||
+      !attributes.rolcanlogin ||
       attributes.rolsuper ||
       attributes.rolbypassrls ||
       attributes.rolcreatedb ||
@@ -593,7 +646,7 @@ const assertManifestPrivilegesPresent = (
           select pg_catalog.regexp_match(expected, '^([^.]+[.][^.]+)[.]([^:]+):(.+)$') as part
         ) as parsed
         cross join lateral (select pg_catalog.to_regclass(parsed.part[1]) as relation) as target
-         left join pg_catalog.pg_attribute as attribute
+         join pg_catalog.pg_attribute as attribute
            on attribute.attrelid = target.relation and attribute.attname = parsed.part[2]
           and attribute.attnum > 0 and not attribute.attisdropped
         where target.relation is not null
@@ -740,22 +793,157 @@ export const assertExplicitRole = (
     yield* assertManifestPrivilegesPresent(client, { grants, identity });
   });
 
-export const bootstrapRuntimeRoles = (
+/** Post-migration readiness must reject missing objects that the pre-migration bootstrap may skip. */
+export const assertDatabaseRoleManifestComplete = (
+  client: PgClient.PgClient,
+): Effect.Effect<void, RuntimeRoleBootstrapError> =>
+  Effect.gen(function* assertDatabaseRoleManifestCompleteEffect() {
+    const tables = [
+      ...new Set([
+        ...TRUST_TABLES,
+        ...explicitEntries.flatMap(({ grants }) => grants.tables.map(({ table }) => table)),
+      ]),
+    ];
+    const sequences = [
+      ...new Set(explicitEntries.flatMap(({ grants }) => grants.sequences.map(({ sequence }) => sequence))),
+    ];
+    const routines = [
+      ...new Set([
+        ...TRUST_ROUTINES.map(({ signature }) => signature),
+        ...explicitEntries.flatMap(({ grants }) => grants.routines),
+      ]),
+    ];
+    const columns = [
+      ...new Set(
+        explicitEntries.flatMap(({ grants }) =>
+          grantedColumnPrivileges(grants).map((grant) => grant.slice(0, grant.indexOf(':'))),
+        ),
+      ),
+    ];
+    yield* failWhenRowsExist<{ object_name: string }>(
+      client,
+      `select expected as object_name from pg_catalog.unnest($1::text[]) as expected
+        where not exists (select 1 from pg_catalog.pg_class where oid = pg_catalog.to_regclass(expected) and relkind in ('r', 'p'))
+       union all
+       select expected from pg_catalog.unnest($2::text[]) as expected
+        where not exists (select 1 from pg_catalog.pg_class where oid = pg_catalog.to_regclass(expected) and relkind = 'S')
+       union all
+       select expected from pg_catalog.unnest($3::text[]) as expected
+        where pg_catalog.to_regprocedure(expected) is null
+       union all
+       select expected from pg_catalog.unnest($4::text[]) as expected
+        cross join lateral (
+          select pg_catalog.regexp_match(expected, '^([^.]+[.][^.]+)[.]([^.]+)$') as part
+        ) as parsed
+        where not exists (
+          select 1 from pg_catalog.pg_attribute as attribute
+           where attribute.attrelid = pg_catalog.to_regclass(parsed.part[1])
+             and attribute.attname = parsed.part[2] and attribute.attnum > 0 and not attribute.attisdropped
+        )
+       order by 1`,
+      [textArrayLiteral(tables), textArrayLiteral(sequences), textArrayLiteral(routines), textArrayLiteral(columns)],
+      (rows) =>
+        `Required database role manifest objects are missing: ${rows.map(({ object_name }) => object_name).join(', ')}`,
+    );
+    const audiences = yield* query<{ audience: string; role_name: string }>(
+      client,
+      'select audience, role_name::text from trust.gateway_audience_roles order by audience',
+    );
+    if (
+      audiences.length !== 1 ||
+      audiences[0]?.audience !== 'party-registry' ||
+      audiences[0]?.role_name !== 'party_registry_runtime'
+    ) {
+      yield* bootstrapFailure(
+        'trust.gateway_audience_roles must contain exactly party-registry -> party_registry_runtime',
+      );
+    }
+    for (const entry of DATABASE_ROLE_GRANT_MANIFEST) {
+      yield* assertLoginRole(client, entry);
+    }
+    for (const entry of explicitEntries) {
+      yield* assertExplicitRole(client, entry);
+    }
+  });
+
+/** Extension views can expose assertion-bearing SQL even without a direct role grant. */
+export const revokePublicStatementStatistics = (
+  client: PgClient.PgClient,
+): Effect.Effect<void, RuntimeRoleBootstrapError> =>
+  Effect.forEach(
+    ['public.pg_stat_statements', 'public.pg_stat_statements_info'],
+    (relation) =>
+      Effect.gen(function* revokeStatisticsEffect() {
+        if (yield* exists(client, tableExistsQuery, relation)) {
+          yield* query(client, `revoke select on table ${qualifiedRelation(relation)} from public`);
+        }
+      }),
+    { concurrency: 1, discard: true },
+  );
+
+export const RuntimeRoleBootstrapModeSchema = Schema.Literals(['reconcile', 'initialize-local']);
+export type RuntimeRoleBootstrapMode = typeof RuntimeRoleBootstrapModeSchema.Type;
+
+/** Check the complete manifest, not just whichever credentials the caller supplied. No writes or transaction here. */
+const preflightProtectedLogins = (client: PgClient.PgClient, connections: DatabaseIdentityConnections) =>
+  Effect.gen(function* preflightProtectedLoginsEffect() {
+    for (const { identity } of explicitEntries) {
+      if (
+        !(yield* exists(
+          client,
+          'select exists(select 1 from pg_catalog.pg_roles where rolname = $1) as exists',
+          identity.role,
+        ))
+      ) {
+        return yield* bootstrapFailure(`Protected PostgreSQL role ${identity.role} is missing`);
+      }
+    }
+    for (const { identity } of explicitEntries) {
+      const connection = connections.runtime[identity.id];
+      if (connection === undefined) {
+        return yield* bootstrapFailure(`The protected ${identity.urlKey} connection is unavailable`);
+      }
+      yield* Effect.gen(function* authenticateProtectedLogin() {
+        const login = yield* PgClient.makeClient({
+          connectTimeout: '10 seconds',
+          url: Redacted.make(connection.connectionString),
+        });
+        const [session] = yield* login.unsafe<{ database: string; role: string }>(
+          'select current_database() as database, session_user as role',
+        );
+        if (session?.database !== connections.admin.database || session.role !== identity.role) {
+          return yield* bootstrapFailure('Unexpected PostgreSQL login identity or database');
+        }
+        return yield* Effect.void;
+      }).pipe(
+        Effect.scoped,
+        Effect.mapError(() =>
+          bootstrapFailure(
+            `Unable to authenticate the protected ${identity.urlKey} connection to its intended database`,
+          ),
+        ),
+      );
+    }
+    return yield* Effect.void;
+  });
+
+const applyRuntimeRoleBootstrap = (
   client: PgClient.PgClient,
   database: string,
-  passwords: ReadonlyMap<string, Redacted.Redacted>,
+  credentials: ReadonlyMap<string, DatabaseLoginCredentials>,
 ): Effect.Effect<void, RuntimeRoleBootstrapError> =>
-  Effect.gen(function* bootstrapRuntimeRolesEffect() {
+  Effect.gen(function* applyRuntimeRoleBootstrapEffect() {
     yield* Effect.forEach(
       DATABASE_ROLE_GRANT_MANIFEST,
       (entry) => {
-        const password = passwords.get(entry.identity.role);
-        return password === undefined
-          ? Effect.fail(bootstrapFailure(`Missing the ${entry.identity.urlKey} password for ${entry.identity.role}`))
-          : resetLoginRole(client, database, entry, password);
+        const login = credentials.get(entry.identity.role);
+        return login === undefined
+          ? Effect.fail(bootstrapFailure(`Missing the ${entry.identity.urlKey} credential policy`))
+          : resetLoginRole(client, database, entry, login);
       },
       { concurrency: 1, discard: true },
     );
+    yield* revokePublicStatementStatistics(client);
     const quotedDatabase = quoteIdentifier(database);
     yield* query(client, `revoke temporary on database ${quotedDatabase} from public`);
     yield* query(client, `revoke temporary, create on database ${quotedDatabase} from ${runtimeRoleList}`);
@@ -779,7 +967,35 @@ export const bootstrapRuntimeRoles = (
     });
   }).pipe(
     client.withTransaction,
-    Effect.mapError((failure) =>
-      Predicate.isTagged(failure, 'SqlError') ? runtimeRoleQueryFailure(failure) : failure,
-    ),
+    Effect.mapError((failure) => (Predicate.isTagged(failure, 'SqlError') ? runtimeRoleQueryFailure() : failure)),
   );
+
+export const bootstrapRuntimeRoles = (
+  client: PgClient.PgClient,
+  connections: DatabaseIdentityConnections,
+  passwords: ReadonlyMap<string, Redacted.Redacted>,
+  mode: RuntimeRoleBootstrapMode,
+): Effect.Effect<void, RuntimeRoleBootstrapError, Reactivity.Reactivity> =>
+  Effect.gen(function* bootstrapRuntimeRolesEffect() {
+    if (mode === 'initialize-local') {
+      if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(connections.admin.host)) {
+        return yield* bootstrapFailure('PostgreSQL role initialization requires a local database');
+      }
+    } else {
+      yield* preflightProtectedLogins(client, connections);
+    }
+    const credentials = new Map<string, DatabaseLoginCredentials>();
+    for (const entry of DATABASE_ROLE_GRANT_MANIFEST) {
+      if (mode === 'reconcile' && entry.kind === 'explicit') {
+        credentials.set(entry.identity.role, { kind: 'existing' });
+      } else {
+        const password = passwords.get(entry.identity.role);
+        if (password === undefined) {
+          return yield* bootstrapFailure(`Missing the ${entry.identity.urlKey} password for ${entry.identity.role}`);
+        }
+        credentials.set(entry.identity.role, { kind: 'password', password });
+      }
+    }
+    yield* applyRuntimeRoleBootstrap(client, connections.admin.database, credentials);
+    return yield* Effect.void;
+  });

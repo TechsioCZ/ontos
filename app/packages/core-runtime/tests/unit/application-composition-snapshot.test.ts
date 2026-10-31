@@ -1,12 +1,24 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { DateTime, Effect, Fiber, Schema } from 'effect';
+import { Context, DateTime, Effect, Fiber, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
 import { expect, it, rstest } from 'effect-rstest';
 
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
-import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
+  ProcessCompositionValidationLive,
+  validateActiveApplicationCompositionSnapshot,
+} from '../../src/modules/active-application-composition.ts';
+import { ProcessCompositionValidation } from '../../src/modules/process-composition-validation.ts';
+import {
+  ActiveApplicationCompositionSource,
+  requestScopedActiveApplicationCompositionSource,
+} from '../../src/modules/active-application-composition-source-service.ts';
+import { ActiveApplicationCompositionSourceReadError } from '../../src/modules/active-application-composition-source-errors.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import {
   ApplicationCompositionSchema,
@@ -17,7 +29,7 @@ import {
 const observedAt = '2026-10-02T12:00:00.000Z';
 const validUntil = '2026-10-02T12:00:01.000Z';
 
-const snapshot = (): ActiveApplicationCompositionSnapshot => {
+const snapshot = (buildMarker = 'shell-build-1'): ActiveApplicationCompositionSnapshot => {
   const composition = Schema.decodeSync(ApplicationCompositionSchema)({
     modules: [],
     revision: '0'.repeat(64),
@@ -25,7 +37,7 @@ const snapshot = (): ActiveApplicationCompositionSnapshot => {
     shell: {
       contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
       coreCapabilities: [],
-      deployment: { appId: 'shell-super-app', buildMarker: 'shell-build-1' },
+      deployment: { appId: 'shell-super-app', buildMarker },
       federationManifest: {
         sha256: 'a'.repeat(64),
         url: 'https://shell.example/releases/shell-build-1/mf-manifest.json',
@@ -46,6 +58,46 @@ const snapshot = (): ActiveApplicationCompositionSnapshot => {
     validUntil: Schema.decodeSync(Schema.DateTimeUtcFromString)(validUntil),
   };
 };
+
+it.effect('shares a wire observation only inside one request Layer build', () =>
+  Effect.gen(function* requestScopedSource() {
+    let reads = 0;
+    const sourceLive = Effect.sync(() => {
+      reads += 1;
+      return `observation-${reads}`;
+    }).pipe(requestScopedActiveApplicationCompositionSource, Layer.effect(ActiveApplicationCompositionSource));
+    const request = Layer.build(sourceLive).pipe(
+      Effect.flatMap((context) => {
+        const source = Context.get(context, ActiveApplicationCompositionSource);
+        return Effect.all([source.load, source.load], { concurrency: 2 });
+      }),
+      Effect.scoped,
+    );
+    expect(yield* request).toEqual(['observation-1', 'observation-1']);
+    expect(reads).toBe(1);
+    expect(yield* request).toEqual(['observation-2', 'observation-2']);
+    expect(reads).toBe(2);
+  }),
+);
+
+it.effect('a failed request observation cannot replace a fresh observation in the next request', () =>
+  Effect.gen(function* retryObservationInNextRequest() {
+    let reads = 0;
+    const sourceLive = Effect.suspend(() => {
+      reads += 1;
+      return reads === 1
+        ? Effect.fail(new ActiveApplicationCompositionSourceReadError({ reason: 'KV unavailable' }))
+        : Effect.succeed('new publication');
+    }).pipe(requestScopedActiveApplicationCompositionSource, Layer.effect(ActiveApplicationCompositionSource));
+    const request = Layer.build(sourceLive).pipe(
+      Effect.flatMap((context) => Context.get(context, ActiveApplicationCompositionSource).load),
+      Effect.scoped,
+    );
+    expect((yield* Effect.flip(request)).reason).toBe('KV unavailable');
+    expect(yield* request).toBe('new publication');
+    expect(reads).toBe(2);
+  }),
+);
 
 it.effect('accepts a complete empty installation while its authority is live', () =>
   Effect.gen(function* acceptLiveSnapshot() {
@@ -114,6 +166,166 @@ it.effect('owns immutable lease dates while preserving native DateTime operation
     expect(Reflect.set(expiresParts, 'second', 59)).toBe(false);
     expect(DateTime.toEpochMillis(output.observedAt)).toBe(Date.parse(observedAt));
     expect(DateTime.toEpochMillis(output.validUntil)).toBe(Date.parse(validUntil));
+  }),
+);
+
+it.effect('reuses only validator-owned snapshots and checks the lease again without hashing', () =>
+  Effect.gen(function* reuseValidatedSnapshot() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const digest = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digest.mockRestore()));
+    const input = snapshot();
+    const approved = yield* validateActiveApplicationCompositionSnapshot(input);
+    const digestCalls = digest.mock.calls.length;
+    expect(yield* validateActiveApplicationCompositionSnapshot(approved)).toBe(approved);
+    expect(digest).toHaveBeenCalledTimes(digestCalls);
+    // An injected object with the same revision is not trusted by identity.
+    expect(Reflect.set(input.composition.shell.deployment, 'buildMarker', 'changed-build')).toBe(true);
+    expect(yield* Effect.flip(validateActiveApplicationCompositionSnapshot(input))).toBeInstanceOf(
+      ActiveApplicationCompositionUnavailableError,
+    );
+    yield* TestClock.setTime(Date.parse(validUntil));
+    expect(yield* Effect.flip(validateActiveApplicationCompositionSnapshot(approved))).toBeInstanceOf(
+      ActiveApplicationCompositionUnavailableError,
+    );
+  }),
+);
+
+it.effect('reuses exact configured bytes across request Layers but never skips the source or its lease', () =>
+  Effect.gen(function* reuseConfiguredSnapshot() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const input = snapshot();
+    const encode = Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema));
+    const encoded = yield* encode(input);
+    let current = encoded;
+    let available = true;
+    let reads = 0;
+    const layer = ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        Layer.succeed(ActiveApplicationCompositionSource, {
+          load: Effect.suspend(() => {
+            reads += 1;
+            return available
+              ? Effect.succeed(current)
+              : Effect.fail(
+                  new ActiveApplicationCompositionSourceReadError({
+                    reason: 'source unavailable',
+                  }),
+                );
+          }),
+        }),
+      ),
+    );
+    const load = Effect.scoped(
+      Layer.build(layer).pipe(
+        Effect.flatMap((context) => Context.get(context, ActiveApplicationCompositionService).load),
+      ),
+    );
+    const first = yield* load;
+    expect(yield* load).toBe(first);
+    expect(reads).toBe(2);
+    current = yield* encode({
+      ...input,
+      composition: {
+        ...input.composition,
+        shell: {
+          ...input.composition.shell,
+          deployment: { ...input.composition.shell.deployment, buildMarker: 'tampered' },
+        },
+      },
+    });
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    current = encoded;
+    available = false;
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    available = true;
+    yield* TestClock.setTime(Date.parse(validUntil));
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    const digest = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digest.mockRestore()));
+    current = yield* encode({ ...input, validUntil: DateTime.makeUnsafe(Date.parse(validUntil) + 1000) });
+    const renewed = yield* load;
+    expect(renewed).not.toBe(first);
+    expect(renewed.composition).toBe(first.composition);
+    expect(digest).not.toHaveBeenCalled();
+    expect(renewed.composition.revision).toBe(first.composition.revision);
+    expect(yield* load).toBe(renewed);
+    expect(reads).toBe(7);
+  }),
+);
+
+it.effect('a native process validates concurrent owner observations once and still checks every source and lease', () =>
+  Effect.gen(function* shareNativeValidation() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const input = {
+      ...snapshot('process-cache-build'),
+      validUntil: DateTime.makeUnsafe(Date.parse(validUntil) + 10_000),
+    };
+    const encode = Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema));
+    let current = yield* encode(input);
+    let reads = 0;
+    const previous = globalThis.ontosProcessCompositionValidation;
+    const registry = Context.get(yield* Layer.build(ProcessCompositionValidationLive), ProcessCompositionValidation);
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        globalThis.ontosProcessCompositionValidation = registry;
+      }),
+      () =>
+        Effect.sync(() => {
+          globalThis.ontosProcessCompositionValidation = previous;
+        }),
+    );
+    const digest = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digest.mockRestore()));
+    const layer = ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        Layer.succeed(ActiveApplicationCompositionSource, {
+          load: Effect.sync(() => {
+            reads += 1;
+            return current;
+          }),
+        }),
+      ),
+    );
+    const load = Layer.build(layer).pipe(
+      Effect.flatMap((context) => Context.get(context, ActiveApplicationCompositionService).load),
+      Effect.scoped,
+    );
+    const owners = yield* Effect.all(
+      Array.from({ length: 27 }, () => load),
+      { concurrency: 'unbounded' },
+    );
+    const [first] = owners;
+    expect(first).toBeDefined();
+    expect(owners.every((owner) => owner === first)).toBe(true);
+    expect(reads).toBe(27);
+    expect(digest).toHaveBeenCalledTimes(1);
+    if (first === undefined) {
+      return;
+    }
+    expect(yield* validateActiveApplicationCompositionSnapshot(first)).toBe(first);
+    expect(digest).toHaveBeenCalledTimes(1);
+
+    // A matching revision does not admit edited bytes, even while another observation is cached.
+    current = yield* encode({
+      ...input,
+      composition: {
+        ...input.composition,
+        shell: {
+          ...input.composition.shell,
+          deployment: { ...input.composition.shell.deployment, buildMarker: 'not-approved' },
+        },
+      },
+    });
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    current = yield* encode(input);
+    expect(yield* load).toBe(first);
+    yield* TestClock.setTime(DateTime.toEpochMillis(input.validUntil));
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    expect(yield* Effect.flip(validateActiveApplicationCompositionSnapshot(first))).toBeInstanceOf(
+      ActiveApplicationCompositionUnavailableError,
+    );
+    expect(reads).toBe(30);
   }),
 );
 

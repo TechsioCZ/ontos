@@ -1,6 +1,6 @@
 import { AsyncResource } from 'node:async_hooks';
 
-import type { BetterAuthOptions, DBPrimitive } from 'better-auth';
+import type { BetterAuthOptions, DBPrimitive, JoinConfig } from 'better-auth';
 import { createAdapterFactory } from 'better-auth/adapters';
 import type {
   AdapterFactoryConfig,
@@ -33,8 +33,14 @@ import {
 import type { AnyRelations, SQL, SQLWrapper } from 'drizzle-orm';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { Effect, flow, Predicate, Schema } from 'effect';
+import { Effect, flow, Option, Predicate, Schema } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
+
+import { ConsumedRowSchema, EffectDrizzleAuthTransactionHooks } from './transaction-hooks.ts';
+import type { EffectDrizzleAuthTransaction } from './transaction-hooks.ts';
+
+export { EffectDrizzleAuthTransactionHooks } from './transaction-hooks.ts';
+export type { EffectDrizzleAuthTransaction } from './transaction-hooks.ts';
 
 /** A Better Auth model or field that the Drizzle tables passed to the adapter do not declare. */
 export class EffectDrizzleAuthAdapterSchemaError extends Schema.TaggedError<EffectDrizzleAuthAdapterSchemaError>()(
@@ -206,145 +212,209 @@ const incrementAssignments = Effect.fnUntraced(function* incrementAssignments(
   return Object.fromEntries(entries);
 });
 
+interface OneToOneJoin {
+  readonly condition: SQL;
+  readonly key: string;
+  readonly table: PgTable;
+}
+
+/** A row and the rows Better Auth joined to it, each under the joined model's key; absent rows come back as null. */
+const selection = (fields: Record<string, PgColumn>, joins: readonly OneToOneJoin[]) => ({
+  ...fields,
+  ...Object.fromEntries(joins.map(({ key, table }) => [key, getColumns(table)])),
+});
+
 /** The adapter's operations as Effects over one executor: the root database or an open transaction. */
-const makeOperations = (tables: EffectDrizzleAuthTables, executor: Executor) => (getFieldName: FieldName) => {
-  const resolve = resolveModel(tables, getFieldName);
-  const firstMatchingId = Effect.fnUntraced(function* firstMatchingId(target: ModelTable, where: CleanedWhere[]) {
-    // Both are pure schema lookups.
-    const [id, condition] = yield* Effect.all([target.column('id'), whereCondition(target, where)], {
-      concurrency: 1,
-    });
-    return { id, rows: executor.select({ id }).from(target.table).where(condition).limit(1) };
-  });
-  return {
-    consumeOne: Effect.fn('EffectDrizzleAuthAdapter.consumeOne')(function* consumeOne(query: {
-      model: string;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(query.model);
-      const { id, rows } = yield* firstMatchingId(target, query.where);
-      const [row] = yield* executor.delete(target.table).where(inArray(id, rows)).returning();
-      return row ?? null;
-    }),
-    count: Effect.fn('EffectDrizzleAuthAdapter.count')(function* countRows(query: {
-      model: string;
-      where?: CleanedWhere[] | undefined;
-    }) {
-      const target = yield* resolve(query.model);
-      const [row] = yield* executor
-        .select({ total: count() })
-        .from(target.table)
-        .where(yield* whereCondition(target, query.where));
-      return row?.total ?? 0;
-    }),
-    create: Effect.fn('EffectDrizzleAuthAdapter.create')(function* create(mutation: { data: Row; model: string }) {
-      const target = yield* resolve(mutation.model);
-      yield* Effect.forEach(Object.keys(mutation.data), target.column, { concurrency: 1, discard: true });
-      const [row] = yield* executor.insert(target.table).values(mutation.data).returning();
-      return row;
-    }),
-    delete: Effect.fn('EffectDrizzleAuthAdapter.delete')(function* deleteRows(mutation: {
-      model: string;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(mutation.model);
-      yield* executor.delete(target.table).where(yield* whereCondition(target, mutation.where));
-    }),
-    deleteMany: Effect.fn('EffectDrizzleAuthAdapter.deleteMany')(function* deleteMany(mutation: {
-      model: string;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(mutation.model);
-      const id = yield* target.column('id');
-      const rows = yield* executor
-        .delete(target.table)
-        .where(yield* whereCondition(target, mutation.where))
-        .returning({ id });
-      return rows.length;
-    }),
-    findMany: Effect.fn('EffectDrizzleAuthAdapter.findMany')(function* findMany(query: {
-      limit: number;
-      model: string;
-      offset?: number | undefined;
-      select?: string[] | undefined;
-      sortBy?: { direction: 'asc' | 'desc'; field: string } | undefined;
-      where?: CleanedWhere[] | undefined;
-    }) {
-      const target = yield* resolve(query.model);
-      const rows = executor
-        .select(yield* projection(target, query.select))
-        .from(target.table)
-        .where(yield* whereCondition(target, query.where))
-        .limit(query.limit)
-        .offset(query.offset ?? 0);
-      const { sortBy } = query;
-      if (sortBy === undefined) {
-        return yield* rows;
-      }
-      const column = yield* target.column(sortBy.field);
-      return yield* rows.orderBy(sortBy.direction === 'desc' ? desc(column) : asc(column));
-    }),
-    findOne: Effect.fn('EffectDrizzleAuthAdapter.findOne')(function* findOne(query: {
-      model: string;
-      select?: string[] | undefined;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(query.model);
-      const [row] = yield* executor
-        .select(yield* projection(target, query.select))
-        .from(target.table)
-        .where(yield* whereCondition(target, query.where))
-        .limit(1);
-      return row ?? null;
-    }),
-    incrementOne: Effect.fn('EffectDrizzleAuthAdapter.incrementOne')(function* incrementOne(mutation: {
-      increment: Record<string, number>;
-      model: string;
-      set?: Row | undefined;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(mutation.model);
-      // Both are pure schema lookups.
-      const [{ id, rows }, increments] = yield* Effect.all(
-        [firstMatchingId(target, mutation.where), incrementAssignments(target, mutation.increment)],
+const makeOperations =
+  (
+    tables: EffectDrizzleAuthTables,
+    {
+      afterConsume,
+      executor,
+    }: {
+      readonly afterConsume?: ((model: string, row: typeof ConsumedRowSchema.Type) => Effect.Effect<void>) | undefined;
+      readonly executor: Executor;
+    },
+  ) =>
+  (getFieldName: FieldName) => {
+    const resolve = resolveModel(tables, getFieldName);
+    /**
+     * The one-to-one joins of a read (a session's user) as LEFT JOINs of the same statement, so reading a session and its
+     * user is one database round trip. Better Auth's factory reads each joined row under its model key and fetches every
+     * join this leaves out (one-to-many) with its own query, exactly as without native joins.
+     */
+    const oneToOneJoins = Effect.fnUntraced(function* oneToOneJoins(
+      base: ModelTable,
+      fields: Record<string, PgColumn>,
+      join: JoinConfig | undefined,
+    ) {
+      const baseColumns = getColumns(base.table);
+      // Pure schema lookups; sequential keeps the joins in Better Auth's order.
+      const joins = yield* Effect.forEach(
+        Object.entries(join ?? {}),
+        Effect.fnUntraced(function* oneToOneJoin([key, config]) {
+          const joined = yield* resolve(key);
+          const from = baseColumns[config.on.from];
+          const to = getColumns(joined.table)[config.on.to];
+          if (from === undefined || to === undefined) {
+            return yield* schemaError(`Better Auth join "${key}" names a column its Drizzle tables do not declare`);
+          }
+          return config.relation === 'one-to-one' && joined.table !== base.table && !(key in fields)
+            ? [{ condition: eq(to, from), key, table: joined.table } satisfies OneToOneJoin]
+            : [];
+        }),
         { concurrency: 1 },
       );
-      const [row] = yield* executor
-        .update(target.table)
-        .set({ ...mutation.set, ...increments })
-        .where(inArray(id, rows))
-        .returning();
-      return row ?? null;
-    }),
-    update: Effect.fn('EffectDrizzleAuthAdapter.update')(function* update(mutation: {
-      model: string;
-      update: Row;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(mutation.model);
-      const [row] = yield* executor
-        .update(target.table)
-        .set(mutation.update)
-        .where(yield* whereCondition(target, mutation.where))
-        .returning();
-      return row ?? null;
-    }),
-    updateMany: Effect.fn('EffectDrizzleAuthAdapter.updateMany')(function* updateMany(mutation: {
-      model: string;
-      update: Row;
-      where: CleanedWhere[];
-    }) {
-      const target = yield* resolve(mutation.model);
-      const id = yield* target.column('id');
-      const rows = yield* executor
-        .update(target.table)
-        .set(mutation.update)
-        .where(yield* whereCondition(target, mutation.where))
-        .returning({ id });
-      return rows.length;
-    }),
+      return joins.flat();
+    });
+    const selectWithJoins = (target: ModelTable, fields: Record<string, PgColumn>, joins: readonly OneToOneJoin[]) => {
+      let query = executor.select(selection(fields, joins)).from(target.table).$dynamic();
+      for (const { condition, table } of joins) {
+        query = query.leftJoin(table, condition);
+      }
+      return query;
+    };
+    const firstMatchingId = Effect.fnUntraced(function* firstMatchingId(target: ModelTable, where: CleanedWhere[]) {
+      // Both are pure schema lookups.
+      const [id, condition] = yield* Effect.all([target.column('id'), whereCondition(target, where)], {
+        concurrency: 1,
+      });
+      return { id, rows: executor.select({ id }).from(target.table).where(condition).limit(1) };
+    });
+    return {
+      consumeOne: Effect.fn('EffectDrizzleAuthAdapter.consumeOne')(function* consumeOne(query: {
+        model: string;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(query.model);
+        const { id, rows } = yield* firstMatchingId(target, query.where);
+        const [row] = yield* executor.delete(target.table).where(inArray(id, rows)).returning();
+        if (row !== undefined && afterConsume !== undefined) {
+          yield* afterConsume(query.model, yield* Schema.decodeEffect(ConsumedRowSchema)(row));
+        }
+        return row ?? null;
+      }),
+      count: Effect.fn('EffectDrizzleAuthAdapter.count')(function* countRows(query: {
+        model: string;
+        where?: CleanedWhere[] | undefined;
+      }) {
+        const target = yield* resolve(query.model);
+        const [row] = yield* executor
+          .select({ total: count() })
+          .from(target.table)
+          .where(yield* whereCondition(target, query.where));
+        return row?.total ?? 0;
+      }),
+      create: Effect.fn('EffectDrizzleAuthAdapter.create')(function* create(mutation: { data: Row; model: string }) {
+        const target = yield* resolve(mutation.model);
+        yield* Effect.forEach(Object.keys(mutation.data), target.column, { concurrency: 1, discard: true });
+        const [row] = yield* executor.insert(target.table).values(mutation.data).returning();
+        return row;
+      }),
+      delete: Effect.fn('EffectDrizzleAuthAdapter.delete')(function* deleteRows(mutation: {
+        model: string;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(mutation.model);
+        yield* executor.delete(target.table).where(yield* whereCondition(target, mutation.where));
+      }),
+      deleteMany: Effect.fn('EffectDrizzleAuthAdapter.deleteMany')(function* deleteMany(mutation: {
+        model: string;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(mutation.model);
+        const id = yield* target.column('id');
+        const rows = yield* executor
+          .delete(target.table)
+          .where(yield* whereCondition(target, mutation.where))
+          .returning({ id });
+        return rows.length;
+      }),
+      findMany: Effect.fn('EffectDrizzleAuthAdapter.findMany')(function* findMany(query: {
+        join?: JoinConfig | undefined;
+        limit: number;
+        model: string;
+        offset?: number | undefined;
+        select?: string[] | undefined;
+        sortBy?: { direction: 'asc' | 'desc'; field: string } | undefined;
+        where?: CleanedWhere[] | undefined;
+      }) {
+        const target = yield* resolve(query.model);
+        const fields = yield* projection(target, query.select);
+        const joins = yield* oneToOneJoins(target, fields, query.join);
+        const rows = selectWithJoins(target, fields, joins)
+          .where(yield* whereCondition(target, query.where))
+          .limit(query.limit)
+          .offset(query.offset ?? 0);
+        const { sortBy } = query;
+        if (sortBy === undefined) {
+          return yield* rows;
+        }
+        const column = yield* target.column(sortBy.field);
+        return yield* rows.orderBy(sortBy.direction === 'desc' ? desc(column) : asc(column));
+      }),
+      findOne: Effect.fn('EffectDrizzleAuthAdapter.findOne')(function* findOne(query: {
+        join?: JoinConfig | undefined;
+        model: string;
+        select?: string[] | undefined;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(query.model);
+        const fields = yield* projection(target, query.select);
+        const joins = yield* oneToOneJoins(target, fields, query.join);
+        const [row] = yield* selectWithJoins(target, fields, joins)
+          .where(yield* whereCondition(target, query.where))
+          .limit(1);
+        return row ?? null;
+      }),
+      incrementOne: Effect.fn('EffectDrizzleAuthAdapter.incrementOne')(function* incrementOne(mutation: {
+        increment: Record<string, number>;
+        model: string;
+        set?: Row | undefined;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(mutation.model);
+        // Both are pure schema lookups.
+        const [{ id, rows }, increments] = yield* Effect.all(
+          [firstMatchingId(target, mutation.where), incrementAssignments(target, mutation.increment)],
+          { concurrency: 1 },
+        );
+        const [row] = yield* executor
+          .update(target.table)
+          .set({ ...mutation.set, ...increments })
+          .where(inArray(id, rows))
+          .returning();
+        return row ?? null;
+      }),
+      update: Effect.fn('EffectDrizzleAuthAdapter.update')(function* update(mutation: {
+        model: string;
+        update: Row;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(mutation.model);
+        const [row] = yield* executor
+          .update(target.table)
+          .set(mutation.update)
+          .where(yield* whereCondition(target, mutation.where))
+          .returning();
+        return row ?? null;
+      }),
+      updateMany: Effect.fn('EffectDrizzleAuthAdapter.updateMany')(function* updateMany(mutation: {
+        model: string;
+        update: Row;
+        where: CleanedWhere[];
+      }) {
+        const target = yield* resolve(mutation.model);
+        const id = yield* target.column('id');
+        const rows = yield* executor
+          .update(target.table)
+          .set(mutation.update)
+          .where(yield* whereCondition(target, mutation.where))
+          .returning({ id });
+        return rows.length;
+      }),
+    };
   };
-};
 
 type OperationsFor = ReturnType<typeof makeOperations>;
 
@@ -381,12 +451,19 @@ const factoryConfig = {
 /** The Better Auth adapter for one open transaction, running with that transaction's services. */
 const transactionAdapter = Effect.fnUntraced(function* transactionAdapter(
   tables: EffectDrizzleAuthTables,
-  transaction: Executor,
+  transaction: EffectDrizzleAuthTransaction,
   options: BetterAuthOptions,
 ) {
   const services = yield* Effect.context();
+  const hooks = Option.getOrUndefined(yield* Effect.serviceOption(EffectDrizzleAuthTransactionHooks));
   return createAdapterFactory({
-    adapter: promiseAdapter(makeOperations(tables, transaction), Effect.runPromiseWith(services)),
+    adapter: promiseAdapter(
+      makeOperations(tables, {
+        afterConsume: hooks === undefined ? undefined : (model, row) => hooks.afterConsume(transaction, model, row),
+        executor: transaction,
+      }),
+      Effect.runPromiseWith(services),
+    ),
     config: { ...factoryConfig, transaction: false },
   })(options);
 });
@@ -397,7 +474,7 @@ const transactionBody =
     options: BetterAuthOptions,
     body: (adapter: DBTransactionAdapter) => Promise<Result>,
   ) =>
-  (transaction: Executor) =>
+  (transaction: EffectDrizzleAuthTransaction) =>
     Effect.flatMap(transactionAdapter(tables, transaction, options), (adapter) =>
       // A rejected body must reach Better Auth unchanged (an APIError stays an APIError), so it
       // travels as the defect that rolls the transaction back and is rethrown by the runner.
@@ -421,8 +498,7 @@ export const makeEffectDrizzleAuthAdapter = Effect.fn('EffectDrizzleAuthAdapter.
   const runTransaction: <A>(effect: Effect.Effect<A, SqlError>) => ReturnType<typeof run<A, SqlError>> = run;
   return (options) => {
     const transaction = Effect.fnUntraced(function* betterAuthTransaction<Result>(
-      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Better Auth's transaction body is a Promise port by contract; this is its only conversion.
-      body: (adapter: DBTransactionAdapter) => Promise<Result>,
+      body: Parameters<typeof transactionBody<Result>>[2],
     ) {
       // The first step runs synchronously inside Better Auth's call. Its async context carries the
       // endpoint context that database hooks read, and it is lost once the connection wait resumes
@@ -430,7 +506,7 @@ export const makeEffectDrizzleAuthAdapter = Effect.fn('EffectDrizzleAuthAdapter.
       return yield* database.transaction(transactionBody(tables, options, AsyncResource.bind(body)));
     }, runTransaction);
     return createAdapterFactory({
-      adapter: promiseAdapter(makeOperations(tables, database), run),
+      adapter: promiseAdapter(makeOperations(tables, { executor: database }), run),
       config: { ...factoryConfig, transaction },
     })(options);
   };

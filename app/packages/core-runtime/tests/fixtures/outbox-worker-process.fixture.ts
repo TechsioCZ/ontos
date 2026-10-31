@@ -6,21 +6,24 @@ import { defineOutboxWorkerEntry, startOutboxWorkerHost } from '../../src/outbox
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 import { makeOutboxWorkerComposition, outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
+const processModuleKey = 'process.fixture';
+const producerModuleKey = 'producer.fixture';
+
 const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
 
 const registration = defineOutboxWorker(
   {
-    consumerModuleKey: 'process.fixture',
+    consumerModuleKey: processModuleKey,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'owner_local_background' },
       entrypointKey: 'process.fixture.lifecycle',
-      moduleKey: 'process.fixture',
+      moduleKey: processModuleKey,
       role: 'worker',
     }),
     leaseDurationMs: 1000,
     payloadSchema: Schema.Struct({ messageKey: MessageKey }),
-    producerModuleKey: 'producer.fixture',
+    producerModuleKey,
     retryPolicy: {
       initialBackoffMs: 0,
       maxAttempts: 1,
@@ -64,11 +67,11 @@ const subscriptions = extractOutboxWorkerSubscriptions([registration]);
 const composition = makeOutboxWorkerComposition([
   {
     ...expectedDeployment,
-    dependencies: ['producer.fixture'],
-    moduleId: 'process.fixture',
+    dependencies: [producerModuleKey],
+    moduleId: processModuleKey,
     subscriptions,
   },
-  { appId: 'producer-fixture', moduleId: 'producer.fixture' },
+  { appId: 'producer-fixture', moduleId: producerModuleKey },
 ]);
 
 startOutboxWorkerHost({

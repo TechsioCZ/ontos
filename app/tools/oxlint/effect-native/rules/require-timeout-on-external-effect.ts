@@ -47,6 +47,9 @@
  * not callbacks returning dormant Effect values or forked/cached lifetimes. Only later pipe
  * operators can bound newly added work. Effect.fn trailing operators count. D-tier finalizers
  * and server-local static import adapters are exempt; browser imports remain candidates.
+ * Native Promise.all batches containing only literal local/package imports also remain server
+ * module loaders, including a native Function.constant bridge. Mixed I/O, opaque loaders,
+ * mutated Promise.all and browser chunk loading do not establish this boundary.
  *
  * With the defaults (`requireTimeout: true`, `requireRetry: false`) any one of the six members
  * satisfies a site. `requireRetry: true` demands a retry member as well (and a timeout member too
@@ -82,8 +85,8 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { identityUnwrap, staticString, FUNCTION_TYPES } from '../shared/ast.ts';
-import { lookupVariable as lexicalVariable } from '../shared/bindings.ts';
+import { identityUnwrap, staticString, FUNCTION_TYPES, walk } from '../shared/ast.ts';
+import { lookupVariable as lexicalVariable, isUnshadowedGlobal } from '../shared/bindings.ts';
 import { bindingPath } from '../shared/effect-identity.ts';
 import { importedName } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
@@ -223,6 +226,109 @@ function returnedBody(thunk: ESTree.Node | null): ESTree.Node | null {
   if (body?.type !== 'BlockStatement') return body;
   if (body.body.length !== 1 || body.body[0]?.type !== 'ReturnStatement') return null;
   return body.body[0].argument;
+}
+
+function staticServerModule(node: ESTree.Node): boolean {
+  if (node.type !== 'ImportExpression' || node.options != null) return false;
+  const specifier = staticString(node.source);
+  return (
+    specifier !== null &&
+    (/^\.\.?\//u.test(specifier) || /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9._-]+)*$/iu.test(specifier))
+  );
+}
+
+function nativePromiseResolveReceiver(context: Context, call: ESTree.CallExpression): boolean {
+  const callee = identityUnwrap(call.callee);
+  if (
+    callee.type !== 'MemberExpression' ||
+    callee.computed ||
+    callee.property.type !== 'Identifier' ||
+    callee.property.name !== 'bind'
+  )
+    return false;
+  const resolve = callee.object;
+  return (
+    resolve.type === 'MemberExpression' &&
+    !resolve.computed &&
+    resolve.property.type === 'Identifier' &&
+    resolve.property.name === 'resolve' &&
+    isUnshadowedGlobal(context, resolve.object, 'Promise') &&
+    call.arguments[0]?.type === 'Identifier' &&
+    isUnshadowedGlobal(context, call.arguments[0], 'Promise')
+  );
+}
+
+/** A replaced Promise.all cannot establish the native local module-loader boundary. */
+function stablePromiseAll(context: Context): boolean {
+  let mutated = false;
+  walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (node) => {
+    let target =
+      node.type === 'AssignmentExpression'
+        ? node.left
+        : node.type === 'UpdateExpression'
+          ? node.argument
+          : node.type === 'UnaryExpression' && node.operator === 'delete'
+            ? node.argument
+            : null;
+    if (target?.type === 'MemberExpression' && staticString(target.property) === 'all') target = target.object;
+    if (
+      target?.type === 'MemberExpression' &&
+      !target.computed &&
+      target.property.type === 'Identifier' &&
+      target.property.name === 'all'
+    )
+      target = target.object;
+    if (target?.type === 'Identifier' && isUnshadowedGlobal(context, target, 'Promise')) mutated = true;
+    if (
+      node.type === 'VariableDeclarator' &&
+      node.init?.type === 'Identifier' &&
+      isUnshadowedGlobal(context, node.init, 'Promise')
+    )
+      mutated = true;
+    if (
+      (node.type === 'CallExpression' || node.type === 'NewExpression') &&
+      node.arguments.some(
+        (argument) => argument.type === 'Identifier' && isUnshadowedGlobal(context, argument, 'Promise'),
+      ) &&
+      !(node.type === 'CallExpression' && nativePromiseResolveReceiver(context, node))
+    )
+      mutated = true;
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression' &&
+      node.callee.property.type === 'Identifier' &&
+      ['assign', 'defineProperty', 'defineProperties', 'set'].includes(node.callee.property.name) &&
+      node.arguments.some(
+        (argument) => argument.type === 'Identifier' && isUnshadowedGlobal(context, argument, 'Promise'),
+      )
+    )
+      mutated = true;
+  });
+  return !mutated;
+}
+
+function staticServerImportBatch(context: Context, node: ESTree.Node, filename: string): boolean {
+  if (!/^(?:(?:apps|verticals)\/[^/]+\/api\/|packages\/[^/]+\/src\/server\/|packages\/core-runtime\/)/u.test(filename))
+    return false;
+  if (
+    node.type !== 'CallExpression' ||
+    node.optional ||
+    node.arguments.length !== 1 ||
+    node.callee.type !== 'MemberExpression' ||
+    node.callee.computed ||
+    node.callee.optional ||
+    node.callee.property.type !== 'Identifier' ||
+    node.callee.property.name !== 'all' ||
+    !isUnshadowedGlobal(context, node.callee.object, 'Promise')
+  )
+    return false;
+  const batch = node.arguments[0];
+  return (
+    batch?.type === 'ArrayExpression' &&
+    batch.elements.length > 0 &&
+    batch.elements.every((element) => element !== null && staticServerModule(element)) &&
+    stablePromiseAll(context)
+  );
 }
 
 export const rule = defineRule({
@@ -460,11 +566,23 @@ export const rule = defineRule({
       // D-tier server module-loading adapters, not browser chunk/network imports. This is a
       // boundary exemption, not a claim that imported modules cannot perform async work.
       if (!/(?:^packages\/core-runtime\/|\/api\/|\/server\/)/u.test(path)) return false;
-      let body = returnedBody(bridgeThunk(call));
+      const thunk = bridgeThunk(call);
+      let body = returnedBody(thunk);
+      if (
+        body === null &&
+        thunk?.type === 'CallExpression' &&
+        !thunk.optional &&
+        thunk.arguments.length === 1 &&
+        bindingPath(context, thunk.callee)?.join('.') === 'Function.constant'
+      )
+        body = thunk.arguments[0] ?? null;
       if (body === null) return false;
       body = identityUnwrap(body);
       if (body.type === 'AwaitExpression') body = identityUnwrap(body.argument);
-      return body.type === 'ImportExpression' && /^\.{1,2}\//u.test(staticString(body.source) ?? '');
+      return (
+        (body.type === 'ImportExpression' && /^\.{1,2}\//u.test(staticString(body.source) ?? '')) ||
+        staticServerImportBatch(context, body, path)
+      );
     };
     const report = (node: ESTree.Node, messageId: 'unboundedPromiseBridge' | 'unboundedHttpCall'): void => {
       const found = inspectAncestors(node);

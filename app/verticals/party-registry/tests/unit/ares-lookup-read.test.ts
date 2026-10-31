@@ -4,8 +4,8 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { FileSystem, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
-import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
-import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import {
   AresLookupApi,
   AresLookupAuthenticationProblemSchema,
@@ -86,18 +86,16 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
   suite.effect('passes trusted correlation to the private adapter and returns exactly one evidence result', () =>
     Effect.gen(function* aresLookupReadCase1() {
       const calls: unknown[] = [];
-      const result = yield* getReadHandler(aresLookupRead)(request, {
+      const result = yield* runReadOwnerSteps(aresLookupRead, request, {
         readKey: aresLookupRead.descriptor.readKey,
         scope,
-        services: {
-          lookup: (input) => {
+        services: {},
+      }).pipe(
+        Effect.provideService(AresSubjectService, {
+          subject: (input) => {
             calls.push(input);
             return Effect.succeed(evidence);
           },
-        },
-      }).pipe(
-        Effect.provideService(AresSubjectService, {
-          subject: () => Effect.die('The handler test supplies services directly'),
         }),
       );
 
@@ -159,15 +157,13 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
       const errors = yield* Effect.all(
         failures.map(([failure, expectedTag]) =>
           Effect.flip(
-            getReadHandler(aresLookupRead)(request, {
+            runReadOwnerSteps(aresLookupRead, request, {
               readKey: aresLookupRead.descriptor.readKey,
               scope,
-              services: { lookup: () => Effect.fail(failure) },
+              services: {},
             }),
           ).pipe(
-            Effect.provideService(AresSubjectService, {
-              subject: () => Effect.die('The handler test supplies services directly'),
-            }),
+            Effect.provideService(AresSubjectService, { subject: () => Effect.fail(failure) }),
             Effect.map((error) => ({ error, expectedTag })),
           ),
         ),

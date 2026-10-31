@@ -1,5 +1,9 @@
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
+import { DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -22,7 +26,9 @@ import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
+import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
+import { duplicateCandidateListReadApiLive } from './duplicate-candidate-list-read-server.ts';
 import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
@@ -74,6 +80,10 @@ const readShellOrigin = () => {
 const shellOrigin = readShellOrigin();
 
 const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY);
+const partyRegistryDatabaseIdentityEnrollmentLive = Layer.succeed(
+  DatabaseIdentityEnrollmentContext,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+);
 
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
@@ -86,13 +96,17 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(
+    Layer.mergeAll(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive, nodeCryptoLayer),
+  ),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
-  Layer.provide(partyRegistryDatabaseConfigLive),
+  Layer.provide(Layer.merge(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive)),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(
+    Layer.mergeAll(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive, nodeCryptoLayer),
+  ),
 );
 
 type PartyRegistryApiRuntimeArguments = readonly [
@@ -123,8 +137,11 @@ export const makePartyRegistryApiRuntime = (
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
-    partyRegistryCommandsLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    partyRegistryCommandRecoveryLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    // The commands and their commit recovery read the committed result through the governed Read runtime.
+    partyRegistryCommandsLive.pipe(Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive))),
+    partyRegistryCommandRecoveryLive.pipe(
+      Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
+    ),
     engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
     // <generated-governed-http-handler-layers>
     aresLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(aresSubjectService)),
@@ -134,7 +151,9 @@ export const makePartyRegistryApiRuntime = (
     ),
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    duplicateCandidateListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     guestPartyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     organizationEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

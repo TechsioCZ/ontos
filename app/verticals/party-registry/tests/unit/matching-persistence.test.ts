@@ -1,16 +1,25 @@
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
+import { ActionRuntime } from '@app/core-runtime';
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import type { SQL } from 'drizzle-orm';
-import { DateTime, Effect, Layer, Schema, Predicate } from 'effect';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { DateTime, Effect, Layer, Schema, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import { RetailEnrollmentEvidenceSchema } from '../../shared/actions/accept-retail-enrollment-evidence.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { acceptRetailEnrollmentEvidenceAction } from '../../src/actions/accept-retail-enrollment-evidence.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
@@ -28,6 +37,9 @@ import {
   caseEvaluationFingerprint,
   candidateFingerprint,
   createOrMatchParty,
+  acceptRetailEnrollmentEvidence,
+  findPartyCreateContinuation,
+  listDuplicateCandidateCases,
   matchParty,
   resolveDuplicateCandidateCreate,
   resolveDuplicateCandidateMatch,
@@ -113,6 +125,8 @@ const recordedRows = (values: RecordedValues): readonly Row[] => {
 const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   const results = new Map([...queues].map(([table, rows]) => [table, [...rows]]));
   const reads: { table: unknown; locked: boolean }[] = [];
+  const queries: SQL[] = [];
+  const limits: number[] = [];
   const inserts: { table: unknown; values: Row | readonly Row[] }[] = [];
   const updates: { table: unknown; values: Row }[] = [];
   const select = () => {
@@ -133,9 +147,17 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
           reads.push(read);
           return chain;
         },
-        limit: () => chain,
+        limit: (limit: number) => {
+          limits.push(limit);
+          return chain;
+        },
         orderBy: () => chain,
-        where: () => chain,
+        where: (query?: SQL) => {
+          if (query !== undefined) {
+            queries.push(query);
+          }
+          return chain;
+        },
       },
     );
     return chain;
@@ -151,6 +173,18 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
       }
       if (table === partyOfficialIdentifiers) {
         return [{ officialIdentifierId, ...values }];
+      }
+      if (table === parties) {
+        return [
+          {
+            partyId: partyA,
+            archivedAt: null,
+            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+            updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+            revision: 1,
+            ...values,
+          },
+        ];
       }
       return [];
     };
@@ -198,8 +232,51 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   };
   // SAFETY: this test double implements exactly the fluent methods called by the persistence seam.
   const transaction = { insert, select, update } as unknown as Parameters<typeof resolveDuplicateCandidateMatch>[0];
-  return { inserts, reads, transaction, updates };
+  return { inserts, limits, queries, reads, transaction, updates };
 };
+
+it.effect('the pending review queue uses tenant and active-state filters, bounded keyset paging, and no writes', () =>
+  Effect.gen(function* pendingReviewQueue() {
+    const rows = Array.from({ length: 26 }, (_, index) => ({
+      ...caseRow(),
+      candidateCaseId: `30000000-0000-4000-8000-${String(99 - index).padStart(12, '0')}`,
+      lifecycleState: index === 0 ? 'NEEDS_EVIDENCE' : 'OPEN',
+    }));
+    const subject = harness(new Map([[duplicateCandidateCases, [rows]]]));
+    const afterCaseRef = makeDuplicateCandidateCaseRef(tenantId, candidateCaseId);
+    const page = yield* listDuplicateCandidateCases(subject.transaction, tenantId, { afterCaseRef });
+    expect(page.items).toHaveLength(25);
+    expect(page.items[0]?.lifecycleState).toBe('NEEDS_EVIDENCE');
+    expect(page.nextCaseRef?.resourceId).toBe(rows[24]?.candidateCaseId);
+    expect(page.items[0]?.displayName).toBeNull();
+    expect(subject.limits).toEqual([26]);
+    const [query] = subject.queries;
+    expect(query).toBeDefined();
+    if (query !== undefined) {
+      const compiled = new PgDialect().sqlToQuery(query);
+      expect(compiled.params).toEqual([tenantId, 'OPEN', 'NEEDS_EVIDENCE', candidateCaseId]);
+      expect(compiled.sql).toContain('"tenant_id" =');
+      expect(compiled.sql).toContain('"lifecycle_state" in');
+      expect(compiled.sql).toContain('"candidate_case_id" <');
+    }
+    expect(subject.inserts).toEqual([]);
+    expect(subject.updates).toEqual([]);
+  }),
+);
+
+it.effect('an empty or final review page has no continuation cursor', () =>
+  Effect.gen(function* finalReviewPage() {
+    const empty = harness();
+    expect(yield* listDuplicateCandidateCases(empty.transaction, tenantId, {})).toEqual({
+      items: [],
+      nextCaseRef: null,
+    });
+    const final = harness(new Map([[duplicateCandidateCases, [[caseRow()]]]]));
+    const page = yield* listDuplicateCandidateCases(final.transaction, tenantId, {});
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCaseRef).toBeNull();
+  }),
+);
 
 const ambiguousHarness = (existingCase: boolean) =>
   harness(
@@ -1253,6 +1330,401 @@ it.layer(
     }),
   );
 });
+
+const retailEvidence = Schema.decodeSync(RetailEnrollmentEvidenceSchema)({
+  authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+  candidateEvidenceRef: '80000000-0000-4000-8000-000000000001',
+  emailOwnership: 'VERIFIED' as const,
+  enrollmentAttemptId: '90000000-0000-4000-8000-000000000001',
+  journey: 'RETAIL_SELF_ENROLLMENT' as const,
+  providerOwnerInvocationId: 'a0000000-0000-4000-8000-000000000001',
+  providerSubjectId: 'provider-retail',
+  sellingLegalEntityId: partyB,
+  tenantId,
+});
+const retailCandidate = candidate({
+  officialIdentifiers: [],
+  partyType: 'PERSON',
+  evidenceRefs: [retailEvidence.candidateEvidenceRef],
+  provenance: { method: 'commerce.portal-enrollment.self-enrollment', source: 'commerce.customer-context' },
+  subjectEvidence: [
+    {
+      basis: 'DIRECT_INTERACTION',
+      evidenceRef: retailEvidence.candidateEvidenceRef,
+      kind: 'ACTOR_ATTESTATION',
+      observedSubject: 'PERSON',
+      statement: 'Exact enrolled subject',
+      subjectKey: partySubjectKeyFromString(retailEvidence.providerSubjectId),
+    },
+  ],
+});
+const retailCase = {
+  ...caseRow(),
+  candidateFingerprint: candidateFingerprint(retailCandidate),
+  candidateSnapshot: {
+    evidenceArtifactRefs: retailCandidate.evidenceRefs,
+    names: [],
+    officialIdentifiers: [],
+    partyType: 'PERSON',
+    provenance: retailCandidate.provenance,
+    subjectEvidence: retailCandidate.subjectEvidence,
+    validFrom: instant,
+  },
+  resolutionActionInvocationId: null,
+  selectedPartyId: null,
+  resolutionOutcome: null,
+};
+const originalCreateDecision = {
+  actionInvocationId,
+  matchDecisionId: decisionId,
+  tenantId,
+  candidateCaseId,
+  partyId: null,
+  operation: 'CREATE',
+  outcome: 'AMBIGUOUS',
+  committedCreateOutcome: 'AMBIGUOUS',
+  decidedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+  matchRuleVersion: 'party-exact-claims.v1',
+  evidenceEvaluation: null,
+  evidenceExplanation: [],
+};
+
+it.effect(
+  'retail policy accepts the original zero-candidate case under the canonical lock and records its named basis',
+  () =>
+    Effect.gen(function* policyAccept() {
+      yield* TestClock.setTime(Date.parse('2026-10-01T00:00:00.000Z'));
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyMatchDecisions, [[originalCreateDecision]]],
+          [duplicateCandidateCases, [[retailCase], [retailCase]]],
+          [duplicateCandidateCaseParties, [[]]],
+        ]),
+      );
+      const result = yield* acceptRetailEnrollmentEvidence(subject.transaction, {
+        actionInvocationId: principalId,
+        originalInvocationId: actionInvocationId,
+        evidence: retailEvidence,
+        legalEntityId: partyB,
+        principalId,
+        tenantId,
+      });
+      expect(result.created).toBe(true);
+      expect(result.result.outcome).toBe('CREATED');
+      expect(subject.inserts.filter(({ table }) => table === parties)).toHaveLength(1);
+      const decision = subject.inserts.find(({ table }) => table === partyMatchDecisions);
+      expect(recordedRow(decision?.values)['evidenceExplanation']).toEqual([
+        expect.objectContaining({ ruleKey: 'party.retail-verified-enrollment.v1', verification: 'VERIFIED' }),
+      ]);
+      expect(subject.updates.find(({ table }) => table === duplicateCandidateCases)?.values).toMatchObject({
+        lifecycleState: 'RESOLVED',
+        resolutionOutcome: 'CREATE_NEW',
+        resolutionReason: 'party.retail-verified-enrollment.v1',
+      });
+    }),
+);
+
+it.effect('linked retail candidates remain in their original review case without inserting a Party', () =>
+  Effect.gen(function* keepReview() {
+    const subject = harness(
+      new Map<unknown, readonly Rows[]>([
+        [partyMatchDecisions, [[originalCreateDecision]]],
+        [duplicateCandidateCases, [[retailCase], [retailCase]]],
+        [duplicateCandidateCaseParties, [[{ partyId: partyA }]]],
+      ]),
+    );
+    const accepted = yield* acceptRetailEnrollmentEvidence(subject.transaction, {
+      actionInvocationId: principalId,
+      originalInvocationId: actionInvocationId,
+      evidence: retailEvidence,
+      legalEntityId: partyB,
+      principalId,
+      tenantId,
+    });
+    expect(accepted.created).toBe(false);
+    expect(accepted.result.outcome).toBe('AMBIGUOUS');
+    expect(subject.inserts).toHaveLength(0);
+    expect(subject.updates).toHaveLength(0);
+  }),
+);
+
+for (const outcome of ['CREATE_NEW', 'MATCH_EXISTING'] as const) {
+  it.effect(`owned invocation recovery follows governed ${outcome} without changing the immutable Create`, () =>
+    Effect.gen(function* reviewContinuation() {
+      const resolutionDecision = {
+        ...originalCreateDecision,
+        actionInvocationId: principalId,
+        candidateCaseId: null,
+        partyId: partyA,
+        operation: outcome === 'CREATE_NEW' ? 'REVIEW_CREATE' : 'REVIEW_MATCH',
+        outcome: outcome === 'CREATE_NEW' ? 'CREATED' : 'MATCHED',
+        committedCreateOutcome: outcome === 'CREATE_NEW' ? 'CREATED' : null,
+      };
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyMatchDecisions, [[originalCreateDecision], [resolutionDecision]]],
+          [
+            duplicateCandidateCases,
+            [
+              [
+                {
+                  ...retailCase,
+                  lifecycleState: 'RESOLVED',
+                  resolutionOutcome: outcome,
+                  resolutionActionInvocationId: principalId,
+                  selectedPartyId: partyA,
+                },
+              ],
+            ],
+          ],
+        ]),
+      );
+      const result = yield* findPartyCreateContinuation(subject.transaction, tenantId, actionInvocationId);
+      expect(result?.outcome).toBe(outcome === 'CREATE_NEW' ? 'CREATED' : 'MATCHED_EXISTING');
+      expect(subject.inserts).toHaveLength(0);
+      expect(subject.updates).toHaveLength(0);
+    }),
+  );
+}
+
+it.effect(
+  'a current candidate discovered after Create remains linked to the original case, never a stranded successor',
+  () =>
+    Effect.gen(function* currentCandidateReview() {
+      const namedCase = {
+        ...retailCase,
+        candidateSnapshot: { ...retailCase.candidateSnapshot, names: [{ nameKind: 'DISPLAY', value: 'Same Name' }] },
+      };
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyMatchDecisions, [[originalCreateDecision]]],
+          [duplicateCandidateCases, [[namedCase], [namedCase]]],
+          [duplicateCandidateCaseParties, [[]]],
+          [parties, [[{ partyId: partyA }], [{ partyId: partyA, currentType: 'PERSON' }]]],
+        ]),
+      );
+      const accepted = yield* acceptRetailEnrollmentEvidence(subject.transaction, {
+        actionInvocationId: principalId,
+        originalInvocationId: actionInvocationId,
+        evidence: retailEvidence,
+        legalEntityId: partyB,
+        principalId,
+        tenantId,
+      });
+      expect(accepted.created).toBe(false);
+      expect(accepted.result).toMatchObject({ outcome: 'AMBIGUOUS', caseRef: { resourceId: candidateCaseId } });
+      expect(subject.inserts.map(({ table }) => table)).toEqual([duplicateCandidateCaseParties]);
+      expect(recordedRows(subject.inserts[0]?.values)).toMatchObject([{ candidateCaseId, partyId: partyA }]);
+      expect(subject.updates).toHaveLength(0);
+    }),
+);
+for (const created of [true, false]) {
+  it.effect(
+    `retail acceptance ${created ? 'emits its single real Party event' : 'does not re-emit creation on a recovered resolution'}`,
+    () =>
+      Effect.gen(function* eventOnce() {
+        const native = yield* makeActionTestHarness({
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        });
+        const collector = createActionCollector(
+          acceptRetailEnrollmentEvidenceAction.descriptor.domainEvents,
+          'party.registry',
+          acceptRetailEnrollmentEvidenceAction.descriptor.accessEvidencePolicy,
+        );
+        const result = yield* getActionHandler(acceptRetailEnrollmentEvidenceAction)(
+          {
+            evidence: retailEvidence,
+            originalInvocationId: (yield* Schema.decodeEffect(RetailEnrollmentEvidenceSchema)(retailEvidence))
+              .providerOwnerInvocationId,
+          },
+          {
+            ...collector,
+            actionInvocationId,
+            compositionRevision: 'a'.repeat(64),
+            scope: {
+              authMethod: 'system',
+              correlationId: 'retail-events',
+              principalId,
+              tenantId,
+              legalEntityId: partyB,
+            },
+            services: {
+              accept: () =>
+                Effect.succeed({
+                  created,
+                  result: {
+                    outcome: 'CREATED',
+                    partyRef: makePartyRef(tenantId, partyA),
+                    decisionRef: {
+                      moduleId: 'party.registry',
+                      resourceId: decisionId,
+                      resourceType: 'party.registry.party-match-decision',
+                      tenantId,
+                    },
+                  },
+                }),
+            },
+          },
+        ).pipe(Effect.provideService(ActionRuntime, native.runtime));
+        expect(result).toMatchObject({ outcome: 'CREATED' });
+        expect(collector.snapshot().domainEvents).toHaveLength(created ? 1 : 0);
+        expect(collector.snapshot().outboxMessages).toHaveLength(created ? 1 : 0);
+      }),
+  );
+}
+
+const retailScope = {
+  authBindingId: actionInvocationId,
+  authContextRef: 'better-auth-session:retail-native-owner',
+  authMethod: 'session' as const,
+  correlationId: 'retail-native-owner',
+  legalEntityId: partyB,
+  principalId,
+  tenantId,
+};
+for (const scenario of [
+  'owned',
+  'wrong-caller',
+  'wrong-tenant',
+  'wrong-company',
+  'wrong-attestation-company',
+  'missing-invocation',
+] as const) {
+  it.effect(`native retail evidence acceptance checks original invocation ownership: ${scenario}`, () =>
+    Effect.gen(function* nativeOwnership() {
+      const native = yield* makeActionTestHarness({
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        actionPermission: 'allowed',
+        tenantPermission: 'allowed',
+        legalEntityAccess: 'allowed',
+        services: [
+          bindActionTestServices(createPartyAction, {
+            createOrMatch: () =>
+              Effect.succeed({
+                outcome: 'CREATED',
+                partyRef: makePartyRef(tenantId, partyA),
+                decisionRef: {
+                  moduleId: 'party.registry',
+                  resourceId: decisionId,
+                  resourceType: 'party.registry.party-match-decision',
+                  tenantId,
+                },
+              }),
+          }),
+        ],
+      });
+      yield* native.runtime.runAction({
+        registration: createPartyAction,
+        payload: { candidate: { ...retailCandidate, validFrom: DateTime.formatIso(retailCandidate.validFrom) } },
+        principal: retailScope,
+        transport: { correlationId: 'retail-native-owner', idempotencyKey: 'original-retail-create' },
+      });
+      const [invocation] = native.snapshot().invocations;
+      if (invocation === undefined) {
+        throw new Error('Native Create invocation was not recorded');
+      }
+      const scope = { ...retailScope };
+      if (scenario === 'wrong-caller') {
+        scope.principalId = yield* Schema.decodeEffect(PrincipalIdSchema)(partyA);
+      }
+      if (scenario === 'wrong-tenant') {
+        scope.tenantId = yield* Schema.decodeEffect(TenantIdSchema)(partyA);
+      }
+      if (scenario === 'wrong-company') {
+        scope.legalEntityId = partyA;
+      }
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [
+            partyMatchDecisions,
+            [
+              [
+                {
+                  ...originalCreateDecision,
+                  committedCreateOutcome: 'CREATED',
+                  outcome: 'CREATED',
+                  candidateCaseId: null,
+                  partyId: partyA,
+                },
+              ],
+            ],
+          ],
+        ]),
+      );
+      // SAFETY: the private factory delegates to the same select/insert/update seam implemented by this harness.
+      const transaction = subject.transaction as Parameters<ReturnType<typeof getActionServiceFactory>>[0];
+      const services = yield* getActionServiceFactory(acceptRetailEnrollmentEvidenceAction)(
+        transaction,
+        scope,
+        'a'.repeat(64),
+      ).pipe(Effect.provideService(ActionRuntime, native.runtime));
+      const result = yield* services
+        .accept(
+          {
+            evidence:
+              scenario === 'wrong-attestation-company'
+                ? { ...retailEvidence, sellingLegalEntityId: partyA }
+                : retailEvidence,
+            originalInvocationId: (yield* Schema.decodeEffect(RetailEnrollmentEvidenceSchema)({
+              ...retailEvidence,
+              providerOwnerInvocationId: scenario === 'missing-invocation' ? decisionId : invocation.actionInvocationId,
+            })).providerOwnerInvocationId,
+          },
+          principalId,
+        )
+        .pipe(Effect.result);
+      expect(Result.isSuccess(result)).toBe(scenario === 'owned');
+      expect(subject.reads.length).toBe(scenario === 'owned' ? 2 : 0);
+      expect(subject.inserts).toHaveLength(0);
+    }),
+  );
+}
+for (const actionPermission of ['allowed', 'denied'] as const) {
+  it.effect(`retail acceptance requires explicit executor and identity permissions: executor ${actionPermission}`, () =>
+    Effect.gen(function* narrowGrant() {
+      let called = false;
+      const native = yield* makeActionTestHarness({
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        actionPermission,
+        tenantPermission: actionPermission === 'allowed' ? 'denied' : 'allowed',
+        legalEntityAccess: 'allowed',
+        services: [
+          bindActionTestServices(acceptRetailEnrollmentEvidenceAction, {
+            accept: () =>
+              Effect.sync(() => {
+                called = true;
+                return {
+                  created: false,
+                  result: {
+                    caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
+                    decisionRef: {
+                      moduleId: 'party.registry',
+                      resourceId: decisionId,
+                      resourceType: 'party.registry.party-match-decision',
+                      tenantId,
+                    },
+                    outcome: 'AMBIGUOUS' as const,
+                  },
+                };
+              }),
+          }),
+        ],
+      });
+      expect(
+        yield* native.runtime
+          .runAction({
+            registration: acceptRetailEnrollmentEvidenceAction,
+            payload: { evidence: retailEvidence, originalInvocationId: retailEvidence.providerOwnerInvocationId },
+            principal: retailScope,
+            transport: { correlationId: 'retail-permission', idempotencyKey: 'retail-permission' },
+          })
+          .pipe(Effect.isFailure, Effect.provideService(ActionRuntime, native.runtime)),
+      ).toBe(true);
+      expect(called).toBe(false);
+      expect(native.snapshot().committed).toHaveLength(0);
+    }),
+  );
+}
 
 const guestLegalEntityId = '80000000-0000-4000-8000-000000000001';
 const guestCandidate = (): PartyCandidate =>

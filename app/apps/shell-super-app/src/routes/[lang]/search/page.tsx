@@ -1,5 +1,4 @@
-/* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -7,6 +6,8 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
+import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
+import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
@@ -36,7 +37,7 @@ const SearchResultItem = ({
       key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
     >
       <LinkButton
-        as={LocalizedLink}
+        as={ShellRouteLink}
         params={{
           moduleId: result.ref.moduleId,
           resourceId: result.ref.resourceId,
@@ -92,7 +93,7 @@ const SearchResultItem = ({
 };
 
 const SearchPage = () => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/search' });
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.state === 'reload_required' || model.shell.state === 'reload_required' || controls.reloadRequired) {
@@ -104,6 +105,9 @@ const SearchPage = () => {
       </main>
     );
   }
+  if (model.shell.state === 'anonymous') {
+    return <SignInRedirect reason={model.shell.reason} />;
+  }
   if (model.shell.state !== 'authenticated') {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
@@ -114,26 +118,50 @@ const SearchPage = () => {
     );
   }
   const currentTenantId = model.shell.identity.tenantId;
-  const content =
-    model.state !== 'ready' ? (
-      <StatusText aria-live="polite" showIcon status="error">
-        {t(`shell.search.${model.state}`)}
-      </StatusText>
-    ) : (
+  const agendaLinks = buildShellNavigation(
+    { language: language ?? '', navigation: model.shell.navigation.items, unavailableDeployments: [] },
+    t,
+  ).groups.flatMap(({ links }) => links.filter(({ enabled, href }) => enabled && href !== null));
+  const content = Match.value(model).pipe(
+    Match.when({ state: 'unavailable' }, () => (
+      <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full max-w-2xl gap-200 p-300">
+        <h1 className="font-semibold text-xl">{t('shell.search.agenda_title')}</h1>
+        <p className="text-fg-secondary text-sm">{t('shell.search.agenda_hint')}</p>
+        <ul className="grid gap-150 md:grid-cols-2">
+          {agendaLinks.map((link) => (
+            <li key={link.key}>
+              <LinkButton
+                as={ShellRouteLink}
+                block
+                className="justify-start hover:bg-overlay"
+                icon={link.icon}
+                size="sm"
+                theme="unstyled"
+                to={link.href ?? '/'}
+                variant="secondary"
+              >
+                {link.label}
+              </LinkButton>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )),
+    Match.when({ state: 'ready' }, (ready) => (
       <section aria-labelledby="search-results-title" className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
         <h2 className="shell:text-title-lg" id="search-results-title">
           {t('shell.search.title')}
         </h2>
-        {model.response.partial ? (
+        {ready.response.partial ? (
           <StatusText aria-live="polite" showIcon status="warning">
             {t('shell.search.partial')}
           </StatusText>
         ) : null}
-        {model.response.results.length === 0 ? (
+        {ready.response.results.length === 0 ? (
           <StatusText status="default">{t('shell.search.empty')}</StatusText>
         ) : (
           <ul className="shell:grid shell:gap-3">
-            {model.response.results.map((result) => (
+            {ready.response.results.map((result) => (
               <SearchResultItem
                 currentTenantId={currentTenantId}
                 key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
@@ -143,9 +171,19 @@ const SearchPage = () => {
           </ul>
         )}
       </section>
-    );
+    )),
+    Match.orElse((other) => (
+      <StatusText aria-live="polite" showIcon status="error">
+        {t(`shell.search.${other.state}`)}
+      </StatusText>
+    )),
+  );
   return (
-    <ShellContentLayout controls={controls} shell={model.shell} title={t('shell.search.title')}>
+    <ShellContentLayout
+      controls={controls}
+      shell={model.shell}
+      title={t(model.state === 'unavailable' ? 'shell.search.agenda_title' : 'shell.search.title')}
+    >
       {content}
     </ShellContentLayout>
   );

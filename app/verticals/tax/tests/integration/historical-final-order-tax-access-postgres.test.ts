@@ -16,6 +16,8 @@ import {
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
   parseDatabaseConfig,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
@@ -305,6 +307,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   ).pipe(
     Layer.provide(Layer.succeed(DatabaseConfig, yield* parseDatabaseConfig({ DATABASE_URL: runtimeUrl }))),
     Layer.provideMerge(staffAuthenticationNamespaceRegistryLayer(['tax'])),
+    Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
     Layer.provide(NodeServices.layer),
   );
   const context = yield* Layer.build(runtimes);

@@ -6,6 +6,8 @@ import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
+import type { PrincipalManagementError } from '../../auth/principal-management-errors.ts';
+import { ManagedApiKeyScopeSchema, validateManagedApiKeyTarget } from '../../auth/managed-api-key-scope.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
@@ -18,6 +20,7 @@ const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.bra
 const BindManagedApiKeyPayloadSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   providerSubjectId: ProviderSubjectIdSchema,
+  scope: ManagedApiKeyScopeSchema,
 });
 export type BindManagedApiKeyPayload = Schema.Schema.Type<typeof BindManagedApiKeyPayloadSchema>;
 const BindManagedApiKeyResultSchema = Schema.Struct({
@@ -28,9 +31,13 @@ const handle = Effect.fn('BindManagedApiKeyAction.handle')(function* bindManaged
   payload: BindManagedApiKeyPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    { readonly bind: PrincipalManagementRepositoryService['bindApiKey'] }
+    {
+      readonly bind: PrincipalManagementRepositoryService['bindApiKey'];
+      readonly validateTarget: (input: BindManagedApiKeyPayload) => Effect.Effect<void, PrincipalManagementError>;
+    }
   >,
 ) {
+  yield* context.services.validateTarget(payload);
   const result = yield* context.services.bind({
     createdByInvocationId: context.actionInvocationId,
     managed: true,
@@ -66,7 +73,7 @@ export const bindManagedApiKeyAction = defineAction(
       access: 'write',
       authorization: {
         kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
+        provisioning: 'explicit',
       },
       entrypointKey: 'core.identity.bind-managed-api-key',
       moduleKey: 'core.identity',
@@ -79,11 +86,20 @@ export const bindManagedApiKeyAction = defineAction(
     policies: [],
     resultSchema: BindManagedApiKeyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
+    tenantPermission: (payload) => (payload.scope === 'tenant-managed' ? 'manage_identity' : undefined),
   },
   handle,
   (transaction, scope) => {
     const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
-    return Effect.succeed({ bind: repository.bindApiKey });
+    return Effect.succeed({
+      bind: repository.bindApiKey,
+      validateTarget: (input: BindManagedApiKeyPayload) =>
+        validateManagedApiKeyTarget(transaction, {
+          ...input,
+          legalEntityId: scope.legalEntityId,
+          requireActive: true,
+          tenantId: scope.tenantId,
+        }),
+    });
   },
 );

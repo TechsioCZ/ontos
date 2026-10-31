@@ -1,4 +1,9 @@
-import type { ContextAccessService, OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
+import type {
+  ContextAccessService,
+  OperationalScope,
+  ScopedRoutineDefinition,
+  ScopedRoutineInvoker,
+} from '@app/core-runtime';
 import {
   getVerticalRuntimeEntrypoints,
   toContextPermissionAccessKey,
@@ -42,12 +47,14 @@ import { commerceQuantityPolicyCurrentRead } from '../../src/api/commerce-quanti
 import { marketBootstrapPolicyCurrentRead } from '../../src/api/market-bootstrap-policy-current.read.ts';
 import { paymentTermPolicyCurrentRead } from '../../src/api/payment-term-policy-current.read.ts';
 import { purchaseCurrencyPolicyCurrentRead } from '../../src/api/purchase-currency-policy-current.read.ts';
-import type { CustomerCommercePolicyScopedRoutineInvoker } from '../../src/persistence/customer-commerce-policy-persistence.ts';
 import { customerCommercePolicyRepositoryForScope } from '../../src/persistence/customer-commerce-policy-persistence.ts';
 import { customerCommercePolicyAdministrationServiceFactory } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import type { CustomerCommercePolicyAdministrationService } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -96,9 +103,17 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
   const moduleIds: string[] = [];
   const routineCalls: string[] = [];
   const database = {
-    executor: yield* makeTestDatabase((text) => {
+    executor: yield* makeTestDatabase((text, values) => {
       if (text.includes('transaction_timestamp')) {
-        return Effect.succeed([{ operation_at: new Date(at) }]);
+        // The governed Read installs scope and reads trusted time in the same native statement.
+        return Effect.succeed([
+          {
+            legal_entity_id: values[1],
+            operation_at: new Date(at),
+            role: 'ontos_runtime',
+            tenant_id: values[0],
+          },
+        ]);
       }
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);
@@ -151,6 +166,7 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
+    { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
   );
   return {
     businessPermissionCalls: () => businessPermissionCalls,
@@ -206,7 +222,7 @@ interface RoutineCall {
 
 interface StatefulInvoker {
   readonly calls: RoutineCall[];
-  readonly invoker: CustomerCommercePolicyScopedRoutineInvoker;
+  readonly invoker: ScopedRoutineInvoker;
 }
 
 const statefulInvoker = (
@@ -237,10 +253,10 @@ const statefulInvoker = (
       }),
   };
   // SAFETY: the fake implements the repository's sole generic `invoke` test seam and returns routine-schema-shaped rows.
-  return { calls, invoker: fake as CustomerCommercePolicyScopedRoutineInvoker };
+  return { calls, invoker: fake as ScopedRoutineInvoker };
 };
 
-const asServiceTransaction = (invoker: CustomerCommercePolicyScopedRoutineInvoker) =>
+const asServiceTransaction = (invoker: ScopedRoutineInvoker) =>
   // SAFETY: the service uses only the scoped-routine `invoke` seam exposed by its persistence repository.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Scoped transaction behavior beyond `invoke` is unreachable in this owner repository test.
   invoker as Parameters<typeof customerCommercePolicyAdministrationServiceFactory>[0];
@@ -1443,7 +1459,7 @@ describe('quantity native profile constraint boundary', () => {
           routineKey: 'customer-commerce-policy.persist-commerce-quantity-rule-assignments',
           ...sample,
         });
-        const invoker: CustomerCommercePolicyScopedRoutineInvoker = { invoke: () => Effect.fail(failure) };
+        const invoker: ScopedRoutineInvoker = { invoke: () => Effect.fail(failure) };
         const repository = yield* customerCommercePolicyRepositoryForScope(invoker, scope);
         const result = yield* Effect.flip(
           repository.persistCommerceQuantityRuleAssignments(0, {

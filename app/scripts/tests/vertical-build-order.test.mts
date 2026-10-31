@@ -54,9 +54,7 @@ const verticals = readdirSync(new URL('verticals/', appRoot), { withFileTypes: t
 it('builds verticals unsorted, so no vertical waits for another vertical build', () => {
   const { scripts = {} } = readManifest('.');
 
-  for (const script of ['build', 'cloudflare:build']) {
-    expect(scripts[script]).toContain(`pnpm -r --no-sort --filter "./verticals/*" run ${script} &&`);
-  }
+  expect(scripts.build).toContain('pnpm -r --no-sort --filter "./verticals/*" run build &&');
 });
 
 it('lets a vertical import another vertical only through source exports, never through build output', () => {

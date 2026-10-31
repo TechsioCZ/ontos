@@ -1,0 +1,199 @@
+{
+  "workforce": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "workforce",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Employees",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "employees": {
+        "title": "Employees",
+        "description": "People on the sales team, their roles and departments.",
+        "create": "New employee",
+        "discard": {
+          "confirm": "Discard changes",
+          "description": "The details you entered in this form will be lost.",
+          "keep": "Keep editing",
+          "title": "Discard unsaved changes?"
+        },
+        "stats": {
+          "active": "Active",
+          "departments": "Departments",
+          "sales": "Sales staff",
+          "total": "Total"
+        },
+        "filters": {
+          "activeOnly": "Active only",
+          "allDepartments": "All departments",
+          "allRoles": "All roles",
+          "clear": "Clear filters",
+          "department": "Department",
+          "role": "Role",
+          "search": "Search name or e-mail…",
+          "searchLabel": "Filter employees",
+          "tag": "Tag"
+        },
+        "columns": {
+          "account": "Account",
+          "department": "Department",
+          "email": "E-mail",
+          "name": "Name",
+          "role": "Role",
+          "status": "Status",
+          "tags": "Tags"
+        },
+        "status": {
+          "active": "Active",
+          "inactive": "Inactive"
+        },
+        "account": {
+          "linked": "Linked",
+          "none": "No account"
+        },
+        "table": {
+          "actions": "Actions",
+          "filters": "Column filters",
+          "loading": "Loading employees",
+          "pageSize": "Rows per page",
+          "range": "{{start}}–{{end}} of {{total}}",
+          "selectAll": "Select all employees",
+          "selectRow": "Select employee"
+        },
+        "form": {
+          "active": "Active",
+          "cancel": "Cancel",
+          "create": "Create employee",
+          "createTitle": "New employee",
+          "department": "Department",
+          "editTitle": "Edit employee",
+          "email": "E-mail",
+          "fullName": "Full name",
+          "phone": "Phone",
+          "principal": "Login account",
+          "principalHelp": "Invite the person in People first. Employment and job roles grant no permissions; activate company membership and grant Tasks access before assigning tasks.",
+          "managePeople": "Invite a person and manage membership and permissions",
+          "role": "Job role",
+          "save": "Save changes",
+          "saving": "Saving…"
+        },
+        "bulk": {
+          "activate": "Activate",
+          "apply": "Save",
+          "deactivate": "Deactivate",
+          "department": "Change department",
+          "departmentTitle": "Change department",
+          "description": "The change applies to {{total}} selected employees.",
+          "role": "Change role",
+          "roleTitle": "Change role",
+          "tags": "Tags"
+        },
+        "errors": {
+          "conflict": "Someone else changed this record in the meantime. Reload it and repeat your change.",
+          "department": "Enter a department.",
+          "email": "Enter an e-mail like name@company.cz.",
+          "emailTaken": "Another employee already uses this e-mail.",
+          "forbidden": "You are not allowed to do this.",
+          "fullName": "Enter a full name.",
+          "fullNameTooLong": "A full name can have at most 200 characters.",
+          "load": "Data could not be loaded.",
+          "loadDescription": "Check your connection and try again.",
+          "phone": "Enter a phone number with 6 to 15 digits, e.g. +420 777 123 456.",
+          "principal": "Select the employee's login account.",
+          "retry": "Try again",
+          "save": "The employee could not be saved. Try again."
+        },
+        "empty": {
+          "first": "No employees yet.",
+          "firstDescription": "Add the first employee of the sales team.",
+          "forbidden": "You do not have access to this section.",
+          "noResults": "No employee matches the filters."
+        },
+        "toast": {
+          "bulkSaved": "Employees saved",
+          "error": "The action could not be completed. Try again.",
+          "saved": "Employee saved"
+        },
+        "roles": {
+          "ACCOUNTANT": "Accountant",
+          "SALES_HEAD": "Sales head",
+          "SALES_REP": "Sales representative",
+          "SUPPORT": "Support",
+          "WAREHOUSE": "Warehouse"
+        },
+        "permissions": {
+          "access": "Access",
+          "role": "Role",
+          "title": "Permissions"
+        },
+        "aiActivity": {
+          "title": "AI activity",
+          "description": "What AI agents and integrations did in this company: every allowed and denied write attempt from the Core audit. Level A may only read, level B may also create tasks, and level C proposes data changes (e.g. CRM clients) that a person must approve in the app and that can be reverted in bulk.",
+          "refresh": "Refresh",
+          "executed_one": "Executed: {{count}}",
+          "executed_other": "Executed: {{count}}",
+          "denied_one": "Denied: {{count}}",
+          "denied_other": "Denied: {{count}}",
+          "level": "Level {{level}}",
+          "write": "write",
+          "unavailable": "The audit records could not be loaded.",
+          "empty": "No AI agent activity yet",
+          "emptyDescription": "As soon as an AI agent changes something in this company, or tries to, it appears here.",
+          "columns": {
+            "time": "Time",
+            "actor": "Agent",
+            "action": "Action",
+            "result": "Result",
+            "reason": "Reason"
+          },
+          "modules": {
+            "work_tasks": "Tasks",
+            "demo_sales-pipeline": "Opportunities",
+            "demo_tagging": "Tags",
+            "demo_merchandise": "Orders and products",
+            "demo_workforce": "Employees",
+            "party_registry": "Customers",
+            "finance_billing": "Invoices",
+            "demo_crm": "CRM",
+            "core_identity": "Accounts and sign-in"
+          },
+          "outcomes": {
+            "succeeded": "Executed",
+            "denied": "Denied",
+            "allowed": "Allowed",
+            "failed": "Failed"
+          },
+          "codes": {
+            "action_permission_denied": "no write permission",
+            "action_succeeded": "saved",
+            "succeeded": "saved",
+            "action_policy_denied": "denied by policy",
+            "action_revision_conflict": "concurrent change",
+            "spicedb_permission_denied": "no write permission",
+            "action_executed": "saved",
+            "policy_allowed": "Policy checks passed",
+            "connector_exchange": "Application connected"
+          },
+          "otherModule": "Application management",
+          "otherOutcome": "Processed",
+          "otherCode": "Processing record"
+        }
+      }
+    },
+    "selectPlaceholder": "Select…",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
+  }
+}

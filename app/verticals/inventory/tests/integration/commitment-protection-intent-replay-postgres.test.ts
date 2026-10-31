@@ -3,6 +3,7 @@ import {
   makeBusinessPermissionRelationshipMutationLive,
   runAction,
   ScopedRoutineInvocationError,
+  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -400,8 +401,9 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
     protectionRef: protection.ref,
   };
   // Test-owned exact Establish admission only; production Import-only authorization is unchanged.
-  const ownerAuthorization = Layer.succeed(OwnerAuthorizationOverlay, {
-    authorize: (transaction, input) =>
+  const ownerAuthorization = Layer.succeed(
+    OwnerAuthorizationOverlay,
+    transactionalOwnerAuthorization((transaction, input) =>
       input.operation === 'action' &&
       input.operationKey === establishCommitmentProtectionAction.descriptor.actionKey &&
       input.owningModuleKey === 'commerce.inventory' &&
@@ -416,7 +418,8 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
               }),
             )
         : Effect.succeed('unavailable' as const),
-  });
+    ),
+  );
   const layer = fixture.layer.pipe(Layer.provide(ownerAuthorization));
   const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
   const permission = yield* makeBusinessPermissionRelationshipMutationLive();

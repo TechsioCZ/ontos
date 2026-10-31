@@ -14,6 +14,7 @@ import {
   dsrDeliveryAccess,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeAcknowledgements,
@@ -118,14 +119,17 @@ it('owns the complete Privacy persistence inventory in one schema', () => {
   );
 
   expect(PRIVACY_SCHEMA_NAME).toBe('privacy');
-  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(37);
+  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(38);
   expect(qualifiedNames).toEqual(PRIVACY_TABLE_INVENTORY.map((name) => `privacy.${name}`));
 });
 
-it('enables tenant and legal-entity RLS on every Privacy table', () => {
+it('enables tenant and legal-entity RLS on every Privacy business table', () => {
   /* jscpd:ignore-start -- Every owner schema must independently prove the same mandatory tenant and Legal Entity RLS contract. */
   // fallow-ignore-next-line code-duplication -- Mandatory owner-local RLS acceptance loop mirrors the repository contract by design.
   for (const table of PRIVACY_TABLES) {
+    if (table === gatewayAssertionRedemptions) {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -471,6 +475,9 @@ it('retains existing identities and Action idempotency constraints', () => {
 it('checks in non-destructive generated migrations with forced RLS and exact immutable guards', () => {
   const sql = migrationSql();
   for (const table of PRIVACY_TABLE_INVENTORY) {
+    if (table === 'gateway_assertion_redemptions') {
+      continue;
+    }
     expect(sql).toContain(`ALTER TABLE "privacy"."${table}" FORCE ROW LEVEL SECURITY`);
     expect(sql).not.toContain(`DROP TABLE "privacy"."${table}"`);
   }
@@ -483,6 +490,34 @@ it('checks in non-destructive generated migrations with forced RLS and exact imm
     expect(sql).toMatch(new RegExp(`REVOKE UPDATE, DELETE ON TABLE[\\s\\S]*?"privacy"\\."${table}"`, 'u'));
   }
   expect(sql).toContain('ALTER COLUMN "processing_activity_id" SET DATA TYPE text');
+});
+
+it('keeps pre-authentication assertion replay identities global and separate from business RLS', () => {
+  const config = getTableConfig(gatewayAssertionRedemptions);
+  expect(config.schema).toBe(PRIVACY_SCHEMA_NAME);
+  expect(config.name).toBe('gateway_assertion_redemptions');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys).toEqual([]);
+  expect(config.columns.map(({ name, notNull }) => ({ name, notNull }))).toEqual([
+    { name: 'audience', notNull: true },
+    { name: 'expires_at', notNull: true },
+    { name: 'issuer', notNull: true },
+    { name: 'jti', notNull: true },
+    { name: 'redeemed_at', notNull: true },
+  ]);
+  expect(config.columns.find(({ name }) => name === 'jti')?.getSQLType()).toBe('uuid');
+  expect(
+    config.uniqueConstraints.map(({ columns, name }) => ({ columns: columns.map((column) => column.name), name })),
+  ).toEqual([{ columns: ['issuer', 'audience', 'jti'], name: 'privacy_gateway_redemptions_identity_uk' }]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['privacy_gateway_redemptions_expiry_idx']);
+  const sql = migrationSql();
+  expect(sql).toContain('privacy_gateway_redemptions_identity_uk');
+  expect(sql).toContain('privacy_gateway_redemptions_expiry_idx');
+  // The owner migration's final word on the replay ledger: no PUBLIC access, runtime select/insert/delete only.
+  expect(sql).toMatch(
+    /REVOKE ALL ON TABLE "privacy"\."gateway_assertion_redemptions" FROM PUBLIC, ontos_runtime;[\s\S]*GRANT SELECT, INSERT, DELETE ON TABLE "privacy"\."gateway_assertion_redemptions" TO ontos_runtime/u,
+  );
 });
 
 it('retains one immutable acknowledgement per scoped presentation and invocation with opaque owner profile IDs', () => {

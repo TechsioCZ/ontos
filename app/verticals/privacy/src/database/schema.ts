@@ -35,6 +35,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'dsr_verifications',
   'eligibility_evidence',
   'external_obligations',
+  'gateway_assertion_redemptions',
   'legal_basis_assignments',
   'legal_holds',
   'notice_acknowledgements',
@@ -58,6 +59,21 @@ export const PRIVACY_TABLE_INVENTORY = [
 ] as const;
 
 export const privacySchema = pgSchema(PRIVACY_SCHEMA_NAME);
+
+export const gatewayAssertionRedemptions = privacySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('privacy_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('privacy_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 const scopeColumns = () => ({
@@ -1368,6 +1384,7 @@ export const PRIVACY_TABLES = [
   dsrVerifications,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeAcknowledgements,
@@ -1408,6 +1425,7 @@ const privacyDatabaseSchema = {
   dsrVerifications,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeAcknowledgements,

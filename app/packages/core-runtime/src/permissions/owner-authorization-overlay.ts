@@ -63,12 +63,36 @@ export interface OwnerAuthorizationInput {
   readonly targets: readonly OwnerAuthorizationTarget[];
 }
 
+/** What an owner adapter knows before Core opens the transaction: everything except its start time. */
+export type OwnerAuthorizationRequest = Omit<OwnerAuthorizationInput, 'operationAt'>;
+
+/** The owner decision inside the transaction, over owner state read through the supplied scoped transaction. */
+export type OwnerAuthorizationCheck = (
+  transaction: ScopedTransactionExecutor,
+  operationAt: DateTime.Utc,
+) => Effect.Effect<OwnerAuthorizationDecision>;
+
 export interface OwnerAuthorizationOverlayService {
-  readonly authorize: (
+  /**
+   * Runs before the transaction opens, so SpiceDB and other remote owner inputs never hold a pooled
+   * connection. The returned check runs inside the transaction and reads only owner database state.
+   */
+  readonly prepare: (request: OwnerAuthorizationRequest) => Effect.Effect<OwnerAuthorizationCheck>;
+}
+
+/** An owner adapter without remote inputs: its whole decision runs inside the transaction. */
+export const transactionalOwnerAuthorization = (
+  authorize: (
     transaction: ScopedTransactionExecutor,
     input: OwnerAuthorizationInput,
-  ) => Effect.Effect<OwnerAuthorizationDecision>;
-}
+  ) => Effect.Effect<OwnerAuthorizationDecision>,
+): OwnerAuthorizationOverlayService =>
+  Object.freeze({
+    prepare: (request: OwnerAuthorizationRequest) =>
+      Effect.succeed((transaction: ScopedTransactionExecutor, operationAt: DateTime.Utc) =>
+        authorize(transaction, { ...request, operationAt }),
+      ),
+  });
 
 export class OwnerAuthorizationOverlay extends Context.Service<
   OwnerAuthorizationOverlay,
@@ -76,9 +100,9 @@ export class OwnerAuthorizationOverlay extends Context.Service<
 >()('@app/core-runtime/permissions/owner-authorization-overlay/OwnerAuthorizationOverlay') {}
 
 /** The explicit default keeps deployments without owner state fail-safe for owner-neutral targets. */
-export const allowOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = Object.freeze({
-  authorize: () => Effect.succeed('allowed' as const),
-});
+export const allowOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = transactionalOwnerAuthorization(() =>
+  Effect.succeed('allowed' as const),
+);
 
 /**
  * The production-safe fallback for deployments that do not install an owner adapter.
@@ -100,7 +124,7 @@ const isCoreDecidedBusinessTarget = (
   target.target.tenantId === scope.tenantId &&
   target.target.legalEntityId === scope.legalEntityId;
 
-export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision =>
+export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationRequest): OwnerAuthorizationDecision =>
   input.targets.some(
     (target) =>
       target.kind === 'assortment_permission' ||
@@ -110,8 +134,10 @@ export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationIn
     : 'allowed';
 
 export const failClosedOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = Object.freeze({
-  authorize: (_transaction: ScopedTransactionExecutor, input: OwnerAuthorizationInput) =>
-    Effect.succeed(failClosedOwnerAuthorizationDecision(input)),
+  prepare: (request: OwnerAuthorizationRequest) => {
+    const decision = failClosedOwnerAuthorizationDecision(request);
+    return Effect.succeed(() => Effect.succeed(decision));
+  },
 });
 
 export const OwnerAuthorizationOverlayAllowLive = Layer.succeed(

@@ -74,6 +74,41 @@ const matchingDelimiterEnd = (source: string, start: number, opening: string, cl
 
 const maskComments = (source: string): string => maskNonCode(source, true);
 
+const arrowReturnTypeEnd = (
+  structure: string,
+  callStart: number,
+  callEnd: number,
+  colon: number,
+): number | undefined => {
+  const previousSeparator = topLevelSeparators(structure, ',', callStart + 1, colon).at(-1);
+  const argumentStart = (previousSeparator ?? callStart) + 1;
+  // An object entry (`load: (input): Type => …`) carries its key before the callback parameters.
+  const prefix = /^\s*(?:[A-Za-z_$][\w$]*\s*:\s*)?(?:async\s+)?\(/u.exec(structure.slice(argumentStart, colon));
+  if (prefix === null) {
+    return undefined;
+  }
+  const parametersStart = argumentStart + prefix[0].length - 1;
+  const parametersEnd = matchingDelimiter(structure, parametersStart, '(', ')');
+  if (parametersEnd === undefined || structure.slice(parametersEnd + 1, colon).trim() !== '') {
+    return undefined;
+  }
+  return topLevelSeparators(structure, '=', colon + 1, callEnd, true).find(
+    (candidate) => structure.charAt(candidate + 1) === '>',
+  );
+};
+
+/** Type argument commas after callback parameters are not invocation argument separators. */
+const maskArrowReturnTypeCommas = (structure: string, callStart: number, callEnd: number): string => {
+  let result = structure;
+  for (const colon of topLevelSeparators(structure, ':', callStart + 1, callEnd)) {
+    const arrow = arrowReturnTypeEnd(structure, callStart, callEnd, colon);
+    if (arrow !== undefined) {
+      result = result.slice(0, colon + 1) + result.slice(colon + 1, arrow).replaceAll(',', ' ') + result.slice(arrow);
+    }
+  }
+  return result;
+};
+
 const callArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
   if (source === undefined) {
     return undefined;
@@ -92,9 +127,13 @@ const callArgument = (source: string | undefined, declaration: RegExp, argumentI
   if (callEnd === undefined) {
     return undefined;
   }
-  return separatedSource(code, topLevelSeparators(structure, ',', callStart + 1, callEnd), callStart + 1, callEnd)[
-    argumentIndex
-  ];
+  const argumentStructure = maskArrowReturnTypeCommas(structure, callStart, callEnd);
+  return separatedSource(
+    code,
+    topLevelSeparators(argumentStructure, ',', callStart + 1, callEnd),
+    callStart + 1,
+    callEnd,
+  )[argumentIndex];
 };
 
 const objectArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
@@ -113,7 +152,8 @@ const topLevelObjectEntries = (source: string): readonly string[] | undefined =>
   if (!source.startsWith('{') || matchingDelimiterEnd(source, 0, '{', '}') !== source.length - 1) {
     return undefined;
   }
-  const separators = topLevelSeparators(maskNonCode(source), ',', 1, source.length - 1);
+  const structure = maskArrowReturnTypeCommas(maskNonCode(source), 0, source.length - 1);
+  const separators = topLevelSeparators(structure, ',', 1, source.length - 1);
   return separatedSource(source, separators, 1, source.length - 1).filter((entry) => entry !== '');
 };
 
@@ -273,21 +313,23 @@ const constInitializer = (source: string, name: string): string | undefined => {
   return end === undefined ? undefined : source.slice(equals + 1, end).trim();
 };
 
-const isEffectFnCallback = (source: string): boolean => {
+const effectFnCallback = (source: string): string | undefined => {
   if (!source.startsWith('Effect.fn(')) {
-    return false;
+    return undefined;
   }
   const opening = source.indexOf('(');
   const closing = matchingDelimiterEnd(source, opening, '(', ')');
   const invocation = closing === undefined ? '' : source.slice(closing + 1).trim();
   const callback = invocation.startsWith('(') ? callArgument(`invoke${invocation}`, /^invoke\(/u) : undefined;
-  return (
-    callback !== undefined &&
+  return callback !== undefined &&
     matchingDelimiterEnd(invocation, 0, '(', ')') === invocation.length - 1 &&
     (matches(callback, /^(?:async\s+)?function\*?(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(/u) ||
       matches(callback, /^(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>/u))
-  );
+    ? callback
+    : undefined;
 };
+
+const isEffectFnCallback = (source: string): boolean => effectFnCallback(source) !== undefined;
 
 const hasBalancedArrowCallback = (source: string): boolean => {
   const candidate = maskComments(source)
@@ -326,13 +368,43 @@ const isExecutableCallback = (candidate: string | undefined, ownerSource?: strin
   return initializer !== undefined && initializer !== candidate && isExecutableCallback(initializer);
 };
 
+interface DirectArrowExpression {
+  readonly annotation: string;
+  readonly output: string;
+  readonly parameters: readonly string[];
+}
+
+const sourceParameters = (source: string, opening: number, closing: number): readonly string[] =>
+  separatedSource(
+    source,
+    topLevelSeparators(maskNonCode(source), ',', opening + 1, closing, true),
+    opening + 1,
+    closing,
+  ).filter((parameter) => parameter !== '');
+
+const directArrowExpression = (source: string | undefined): DirectArrowExpression | undefined => {
+  const closing = source?.startsWith('(') === true ? matchingDelimiterEnd(source, 0, '(', ')') : undefined;
+  if (source === undefined || closing === undefined) {
+    return undefined;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(source), '=', closing + 1, source.length, true);
+  if (arrow === undefined || source.slice(arrow, arrow + 2) !== '=>') {
+    return undefined;
+  }
+  return {
+    annotation: source.slice(closing + 1, arrow).trim(),
+    output: source.slice(arrow + 2).trim(),
+    parameters: sourceParameters(source, 0, closing),
+  };
+};
+
 const callbackReturnedExpression = (handlerSource: string): string | undefined => {
   const structure = maskNonCode(handlerSource);
   const arrow = structure.indexOf('=>');
   if (arrow === -1) {
     return undefined;
   }
-  const body = handlerSource.slice(arrow + 2).trim();
+  const body = directArrowExpression(handlerSource)?.output ?? handlerSource.slice(arrow + 2).trim();
   if (!body.startsWith('{')) {
     return body;
   }
@@ -347,21 +419,6 @@ const callbackReturnedExpression = (handlerSource: string): string | undefined =
   const returned = body.slice(finalReturn.index + finalReturn[0].length);
   const statementEnd = returned.indexOf(';');
   return (statementEnd === -1 ? returned : returned.slice(0, statementEnd)).trim();
-};
-
-const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
-  if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
-    return false;
-  }
-  const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(ownerSource, candidate) : candidate;
-  if (resolved === undefined) {
-    return false;
-  }
-  if (isEffectFnCallback(resolved)) {
-    return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
-  }
-  const expression = callbackReturnedExpression(resolved);
-  return /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(maskNonCode(expression ?? '', true));
 };
 
 interface GeneratedSlotRange {
@@ -1023,6 +1080,8 @@ const cryptoReadInvocation = (source: string, elements: readonly string[]) => {
   return { actualArguments, exported, invocation, maker };
 };
 
+const REDEMPTION_BOUNDARY_MODULE = './auth/gateway-assertion-redemption.ts';
+
 const cryptoReadImportedArguments = (
   source: string,
   elements: readonly string[],
@@ -1037,13 +1096,77 @@ const cryptoReadImportedArguments = (
     if (
       !/^[A-Za-z][A-Za-z0-9]*:\s*Layer\.Layer<\s*GatewayAssertionRedemptionService\s*>$/u.test(elements[index] ?? '') ||
       imported?.imported !== 'GatewayAssertionRedemptionLive' ||
-      imported.modulePath !== './auth/gateway-assertion-redemption.ts'
+      imported.modulePath !== REDEMPTION_BOUNDARY_MODULE
     ) {
       return null;
     }
     importedArguments.add(argument);
   }
   return importedArguments;
+};
+
+interface EnrolledRedemption {
+  /** Local name of the owner's imported `GatewayAssertionRedemptionLive`. */
+  readonly alias: string;
+  /** Exact top-level `const` declaration of the enrolled runtime argument. */
+  readonly declaration: string;
+  /** The enrolled runtime argument. */
+  readonly name: string;
+}
+
+const isOwnerRedemptionImport = (source: string, binding: string, original: string): boolean => {
+  const imported = namedSourceImport(source, binding);
+  return imported?.imported === original && imported.modulePath === REDEMPTION_BOUNDARY_MODULE && !imported.typeOnly;
+};
+
+/**
+ * Redemption runtime arguments which the root passes through the canonical database enrollment
+ * `const x = Live.pipe(Layer.provide(GatewayAssertionRedemptionDatabaseLive), Layer.provide(DatabaseConfigLive))`.
+ * Every redemption-typed tuple element with a declared argument must prove that enrollment of the owner's imported
+ * `GatewayAssertionRedemptionLive`; any other declared redemption argument rejects the root.
+ */
+const cryptoReadEnrolledRedemptions = (
+  source: string,
+  elements: readonly string[],
+  actualArguments: readonly string[],
+): readonly EnrolledRedemption[] | null => {
+  const enrolled: EnrolledRedemption[] = [];
+  for (const [index, argument] of actualArguments.entries()) {
+    const initializer = index === 0 ? undefined : constInitializer(source, argument);
+    const element = elements[index] ?? '';
+    if (
+      initializer === undefined ||
+      !/^[A-Za-z][A-Za-z0-9]*:\s*Layer\.Layer<\s*GatewayAssertionRedemptionService\b/u.test(element)
+    ) {
+      continue;
+    }
+    const alias =
+      /^(?<alias>[A-Za-z_$][A-Za-z0-9_$]*)\.pipe\(\s*Layer\.provide\(GatewayAssertionRedemptionDatabaseLive\),\s*Layer\.provide\(DatabaseConfigLive\),?\s*\)$/u.exec(
+        maskComments(initializer).trim(),
+      )?.groups?.alias;
+    const declaration = new RegExp(
+      `\\bconst\\s+${escapeRegExp(argument)}\\s*=\\s*${escapeRegExp(initializer)}\\s*;`,
+      'u',
+    ).exec(source)?.[0];
+    if (
+      alias === undefined ||
+      declaration === undefined ||
+      !new RegExp(
+        `^[A-Za-z][A-Za-z0-9]*:\\s*Layer\\.Layer<\\s*GatewayAssertionRedemptionService\\s*,\\s*Layer\\.Error<\\s*typeof\\s+${escapeRegExp(argument)}\\s*>\\s*>$`,
+        'u',
+      ).test(element) ||
+      !isOwnerRedemptionImport(source, alias, 'GatewayAssertionRedemptionLive') ||
+      !isOwnerRedemptionImport(
+        source,
+        'GatewayAssertionRedemptionDatabaseLive',
+        'GatewayAssertionRedemptionDatabaseLive',
+      )
+    ) {
+      return null;
+    }
+    enrolled.push({ alias, declaration, name: argument });
+  }
+  return enrolled;
 };
 
 const cryptoReadProtectedNames = (
@@ -1053,6 +1176,7 @@ const cryptoReadProtectedNames = (
   maker: string,
   exported: string,
   importedArguments: ReadonlySet<string>,
+  enrolledRedemptions: readonly EnrolledRedemption[],
 ) => {
   const protectedNames = new Set([
     args,
@@ -1075,13 +1199,27 @@ const cryptoReadProtectedNames = (
     }
     protectedNames.add(argument);
   }
-  if (importedArguments.size > 0) {
+  const enrolledNames = enrolledRedemptions.flatMap(({ alias, name }) => [alias, name]);
+  if (enrolledRedemptions.length > 0) {
+    enrolledNames.push('GatewayAssertionRedemptionDatabaseLive');
+  }
+  for (const name of enrolledNames) {
+    if (protectedNames.has(name)) {
+      return null;
+    }
+    protectedNames.add(name);
+  }
+  if (importedArguments.size > 0 || enrolledRedemptions.length > 0) {
     protectedNames.add('GatewayAssertionRedemptionService');
   }
   return protectedNames;
 };
 
-const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<string>): boolean => {
+const hasCryptoReadImports = (
+  source: string,
+  importedArguments: ReadonlySet<string>,
+  enrolledRedemptions: readonly EnrolledRedemption[],
+): boolean => {
   // Local binding -> [module, exported name].
   const expectedImports = new Map([
     ['Layer', [EFFECT_EDGE_MODULE, 'Layer']],
@@ -1089,7 +1227,7 @@ const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<str
     ['nodeCryptoLayer', ['@effect/platform-node/NodeCrypto', 'layer']],
     ['ReadRuntime', [CORE_RUNTIME_MODULE, 'ReadRuntime']],
   ]);
-  if (importedArguments.size > 0) {
+  if (importedArguments.size > 0 || enrolledRedemptions.length > 0) {
     expectedImports.set('GatewayAssertionRedemptionService', [
       CORE_RUNTIME_MODULE,
       'GatewayAssertionRedemptionService',
@@ -1117,12 +1255,16 @@ const cryptoReadRemainingSource = (
   maker: string,
   invocation: string | undefined,
   exported: string,
+  enrolledRedemptions: readonly EnrolledRedemption[],
 ) => {
   // Remove only the declarations and imports whose identities and exact roles were proved.
   let remaining = source.replace(
     factorySource,
     factorySource.replace(signature, '()').replace(injection, '').replace(merge, ''),
   );
+  for (const { declaration } of enrolledRedemptions) {
+    remaining = remaining.replace(declaration, ' '.repeat(declaration.length));
+  }
   remaining = remaining.slice(0, tupleIndex) + ' '.repeat(closing + 1 - tupleIndex) + remaining.slice(closing + 1);
   let invalidImport = false;
   remaining = remaining.replaceAll(/^\s*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gmu, (declaration) => {
@@ -1130,6 +1272,7 @@ const cryptoReadRemainingSource = (
     for (const entry of values.split(',').map((value) => value.trim())) {
       if (
         /^GatewayAssertionRedemptionLive\b/u.test(entry) &&
+        !enrolledRedemptions.some(({ alias }) => entry === `GatewayAssertionRedemptionLive as ${alias}`) &&
         ![...importedArguments].some(
           (argument) =>
             entry ===
@@ -1273,7 +1416,8 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
     return false;
   }
   const importedArguments = cryptoReadImportedArguments(source, tuple.elements, invocation.actualArguments);
-  if (importedArguments === null) {
+  const enrolledRedemptions = cryptoReadEnrolledRedemptions(source, tuple.elements, invocation.actualArguments);
+  if (importedArguments === null || enrolledRedemptions === null) {
     return false;
   }
   const protectedNames = cryptoReadProtectedNames(
@@ -1283,8 +1427,9 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
     invocation.maker,
     invocation.exported,
     importedArguments,
+    enrolledRedemptions,
   );
-  if (protectedNames === null || !hasCryptoReadImports(source, importedArguments)) {
+  if (protectedNames === null || !hasCryptoReadImports(source, importedArguments, enrolledRedemptions)) {
     return false;
   }
   const remaining = cryptoReadRemainingSource(
@@ -1299,6 +1444,7 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
     invocation.maker,
     invocation.invocation,
     invocation.exported,
+    enrolledRedemptions,
   );
   return remaining !== null && hasClosedCryptoReadReferences(remaining, protectedNames);
 };
@@ -1595,37 +1741,11 @@ const hasNativeReadServiceFactoryExport = (source: string, binding: string): boo
   );
 };
 
-/** Resolve the original owner callable; native import renames preserve that callable's identity. */
-export const hasOwnerLocalReadServiceFactory = (
-  sources: ReadonlyMap<string, string>,
-  readFile: string,
-  ownerPath: string,
-  candidate?: string,
-): boolean => {
-  if (
-    candidate === undefined ||
-    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ||
-    path.posix.normalize(ownerPath) !== ownerPath ||
-    path.posix.normalize(readFile) !== readFile ||
-    !readFile.startsWith(`${ownerPath}/`)
-  ) {
-    return false;
-  }
-  const readSource = sources.get(readFile);
-  const imported = readSource === undefined ? undefined : namedSourceImport(readSource, candidate);
-  if (imported === undefined || !/^\.\.?\//u.test(imported.modulePath) || !imported.modulePath.endsWith('.ts')) {
-    return false;
-  }
-  const factoryFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
-  const factorySource = factoryFile.startsWith(`${ownerPath}/`) ? sources.get(factoryFile) : undefined;
-  return (
-    factorySource !== undefined &&
-    (hasNativeReadServiceFactoryExport(factorySource, imported.imported) ||
-      hasScopedReadFactoryExport(factorySource, imported.imported))
-  );
-};
-
-const nativeReadFactoryAnnotationBinding = (source: string, annotation: string): string | undefined => {
+const nativeReadFactoryAnnotationBinding = (
+  source: string,
+  annotation: string,
+  nativeName = 'ReadServiceFactory',
+): string | undefined => {
   const nativeType = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<arguments><[\s\S]+>)$/u.exec(annotation);
   const binding = nativeType?.groups?.binding;
   const argumentsSource = nativeType?.groups?.arguments;
@@ -1633,7 +1753,7 @@ const nativeReadFactoryAnnotationBinding = (source: string, annotation: string):
   return argumentsSource !== undefined &&
     topLevelSeparators(maskNonCode(argumentsSource), '>', 0, argumentsSource.length, true)[0] ===
       argumentsSource.length - 1 &&
-    imported?.imported === 'ReadServiceFactory' &&
+    imported?.imported === nativeName &&
     imported.modulePath === CORE_RUNTIME_MODULE
     ? binding
     : undefined;
@@ -2065,6 +2185,176 @@ const hasStableReadFactoryBindings = (
   return [...expectedDeclarations].every(([binding, count]) => (declarations.get(binding) ?? 0) === count);
 };
 
+const hasStableOwnerLocalEffectFn = (binding: string, ownerSource: string): boolean => {
+  const initializer = constInitializer(ownerSource, binding);
+  return (
+    initializer !== undefined &&
+    isEffectFnCallback(initializer) &&
+    /\byield\*|\.pipe\(/u.test(maskNonCode(initializer, true)) &&
+    hasExactValueImport(ownerSource, 'Effect', 'effect') &&
+    hasStableReadFactoryBindings(
+      ownerSource,
+      new Map([
+        ['Effect', 0],
+        [binding, 1],
+      ]),
+      '',
+    )
+  );
+};
+
+/** A local Effect.fn call returns an Effect without requiring a redundant constructor or pipe in the caller. */
+const hasOwnerLocalEffectFnReadInvocation = (expression: string, ownerSource: string): boolean => {
+  const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression)?.groups?.name;
+  return (
+    binding !== undefined &&
+    isWholeCallExpression(expression, new RegExp(`^${escapeRegExp(binding)}\\(`, 'u')) &&
+    hasStableOwnerLocalEffectFn(binding, ownerSource)
+  );
+};
+
+/** A readonly inline service method can retain a stable local Effect.fn's exact return type. */
+const hasTypedReadServiceEffectInvocation = (callback: string, expression: string, source: string): boolean => {
+  const invocation = /^(?<context>[A-Za-z_$][A-Za-z0-9_$]*)\.services\.(?<method>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(
+    expression,
+  )?.groups;
+  const arrow = directArrowExpression(callback);
+  const contextName = invocation?.context;
+  const method = invocation?.method;
+  if (
+    arrow === undefined ||
+    contextName === undefined ||
+    method === undefined ||
+    !isWholeCallExpression(
+      expression,
+      new RegExp(`^${escapeRegExp(contextName)}\\.services\\.${escapeRegExp(method)}\\(`, 'u'),
+    )
+  ) {
+    return false;
+  }
+  const imported = namedSourceImport(source, 'ReadLoadContext', true);
+  if (imported?.modulePath !== CORE_RUNTIME_MODULE) {
+    return false;
+  }
+  const parameter = arrow.parameters.find((value) => new RegExp(`^${escapeRegExp(contextName)}\\s*:`, 'u').test(value));
+  const contract =
+    parameter === undefined
+      ? undefined
+      : new RegExp(
+          `^${escapeRegExp(contextName)}\\s*:\\s*ReadLoadContext\\s*<\\s*\\{\\s*readonly\\s+${escapeRegExp(method)}\\s*:\\s*\\([\\s\\S]*\\)\\s*=>\\s*ReturnType\\s*<\\s*typeof\\s+(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\\s*>\\s*;?\\s*\\}\\s*>$`,
+          'u',
+        ).exec(parameter)?.groups;
+  return contract?.binding !== undefined && hasStableOwnerLocalEffectFn(contract.binding, source);
+};
+
+const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
+  if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
+    return false;
+  }
+  const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(ownerSource, candidate) : candidate;
+  if (resolved === undefined) {
+    return false;
+  }
+  if (isEffectFnCallback(resolved)) {
+    return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
+  }
+  const expression = maskNonCode(callbackReturnedExpression(resolved) ?? '', true).trim();
+  return (
+    (/^Effect\.(?:succeedNone|void)$/u.test(expression) &&
+      hasExactValueImport(ownerSource, 'Effect', 'effect') &&
+      hasStableReadFactoryBindings(ownerSource, new Map([['Effect', 0]]), '')) ||
+    /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression) ||
+    hasOwnerLocalEffectFnReadInvocation(expression, ownerSource) ||
+    hasTypedReadServiceEffectInvocation(resolved, expression, ownerSource)
+  );
+};
+
+const identifierParameterType = (parameter: string | undefined): string | undefined =>
+  /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(parameter?.trim() ?? '')?.groups?.type;
+
+const nativeScopedReadFactoryTypes = (
+  source: string,
+  parameters: readonly string[],
+): { readonly scopeType: string; readonly transactionType: string } | undefined => {
+  const transactionType = identifierParameterType(parameters[0]);
+  const scopeType = identifierParameterType(parameters[1]);
+  if (parameters.length !== 2 || transactionType === undefined || scopeType === undefined) {
+    return undefined;
+  }
+  const scopeImport = namedSourceImport(source, scopeType, true);
+  const factoryTypeImport = namedSourceImport(source, 'ReadServiceFactory', true);
+  const transactionAlias = assignedExpression(
+    source,
+    new RegExp(`\\btype\\s+${escapeRegExp(transactionType)}\\s*=\\s*`, 'u'),
+  );
+  return scopeImport?.imported === 'OperationalScope' &&
+    scopeImport.modulePath === CORE_RUNTIME_MODULE &&
+    factoryTypeImport?.imported === 'ReadServiceFactory' &&
+    factoryTypeImport.modulePath === CORE_RUNTIME_MODULE &&
+    transactionAlias?.replaceAll(/\s+/gu, '').replaceAll('"', "'") ===
+      "Pick<Parameters<ReadServiceFactory<Readonly<Record<string,never>>>>[0],'invoke'>"
+    ? { scopeType, transactionType }
+    : undefined;
+};
+
+const hasNativeScopedReadServiceFactoryExport = (source: string, binding: string): boolean => {
+  const arrow = directArrowExpression(constInitializer(source, binding));
+  const nativeTypes = arrow === undefined ? undefined : nativeScopedReadFactoryTypes(source, arrow.parameters);
+  if (arrow === undefined || nativeTypes === undefined) {
+    return false;
+  }
+  const outputType = /^:\s*Effect\.Effect(?<arguments><[\s\S]+>)$/u.exec(arrow.annotation)?.groups?.arguments;
+  return (
+    outputType !== undefined &&
+    topLevelSeparators(maskNonCode(outputType), '>', 0, outputType.length, true)[0] === outputType.length - 1 &&
+    isWholeCallExpression(arrow.output, /^Effect\.succeed\(/u) &&
+    hasExactValueImport(source, 'Effect', 'effect') &&
+    hasExactlyOne(maskNonCode(source), new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*=`, 'gu')) &&
+    hasStableReadFactoryBindings(
+      source,
+      new Map([
+        [binding, 1],
+        ['Effect', 0],
+        ['ReadServiceFactory', 0],
+        [nativeTypes.scopeType, 0],
+        [nativeTypes.transactionType, 1],
+      ]),
+      '',
+    )
+  );
+};
+
+/** Resolve the original owner callable; native import renames preserve that callable's identity. */
+export const hasOwnerLocalReadServiceFactory = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate?: string,
+): boolean => {
+  if (
+    candidate === undefined ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const readSource = sources.get(readFile);
+  const imported = readSource === undefined ? undefined : namedSourceImport(readSource, candidate);
+  if (imported === undefined || !/^\.\.?\//u.test(imported.modulePath) || !imported.modulePath.endsWith('.ts')) {
+    return false;
+  }
+  const factoryFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+  const factorySource = factoryFile.startsWith(`${ownerPath}/`) ? sources.get(factoryFile) : undefined;
+  return (
+    factorySource !== undefined &&
+    (hasNativeReadServiceFactoryExport(factorySource, imported.imported) ||
+      hasScopedReadFactoryExport(factorySource, imported.imported) ||
+      hasNativeScopedReadServiceFactoryExport(factorySource, imported.imported))
+  );
+};
+
 interface LocalReadFactoryMaker {
   readonly argumentsList: readonly string[];
   readonly maker: string;
@@ -2242,6 +2532,68 @@ export const hasOwnerLocalReadServiceFactoryResult = (
   );
 };
 
+const nativeReadFinishContextType = (source: string, callbackSource: string | undefined): string | undefined => {
+  const opening = callbackSource?.indexOf('(');
+  const closing =
+    callbackSource === undefined || opening === undefined
+      ? undefined
+      : matchingDelimiterEnd(callbackSource, opening, '(', ')');
+  if (callbackSource === undefined || opening === undefined || closing === undefined) {
+    return undefined;
+  }
+  const parameters = sourceParameters(callbackSource, opening, closing);
+  const annotation = /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>[\s\S]+)$/u.exec(parameters[1] ?? '')?.groups?.type;
+  return parameters.length === 2 && annotation !== undefined
+    ? nativeReadFactoryAnnotationBinding(source, annotation, 'ReadFinishContext')
+    : undefined;
+};
+
+const localReadFinishFactoryMaker = (source: string, candidate: string): LocalReadFactoryMaker | undefined => {
+  const maker = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(candidate)?.groups?.name;
+  if (maker === undefined) {
+    return undefined;
+  }
+  const argumentsList = wholeCallArguments(candidate, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'));
+  const arrow = directArrowExpression(constInitializer(source, maker));
+  const callback = arrow?.annotation === '' ? effectFnCallback(arrow.output) : undefined;
+  const nativeType = nativeReadFinishContextType(source, callback);
+  return argumentsList !== undefined && arrow !== undefined && nativeType !== undefined
+    ? { argumentsList, maker, nativeType, parameters: arrow.parameters }
+    : undefined;
+};
+
+/** A finish maker must return Effect.fn with the native Core context and owner-local dependencies. */
+export const hasOwnerLocalReadFinishFactoryResult = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate: string | undefined,
+): boolean => {
+  const source = sources.get(readFile);
+  if (
+    source === undefined ||
+    candidate === undefined ||
+    path.posix.normalize(readFile) !== readFile ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    !readFile.startsWith(`${ownerPath}/`) ||
+    !hasExactValueImport(source, 'Effect', 'effect')
+  ) {
+    return false;
+  }
+  const factory = localReadFinishFactoryMaker(source, candidate);
+  const dependencies =
+    factory === undefined
+      ? undefined
+      : localReadFactoryDependencies(sources, readFile, ownerPath, source, factory.maker, factory);
+  return (
+    factory !== undefined &&
+    dependencies !== undefined &&
+    factory.argumentsList.length >= dependencies.minimumArguments &&
+    factory.argumentsList.length <= factory.parameters.length &&
+    hasStableReadFactoryBindings(source, dependencies.bindings, factory.maker)
+  );
+};
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -2250,7 +2602,7 @@ const hasReadCallbacks = (
   readFile: string,
   ownerPath: string,
 ): boolean => {
-  const handler = callArgument(readExpression, /^defineRead\(/u, 1);
+  const pipeline = callArgument(readExpression, /^defineRead\(/u, 1);
   const callbacks = [2, 3];
   if (kind === SEARCH_PROVIDER_KIND) {
     callbacks.push(4);
@@ -2289,8 +2641,23 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
+  // A single owner handler, or an owner pipeline: an executable `load` step plus optional executable
+  // `prepare` and `finish` steps.
+  const isPipeline = pipeline?.trimStart().startsWith('{') === true;
+  const load = isPipeline && pipeline !== undefined ? objectPropertyValue(pipeline, 'load') : pipeline;
+  const optionalSteps = ['prepare', 'finish'].flatMap((step) => {
+    const callback = isPipeline && pipeline !== undefined ? objectPropertyValue(pipeline, step) : undefined;
+    return callback === undefined ? [] : [{ callback, step }];
+  });
   return (
-    (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
+    (isReadHandlerCallback(load, source) || isOwnerLocalImportedFactoryResult(load)) &&
+    optionalSteps.every(
+      ({ callback, step }) =>
+        isExecutableCallback(callback, source) ||
+        isOwnerLocalImportedCallback(callback) ||
+        isOwnerLocalImportedFactoryResult(callback) ||
+        (step === 'finish' && hasOwnerLocalReadFinishFactoryResult(sources, readFile, ownerPath, callback)),
+    ) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       return (
@@ -2341,6 +2708,7 @@ const hasReadContract = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
   ownerPath: string,
+  diagnostics?: string[],
 ): boolean => {
   const camel = toCamelCase(contribution.name);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
@@ -2406,6 +2774,11 @@ const hasReadContract = (
     policy: hasReadDescriptorPolicy(read, allowedAccessKinds),
     readCall: isWholeObjectCall(readExpression, read, /^defineRead\(/u),
   };
+  for (const [name, valid] of Object.entries(checks)) {
+    if (!valid) {
+      diagnostics?.push(`${contribution.name} read: ${name}`);
+    }
+  }
   return Object.values(checks).every(Boolean);
 };
 
@@ -3121,6 +3494,26 @@ export const hasGeneratedActionClientPublication = (
   );
 };
 
+/** Codesmith roots may publish explicit bindings instead of an unrestricted wildcard. */
+export const hasGeneratedActionHttpClientExports = (source: string, slug: string, type: string): boolean => {
+  const modulePath = escapeRegExp(`./${slug}-action-client.ts`);
+  const start = '// <generated-action-http-client-exports>';
+  const end = '// </generated-action-http-client-exports>';
+  const wildcard = new RegExp(`export \\* from '${modulePath}';`, 'gu');
+  const values = new RegExp(
+    `export \\{\\s*execute${escapeRegExp(type)},\\s*execute${escapeRegExp(type)}WithAuthorization\\s*\\} from '${modulePath}';`,
+    'gu',
+  );
+  const options = new RegExp(
+    `export type \\{\\s*${escapeRegExp(type)}ActionClientOptions\\s*\\} from '${modulePath}';`,
+    'gu',
+  );
+  return (
+    slotHasExactlyOneCodeMatch(source, start, end, wildcard) ||
+    (slotHasExactlyOneCodeMatch(source, start, end, values) && slotHasExactlyOneCodeMatch(source, start, end, options))
+  );
+};
+
 const publicContractSourceLocation = (
   packagePath: string,
   exportedPath: string | undefined,
@@ -3188,6 +3581,7 @@ export const hasNativeHttpActionMount = (source: string, layer: string): boolean
 
 const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly deploymentAppId: string;
+  readonly diagnostics: string[] | undefined;
   readonly handlerRoot: string;
   readonly manifest: string;
   readonly moduleId: string;
@@ -3234,7 +3628,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
     const escapedApiValue = escapeRegExp(apiValue);
     const escapedLayerValue = escapeRegExp(layerValue);
     const escapedActionValue = escapeRegExp(`${camel}Action`);
-    return [
+    const checks = [
       actionSource.startsWith(
         `// @generated by OntOS Codesmith Action v1\n// @ontos-action-owner ${input.moduleId}\n// @ontos-action-slug ${slug}\n`,
       ),
@@ -3276,7 +3670,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
           'gu',
         ),
       ) || hasNativeHttpActionMount(input.handlerRoot, layerValue),
-      hasGeneratedActionClientPublication(clientRoot, slug, clientImport),
+      hasGeneratedActionClientPublication(clientRoot, slug, clientImport) ||
+        hasGeneratedActionHttpClientExports(clientRoot, slug, type),
       slotHasExactlyOneCodeMatch(
         input.manifest,
         '// <generated-module-manifest-actions>',
@@ -3289,7 +3684,35 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         '// </generated-module-registration-actions>',
         new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
-    ].every(Boolean);
+    ];
+    const labels = [
+      'Action provenance',
+      'Action registration',
+      'Action key',
+      'endpoint path',
+      'API identity',
+      'group identity',
+      'problem mapper',
+      'problem registration',
+      'HTTP runner',
+      'HTTP registration',
+      'HTTP group',
+      'client contract',
+      'client gateway',
+      'client fresh assertion',
+      'shared API contribution',
+      'handler import',
+      'handler runtime',
+      'client exports',
+      'manifest Action',
+      'runtime Action',
+    ];
+    for (const [index, valid] of checks.entries()) {
+      if (!valid) {
+        input.diagnostics?.push(`${slug}: ${labels[index]}`);
+      }
+    }
+    return checks.every(Boolean);
   });
 };
 
@@ -3678,8 +4101,9 @@ const hasCompleteContributionRead = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
   ownerPath: string,
+  diagnostics?: string[],
 ): boolean =>
-  hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath) &&
+  hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath, diagnostics) &&
   (contribution.kind !== MODULE_API_KIND ||
     hasGeneratedModuleApiReadContract(
       readSource,
@@ -3969,6 +4393,7 @@ const hasCompleteGeneratedContribution = (
       sources,
       path.posix.normalize(path.posix.join(verticalPath, 'api', readImport)),
       verticalPath,
+      context.diagnostics,
     ),
     server: hasServerContract(
       serverSource,
@@ -3998,6 +4423,7 @@ const hasCompleteGeneratedContributions = (
 ): boolean => {
   const contributions = generatedReadContributions(sources, inputs.verticalPath);
   if (contributions.length === 0) {
+    diagnostics?.push('no generated read contracts with valid provenance');
     return false;
   }
   if (!hasMatchingModuleApiSlots(inputs.manifest, inputs.registration, contributions)) {
@@ -4035,6 +4461,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
     readsAreComplete &&
     hasCompleteGeneratedActionHttpSeam({
       deploymentAppId,
+      diagnostics,
       handlerRoot: inputs.handlerRoot,
       manifest: inputs.manifest,
       moduleId: inputs.moduleId,

@@ -1,10 +1,12 @@
+import { ActionPermission as RuntimeActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
-import * as publicSurface from '../../src/index.ts';
+
+const publicSurface = await import('../../src/index.ts');
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -127,4 +129,10 @@ it('publishes the typed governed Read alternative-target composition', () => {
 
   expect(target.kind).toBe('any_of');
   expect(target.targets[0].kind).toBe('resource');
+});
+
+it('publishes the contextual permission tag through the server wiring port while keeping the main Action SDK narrow', () => {
+  expect(RuntimeActionPermission.key).toBe('@app/core-runtime/permissions/service/ActionPermission');
+  expect('ActionPermission' in publicSurface).toBe(false);
+  expect('ActionPermissionLive' in publicSurface).toBe(false);
 });

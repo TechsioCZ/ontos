@@ -12,7 +12,7 @@ const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
 export const IdentifierVerificationSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
 export type IdentifierVerification = typeof IdentifierVerificationSchema.Type;
 
-const isValidCzechIco = (value: string): boolean => {
+export const isValidCzechIco = (value: string): boolean => {
   if (!/^[0-9]{8}$/u.test(value)) {
     return false;
   }

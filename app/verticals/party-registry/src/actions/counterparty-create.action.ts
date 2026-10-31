@@ -31,6 +31,8 @@ export {
 } from '../../shared/actions/counterparty-create.ts';
 export type { CounterpartyCreatePayload } from '../../shared/actions/counterparty-create.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const CounterpartyCreateError = Schema.Union([
   PartyAliasWriteRejected,
   CounterpartyEvidenceInsufficient,
@@ -112,8 +114,8 @@ const handleCounterpartyCreate = Effect.fn('CounterpartyCreateAction.handleCount
       accessKind: 'read',
       queryHash: `counterparty-context:${result.partyRef.resourceId}`,
       resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
+      servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+      targetModuleKey: PARTY_REGISTRY_MODULE_ID,
       targetResourceId: result.counterpartyRef.resourceId,
       targetResourceType: 'party.registry.counterparty',
     });
@@ -126,8 +128,8 @@ const handleCounterpartyCreate = Effect.fn('CounterpartyCreateAction.handleCount
       const event = yield* context.addDomainEvent({
         eventType: 'party.registry.counterparty-created.v1',
         payloadJson,
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
+        producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+        subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
         subjectResourceId: result.counterpartyRef.resourceId,
         subjectResourceType: 'party.registry.counterparty',
       });
@@ -165,13 +167,13 @@ export const counterpartyCreateAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.counterparty-create',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityPermission: 'manage_counterparty',
     legalEntityScope: 'required',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CounterpartyCreatePayloadSchema,
     policies: [],
     resultSchema: CounterpartyCreateResultSchema,

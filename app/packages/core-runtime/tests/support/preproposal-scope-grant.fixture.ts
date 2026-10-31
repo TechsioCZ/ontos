@@ -2,11 +2,13 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, Layer, Schema, Stdio, Stream } from 'effect';
 import { GatewayScopeGrantRegistrar, GatewayScopeGrantRegistrarLive } from '../../src/auth/gateway-scope-grant.ts';
 import { PrincipalIdSchema, TenantIdSchema } from '../../src/auth/external-identity-contracts.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 
 const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PreproposalLegalEntityId'));
 const commandSchema = Schema.Struct({
   assertion: Schema.RedactedFromValue(Schema.String),
-  audience: Schema.String,
+  audience: Schema.Literal('party-registry'),
   expiresAtEpochSeconds: Schema.Int,
   jti: Schema.String.check(Schema.isUUID()),
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
@@ -44,7 +46,12 @@ const serve = Effect.gen(function* serveSignedAssertionRegistration() {
 NodeRuntime.runMain(
   Effect.scoped(
     Effect.gen(function* scopeGrantMain() {
-      const services = yield* Layer.build(GatewayScopeGrantRegistrarLive.pipe(Layer.provideMerge(NodeServices.layer)));
+      // The Party receiver uses gateway-grant scope. Match the clone's explicit test-owned enrollment;
+      // an empty enrollment would acknowledge registration without persisting the assertion's grant.
+      const enrollment = Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+      const services = yield* Layer.build(
+        GatewayScopeGrantRegistrarLive.pipe(Layer.provide(enrollment), Layer.provideMerge(NodeServices.layer)),
+      );
       yield* serve.pipe(
         Effect.catchCause(() =>
           Effect.sync(() => {

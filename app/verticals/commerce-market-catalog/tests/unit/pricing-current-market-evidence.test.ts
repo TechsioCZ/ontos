@@ -171,7 +171,7 @@ describe('Pricing Current Market evidence owner boundary', () => {
       const absent = yield* readPricingCurrentMarketEvidence(
         persistence({
           generation: 9,
-          nextApplicabilityBoundary: presentSnapshot.nextApplicabilityBoundary,
+          nextApplicabilityBoundary: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(boundary),
           observedAt: presentSnapshot.observedAt,
           state: 'ABSENT',
         }),
@@ -302,7 +302,8 @@ describe('Pricing Current Market evidence owner boundary', () => {
       const snapshot = yield* ownerPersistence.readCurrent(request);
       expect(routineKey).toBe('pricing-current-market-evidence.read-current');
       expect(input).toEqual({ channel: 'B2C', effectiveAt: operationTime, marketId });
-      expect(snapshot.state).toBe('PRESENT');
+      expect(snapshot).toEqual(presentSnapshot);
+      expect(DateTime.formatIso(snapshot.observedAt)).toBe(observedAt);
       expect(() => Schema.decodeUnknownSync(PricingCurrentMarketEvidenceResponseSchema)({})).toThrow();
     }),
   );

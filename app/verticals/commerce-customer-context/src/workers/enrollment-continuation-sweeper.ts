@@ -1,8 +1,8 @@
-import { Clock, DateTime, Duration, Effect, Layer, Option, Ref, Schedule } from 'effect';
+import { Cause, Clock, DateTime, Effect, Option, Ref } from 'effect';
 
 import type { DueEnrollmentAttempt, DueEnrollmentAttemptCursor } from '../enrollment/attempts/attempt-persistence.ts';
-import { CommerceEnrollmentContinuation } from '../enrollment/continuation/enrollment-continuation.ts';
 import type {
+  CommerceEnrollmentContinuation,
   CommerceEnrollmentContinuationResult,
   CommerceEnrollmentContinuationSweepPass,
 } from '../enrollment/continuation/enrollment-continuation.ts';
@@ -49,8 +49,7 @@ import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contrac
  * Attempt swept exactly once. The journal therefore hands out one claim per Attempt per pass, and a
  * replica that does not get it leaves the row alone without charging it.
  *
- * It follows the shape of the outbox poller's supervision loop: one tick that cannot fail, logged
- * only when it did something, repeated on a fixed schedule for the lifetime of the layer's scope.
+ * The owner host's recovery supervisor (`src/worker-host/recovery.ts`) repeats one sweep per cycle.
  * It is deliberately not a queue: the Attempt journal already is the durable record, and a second
  * durable index of due work would be a second thing to keep true.
  */
@@ -97,7 +96,7 @@ interface TrackedAttempt extends AdvanceEntry {
 interface DueSweep {
   readonly entry: TrackedAttempt;
   /** The revision the journal named for it on this tick; `none` when this tick's listing had none. */
-  readonly revision: Option.Option<Pick<DueEnrollmentAttempt, 'compositionRevision' | 'revision'>>;
+  readonly revision: Option.Option<Pick<DueEnrollmentAttempt, 'revision'>>;
 }
 
 export interface CommerceEnrollmentContinuationSweepResult {
@@ -117,7 +116,21 @@ interface CommerceEnrollmentContinuationSweeper {
    * registers the Attempt for a later sweep and a completion releases it.
    */
   readonly continuation: Continuation;
+  /** The runtime reads this after the same sweep, never by opening a second admission pass. */
+  readonly observation: Effect.Effect<CommerceEnrollmentRecoveryObservation>;
   readonly sweep: Effect.Effect<CommerceEnrollmentContinuationSweepResult>;
+}
+
+export interface CommerceEnrollmentRecoveryObservation {
+  readonly available: boolean;
+  /** Successful journal/admission sweep, not proof that any owner work completed. */
+  readonly lastSuccessfulSweepAt: Option.Option<number>;
+  /** Oldest due row observed in this bounded tick, not a global backlog age. */
+  readonly oldestDueAt: Option.Option<number>;
+  /** The due listing excludes exhausted rows; absence of a count must not mean zero. */
+  readonly retryExhaustedCount: Option.Option<number>;
+  /** Unsettled advances observed during this tick, not a global backlog count. */
+  readonly unresolved: number;
 }
 
 export interface CommerceEnrollmentContinuationSweeperOptions {
@@ -131,6 +144,7 @@ export interface CommerceEnrollmentContinuationSweeperOptions {
 type Registry = ReadonlyMap<string, TrackedAttempt>;
 
 interface SweeperState {
+  readonly observation: Ref.Ref<CommerceEnrollmentRecoveryObservation>;
   readonly registry: Ref.Ref<Registry>;
 }
 
@@ -181,8 +195,24 @@ const observe = (
     Effect.asVoid,
   );
 
-const trackedAdvance = (state: SweeperState, inner: Pick<Continuation, 'advance'>, entry: AdvanceEntry) =>
-  inner.advance(entry.attempt).pipe(
+/**
+ * Why a sweep failed, in the same terms the HTTP continuation logs it: the failure's bounded reason
+ * and its rendered cause. A bare error tag cannot tell a provider read from a Core call or a
+ * transaction, and every one of them fails with the same tag.
+ */
+const failureEvidence = (failure: { readonly _tag: string; readonly reason: string }) => ({
+  cause: Cause.pretty(Cause.fail(failure)),
+  errorTag: failure._tag,
+  reason: failure.reason,
+});
+
+const trackedAdvance = (
+  state: SweeperState,
+  inner: Pick<Continuation, 'advance'>,
+  entry: AdvanceEntry,
+  options?: Parameters<Continuation['advance']>[1],
+) =>
+  inner.advance(entry.attempt, options).pipe(
     Effect.tap((result) => observe(state, entry, result)),
     // A failed advance is still activity: the Attempt stays tracked so the next sweep retries it.
     Effect.tapError(() => observe(state, entry)),
@@ -198,12 +228,20 @@ const advanceEntry = (
   entry: TrackedAttempt,
 ): Effect.Effect<boolean> =>
   trackedAdvance(state, inner, entry).pipe(
-    Effect.matchCauseEffect({
-      onFailure: (cause) =>
+    Effect.tap((result) =>
+      isSettled(result)
+        ? Effect.void
+        : Ref.update(state.observation, (current) => ({ ...current, unresolved: current.unresolved + 1 })),
+    ),
+    Effect.matchEffect({
+      onFailure: (failure) =>
         Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not advance this Attempt'), {
+          ...failureEvidence(failure),
           portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
-          reason: String(cause),
-        }).pipe(Effect.as(true)),
+        }).pipe(
+          Effect.andThen(Ref.update(state.observation, (current) => ({ ...current, available: false }))),
+          Effect.as(true),
+        ),
       onSuccess: () => Effect.succeed(true),
     }),
   );
@@ -219,23 +257,34 @@ const claimedAdvance = (
   state: SweeperState,
   inner: CommerceEnrollmentContinuationSweepPass,
   entry: TrackedAttempt,
-  revision: Pick<DueEnrollmentAttempt, 'compositionRevision' | 'revision'>,
+  revision: Pick<DueEnrollmentAttempt, 'revision'>,
   claimTtlMillis: number,
 ): Effect.Effect<boolean> =>
-  inner.claimSweep({ ...entry.attempt, ...revision, claimTtlMillis, maxSweeps: SWEEP_BUDGET }).pipe(
-    Effect.matchCauseEffect({
-      onFailure: (cause) =>
-        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
-          portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
-          reason: String(cause),
-        }).pipe(Effect.as(false)),
-      onSuccess: Option.match({
-        onNone: () => Effect.succeed(false),
-        // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
-        onSome: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+  inner
+    .claimSweep({
+      ...entry.attempt,
+      ...revision,
+      claimTtlMillis,
+      compositionRevision: inner.compositionRevision,
+      maxSweeps: SWEEP_BUDGET,
+    })
+    .pipe(
+      Effect.matchEffect({
+        onFailure: (failure) =>
+          Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
+            ...failureEvidence(failure),
+            portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
+          }).pipe(
+            Effect.andThen(Ref.update(state.observation, (current) => ({ ...current, available: false }))),
+            Effect.as(false),
+          ),
+        onSuccess: Option.match({
+          onNone: () => Effect.succeed(false),
+          // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
+          onSome: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+        }),
       }),
-    }),
-  );
+    );
 
 /** One due Attempt: advanced under whichever budget this tick's listing left it under. */
 const sweepEntry = (
@@ -274,8 +323,8 @@ const listDuePage = (
   staleAfterMillis: number,
 ): Effect.Effect<DurableListing> =>
   inner.listDue({ after, limit: pageLimit, maxSweeps: SWEEP_BUDGET, staleAfterMillis }).pipe(
-    Effect.matchCauseEffect({
-      onFailure: (cause) => Effect.succeed<DurableListing>({ attempts: [], unreadable: Option.some(String(cause)) }),
+    Effect.matchEffect({
+      onFailure: (failure) => Effect.succeed<DurableListing>({ attempts: [], unreadable: Option.some(failure._tag) }),
       onSuccess: (attempts) => Effect.succeed<DurableListing>({ attempts, unreadable: Option.none() }),
     }),
   );
@@ -358,7 +407,7 @@ const dueEntries = (
         lastActivityMillis: tracked?.lastActivityMillis ?? DateTime.toEpochMillis(listed.updatedAt),
         sweeps: tracked?.sweeps ?? 0,
       },
-      revision: Option.some({ compositionRevision: listed.compositionRevision, revision: listed.revision }),
+      revision: Option.some({ revision: listed.revision }),
     });
   }
   for (const entry of registry.values()) {
@@ -381,11 +430,18 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   staleAfterMillis: number,
 ): Effect.fn.Return<CommerceEnrollmentContinuationSweepResult> {
   const [now, registry] = yield* Effect.all([Clock.currentTimeMillis, Ref.get(state.registry)], { concurrency: 2 });
+  yield* Ref.update(state.observation, (current) => ({
+    ...current,
+    available: false,
+    oldestDueAt: Option.none(),
+    unresolved: 0,
+  }));
   const admitted = yield* inner.openSweepPass.pipe(
     Effect.matchEffect({
       onFailure: (failure) =>
         Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper awaits an approved continuation pass'), {
-          reason: failure.reason,
+          available: false,
+          errorTag: failure._tag,
         }).pipe(Effect.as(Option.none<CommerceEnrollmentContinuationSweepPass>())),
       onSuccess: Effect.succeedSome,
     }),
@@ -395,6 +451,20 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   }
   const pass = admitted.value;
   const durable = yield* durableDue({ inner: pass, pageLimit, staleAfterMillis });
+  let oldestDueAt: Option.Option<number> = Option.none();
+  for (const attempt of durable.attempts) {
+    oldestDueAt = Option.some(
+      Math.min(
+        Option.getOrElse(oldestDueAt, () => Infinity),
+        DateTime.toEpochMillis(attempt.updatedAt),
+      ),
+    );
+  }
+  yield* Ref.update(state.observation, (current) => ({
+    ...current,
+    available: Option.isNone(durable.unreadable),
+    oldestDueAt,
+  }));
   if (Option.isSome(durable.unreadable)) {
     yield* Effect.annotateLogs(
       Effect.logWarning('The Commerce enrollment sweeper could not read the durable Attempt journal'),
@@ -409,66 +479,36 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   });
   const swept = advanced.filter(Boolean).length;
   const tracked = yield* Ref.get(state.registry);
+  const finishedAt = yield* Clock.currentTimeMillis;
+  yield* Ref.update(state.observation, (current) =>
+    current.available ? { ...current, lastSuccessfulSweepAt: Option.some(finishedAt) } : current,
+  );
   return { released: advanced.length - swept, swept, tracked: tracked.size };
 });
 
 export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
   function* commerceEnrollmentContinuationSweeperFor(options: CommerceEnrollmentContinuationSweeperOptions) {
     const registry = yield* Ref.make<Registry>(new Map());
-    const state: SweeperState = { registry };
+    const observation = yield* Ref.make<CommerceEnrollmentRecoveryObservation>({
+      available: false,
+      lastSuccessfulSweepAt: Option.none(),
+      oldestDueAt: Option.none(),
+      retryExhaustedCount: Option.none(),
+      unresolved: 0,
+    });
+    const state: SweeperState = { observation, registry };
     const inner = options.continuation;
     const pageLimit = options.pageLimit ?? SWEEP_PAGE_LIMIT;
     const staleAfterMillis = options.staleAfterMillis ?? LEASE_WINDOW_MS;
     const sweeper: CommerceEnrollmentContinuationSweeper = {
       continuation: {
-        advance: (attempt) => trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }),
+        advance: (attempt, advanceOptions) =>
+          trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }, advanceOptions),
         openSweepPass: inner.openSweepPass,
       },
+      observation: Ref.get(observation),
       sweep: sweepOnce(state, inner, pageLimit, staleAfterMillis),
     };
     return sweeper;
   },
-);
-
-const hasActivity = (result: CommerceEnrollmentContinuationSweepResult): boolean =>
-  result.released > 0 || result.swept > 0;
-
-/** The supervision loop: a tick that cannot fail, logged only when it moved something. */
-const runCommerceEnrollmentContinuationSweepLoop = (
-  sweep: Effect.Effect<CommerceEnrollmentContinuationSweepResult>,
-  intervalMillis: number,
-): Effect.Effect<void> =>
-  sweep.pipe(
-    Effect.tap((result) =>
-      hasActivity(result)
-        ? Effect.annotateLogs(Effect.logInfo('The Commerce enrollment sweep cycle completed'), {
-            released: result.released,
-            swept: result.swept,
-            tracked: result.tracked,
-          })
-        : Effect.void,
-    ),
-    Effect.repeat(Schedule.spaced(Duration.millis(intervalMillis))),
-    Effect.asVoid,
-  );
-
-/**
- * The swept continuation: the continuation this deployment resolved, instrumented, with the sweep
- * loop running for the lifetime of the layer's scope. It takes the unswept continuation as its own
- * requirement, so root decides which one is wrapped — a host without the enrollment realm sweeps a
- * fail-closed continuation that refuses every Attempt and reports an empty journal, which is a
- * no-op rather than a second code path.
- */
-export const CommerceEnrollmentSweptContinuationLive: Layer.Layer<
-  CommerceEnrollmentContinuation,
-  never,
-  CommerceEnrollmentContinuation
-> = Layer.effect(
-  CommerceEnrollmentContinuation,
-  Effect.gen(function* makeCommerceEnrollmentSweptContinuation() {
-    const continuation = yield* CommerceEnrollmentContinuation;
-    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({ continuation });
-    yield* Effect.forkScoped(runCommerceEnrollmentContinuationSweepLoop(sweeper.sweep, LEASE_WINDOW_MS));
-    return sweeper.continuation;
-  }),
 );

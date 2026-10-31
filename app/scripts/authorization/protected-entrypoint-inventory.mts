@@ -2,6 +2,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Array as EffectArray, Order, Result, Schema } from 'effect';
 
+import { ActionExecutionAuthorizationSchema } from '../../packages/core-runtime/src/authorization/entrypoint-classification.ts';
+
 export const PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION = 2 as const;
 
 const PermissionSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u));
@@ -13,10 +15,7 @@ const InventoryAuthorizationSchema = Schema.Union([
     kind: Schema.Literal('context_permission'),
     permission: PermissionSchema,
   }),
-  Schema.Struct({
-    kind: Schema.Literal('action_execution'),
-    provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
-  }),
+  ActionExecutionAuthorizationSchema,
   Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
   Schema.Struct({
     credential: Schema.Literals(['api_key', 'session']),

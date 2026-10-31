@@ -1,0 +1,275 @@
+{
+  "sales-pipeline": {
+    "detail": {
+      "title": "Business case",
+      "relatedRecords": "Related records",
+      "tasks": "Tasks",
+      "contracts": "Contracts",
+      "orders": "Orders from this case",
+      "offerLinesTitle": "Offer – case line items",
+      "offerLinesLabel": "Offer line items",
+      "stageHistory": "Stage history"
+    },
+    "aiReview": {
+      "decisionNote": "Decision note (optional)",
+      "decisionNotePlaceholder": "E.g. verified with the customer",
+      "logTitle": "AI and approval log",
+      "unavailableTitle": "AI proposals are unavailable",
+      "batchDisplayLabel": "Batch display"
+    },
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "sales-pipeline",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Opportunities",
+    "widgetBody": "Owns a vertical route surface.",
+    "status": {
+      "opportunity": {
+        "LEAD": "Lead",
+        "QUALIFIED": "Qualified",
+        "PROPOSAL": "Proposal",
+        "NEGOTIATION": "Negotiation",
+        "WON": "Won",
+        "LOST": "Lost"
+      }
+    },
+    "table": {
+      "actionsLabel": "Actions",
+      "clearSearchLabel": "Clear search",
+      "columnsLabel": "Column settings",
+      "editingLabel": "You are editing a row, other table controls are locked",
+      "emptyDescription": "No data available.",
+      "emptyTitle": "No records",
+      "filtersLabel": "Column filters",
+      "loadingLabel": "Loading data",
+      "pageSizeLabel": "Rows per page",
+      "pagination": {
+        "first": "First page",
+        "last": "Last page",
+        "lastPage": "Page {{page}}, last",
+        "next": "Next page",
+        "page": "Page {{page}}",
+        "previous": "Previous page",
+        "root": "Pagination"
+      },
+      "rangeEmpty": "No records",
+      "rangeLabel": "{{start}}–{{end}} of {{total}}",
+      "reorderLabel": "Change row order",
+      "requiredLabel": "Required",
+      "searchButtonLabel": "Search",
+      "searchLabel": "Search",
+      "searchPlaceholder": "Search opportunities…",
+      "selectAllLabel": "Select all rows",
+      "selectionLabel": "Select rows"
+    },
+    "pages": {
+      "records": {
+        "title": "Opportunities",
+        "description": "Sales and rental opportunities. Catalog lines in a won opportunity create a draft invoice.",
+        "newOpportunity": "New opportunity",
+        "unavailable": "Data could not be loaded.",
+        "forbidden": "You do not have access to this section.",
+        "retry": "Try again",
+        "retryDescription": "Check your connection and try again.",
+        "emptyTitle": "No opportunities yet.",
+        "emptyDescription": "Create the first opportunity and follow it through to a win.",
+        "noResults": "No opportunities match the filters.",
+        "noResultsConflict": "The “Owner” and “Unassigned only” filters exclude each other. Clear one of them.",
+        "clearFilters": "Clear filters",
+        "stats": {
+          "open": "Open",
+          "weighted": "Weighted value",
+          "won": "Won",
+          "winRate": "Win rate"
+        },
+        "filters": {
+          "allOpportunities": "All opportunities",
+          "allOwners": "All owners",
+          "allStages": "All stages",
+          "assignment": "Assignment",
+          "owner": "Owner",
+          "search": "Search by title",
+          "searchLabel": "Search",
+          "stage": "Stage",
+          "tag": "Tag",
+          "unassignedOnly": "Unassigned only",
+          "customer": "Customer",
+          "allCustomers": "All customers",
+          "tagFailed": "The tag filter could not be loaded."
+        },
+        "columns": {
+          "amount": "Value",
+          "customer": "Customer",
+          "expectedClose": "Expected close",
+          "owner": "Owner",
+          "probability": "Probability",
+          "stage": "Stage",
+          "tags": "Tags",
+          "title": "Title",
+          "updatedAt": "Updated"
+        },
+        "archiveConfirm": "Archive opportunity “{{title}}”? It will leave the active list; its history will be preserved.",
+        "actions": {
+          "archive": "Archive",
+          "assignOwner": "Assign owner",
+          "changeStage": "Change stage",
+          "edit": "Edit"
+        },
+        "bulk": {
+          "owner": "Assign owner",
+          "selected": "Selected: {{total}}",
+          "stage": "Change stage",
+          "tags": "Tags"
+        },
+        "create": {
+          "cancel": "Cancel",
+          "submit": "Create opportunity",
+          "submitting": "Saving…",
+          "title": "New opportunity",
+          "description": "Enter the subject, counterparty and expected closing date.",
+          "customerPlaceholder": "Search for a customer…",
+          "noCustomerMatch": "No customer matches the search.",
+          "unknownCustomer": "Unknown customer",
+          "customersFailed": "Customers could not be loaded.",
+          "ownerEditHint": "Change the owner with the Assign owner action.",
+          "productPlaceholder": "Search for a product…",
+          "noProductMatch": "No product matches the search.",
+          "productsFailed": "Products could not be loaded.",
+          "currentPrice": "Current price: {{price}}, VAT {{vat}} %",
+          "addLine": "Add line",
+          "removeLine": "Remove line",
+          "noLines": "No lines yet.",
+          "priceFixedHint": "Price fixed when added.",
+          "lineMeta": "{{quantity}} × {{price}} per unit, VAT {{vat}} %",
+          "discard": {
+            "confirm": "Discard changes",
+            "description": "What you entered in this form will be lost.",
+            "keep": "Keep editing",
+            "title": "Discard unsaved changes?"
+          },
+          "total": "Total excl. VAT",
+          "errors": {
+            "customerRequired": "Choose a customer.",
+            "dateRequired": "Choose the expected close date.",
+            "noteTooLong": "The note can have at most 2000 characters.",
+            "productRequired": "Choose a product.",
+            "quantityRange": "Quantity must be a whole number from 1 to {{max}}.",
+            "titleRequired": "Enter the opportunity name.",
+            "amountRange": "The line total is too large. Reduce the price or quantity.",
+            "manualLine": "Enter a description up to 300 characters and a non-negative price."
+          },
+          "fields": {
+            "title": "Name",
+            "customer": "Customer",
+            "assignee": "Owner",
+            "expectedClose": "Expected close",
+            "note": "Note",
+            "lines": "Lines",
+            "product": "Product",
+            "quantity": "Quantity",
+            "rentDescription": "Rent or service",
+            "price": "Price per period excluding VAT (CZK)",
+            "vat": "VAT (%)"
+          },
+          "rentHint": "Include the building or unit and rental period. The amount covers the entered number of periods; create an invoice for these lines manually."
+        },
+        "stageDialog": {
+          "cancel": "Cancel",
+          "note": "Note",
+          "stage": "New stage",
+          "stageRequired": "Choose the new stage.",
+          "submit": "Change stage",
+          "submitting": "Saving…",
+          "title": "Change stage",
+          "wonWarning": "Catalog lines create a draft invoice. Invoice rental and service lines without catalog products manually."
+        },
+        "owner": {
+          "cancel": "Cancel",
+          "label": "Owner",
+          "none": "Unassigned",
+          "submit": "Assign owner",
+          "submitting": "Saving…",
+          "title": "Assign owner"
+        },
+        "toasts": {
+          "archived": "Opportunity archived.",
+          "created": "Opportunity created",
+          "ownerAssigned": "Owner assigned",
+          "ownerRemoved": "Owner removed",
+          "skipReasons": {
+            "closed": "closed: {{total}}",
+            "invalidTransition": "change not allowed: {{total}}",
+            "notFound": "not found: {{total}}",
+            "other": "unchanged: {{total}}"
+          },
+          "skipped": "Skipped: {{total}} ({{reasons}})",
+          "stageChanged": "Stage changed",
+          "updated": "Opportunity saved",
+          "bulkChanged": "Changed {{changed}}, skipped {{skipped}}"
+        },
+        "errors": {
+          "closed": "The opportunity is closed. Its stage, details and assignment cannot be changed. Bulk changes leave closed opportunities unchanged.",
+          "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
+          "forbidden": "You are not allowed to do this.",
+          "generic": "The change could not be saved. Try again.",
+          "invalidFilter": "The customer filter in the page URL is invalid."
+        },
+        "bulkByTag": {
+          "title": "Bulk by tag",
+          "description": "The change applies to open opportunities that match the chosen tag.",
+          "kind": "Tag type",
+          "kinds": {
+            "customer": "Customer",
+            "opportunity": "Opportunity"
+          },
+          "preview": "Affected opportunities",
+          "chooseTag": "Choose a tag to see the opportunities the change touches.",
+          "previewEmpty": "No open opportunity matches the tag.",
+          "loading": "Loading opportunities…",
+          "tagsFailed": "Tags could not be loaded.",
+          "loadFailed": "Opportunities could not be loaded. Close the dialog and try again.",
+          "conflict": "Someone else changed the opportunities. Close the dialog and repeat the change.",
+          "action": "Action",
+          "actions": {
+            "stage": "Change stage",
+            "owner": "Assign owner"
+          },
+          "stage": "New stage",
+          "owner": "Owner",
+          "valueRequired": "Choose a new stage or owner.",
+          "tooMany": "At most {{limit}} opportunities can change at once. Narrow the selection with a tag.",
+          "submit": "Apply change",
+          "submitting": "Saving…",
+          "cancel": "Cancel"
+        },
+        "edit": {
+          "title": "Edit opportunity",
+          "description": "Change the owner with the Assign owner action. Lines keep the prices fixed when they were added.",
+          "submit": "Save changes"
+        },
+        "unknownOwner": "Unknown owner"
+      },
+      "ai": {
+        "title": "AI changes to approve",
+        "description": "Level C AI agent proposals for opportunities and orders. Nothing changes until a person approves."
+      }
+    },
+    "selectPlaceholder": "Select…",
+    "loading": "Loading…",
+    "noResults": "No results",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
+  }
+}

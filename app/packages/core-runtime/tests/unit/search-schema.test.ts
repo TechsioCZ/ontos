@@ -1,9 +1,17 @@
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
+import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
 import { searchIndexEntries, searchProjectionGenerations, searchProjectionRebuilds } from '../../src/db/schema.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const config = getTableConfig(searchIndexEntries);
+const identityPolicies = makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+const policiesFor = (table: PgTable) => [
+  ...getTableConfig(table).policies,
+  ...identityPolicies.filter((descriptor) => descriptor.table === table).map(({ policy }) => policy),
+];
 
 it('Core Search rebuild floors are tenant/resource-scoped and cannot be deleted by runtime', () => {
   const rebuilds = getTableConfig(searchProjectionRebuilds);
@@ -13,7 +21,9 @@ it('Core Search rebuild floors are tenant/resource-scoped and cannot be deleted 
     'source_module_key',
     'source_resource_type',
   ]);
-  expect(rebuilds.policies.map(({ for: operation, name, to }) => ({ name, operation, to }))).toEqual([
+  expect(
+    policiesFor(searchProjectionRebuilds).map(({ for: operation, name, to }) => ({ name, operation, to })),
+  ).toEqual([
     { name: 'core_search_projection_rebuilds_tenant_select', operation: 'select', to: 'ontos_runtime' },
     { name: 'core_search_projection_rebuilds_tenant_insert', operation: 'insert', to: 'ontos_runtime' },
     { name: 'core_search_projection_rebuilds_tenant_update', operation: 'update', to: 'ontos_runtime' },
@@ -43,7 +53,9 @@ it('Core Search snapshot generations are independent tenant/source-scoped infras
   const generations = getTableConfig(searchProjectionGenerations);
   expect(generations.enableRLS).toBe(true);
   expect(generations.primaryKeys[0]?.columns.map(({ name }) => name)).toEqual(['tenant_id', 'source_module_key']);
-  expect(generations.policies.map(({ for: operation, name, to }) => ({ name, operation, to }))).toEqual([
+  expect(
+    policiesFor(searchProjectionGenerations).map(({ for: operation, name, to }) => ({ name, operation, to })),
+  ).toEqual([
     { name: 'core_search_projection_generations_tenant_select', operation: 'select', to: 'ontos_runtime' },
     { name: 'core_search_projection_generations_tenant_insert', operation: 'insert', to: 'ontos_runtime' },
     { name: 'core_search_projection_generations_tenant_update', operation: 'update', to: 'ontos_runtime' },
@@ -97,7 +109,7 @@ it('Core Search physical projection has versioned tenant-qualified lookup keys',
 });
 
 it('Core Search projection declares complete tenant RLS and bounded document checks', () => {
-  expect(config.policies.map(({ for: command, name, to }) => ({ command, name, to }))).toEqual([
+  expect(policiesFor(searchIndexEntries).map(({ for: command, name, to }) => ({ command, name, to }))).toEqual([
     { command: 'select', name: 'core_search_index_entries_tenant_select', to: 'ontos_runtime' },
     { command: 'insert', name: 'core_search_index_entries_tenant_insert', to: 'ontos_runtime' },
     { command: 'update', name: 'core_search_index_entries_tenant_update', to: 'ontos_runtime' },
@@ -113,7 +125,7 @@ it('Core Search projection declares complete tenant RLS and bounded document che
   ]);
   const dialect = new PgDialect();
   const policySql = new Map(
-    config.policies.map(({ name, using, withCheck }) => [
+    policiesFor(searchIndexEntries).map(({ name, using, withCheck }) => [
       name,
       [using, withCheck].flatMap((value) => (value === undefined ? [] : [dialect.sqlToQuery(value).sql])),
     ]),

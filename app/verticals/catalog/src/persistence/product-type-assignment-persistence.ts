@@ -53,6 +53,90 @@ export interface ProductTypeAssignmentPersistence {
   ) => Effect.Effect<SetProductTypeResult, ProductTypeAssignmentRejected | CatalogPersistenceUnavailable>;
 }
 
+/** Plain owner facts only; the preparation transaction never escapes this read. */
+export const readProductTypeAssignmentSnapshot = Effect.fn('ProductTypeAssignmentPersistence.snapshot')(
+  function* readSnapshot(
+    transaction: ScopedTransaction,
+    scope: OperationalScope,
+    input: {
+      readonly nextProductTypeId?: string;
+      readonly productId: string;
+    },
+  ) {
+    const { tenantId } = scope;
+    const [product, assignment, latestEvent] = yield* Effect.all(
+      [
+        transaction
+          .select({ currentRevision: products.currentRevision })
+          .from(products)
+          .where(and(eq(products.tenantId, tenantId), eq(products.productId, input.productId)))
+          .for('update')
+          .limit(1)
+          .pipe(Effect.mapError(unavailable)),
+        transaction
+          .select({
+            assignmentRevision: productTypeAssignments.assignmentRevision,
+            productTypeId: productTypeAssignments.productTypeId,
+          })
+          .from(productTypeAssignments)
+          .where(
+            and(eq(productTypeAssignments.tenantId, tenantId), eq(productTypeAssignments.productId, input.productId)),
+          )
+          .for('share')
+          .limit(1)
+          .pipe(Effect.mapError(unavailable)),
+        transaction
+          .select({ assignmentRevision: productTypeAssignmentEvents.assignmentRevision })
+          .from(productTypeAssignmentEvents)
+          .where(
+            and(
+              eq(productTypeAssignmentEvents.tenantId, tenantId),
+              eq(productTypeAssignmentEvents.productId, input.productId),
+            ),
+          )
+          .orderBy(desc(productTypeAssignmentEvents.assignmentRevision))
+          .limit(1)
+          .pipe(Effect.mapError(unavailable)),
+      ],
+      { concurrency: 1 },
+    );
+    const nextType =
+      input.nextProductTypeId === undefined
+        ? []
+        : yield* transaction
+            .select({ currentRevision: productTypes.currentRevision })
+            .from(productTypes)
+            .where(and(eq(productTypes.tenantId, tenantId), eq(productTypes.productTypeId, input.nextProductTypeId)))
+            .for('share')
+            .limit(1)
+            .pipe(Effect.mapError(unavailable));
+    const nextRevision =
+      input.nextProductTypeId === undefined || nextType[0] === undefined
+        ? []
+        : yield* transaction
+            .select({ productTypeRevisionId: productTypeRevisions.productTypeRevisionId })
+            .from(productTypeRevisions)
+            .where(
+              and(
+                eq(productTypeRevisions.tenantId, tenantId),
+                eq(productTypeRevisions.productTypeId, input.nextProductTypeId),
+                eq(productTypeRevisions.revision, nextType[0].currentRevision),
+              ),
+            )
+            .for('share')
+            .limit(1)
+            .pipe(Effect.mapError(unavailable));
+    return {
+      assignedProductTypeId: assignment[0]?.productTypeId,
+      assignmentRevision: assignment[0]?.assignmentRevision,
+      latestAssignmentRevision: latestEvent[0]?.assignmentRevision,
+      nextProductTypeRevision: nextType[0]?.currentRevision,
+      nextProductTypeRevisionId: nextRevision[0]?.productTypeRevisionId,
+      productRevision: product[0]?.currentRevision,
+    };
+  },
+);
+
 /**
  * Revalidates the Cart-owned population token and Catalog-owned Current rows before changing one
  * Product Type assignment. A non-empty open-selection population remains blocked because the

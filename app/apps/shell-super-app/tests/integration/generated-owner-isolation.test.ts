@@ -85,8 +85,14 @@ import {
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import {
   makeActionPermissionService,
+  toSpiceDbActionGrantObjectId,
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { injectStatementFaults } from '../../../../packages/core-runtime/tests/support/database-faults.ts';
@@ -113,6 +119,7 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -434,7 +441,6 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: PgC
   yield* admin.unsafe(`grant usage on schema ${schemaName} to ontos_runtime`);
   yield* admin.unsafe(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`);
 });
-type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 type RuntimeActionRegistration = ActionRegistration<
   Schema.ConstraintDecoder<unknown>,
   Schema.ConstraintDecoder<unknown>,
@@ -449,34 +455,27 @@ const RuntimeActionRegistrationSchema = Schema.declare<RuntimeActionRegistration
   (value): value is RuntimeActionRegistration => Predicate.isObjectKeyword(value),
 );
 const isRuntimeActionRegistration = Schema.is(RuntimeActionRegistrationSchema);
-const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
-  const transactionOverride = {
-    transaction: (runInTransaction, configuration) =>
-      database.executor.transaction(
-        (transaction) =>
-          runInTransaction(transaction).pipe(
-            injectStatementFaults((statement) =>
-              statement.startsWith('insert into "core"."data_access_events"')
-                ? Effect.fail(
-                    new SqlError({
-                      reason: new UnknownError({
-                        cause: new Error('Injected SQL failure'),
-                        message: 'Injected evidence persistence failure',
-                      }),
-                    }),
-                  )
-                : Effect.void,
-            ),
-          ),
-        configuration,
+/**
+ * Every Read evidence insert fails, wherever Core writes it: since ff350ac53 allowed evidence follows the owner
+ * transaction's commit, and a definite denial is recorded in its own short transaction.
+ */
+const failingEvidenceRuntime = (runtime: ReadRuntimeService): ReadRuntimeService => ({
+  runRead: (input) =>
+    runtime.runRead(input).pipe(
+      injectStatementFaults((statement) =>
+        statement.startsWith('insert into "core"."data_access_events"')
+          ? Effect.fail(
+              new SqlError({
+                reason: new UnknownError({
+                  cause: new Error('Injected SQL failure'),
+                  message: 'Injected evidence persistence failure',
+                }),
+              }),
+            )
+          : Effect.void,
       ),
-  } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
-  const executor: CoreDatabaseService['executor'] = Object.assign(
-    Object.create(database.executor),
-    transactionOverride,
-  );
-  return { executor };
-};
+    ),
+});
 const capturedLoggerLayer = (entries: string[]) =>
   Logger.layer([
     Logger.make((options) => {
@@ -630,9 +629,14 @@ it.live(
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
     const scopeResolver = withNamespaceRegistry(
-      yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess),
+      yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        contextAccess,
+      ),
     );
-    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess);
+    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    });
     const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.publicKey));
@@ -750,6 +754,21 @@ it.live(
       resourceId: collidingResourceId,
       resourceType: GENERATED_OWNER.resourceType,
     });
+    const actionIdentity = {
+      actionKey: GENERATED_OWNER.actionKey,
+      legalEntityId: entityA1,
+      tenantId: tenantA,
+    };
+    const roleGrant = { ...actionIdentity, roleKey: 'generated-owner-executor' };
+    const actionRoleId = toScopedRoleObjectId(roleGrant);
+    const actionRelationships = [
+      ...buildActionAuthorizationRelationships([actionIdentity]),
+      ...buildActionAuthorizationRoleGrantRelationships(
+        [roleGrant],
+        [{ legalEntityId: entityA1, moduleKeys: [GENERATED_OWNER.moduleId], tenantId: tenantA }],
+      ),
+      relationship('scoped_role', actionRoleId, 'member', 'principal', principalA),
+    ];
     const touchedObjects: readonly [string, string][] = [
       ['tenant', tenantA],
       ['tenant', tenantB],
@@ -773,7 +792,9 @@ it.live(
       ],
       ['resource', requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource')],
       ['resource', requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource')],
-      ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
+      ['action', toSpiceDbActionObjectId(actionIdentity)],
+      ['action_grant', toSpiceDbActionGrantObjectId(actionIdentity)],
+      ['scoped_role', actionRoleId],
     ];
     yield* Effect.acquireRelease(
       Effect.void,
@@ -918,7 +939,6 @@ it.live(
     );
     const resourceA = requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource');
     const resourceB = requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource');
-    const actionId = toSpiceDbActionObjectId(GENERATED_OWNER.actionKey);
     const relationships = [
       relationship('tenant', tenantA, 'member', 'principal', principalA),
       relationship('tenant', tenantB, 'member', 'principal', principalB),
@@ -938,8 +958,7 @@ it.live(
       relationship('resource', resourceA, 'reader', 'principal', principalA),
       relationship('resource', resourceB, 'module', 'module_access', moduleB),
       relationship('resource', resourceB, 'reader', 'principal', principalB),
-      relationship('action', actionId, 'restriction', 'action', actionId),
-      relationship('action', actionId, 'executor', 'principal', principalA),
+      ...actionRelationships,
     ];
     yield* Effect.tryPromise(() =>
       spiceAdmin.promises.writeRelationships(
@@ -1246,13 +1265,17 @@ it.live(
     ]);
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
-      yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), unavailableContextAccess),
+      yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        unavailableContextAccess,
+      ),
     );
     const unavailableRuntime = makeReadRuntime(
       runtimeDatabase,
       moduleGateway,
       unavailableResolver,
       unavailableContextAccess,
+      { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
     );
     const unavailableOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1274,11 +1297,10 @@ it.live(
     expect(JSON.stringify(yield* Effect.tryPromise(() => unavailableResponse.json()))).not.toMatch(
       /postgres|spicedb|permission check|row-level/iu,
     );
-    const evidenceFailureRuntime = makeReadRuntime(
-      failingEvidenceDatabase(runtimeDatabase),
-      moduleGateway,
-      scopeResolver,
-      contextAccess,
+    const evidenceFailureRuntime = failingEvidenceRuntime(
+      makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      }),
     );
     const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1304,8 +1326,10 @@ it.live(
       makeActionPermissionService(permissionClient),
       scopeResolver,
       {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         moduleEntrypointGateway: moduleGateway,
         moduleStateGate,
+
         resolveCompositionRevision: (verifiedPrincipal) => {
           const revision = readVerifiedGatewayCompositionRevision(verifiedPrincipal);
           return revision === undefined

@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 import { TaxEvaluationRequestSchema, TaxEvaluationResponseSchema } from '../../shared/apis/tax-evaluation.ts';
 import type { TaxEvaluationRequest, TaxEvaluationResponse } from '../../shared/apis/tax-evaluation.ts';
@@ -28,7 +28,7 @@ const taxEvaluationEntrypoint = defineTenantModuleEntrypoint({
 
 export const readTaxEvaluation = (
   input: TaxEvaluationRequest,
-  context: ReadHandlerContext<TaxEvaluationServices>,
+  context: ReadLoadContext<TaxEvaluationServices>,
 ): Effect.Effect<ReadHandlerResult<TaxEvaluationResponse>, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   context.services.evaluations.evaluate(input).pipe(
     Effect.catchTag('TaxGovernancePersistenceUnavailable', () =>
@@ -70,7 +70,7 @@ export const taxEvaluationRead = defineRead(
     resultSchema: TaxEvaluationResponseSchema,
     schemaVersion: '1',
   },
-  readTaxEvaluation,
+  { load: readTaxEvaluation },
   (transaction, scope) => Effect.succeed({ evaluations: taxEvaluationForScope(transaction, scope) }),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

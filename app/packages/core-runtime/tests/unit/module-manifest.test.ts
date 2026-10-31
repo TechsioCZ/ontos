@@ -341,3 +341,70 @@ it('deployment contract decoding is exact and versioned', () => {
   expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '0' })).toThrow();
   expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '999' })).toThrow();
 });
+
+it('accepts declared external identity providers and rejects malformed or duplicate namespaces', () => {
+  const provider = {
+    admissionDeadlineMs: 5000,
+    authenticationNamespaceId: 'ontos.example.portal.v1',
+    provider: 'example-provider',
+    verification: { operation: 'example-portal.verify.v1', path: '/portal/internal/verify' },
+  };
+  const withProviders = (externalIdentityProviders: readonly (typeof provider)[]) => ({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, externalIdentityProviders },
+  });
+  expect(defineOntosModuleManifest(withProviders([provider])).publicSurface.externalIdentityProviders).toEqual([
+    provider,
+  ]);
+  expect(() => defineOntosModuleManifest(withProviders([provider, provider]))).toThrow();
+  expect(() => defineOntosModuleManifest(withProviders([{ ...provider, admissionDeadlineMs: 0 }]))).toThrow();
+  expect(() =>
+    defineOntosModuleManifest(
+      withProviders([{ ...provider, verification: { ...provider.verification, path: 'portal/verify' } }]),
+    ),
+  ).toThrow();
+});
+
+it('accepts exact isolated API cookies and rejects reserved, foreign or ambiguous credential policies', () => {
+  const policy = {
+    cookieNames: ['example-portal.session_token', '__Secure-example-portal.session_token'],
+    realmPrefix: 'example-portal',
+    routes: [{ method: 'GET', path: '/api/customer-account' }],
+  } as const;
+  const withPolicy = (
+    apiCookieTransport: readonly {
+      cookieNames: readonly string[];
+      realmPrefix: string;
+      routes: readonly { method: 'GET'; path: string }[];
+    }[],
+  ) => ({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, apiCookieTransport },
+  });
+  const accepted = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, apiCookieTransport: [policy] },
+  });
+  expect(accepted.publicSurface.apiCookieTransport).toEqual([policy]);
+  expect(Object.isFrozen(accepted.publicSurface.apiCookieTransport?.[0]?.routes)).toBe(true);
+  const invalidPolicies: Parameters<typeof withPolicy>[0] = [
+    ...['better-auth', 'shell', 'staff', 'ontos'].map((realmPrefix) => ({
+      ...policy,
+      cookieNames: [`${realmPrefix}.session_token`],
+      realmPrefix,
+    })),
+    { ...policy, cookieNames: ['better-auth.session_token'] },
+    { ...policy, cookieNames: ['__Secure-better-auth.session_token'] },
+    { ...policy, cookieNames: ['__Host-better-auth.session_token'] },
+    { ...policy, cookieNames: ['another-portal.session_token'] },
+    { ...policy, cookieNames: ['example-portal.session_token', 'example-portal.session_token'] },
+    { ...policy, cookieNames: ['example-portal.*'] },
+    { ...policy, routes: [{ method: 'GET', path: '/api/customer-account/../staff' }] },
+    { ...policy, routes: [{ method: 'GET', path: '/api/customer-account?scope=staff' }] },
+    { ...policy, routes: [policy.routes[0], policy.routes[0]] },
+  ];
+  for (const invalidPolicy of invalidPolicies) {
+    expect(() => defineOntosModuleManifest(withPolicy([invalidPolicy]))).toThrow();
+  }
+  expect(() => defineOntosModuleManifest(withPolicy([policy, policy]))).toThrow();
+});

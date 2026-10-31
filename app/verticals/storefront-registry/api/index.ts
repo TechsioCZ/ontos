@@ -1,6 +1,8 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -41,6 +43,8 @@ import {
   storefrontRegistryCorsAllowedMethods,
   storefrontRegistryCorsAllowedOrigins,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const storefrontRegistryReadinessLayer = HttpApiBuilder.group(storefrontRegistryApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -94,6 +98,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -125,6 +130,7 @@ export const makeStorefrontRegistryApiRuntime = (
       Layer.mergeAll(
         runtimeObservabilityLive,
         RequestSchemaProblemLive,
+        databaseIdentitiesLive,
         ActiveApplicationCompositionSourceLive.pipe(
           Layer.provide(
             FetchHttpClient.layer.pipe(

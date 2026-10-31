@@ -5,9 +5,11 @@ import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import {
   basisCurrentnessMatchesClaim,
   proposalMatchesPreapprovalCart,
+  purchaseProposalBasisReadSnapshotMatches,
   quotationPublicationRevision,
   recoverCompletedProposalBasis,
   samePreparedQuantity,
+  verifyPreparedBasisMutationWindow,
 } from '../../src/services/purchase-proposal-basis.service.ts';
 import { PurchaseProposalRevisionSchema } from '../../shared/domain/purchasing-approval.ts';
 import { PurchaseLimitEvaluationCurrentFactsSchema } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
@@ -19,6 +21,17 @@ const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
 const id = '44444444-4444-4444-8444-444444444444';
 const at = '2026-10-23T00:00:00.000Z';
+
+it.effect('rejects prepared basis evidence at its exclusive End and when validity is unknown', () =>
+  Effect.gen(function* preparedBasisValidity() {
+    yield* verifyPreparedBasisMutationWindow(1000, 999);
+    for (const boundary of [null, 999, 1000, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const failure = yield* verifyPreparedBasisMutationWindow(boundary, 1000).pipe(Effect.flip);
+      expect(failure.code).toBe('PROPOSAL_NOT_CURRENT');
+    }
+  }),
+);
+
 const ref = (moduleId: string, resourceType: string, resourceId: string) => ({
   moduleId,
   resourceId,
@@ -417,3 +430,38 @@ it('accepts a canonically formatted Catalog quantity equal in value to the Cart 
   expect(samePreparedQuantity('2', '2.01')).toBe(false);
   expect(samePreparedQuantity('2', 'two')).toBe(false);
 });
+
+it.effect('revalidates the full owner snapshot after released HTTP and ignores only the observation clock', () =>
+  Effect.sync(() => {
+    const assignments: readonly string[] = [];
+    const before = {
+      basis: resolved.basis,
+      operationTime: at,
+      snapshot: {
+        assignments,
+        currencyPolicy: { generation: 2 },
+        ownerAccess: 'ALLOWED',
+        paymentPolicy: { generation: 4 },
+        profile: { revision: 3, state: 'ACTIVE' },
+      },
+    };
+    const afterClock = { ...before, operationTime: 'later' };
+    expect(purchaseProposalBasisReadSnapshotMatches(before, afterClock)).toBe(true);
+    for (const snapshot of [
+      { ...before.snapshot, assignments: ['new-assignment'] },
+      { ...before.snapshot, currencyPolicy: { generation: 3 } },
+      { ...before.snapshot, ownerAccess: 'DENIED' },
+      { ...before.snapshot, paymentPolicy: { generation: 5 } },
+      { ...before.snapshot, profile: { revision: 4, state: 'ACTIVE' } },
+      { ...before.snapshot, profile: { revision: 3, state: 'ARCHIVED' } },
+    ]) {
+      expect(purchaseProposalBasisReadSnapshotMatches(before, { ...before, snapshot })).toBe(false);
+    }
+    expect(
+      purchaseProposalBasisReadSnapshotMatches(before, {
+        ...before,
+        basis: { ...before.basis, proposal: { ...proposal, canonicalHash: 'changed' } },
+      }),
+    ).toBe(false);
+  }),
+);

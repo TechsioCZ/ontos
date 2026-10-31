@@ -1,8 +1,9 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, DateTime, Effect, Exit, Logger, Redacted, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Logger, Option, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
-import { Headers, HttpServerRequest } from 'effect/http';
+import { TestClock } from 'effect/testing';
+import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
@@ -13,6 +14,7 @@ import { OperationAuthenticationRequired } from '../../src/operations/operation-
 import { OperationContextDenied } from '../../src/operations/operation-context-denied.ts';
 import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
 import { OperationContextUnavailable } from '../../src/operations/operation-context-unavailable.ts';
+import { RequestPermissionDecisions, withRequestPermissionDecisions } from '../../src/permissions/context-access.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadCoreError } from '../../src/reads/errors.ts';
 import { ReadEvidencePersistenceError } from '../../src/reads/read-evidence-persistence-error.ts';
@@ -166,11 +168,13 @@ const registration = defineRead(
     resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
     schemaVersion: '1',
   },
-  () =>
-    Effect.succeed({
-      evidence: { resultCount: 1 },
-      result: { ok: true as const },
-    }),
+  {
+    load: () =>
+      Effect.succeed({
+        evidence: { resultCount: 1 },
+        result: { ok: true as const },
+      }),
+  },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: 'core.shell' }),
 );
@@ -183,17 +187,115 @@ const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
 
-const observed: Parameters<ReadRuntimeService['runRead']>[0][] = [];
-// SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
-// other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Test-only generic service double; expires: 2026-12-31.
-const readRuntime = {
-  runRead: (input: Parameters<ReadRuntimeService['runRead']>[0]) => {
+interface ObservedReadInput {
+  readonly audience?: string;
+  readonly input: unknown;
+}
+const observed: ObservedReadInput[] = [];
+const readRuntime: ReadRuntimeService = {
+  runRead: (input) => {
     observed.push(input);
-    return Effect.succeed({ ok: true as const });
+    return Schema.decodeEffect(input.registration.descriptor.resultSchema)({ ok: true }).pipe(
+      Effect.mapError(
+        () => new ReadResultValidationError({ code: 'read_result_invalid', reason: 'Invalid test result' }),
+      ),
+    );
   },
-} as ReadRuntimeService;
+};
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
+
+it.effect('owns a fresh permission batch per HTTP read and preserves an enclosing request scope', () =>
+  Effect.gen(function* requestScopedPermissionBatches() {
+    const authenticatedScopes = new WeakSet<object>();
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () =>
+        RequestPermissionDecisions.pipe(
+          Effect.map((scope) => {
+            expect(Option.isSome(scope)).toBe(true);
+            if (Option.isSome(scope)) {
+              expect(authenticatedScopes.has(scope.value)).toBe(false);
+              authenticatedScopes.add(scope.value);
+            }
+            return principal;
+          }),
+        ),
+      problems,
+      registration,
+    });
+    const execute = handler({
+      payload: { query: 'fixture' },
+      request: { headers: Headers.fromInput({ 'x-correlation-id': 'permission-batch-test' }) },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    yield* execute;
+    yield* execute;
+    expect(yield* RequestPermissionDecisions).toEqual(Option.none());
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* enclosingRequestScope() {
+        const enclosing = yield* RequestPermissionDecisions;
+        yield* execute;
+        expect(yield* RequestPermissionDecisions).toBe(enclosing);
+        if (Option.isSome(enclosing)) {
+          expect(authenticatedScopes.has(enclosing.value)).toBe(true);
+        }
+      }),
+    );
+  }),
+);
+
+it.effect('reports authentication and response encoding separately without exposing request values', () =>
+  Effect.gen(function* encodedResponseTiming() {
+    const entries: string[] = [];
+    const responses: HttpServerResponse.HttpServerResponse[] = [];
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => TestClock.adjust('3 millis').pipe(Effect.as(principal)),
+      problems,
+      registration,
+    });
+    const response = handler({
+      payload: { query: 'private-query' },
+      request: {
+        headers: Headers.fromInput({
+          authorization: 'Bearer private-token',
+          'x-correlation-id': 'private-correlation',
+        }),
+      },
+    }).pipe(
+      Effect.flatMap((result) =>
+        TestClock.adjust('7 millis').pipe(
+          Effect.as(HttpServerResponse.jsonUnsafe(result, { headers: { 'server-timing': 'existing;dur=1' } })),
+        ),
+      ),
+    );
+    for (let requestIndex = 0; requestIndex < 2; requestIndex += 1) {
+      yield* HttpEffect.toHandled(response, (_request, value) =>
+        Effect.sync(() => {
+          responses.push(value);
+        }),
+      ).pipe(
+        Effect.provideService(ReadRuntime, readRuntime),
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/timing')),
+        ),
+        Effect.provide(capturedLoggerLayer(entries)),
+      );
+    }
+    const timings = responses.map((value) => value.headers['server-timing'] ?? '');
+    const isolate = timings.map((header) => /owner-isolate;desc="(?<id>[a-z0-9]+):(?<ordinal>\d+)"/u.exec(header));
+    expect(isolate[0]?.groups?.['id']).toMatch(/^[a-z0-9]+$/u);
+    expect(isolate[1]?.groups?.['id']).toBe(isolate[0]?.groups?.['id']);
+    expect(Number(isolate[1]?.groups?.['ordinal'])).toBe(Number(isolate[0]?.groups?.['ordinal']) + 1);
+    for (const header of timings) {
+      expect(header).toContain('existing;dur=1, owner-isolate;desc=');
+      expect(header).toContain(', read-authentication;dur=3, read-encode;dur=7');
+    }
+    expect(entries.join('\n')).toContain('Governed read phases completed');
+    expect(entries.join('\n')).not.toMatch(/private-|better-auth|00000000/u);
+  }),
+);
 
 const timestampInputSchema = Schema.Struct({ requestedAt: Schema.DateTimeUtcFromString });
 const timestampRegistration = defineRead(
@@ -426,9 +528,61 @@ it.effect('passes only payload, trusted principal, registration, and correlation
         input: payload,
         principal,
         registration,
+        timings: expect.any(Object),
         transport: { correlationId: 'correlation-test' },
       },
     ]);
+  }),
+);
+
+it.effect('logs typed Core infrastructure failures with correlation while keeping the public problem sanitized', () =>
+  Effect.gen(function* diagnoseCoreFailures() {
+    for (const [failure, expected] of coreFailures) {
+      const logEntries: string[] = [];
+      // SAFETY: The service double fails before returning a result for any registration or payload.
+      const failingRuntime = {
+        runRead: () => Effect.fail(failure),
+      } as ReadRuntimeService;
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration,
+      });
+      const exit = yield* Effect.exit(
+        handler({
+          payload: { query: 'private payload' },
+          request: {
+            headers: Headers.fromInput({
+              authorization: 'Bearer private-credential',
+              'x-correlation-id': 'correlation-unavailable',
+            }),
+          },
+        }),
+      ).pipe(
+        Effect.provideService(ReadRuntime, failingRuntime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        Effect.provide(capturedLoggerLayer(logEntries)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toEqual(expected);
+      }
+      if (expected.status === 500 || expected.status === 503) {
+        expect(logEntries).toHaveLength(1);
+        expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(logEntries[0] ?? '{}')).toMatchObject({
+          annotations: {
+            code: failure.code,
+            correlationId: 'correlation-unavailable',
+            failureTag: failure._tag,
+            readKey: registration.descriptor.readKey,
+            reason,
+          },
+        });
+      } else {
+        expect(logEntries).toHaveLength(0);
+      }
+      expect(logEntries.join('\n')).not.toMatch(/private payload|private-credential/u);
+    }
   }),
 );
 
@@ -491,12 +645,14 @@ it.effect('maps only schema-declared owner failures to concrete public Problems'
         ...registration.descriptor,
         domainErrorSchema: DeclaredHttpDomainFailure,
       },
-      () =>
-        Effect.fail(
-          new DeclaredHttpDomainFailure({
-            reasonCode: 'PURPOSE_NOT_ALLOWED',
-          }),
-        ),
+      {
+        load: () =>
+          Effect.fail(
+            new DeclaredHttpDomainFailure({
+              reasonCode: 'PURPOSE_NOT_ALLOWED',
+            }),
+          ),
+      },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );
@@ -615,5 +771,53 @@ it.effect('uses the configured receiver audience instead of an HTTP audience hea
       Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
     );
     expect(observed.map((input) => input.audience)).toEqual(['test.receiver.api']);
+  }),
+);
+
+it.effect('re-encodes transformed framework payloads before the runtime validates them', () =>
+  Effect.gen(function* transformedHttpPayload() {
+    const inputSchema = Schema.Struct({
+      at: Schema.DateTimeUtcFromString,
+      filter: Schema.OptionFromNullOr(Schema.String),
+    });
+    const transformedRegistration = defineRead(
+      {
+        accessKind: 'detail',
+        entrypoint: registration.descriptor.entrypoint,
+        evidencePolicy: registration.descriptor.evidencePolicy,
+        inputSchema,
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'module',
+        policies: [],
+        readKey: 'core.shell.governed-http-transformed-test',
+        resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
+        schemaVersion: '1',
+      },
+      {
+        load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const wireInput = { at: '2026-10-23T12:00:00.000Z', filter: null };
+    const payload = yield* Schema.decodeEffect(inputSchema)(wireInput);
+    observed.length = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      problems,
+      registration: transformedRegistration,
+    });
+    const result = yield* handler({
+      payload,
+      request: { headers: Headers.fromInput({ 'x-correlation-id': 'transformed-input' }) },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.input).toEqual(wireInput);
+    expect(yield* Schema.decodeUnknownEffect(inputSchema)(observed[0]?.input)).toEqual(payload);
   }),
 );

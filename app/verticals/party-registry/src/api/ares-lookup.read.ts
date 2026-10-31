@@ -6,7 +6,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 
 import { AresLookupRequestSchema, AresLookupResponseSchema } from '../../shared/apis/ares-lookup.ts';
@@ -17,17 +17,18 @@ import type {
   AresSubjectServiceContract,
 } from '../integrations/ares/ares-subject.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+const ARES_LOOKUP_UNAVAILABLE_REASON = 'ARES lookup is temporarily unavailable' as const;
+
 export const aresLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.ares-lookup',
-  moduleKey: 'party.registry',
+  moduleKey: PARTY_REGISTRY_MODULE_ID,
   role: 'api',
 });
 
-interface Services {
-  readonly lookup: AresSubjectServiceContract['subject'];
-}
+type AresSubjectResult = Effect.Success<ReturnType<AresSubjectServiceContract['subject']>>;
 
 type AresLookupHandlerError = ReadHandlerExecutionError | ReadHandlerNotFound | ReadHandlerUnavailable;
 
@@ -42,7 +43,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -82,7 +83,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -92,7 +93,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -102,7 +103,7 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
           withCause(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
-              reason: 'ARES lookup is temporarily unavailable',
+              reason: ARES_LOOKUP_UNAVAILABLE_REASON,
             }),
             cause,
           ),
@@ -121,24 +122,29 @@ export const aresLookupRead = defineRead(
     },
     inputSchema: AresLookupRequestSchema,
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.ares-lookup',
     resultSchema: AresLookupResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    context.services
-      .lookup({
-        correlationId: context.scope.correlationId,
-        ico: input.ico,
-      } satisfies AresSubjectLookup)
-      .pipe(
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+  {
+    // ARES is an external registry: the lookup runs before the transaction opens, never while it holds a connection.
+    prepare: (input, context) =>
+      AresSubjectService.pipe(
+        Effect.flatMap((service) =>
+          service.subject({
+            correlationId: context.scope.correlationId,
+            ico: input.ico,
+          } satisfies AresSubjectLookup),
+        ),
         // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
         Effect.catch(mapAresFailure),
       ),
-  () => AresSubjectService.pipe(Effect.map((service) => ({ lookup: service.subject }))),
+    load: (_input, context: ReadLoadContext<Readonly<Record<string, never>>, AresSubjectResult>) =>
+      Effect.succeed({ evidence: { resultCount: 1 }, result: context.prepared }),
+  },
+  () => Effect.succeed({}),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

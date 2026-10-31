@@ -9,6 +9,7 @@ test.each([
   ['login.field', cs.shell.login.field, en.shell.login.field],
   ['login.required', cs.shell.login.required, en.shell.login.required],
   ['login.toast', cs.shell.login.toast, en.shell.login.toast],
+  ['login.oauth', cs.shell.login.oauth, en.shell.login.oauth],
   ['modules', cs.shell.modules, en.shell.modules],
   ['modules.active', cs.shell.modules.active, en.shell.modules.active],
   ['modules.state', cs.shell.modules.state, en.shell.modules.state],

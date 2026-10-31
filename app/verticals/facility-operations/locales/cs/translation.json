@@ -1,0 +1,21 @@
+{
+  "facility-operations": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Provoz areálu: majetek, měřidla, bezpečnost, dokumenty, agenda a nákupy."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Modul Provoz je nedostupný",
+    "role": "facility-operations",
+    "routeSurface": "Provoz areálu.",
+    "title": "Provoz",
+    "widgetBody": "Provoz areálu."
+  }
+}

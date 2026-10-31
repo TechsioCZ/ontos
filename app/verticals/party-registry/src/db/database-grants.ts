@@ -1,4 +1,6 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY, TRUST_ROUTINES } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
+import { trustRoutinesForIdentities } from '@app/core-runtime/db/database-identity-manifest';
+
 import type { DatabaseRoleGrants } from '@app/core-runtime';
 
 /**
@@ -90,8 +92,8 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
     {
       table: 'core.principals',
       privileges: ['select'],
-      columns: { select: ['principal_id', 'tenant_id', 'status'] },
-      reason: 'Core auth/principal-resolver checks the acting principal status',
+      columns: { select: ['principal_id', 'tenant_id', 'kind', 'status'] },
+      reason: 'Core operations/context checks the acting principal status and agent-key issuing-company boundary',
     },
     {
       table: 'core.principal_auth_bindings',
@@ -160,7 +162,7 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
     },
   ],
   routines: [
-    ...TRUST_ROUTINES.flatMap(({ executableBy, signature }) =>
+    ...trustRoutinesForIdentities([PARTY_REGISTRY_REQUEST_IDENTITY]).flatMap(({ executableBy, signature }) =>
       executableBy.includes(PARTY_REGISTRY_REQUEST_IDENTITY.role) ? [signature] : [],
     ),
     PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,

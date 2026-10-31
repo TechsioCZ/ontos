@@ -12,6 +12,8 @@ import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/comme
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 const { spawn } = process.getBuiltinModule('node:child_process');
 const migratorPort = Config.Int('MIGRATOR_PORT').pipe(Config.withDefault(8080));
+// The app host runs the same chain once before it publishes; the standalone migrator stays up for readiness.
+const migrateOnce = Config.Boolean('MIGRATOR_ONCE').pipe(Config.withDefault(false));
 
 class MigratorError extends Error {
   /**
@@ -77,6 +79,11 @@ const run = Effect.fn('run')(
 
 /** @param {string} relativePath - Application-relative script path. */
 const runAppScript = (relativePath) => run(process.execPath, [path.join(appDirectory, relativePath)]);
+
+/** @param {'core' | 'party'} owner - Reviewed owner whose histories converge as one ordered group. */
+const migrateConvergentOwner = (owner) =>
+  run(process.execPath, [path.join(appDirectory, 'scripts/migration-convergence-cli.mts'), owner]);
+
 /**
  * @param {string} relativeDirectory - Application-relative package directory.
  * @param {string} config - Drizzle configuration filename.
@@ -151,11 +158,9 @@ const main = Effect.scoped(
     const portalAuthDatabase = yield* loadOptionalCommercePortalAuthDatabaseConfig();
     yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-    yield* migrate('packages/core-runtime', 'drizzle.config.ts');
+    yield* migrateConvergentOwner('core');
     yield* migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
-    yield* runAppScript('verticals/party-registry/scripts/prepare-contacts-migration.mts');
-    yield* migrate('verticals/party-registry', 'drizzle.contacts.config.ts');
-    yield* migrate('verticals/party-registry', 'drizzle.config.ts');
+    yield* migrateConvergentOwner('party');
     yield* migrate('verticals/payment-term-catalog', 'drizzle.config.ts');
     yield* migrate('verticals/price-group-catalog', 'drizzle.config.ts');
     yield* migrate('verticals/assortment', 'drizzle.config.ts');
@@ -168,6 +173,19 @@ const main = Effect.scoped(
     yield* migrate('verticals/storefront-registry', 'drizzle.config.ts');
     yield* migrate('verticals/tax', 'drizzle.config.ts');
     // <generated-vertical-provider-migrations>
+    yield* migrate('verticals/property-portfolio', 'drizzle.config.ts');
+    yield* migrate('verticals/property-leasing', 'drizzle.config.ts');
+    yield* migrate('verticals/legal-agreements', 'drizzle.config.ts');
+    yield* migrate('verticals/work-tasks', 'drizzle.config.ts');
+    yield* migrate('verticals/workforce', 'drizzle.config.ts');
+    yield* migrate('verticals/tagging', 'drizzle.config.ts');
+    yield* migrate('verticals/sales-pipeline', 'drizzle.config.ts');
+    yield* migrate('verticals/merchandise', 'drizzle.config.ts');
+    yield* migrate('verticals/facility-operations', 'drizzle.config.ts');
+    yield* migrate('verticals/sales-insights', 'drizzle.config.ts');
+    yield* migrate('verticals/finance-billing', 'drizzle.config.ts');
+    yield* migrate('verticals/crm-activities', 'drizzle.config.ts');
+    yield* migrate('verticals/crm', 'drizzle.config.ts');
     yield* migrate('verticals/projects', 'drizzle.config.ts');
     yield* migrate('verticals/commerce-cart', 'drizzle.config.ts');
     yield* migrate('verticals/commerce-order', 'drizzle.config.ts');
@@ -179,7 +197,9 @@ const main = Effect.scoped(
       yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
     }
     yield* runAppScript('scripts/verify-application-db-schema.mts');
-    yield* serveReadiness(yield* migratorPort);
+    if (!(yield* migrateOnce)) {
+      yield* serveReadiness(yield* migratorPort);
+    }
   }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
 );
 

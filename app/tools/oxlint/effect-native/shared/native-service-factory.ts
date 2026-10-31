@@ -5,7 +5,7 @@ import type { Syntax } from './ast.ts';
 import { lookupVariable } from './bindings.ts';
 import { scopePath } from './paths.ts';
 
-const nativeFactories = new Set(['ActionServiceFactory', 'ReadServiceFactory']);
+const nativeFactories = new Set(['ActionServiceFactory', 'ActionServicePreflight', 'ReadServiceFactory']);
 const nativeDefinitions = new Set(['defineAction', 'defineRead']);
 const nativeRuntimeModule = '@app/core-runtime';
 const transparentWrappers = new Set(['ParenthesizedExpression', 'ChainExpression', 'TSNonNullExpression']);
@@ -122,6 +122,12 @@ const wrappedFactory = (context: Context, fn: ESTree.Node): Syntax | null => {
   return staticString(builder.arguments[0], { templates: false }) === null ? null : call;
 };
 
+/** A factory reference in the native transaction-bound slot is owned by Core, rather than called by its importer. */
+export const isNativeServiceFactoryArgument = (context: Context, node: ESTree.Node): boolean => {
+  const held = skipWrappers(node, transparentWrappers);
+  return nativeDefinitionArgument(context, held.node, held.parent);
+};
+
 /** The three runtime arguments belong to the native transaction/scope/revision contract. */
 export const isNativeServiceFactoryCallback = (context: Context, node: ESTree.Node): boolean => {
   if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') {
@@ -151,38 +157,51 @@ export const isNativeServiceFactoryCallback = (context: Context, node: ESTree.No
   return variable !== null && !variable.references.some((reference) => reference.isWrite() && !reference.init);
 };
 
+const constYieldedAcquisition = (node: ESTree.Node | null) => {
+  if (
+    node?.type !== 'YieldExpression' ||
+    !node.delegate ||
+    node.parent?.type !== 'VariableDeclarator' ||
+    node.parent.parent?.type !== 'VariableDeclaration' ||
+    node.parent.parent.kind !== 'const'
+  ) {
+    return null;
+  }
+  return { acquired: node.argument, declaration: node.parent.parent };
+};
+
 /** A const service acquisition in the native transaction factory is owner composition.
  * Only the directly yielded pipeline qualifies; nested handlers and escaped effects do not.
  */
 export const isNativeServiceFactoryAcquisition = (context: Context, node: ESTree.Node): boolean => {
   let ancestor: ESTree.Node | null = parentOf(node);
   while (ancestor !== null && ancestor.type !== 'YieldExpression') {
-    if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(ancestor.type)) return false;
+    if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(ancestor.type)) {
+      return false;
+    }
     ancestor = parentOf(ancestor);
   }
-  if (
-    ancestor?.type !== 'YieldExpression' ||
-    !ancestor.delegate ||
-    ancestor.parent?.type !== 'VariableDeclarator' ||
-    ancestor.parent.parent?.type !== 'VariableDeclaration' ||
-    ancestor.parent.parent.kind !== 'const'
-  )
+  const acquisition = constYieldedAcquisition(ancestor);
+  if (acquisition === null) {
     return false;
-  const acquired = ancestor.argument;
+  }
+  const { acquired, declaration } = acquisition;
   if (
     acquired?.type !== 'CallExpression' ||
     acquired.callee.type !== 'MemberExpression' ||
     memberName(acquired.callee) !== 'pipe' ||
     acquired.callee.object.type !== 'Identifier'
-  )
+  ) {
     return false;
+  }
   const provision = node.parent;
   if (
     acquired.callee.object !== node &&
     !(provision?.type === 'CallExpression' && provision.callee === node && acquired.arguments.includes(provision))
-  )
+  ) {
     return false;
-  let owner: ESTree.Node | null = parentOf(ancestor.parent.parent);
+  }
+  let owner: ESTree.Node | null = parentOf(declaration);
   while (owner !== null) {
     if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(owner.type)) {
       return isNativeServiceFactoryCallback(context, owner);

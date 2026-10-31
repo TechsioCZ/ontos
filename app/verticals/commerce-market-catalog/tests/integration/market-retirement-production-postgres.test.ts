@@ -30,6 +30,7 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import { retireMarketAction } from '../../src/actions/retire-market.action.ts';
 import { commerceMarketCatalogRelations } from '../../src/database/schema.ts';
 import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const RETIRE_ACTION_KEY = 'commerce.market-catalog.retire-market';
 const FIXTURE_COMPOSITION_REVISION = 'a'.repeat(64);
@@ -304,6 +305,7 @@ it.live(
           actionKeys: [RETIRE_ACTION_KEY],
           authenticationNamespaceId: 'market-retirement-production-postgres',
           compositionRevision: FIXTURE_COMPOSITION_REVISION,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));

@@ -3,9 +3,9 @@ import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   TrustedPrincipalContextSchema,
-  scopedRoutineInvokerFromTransaction,
+  defineRead,
 } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ReadOwnerTransaction } from '@app/core-runtime';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import {
   CurrentPricingDecisionRequestSchema,
@@ -13,15 +13,20 @@ import {
   projectCurrentPricingDecisionResponse,
 } from '@app/pricing-contracts/current-pricing-decision';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
-import { Effect, Exit, Match, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
   currentPricingDecisionRead,
-  makeCurrentPricingDecisionReadServiceFactory,
-  resolveCurrentPricingDecision,
+  evaluateCurrentPricingDecision,
+  makeFinishCurrentPricingDecision,
+  prepareCurrentPricingDecision,
   resolveCurrentPricingDecisionTrustedScope,
+  verifyCurrentPricingDecisionSubject,
 } from '../../src/api/current-pricing-decision.read.ts';
+import type { PricingOwnerMaterialEvidenceFenceGateway } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import {
   CurrentPricingDecisionEvaluationFactory,
   CurrentPricingDecisionScopeViolation,
@@ -45,6 +50,21 @@ import {
   unitPriceFixtureEffectiveAt,
   unitPriceFixtureTenantId,
 } from './support/unit-price-calculation.fixture.ts';
+
+/** The wiring test observes the owner-state adapters, so no short owner transaction is ever opened. */
+const unusedOwnerTransaction: ReadOwnerTransaction = () =>
+  Effect.die('The wiring test evaluates nothing, so it opens no owner transaction');
+
+/** The decision the governed Read makes: subject verification in `prepare`, then the evaluation in `finish`. */
+const resolveCurrentPricingDecision = (
+  input: Parameters<typeof verifyCurrentPricingDecisionSubject>[0],
+  trusted: Parameters<typeof verifyCurrentPricingDecisionSubject>[1],
+  verifySubjectAuthority: Parameters<typeof verifyCurrentPricingDecisionSubject>[2],
+  evaluate: Parameters<typeof evaluateCurrentPricingDecision>[3],
+) =>
+  verifyCurrentPricingDecisionSubject(input, trusted, verifySubjectAuthority).pipe(
+    Effect.flatMap((verified) => evaluateCurrentPricingDecision(input, trusted, verified, evaluate)),
+  );
 
 const principalId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
@@ -462,84 +482,110 @@ describe('Current Pricing Decision governed read', () => {
     ).toThrow();
   });
 
-  it.effect('passes the owner transaction and verified trusted scope into the request-bound evaluator factory', () =>
-    Effect.gen(function* preservesTransactionAndScope() {
-      const input = yield* request;
-      const legalEntityId = input.decision.commercialScope.sellingLegalEntityId;
-      const scope = {
-        ...(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
-          authBindingId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-          authContextRef: 'session:790',
-          authMethod: 'session',
-          legalEntityId,
-          principalId,
-          tenantId: input.decision.tenantId,
-        })),
-        correlationId: 'correlation:790',
-      } satisfies OperationalScope;
-      // SAFETY: This inert transaction identity is only compared by reference; no private capability is invoked.
-      const transaction = scopedRoutineInvokerFromTransaction(() => Effect.succeed([]), {
-        legalEntityId,
-        tenantId: scope.tenantId,
-      }) as unknown as ScopedTransactionExecutor;
-      const source = {
-        loadFresh: () => Effect.die('The factory composition test does not evaluate a request'),
-      } satisfies CurrentPricingDecisionWholeEvaluationPort;
-      let observedTransaction: ScopedTransactionExecutor | undefined;
-      let observedScope: OperationalScope | undefined;
-      let observedSource: CurrentPricingDecisionWholeEvaluationPort | undefined;
-      const serviceFactory = makeCurrentPricingDecisionReadServiceFactory((candidateTransaction, candidateScope) => {
-        observedTransaction = candidateTransaction;
-        observedScope = candidateScope;
-        return Effect.succeed(source);
-      });
-      const subjectAuthority = { verify: verifyExactSubjectAuthority };
-
-      const services = yield* serviceFactory(transaction, scope, 'a'.repeat(64)).pipe(
-        Effect.provideService(CurrentPricingDecisionSubjectAuthority, subjectAuthority),
-        Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
-          make: (candidateSource) => {
-            observedSource = candidateSource;
-            return { evaluate: () => Effect.succeed(nonResolvedEvaluationFor(input)) };
+  it.effect(
+    'verifies the subject before the transaction and evaluates after commit over short owner transactions',
+    () =>
+      Effect.gen(function* preparesThenFinishes() {
+        const input = yield* request;
+        const legalEntityId = input.decision.commercialScope.sellingLegalEntityId;
+        const compositionRevision = 'a'.repeat(64);
+        const scope = {
+          ...(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+            authBindingId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            authContextRef: 'session:790',
+            authMethod: 'session',
+            legalEntityId,
+            principalId,
+            tenantId: input.decision.tenantId,
+          })),
+          correlationId: 'correlation:790',
+        } satisfies OperationalScope;
+        const { readKey } = currentPricingDecisionRead.descriptor;
+        const source = {
+          loadFresh: () => Effect.die('The factory composition test does not evaluate a request'),
+        } satisfies CurrentPricingDecisionWholeEvaluationPort;
+        const gateway = {
+          confirmObservedGenerationsThrough: () => Effect.die('This test stops before owner verification'),
+          verifyOpaqueProofsAgainstCurrentState: () => Effect.die('This test stops before owner verification'),
+        } satisfies PricingOwnerMaterialEvidenceFenceGateway;
+        let observedTransaction: ReadOwnerTransaction | undefined;
+        let observedFenceTransaction: ReadOwnerTransaction | undefined;
+        let observedScope: OperationalScope | undefined;
+        let observedSource: CurrentPricingDecisionWholeEvaluationPort | undefined;
+        let observedGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined;
+        let observedRevision: string | undefined;
+        // The production pipeline, with the evaluation's owner-state adapters observed instead of built.
+        const read = defineRead(
+          currentPricingDecisionRead.descriptor,
+          {
+            // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
+            prepare: prepareCurrentPricingDecision,
+            load: () => Effect.void,
+            finish: makeFinishCurrentPricingDecision(
+              (candidateTransaction, candidateScope) => {
+                observedTransaction = candidateTransaction;
+                observedScope = candidateScope;
+                return Effect.succeed(source);
+              },
+              (candidateTransaction) => {
+                observedFenceTransaction = candidateTransaction;
+                return gateway;
+              },
+            ),
+            // oxlint-enable perfectionist/sort-objects
           },
-        }),
-      );
+          () => Effect.succeed({}),
+          () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
+        );
 
-      expect(observedTransaction).toBe(transaction);
-      expect(observedScope).toEqual(scope);
-      expect(observedSource).toBe(source);
-      expect(services.verifySubjectAuthority).toBe(subjectAuthority.verify);
-      expect(services.trustedScope).toEqual({
-        legalEntityId: scope.legalEntityId,
-        principal: yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(scope),
-      });
+        const finished = yield* runReadOwnerSteps(read, input, {
+          compositionRevision,
+          readKey,
+          scope,
+          services: {},
+          transaction: unusedOwnerTransaction,
+        }).pipe(
+          Effect.provideService(CurrentPricingDecisionSubjectAuthority, { verify: verifyExactSubjectAuthority }),
+          Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
+            make: (candidateSource, candidateGateway, revision) => {
+              observedSource = candidateSource;
+              observedGateway = candidateGateway;
+              observedRevision = revision;
+              return { evaluate: () => Effect.succeed(nonResolvedEvaluationFor(input)) };
+            },
+          }),
+        );
 
-      const productionServices = yield* serviceFactory(transaction, scope, 'a'.repeat(64)).pipe(
-        Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
-          make: () => ({ evaluate: () => Effect.succeed(nonResolvedEvaluationFor(input)) }),
-        }),
-      );
-      const absentIssuerFailure = yield* productionServices
-        .verifySubjectAuthority({
-          request: input,
-          scope: {
-            principal: yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(scope),
-            sellingLegalEntityId: legalEntityId,
-          },
-        })
-        .pipe(Effect.flip);
-      expect(
-        Match.value(absentIssuerFailure).pipe(
-          Match.tag('CurrentPricingDecisionSubjectAuthorityUnavailable', () => true),
-          Match.orElse(() => false),
+        expect(observedTransaction).toBe(unusedOwnerTransaction);
+        expect(observedFenceTransaction).toBe(unusedOwnerTransaction);
+        expect(observedScope).toEqual(scope);
+        expect(observedSource).toBe(source);
+        expect(observedGateway).toBe(gateway);
+        expect(observedRevision).toBe(compositionRevision);
+        expect(finished).toEqual({
+          evidence: { resultCount: 1 },
+          result: projectCurrentPricingDecisionResponse(outcomeFor(input)),
+        });
+
+        // Without a configured issuer the environment-backed verification is unavailable, before any transaction.
+        const absentIssuerFailure = yield* prepareCurrentPricingDecision(input, {
+          compositionRevision,
+          readKey,
+          scope,
+        }).pipe(Effect.flip);
+        expect(Schema.is(ReadHandlerUnavailable)(absentIssuerFailure)).toBe(true);
+        // Without the captured composition revision nothing remote is attempted.
+        const missingRevision = yield* prepareCurrentPricingDecision(input, { readKey, scope }).pipe(
+          Effect.provideService(CurrentPricingDecisionSubjectAuthority, { verify: verifyExactSubjectAuthority }),
+          Effect.flip,
+        );
+        expect(Schema.is(OperationContextUnavailable)(missingRevision)).toBe(true);
+      }).pipe(
+        Effect.provideService(
+          PricingExternalOwnerEvidenceValidation,
+          makePricingExternalOwnerEvidenceValidationService(),
         ),
-      ).toBe(true);
-    }).pipe(
-      Effect.provideService(
-        PricingExternalOwnerEvidenceValidation,
-        makePricingExternalOwnerEvidenceValidationService(),
       ),
-    ),
   );
 
   it.effect('fails closed before source construction when trusted SLE scope is absent', () =>

@@ -130,10 +130,12 @@ export const ${value}Read = defineRead(
     resultSchema: ${type}ResponseSchema,
     schemaVersion: '1',
   },
-  () => Effect.fail(new ReadHandlerUnavailable({
-    code: 'read_handler_unavailable',
-    reason: 'Core read requires owner implementation and target authorization',
-  })),
+  {
+    load: () => Effect.fail(new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Core read requires owner implementation and target authorization',
+    })),
+  },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: '${module}' }),
 );

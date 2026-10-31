@@ -1,4 +1,4 @@
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 
@@ -41,25 +41,27 @@ export const counterpartyRoleHistoryRead = defineRead(
     resultSchema: CounterpartyRoleHistoryResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input,
-    context: ReadHandlerContext<{
-      readonly list: (
-        counterpartyId: string,
-      ) => Effect.Effect<LookupResult<CounterpartyRoleHistoryResponse['roles']>, CounterpartyPersistenceUnavailable>;
-    }>,
-  ) =>
-    resolveCounterpartyRead(
-      input.counterpartyRef,
-      context.scope.tenantId,
-      context.services.list,
-      'Counterparty Role history is temporarily unavailable',
-    ).pipe(
-      Effect.map((value) => ({
-        evidence: { resultCount: value.length },
-        result: { counterpartyRef: input.counterpartyRef, roles: value },
-      })),
-    ),
+  {
+    load: (
+      input,
+      context: ReadLoadContext<{
+        readonly list: (
+          counterpartyId: string,
+        ) => Effect.Effect<LookupResult<CounterpartyRoleHistoryResponse['roles']>, CounterpartyPersistenceUnavailable>;
+      }>,
+    ) =>
+      resolveCounterpartyRead(
+        input.counterpartyRef,
+        context.scope.tenantId,
+        context.services.list,
+        'Counterparty Role history is temporarily unavailable',
+      ).pipe(
+        Effect.map((value) => ({
+          evidence: { resultCount: value.length },
+          result: { counterpartyRef: input.counterpartyRef, roles: value },
+        })),
+      ),
+  },
   (transaction, scope) =>
     Effect.succeed({
       list: (counterpartyId: string) =>

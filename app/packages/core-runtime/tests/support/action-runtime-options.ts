@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 
 import type { ActionRuntimeOptions } from '../../src/actions/runtime.ts';
 import type { ContextAccess } from '../../src/permissions/context-access.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { openModuleEntrypointGateway } from './open-module-entrypoint-gateway.ts';
 import { openModuleStateGate } from './open-module-state-gate.ts';
 
@@ -25,6 +26,7 @@ export const allowTenantPermissions: (typeof ContextAccess)['Service'] = {
 };
 
 export const openActionRuntimeOptions = {
+  databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
   moduleEntrypointGateway: openModuleEntrypointGateway,
   moduleStateGate: openModuleStateGate,
   // These fixtures test unrelated Action boundaries. Composition fencing has its own native
@@ -33,5 +35,9 @@ export const openActionRuntimeOptions = {
   resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)),
 } satisfies Pick<
   ActionRuntimeOptions,
-  'moduleEntrypointGateway' | 'moduleStateGate' | 'lockCompositionAuthority' | 'resolveCompositionRevision'
+  | 'databaseIdentities'
+  | 'moduleEntrypointGateway'
+  | 'moduleStateGate'
+  | 'lockCompositionAuthority'
+  | 'resolveCompositionRevision'
 >;

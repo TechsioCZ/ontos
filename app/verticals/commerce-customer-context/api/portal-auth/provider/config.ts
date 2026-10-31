@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY, databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthConfig } from './config-service.ts';
@@ -18,6 +19,8 @@ const EnvironmentKeySchema = Schema.Literals([
   'COMMERCE_PORTAL_AUTH_SECRETS',
   'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS',
   'COMMERCE_PORTAL_AUTH_URL',
+  // The shared runtime identity's connection, which a host that names the realm connects it with.
+  'DATABASE_URL',
 ]);
 type EnvironmentKey = typeof EnvironmentKeySchema.Type;
 export type CommercePortalAuthEnvironment = Readonly<Partial<Record<EnvironmentKey, string>>>;
@@ -68,6 +71,7 @@ export interface CommercePortalAuthPolicyValue {
     readonly mfa: { readonly max: number; readonly windowSeconds: number };
     readonly recovery: { readonly max: number; readonly windowSeconds: number };
     readonly signIn: { readonly max: number; readonly windowSeconds: number };
+    readonly verificationCaller: { readonly max: number; readonly windowSeconds: number };
   };
   readonly secretRotation: {
     readonly routineRefreshRotatesSessionIdentifier: boolean;
@@ -118,7 +122,7 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
     originCheck: true,
   }),
   emailVerification: Object.freeze({
-    expiresInSeconds: 900,
+    expiresInSeconds: 86_400,
     requiredBeforeSignIn: true,
   }),
   mfa: Object.freeze({
@@ -139,6 +143,7 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
     mfa: Object.freeze({ max: 5, windowSeconds: 300 }),
     recovery: Object.freeze({ max: 3, windowSeconds: 3600 }),
     signIn: Object.freeze({ max: 5, windowSeconds: 60 }),
+    verificationCaller: Object.freeze({ max: 30, windowSeconds: 60 }),
   }),
   secretRotation: Object.freeze({
     routineRefreshRotatesSessionIdentifier: false,
@@ -312,19 +317,50 @@ const parseOptionalCommercePortalAuthConfigFromProvider = optionalConfigReader(
   malformedConfiguration,
 );
 
-/** `Option.none()` only when the supplied environment names no portal-realm value at all. */
+const namedValue = (provider: ConfigProvider.ConfigProvider, key: string) =>
+  Config.option(Config.String(key))
+    .parse(provider)
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+/**
+ * The process environment the realm is read from. Once a host names the realm, its runtime connection is the
+ * shared runtime identity's (the `ontos_runtime` role, as `.env.example` configures the realm): the Worker's
+ * `HYPERDRIVE` binding, or `DATABASE_URL` on Node. That identity is the one the deployment migrates and grants
+ * the provider schema to, so no host can be handed a provider role nobody granted.
+ */
+const portalAuthEnvironmentFor = Effect.fn('CommercePortalAuthConfig.environment')(
+  function* portalAuthEnvironmentEffect(environment: ConfigProvider.ConfigProvider) {
+    if (Option.isNone(yield* namedValue(environment, 'COMMERCE_PORTAL_AUTH_URL'))) {
+      return environment;
+    }
+    const runtime = yield* databaseRuntime
+      .runtimeDatabaseProvider(environment, SHARED_RUNTIME_IDENTITY)
+      .pipe(Effect.orElseSucceed(() => ConfigProvider.fromUnknown({})));
+    return Option.match(yield* namedValue(runtime, 'DATABASE_URL'), {
+      onNone: () => environment,
+      onSome: (connectionString) =>
+        ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({ COMMERCE_PORTAL_AUTH_DATABASE_URL: connectionString }),
+          environment,
+        ),
+    });
+  },
+);
+const portalAuthEnvironment = portalAuthEnvironmentFor(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+
+/** `Option.none()` only when the supplied host environment names no portal-realm value at all. */
 export const parseOptionalCommercePortalAuthConfig = (
   environment: CommercePortalAuthEnvironment,
 ): Effect.Effect<Option.Option<CommercePortalAuthConfigValue>, CommercePortalAuthConfigError> =>
-  parseOptionalCommercePortalAuthConfigFromProvider(
-    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
+  portalAuthEnvironmentFor(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true })).pipe(
+    Effect.flatMap(parseOptionalCommercePortalAuthConfigFromProvider),
   );
 
 /** The availability read that keeps a misconfiguration an error; the portal groups answer for it. */
 export const optionalCommercePortalAuthConfig: Effect.Effect<
   Option.Option<CommercePortalAuthConfigValue>,
   CommercePortalAuthConfigError
-> = parseOptionalCommercePortalAuthConfigFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+> = portalAuthEnvironment.pipe(Effect.flatMap(parseOptionalCommercePortalAuthConfigFromProvider));
 
 /**
  * The one fail-closed availability read every consumer that must keep serving shares. A realm
@@ -348,5 +384,5 @@ export const portalAuthRealmConfigured: Effect.Effect<boolean> = optionalCommerc
 
 export const CommercePortalAuthConfigLive = Layer.effect(
   CommercePortalAuthConfig,
-  parseCommercePortalAuthConfigFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+  portalAuthEnvironment.pipe(Effect.flatMap(parseCommercePortalAuthConfigFromProvider)),
 );

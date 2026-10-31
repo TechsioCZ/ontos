@@ -71,16 +71,18 @@ const evidenceStep = (
   retained: readonly MergeSurvivorCandidate[],
   explanation: string,
   winnerPartyRef: PartyRef | null,
-): MergeSelectionEvidenceStep =>
-  Object.freeze({
+): MergeSelectionEvidenceStep => {
+  const eligibleCandidates = new Set(eligible);
+  const retainedCandidates = new Set(retained);
+  return Object.freeze({
     candidatePartyRefs: Object.freeze(candidates.map(({ partyRef }) => partyRef)),
     candidateSnapshots: Object.freeze(
       candidates.map((candidate) =>
         Object.freeze({
           candidate,
           criterionValue: criterionValue(criterion, candidate),
-          eligibleBefore: eligible.includes(candidate),
-          retainedAfter: retained.includes(candidate),
+          eligibleBefore: eligibleCandidates.has(candidate),
+          retainedAfter: retainedCandidates.has(candidate),
         }),
       ),
     ),
@@ -89,6 +91,7 @@ const evidenceStep = (
     explanation,
     winnerPartyRef,
   });
+};
 
 const criteria = [
   {

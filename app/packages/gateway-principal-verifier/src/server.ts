@@ -12,6 +12,8 @@ import {
   GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GatewayAudienceSchema,
+  ReferenceGatewayCredentialsSchema,
+  REFERENCE_GATEWAY_CREDENTIALS_HEADER,
   GatewayContextClaimsSchema,
   decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
@@ -27,10 +29,12 @@ import {
   Layer,
   Option,
   Redacted,
+  Ref,
   Schema,
 } from 'effect';
-import { createLocalJWKSet, decodeProtectedHeader, importJWK, jwtVerify } from 'jose';
+import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import type { LocalJWKSet } from 'jose';
+import { HttpServerRequest } from 'effect/http';
 
 export const ACTION_PRINCIPAL_BEARER_CHALLENGE = 'Bearer' as const;
 
@@ -113,8 +117,8 @@ const unavailableError = (): ActionPrincipalUnavailableError =>
   ActionPrincipalUnavailableErrorSchema.make({
     reason: 'Action identity verification is unavailable',
   });
-const mapRedemptionUnavailable = () => Effect.fail(unavailableError());
 const mapRedemptionReplay = () => Effect.fail(invalidError());
+const mapRedemptionUnavailable = () => Effect.fail(unavailableError());
 const mapConfigurationFailure = () => Effect.fail(configurationError());
 
 const PublicVerificationKeySchema = Schema.Struct({
@@ -170,6 +174,10 @@ const gatewayVerificationEnvironment = Config.all({
 });
 const VERIFY_ASSERTION_TIMEOUT = Duration.seconds(2);
 
+const currentEpochSeconds = (options: GatewayPrincipalVerificationOptions) =>
+  options.currentTimeSeconds ??
+  Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)));
+
 interface VerificationConfiguration {
   readonly issuer: string;
   readonly keySet: LocalJWKSet;
@@ -209,27 +217,28 @@ const loadGatewayPrincipalVerificationConfiguration = (
             use,
             x,
           }));
-          return Effect.tryPromise({
-            // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-            catch: () => configurationError(),
-            // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this cached configuration Promise boundary.
-            try: () =>
-              Promise.all(
-                keys.map(
-                  // oxlint-disable-next-line sonarjs/no-nested-functions, typescript/promise-function-async -- Effect owns this cached configuration Promise boundary; key imports complete before request verification.
-                  (key) => importJWK(key, 'EdDSA'),
-                ),
-              ),
-          }).pipe(
+          const keySet = createLocalJWKSet({ keys });
+          return Effect.forEach(
+            keys,
+            // Validate through the resolver that verifies requests, retaining its imported keys.
+            // A separate import discarded each key and forced another import on the first JWT.
+            (key) =>
+              Effect.tryPromise({
+                // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+                catch: configurationError,
+                try: keySet.bind(undefined, { alg: key.alg, kid: key.kid }, undefined),
+              }),
+            { concurrency: 8 },
+          ).pipe(
             Effect.timeoutOrElse({
               duration: VERIFY_ASSERTION_TIMEOUT,
               orElse: () => Effect.fail(configurationError()),
             }),
             Effect.map((): VerificationConfiguration => {
               if (mapping === undefined) {
-                return { issuer, keySet: createLocalJWKSet({ keys }) };
+                return { issuer, keySet };
               }
-              return { issuer, keySet: createLocalJWKSet({ keys }), legacyNamespaceMapping: mapping };
+              return { issuer, keySet, legacyNamespaceMapping: mapping };
             }),
           );
         }),
@@ -319,133 +328,138 @@ const ReceivingGatewayDeploymentSchema = Schema.Struct({
 });
 type ReceivingGatewayDeployment = typeof ReceivingGatewayDeploymentSchema.Type;
 
-const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(
-  function* verifyAuthenticatedTokenEffect(
-    expectedAudience: string,
-    expectedDeployment: ReceivingGatewayDeployment,
-    token: string,
-    options: GatewayPrincipalVerificationOptions,
-  ): Effect.fn.Return<
-    VerifiedGatewayPrincipal,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
-  > {
-    const audience = yield* Schema.decodeEffect(GatewayAudienceSchema)(expectedAudience).pipe(
-      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Schema diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-      Effect.mapError(() => configurationError()),
-    );
-    const deployment = yield* Schema.decodeEffect(ReceivingGatewayDeploymentSchema)(expectedDeployment).pipe(
-      Effect.catchTag('SchemaError', mapConfigurationFailure),
-    );
+const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeAuthenticatedTokenVerifier')(
+  function* makeAuthenticatedTokenVerifierEffect() {
     const verifier = yield* GatewayPrincipalVerifierConfiguration;
-    const configuration = yield* verifier.configuration;
-    const now = yield* (
-      options.currentTimeSeconds ??
-        Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
-    );
-    if (!Number.isSafeInteger(now) || now < 0) {
-      return yield* Effect.fail(configurationError());
-    }
-    const unverifiedHeader = yield* Effect.try({
-      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Token parser diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-      catch: () => invalidError(),
-      try: () => decodeProtectedHeader(token),
-    });
-    yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
-      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Header diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-      Effect.mapError(() => invalidError()),
-    );
-    const verified = yield* Effect.tryPromise({
-      catch: (cause) =>
-        Option.match(decodeVerificationFailure(cause), {
-          onNone: unavailableError,
-          onSome: classifyVerificationFailure,
-        }),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the Promise boundary; remove-when: the lint rule recognizes Effect.tryPromise callbacks.
-      try: () =>
-        jwtVerify(token, configuration.keySet, {
+    const compositionService = yield* ActiveApplicationCompositionService;
+    return Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(function* verifyAuthenticatedTokenEffect(
+      expectedAudience: string,
+      expectedDeployment: ReceivingGatewayDeployment,
+      token: string,
+      options: GatewayPrincipalVerificationOptions,
+    ): Effect.fn.Return<VerifiedGatewayPrincipal, ActionPrincipalError> {
+      const audience = yield* Schema.decodeEffect(GatewayAudienceSchema)(expectedAudience).pipe(
+        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Schema diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+        Effect.mapError(() => configurationError()),
+      );
+      const deployment = yield* Schema.decodeEffect(ReceivingGatewayDeploymentSchema)(expectedDeployment).pipe(
+        Effect.catchTag('SchemaError', mapConfigurationFailure),
+      );
+      const configuration = yield* verifier.configuration;
+      const now = yield* currentEpochSeconds(options);
+      if (!Number.isSafeInteger(now) || now < 0) {
+        return yield* Effect.fail(configurationError());
+      }
+      const unverifiedHeader = yield* Effect.try({
+        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Token parser diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+        catch: () => invalidError(),
+        try: () => decodeProtectedHeader(token),
+      });
+      yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
+        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Header diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+        Effect.mapError(() => invalidError()),
+      );
+      const verified = yield* Effect.tryPromise({
+        catch: (cause) =>
+          Option.match(decodeVerificationFailure(cause), {
+            onNone: unavailableError,
+            onSome: classifyVerificationFailure,
+          }),
+        try: jwtVerify.bind(undefined, token, configuration.keySet, {
           algorithms: ['EdDSA'],
           audience,
           clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
           currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
           issuer: configuration.issuer,
         }),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: VERIFY_ASSERTION_TIMEOUT,
-        orElse: () => Effect.fail(unavailableError()),
-      }),
-    );
-    const claims = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
-      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Claim diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-      Effect.mapError(() => invalidError()),
-    );
-    if (claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
-      return yield* Effect.fail(invalidError());
-    }
-    const compositionService = yield* ActiveApplicationCompositionService;
-    const snapshot = yield* compositionService.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-      Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
-    );
-    const approvedDeployment =
-      snapshot.composition.shell.deployment.appId === deployment.appId
-        ? snapshot.composition.shell.deployment
-        : snapshot.composition.modules.find((module) => module.deployment.appId === deployment.appId)?.deployment;
-    if (
-      snapshot.composition.revision !== claims.compositionRevision ||
-      claims.targetBuildMarker !== deployment.buildMarker ||
-      approvedDeployment?.buildMarker !== deployment.buildMarker
-    ) {
-      return yield* Effect.fail(
-        ActionPrincipalScopeErrorSchema.make({
-          reason: 'The Bearer assertion does not target this approved release',
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: VERIFY_ASSERTION_TIMEOUT,
+          orElse: () => Effect.fail(unavailableError()),
         }),
       );
-    }
-    let principalFromClaims: TrustedPrincipalContext;
-    if (claims.ver === GATEWAY_ASSERTION_VERSION) {
-      // Mapping occurs only after jwtVerify and claim decoding.  The mapping
-      // is deployment configuration bound to the verified issuer; it never
-      // comes from the request, JWT principal, or persisted binding.
-      const { legacyNamespaceMapping } = configuration;
+      const claims = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
+        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Claim diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+        Effect.mapError(() => invalidError()),
+      );
+      if (claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
+        return yield* Effect.fail(invalidError());
+      }
+      const snapshot = yield* compositionService.load.pipe(
+        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+        Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
+      );
+      const approvedDeployment =
+        snapshot.composition.shell.deployment.appId === deployment.appId
+          ? snapshot.composition.shell.deployment
+          : snapshot.composition.modules.find((module) => module.deployment.appId === deployment.appId)?.deployment;
       if (
-        legacyNamespaceMapping !== undefined &&
-        (legacyNamespaceMapping.issuer !== configuration.issuer || legacyNamespaceMapping.issuer !== claims.iss)
+        snapshot.composition.revision !== claims.compositionRevision ||
+        claims.targetBuildMarker !== deployment.buildMarker ||
+        approvedDeployment?.buildMarker !== deployment.buildMarker
       ) {
+        return yield* Effect.fail(
+          ActionPrincipalScopeErrorSchema.make({
+            reason: 'The Bearer assertion does not target this approved release',
+          }),
+        );
+      }
+      let principalFromClaims: TrustedPrincipalContext;
+      if (claims.ver === GATEWAY_ASSERTION_VERSION) {
+        // Mapping occurs only after jwtVerify and claim decoding.  The mapping
+        // is deployment configuration bound to the verified issuer; it never
+        // comes from the request, JWT principal, or persisted binding.
+        const { legacyNamespaceMapping } = configuration;
+        if (
+          legacyNamespaceMapping !== undefined &&
+          (legacyNamespaceMapping.issuer !== configuration.issuer || legacyNamespaceMapping.issuer !== claims.iss)
+        ) {
+          return yield* Effect.fail(invalidError());
+        }
+        principalFromClaims =
+          legacyNamespaceMapping === undefined
+            ? claims.principal
+            : yield* Schema.decodeEffect(TrustedPrincipalContextSchema, {
+                onExcessProperty: 'error',
+              })({
+                ...claims.principal,
+                authenticationNamespaceId: legacyNamespaceMapping.authenticationNamespaceId,
+              }).pipe(
+                // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Mapping diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+                Effect.mapError(() => invalidError()),
+              );
+      } else if (claims.ver === EXTERNAL_GATEWAY_ASSERTION_VERSION) {
+        // Namespace registration and provider admission happen in Core.  The
+        // gateway only authenticates the signed context and preserves the
+        // namespace supplied by the issuer, including future namespaces.
+        if (claims.principal.authenticationNamespaceId === undefined) {
+          return yield* Effect.fail(invalidError());
+        }
+        principalFromClaims = claims.principal;
+      } else {
         return yield* Effect.fail(invalidError());
       }
-      principalFromClaims =
-        legacyNamespaceMapping === undefined
-          ? claims.principal
-          : yield* Schema.decodeEffect(TrustedPrincipalContextSchema, {
-              onExcessProperty: 'error',
-            })({
-              ...claims.principal,
-              authenticationNamespaceId: legacyNamespaceMapping.authenticationNamespaceId,
-            }).pipe(
-              // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Mapping diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-              Effect.mapError(() => invalidError()),
-            );
-    } else if (claims.ver === EXTERNAL_GATEWAY_ASSERTION_VERSION) {
-      // Namespace registration and provider admission happen in Core.  The
-      // gateway only authenticates the signed context and preserves the
-      // namespace supplied by the issuer, including future namespaces.
-      if (claims.principal.authenticationNamespaceId === undefined) {
-        return yield* Effect.fail(invalidError());
-      }
-      principalFromClaims = claims.principal;
-    } else {
-      return yield* Effect.fail(invalidError());
-    }
-    return {
-      assertion: Redacted.make(token),
-      compositionRevision: claims.compositionRevision,
-      expiresAtEpochSeconds: claims.exp,
-      issuer: claims.iss,
-      jti: claims.jti,
-      principal: principalFromClaims,
-    };
+      return {
+        assertion: Redacted.make(token),
+        compositionRevision: claims.compositionRevision,
+        expiresAtEpochSeconds: claims.exp,
+        issuer: claims.iss,
+        jti: claims.jti,
+        principal: principalFromClaims,
+      };
+    });
+  },
+);
+
+const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(
+  function* verifyWithRuntimeServices(
+    expectedAudience: string,
+    expectedDeployment: ReceivingGatewayDeployment,
+    token: string,
+    options: GatewayPrincipalVerificationOptions,
+  ) {
+    const verifyToken = yield* makeAuthenticatedTokenVerifier();
+    return yield* verifyToken(expectedAudience, expectedDeployment, token, options);
   },
 );
 
@@ -534,19 +548,12 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   > {
     return verifyPrincipal(authorization, options).pipe(
       Effect.tap(({ expiresAtEpochSeconds, issuer, jti }) =>
-        options.redemption
-          .consume({
-            audience: expectedAudience,
-            expiresAtEpochSeconds,
-            issuer,
-            jti,
-          })
-          .pipe(
-            Effect.catchTags({
-              GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,
-              GatewayAssertionReplayError: mapRedemptionReplay,
-            }),
-          ),
+        options.redemption.consume({ audience: expectedAudience, expiresAtEpochSeconds, issuer, jti }).pipe(
+          Effect.catchTags({
+            GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,
+            GatewayAssertionReplayError: mapRedemptionReplay,
+          }),
+        ),
       ),
       Effect.map(({ assertion, compositionRevision, principal }) =>
         trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
@@ -563,3 +570,64 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
     verifyAndRedeem,
   } as const;
 };
+
+/** Request-scoped forwarding of fresh provider assertions. No receiving deployment signs tokens. */
+export const makeReferenceGatewayCredentialSource = Effect.fn('GatewayPrincipalVerifier.referenceCredentialSource')(
+  function* makeReferenceGatewayCredentialSourceEffect(scope: TrustedPrincipalContext) {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const encoded = request.headers[REFERENCE_GATEWAY_CREDENTIALS_HEADER];
+    const credentials =
+      encoded === undefined
+        ? []
+        : yield* Schema.decodeEffect(Schema.fromJsonString(ReferenceGatewayCredentialsSchema))(encoded).pipe(
+            Effect.mapError((cause) => Object.defineProperty(invalidError(), 'cause', { value: cause })),
+          );
+    const pending = yield* Ref.make(credentials);
+    const composition = yield* ActiveApplicationCompositionService;
+    const verifyToken = yield* makeAuthenticatedTokenVerifier();
+    return {
+      issue: Effect.fn('GatewayPrincipalVerifier.issueReferenceCredential')(function* issueReferenceCredential(
+        audience: string,
+      ) {
+        const credential = yield* Ref.modify(pending, (entries) => {
+          const index = entries.findIndex((entry) => entry.audience === audience);
+          return [entries[index], entries.filter((_, position) => position !== index)] as const;
+        });
+        if (credential === undefined) {
+          return yield* Effect.fail(unavailableError());
+        }
+        const snapshot = yield* composition.load.pipe(
+          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+          Effect.mapError((cause) => Object.defineProperty(unavailableError(), 'cause', { value: cause })),
+        );
+        const module = snapshot.composition.modules.find((entry) => entry.deployment.appId === audience);
+        if (module === undefined) {
+          return yield* Effect.fail(invalidError());
+        }
+        const token = yield* readBearer(credential.authorization);
+        const { principal } = yield* verifyToken(audience, module.deployment, token, {});
+        if (
+          principal.tenantId !== scope.tenantId ||
+          principal.principalId !== scope.principalId ||
+          principal.legalEntityId !== scope.legalEntityId ||
+          principal.authBindingId !== scope.authBindingId ||
+          principal.authMethod !== scope.authMethod ||
+          principal.authContextRef !== scope.authContextRef ||
+          principal.impersonatedByPrincipalId !== scope.impersonatedByPrincipalId ||
+          principal.authenticationNamespaceId !== scope.authenticationNamespaceId ||
+          principal.trustedStorefrontId !== scope.trustedStorefrontId
+        ) {
+          return yield* Effect.fail(invalidError());
+        }
+        // Owner-to-owner reads go straight to the referenced module's approved release origin. The Shell runtime
+        // contract URL is the Shell's static asset release, which does not serve the module API.
+        const apiBaseUrl = new URL(`/${audience}-api`, module.backend.baseUrl).href;
+        return {
+          apiBaseUrl,
+          authorization: Redacted.value(credential.authorization),
+          compositionRevision: snapshot.composition.revision,
+        };
+      }),
+    };
+  },
+);

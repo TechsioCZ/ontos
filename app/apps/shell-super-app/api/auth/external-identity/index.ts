@@ -311,6 +311,15 @@ const mapWorkloadError = (
 
 const mapAdmissionError = (error: ExternalIdentityFailure): ExternalIdentityProblem => mapIdentityCode(error.code);
 
+/** Records why an admission was refused. Reasons are fixed internal strings, never request data or credentials. */
+const logAdmissionRefusal = (failure: ExternalIdentityFailure) =>
+  Effect.logWarning('External identity admission refused').pipe(
+    Effect.annotateLogs({ code: failure.code, reason: failure.reason }),
+  );
+
+const refuseAdmission = <Value, Requirements>(admission: Effect.Effect<Value, ExternalIdentityFailure, Requirements>) =>
+  admission.pipe(Effect.tapError(logAdmissionRefusal), Effect.mapError(mapAdmissionError));
+
 const requiredHeader = (
   headers: ExternalIdentityHttpHeaders,
   name: string,
@@ -378,16 +387,18 @@ const bindingSubjectRead = defineRead<
     resultSchema: ExternalAuthenticationSubjectSchema,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services
-      .lookup({
-        ...input,
-        tenantId: context.scope.tenantId,
-      })
-      .pipe(
-        Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-      ),
+  {
+    load: (input, context) =>
+      context.services
+        .lookup({
+          ...input,
+          tenantId: context.scope.tenantId,
+        })
+        .pipe(
+          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+          Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+        ),
+  },
   (transaction) =>
     Effect.succeed({
       lookup: (input: {
@@ -431,21 +442,26 @@ const resolveExternalSubjectRead = defineRead<
     resultSchema: ResolveExternalSubjectResultSchema,
     schemaVersion: '1',
   },
-  (subject, context) =>
-    Effect.serviceOption(ExternalIdentityAdmission).pipe(
-      Effect.flatMap((admission) =>
-        Option.isNone(admission)
-          ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
-          : context.services
-              .resolve({
-                admission: admission.value,
-                subject,
-                tenantId: context.scope.tenantId,
-              })
-              .pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code }))),
+  {
+    load: (subject, context) =>
+      Effect.serviceOption(ExternalIdentityAdmission).pipe(
+        Effect.flatMap((admission) =>
+          Option.isNone(admission)
+            ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
+            : context.services
+                .resolve({
+                  admission: admission.value,
+                  subject,
+                  tenantId: context.scope.tenantId,
+                })
+                .pipe(
+                  Effect.tapError(logAdmissionRefusal),
+                  Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+                ),
+        ),
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
       ),
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  },
   (transaction) => Effect.succeed({ resolve: resolveExternalSubjectFromTransaction(transaction) }),
   () => ({ kind: 'tenant', permission: 'access' }),
 );
@@ -503,6 +519,11 @@ const runResolveRead = (
       }),
     ),
     Effect.provideContext(Context.make(ExternalIdentityAdmission, admission)),
+    Effect.tapError((refusal) =>
+      Predicate.isTagged(refusal, 'ExternalIdentityError')
+        ? Effect.void
+        : Effect.logWarning('External identity resolve read refused').pipe(Effect.annotateLogs({ tag: refusal._tag })),
+    ),
     Effect.mapError(mapReadError),
   );
 
@@ -862,7 +883,7 @@ const reservePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.reservePr
                 authenticationRef: payload.authenticationRef,
                 subject: payload.reservation,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             return yield* runReserveAction(
               principal,
@@ -915,7 +936,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
                 authenticationRef: payload.authenticationRef,
                 subject,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             return yield* runActivateAction(
               principal,
@@ -974,7 +995,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
                   authenticationRef,
                   subject,
                   tenantId: principal.tenantId,
-                }).pipe(Effect.mapError(mapAdmissionError)),
+                }).pipe(refuseAdmission),
               );
             }
             return yield* runStatusAction(principal, payload, idempotencyKey, ultramodernDeliveryUnit.appId, admission);
@@ -1047,7 +1068,7 @@ const resolveExternalSubjectHandler = Effect.fn('ExternalIdentityHttp.resolveExt
                 binding,
                 subject,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             return yield* runResolveRead(principal, subject, admission, ultramodernDeliveryUnit.appId);
           }),
@@ -1094,7 +1115,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
                 binding,
                 subject,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             const resolved = yield* runResolveRead(principal, subject, admission, ultramodernDeliveryUnit.appId);
             let legalEntityId: typeof principal.legalEntityId;

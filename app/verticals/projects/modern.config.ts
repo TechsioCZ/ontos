@@ -4,7 +4,6 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'projects';
@@ -14,7 +13,6 @@ export default defineConfig(
     {
       ...createWorkspaceModernConfig({
         appId,
-        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         moduleUrl: import.meta.url,
       }),
       bff: {
@@ -37,6 +35,7 @@ export default defineConfig(
           localeDetection: {
             fallbackLanguage: 'en',
             ignoreRedirectRoutes: [
+              '/.well-known',
               '/@mf-types',
               '/assets',
               '/bundles',

@@ -42,8 +42,8 @@ import {
 } from '../../../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue, DatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
-  DATABASE_IDENTITIES,
   SHARED_RUNTIME_IDENTITY,
+  makeDatabaseIdentityEnrollmentLive,
 } from '../../../../packages/core-runtime/src/db/database-identities.ts';
 import {
   dataAccessEvents,
@@ -64,7 +64,11 @@ import {
   toBusinessPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { makeCommerceCustomerContextApiRuntime } from '../../api/index.ts';
+import {
+  makeCommerceCustomerContextApiRuntime,
+  productionActionRuntimeLive,
+  productionReadRuntimeLive,
+} from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { SavedAddressListForbiddenProblemSchema } from '../../shared/apis/saved-address-list.ts';
@@ -77,6 +81,8 @@ import {
   makeAcceptanceGatewayIssuer,
 } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
+import { testDatabaseIdentityConnection } from '../../../../packages/core-runtime/tests/support/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../support/database-identities.ts';
 
 /**
  * A customer session that holds no business Permission for the profile it selects is answered
@@ -111,12 +117,15 @@ const bootstrapPermissionRuntimeRole = Effect.fn('PermissionAcceptance.bootstrap
   function* bootstrapPermissionRuntimeRole(connections: DatabaseConnectionPair) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     // The bootstrap provisions every database identity, so each dedicated login targets this database too.
-    const identities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+    const identities = yield* loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
     const database = new URL(connections.admin.connectionString).pathname.slice(1);
     const dedicatedIdentityUrls = Object.fromEntries(
       DATABASE_IDENTITIES.filter(({ id }) => id !== SHARED_RUNTIME_IDENTITY.id).map(({ id, urlKey }) => [
         urlKey,
-        connectionStringForDatabase(identities.runtime[id].connectionString, database),
+        connectionStringForDatabase(testDatabaseIdentityConnection(identities, id).connectionString, database),
       ]),
     );
     const bootstrap = yield* spawner.spawn(
@@ -157,23 +166,30 @@ const acquirePermissionDatabase = Effect.fn('PermissionAcceptance.acquireDatabas
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     for (const owner of ['packages/core-runtime', 'verticals/commerce-customer-context']) {
       const workingDirectory = path.join(workspaceRoot, owner);
+      // Core migrates through its own convergent migrator: its main and demo lineages converge through the
+      // reviewed equivalence plan, which a plain `drizzle-kit migrate` would replay twice.
+      const [command, ...commandArguments]: readonly [string, ...string[]] =
+        owner === 'packages/core-runtime'
+          ? [process.execPath, '../../scripts/migration-convergence-cli.mts', 'core']
+          : [
+              path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
+              'migrate',
+              '--config',
+              'drizzle.config.ts',
+            ];
       const migration = yield* spawner.spawn(
-        ChildProcess.make(
-          path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
-          ['migrate', '--config', 'drizzle.config.ts'],
-          {
-            cwd: workingDirectory,
-            env: {
-              APP_ENV_PATH: '/dev/null',
-              DATABASE_ADMIN_URL: isolated.admin.connectionString,
-              DATABASE_URL: isolated.runtime.connectionString,
-            },
-            extendEnv: true,
-            stderr: 'ignore',
-            stdin: 'ignore',
-            stdout: 'ignore',
+        ChildProcess.make(command, commandArguments, {
+          cwd: workingDirectory,
+          env: {
+            APP_ENV_PATH: '/dev/null',
+            DATABASE_ADMIN_URL: isolated.admin.connectionString,
+            DATABASE_URL: isolated.runtime.connectionString,
           },
-        ),
+          extendEnv: true,
+          stderr: 'ignore',
+          stdin: 'ignore',
+          stdout: 'ignore',
+        }),
       );
       const status = yield* migration.exitCode;
       if (Number(status) !== 0) {
@@ -368,7 +384,10 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
   const crypto = yield* Crypto.Crypto;
-  const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+  const scopeResolver = yield* makeOperationalScopeResolver(
+    makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    contextAccess,
+  );
   const ownerServices = yield* Layer.build(
     commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
       Layer.provide(profileRetailPermissionReaderFactoryLive),
@@ -377,11 +396,14 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   );
   const ownerAuthorizationOverlay = Context.get(ownerServices, OwnerAuthorizationOverlay);
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
     ownerAuthorizationOverlay,
   });
   const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker).pipe(
     Layer.provide(
       Layer.mergeAll(
+        makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
         Layer.succeed(ActionRepository, makeActionRepository(crypto)),
         Layer.effect(
           ActionPermission,
@@ -400,8 +422,9 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   return yield* Effect.acquireRelease(
     Effect.sync(() =>
       makeCommerceCustomerContextApiRuntime(
-        Layer.succeed(ReadRuntime, readRuntime),
-        actionRuntime,
+        // Retain the owner ports published by production; only the governed runtimes use this test's Core scope.
+        Layer.succeed(ReadRuntime, readRuntime).pipe(Layer.provideMerge(productionReadRuntimeLive)),
+        actionRuntime.pipe(Layer.provideMerge(productionActionRuntimeLive)),
         singleUseRedemptionLive,
         commercePortalAuthRealmUnavailableLive([ORIGIN]),
         gateway.verificationLive,

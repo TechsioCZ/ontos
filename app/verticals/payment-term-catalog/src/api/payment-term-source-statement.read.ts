@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import type { PaymentTermSourceKey } from '../../shared/domain/payment-term-source.ts';
 import type { PaymentTermSourcePersistence } from '../persistence/payment-term-source-persistence.ts';
 import { Effect, Option, Predicate } from 'effect';
@@ -68,10 +68,12 @@ export const paymentTermSourceStatementRead = defineRead(
     resultSchema: PaymentTermSourceStatementResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<PaymentTermSourcePersistence>) =>
-    readPaymentTermSourceStatement(input, context.services).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: Predicate.isTagged(result, 'FOUND') ? 1 : 0 }, result })),
-    ),
+  {
+    load: (input, context: ReadLoadContext<PaymentTermSourcePersistence>) =>
+      readPaymentTermSourceStatement(input, context.services).pipe(
+        Effect.map((result) => ({ evidence: { resultCount: Predicate.isTagged(result, 'FOUND') ? 1 : 0 }, result })),
+      ),
+  },
   (transaction, scope) => paymentTermSourcePersistenceForScope(transaction, scope),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

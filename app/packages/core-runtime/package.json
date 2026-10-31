@@ -43,7 +43,16 @@
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts",
     "./testing/owner-evidence": "./src/testing/owner-evidence.ts",
-    "./legacy-completion-publication": "./src/modules/legacy-completion-publication.ts"
+    "./legacy-completion-publication": "./src/modules/legacy-completion-publication.ts",
+    "./auth/assignable-principals": "./src/auth/assignable-principals.ts",
+    "./auth/external-identity-provider": "./src/auth/external-identity-provider.ts",
+    "./db/database-identity-manifest": "./src/db/database-identity-manifest.ts",
+    "./db/agent-history-page": "./src/db/agent-history-page.ts",
+    "./demo-company-profiles": "./src/install/demo-company-profiles.ts",
+    "./modules/legal-entity-navigation-exclusions": "./src/modules/legal-entity-navigation-exclusions.ts",
+    "./modules/mcp-contribution": "./src/modules/mcp-contribution.ts",
+    "./outbox/core-modules-tenant-module-state-changed-v1": "./src/outbox/core-modules-tenant-module-state-changed-v1.ts",
+    "./outbox/core-system-worker": "./src/outbox/core-system-worker-entry.ts"
   },
   "imports": {
     "#database-runtime": {
@@ -51,6 +60,7 @@
       "default": "./src/db/database-runtime.node.ts"
     },
     "#unit-service-fetch": {
+      "types": "./src/http/unit-service-fetch.ts",
       "workerd": "./src/http/unit-service-fetch.workerd.ts",
       "node": "./src/http/unit-service-fetch.node.ts"
     },
@@ -62,11 +72,12 @@
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:migrate": "node ../../scripts/migration-convergence-cli.mts core",
     "db:test": "rstest --project unit --project integration",
-    "db:verify": "node scripts/verify-db-schema.mts",
+    "db:verify": "node ../../scripts/verify-core-db-schema.mts",
     "test:unit": "rstest --project unit",
     "test:integration": "rstest --project integration",
+    "test:operator": "rstest --project operator --pool.maxWorkers 1",
     "action:test:unit": "rstest --project unit tests/unit/action-",
     "action:test:integration": "rstest --project integration tests/integration/action-",
     "outbox:test:unit": "rstest --project unit tests/unit/outbox-",

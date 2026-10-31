@@ -170,7 +170,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
           expect(harness.snapshot().ownerQueries).toEqual([]);
           expect(harness.snapshot().evidenceWrites).toBe(testCase.status === 403 ? 2 : 0);
           expect(harness.snapshot().statements.at(-1)).toBe(
-            testCase.status === 403 || testCase.status === 409 ? 'COMMIT' : 'ROLLBACK',
+            // The merged Read lifecycle rolls back a declared owner failure; only a denial commits its evidence.
+            testCase.status === 403 ? 'COMMIT' : 'ROLLBACK',
           );
         }),
     );

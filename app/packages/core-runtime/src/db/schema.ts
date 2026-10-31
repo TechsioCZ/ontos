@@ -1,5 +1,4 @@
 import { defineRelations, sql } from 'drizzle-orm';
-import type { SQL } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -19,11 +18,11 @@ import {
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Schema } from 'effect';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
-import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-  SHARED_RUNTIME_IDENTITY,
-} from './database-identity-manifest.ts';
+import type { CompanyAffiliation, CompanyMembershipStatus } from '../permissions/company-membership.ts';
+
+import { SHARED_RUNTIME_IDENTITY } from './database-identity-manifest.ts';
+
+export { emailDeliveries, emailSchema, emailSettings } from './email-schema.ts';
 
 export const CORE_SCHEMA_NAME = 'core';
 
@@ -34,6 +33,8 @@ export const CORE_TABLE_INVENTORY = [
   'legal_entities',
   'principals',
   'principal_auth_bindings',
+  'principal_company_memberships',
+  'person_invitations',
   'tenant_module_states',
   'action_invocations',
   'tenant_module_state_changes',
@@ -51,6 +52,9 @@ export const CORE_TABLE_INVENTORY = [
   'search_projection_generations',
   'search_projection_rebuilds',
   'worker_checkpoints',
+  'agent_proposals',
+  'legal_entity_navigation_exclusions',
+  'oauth_connection_grants',
 ] as const;
 
 export const ACTION_INVOCATION_STATUSES = [
@@ -65,7 +69,13 @@ export const ACTION_INVOCATION_STATUSES = [
 
 export type ActionInvocationStatus = (typeof ACTION_INVOCATION_STATUSES)[number];
 
-export const ACTION_AUTH_METHODS = ['session', 'api_key', 'system', 'support_impersonation'] as const;
+export const ACTION_AUTH_METHODS = [
+  'session',
+  'api_key',
+  'system',
+  'support_impersonation',
+  'oauth_connection',
+] as const;
 
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
@@ -75,7 +85,7 @@ export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
 export const PRINCIPAL_STATUSES = ['active', 'disabled', 'archived'] as const;
 export type PrincipalStatus = (typeof PRINCIPAL_STATUSES)[number];
 
-export const BINDING_SUBJECT_TYPES = ['user', 'api_key'] as const;
+export const BINDING_SUBJECT_TYPES = ['user', 'api_key', 'oauth_grant'] as const;
 export type BindingSubjectType = (typeof BINDING_SUBJECT_TYPES)[number];
 
 export const BINDING_STATUSES = ['pending', 'active', 'disabled', 'revoked'] as const;
@@ -89,32 +99,7 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultN
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
 const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
 
-const CANONICAL_MODULE_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
-
-const CorePolicyDefinitionInvariantError = Schema.TaggedError<Error>()('CorePolicyDefinitionInvariantError', {
-  message: Schema.String,
-});
-
-/** Renders a module key (or its action-key prefix) as a SQL literal only after proving it is canonical. */
-const moduleKeyPolicyLiteral = (moduleKey: string | null, suffix: '' | '.'): SQL => {
-  if (moduleKey === null || !CANONICAL_MODULE_KEY_PATTERN.test(moduleKey)) {
-    throw new CorePolicyDefinitionInvariantError({ message: 'Core policy module key is not canonical' });
-  }
-  return sql.raw(`'${moduleKey}${suffix}'`);
-};
-
 const SHARED_RUNTIME_ROLE = SHARED_RUNTIME_IDENTITY.role;
-const PARTY_REGISTRY_REQUEST_ROLE = PARTY_REGISTRY_REQUEST_IDENTITY.role;
-const PARTY_REGISTRY_WORKER_ROLE = PARTY_REGISTRY_WORKER_IDENTITY.role;
-const PARTY_REGISTRY_ROLES = [PARTY_REGISTRY_REQUEST_ROLE, PARTY_REGISTRY_WORKER_ROLE];
-const PARTY_REGISTRY_MODULE_KEY = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '');
-const PARTY_REGISTRY_ACTION_KEY_PREFIX = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '.');
-const TRUSTED_TENANT_ID = sql`(select trust.current_tenant_id())`;
-const SESSION_TENANT_ID = sql`nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
-
-/** A sealed legal entity narrows non-global rows; an unselected scope is tenant-wide. */
-const trustedTenantLegalEntityPredicate = (tenantColumn: AnyPgColumn, legalEntityColumn: AnyPgColumn) =>
-  sql`${tenantColumn} = ${TRUSTED_TENANT_ID} and ((select trust.current_legal_entity_id()) is null or ${legalEntityColumn} is null or ${legalEntityColumn} = (select trust.current_legal_entity_id()))`;
 
 /** The shared runtime keeps its pre-pilot unrestricted access once RLS guards a Core table. */
 const sharedRuntimeAllPolicy = (tableName: string) =>
@@ -149,11 +134,6 @@ export const applicationCompositionAuthority = enableCoreGovernedRls(
         'core_application_composition_authority_phase_ck',
         sql`${table.phase} in ('active', 'draining', 'sealed', 'migrated')`,
       ),
-      pgPolicy('core_application_composition_authority_select', {
-        for: 'select',
-        to: [SHARED_RUNTIME_ROLE, ...PARTY_REGISTRY_ROLES],
-        using: sql`true`,
-      }),
     ],
   ),
 );
@@ -204,19 +184,6 @@ export const tenants = enableCoreGovernedRls(
       uniqueIndex('core_tenants_slug_uk').on(table.slug),
       check('core_tenants_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
       sharedRuntimeAllPolicy('tenants'),
-      pgPolicy('core_tenants_party_registry_select', { for: 'select', to: PARTY_REGISTRY_ROLES, using: sql`true` }),
-      pgPolicy('core_tenants_party_registry_request_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-        withCheck: sql`false`,
-      }),
-      pgPolicy('core_tenants_party_registry_worker_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`false`,
-      }),
     ],
   ),
 );
@@ -237,6 +204,8 @@ export const legalEntities = enableCoreGovernedRls(
       registrationNumber: text('registration_number').notNull(),
       vatId: text('vat_id'),
       status: text('status').notNull(),
+      /** Tenant-provided company introduction displayed by the demo. */
+      welcome: text('welcome'),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
     },
@@ -249,17 +218,8 @@ export const legalEntities = enableCoreGovernedRls(
       ),
       index('core_legal_entities_tenant_idx').on(table.tenantId),
       check('core_legal_entities_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
+      check('core_legal_entities_welcome_ck', sql`length(${table.welcome}) between 1 and 400`),
       sharedRuntimeAllPolicy('legal_entities'),
-      pgPolicy('core_legal_entities_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-      }),
-      pgPolicy('core_legal_entities_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
     ],
   ),
 );
@@ -282,11 +242,6 @@ export const principals = enableCoreGovernedRls(
       check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
       check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
       sharedRuntimeAllPolicy('principals'),
-      pgPolicy('core_principals_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-      }),
     ],
   ),
 );
@@ -340,7 +295,7 @@ export const principalAuthBindings = enableCoreGovernedRls(
         'core_auth_bindings_namespace_ck',
         sql`length(btrim(${table.authenticationNamespaceId})) between 1 and 200 and ${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId})`,
       ),
-      check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
+      check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key', 'oauth_grant')`),
       check('core_auth_bindings_subject_id_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
       check('core_auth_bindings_status_ck', sql`${table.status} in ('pending', 'active', 'revoked', 'disabled')`),
       check('core_auth_bindings_revision_ck', sql`${table.bindingRevision} >= 1`),
@@ -349,13 +304,93 @@ export const principalAuthBindings = enableCoreGovernedRls(
         sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
       ),
       sharedRuntimeAllPolicy('principal_auth_bindings'),
-      pgPolicy('core_principal_auth_bindings_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-      }),
     ],
   ),
+);
+
+/** Core-owned directory membership. Departures retain identity and company history; rows are never deleted. */
+export const principalCompanyMemberships = coreSchema.table.withRLS(
+  'principal_company_memberships',
+  {
+    tenantId: tenantId(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    principalId: principalId(),
+    affiliation: text('affiliation').$type<CompanyAffiliation>(),
+    status: text('status').$type<CompanyMembershipStatus>().notNull(),
+    revision: integer('revision').default(1).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => {
+    const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+    return [
+      primaryKey({
+        name: 'core_principal_company_memberships_pk',
+        columns: [table.tenantId, table.legalEntityId, table.principalId],
+      }),
+      foreignKey({
+        name: 'core_company_memberships_principal_fk',
+        columns: [table.tenantId, table.principalId],
+        foreignColumns: [principals.tenantId, principals.principalId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'core_company_memberships_legal_entity_fk',
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      }).onDelete('restrict'),
+      index('core_company_memberships_principal_idx').on(table.tenantId, table.principalId),
+      check('core_company_memberships_affiliation_ck', sql`${table.affiliation} in ('employee', 'external')`),
+      check(
+        'core_company_memberships_status_ck',
+        sql`${table.status} in ('invited', 'active', 'disabled', 'departed')`,
+      ),
+      check('core_company_memberships_revision_ck', sql`${table.revision} >= 1`),
+      pgPolicy('core_company_memberships_select', { for: 'select', to: 'ontos_runtime', using: scope }),
+      pgPolicy('core_company_memberships_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
+      pgPolicy('core_company_memberships_update', {
+        for: 'update',
+        to: 'ontos_runtime',
+        using: scope,
+        withCheck: scope,
+      }),
+    ];
+  },
+);
+
+/** Immutable invitation intent. The one-use secret belongs only to the authentication provider's verification row. */
+export const personInvitations = coreSchema.table.withRLS(
+  'person_invitations',
+  {
+    invitationId: uuid('invitation_id').primaryKey(),
+    tenantId: tenantId(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    principalId: principalId(),
+    providerSubjectId: text('provider_subject_id').notNull(),
+    verificationId: text('verification_id').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => {
+    const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+    return [
+      foreignKey({
+        name: 'core_person_invitations_membership_fk',
+        columns: [table.tenantId, table.legalEntityId, table.principalId],
+        foreignColumns: [
+          principalCompanyMemberships.tenantId,
+          principalCompanyMemberships.legalEntityId,
+          principalCompanyMemberships.principalId,
+        ],
+      }).onDelete('restrict'),
+      uniqueIndex('core_person_invitations_verification_uk').on(table.verificationId),
+      uniqueIndex('core_person_invitations_principal_uk').on(table.tenantId, table.principalId),
+      check('core_person_invitations_provider_subject_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
+      check('core_person_invitations_verification_ck', sql`length(${table.verificationId}) between 1 and 500`),
+      check('core_person_invitations_expiry_ck', sql`${table.expiresAt} > ${table.createdAt}`),
+      pgPolicy('core_person_invitations_select', { for: 'select', to: 'ontos_runtime', using: scope }),
+      pgPolicy('core_person_invitations_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
+    ];
+  },
 );
 
 const legalEntityId = () => uuid('legal_entity_id');
@@ -387,17 +422,6 @@ export const tenantModuleStates = enableCoreGovernedRls(
         sql`${table.state} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
       ),
       sharedRuntimeAllPolicy('tenant_module_states'),
-      pgPolicy('core_tenant_module_states_party_registry_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_ROLES,
-        using: sql`true`,
-      }),
-      pgPolicy('core_tenant_module_states_party_registry_worker_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`false`,
-      }),
     ],
   ),
 );
@@ -471,34 +495,13 @@ export const actionInvocations = enableCoreGovernedRls(
       ...authContextForeignKeys('core_action_invocations', table),
       check(
         'core_action_invocations_auth_method_ck',
-        sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation')`,
+        sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation', 'oauth_connection')`,
       ),
       check(
         'core_action_invocations_status_ck',
         sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
       ),
       sharedRuntimeAllPolicy('action_invocations'),
-      pgPolicy('core_action_invocations_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-      }),
-      pgPolicy('core_action_invocations_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-      }),
-      pgPolicy('core_action_invocations_party_registry_request_update', {
-        for: 'update',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-      }),
-      pgPolicy('core_action_invocations_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
     ],
   ),
 );
@@ -585,16 +588,6 @@ export const auditEvents = enableCoreGovernedRls(
       ),
       check('core_audit_events_profile_ck', sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`),
       sharedRuntimeAllPolicy('audit_events'),
-      pgPolicy('core_audit_events_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
-      }),
-      pgPolicy('core_audit_events_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
-      }),
     ],
   ),
 );
@@ -662,11 +655,6 @@ export const dataAccessEvents = enableCoreGovernedRls(
         sql`(${table.evidenceCaptureMode} = 'redacted_payload' and ${table.redactionProfile} is not null and ${table.evidencePayloadJson} is not null) or (${table.evidenceCaptureMode} <> 'redacted_payload' and ${table.redactionProfile} is null)`,
       ),
       sharedRuntimeAllPolicy('data_access_events'),
-      pgPolicy('core_data_access_events_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.servingModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
     ],
   ),
 );
@@ -717,22 +705,6 @@ export const domainEvents = enableCoreGovernedRls(
         name: 'core_domain_events_tenant_invocation_fk',
       }).onDelete('restrict'),
       sharedRuntimeAllPolicy('domain_events'),
-      pgPolicy('core_domain_events_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_domain_events_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
-      pgPolicy('core_domain_events_party_registry_worker_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`false`,
-      }),
     ],
   ),
 );
@@ -776,22 +748,6 @@ export const outboxMessages = enableCoreGovernedRls(
         name: 'core_outbox_messages_tenant_domain_event_fk',
       }).onDelete('restrict'),
       sharedRuntimeAllPolicy('outbox_messages'),
-      pgPolicy('core_outbox_messages_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_outbox_messages_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
-      pgPolicy('core_outbox_messages_party_registry_worker_update', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`true`,
-      }),
     ],
   ),
 );
@@ -1099,32 +1055,6 @@ export const evidenceReferences = coreSchema.table(
   ],
 );
 
-/** The Party Registry worker maintains only Party Registry projections under its session tenant setting. */
-const partyRegistryWorkerSearchPolicies = (
-  prefix: string,
-  table: { readonly sourceModuleKey: AnyPgColumn; readonly tenantId: AnyPgColumn },
-) => {
-  const predicate = sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`;
-  return [
-    pgPolicy(`${prefix}_party_registry_worker_select`, {
-      for: 'select',
-      to: PARTY_REGISTRY_WORKER_ROLE,
-      using: predicate,
-    }),
-    pgPolicy(`${prefix}_party_registry_worker_insert`, {
-      for: 'insert',
-      to: PARTY_REGISTRY_WORKER_ROLE,
-      withCheck: predicate,
-    }),
-    pgPolicy(`${prefix}_party_registry_worker_update`, {
-      for: 'update',
-      to: PARTY_REGISTRY_WORKER_ROLE,
-      using: predicate,
-      withCheck: predicate,
-    }),
-  ];
-};
-
 export const searchIndexEntries = enableCoreGovernedRls(
   coreSchema.table(
     'search_index_entries',
@@ -1171,33 +1101,6 @@ export const searchIndexEntries = enableCoreGovernedRls(
         sql`${table.deleted} or (length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 40000)`,
       ),
       check('core_search_index_entries_version_ck', sql`${table.projectionVersion} > 0`),
-      pgPolicy('core_search_index_entries_tenant_select', {
-        for: 'select',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_tenant_insert', {
-        for: 'insert',
-        to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_tenant_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_tenant_delete', {
-        for: 'delete',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      ...partyRegistryWorkerSearchPolicies('core_search_index_entries', table),
     ],
   ),
 );
@@ -1219,23 +1122,6 @@ export const searchProjectionGenerations = enableCoreGovernedRls(
         columns: [table.tenantId, table.sourceModuleKey],
       }),
       check('core_search_projection_generations_positive_ck', sql`${table.generation} > 0`),
-      pgPolicy('core_search_projection_generations_tenant_select', {
-        for: 'select',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_generations_tenant_insert', {
-        for: 'insert',
-        to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_generations_tenant_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      ...partyRegistryWorkerSearchPolicies('core_search_projection_generations', table),
     ],
   ),
 );
@@ -1259,23 +1145,6 @@ export const searchProjectionRebuilds = enableCoreGovernedRls(
       }),
       check('core_search_projection_rebuilds_version_ck', sql`${table.rebuildVersion} > 0`),
       check('core_search_projection_rebuilds_fingerprint_ck', sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`),
-      pgPolicy('core_search_projection_rebuilds_tenant_select', {
-        for: 'select',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_rebuilds_tenant_insert', {
-        for: 'insert',
-        to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_rebuilds_tenant_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      ...partyRegistryWorkerSearchPolicies('core_search_projection_rebuilds', table),
     ],
   ),
 );
@@ -1299,22 +1168,166 @@ export const workerCheckpoints = coreSchema.table(
   ],
 );
 
+/** Platform approval queue: write proposals of AI agents for any module (approvals-platform lane). No RLS: the
+ * shell filters by tenant and legal entity; bootstrap-runtime-role grants the runtime role on all core tables. */
+export const agentProposals = coreSchema.table(
+  'agent_proposals',
+  {
+    proposalId: uuid('proposal_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    batchId: uuid('batch_id').notNull(),
+    batchInstruction: text('batch_instruction').notNull(),
+    runId: text('run_id'),
+    position: integer('position').notNull(),
+    agentPrincipalId: uuid('agent_principal_id').notNull(),
+    agentLabel: text('agent_label').notNull(),
+    appId: text('app_id').notNull(),
+    moduleKey: text('module_key').notNull(),
+    actionSlug: text('action_slug').notNull().default('apply-command'),
+    commandJson: jsonb('command_json').$type<Readonly<Record<string, Schema.Json>>>().notNull(),
+    referenceAudiencesJson: jsonb('reference_audiences_json')
+      .$type<readonly string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    summary: text('summary').notNull(),
+    targetLabel: text('target_label').notNull(),
+    reason: text('reason').notNull(),
+    risk: text('risk').notNull(),
+    diffJson: jsonb('diff_json')
+      .$type<readonly unknown[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    revertJson: jsonb('revert_json').$type<unknown>(),
+    status: text('status').notNull().default('pending'),
+    createdAt: createdAt(),
+    decidedByPrincipalId: uuid('decided_by_principal_id'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    appliedAt: timestamp('applied_at', { withTimezone: true }),
+    applyResultJson: jsonb('apply_result_json').$type<unknown>(),
+    failure: text('failure'),
+    revertedByPrincipalId: uuid('reverted_by_principal_id'),
+    revertedAt: timestamp('reverted_at', { withTimezone: true }),
+    batchRevertedAt: timestamp('batch_reverted_at', { withTimezone: true }),
+    batchRevertedByPrincipalId: uuid('batch_reverted_by_principal_id'),
+    batchRevertNote: text('batch_revert_note'),
+  },
+  (table) => [
+    index('core_agent_proposals_company_created_idx').on(table.tenantId, table.legalEntityId, table.createdAt),
+    index('core_agent_proposals_batch_idx').on(table.batchId),
+    uniqueIndex('core_agent_proposals_run_uk')
+      .on(table.tenantId, table.agentPrincipalId, table.runId, table.position)
+      .where(sql`${table.runId} is not null`),
+    check(
+      'core_agent_proposals_status_ck',
+      sql`${table.status} in ('pending', 'applied', 'rejected', 'failed', 'reverted', 'revert_failed')`,
+    ),
+    check('core_agent_proposals_risk_ck', sql`${table.risk} in ('low', 'medium', 'high')`),
+  ],
+);
+
+/** MCP OAuth connection grants (lane mcp-connection-grants). Written only by the shell grant store
+ * (apps/shell-super-app/api/oauth-connections/grant-store.ts); Core only sees the derived `oauth_grant` binding. */
+export const oauthConnectionGrants = coreSchema.table(
+  'oauth_connection_grants',
+  {
+    grantId: uuid('grant_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    userId: text('user_id').notNull(),
+    userPrincipalId: uuid('user_principal_id').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    actingKind: text('acting_kind').notNull(),
+    clientId: text('client_id').notNull(),
+    clientName: text('client_name').notNull(),
+    clientHost: text('client_host').notNull(),
+    clientKind: text('client_kind').notNull(),
+    clientLogoUri: text('client_logo_uri'),
+    modulesJson: jsonb('modules_json').$type<unknown>().notNull(),
+    writePolicy: text('write_policy').notNull(),
+    profileId: uuid('profile_id').notNull(),
+    authBindingId: uuid('auth_binding_id'),
+    consentId: text('consent_id'),
+    sessionId: text('session_id'),
+    status: text('status').notNull().default('draft'),
+    createdAt: createdAt(),
+    consentedAt: timestamp('consented_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedByPrincipalId: uuid('revoked_by_principal_id'),
+    revokeReason: text('revoke_reason'),
+  },
+  (table) => [
+    index('core_oauth_grants_company_status_idx').on(table.tenantId, table.legalEntityId, table.status),
+    index('core_oauth_grants_user_status_idx').on(table.userId, table.status),
+    index('core_oauth_grants_acting_status_idx').on(table.actingPrincipalId, table.status),
+    index('core_oauth_grants_client_idx').on(table.clientId),
+    index('core_oauth_grants_session_idx').on(table.sessionId),
+    check(
+      'core_oauth_grants_status_ck',
+      sql`${table.status} in ('draft', 'active', 'denied', 'revoked', 'superseded')`,
+    ),
+    check('core_oauth_grants_acting_kind_ck', sql`${table.actingKind} in ('human', 'agent')`),
+    check('core_oauth_grants_client_kind_ck', sql`${table.clientKind} in ('cimd', 'loopback')`),
+    check('core_oauth_grants_write_policy_ck', sql`${table.writePolicy} in ('read_only', 'approval', 'direct')`),
+    check(
+      'core_oauth_grants_revoke_reason_ck',
+      sql`${table.revokeReason} is null or ${table.revokeReason} in ('user', 'admin', 'superseded', 'operator_removed', 'agent_disabled', 'user_disabled', 'password_changed')`,
+    ),
+  ],
+);
+
+/**
+ * Shell navigation destinations a company does not offer, keyed by the contribution's page entrypoint. Tenant data
+ * filled by installation or seed tooling; the Shell composition drops listed destinations for that legal entity.
+ */
+export const legalEntityNavigationExclusions = coreSchema.table(
+  'legal_entity_navigation_exclusions',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    entrypointKey: text('entrypoint_key').notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'core_legal_entity_navigation_exclusions_pk',
+      columns: [table.tenantId, table.legalEntityId, table.entrypointKey],
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_legal_entity_navigation_exclusions_legal_entity_fk',
+    }).onDelete('cascade'),
+    check(
+      'core_legal_entity_navigation_exclusions_entrypoint_ck',
+      sql`${table.entrypointKey} ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)*$' and length(${table.entrypointKey}) <= 200`,
+    ),
+  ],
+);
+
 export const coreDatabaseSchema = {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
   actionInvocations,
+  agentProposals,
   auditEvents,
   dataAccessEvents,
   domainEvents,
   evidenceReferences,
   legalEntities,
+  legalEntityNavigationExclusions,
   mediaAssets,
   mediaLinks,
+  oauthConnectionGrants,
   outboxAttempts,
   outboxDeliveries,
   outboxDeliveryResolutions,
   outboxMessages,
+  personInvitations,
   principalAuthBindings,
+  principalCompanyMemberships,
   principals,
   searchIndexEntries,
   searchProjectionGenerations,
@@ -1332,6 +1345,8 @@ export const CORE_TABLES = [
   legalEntities,
   principals,
   principalAuthBindings,
+  principalCompanyMemberships,
+  personInvitations,
   tenantModuleStates,
   actionInvocations,
   tenantModuleStateChanges,
@@ -1349,6 +1364,8 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  agentProposals,
+  legalEntityNavigationExclusions,
 ] as const;
 
 export type TenantRow = typeof tenants.$inferSelect;

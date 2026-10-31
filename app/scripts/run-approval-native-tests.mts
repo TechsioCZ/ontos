@@ -4,7 +4,7 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess } from 'effect/process';
 
 import { loadDatabaseIdentityConnections } from '../packages/core-runtime/src/db/config.ts';
-import { DATABASE_IDENTITIES } from '../packages/core-runtime/src/db/database-identities.ts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../database/identity-enrollment.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 
 class ApprovalNativeTestFailed extends Schema.TaggedError<ApprovalNativeTestFailed>()('ApprovalNativeTestFailed', {
@@ -24,10 +24,17 @@ const cli = Command.make(
   },
   ({ testCase, testName }) =>
     Effect.gen(function* runApprovalNativeTests() {
-      const database = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+      const database = yield* loadDatabaseIdentityConnections({
+        enrollment: APP_DATABASE_IDENTITY_ENROLLMENT,
+        envPath: '/dev/null',
+      });
       const permissions = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
       const inherited = yield* Config.all({
         HOME: Config.String('HOME'),
+        ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+          Config.withDefault(true),
+          Config.map(String),
+        ),
         PATH: Config.String('PATH'),
         TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
       });

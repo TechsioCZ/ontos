@@ -1,4 +1,4 @@
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Option, Predicate, Redacted, Ref, Schema } from 'effect';
 
 import {
   ApplicationCompositionSchema,
@@ -11,13 +11,14 @@ import {
   validateApplicationCompositionCandidate,
 } from './application-composition.ts';
 import type { ApplicationComposition, ApplicationCompositionCandidateEvidence } from './application-composition.ts';
-import { buildInstalledModuleCatalog } from './catalog.ts';
+import { buildInstalledModuleCatalog, OntosModuleCatalogValidationError } from './catalog.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
-import { ONTOS_MODULE_CONTRACT_MAX_BYTES, OntosModuleDeploymentContractSchema } from './manifest.ts';
+import { ONTOS_MODULE_CONTRACT_MAX_BYTES } from './manifest.ts';
 import { shellPageRouteCatalogIssue } from './shell-contribution.ts';
+import type { ValidatedCompositionCatalogLookup } from './process-composition-validation.ts';
 
 const utf8 = new TextEncoder();
-const contractJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
+const contractJsonSchema = Schema.fromJsonString(Schema.Unknown);
 
 const invalid = (reason: string, cause?: unknown): ApplicationCompositionValidationError => {
   if (cause === undefined) {
@@ -51,7 +52,7 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
     Effect.mapError((cause) => invalid('Application Composition does not match the supported schema', cause)),
   );
   let totalContractBytes = 0;
-  const decoded = yield* Effect.forEach(
+  const documents = yield* Effect.forEach(
     composition.modules,
     Effect.fnUntraced(function* decodeModule(module) {
       if (module.contractDocument.length > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
@@ -79,6 +80,32 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
           invalid(`module ${module.moduleId} contract document is invalid or unsupported`, cause),
         ),
       );
+      return { contract, digest, module };
+    }),
+    { concurrency: 1 },
+  );
+  // The installed catalog owns strict contract decoding. Derive composition evidence from
+  // its validated objects instead of decoding every complete contract a second time.
+  const catalog = yield* Effect.try({
+    catch: (cause) =>
+      invalid(
+        Schema.is(OntosModuleCatalogValidationError)(cause)
+          ? `Application Composition contracts do not form one complete installed catalog: ${cause.reason}`
+          : 'Application Composition contracts do not form one complete installed catalog',
+        cause,
+      ),
+    try: () =>
+      buildInstalledModuleCatalog(
+        documents.map(({ contract, module }) => ({ contract, expectedAppId: module.deployment.appId })),
+      ),
+  });
+  const decoded = yield* Effect.forEach(
+    documents,
+    Effect.fnUntraced(function* observeModule({ digest, module }) {
+      const contract = catalog.getByDeploymentAppId(module.deployment.appId);
+      if (contract === undefined) {
+        return yield* invalid(`module ${module.moduleId} has no observed deployment contract`);
+      }
       const contributionKeys = Object.values(contract.manifest.publicSurface.shellContributions).flatMap(
         (contributions) => contributions.map(({ contributionKey }) => contributionKey),
       );
@@ -121,11 +148,13 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
   if (routeIssue !== undefined) {
     return yield* invalid(routeIssue);
   }
-  const canonicalBytes = utf8.encode(canonicalizeApplicationComposition(composition));
+  // Both revisions are schema-checked 64-character ASCII hex strings, so zeroing the
+  // revision preserves the canonical byte length. Encode once for size and digest.
+  const canonicalBytes = utf8.encode(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) }));
   if (canonicalBytes.byteLength > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES) {
     return yield* invalid('Application Composition exceeds its encoded byte budget');
   }
-  if ((yield* applicationCompositionContentRevision(composition)) !== composition.revision) {
+  if ((yield* sha256Hex(canonicalBytes)) !== composition.revision) {
     return yield* invalid('Application Composition revision does not match its immutable content');
   }
   const evidence: ApplicationCompositionCandidateEvidence = {
@@ -156,16 +185,6 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
     runtime: composition.shell,
   };
   yield* validateApplicationCompositionCandidate(composition, evidence);
-  const catalog = yield* Effect.try({
-    catch: (cause) => invalid('Application Composition contracts do not form one complete installed catalog', cause),
-    try: () =>
-      buildInstalledModuleCatalog(
-        decoded.map(({ contract, module }) => ({
-          contract,
-          expectedAppId: module.deployment.appId,
-        })),
-      ),
-  });
   // Catalog accessors refer to these same decoded contracts. Freeze those contracts as well as
   // the catalog containers: an accepted revision must not change through a returned projection.
   for (const contract of catalog.contracts) {
@@ -174,16 +193,46 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
   return catalog;
 });
 
+// Catalogs contain immutable data only. Mutable or shallow-frozen injected inputs must be
+// verified again; a frozen accessor is not immutable evidence either.
+const isFrozenArtifact = <Value>(value: Value): boolean =>
+  !Predicate.isObjectKeyword(value) ||
+  value === null ||
+  (Object.isFrozen(value) &&
+    Object.values(Object.getOwnPropertyDescriptors(value)).every(
+      (descriptor) => 'value' in descriptor && isFrozenArtifact(descriptor.value),
+    ));
+const validatedCatalogs = Ref.makeUnsafe(new WeakMap<ApplicationComposition, InstalledModuleCatalog>());
+
+/** The host registry exposes only catalogs this validator minted from deeply immutable content. */
+export const validatedApplicationCompositionCatalog: ValidatedCompositionCatalogLookup = (composition) =>
+  Ref.get(validatedCatalogs).pipe(Effect.map((catalogs) => Option.fromUndefinedOr(catalogs.get(composition))));
+
 /**
  * Construct one all-or-nothing catalog from approved documents. No remote fetch, topology fallback,
  * availability filtering, or retained last-known-good catalog can alter installed membership.
  */
-export const buildApplicationCompositionCatalog = (
+export const buildApplicationCompositionCatalog = Effect.fn(
+  'ApplicationCompositionCatalog.buildApplicationCompositionCatalog',
+)(function* loadValidatedCatalog(
   composition: ApplicationComposition,
-): Effect.Effect<InstalledModuleCatalog, ApplicationCompositionValidationError> =>
-  buildCatalog(composition).pipe(
+): Effect.fn.Return<InstalledModuleCatalog, ApplicationCompositionValidationError> {
+  const local = yield* validatedApplicationCompositionCatalog(composition);
+  const cached = Option.isSome(local)
+    ? local
+    : yield* globalThis.ontosProcessCompositionValidation?.catalog(composition) ?? Effect.succeed(Option.none());
+  if (Option.isSome(cached)) {
+    return cached.value;
+  }
+  return yield* buildCatalog(composition).pipe(
+    Effect.tap((catalog) =>
+      isFrozenArtifact(composition)
+        ? Ref.update(validatedCatalogs, (catalogs) => catalogs.set(composition, catalog))
+        : Effect.void,
+    ),
     Effect.timeoutOrElse({
       duration: ONTOS_APPLICATION_COMPOSITION_VALIDATION_TIMEOUT_MS,
       orElse: () => Effect.fail(invalid('Application Composition validation exceeded its time budget')),
     }),
   );
+});

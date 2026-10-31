@@ -18,7 +18,9 @@ import {
   PrincipalResolverLive,
   TenantModuleStateServiceLive,
   loadDatabaseConnectionPair,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -45,8 +47,10 @@ import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } fr
 import { AuthConfig, AuthConfigLive, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { AuthenticationServiceLive, makeAuthenticationService } from '../../api/auth/service.ts';
+import { shellAuthenticationFrameworkLive } from './shell-authentication.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
+import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -117,16 +121,21 @@ const serve = Effect.scoped(
       return yield* unavailable();
     }
     const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
-    const database = yield* makeAuthDatabase(configuration);
+    const database = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: connections.runtime.expectedRole,
+    });
     const core = CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)));
-    const resolver = yield* Layer.build(
-      PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(Layer.provide(core)),
+    const authenticationContext = yield* Layer.build(
+      shellAuthenticationFrameworkLive({ allowFixtureSignUp: true }).pipe(
+        Layer.provideMerge(PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID })),
+        Layer.provideMerge(core),
+        Layer.provideMerge(
+          Layer.mergeAll(Layer.succeed(AuthConfig, configuration), Layer.succeed(AuthDatabase, database)),
+        ),
+      ),
     );
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-      Effect.provideService(AuthConfig, configuration),
-      Effect.provideService(AuthDatabase, database),
-      Effect.provideContext(resolver),
-    );
+    const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
     const crypto = yield* Crypto.Crypto;
     const suffix = yield* crypto.randomUUIDv4();
     const email = `native-${suffix}@fixture.invalid`;
@@ -147,8 +156,16 @@ const serve = Effect.scoped(
     const runtimeResolver = PrincipalResolverLive({
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     }).pipe(Layer.provide(runtimeCore));
+    // The runtime composition does not admit fixture sign-up, exactly as production composes it.
     const runtimeAuthentication = AuthenticationServiceLive.pipe(
-      Layer.provide(Layer.mergeAll(AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive)), runtimeResolver)),
+      Layer.provide(
+        shellAuthenticationFrameworkLive({ allowFixtureSignUp: false }).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive)), runtimeResolver, runtimeCore),
+          ),
+        ),
+      ),
+      Layer.provide(NodeCrypto.layer),
     );
     const composition = ActiveApplicationCompositionConfigLive.pipe(
       Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
@@ -156,6 +173,8 @@ const serve = Effect.scoped(
     const issuer = GatewayIssuerLive.pipe(
       Layer.provide(ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition))),
       Layer.provide(GatewayScopeGrantRegistrarLive),
+      // The Shell's production enrollment: Party Registry gateway grants target its dedicated identity.
+      Layer.provide(makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT)),
     );
     const runtime = makeShellAuthenticationApiRuntime(
       runtimeAuthentication,
@@ -163,7 +182,8 @@ const serve = Effect.scoped(
       TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCore)),
       undefined,
       false,
-      ContextAccessLive,
+      // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
+      Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
     );
     const handler = yield* Effect.acquireRelease(
       Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: runtime }, {})).pipe(

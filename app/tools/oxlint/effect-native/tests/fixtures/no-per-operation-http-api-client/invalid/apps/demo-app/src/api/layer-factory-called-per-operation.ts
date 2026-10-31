@@ -2,8 +2,8 @@
 // The `make*Live` effect factory is blessed where it feeds `Layer.effect` at module level, but it is
 // still a client factory: calling it from an operation builds one more client per call.
 import { Context, Effect, Layer } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpClient } from 'effect/http';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 interface ContactsClientService {

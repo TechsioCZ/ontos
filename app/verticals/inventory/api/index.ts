@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -27,7 +29,10 @@ import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -68,6 +73,8 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { inventoryApi, inventoryOperationContexts } from '../shared/api.ts';
 import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../src/persistence/import-source-assertion-owner-authorization.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const inventoryReadinessLayer = HttpApiBuilder.group(inventoryApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -125,6 +132,7 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provide(nodeCryptoLayer),
 );
 const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
@@ -132,13 +140,22 @@ const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provide(nodeCryptoLayer),
+);
+
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
 );
 
 type InventoryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof inventoryReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof inventoryActionRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 type InventoryApiGroups = (typeof inventoryApi.groups)[keyof typeof inventoryApi.groups];
@@ -199,7 +216,9 @@ export const makeInventoryApiRuntime = (
     InventoryApiGroups,
     InventoryHandlerRequirements
   >['handlers'] = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),
+    ),
     Layer.orDie,
   );
 
@@ -210,6 +229,10 @@ export const makeInventoryApiRuntime = (
 };
 
 const apiRuntime: EffectBffDefinition<typeof inventoryApi> & EffectBffRuntime<typeof inventoryApi> =
-  makeInventoryApiRuntime(inventoryReadRuntimeLive, inventoryActionRuntimeLive, GovernedGatewayAssertionRedemptionLive);
+  makeInventoryApiRuntime(
+    inventoryReadRuntimeLive,
+    inventoryActionRuntimeLive,
+    productionGatewayAssertionRedemptionLive,
+  );
 
 export default apiRuntime;

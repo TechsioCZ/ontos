@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Predicate } from 'effect';
-import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   BusinessPermissionRelationshipMutation,
   ContextAccess,
@@ -163,14 +163,14 @@ it.effect('returns exact allowed and denied decisions and maps unavailable check
     };
     for (const decision of ['ALLOWED', 'DENIED'] as const) {
       expect(
-        yield* checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, {
+        yield* checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, 'ALLOWED', {
           check: () => Effect.succeed(decision),
         }),
       ).toEqual({ decision });
     }
 
     const failure = yield* Effect.flip(
-      checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, {
+      checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, 'ALLOWED', {
         check: () => Effect.fail(unavailableFailure()),
       }),
     );
@@ -190,6 +190,7 @@ it.effect('rejects cross-tenant checks before consulting the access adapter', ()
         },
         principalId,
         tenantId,
+        'ALLOWED',
         {
           check: () => {
             called = true;
@@ -399,7 +400,8 @@ const scopeWithoutLegalEntity = {
 
 it.effect('fails closed when the access-list handler lacks Legal Entity context', () =>
   Effect.gen(function* missingListLegalEntity() {
-    const unavailable = yield* getReadHandler(counterpartyCommerceAccessListRead)(
+    const unavailable = yield* runReadOwnerSteps(
+      counterpartyCommerceAccessListRead,
       { counterpartyRef, scope },
       {
         readKey: counterpartyCommerceAccessListRead.descriptor.readKey,
@@ -418,7 +420,8 @@ it.effect('fails closed when the access-list handler lacks Legal Entity context'
 
 it.effect('fails closed when the access-detail handler lacks Legal Entity context', () =>
   Effect.gen(function* missingDetailLegalEntity() {
-    const unavailable = yield* getReadHandler(counterpartyCommerceAccessDetailRead)(
+    const unavailable = yield* runReadOwnerSteps(
+      counterpartyCommerceAccessDetailRead,
       { counterpartyRef, grantRef, scope },
       {
         readKey: counterpartyCommerceAccessDetailRead.descriptor.readKey,
@@ -437,7 +440,8 @@ it.effect('fails closed when the access-detail handler lacks Legal Entity contex
 
 it.effect('fails closed when the invitation handler lacks Legal Entity context', () =>
   Effect.gen(function* missingInvitationLegalEntity() {
-    const unavailable = yield* getReadHandler(counterpartyAccessInvitationReadRead)(
+    const unavailable = yield* runReadOwnerSteps(
+      counterpartyAccessInvitationReadRead,
       { counterpartyRef, invitationRef, scope },
       {
         readKey: counterpartyAccessInvitationReadRead.descriptor.readKey,

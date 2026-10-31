@@ -1,5 +1,5 @@
 // Same member names, different origins: none of these construct an HttpApi client.
-import type * as HttpApiClient from 'effect/unstable/httpapi/HttpApiClient';
+import type * as HttpApiClient from 'effect/http-api/HttpApiClient';
 import { make } from './local-factory.ts';
 import { contactsApi } from './api.ts';
 

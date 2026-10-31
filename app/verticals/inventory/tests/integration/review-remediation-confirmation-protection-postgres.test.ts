@@ -133,6 +133,9 @@ import {
   executeReservationConfirmationIssuanceWorker,
   ReservationConfirmationIssuanceExecution,
 } from '../../src/workers/execute-reservation-confirmation-issuance.worker.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const compositionRevision = 'a'.repeat(64);
 const compositionSubscriptions = extractOutboxWorkerSubscriptions([
@@ -608,6 +611,8 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     {
       ...openActionRuntimeOptions,
       contextAccess,
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
     },
   );
@@ -616,7 +621,10 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     openModuleEntrypointGateway,
     testOperationalScopeResolver,
     contextAccess,
-    { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay },
+    {
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+    },
   );
   const outbox = makeOutboxRuntime(makeOutboxRepository(runtimeDatabase, crypto));
   const baseFanout = makeOutboxWorkerLegalEntityScopeFanout(
@@ -779,6 +787,7 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     proofValidUntil,
     protectionAuthorityCalls,
     reservationBackendCalls,
+    runtimeDatabase,
   };
 });
 
@@ -994,7 +1003,8 @@ it.live(
             );
           expect(durableAttempt?.currentState).toBe('INDETERMINATE');
 
-          yield* scenario.coreAdmin.transaction((transaction) =>
+          // The owner write runs as the enrolled runtime role, the only kind of login that may install scope.
+          yield* scenario.runtimeDatabase.transaction((transaction) =>
             Effect.gen(function* expireConfirmation() {
               const scope = {
                 authMethod: 'api_key' as const,
@@ -1008,7 +1018,11 @@ it.live(
                 _tag: 'VALIDITY_ELAPSED',
                 effectiveAt: current.expiresAt,
               });
-              const scopedTransaction = yield* installOperationalScope(transaction, scope);
+              const scopedTransaction = yield* installOperationalScope(
+                transaction,
+                scope,
+                FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              );
               yield* reservationConfirmationPersistenceForScope(scopedTransaction, scope).saveRevision({
                 current,
                 next: expired,

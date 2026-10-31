@@ -79,6 +79,19 @@ This increment resolves uncertain commits through an explicit server-side commit
 
 ## Events and Transactions
 
+An Action whose business decision needs remote owner facts may register a fourth definition argument with
+`prepareServices`. Core calls it only after permission, Policy, and composition admission, outside the business
+transaction. Its context supplies the exact invocation, trusted scope, composition revision, and a short guarded
+owner transaction capability. Use that capability only to load SQL snapshots. Do not return a transaction executor
+or transaction-bound service from a snapshot.
+
+Preparation resolves remote facts after the snapshot transaction releases its connection, then returns an
+invocation-local service factory. That factory runs inside the final business transaction and must reload and
+compare every owner fact that contributed to the decision before writing. A changed, expired, or unavailable
+snapshot fails closed. Prepared facts must not live on the shared Action registration or in a process-global cache.
+Preparation cannot change the decoded payload, bypass an authorization gate, or persist a successful Action result.
+The normal atomic business, evidence, and invocation commit remains unchanged.
+
 - Persist a successful result Audit Event for every committed Action. Generate any additional successful audit checkpoints required by the Action's evidence profile.
 - Define every expected domain failure, each permitted Domain Event type and payload schema, and the Data Access evidence policy as part of the Action descriptor. The policy—not handler input—selects `metadata_only`, `hash_only`, or `redacted_payload`; this runtime does not accept `stored_artifact` until Core can enforce its media, retention, classification, and encryption contract. An Action may instantiate zero or more declared Domain Events, and every instantiated Domain Event must be persisted. Core rejects undeclared error values, undeclared event types, invalid event payloads, and any event whose producer differs from the descriptor's owning module.
 - Any handler-recorded custom Audit evidence requires its own descriptor schema. Core rejects undeclared fields, invalid JSON, repeated capture, runtime-owned field replacement, and evidence larger than 4 KiB before persistence. The support checkpoint Action declares the only current custom evidence vocabulary.

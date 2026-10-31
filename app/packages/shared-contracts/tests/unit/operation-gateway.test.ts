@@ -5,6 +5,8 @@ import {
   DocumentCompositionRevisionError,
   pinDocumentCompositionRevision,
 } from '../../src/document-composition-revision.ts';
+import { isDocumentAppDenied, pinDocumentDeniedApps } from '../../src/document-denied-apps.ts';
+import { GatewayForbiddenProblemSchema } from '../../src/gateway-context.ts';
 import { makeOperationGateway } from '../../src/operation-gateway.ts';
 
 const compositionRevision = 'a'.repeat(64);
@@ -240,4 +242,20 @@ it.effect(
       expect(Schema.isSchemaError(failure)).toBe(true);
       expect(attempts).toBe(0);
     }),
+);
+
+it.effect('answers a shell-denied audience as GatewayForbiddenProblem without issuing or calling the owner', () =>
+  Effect.gen(function* deniedAudienceEffect() {
+    yield* pinDocumentCompositionRevision(compositionRevision);
+    expect(isDocumentAppDenied(audience)).toBe(false);
+    pinDocumentDeniedApps([audience], globalThis.document);
+    expect(isDocumentAppDenied(audience)).toBe(true);
+    expect(isDocumentAppDenied('party-registry')).toBe(false);
+    let attempted = false;
+    const failure = yield* makeOperationGateway(audience)
+      .invoke(() => Effect.sync(() => (attempted = true)))
+      .pipe(Effect.flip);
+    expect(Schema.is(GatewayForbiddenProblemSchema)(failure)).toBe(true);
+    expect(attempted).toBe(false);
+  }),
 );

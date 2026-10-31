@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { Array as EffectArray, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { parseSync } from 'oxc-parser';
 
 import { coreRuntimeValueReExports, focusedEntrypointValueExports } from '../materialize-outbox-worker.mjs';
 
@@ -34,6 +35,37 @@ it('reads only live value exports of the focused entrypoint', () => {
     ].join('\n'),
   );
   expect(EffectArray.sort([...exports], Order.String)).toEqual(['Live', 'Renamed']);
+});
+
+it('routes hosted worker enrollment through its owning subpath, not the focused Core entrypoint', () => {
+  const entrypoint = focusedEntrypointValueExports(
+    readFileSync(new URL('../../packages/core-runtime/src/outbox/worker-entrypoint.ts', import.meta.url), 'utf-8'),
+  );
+  const workerRoots = [
+    'apps/shell-super-app/src/entry.core-system-worker.ts',
+    ...['commerce-customer-context', 'price-group-catalog', 'privacy', 'finance-billing', 'inventory'].map(
+      (owner) => `verticals/${owner}/src/worker-host/entry.ts`,
+    ),
+  ];
+  for (const filename of workerRoots) {
+    const source = readFileSync(new URL(`../../${filename}`, import.meta.url), 'utf-8');
+    const imports = parseSync(filename, source).module.staticImports.flatMap((statement) =>
+      statement.entries
+        .filter((entry) => !entry.isType)
+        .map((entry) => ({ name: entry.importName.name, specifier: statement.moduleRequest.value })),
+    );
+    expect(
+      imports.filter(({ name }) => name === 'defineDatabaseIdentityEnrollment').map(({ specifier }) => specifier),
+      filename,
+    ).toEqual(['@app/core-runtime/db/database-identity-manifest']);
+    for (const { name, specifier } of imports) {
+      if (specifier === '@app/core-runtime' || specifier === '@app/core-runtime/outbox/worker') {
+        expect(entrypoint.has(name ?? ''), `${filename} imports ${name} from ${specifier}`).toBe(true);
+      }
+    }
+  }
+  expect(entrypoint.has('makeDatabaseIdentityEnrollmentLive')).toBe(true);
+  expect(entrypoint.has('defineDatabaseIdentityEnrollment')).toBe(false);
 });
 
 it('exports every Core value the deployed worker hosts re-export', () => {

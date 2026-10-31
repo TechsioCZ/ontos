@@ -1,0 +1,437 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, Effect } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
+// Client card (C01/C02/C04/C05 facts) in a SidePanel over the clients list. Header with key facts and the owner,
+// then tabs Kontakty / Návštěvy / Objednávky / Historie. Návštěvy and Objednávky are rendered by the visits and
+// imports lanes through the ClientCardTabProps contract (./card-tab-props.ts).
+import { EmptyState, SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { Tabs } from '@techsio/ui-kit/molecules/tabs';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { useState } from 'react';
+import type { ReactNode } from 'react';
+
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
+import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { canWriteClient } from '../../../../../shared/domain/access.ts';
+import type { Client } from '../../../../../shared/domain/clients.ts';
+import { clientSalesFacts } from '../../../../../shared/domain/reports.ts';
+import type { ClientSalesFacts } from '../../../../../shared/domain/reports.ts';
+import { salespersonName } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+
+import { useFormatDecimalMoney } from '../prehled-prodeju/report-format.ts';
+import { ClientOrdersTab } from '../importy/client-orders-tab.tsx';
+import { ClientVisitsTab } from '../navstevy/client-visits-tab.tsx';
+import { AssignDialog } from './assign-dialog.tsx';
+import { ClientFormDialog } from './client-form-dialog.tsx';
+import { activeContactsOf, kindLabels, partyLinked, segmentLabel } from './clients-model.ts';
+import { PartyLinkDialog } from './party-link-dialog.tsx';
+import { ContactsTab } from './contacts-tab.tsx';
+import { HistoryTab } from './history-tab.tsx';
+import { SalespersonChip } from './salesperson-chip.tsx';
+import './client-card.css';
+
+interface CardProps {
+  readonly busy: boolean;
+  readonly clientId: string;
+  readonly onClose: () => void;
+  readonly records: RecordsResponse;
+  readonly submit: CrmCommandSubmit;
+}
+
+const Fact = ({
+  children,
+  icon,
+  label,
+}: {
+  readonly children: ReactNode;
+  readonly icon: string;
+  readonly label: string;
+}) => (
+  <div className="flex min-w-0 items-start gap-100">
+    <span aria-hidden className={`${icon} mt-50 size-200 shrink-0 text-fg-secondary`} />
+    <div className="flex min-w-0 flex-col">
+      <dt className="text-fg-secondary text-xs">{label}</dt>
+      <dd className="break-words text-sm">{children}</dd>
+    </div>
+  </div>
+);
+
+const Missing = ({ children = 'údaj neposkytnut' }: { readonly children?: ReactNode }) => (
+  <span className="text-fg-secondary">{children}</span>
+);
+
+const NotVisible = ({ onClose }: { readonly onClose: () => void }) => {
+  const { t } = useModernI18n();
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} theme="outlined" variant="secondary">
+          Zavřít
+        </Button>
+      }
+      closeLabel={dialogCloseLabel}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel="Změnit šířku panelu"
+      size="md"
+      title={t('crm.ciClientsVisits.clients.notFound')}
+    >
+      <EmptyState
+        description="Klient neexistuje nebo k němu nemáte přístup. Obchodník vidí jen klienty, které má přidělené."
+        title={t('crm.ciClientsVisits.clients.cardUnavailable')}
+      />
+    </SidePanel>
+  );
+};
+
+/** Facts remain a pure projection of the same ACL-filtered records as the card. */
+const ClientCardFacts = ({
+  client,
+  facts,
+  owner,
+  writeAll,
+}: {
+  readonly client: Client;
+  readonly facts: ClientSalesFacts;
+  readonly owner: string | undefined;
+  readonly writeAll: boolean;
+}) => {
+  const { t } = useModernI18n();
+  const formatDecimalMoney = useFormatDecimalMoney();
+  return (
+    <dl className={`${surfaceTileClassName} grid grid-cols-1 gap-200 p-200 sm:grid-cols-2 lg:grid-cols-3`}>
+      <Fact icon="icon-[mdi--account-tie-outline]" label={t('crm.ciClientsVisits.fields.salesperson')}>
+        <SalespersonChip name={owner} />
+      </Fact>
+      <Fact icon="icon-[mdi--map-marker-check-outline]" label={t('crm.ciClientsVisits.visits.lastVisit')}>
+        {facts.lastVisitAt === undefined ? (
+          <Missing>bez osobní návštěvy</Missing>
+        ) : (
+          pipe(facts.lastVisitAt, orderDateText, formatDate)
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--calendar-check-outline]" label={t('crm.ciClientsVisits.visits.lastContactAnyType')}>
+        {facts.lastContactAt === undefined ? (
+          <Missing>bez zapsaného kontaktu</Missing>
+        ) : (
+          pipe(facts.lastContactAt, orderDateText, formatDate)
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--receipt-text-outline]" label={t('crm.ciClientsVisits.clients.recordedOrders')}>
+        {facts.orderCount === 0 ? (
+          <Missing>bez dat</Missing>
+        ) : (
+          <>
+            {formatNumber(facts.orderCount)}
+            {facts.lastOrderAt === undefined ? '' : ` · poslední ${pipe(facts.lastOrderAt, orderDateText, formatDate)}`}
+          </>
+        )}
+      </Fact>
+      <Fact
+        icon="icon-[mdi--card-account-details-outline]"
+        label={client.kind === 'organization' ? 'IČO / DIČ' : 'Identifikace'}
+      >
+        {client.regNo === undefined && client.vatNo === undefined ? (
+          <Missing />
+        ) : (
+          [client.regNo, client.vatNo].filter((value) => value !== undefined).join(' / ')
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--phone-outline]" label={t('crm.ciClientsVisits.fields.phone')}>
+        {client.phone === undefined ? (
+          <Missing />
+        ) : (
+          <Link href={`tel:${client.phone.replaceAll(' ', '')}`}>{client.phone}</Link>
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--email-outline]" label={t('crm.ciClientsVisits.fields.email')}>
+        {client.email === undefined ? <Missing /> : <Link href={`mailto:${client.email}`}>{client.email}</Link>}
+      </Fact>
+      <Fact icon="icon-[mdi--map-marker-outline]" label={t('crm.ciClientsVisits.fields.address')}>
+        {client.address ?? <Missing />}
+      </Fact>
+      <Fact icon="icon-[mdi--cash-multiple]" label={t('crm.ciClientsVisits.clients.recordedOrderValue')}>
+        {facts.totals.length === 0 ? (
+          <Missing>bez dat</Missing>
+        ) : (
+          <span className="flex flex-col">
+            {facts.totals.map((total) => (
+              <span className="tabular-nums" key={total.currency}>
+                {formatDecimalMoney(total.amount, total.currency)}
+              </span>
+            ))}
+          </span>
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--web]" label={t('crm.ciClientsVisits.fields.website')}>
+        {client.website ?? <Missing />}
+      </Fact>
+      <Fact icon="icon-[mdi--database-check-outline]" label={t('crm.ciClientsVisits.clients.registryIdentity')}>
+        {partyLinked(client) ? (
+          <span className="flex flex-col">
+            <span>{client.partyRef?.registryName ?? client.name}</span>
+            <span className="text-fg-secondary text-xs">
+              {`ověřený zákazník${client.partyRef?.linkedAt === undefined ? '' : [' · propojeno ', pipe(client.partyRef.linkedAt, orderDateText, formatDate)].join('')}`}
+            </span>
+          </span>
+        ) : (
+          <Missing>{writeAll ? 'nepropojeno – propojte tlačítkem výše' : 'čeká na propojení vedením obchodu'}</Missing>
+        )}
+      </Fact>
+    </dl>
+  );
+};
+
+const CardBody = ({
+  busy,
+  client,
+  onClose,
+  records,
+  submit,
+}: Omit<CardProps, 'clientId'> & { readonly client: Client }) => {
+  const toaster = useToast();
+  const [tab, setTab] = useState('contacts');
+  const [editing, setEditing] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [linkingParty, setLinkingParty] = useState(false);
+  const writable = canWriteClient(records.viewer, client);
+  const archived = client.status === 'archived';
+  const contacts = activeContactsOf(records, client.id);
+  const visitCount = records.state.visits.items.filter((visit) => visit.clientId === client.id).length;
+  const facts = clientSalesFacts(records.state, client.id);
+  const owner = salespersonName(records, client.ownerSalespersonId);
+  const segment = segmentLabel(client.segment);
+
+  if (editing) {
+    return (
+      <ClientFormDialog
+        busy={busy}
+        client={client}
+        mode="edit"
+        onClose={() => setEditing(false)}
+        onSaved={() => setEditing(false)}
+        records={records}
+        submit={submit}
+      />
+    );
+  }
+
+  const run = (command: CrmCommandInput, success: string) =>
+    submit(command).pipe(
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          toaster.create(
+            outcome.ok
+              ? { title: success, type: 'success' }
+              : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
+          );
+        }),
+      ),
+      Effect.map((outcome) => outcome.ok),
+    );
+
+  const tabProps = { busy, client, records, submit };
+
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} theme="outlined" variant="secondary">
+          Zavřít
+        </Button>
+      }
+      closeLabel={dialogCloseLabel}
+      description={
+        <span className="flex flex-wrap items-center gap-100">
+          <Badge size="sm" variant="outline">
+            {kindLabels[client.kind]}
+          </Badge>
+          {segment !== undefined && (
+            <Badge size="sm" variant="info">
+              {segment}
+            </Badge>
+          )}
+          {archived ? (
+            <Badge size="sm" variant="warning">
+              {`Archivován ${pipe(client.archivedAt, orderDateText, formatDate)}`}
+            </Badge>
+          ) : (
+            <Badge size="sm" variant="success">
+              Aktivní
+            </Badge>
+          )}
+          {!writable && (
+            <Badge size="sm" variant="secondary">
+              Jen pro čtení
+            </Badge>
+          )}
+        </span>
+      }
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel="Změnit šířku panelu"
+      size="xl"
+      title={client.name}
+    >
+      <div className="flex flex-col gap-250 py-100">
+        <div className="flex flex-wrap gap-100">
+          {writable && !archived && (
+            <Button
+              icon="icon-[mdi--pencil-outline]"
+              onClick={() => setEditing(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Upravit údaje
+            </Button>
+          )}
+          {records.viewer.assign && (
+            <Button
+              icon="icon-[mdi--account-switch-outline]"
+              onClick={() => setAssigning(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {owner === undefined ? 'Přidělit obchodníkovi' : 'Změnit obchodníka'}
+            </Button>
+          )}
+          {writable && records.viewer.writeAll && !archived && !partyLinked(client) && (
+            <Button
+              icon="icon-[mdi--link-variant]"
+              onClick={() => setLinkingParty(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Propojit s evidencí zákazníků
+            </Button>
+          )}
+          {writable &&
+            (archived ? (
+              <Button
+                icon="icon-[mdi--archive-arrow-up-outline]"
+                isLoading={busy}
+                onClick={() => {
+                  browserRuntime.runFork(run({ _tag: 'RestoreClient', id: client.id }, 'Klient obnoven z archivu'));
+                }}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                Obnovit z archivu
+              </Button>
+            ) : (
+              <Button
+                icon="icon-[mdi--archive-outline]"
+                onClick={() => setArchiving(true)}
+                size="sm"
+                theme="borderless"
+                variant="secondary"
+              >
+                Archivovat
+              </Button>
+            ))}
+        </div>
+
+        <ClientCardFacts client={client} facts={facts} owner={owner} writeAll={records.viewer.writeAll} />
+        {client.note !== undefined && (
+          <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
+            <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-200 shrink-0 text-fg-secondary" />
+            <p className="whitespace-pre-line">{client.note}</p>
+          </div>
+        )}
+
+        <Tabs className="crm-client-card-tabs" onValueChange={setTab} value={tab} variant="line">
+          <Tabs.List>
+            <Tabs.Trigger value="contacts">Kontakty ({contacts.length})</Tabs.Trigger>
+            <Tabs.Trigger value="visits">Návštěvy ({visitCount})</Tabs.Trigger>
+            <Tabs.Trigger value="orders">Objednávky ({facts.orderCount})</Tabs.Trigger>
+            <Tabs.Trigger value="history">Historie</Tabs.Trigger>
+            <Tabs.Indicator />
+          </Tabs.List>
+          <Tabs.Content className="py-200" value="contacts">
+            <ContactsTab {...tabProps} writable={writable && !archived} />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="visits">
+            <ClientVisitsTab {...tabProps} />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="orders">
+            <ClientOrdersTab {...tabProps} />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="history">
+            <HistoryTab client={client} records={records} />
+          </Tabs.Content>
+        </Tabs>
+      </div>
+      {linkingParty && (
+        <PartyLinkDialog
+          busy={busy}
+          client={client}
+          onClose={() => setLinkingParty(false)}
+          records={records}
+          run={run}
+        />
+      )}
+      {assigning && (
+        <AssignDialog busy={busy} client={client} onClose={() => setAssigning(false)} records={records} run={run} />
+      )}
+      <Dialog
+        actions={
+          <>
+            <Button onClick={() => setArchiving(false)} theme="outlined" variant="secondary">
+              Zrušit
+            </Button>
+            <Button
+              isLoading={busy}
+              onClick={() => {
+                browserRuntime.runFork(
+                  run({ _tag: 'ArchiveClient', id: client.id }, 'Klient archivován').pipe(
+                    Effect.tap((ok) =>
+                      Effect.sync(() => {
+                        if (ok) {
+                          setArchiving(false);
+                        }
+                      }),
+                    ),
+                  ),
+                );
+              }}
+              variant="primary"
+            >
+              Archivovat
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description="Klient zmizí z běžného seznamu. Kontakty, návštěvy, objednávky a historie zůstanou zachované a dohledatelné ve filtru Archivovaní; klienta lze kdykoli obnovit."
+        onOpenChange={({ open }) => setArchiving(open)}
+        open={archiving}
+        size="sm"
+        title={`Archivovat ${client.name}?`}
+      />
+    </SidePanel>
+  );
+};
+
+export const ClientCard = ({ clientId, ...props }: CardProps) => {
+  const client = props.records.state.clients.items.find((entry) => entry.id === clientId);
+  return client === undefined ? <NotVisible onClose={props.onClose} /> : <CardBody {...props} client={client} />;
+};

@@ -1,6 +1,6 @@
 // Deep submodule namespace imports and aliased named imports are real Effect cookie bindings.
-import { Cookies as C } from 'effect/unstable/http';
-import * as Respond from 'effect/unstable/http/HttpServerResponse';
+import { Cookies as C } from 'effect/http';
+import * as Respond from 'effect/http/HttpServerResponse';
 
 export const write = (headers: Headers, cookies: C.Cookies): void => {
   headers.append('set-cookie', C.toSetCookieHeaders(cookies).join(', '));

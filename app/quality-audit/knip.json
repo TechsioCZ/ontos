@@ -12,7 +12,14 @@
     "tools/oxlint/effect-native/tests/fixtures/**",
     "**/.env",
     "**/.env.*",
-    "**/cloudflare-dist/**"
+    "**/cloudflare-dist/**",
+    "**/.next/**",
+    "**/.open-next/**",
+    "**/.wrangler/**",
+    "**/.vercel/**",
+    "**/coverage/**",
+    "**/playwright-report/**",
+    "**/test-results/**"
   ],
   "workspaces": {
     ".": {
@@ -40,7 +47,9 @@
         "!repos/**",
         "!tools/oxlint/effect-native/tests/fixtures/**",
         "scripts/**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
-        "quality-audit/knip-reporter.mts"
+        "quality-audit/knip-reporter.mts",
+        "scripts/demo/prove-sales-demo.mts",
+        "scripts/demo/provision-actions.mts"
       ],
       "project": [
         "scripts/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
@@ -59,7 +68,8 @@
         "!**/.env.*",
         "!repos/**",
         "!tools/oxlint/effect-native/tests/fixtures/**",
-        "quality-audit/**/*.mts"
+        "quality-audit/**/*.mts",
+        "database/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
       ],
       "rstest": {
         "config": [],
@@ -258,6 +268,34 @@
       "ignoreDependencies": [
         "cloudflare"
       ]
+    },
+    "akros-storefront": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*",
+        "!**/cloudflare-dist/**",
+        "!**/.next/**",
+        "!**/.open-next/**",
+        "!**/.wrangler/**",
+        "!**/.vercel/**",
+        "!**/coverage/**",
+        "!**/playwright-report/**",
+        "!**/test-results/**"
+      ],
+      "entry": [
+        "cloudflare-worker.mjs",
+        "*.config.{ts,mts,js,mjs}"
+      ],
+      "lefthook": false
     }
   }
 }

@@ -8,87 +8,28 @@ import {
   validateCoreSearchProjectionWorkerContext,
 } from './projection.ts';
 import type { CoreSearchProjectionStoreService } from './projection.ts';
+import { CoreSearchIngestionRegistry, isCoreSearchIngestionRegistered } from './ingestion-registry.ts';
+import type { CoreSearchIngestionRegistration } from './ingestion-registry.ts';
 
-const PARTY_REGISTRY_MODULE_KEY = 'party.registry' as const;
 const tenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+const nonEmpty = Schema.String.check(Schema.isMinLength(1));
+const moduleKeySchema = nonEmpty.pipe(Schema.brand('ModuleId'));
+const workerKeySchema = nonEmpty.pipe(Schema.brand('SearchWorkerKey'));
 type UnparsedCoreSearchIngestionObservation = typeof Schema.Unknown.Type;
 type CoreSearchProjectionMutationSink = Pick<CoreSearchProjectionStoreService, 'apply'>;
 
-export const CORE_SEARCH_PARTY_LIFECYCLE_TOPICS = [
-  'party.registry.party-created.v1',
-  'party.registry.party-updated.v1',
-  'party.registry.party-archived.v1',
-  'party.registry.party-unarchived.v1',
-  'party.registry.party-fact-corrected.v1',
-  'party.registry.official-identifier-added.v1',
-  'party.registry.official-identifier-updated.v1',
-  'party.registry.official-identifier-ended.v1',
-  'party.registry.contact-point-added.v1',
-  'party.registry.contact-point-updated.v1',
-  'party.registry.contact-point-ended.v1',
-  'party.registry.counterparty-created.v1',
-  'party.registry.counterparty-role-added.v1',
-  'party.registry.counterparty-role-ended.v1',
-  'party.registry.search-rebuild-requested.v1',
-] as const;
-export type CoreSearchPartyLifecycleTopic = (typeof CORE_SEARCH_PARTY_LIFECYCLE_TOPICS)[number];
-
-export const CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS = [
-  'party.registry.project-party-created-to-search',
-  'party.registry.project-party-updated-to-search',
-  'party.registry.project-party-archived-to-search',
-  'party.registry.project-party-unarchived-to-search',
-  'party.registry.project-party-fact-corrected-to-search',
-  'party.registry.project-official-identifier-added-to-search',
-  'party.registry.project-official-identifier-updated-to-search',
-  'party.registry.project-official-identifier-ended-to-search',
-  'party.registry.project-contact-point-added-to-search',
-  'party.registry.project-contact-point-updated-to-search',
-  'party.registry.project-contact-point-ended-to-search',
-  'party.registry.project-counterparty-created-to-search',
-  'party.registry.project-counterparty-role-added-to-search',
-  'party.registry.project-counterparty-role-ended-to-search',
-  'party.registry.rebuild-search',
-] as const;
-export type CoreSearchPartyProjectorWorkerKey = (typeof CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS)[number];
-
-const topicSchema = Schema.Literals(CORE_SEARCH_PARTY_LIFECYCLE_TOPICS);
-const workerKeySchema = Schema.Literals(CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS);
 const versionSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
 
 export const CoreSearchIngestionObservationSchema = Schema.Struct({
-  consumerModuleKey: Schema.Literal(PARTY_REGISTRY_MODULE_KEY),
+  consumerModuleKey: moduleKeySchema,
   mutation: CoreSearchProjectionMutationSchema,
-  producerModuleKey: Schema.Literal(PARTY_REGISTRY_MODULE_KEY),
+  producerModuleKey: moduleKeySchema,
   projectionVersion: versionSchema,
   tenantId: tenantIdSchema,
-  topic: topicSchema,
+  topic: nonEmpty,
   workerKey: workerKeySchema,
 });
 export type CoreSearchIngestionObservation = typeof CoreSearchIngestionObservationSchema.Type;
-
-export interface CoreSearchIngestionRegistration {
-  readonly consumerModuleKey: typeof PARTY_REGISTRY_MODULE_KEY;
-  readonly producerModuleKey: typeof PARTY_REGISTRY_MODULE_KEY;
-  readonly topic: CoreSearchPartyLifecycleTopic;
-  readonly workerKey: CoreSearchPartyProjectorWorkerKey;
-}
-
-export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRegistration[] = Object.freeze(
-  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS.flatMap((topic, index) => {
-    const workerKey = CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS[index];
-    return workerKey === undefined
-      ? []
-      : [
-          Object.freeze({
-            consumerModuleKey: PARTY_REGISTRY_MODULE_KEY,
-            producerModuleKey: PARTY_REGISTRY_MODULE_KEY,
-            topic,
-            workerKey,
-          }),
-        ];
-  }),
-);
 
 const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
   if (cause === undefined) {
@@ -111,12 +52,15 @@ export interface CoreSearchIngestionService {
   ) => ReturnType<CoreSearchProjectionStoreService['apply']>;
 }
 
-/** Core-owned consumer seam for post-commit Party lifecycle observations. */
+/** Core-owned consumer seam for post-commit observations a producing module registered for search. */
 export class CoreSearchIngestion extends Context.Service<CoreSearchIngestion, CoreSearchIngestionService>()(
   '@app/core-runtime/search/ingestion/CoreSearchIngestion',
 ) {}
 
-export const makeCoreSearchIngestion = (store: CoreSearchProjectionMutationSink): CoreSearchIngestionService => ({
+export const makeCoreSearchIngestion = (
+  store: CoreSearchProjectionMutationSink,
+  registrations: readonly CoreSearchIngestionRegistration[],
+): CoreSearchIngestionService => ({
   ingest: Effect.fn('makeCoreSearchIngestion.ingest')(function* ingestVerifiedObservation(
     input: UnparsedCoreSearchIngestionObservation,
     context: OutboxWorkerHandlerContext,
@@ -128,13 +72,7 @@ export const makeCoreSearchIngestion = (store: CoreSearchProjectionMutationSink)
       moduleId: observation.producerModuleKey,
       tenantId: observation.tenantId,
     });
-    const registered = CORE_SEARCH_INGESTION_REGISTRATIONS.some(
-      (registration) =>
-        registration.consumerModuleKey === observation.consumerModuleKey &&
-        registration.producerModuleKey === observation.producerModuleKey &&
-        registration.topic === observation.topic &&
-        registration.workerKey === observation.workerKey,
-    );
+    const registered = isCoreSearchIngestionRegistered(registrations, observation);
     const mutationTenantId =
       observation.mutation.kind === 'upsert'
         ? observation.mutation.document.ref.tenantId
@@ -166,6 +104,7 @@ export const CoreSearchIngestionLive = Layer.effect(
   CoreSearchIngestion,
   Effect.gen(function* makeCoreSearchIngestionLive() {
     const store = yield* CoreSearchProjectionStore;
-    return makeCoreSearchIngestion(store);
+    const registrations = yield* CoreSearchIngestionRegistry;
+    return makeCoreSearchIngestion(store, registrations);
   }),
 );

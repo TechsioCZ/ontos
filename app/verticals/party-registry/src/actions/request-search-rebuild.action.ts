@@ -16,6 +16,8 @@ import { createRequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxMe
 
 export type { RequestSearchRebuildPayload } from '../../shared/actions/request-search-rebuild.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const domainEvents = {
   'party.registry.search-rebuild-requested.v1': OutboxPayloadSchema,
 } as const;
@@ -31,7 +33,7 @@ const handleRequestSearchRebuild = Effect.fn('RequestSearchRebuildAction.handleR
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.search-rebuild-requested.v1',
       payloadJson: payload,
-      producerModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectModuleKey: 'core.identity',
       subjectResourceId: context.scope.tenantId,
       subjectResourceType: 'tenant',
@@ -61,12 +63,12 @@ export const requestSearchRebuildAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.request-search-rebuild',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: RequestSearchRebuildPayloadSchema,
     policies: [],
     resultSchema: RequestSearchRebuildResultSchema,

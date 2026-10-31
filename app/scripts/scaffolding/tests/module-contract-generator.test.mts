@@ -144,8 +144,6 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-          'cloudflare:build':
-            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: 'preserve-me',
         },
         type: 'module',
@@ -182,7 +180,6 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
         private: true,
         scripts: {
           build: 'modern build --deploy-target node',
-          'cloudflare:build': 'modern build --deploy-target cloudflare',
         },
         type: 'module',
         version: '0.1.0',
@@ -414,9 +411,7 @@ it.live(
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
         expect(packageJson.scripts['existing']).toBe('preserve-me');
         expect(packageJson.scripts['build'] ?? '').toMatch(/--vertical property-registry --target dist/u);
-        expect(packageJson.scripts['cloudflare:build'] ?? '').toMatch(
-          /--vertical property-registry --target cloudflare-dist/u,
-        );
+        expect(packageJson.scripts['cloudflare:build']).toBe(undefined);
         expect(packageJson.modernjs.ontosModule).toEqual({
           contractPath: '/.well-known/ontos-module-manifest.json',
           manifest: './vertical.manifest.ts',
@@ -751,6 +746,8 @@ export default apiRuntime;
         expect(runtime).toContain(
           'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer))',
         );
+        expect(runtime).toContain('defineGovernedDatabaseIdentityEnrollment([])');
+        expect(runtime).toContain('GovernedReadLayer.provide(governedDatabaseIdentitiesLive)');
         expect(runtime).toContain('GovernedReadLayer.orDie');
         expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
         expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);

@@ -1,10 +1,12 @@
 import {
+  startGatewayAssertionRedemptionCleanup,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
   recoverSqlTransactionError,
   configureDatabasePool,
+  openDatabaseClient,
 } from '@app/core-runtime';
 import type {
   DatabasePoolDeadlines,
@@ -57,26 +59,18 @@ const REDEMPTION_TIMEOUT = Duration.seconds(5);
 const redeemAssertion = (
   executor: PricingGatewayAssertionRedemptionDatabaseExecutor,
   input: GatewayAssertionRedemptionInput,
-  expiredBefore: Date,
   expiresAt: Date,
 ) =>
-  executor.transaction(
-    Effect.fn('PricingGatewayAssertionRedemptionRuntime.redeemAssertion')(function* redeemAssertionEffect(transaction) {
-      yield* transaction
-        .delete(gatewayAssertionRedemptions)
-        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore));
-      return yield* transaction
-        .insert(gatewayAssertionRedemptions)
-        .values({
-          audience: input.audience,
-          expiresAt,
-          issuer: input.issuer,
-          jti: input.jti,
-        })
-        .onConflictDoNothing()
-        .returning({ jti: gatewayAssertionRedemptions.jti });
-    }),
-  );
+  executor
+    .insert(gatewayAssertionRedemptions)
+    .values({
+      audience: input.audience,
+      expiresAt,
+      issuer: input.issuer,
+      jti: input.jti,
+    })
+    .onConflictDoNothing()
+    .returning({ jti: gatewayAssertionRedemptions.jti });
 
 export const makeGatewayAssertionRedemption = (
   executor: PricingGatewayAssertionRedemptionDatabaseExecutor,
@@ -86,15 +80,12 @@ export const makeGatewayAssertionRedemption = (
   ) {
     const nowEpochMs = yield* Clock.currentTimeMillis;
     // Verification can finish after its captured clock passes the assertion's skew window.
-    // Reject before cleanup can delete this assertion's existing replay evidence.
+    // Reject without modifying the durable replay evidence.
     if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
       return yield* replayError();
     }
-    const expiredBefore = DateTime.toDateUtc(
-      DateTime.makeUnsafe(nowEpochMs - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000),
-    );
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-    const inserted = yield* redeemAssertion(executor, input, expiredBefore, expiresAt).pipe(
+    const inserted = yield* redeemAssertion(executor, input, expiresAt).pipe(
       recoverSqlTransactionError,
       Effect.mapError(unavailableError),
       Effect.timeoutOrElse({
@@ -126,9 +117,10 @@ const makeGatewayAssertionRedemptionDatabase = Effect.fn('PricingGatewayAssertio
     const poolConfiguration = yield* configureDatabasePool(
       Redacted.make(configuration.connectionString),
       configuration.poolDeadlines,
+      configuration.maxConnections,
     ).pipe(Effect.mapError((error) => unavailableError(error)));
     const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
+    const client = yield* openDatabaseClient(poolConfiguration).pipe(
       Effect.provideService(Reactivity.Reactivity, reactivity),
       Effect.mapError(unavailableError),
     );
@@ -150,7 +142,14 @@ export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
 
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
-  PricingGatewayAssertionRedemptionDatabase.pipe(
-    Effect.map(({ executor }) => makeGatewayAssertionRedemption(executor)),
-  ),
+  Effect.gen(function* makeRedemptionWithCleanup() {
+    const { executor } = yield* PricingGatewayAssertionRedemptionDatabase;
+    yield* startGatewayAssertionRedemptionCleanup('pricing', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
+      executor
+        .delete(gatewayAssertionRedemptions)
+        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    );
+    return makeGatewayAssertionRedemption(executor);
+  }),
 );

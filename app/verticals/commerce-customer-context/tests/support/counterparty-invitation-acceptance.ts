@@ -83,10 +83,14 @@ interface SpiceDbRelationshipSpec {
 }
 
 /** The `action#executor` relationships one Principal needs for the Actions a scenario runs. */
-const executorOf = (principalId: string, actionKeys: readonly string[]): readonly SpiceDbRelationshipSpec[] =>
+const executorOf = (
+  principalId: string,
+  actionKeys: readonly string[],
+  realm: CounterpartyInvitationRealm,
+): readonly SpiceDbRelationshipSpec[] =>
   actionKeys.map((actionKey) => ({
     relation: 'executor',
-    resourceId: toSpiceDbActionObjectId(actionKey),
+    resourceId: toSpiceDbActionObjectId({ actionKey, legalEntityId: realm.legalEntityId, tenantId: realm.tenantId }),
     resourceType: 'action',
     subjectId: principalId,
     subjectType: 'principal',
@@ -135,9 +139,11 @@ export const revokeCounterpartyInvitationClaimExecutor = Effect.fnUntraced(
     const configuration = yield* loadSpiceDbConfig();
     const client = newSpiceDbGrpcClient(configuration);
     yield* Effect.addFinalizer(() => Effect.sync(() => client.close()));
-    const relationships = executorOf(realm.recipientPrincipalId, [
-      'commerce.customer-context.claim-counterparty-access-invitation',
-    ]).map(relationshipFor);
+    const relationships = executorOf(
+      realm.recipientPrincipalId,
+      ['commerce.customer-context.claim-counterparty-access-invitation'],
+      realm,
+    ).map(relationshipFor);
     yield* Effect.promise(
       async () =>
         await client.promises.writeRelationships(
@@ -304,8 +310,8 @@ const spiceDbSpecsFor = (
     ...memberOf(realm.inviterPrincipalId),
     ...memberOf(realm.recipientPrincipalId),
     ...memberOf(realm.storefrontPrincipalId),
-    ...executorOf(realm.recipientPrincipalId, grants.recipientActionKeys),
-    ...executorOf(realm.storefrontPrincipalId, grants.storefrontActionKeys),
+    ...executorOf(realm.recipientPrincipalId, grants.recipientActionKeys, realm),
+    ...executorOf(realm.storefrontPrincipalId, grants.storefrontActionKeys, realm),
   ];
 };
 
@@ -659,7 +665,7 @@ const claimAnswerLoss = function* claimAnswerLoss(droppedAnswers: string[]) {
         return Effect.succeed(result);
       }),
     );
-  return { resolveActionCommit: runtime.resolveActionCommit, runAction };
+  return { ...runtime, runAction };
 };
 
 /**

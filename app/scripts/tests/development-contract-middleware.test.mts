@@ -10,6 +10,7 @@ import { createDevelopmentContractMiddleware } from '../../packages/shared-contr
 type Middleware = Parameters<Parameters<ReturnType<typeof createDevelopmentContractMiddleware>>[0]['unshift']>[0];
 
 const CONTRACT = '{"moduleId":"party.registry"}';
+const MCP_TOOLS = '{"tools":[]}';
 const roots: string[] = [];
 
 afterEach(() => {
@@ -24,6 +25,7 @@ const installMiddleware = () => {
   roots.push(root);
   mkdirSync(path.join(root, '.dev-public/.well-known'), { recursive: true });
   writeFileSync(path.join(root, '.dev-public/.well-known/ontos-module-manifest.json'), CONTRACT);
+  writeFileSync(path.join(root, '.dev-public/.well-known/ontos-module-mcp-tools.json'), MCP_TOOLS);
   const installed: Middleware[] = [];
   createDevelopmentContractMiddleware(pathToFileURL(path.join(root, 'modern.config.ts')).href)({
     unshift: (middleware) => {
@@ -71,6 +73,17 @@ it('serves the prepared module contract as uncached JSON, ignoring the query str
   expect(response.headers).toEqual({
     'Cache-Control': 'no-cache',
     'Content-Length': String(Buffer.byteLength(CONTRACT)),
+    'Content-Type': 'application/json',
+  });
+});
+
+it('serves the prepared MCP tool catalog next to the module contract', () => {
+  const response = request(installMiddleware(), '/.well-known/ontos-module-mcp-tools.json');
+  expect(response.nextCalled).toBe(false);
+  expect(JSON.parse(response.body ?? '')).toEqual({ tools: [] });
+  expect(response.headers).toEqual({
+    'Cache-Control': 'no-cache',
+    'Content-Length': String(Buffer.byteLength(MCP_TOOLS)),
     'Content-Type': 'application/json',
   });
 });

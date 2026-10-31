@@ -240,3 +240,8 @@ export const getPrivacyReadiness = ({
     Effect.flatMap((clientOptions) => makeEffectHttpApiClient(privacyApi, clientOptions)),
     Effect.flatMap((client) => client.foundation.readiness({})),
   );
+
+export { executeProcessingPurposesWithAuthorization, executeProcessingPurposes } from './processing-purposes-client.ts';
+export { executePrivacySubjectsWithAuthorization, executePrivacySubjects } from './privacy-subjects-client.ts';
+export { executeNoticeVersionsWithAuthorization, executeNoticeVersions } from './notice-versions-client.ts';
+export { executeCurrentConsentWithAuthorization, executeCurrentConsent } from './current-consent-client.ts';

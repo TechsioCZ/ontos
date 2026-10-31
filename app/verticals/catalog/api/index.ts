@@ -1,6 +1,8 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -251,6 +253,8 @@ import {
   resolveCatalogShellOrigin,
 } from './runtime-support.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const catalogReadinessLayer = HttpApiBuilder.group(catalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
     // The typed build marker is still decoded against the published readiness schema.
@@ -320,7 +324,9 @@ const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
 const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-  Layer.provide(catalogSourceActionPersistenceLive),
+  // The source and local override Actions build their persistence from this factory while they execute, so it must
+  // stay visible in the runtime context beside the Action runtime.
+  Layer.provideMerge(catalogSourceActionPersistenceLive),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -336,6 +342,7 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const catalogReadRuntime = ReadRuntimeLive.pipe(
   Layer.provide(catalogExternalCorrelationResolverLive),
@@ -345,6 +352,7 @@ const catalogReadRuntime = ReadRuntimeLive.pipe(
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -594,7 +602,7 @@ export const makeCatalogApiRuntime = (
     CatalogApiGroups,
     CatalogHandlerRequirements
   >['handlers'] = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, databaseIdentitiesLive)),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

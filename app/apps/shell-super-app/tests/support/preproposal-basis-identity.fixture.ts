@@ -7,7 +7,9 @@ import {
   PrincipalResolver,
   PrincipalResolverLive,
   TenantModuleStateServiceLive,
+  defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
+  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
 import {
@@ -165,6 +167,10 @@ export const serve = Effect.scoped(
       catch: () => unavailable('authentication-import'),
       try: async () => await import('../../api/auth/service.ts'),
     });
+    const { shellAuthenticationFrameworkLive } = yield* Effect.tryPromise({
+      catch: () => unavailable('authentication-framework-import'),
+      try: async () => await import('./shell-authentication.ts'),
+    });
     const { makeApiKeyService } = yield* Effect.tryPromise({
       catch: () => unavailable('key-provider-import'),
       try: async () => await import('../../api/auth/api-key-service.ts'),
@@ -179,7 +185,10 @@ export const serve = Effect.scoped(
       DATABASE_URL: Redacted.value(configuration.databaseUrl),
       NODE_ENV: 'test',
     });
-    const authDatabase = yield* makeAuthDatabase(authConfiguration);
+    const authDatabase = yield* makeAuthDatabase({
+      connectionString: authConfiguration.connectionString,
+      expectedRole: databaseConfig.expectedRole,
+    });
     const persistence = CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfig)));
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
@@ -193,6 +202,8 @@ export const serve = Effect.scoped(
     );
     const common = Layer.mergeAll(
       ContextAccessLive,
+      // This Shell fixture installs no dedicated database identities.
+      makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
       LegalEntityContextLive.pipe(Layer.provide(persistence)),
       composition,
       staffAuthenticationNamespaceRegistryLayer(['shell-super-app']),
@@ -212,11 +223,16 @@ export const serve = Effect.scoped(
       ),
     );
     const runtime = yield* Layer.build(Layer.mergeAll(actions.pipe(Layer.provide(common)), resolver, common));
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-      Effect.provideService(AuthConfig, authConfiguration),
-      Effect.provideService(AuthDatabase, authDatabase),
-      Effect.provideContext(runtime),
+    const authenticationContext = yield* Layer.build(
+      shellAuthenticationFrameworkLive({ allowFixtureSignUp: true }).pipe(
+        Layer.provideMerge(Layer.succeedContext(runtime)),
+        Layer.provideMerge(persistence),
+        Layer.provideMerge(
+          Layer.mergeAll(Layer.succeed(AuthConfig, authConfiguration), Layer.succeed(AuthDatabase, authDatabase)),
+        ),
+      ),
     );
+    const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, authConfiguration),
       Effect.provideService(AuthDatabase, authDatabase),
@@ -312,6 +328,8 @@ export const serve = Effect.scoped(
               correlationId: `${suffix}:${name}:key`,
               idempotencyKey: `${suffix}:${name}:key`,
               managedPrincipalId: createdService.principalId,
+              // A service principal's key is tenant-managed; company-agent keys need an agent principal.
+              managedScope: 'tenant-managed',
               name,
               principal,
               requestHeaders: headers,

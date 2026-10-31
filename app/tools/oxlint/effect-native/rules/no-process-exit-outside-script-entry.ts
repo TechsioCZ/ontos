@@ -50,6 +50,10 @@
  *     them. `const exit = await Effect.runPromiseExit(program); process.exitCode = Exit.match(exit,
  *     { onFailure: () => 1, onSuccess: () => 0 });` at the top level (or in a Program-level `main`
  *     called only from the guard, or a top-level IIFE) never reports.
+ *   - **A native NodeRuntime.runMain teardown** — a non-exported Program-level const used only
+ *     as that runner's literal teardown option may forward its Exit through Runtime.defaultTeardown,
+ *     then call onExit(code) followed by process.exit(code). Exact native value imports, bindings,
+ *     callback bodies and exclusive use must be proved. This remains one counted edge site.
  *   - **Reads** of `process.exitCode` (`if (process.exitCode !== 0)`) — only writes decide an exit.
  *   - **`process.kill(child.pid, …)` / `kill(pid, "SIGTERM")` on someone else's process** — signalling
  *     a child is resource management, not an exit decision. Only `process.pid` is reported.
@@ -73,9 +77,10 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import type { Context, ESTree } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { parentOf, skipWrappers, syntax, propertyText, unwrapNode as skipTransparent } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
 import { stringList, positiveInteger, booleanOption } from '../shared/options.ts';
 import { scriptScope, inScriptScope, matchesGlobs } from '../shared/paths.ts';
 import { provenance, valueReference } from '../shared/provenance.ts';
@@ -120,9 +125,214 @@ function entryContinuation(context: Context, fn: AnyNode): ESTree.CallExpression
 }
 
 function isEntryPosition(context: Context, site: AnyNode): boolean {
+  if (isNativeRuntimeTeardownExit(context, site)) return true;
   const fn = nearestFunction(site);
   const continuation = fn === null ? null : entryContinuation(context, fn);
   return continuation === null ? isBasicEntryPosition(context, site) : isEntryPosition(context, continuation);
+}
+
+/** Exact value-import identity, with no aliases, escapes, writes, or computed method access. */
+function nativeRuntimeImport(context: Context, node: AnyNode, namespace: 'Runtime' | 'NodeRuntime'): boolean {
+  if (node.type !== 'Identifier') return false;
+  const variable = lookupVariable(context, node);
+  if (variable?.defs.length !== 1) return false;
+  const definition = variable.defs[0]!;
+  const declaration = definition.parent;
+  const specifier = definition.node;
+  if (
+    definition.type !== 'ImportBinding' ||
+    declaration?.type !== 'ImportDeclaration' ||
+    declaration.importKind === 'type'
+  ) {
+    return false;
+  }
+  const barrel = namespace === 'Runtime' ? 'effect' : '@effect/platform-node';
+  const imported =
+    specifier.type === 'ImportSpecifier' &&
+    specifier.importKind !== 'type' &&
+    declaration.source.value === barrel &&
+    (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) === namespace;
+  const submodule =
+    specifier.type === 'ImportNamespaceSpecifier' && declaration.source.value === `${barrel}/${namespace}`;
+  return (imported || submodule) && nativeNamespaceReferences(context, variable);
+}
+
+function nativeNamespaceReferences(context: Context, variable: Variable): boolean {
+  return variable.references.every((reference) => {
+    if (reference.isWrite()) return false;
+    const identifier = reference.identifier;
+    if (!valueReference(context, identifier)) return parentOf(identifier)?.type !== 'ExportSpecifier';
+    const member = parentOf(identifier);
+    const call = parentOf(member);
+    return (
+      member?.type === 'MemberExpression' &&
+      member.object === identifier &&
+      !member.computed &&
+      !member.optional &&
+      call?.type === 'CallExpression' &&
+      call.callee === member &&
+      !call.optional
+    );
+  });
+}
+
+function nativeRuntimeCall(
+  context: Context,
+  node: AnyNode,
+  namespace: 'Runtime' | 'NodeRuntime',
+  method: string,
+): node is ESTree.CallExpression {
+  if (node.type !== 'CallExpression' || node.optional) return false;
+  const callee = node.callee;
+  return (
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    !callee.optional &&
+    propertyText(callee) === method &&
+    nativeRuntimeImport(context, callee.object, namespace)
+  );
+}
+
+function onlyValueUses(context: Context, binding: AnyNode, expected: readonly AnyNode[]): boolean {
+  const variable = lookupVariable(context, binding);
+  if (
+    variable?.defs.length !== 1 ||
+    variable.references.some((reference) => reference.init !== true && reference.isWrite())
+  )
+    return false;
+  const uses = variable.references.filter(
+    (reference) =>
+      reference.init !== true &&
+      (valueReference(context, reference.identifier) || parentOf(reference.identifier)?.type === 'ExportSpecifier'),
+  );
+  return (
+    uses.length === expected.length &&
+    uses.every((reference) => reference.isRead() && !reference.isWrite() && expected.includes(reference.identifier))
+  );
+}
+
+function statementCall(node: AnyNode | undefined): ESTree.CallExpression | null {
+  return node?.type === 'ExpressionStatement' && node.expression.type === 'CallExpression' && !node.expression.optional
+    ? node.expression
+    : null;
+}
+
+function ordinaryCallback(node: AnyNode | null, parameterCount: number): node is ESTree.ArrowFunctionExpression {
+  return (
+    node?.type === 'ArrowFunctionExpression' &&
+    !node.async &&
+    node.params.length === parameterCount &&
+    node.params.every((parameter) => parameter.type === 'Identifier')
+  );
+}
+
+function sameBinding(context: Context, reference: AnyNode | undefined, binding: AnyNode): boolean {
+  return reference?.type === 'Identifier' && lookupVariable(context, reference) === lookupVariable(context, binding);
+}
+
+/** The callback may only forward the derived code, then hard-exit with that same code. */
+function nativeExitForwarder(context: Context, callback: AnyNode | null, site: AnyNode, onExit: AnyNode): boolean {
+  if (!ordinaryCallback(callback, 1) || callback.body.type !== 'BlockStatement') return false;
+  const [forwardStatement, exitStatement] = callback.body.body;
+  const forward = statementCall(forwardStatement);
+  const exitCall = statementCall(exitStatement);
+  const code = callback.params[0]!;
+  return (
+    callback.body.body.length === 2 &&
+    exitCall === site &&
+    forward !== null &&
+    forward.arguments.length === 1 &&
+    sameBinding(context, forward.callee, onExit) &&
+    sameBinding(context, forward.arguments[0], code) &&
+    exitCall.arguments.length === 1 &&
+    sameBinding(context, exitCall.arguments[0], code) &&
+    provenance(context, exitCall.callee) === 'process.exit' &&
+    onlyValueUses(context, code, [forward.arguments[0]!, exitCall.arguments[0]!]) &&
+    onlyValueUses(context, onExit, [forward.callee])
+  );
+}
+
+function runMainTeardownReference(context: Context, identifier: AnyNode): boolean {
+  const property = parentOf(identifier);
+  const options = parentOf(property);
+  const call = parentOf(options);
+  if (
+    property?.type !== 'Property' ||
+    property.value !== identifier ||
+    property.computed ||
+    property.method ||
+    property.kind !== 'init' ||
+    propertyText(property) !== 'teardown' ||
+    options?.type !== 'ObjectExpression' ||
+    call?.type !== 'CallExpression' ||
+    call.arguments.length !== 2 ||
+    call.arguments[1] !== options ||
+    nearestFunction(call) !== null
+  ) {
+    return false;
+  }
+  return (
+    options.properties.every(
+      (entry) =>
+        entry === property ||
+        (entry.type === 'Property' &&
+          !entry.computed &&
+          !entry.method &&
+          entry.kind === 'init' &&
+          propertyText(entry) === 'disableErrorReporting' &&
+          entry.value.type === 'Literal' &&
+          typeof entry.value.value === 'boolean'),
+    ) && nativeRuntimeCall(context, call, 'NodeRuntime', 'runMain')
+  );
+}
+
+function exclusiveProgramTeardown(context: Context, callback: AnyNode): boolean {
+  const declarator = parentOf(callback);
+  const declaration = parentOf(declarator);
+  if (
+    declarator?.type !== 'VariableDeclarator' ||
+    declarator.init !== callback ||
+    declarator.id.type !== 'Identifier' ||
+    declaration?.type !== 'VariableDeclaration' ||
+    declaration.kind !== 'const' ||
+    parentOf(declaration)?.type !== 'Program'
+  ) {
+    return false;
+  }
+  const variable = lookupVariable(context, declarator.id);
+  const uses = variable?.references.filter(
+    (reference) =>
+      reference.init !== true &&
+      (valueReference(context, reference.identifier) || parentOf(reference.identifier)?.type === 'ExportSpecifier'),
+  );
+  return (
+    uses?.length === 1 &&
+    onlyValueUses(context, declarator.id, [uses[0]!.identifier]) &&
+    runMainTeardownReference(context, uses[0]!.identifier)
+  );
+}
+
+/** Only the native post-fiber teardown, never an arbitrary callback contract, inherits the entry edge. */
+function isNativeRuntimeTeardownExit(context: Context, site: AnyNode): boolean {
+  if (site.type !== 'CallExpression') return false;
+  const forwarder = nearestFunction(site);
+  const teardown = forwarder === null ? null : nearestFunction(forwarder);
+  if (!ordinaryCallback(teardown, 2) || !exclusiveProgramTeardown(context, teardown)) return false;
+  const defaultCall =
+    teardown.body.type === 'BlockStatement'
+      ? teardown.body.body.length === 1
+        ? statementCall(teardown.body.body[0])
+        : null
+      : teardown.body;
+  return (
+    defaultCall !== null &&
+    nativeRuntimeCall(context, defaultCall, 'Runtime', 'defaultTeardown') &&
+    defaultCall.arguments.length === 2 &&
+    defaultCall.arguments[1] === forwarder &&
+    sameBinding(context, defaultCall.arguments[0], teardown.params[0]!) &&
+    onlyValueUses(context, teardown.params[0]!, [defaultCall.arguments[0]!]) &&
+    nativeExitForwarder(context, forwarder, site, teardown.params[1]!)
+  );
 }
 
 function processObjectText(context: Context, node: AnyNode): string | null {

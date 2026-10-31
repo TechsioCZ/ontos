@@ -3,6 +3,16 @@
   "preset": "presetUltramodern",
   "owners": [
     {
+      "id": "admin-ui",
+      "package": "@app/admin-ui",
+      "path": "packages/admin-ui"
+    },
+    {
+      "id": "consent-authority-contracts",
+      "package": "@app/consent-authority-contracts",
+      "path": "packages/consent-authority-contracts"
+    },
+    {
       "id": "core-runtime",
       "package": "@app/core-runtime",
       "path": "packages/core-runtime",
@@ -238,6 +248,24 @@
       }
     },
     {
+      "id": "party-registry-identity-contracts",
+      "package": "@app/party-registry-identity-contracts",
+      "path": "packages/party-registry-identity-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/party-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
+        }
+      }
+    },
+    {
       "id": "party-registry",
       "package": "@app/party-registry",
       "path": "verticals/party-registry",
@@ -467,6 +495,240 @@
           "tier": "tier-2-vertical",
           "references": [
             "docs/super-app-rfc-adr/blast-radius.md#tax"
+          ]
+        }
+      }
+    },
+    {
+      "id": "property-portfolio",
+      "package": "@app/property-portfolio",
+      "path": "verticals/property-portfolio",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/property-portfolio.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#property-portfolio",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#property-portfolio"
+          ]
+        }
+      }
+    },
+    {
+      "id": "property-leasing",
+      "package": "@app/property-leasing",
+      "path": "verticals/property-leasing",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/property-leasing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#property-leasing",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#property-leasing"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legal-agreements",
+      "package": "@app/legal-agreements",
+      "path": "verticals/legal-agreements",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/legal-agreements.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#legal-agreements",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#legal-agreements"
+          ]
+        }
+      }
+    },
+    {
+      "id": "work-tasks",
+      "package": "@app/work-tasks",
+      "path": "verticals/work-tasks",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/work-tasks.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#work-tasks",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#work-tasks"
+          ]
+        }
+      }
+    },
+    {
+      "id": "workforce",
+      "package": "@app/workforce",
+      "path": "verticals/workforce",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/workforce.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#workforce",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#workforce"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tagging",
+      "package": "@app/tagging",
+      "path": "verticals/tagging",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/tagging.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#tagging",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#tagging"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sales-pipeline",
+      "package": "@app/sales-pipeline",
+      "path": "verticals/sales-pipeline",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/sales-pipeline.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#sales-pipeline",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#sales-pipeline"
+          ]
+        }
+      }
+    },
+    {
+      "id": "merchandise",
+      "package": "@app/merchandise",
+      "path": "verticals/merchandise",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/merchandise.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#merchandise",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#merchandise"
+          ]
+        }
+      }
+    },
+    {
+      "id": "facility-operations",
+      "package": "@app/facility-operations",
+      "path": "verticals/facility-operations",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/facility-operations.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#facility-operations",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#facility-operations"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sales-insights",
+      "package": "@app/sales-insights",
+      "path": "verticals/sales-insights",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/sales-insights.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#sales-insights",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#sales-insights"
+          ]
+        }
+      }
+    },
+    {
+      "id": "finance-billing",
+      "package": "@app/finance-billing",
+      "path": "verticals/finance-billing",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/finance-billing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#finance-billing",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#finance-billing"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crm-activities",
+      "package": "@app/crm-activities",
+      "path": "verticals/crm-activities",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/crm-activities.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm-activities",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#crm-activities"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crm",
+      "package": "@app/crm",
+      "path": "verticals/crm",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/crm.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#crm"
           ]
         }
       }

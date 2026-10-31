@@ -1,4 +1,8 @@
-import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '@app/core-runtime';
+import {
+  OwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
+} from '@app/core-runtime';
 import type {
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
@@ -14,8 +18,8 @@ import { stockPositionPersistenceForScope } from './stock-position-repository.ts
 import { inventoryStockPositions } from './stock-position-table.ts';
 
 /** Owner-state admission only; Core still checks the executor and exact business permission. */
-export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = Object.freeze({
-  authorize: Effect.fn('InventoryImportOwnerAuthorization.authorize')(function* authorize(
+export const authorizeImportSourceAssertionOwner = Effect.fn('InventoryImportOwnerAuthorization.authorize')(
+  function* authorize(
     transaction: ScopedTransactionExecutor,
     input: OwnerAuthorizationInput,
   ): Effect.fn.Return<OwnerAuthorizationDecision> {
@@ -24,7 +28,8 @@ export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationO
       input.operationKey !== 'commerce.inventory.import-source-assertion' ||
       input.owningModuleKey !== 'commerce.inventory'
     ) {
-      return yield* failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
+      const failClosed = yield* failClosedOwnerAuthorizationOverlay.prepare(input);
+      return yield* failClosed(transaction, input.operationAt);
     }
     const [target, ...unexpected] = input.targets;
     if (
@@ -91,8 +96,12 @@ export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationO
         StockPositionRejected: () => Effect.succeed('unavailable' as const),
       }),
     );
-  }),
-});
+  },
+);
+
+/** The owner decision reads only owner database state, so all of it runs inside Core's transaction. */
+export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService =
+  transactionalOwnerAuthorization(authorizeImportSourceAssertionOwner);
 
 export const importSourceAssertionOwnerAuthorizationOverlayLive = Layer.succeed(
   OwnerAuthorizationOverlay,

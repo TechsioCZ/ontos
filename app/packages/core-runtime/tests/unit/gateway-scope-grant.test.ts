@@ -10,6 +10,7 @@ import { makeGatewayScopeGrantRegistrar } from '../../src/auth/gateway-scope-gra
 import type { GatewayScopeGrantInput } from '../../src/auth/gateway-scope-grant.ts';
 import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../support/sql-connection.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -39,7 +40,9 @@ const registerWith = (
 ) =>
   Effect.gen(function* registerWithScriptedIssuer() {
     const client = yield* PgClient.PgClient;
-    const result = yield* Effect.exit(makeGatewayScopeGrantRegistrar(client).register(input));
+    const result = yield* Effect.exit(
+      makeGatewayScopeGrantRegistrar(client, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).register(input),
+    );
     return { result };
   }).pipe(
     Effect.provide(

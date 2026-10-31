@@ -1,0 +1,21 @@
+{
+  "sales-insights": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "sales-insights",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Statistics",
+    "widgetBody": "Owns a vertical route surface."
+  }
+}

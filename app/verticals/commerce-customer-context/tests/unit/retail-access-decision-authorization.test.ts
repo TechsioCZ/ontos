@@ -96,7 +96,9 @@ it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suit
               .pipe(Effect.provide(ownerFactories.pipe(Layer.provide(harness.layer)))),
           );
           expect(Predicate.isTagged(failure, 'ReadHandlerNotFound')).toBe(true);
-          expect(businessTargets).toEqual(['retail.consent.manage']);
+          // The Read prefetches the Retail baseline before its transaction; every other permission is denied
+          // here, so reaching the owner proves admission depends only on the exact required permission.
+          expect(businessTargets).toContain('retail.consent.manage');
           expect(harness.snapshot().ownerQueries).toHaveLength(1);
         }),
     );

@@ -1320,7 +1320,7 @@ const durableRetailAttempt = Effect.gen(function* durableRetailAttemptEffect() {
         native.readBinding().pipe(
           Effect.map((found) =>
             Option.isNone(found)
-              ? ({ state: 'OPEN' } as const)
+              ? ({ state: 'NOT_STARTED' } as const)
               : ({ result: found.value, state: 'COMMITTED' } as const),
           ),
           Effect.mapError(

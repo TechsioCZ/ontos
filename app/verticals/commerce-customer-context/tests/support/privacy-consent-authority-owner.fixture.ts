@@ -17,7 +17,11 @@ import {
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { ResendEmailDeliveryConfigLive, RESEND_EMAILS_ENDPOINT } from '@app/email-delivery/resend';
+import {
+  ResendEmailDeliveryConfigLive,
+  ResendEmailDeliveryLive,
+  RESEND_EMAILS_ENDPOINT,
+} from '@app/email-delivery/resend';
 import {
   PartyRegistryRetailPartyResolverFactory,
   makePartyRegistryRetailPartyResolver,
@@ -31,10 +35,11 @@ import {
   CorePersistenceLive,
   ContextAccessLive,
   DatabaseConfigLive,
-  loadDatabaseConnectionPair,
   loadDatabaseConfig,
+  loadDatabaseConnectionPair,
   SHARED_RUNTIME_IDENTITY,
 } from '@app/core-runtime';
+import type { RuntimeDatabaseConfigValue } from '@app/core-runtime';
 import { extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
@@ -231,6 +236,7 @@ const enrollmentObservationSchema = Schema.TaggedStruct(enrollmentObservationSta
     'COMPLETE',
     'RECONCILIATION_REQUIRED',
     'TERMINATED',
+    'FAILED',
   ]),
   continuation: Schema.Literals([
     'NOT_OBSERVED',
@@ -506,8 +512,10 @@ const migrateOwnedPortalAuth = Effect.fn('RetainedConsentOwner.migrateOwnedPorta
 // Runtime-only observation: missing storage is reported, never created by an HTTP process.
 const ownedDatabaseStage = 'owned-database';
 const ownedProviderStorageIsReady = Effect.fn('RetainedConsentOwner.ownedProviderStorageIsReady')(
-  function* ownedProviderStorageIsReady(runtime: Effect.Success<ReturnType<typeof loadDatabaseConfig>>) {
-    if (!/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(runtime.database)) {
+  function* ownedProviderStorageIsReady(runtime: RuntimeDatabaseConfigValue) {
+    // A runtime identity's configuration carries its connection and role; the connection names the database.
+    const database = decodeURIComponent(new URL(runtime.connectionString).pathname.slice(1));
+    if (!/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(database)) {
       return yield* failed(ownedDatabaseStage);
     }
     const providerConnection = yield* Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL');
@@ -535,8 +543,8 @@ const ownedProviderStorageIsReady = Effect.fn('RetainedConsentOwner.ownedProvide
         ),
       );
     if (
-      identities[0].database !== runtime.database ||
-      identities[0].role !== runtime.user ||
+      identities[0].database !== database ||
+      identities[0].role !== runtime.expectedRole ||
       identities[0].superuser ||
       identities[0].bypass
     ) {
@@ -597,6 +605,7 @@ const prepareOwnedProviderStorage = Effect.fn('RetainedConsentOwner.prepareOwned
 
 const verifyPreparedProviderStorage = Effect.fn('RetainedConsentOwner.verifyPreparedProviderStorage')(
   function* verifyPreparedProviderStorage() {
+    // HTTP processes receive only their runtime identity, never the administrative connection.
     const runtime = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: SHARED_RUNTIME_IDENTITY });
     if (!(yield* ownedProviderStorageIsReady(runtime))) {
       return yield* failed(providerSchemaInventory);
@@ -1073,7 +1082,18 @@ const serve = Effect.scoped(
     );
     const permissionReader = Context.get(permissionReaderContext, ProfileRetailPermissionReaderFactory);
     const configuredRealm = commercePortalAuthRealmLive.pipe(
-      Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          CommercePortalAuthConfigLive,
+          // The realm uses the deployment's installed mail transport; this owner fixture installs Resend.
+          // Its TEST configuration is fixed by this fixture, so a configuration failure is a fixture defect.
+          ResendEmailDeliveryLive.pipe(
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ResendEmailDeliveryConfigLive),
+            Layer.orDie,
+          ),
+        ),
+      ),
     );
     const configuredRuntime = makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive.pipe(Layer.merge(serverParty)),

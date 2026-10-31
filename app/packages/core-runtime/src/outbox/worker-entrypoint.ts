@@ -1,9 +1,21 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
+export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
+export { databaseRuntime } from '#database-runtime';
+export { configureDatabasePool } from '../db/pool-configuration.ts';
+export { openDatabaseClient } from '../db/database-client.ts';
+export {
+  ApplicationCompositionSchema,
+  ApplicationCompositionModuleSchema,
+} from '../modules/application-composition.ts';
+export {
+  ActionAuthorizationPreflightDatabase,
+  ActionAuthorizationPreflightDatabaseLive,
+} from '../permissions/action-authorization-preflight.ts';
+export { ActionPermissionCheckError } from '../actions/errors.ts';
 export { ActiveApplicationCompositionConfigLive } from '../modules/active-application-composition.ts';
-export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
 export { OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-export { defineScopedRoutine } from '../db/scoped-routine.ts';
+export { defineScopedRoutine, scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
 export { findPostgresFailure } from '../database/postgres-failure.ts';
 export { BusinessPermissionCodeSchema, defineBusinessPermissionCatalog } from '../permissions/business-permission.ts';
 export { AuthorizationMutationReconciliationUnavailable } from '../permissions/authorization-reconciler.ts';
@@ -32,10 +44,15 @@ export {
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from '../db/scoped-transaction.ts';
-export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
-export { PARTY_REGISTRY_REQUEST_IDENTITY, PARTY_REGISTRY_WORKER_IDENTITY } from '../db/database-identity-manifest.ts';
+export { DatabaseConfig, DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
+export { DatabaseIdentityEnrollmentContext, makeDatabaseIdentityEnrollmentLive } from '../db/database-identities.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
+export {
+  coreSearchIngestionRegistryLayer,
+  CoreSearchIngestionRegistry,
+  defineCoreSearchIngestionRegistrations,
+} from '../search/ingestion-registry.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {
   CoreSearchProjectionDocumentSchema,

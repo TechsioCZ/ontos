@@ -7,7 +7,7 @@ import type { Connection } from 'effect/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
-import { getActionServiceFactory } from '../actions/definition.ts';
+import { getActionServiceFactory, getActionServicePreflight } from '../actions/definition.ts';
 import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
@@ -24,10 +24,15 @@ import type {
   PrepareActionInvocationInput,
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
-import type { ActionRuntimeStage } from '../actions/runtime.ts';
+import type { ActionRuntimeOptions, ActionRuntimeStage } from '../actions/runtime.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
+import {
+  defineDatabaseIdentityEnrollment,
+  gatewayScopeGrantRoleForAudience,
+  SHARED_RUNTIME_IDENTITY,
+} from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
@@ -35,6 +40,7 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/modul
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
+import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
@@ -50,6 +56,7 @@ const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
 const gatewayAssertionValuesSchema = Schema.Tuple([Schema.String]);
 /** The principal claim Shell registers as the gateway scope grant for an issued assertion. */
 const gatewayAssertionClaimsSchema = Schema.Struct({
+  aud: Schema.String,
   principal: Schema.Struct({
     legalEntityId: Schema.optional(Schema.String.pipe(Schema.brand('LegalEntityId'))),
     tenantId: Schema.String.pipe(Schema.brand('TenantId')),
@@ -116,6 +123,8 @@ export interface ActionTestHarnessOptions {
   readonly actionPermission?: ContextAccessDecision;
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
+  readonly compositionRevision?: string;
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
   readonly legalEntityAccess?: ContextAccessDecision;
   readonly legalEntityPermission?: ContextAccessDecision;
   readonly moduleState?: TenantModuleState;
@@ -128,6 +137,7 @@ export interface ActionTestHarnessOptions {
 export interface ActionTestInvocation extends ActionInvocationRecord {
   readonly actionKey: string;
   readonly idempotencyKey: string | undefined;
+  readonly legalEntityId: string | undefined;
   readonly principalId: string;
   readonly tenantId: string;
 }
@@ -158,6 +168,7 @@ const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionErro
 const actionTestHarness = Effect.fn('ActionTestHarness.make')(
   function* actionTestHarness(options: ActionTestHarnessOptions = {}) {
     const crypto = yield* Crypto.Crypto;
+    const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
     const invocations = new Map<string, ActionTestInvocation>();
     const idempotency = new Map<string, string>();
     const committed: FlushActionSuccessInput[] = [];
@@ -205,6 +216,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         actionKey: input.actionKey,
         completedAt: null,
         idempotencyKey: input.idempotencyKey,
+        legalEntityId: input.principal.legalEntityId,
         principalId: input.principal.principalId,
         requestHash: input.requestHash,
         status: 'received',
@@ -262,8 +274,19 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
       resolveInvocation: (_executor, input) =>
         Effect.suspend(() => {
-          const invocation = invocations.get(input.invocationId);
+          const hasInvocationId = input.invocationId !== undefined;
+          const invocation = hasInvocationId
+            ? invocations.get(input.invocationId)
+            : [...invocations.values()].find(
+                (candidate) =>
+                  candidate.actionKey === input.actionKey &&
+                  candidate.idempotencyKey === input.idempotencyKey &&
+                  candidate.legalEntityId === input.principal.legalEntityId &&
+                  candidate.tenantId === input.principal.tenantId &&
+                  candidate.principalId === input.principal.principalId,
+              );
           return invocation?.tenantId === input.principal.tenantId &&
+            invocation.legalEntityId === input.principal.legalEntityId &&
             invocation.principalId === input.principal.principalId
             ? Effect.succeed(invocation)
             : Effect.fail(
@@ -306,19 +329,23 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         }
       } else if (sql === 'rollback') {
         pendingCommit = [];
-      } else if (sql.includes('set_config')) {
-        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
       } else if (sql === ESTABLISH_GATEWAY_SCOPE_SQL) {
         // Models the grant Shell registered for this assertion: the database derives the scope
         // from the redeemed assertion's principal claim, never from the request.
         const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
-        const { principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+        const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+        const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
+        if (Option.isNone(role)) {
+          return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
+        }
         scope.tenantId = principal.tenantId;
         scope.legalEntityId = principal.legalEntityId ?? '';
-        scope.role = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+        scope.role = role.value;
         return {
           rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
         };
+      } else if (sql.includes('set_config')) {
+        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
       } else if (sql.includes('current_setting') || sql === READ_GATEWAY_SCOPE_SQL) {
         return {
           rows: [
@@ -484,6 +511,27 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       }
       return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
     };
+    const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+    let runtimeOptions: ActionRuntimeOptions = {
+      contextAccess,
+      databaseIdentities,
+      // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+      lockCompositionAuthority: () => Effect.succeed([]),
+      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+      moduleStateGate,
+      onStage: (stage) => {
+        stages.push(stage);
+      },
+      resolveCompositionRevision: () => Effect.succeed(options.compositionRevision ?? 'a'.repeat(64)),
+      resolveServiceFactory,
+      // Explicit lifecycle-only service bindings replace both acquisition phases.
+      // Unbound registrations still execute the real preparation and guarded factory.
+      resolveServicePreflight: (registration) =>
+        bindings.has(registration) ? undefined : getActionServicePreflight(registration),
+    };
+    if (Option.isSome(authorizationPreflight)) {
+      runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+    }
     const runtime = makeActionRuntime(
       database,
       repository,
@@ -499,18 +547,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
             : Effect.succeed(options.actionPermission ?? 'denied'),
       },
       scopeResolver,
-      {
-        contextAccess,
-        // This scripted harness rejects owner SQL and tests the Action lifecycle only.
-        lockCompositionAuthority: () => Effect.succeed([]),
-        moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-        moduleStateGate,
-        onStage: (stage) => {
-          stages.push(stage);
-        },
-        resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)),
-        resolveServiceFactory,
-      },
+      runtimeOptions,
     );
     return Object.freeze({
       layer: Layer.succeed(ActionRuntime, runtime),

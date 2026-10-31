@@ -12,6 +12,8 @@ import {
   makeActionRuntimeLive,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import {
   ActionPermissionLive,
@@ -400,6 +402,7 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(composition))),
     Layer.provide(Layer.mergeAll(actions, reads, namespace, redemption, source, RequestSchemaProblemLive)),
+    Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
   );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>

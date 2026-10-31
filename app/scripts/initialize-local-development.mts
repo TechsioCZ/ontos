@@ -11,8 +11,7 @@ import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redac
 import { isSqlError } from 'effect/sql/SqlError';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
-import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
+import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import {
@@ -29,6 +28,9 @@ import {
 } from '../packages/core-runtime/src/db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../packages/core-runtime/src/db/types.ts';
 import {
+  BootstrapCompanyMembershipSchema,
+  companyMembershipAdmissionRelationships,
+  installBootstrapCompanyMemberships,
   bootstrapPrincipalRecord,
   bootstrapRelationshipRequest,
   selectBootstrapLegalEntities,
@@ -42,6 +44,7 @@ import {
   toModuleAccessObjectId,
 } from '../packages/core-runtime/src/permissions/context-access.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
+import { localDevelopmentAdministratorFixture, principalRelationships } from './demo/permissions.mts';
 
 export interface LocalDevelopmentEnvironment {
   readonly BETTER_AUTH_SECRET?: unknown;
@@ -58,24 +61,18 @@ type ExactRecord = Readonly<Record<string, Comparable>>;
 
 const localDevelopmentPassword = Redacted.make(['password', '1234'].join(''));
 
-/**
- * Party Registry's governed reads answer from the tenant's `read_party_identity` permission, which
- * module access alone does not grant; the local principal reads the parties it works with.
- */
-const PARTY_REGISTRY_MODULE_ID = 'party.registry';
-
 export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   authBindingId: '73000000-0000-4000-8000-000000000010',
   defaultLocale: 'cs',
   email: 'demo@test.com',
-  legalEntityId: '71000000-0000-4000-8000-000000000010',
+  legalEntityId: localDevelopmentAdministratorFixture.legalEntityId,
   legalName: 'Local Legal Entity',
   password: localDevelopmentPassword,
   principalDisplayName: 'Local User',
-  principalId: '72000000-0000-4000-8000-000000000010',
+  principalId: localDevelopmentAdministratorFixture.principalId,
   registrationCountry: 'CZ',
   registrationNumber: 'LOCAL-0001',
-  tenantId: '70000000-0000-4000-8000-000000000010',
+  tenantId: localDevelopmentAdministratorFixture.tenantId,
   tenantName: 'Local Tenant',
   tenantSlug: 'local',
 });
@@ -84,6 +81,14 @@ export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([
   'party-registry',
   'commerce-market-catalog',
   'commerce-customer-context',
+  // Sales demo MicroVerticals (demo/sales-crm).
+  'workforce',
+  'tagging',
+  'sales-pipeline',
+  'merchandise',
+  'sales-insights',
+  'facility-operations',
+  'crm',
 ] as const);
 
 export interface LocalDevelopmentConfiguration {
@@ -397,59 +402,41 @@ export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.bu
     }
     const shared: LocalDevelopmentRelationship[] = [
       {
-        relation: 'member',
-        resourceId: context.tenantId,
-        resourceType: 'tenant',
-        subjectId: context.principalId,
-        subjectType: 'principal',
-      },
-      {
         relation: 'tenant',
-        resourceId: legalEntityObjectId,
-        resourceType: 'legal_entity',
+        resourceId: context.principalId,
+        resourceType: 'principal',
         subjectId: context.tenantId,
         subjectType: 'tenant',
       },
       {
-        relation: 'member',
-        resourceId: legalEntityObjectId,
-        resourceType: 'legal_entity',
+        relation: 'self',
+        resourceId: context.principalId,
+        resourceType: 'principal',
         subjectId: context.principalId,
         subjectType: 'principal',
       },
+      ...principalRelationships(
+        context.principalId,
+        localDevelopmentAdministratorFixture.role,
+        [],
+        context.legalEntityId,
+        context.tenantId,
+      ),
     ];
-    if (moduleIds.includes(PARTY_REGISTRY_MODULE_ID)) {
-      shared.push({
-        relation: 'party_identity_reader',
-        resourceId: context.tenantId,
-        resourceType: 'tenant',
-        subjectId: context.principalId,
-        subjectType: 'principal',
-      });
-    }
     for (const moduleId of moduleIds) {
       const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, moduleId);
       if (moduleObjectId === undefined) {
         return yield* failure('local_contract_invalid', `Module ${moduleId} has an invalid authorization ID`);
       }
-      shared.push(
-        {
-          relation: 'legal_entity',
-          resourceId: moduleObjectId,
-          resourceType: 'module_access',
-          subjectId: legalEntityObjectId,
-          subjectType: 'legal_entity',
-        },
-        {
-          relation: 'accessor',
-          resourceId: moduleObjectId,
-          resourceType: 'module_access',
-          subjectId: context.principalId,
-          subjectType: 'principal',
-        },
-      );
+      shared.push({
+        relation: 'legal_entity',
+        resourceId: moduleObjectId,
+        resourceType: 'module_access',
+        subjectId: legalEntityObjectId,
+        subjectType: 'legal_entity',
+      });
     }
-    return shared;
+    return companyMembershipAdmissionRelationships(shared, [context]);
   },
 );
 
@@ -651,6 +638,18 @@ export const reconcileCoreContext = (
         }
 
         yield* reconcileLocalModules(transaction, moduleIds);
+        const companyMembership = yield* Schema.decodeEffect(BootstrapCompanyMembershipSchema)({
+          affiliation: localDevelopmentAdministratorFixture.affiliation,
+          legalEntityId: context.legalEntityId,
+          principalId: context.principalId,
+        }).pipe(Effect.mapError(() => failure('local_contract_invalid', 'Invalid local developer membership fixture')));
+        yield* installBootstrapCompanyMemberships(transaction, context.tenantId, [companyMembership]).pipe(
+          Effect.catchTag('BootstrapCompanyMembershipConflict', () =>
+            Effect.fail(
+              failure('local_conflict', 'The local developer membership conflicts; offboarding is preserved'),
+            ),
+          ),
+        );
         return yield* Effect.void;
       }),
     )
@@ -723,29 +722,18 @@ export const initializeLocalDevelopment = (
       LOCAL_DEVELOPMENT_VERTICALS,
     );
     const relationships = yield* buildLocalDevelopmentRelationships(moduleIds);
-    const authUser = yield* ensureAuthUser(configuration).pipe(
-      Effect.provide(
-        AuthDatabaseLive.pipe(
-          Layer.provide(
-            Layer.succeed(AuthConfig, {
-              baseUrl: configuration.authBaseUrl,
-              connectionString: configuration.databaseAdminUrl,
-              secret: Redacted.value(configuration.authSecret),
-              secureCookies: false,
-              supportUserIds: [],
-              trustedOrigins: [configuration.authBaseUrl],
-            }),
-          ),
-        ),
-      ),
-      Effect.catchTag('AuthDatabaseConnectionError', () =>
-        failure('local_persistence_failed', 'The local authentication database could not be opened'),
-      ),
-    );
     const databaseConfiguration = yield* parseDatabaseConfig({
       DATABASE_URL: configuration.databaseAdminUrl,
     }).pipe(
       Effect.mapError(() => failure('local_configuration_invalid', 'The local Core database configuration is invalid')),
+    );
+    const authUser = yield* ensureAuthUser(configuration).pipe(
+      Effect.provide(
+        AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration))),
+      ),
+      Effect.catchTag('AuthDatabaseConnectionError', () =>
+        failure('local_persistence_failed', 'The local authentication database could not be opened'),
+      ),
     );
     yield* Effect.gen(function* initializeCore() {
       const database = yield* CoreDatabase;

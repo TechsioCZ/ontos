@@ -1,0 +1,134 @@
+{
+  "tagging": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "tagging",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Tags",
+    "widgetBody": "Owns a vertical route surface.",
+    "colors": {
+      "blue": "Blue",
+      "gray": "Gray",
+      "green": "Green",
+      "orange": "Orange",
+      "pink": "Pink",
+      "purple": "Purple",
+      "red": "Red",
+      "yellow": "Yellow"
+    },
+    "kinds": {
+      "customer": "Customers",
+      "employee": "Employees",
+      "opportunity": "Opportunities",
+      "order": "Orders",
+      "product": "Products"
+    },
+    "pages": {
+      "records": {
+        "title": "Tags",
+        "description": "Tags and their assignments.",
+        "forbidden": "You do not have permission to view tags.",
+        "unavailable": "Data could not be loaded."
+      }
+    },
+    "tags": {
+      "assigned": {
+        "description": "Records carrying this tag, grouped by subject kind.",
+        "empty": "No assignments.",
+        "failed": "Assignments could not be loaded.",
+        "loading": "Loading assignments…",
+        "title": "Assignments of tag {{name}}",
+        "unknown": "Unknown record",
+        "unknownCustomer": "Unknown customer"
+      },
+      "assignments": "Assignments",
+      "bulk": {
+        "action": "Action",
+        "add": "Add",
+        "busy": "Saving…",
+        "chooseTag": "Choose a tag.",
+        "description": "The change applies to the selected records ({{total}}).",
+        "failure": "Tags could not be updated. Try again.",
+        "forbidden": "You do not have permission to change tags.",
+        "remove": "Remove",
+        "submit": "Apply tag",
+        "submitRemove": "Remove tag",
+        "success": "Tags updated",
+        "tag": "Tag",
+        "title": "Edit tags"
+      },
+      "created": "Tag created",
+      "deleted": "Tag deleted",
+      "delete": {
+        "alreadyDeleted": "The tag was already deleted.",
+        "busy": "Deleting…",
+        "conflict": "Tags changed in the meantime. Check the list and try again.",
+        "description": "Deleting the tag removes it from all records.",
+        "failure": "The tag could not be deleted. Try again.",
+        "forbidden": "You do not have permission to delete tags.",
+        "submit": "Delete tag",
+        "title": "Delete tag “{{name}}”?"
+      },
+      "edit": "Edit tag",
+      "failure": "The change could not be saved. Try again.",
+      "filter": {
+        "all": "All tags",
+        "noResults": "No tag matches.",
+        "placeholder": "Tag",
+        "toggle": "Show tags"
+      },
+      "form": {
+        "cancel": "Cancel",
+        "color": "Colour",
+        "createSubmit": "Create tag",
+        "description": "Description",
+        "discardConfirm": "Discard changes",
+        "discardDescription": "The details you entered in this form will be lost.",
+        "discardKeep": "Keep editing",
+        "discardTitle": "Discard unsaved changes?",
+        "editSubmit": "Save changes",
+        "kinds": "Applies to",
+        "kindsRequired": "Choose at least one area.",
+        "name": "Name",
+        "nameRequired": "Enter a tag name.",
+        "nameTooLong": "The name can have at most 60 characters.",
+        "saving": "Saving…"
+      },
+      "loadFailed": "Tags could not be loaded.",
+      "new": "New tag",
+      "retry": "Try again",
+      "table": {
+        "actions": "Actions",
+        "appliesTo": "Applies to",
+        "clearSearch": "Clear search",
+        "description": "Description",
+        "empty": "No tags yet.",
+        "emptyDescription": "Create the first tag and assign it to records.",
+        "loadingLabel": "Loading data",
+        "name": "Name",
+        "noResults": "No tag matches the search.",
+        "pageSize": "Rows per page",
+        "range": "{{start}}–{{end}} of {{total}}",
+        "search": "Search tags…",
+        "searchLabel": "Filter tags"
+      },
+      "updated": "Tag updated",
+      "selectPlaceholder": "Select…",
+      "loading": "Loading…"
+    },
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
+  }
+}

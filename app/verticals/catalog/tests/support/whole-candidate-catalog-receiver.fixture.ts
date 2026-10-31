@@ -11,6 +11,8 @@ import {
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
   parseDatabaseConfig,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import {
@@ -816,6 +818,7 @@ const childProgram = Effect.gen(function* wholeCandidateCatalogChild() {
 const services = NodeServices.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
 );
 if (process.argv.includes('--describe-whole-candidate')) {
   NodeRuntime.runMain(

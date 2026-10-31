@@ -167,12 +167,35 @@ const governedRedemptionImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
 const governedRedemptionDatabaseImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
-const normalizeSupportImport = (candidate: string) => candidate.replaceAll(/\s+/gu, ' ').replaceAll(/,\s*\}/gu, ' }');
-const supportedGovernedImports = new Set([
-  governedPrincipalImport,
-  governedRedemptionImport,
-  governedRedemptionDatabaseImport,
-]);
+const governedSupportImports = [governedPrincipalImport, governedRedemptionImport] as const;
+type GovernedSupportImport = (typeof governedSupportImports)[number];
+/** Each supported entry and the generated owner import it satisfies. */
+const supportedGovernedImports = [
+  [governedPrincipalImport, governedPrincipalImport],
+  [governedRedemptionImport, governedRedemptionImport],
+  [governedRedemptionDatabaseImport, governedRedemptionImport],
+] as const;
+
+/** Formatter output may wrap or reorder bindings; the module and exact binding set stay fixed. */
+const supportImportIdentity = (candidate: string): string | undefined => {
+  const match = /^import\s*\{(?<bindings>[^}]+)\}\s*from\s*'(?<module>[^']+)'\s*;$/u.exec(candidate);
+  if (match?.groups === undefined) {
+    return undefined;
+  }
+  const bindings = (match.groups['bindings'] ?? '')
+    .split(',')
+    .map((binding) => binding.trim().replaceAll(/\s+/gu, ' '))
+    .filter(Boolean)
+    .toSorted();
+  return `${match.groups['module']}:${bindings.join(',')}`;
+};
+
+const governedSupportImportOwner = (candidate: string): GovernedSupportImport | undefined => {
+  const identity = supportImportIdentity(candidate);
+  return supportedGovernedImports.find(
+    ([entry]) => identity !== undefined && supportImportIdentity(entry) === identity,
+  )?.[1];
+};
 
 const compositionIdentity = (source: string): string | undefined => {
   for (const pattern of [
@@ -464,7 +487,7 @@ export const ${toCamelCase(name)}Read = defineRead(
     resultSchema: ${type}ResponseSchema,
     schemaVersion: '1',
   },
-  () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+  { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }) },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
 );
@@ -600,13 +623,15 @@ export const ${toCamelCase(name)}Read = defineRead(
     resultSchema: ${resultSchema},
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.load(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: ${resultCount} },
-        result,
-      })),
-    ),
+  {
+    load: (input, context) =>
+      context.services.load(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: ${resultCount} },
+          result,
+        })),
+      ),
+  },
   () => Effect.succeed({ load: load${type} }),
   () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
 ${kind === SEARCH_PROVIDER_KIND ? '  (result) => result.map(({ ref }) => ref),\n' : ''});
@@ -896,27 +921,21 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         isGovernedHttpHandlerLayerSlotEntry,
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
-        const supportEntries = readGeneratedSlotEntries(
+        const supportOwners = readGeneratedSlotEntries(
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
           GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-        ).map(normalizeSupportImport);
+        ).map(governedSupportImportOwner);
         if (
-          supportEntries.some((entry) => !supportedGovernedImports.has(entry)) ||
-          supportEntries.filter((entry) => entry === governedPrincipalImport).length > 1 ||
-          supportEntries.filter(
-            (entry) => entry === governedRedemptionImport || entry === governedRedemptionDatabaseImport,
-          ).length > 1
+          supportOwners.includes(undefined) ||
+          governedSupportImports.some((expected) => supportOwners.filter((owner) => owner === expected).length > 1)
         ) {
           return raiseScaffoldFailure(
             `generated owner slot contains unsupported developer content: ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}`,
           );
         }
-        for (const supportImport of [governedPrincipalImport, governedRedemptionImport]) {
-          if (
-            supportEntries.includes(supportImport) ||
-            (supportImport === governedRedemptionImport && supportEntries.includes(governedRedemptionDatabaseImport))
-          ) {
+        for (const supportImport of governedSupportImports) {
+          if (supportOwners.includes(supportImport)) {
             continue;
           }
           next = insertSortedSlotIdempotently(
@@ -924,7 +943,7 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
             supportImport,
-            (candidate) => supportedGovernedImports.has(normalizeSupportImport(candidate)),
+            (candidate) => governedSupportImportOwner(candidate) !== undefined,
           );
         }
       }

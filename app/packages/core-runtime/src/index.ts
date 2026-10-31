@@ -1,3 +1,4 @@
+export { withPostgresSessionAdvisoryLock } from './db/session-advisory-lock.ts';
 export {
   ACTION_PROVISIONING_INTENTS,
   ActionExecutionAuthorizationSchema,
@@ -27,6 +28,7 @@ export {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
 } from './auth/gateway-assertion-redemption.ts';
+export { startGatewayAssertionRedemptionCleanup } from './auth/gateway-assertion-redemption-cleanup.ts';
 export type {
   GatewayAssertionRedemption,
   GatewayAssertionRedemptionError,
@@ -93,6 +95,85 @@ export {
 } from './auth/principal-management-errors.ts';
 export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
 export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-administration-reads.ts';
+export {
+  PeopleDirectoryInputSchema,
+  PeopleDirectoryResultSchema,
+  peopleDirectoryRead,
+} from './auth/people-directory-read.ts';
+export { RoleCatalogResultSchema, roleCatalogRead } from './auth/role-catalog-read.ts';
+export { acceptPersonInvitationFromTransaction } from './auth/person-invitation-acceptance.ts';
+export { PersonInvitationIdentityProvider } from './auth/person-invitation-identity-provider.ts';
+export type {
+  PersonInvitationIdentityInput,
+  PersonInvitationIdentityWriter,
+} from './auth/person-invitation-identity-provider.ts';
+export { InvitePersonPayloadSchema, InvitePersonResultSchema } from './auth/person-invitation.ts';
+export type { InvitePersonPayload, InvitePersonResult } from './auth/person-invitation.ts';
+export { invitePersonAction } from './modules/actions/invite-person.action.ts';
+export { identityAdministrationAuditRead } from './auth/identity-administration-audit-read.ts';
+export { IdentityAdministrationAuditResultSchema } from './auth/identity-administration-audit-contract.ts';
+export {
+  IdentityAdministrationDeniedAudit,
+  IdentityAdministrationDeniedAuditLive,
+} from './auth/identity-administration-audit-denied.ts';
+export {
+  StaffRoleTemplateAccountProvider,
+  StaffRoleTemplateEmailsSchema,
+  StaffRoleTemplateAccountsSchema,
+} from './auth/staff-role-template-account-provider.ts';
+export { staffRoleTemplateBindingsRead } from './auth/staff-role-template-bindings-read.ts';
+export { mutateAgentProposalsAction } from './modules/actions/mutate-agent-proposals.action.ts';
+export {
+  AgentProposalCommandPayloadSchema,
+  AgentProposalCommandResultSchema,
+} from './auth/agent-proposal-command-contract.ts';
+export type {
+  AgentProposalCommandPayload,
+  AgentProposalCommandResult,
+} from './auth/agent-proposal-command-contract.ts';
+export { AgentProposalCommandError } from './auth/agent-proposal-command-error.ts';
+export {
+  AgentProposalCommandPreparation,
+  AgentProposalCommandPreparationLive,
+  AgentProposalCommandAuthorizationPreflightLive,
+} from './auth/agent-proposal-command-preparation.ts';
+export { agentProposalQueueRead } from './auth/agent-proposal-queue-read.ts';
+export {
+  AGENT_PROPOSAL_QUEUE_CANDIDATE_LIMIT,
+  AGENT_PROPOSAL_WITHDRAWAL_BATCH_LIMIT,
+  AgentProposalCommandRecoverySchema,
+  AgentProposalReservationSchema,
+  AgentProposalQueueInputSchema,
+  AgentProposalQueueModuleReview,
+  AgentProposalQueueRequestSchema,
+  AgentProposalQueueResultSchema,
+  AgentProposalQueueRiskSchema,
+  AgentProposalQueueRowSchema,
+  AgentProposalQueueStatusSchema,
+  AgentProposalQueueVisibilitySchema,
+} from './auth/agent-proposal-queue-contract.ts';
+export type {
+  AgentProposalCommandRecovery,
+  AgentProposalReservation,
+  AgentProposalQueueInput,
+  AgentProposalQueueModuleReviewService,
+  AgentProposalQueueRow,
+} from './auth/agent-proposal-queue-contract.ts';
+export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
+export { OAuthAuthenticationAudit, OAuthAuthenticationAuditLive } from './auth/oauth-authentication-audit.ts';
+export { OAuthAuthenticationAuditUnavailable } from './auth/oauth-authentication-audit-unavailable.ts';
+export { OAuthConnectionCompanies, OAuthConnectionCompaniesLive } from './auth/oauth-connection-companies.ts';
+export { OAuthGrantOwners } from './auth/oauth-grant-owners.ts';
+export { OAuthGrantRegistry } from './auth/oauth-grant-registry-service.ts';
+export { OAuthGrantRegistryLive } from './auth/oauth-grant-registry-live.ts';
+export { OAuthGrantRegistryUnavailable } from './auth/oauth-grant-registry-unavailable.ts';
+export { OAuthGrantModulesSchema } from './auth/oauth-grant-registry-contract.ts';
+export type { OAuthGrantPrincipal, OAuthGrantRecord } from './auth/oauth-grant-registry-contract.ts';
+export {
+  OAuthConnectionRevocationNotesInputSchema,
+  OAuthConnectionRevocationNotesResultSchema,
+  oauthConnectionRevocationNotesRead,
+} from './auth/oauth-connection-revocation-notes-read.ts';
 // @ontos-codesmith-core-read-exports:start
 
 // @ontos-core-read legal-entity-detail
@@ -118,25 +199,27 @@ export type {
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export { openDatabaseClient } from './db/database-client.ts';
+export { verifySessionRoleOnFirstUse } from './db/session-identity.ts';
 export { databaseRuntime } from '#database-runtime';
 export type { DatabaseConnectionPair } from './db/config.ts';
 export type { DatabaseRuntime } from './db/database-runtime.ts';
-export type { DatabaseIdentityConnections } from './db/config.ts';
+export type { DatabaseIdentityConnections, RuntimeDatabaseConfigValue } from './db/config.ts';
 export {
   BEARER_ASSERTION_ROLE_SETTINGS,
-  DATABASE_IDENTITIES,
-  DEDICATED_IDENTITY_MODULE_KEYS,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
+  defineDatabaseIdentityEnrollment,
+  DatabaseIdentityEnrollmentError,
+  trustRoutinesForIdentities,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  TRUST_ROUTINES,
 } from './db/database-identity-manifest.ts';
 export type {
   CloudflareHyperdriveBinding,
   DatabaseAcceptedFinding,
   DatabaseIdentity,
   DatabaseIdentityId,
+  DatabaseIdentityEnrollment,
+  DatabaseOwnerIdentityDescriptor,
   DatabaseRoleGrants,
   DatabaseScopeAuthority,
   DatabaseSequenceGrant,
@@ -144,9 +227,15 @@ export type {
   DatabaseTablePrivilege,
   DatabaseUrlKey,
 } from './db/database-identity-manifest.ts';
-export { gatewayScopeGrantRoleForAudience } from './db/database-identities.ts';
+export {
+  DatabaseIdentityEnrollmentContext,
+  makeDatabaseIdentityEnrollmentLive,
+  databaseIdentityForRole,
+  gatewayScopeGrantRoleForAudience,
+} from './db/database-identities.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
+export { parseSpiceDbConfig } from './permissions/config.ts';
 export {
   DatabaseConfig,
   DatabaseConfigError,
@@ -221,6 +310,8 @@ export {
   ContextAccessLive,
   makeContextAccess,
   makeContextAccessLive,
+  RequestPermissionDecisions,
+  withRequestPermissionDecisions,
   assortmentPermissionTargetRequiresLegalEntity,
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
@@ -258,12 +349,16 @@ export {
   OwnerAuthorizationOverlay,
   OwnerAuthorizationOverlayAllowLive,
   allowOwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationDecision,
   failClosedOwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
 } from './permissions/owner-authorization-overlay.ts';
 export type {
+  OwnerAuthorizationCheck,
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
+  OwnerAuthorizationRequest,
   OwnerAuthorizationTarget,
 } from './permissions/owner-authorization-overlay.ts';
 export {
@@ -310,6 +405,23 @@ export type {
   PrincipalRef,
 } from './permissions/principal-ref.ts';
 export { PrincipalEligibilityLive, principalEligibilityForTransaction } from './permissions/principal-eligibility.ts';
+export {
+  activeAssignmentMember,
+  AssigneeIneligible,
+  AssignablePrincipals,
+  AssignablePrincipalsUnavailable,
+  loadAssignablePrincipalDirectory,
+  loadAssignmentPreflightSnapshot,
+  makeAssignablePrincipals,
+  readAssignablePrincipals,
+  resolveAssignee,
+} from './auth/assignable-principals.ts';
+export type {
+  AssignablePrincipal,
+  AssignablePrincipalDirectory,
+  AssignmentCompanyScope,
+  AssignmentDirectoryMember,
+} from './auth/assignable-principals.ts';
 export {
   AUTHORIZATION_MUTATION_STATES,
   AUTHORIZATION_MUTATION_TRANSITIONS,
@@ -410,6 +522,8 @@ export type {
   ActionResourcePermissionTargetResolver,
   ActionRequirements,
   ActionServiceFactory,
+  ActionServicePreflight,
+  ActionServicePreparation,
   ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
@@ -426,13 +540,21 @@ export type {
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
 export { recoverSqlTransactionError } from './actions/repository.ts';
-export { ActionRuntime, makeActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
+export {
+  ActionExecutionResolutionSchema,
+  ActionRuntime,
+  makeActionRuntimeLive,
+  resolveActionCommit,
+  runAction,
+} from './actions/runtime.ts';
 export type {
   ActionCommitOpen,
+  ActionExecutionResolution,
   ActionRuntimeService,
   ResolveActionCommitInput,
   RunActionInput,
 } from './actions/runtime.ts';
+export { TrustedCompanyPrincipalContextSchema } from './actions/principal-context.ts';
 export {
   ActionTransportMetadataSchema,
   TrustedPrincipalContextSchema,
@@ -441,6 +563,8 @@ export {
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
+  ActionOwnerTransaction,
+  ActionServicePreparationContext,
   ActionTransportMetadata,
   CommittedActionDomainRejection,
   TrustedPrincipalContext,
@@ -504,7 +628,12 @@ export type {
   ReadAccessKind,
   ReadDescriptor,
   ReadEvidenceCaptureMode,
-  ReadHandler,
+  ReadFinish,
+  ReadFinishPipeline,
+  ReadLoad,
+  ReadLoadPipeline,
+  ReadOwnerStages,
+  ReadPrepare,
   ReadPermissionDenialStatus,
   ReadPermissionTarget,
   ReadPermissionTargetResolver,
@@ -514,11 +643,22 @@ export type {
   ReadResourcePermissionDeclaration,
   ReadResourcePermissionTarget,
   ReadResourcePermissionTargetResolver,
+  ReadHandler,
   ReadServiceFactory,
   ResolvedReadPermissionTarget,
   ResolvedReadConditionalPermissionRequirement,
 } from './reads/definition.ts';
-export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from './reads/context.ts';
+export type {
+  ReadEvidenceMetadata,
+  ReadFinishContext,
+  ReadHandlerContext,
+  ReadHandlerResult,
+  ReadLoadContext,
+  ReadOwnerTransaction,
+  ReadPrepareContext,
+} from './reads/context.ts';
+export { IoInsideDatabaseTransaction } from './db/transaction-io-guard.ts';
+export type { TransactionIo } from './db/transaction-io-guard.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
@@ -575,21 +715,18 @@ export {
   makePostgresCoreSearchProjectionStore,
 } from './search/persistence.ts';
 export {
-  CORE_SEARCH_INGESTION_REGISTRATIONS,
-  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
-  CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS,
   CoreSearchIngestion,
   CoreSearchIngestionLive,
   CoreSearchIngestionObservationSchema,
   makeCoreSearchIngestion,
 } from './search/ingestion.ts';
-export type {
-  CoreSearchIngestionObservation,
-  CoreSearchIngestionRegistration,
-  CoreSearchIngestionService,
-  CoreSearchPartyLifecycleTopic,
-  CoreSearchPartyProjectorWorkerKey,
-} from './search/ingestion.ts';
+export type { CoreSearchIngestionObservation, CoreSearchIngestionService } from './search/ingestion.ts';
+export {
+  CoreSearchIngestionRegistry,
+  coreSearchIngestionRegistryLayer,
+  defineCoreSearchIngestionRegistrations,
+} from './search/ingestion-registry.ts';
+export type { CoreSearchIngestionRegistration } from './search/ingestion-registry.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from './search/worker-snapshot.ts';
 export type {
   CoreSearchSnapshotReadExecutor,
@@ -779,6 +916,27 @@ export {
   defineOntosModuleManifest,
 } from './modules/manifest.ts';
 export {
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+  OntosMcpContributionSchema,
+  OntosMcpHidden,
+  OntosMcpRevisionSchema,
+  OntosMcpTextSchema,
+  OntosMcpToolCatalogJsonSchema,
+  OntosMcpToolCatalogReferenceSchema,
+  OntosMcpToolCatalogSchema,
+  OntosMcpToolSchema,
+  defineOntosMcpContribution,
+} from './modules/mcp-contribution.ts';
+export type {
+  OntosMcpContribution,
+  OntosMcpContributionInput,
+  OntosMcpRevision,
+  OntosMcpText,
+  OntosMcpTool,
+  OntosMcpToolTextInput,
+  OntosMcpWriteInput,
+} from './modules/mcp-contribution.ts';
+export {
   OntosShellContributionsSchema,
   ShellMediaAttachmentContributionSchema,
   ShellNavigationContributionSchema,
@@ -866,12 +1024,63 @@ export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action
 export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+export { configureDemoCompaniesAction } from './modules/actions/configure-demo-companies.action.ts';
+export {
+  manageDemoAccountAction,
+  ManageDemoAccountAuditEvidenceSchema,
+  ManageDemoAccountPayloadSchema,
+} from './modules/actions/manage-demo-account.action.ts';
+export type {
+  ManageDemoAccountPayload,
+  ManageDemoAccountResult,
+} from './modules/actions/manage-demo-account.action.ts';
+export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
+export type { DemoAccountGrants } from './install/demo-account-administration.ts';
+export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
+export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
+export type { PrincipalOperators } from './permissions/principal-operators.ts';
+export {
+  agentGrantRelationships,
+  agentModuleAccessOf,
+  isReadPermission,
+  relationshipModuleAccess,
+} from './install/agent-entity-grants.ts';
+export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from './install/agent-entity-grants.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { replaceAgentOperatorsAction } from './modules/actions/replace-agent-operators.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
+export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
+export { setScopedRoleMembershipAction } from './modules/actions/set-scoped-role-membership.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
+
+export {
+  AgentProfileProjectionSchema,
+  DEFAULT_AGENT_PROFILE,
+  foldAgentProfiles,
+} from './auth/agent-profile-projection.ts';
+export type { AgentProfile, AgentProfileAuditRow } from './auth/agent-profile-projection.ts';
+export { AgentProfilesInputSchema, AgentProfilesResultSchema, agentProfilesRead } from './auth/agent-profiles-read.ts';
+export { agentActivityRead } from './auth/agent-activity-read.ts';
+export { agentActivityActorsRead } from './auth/agent-activity-actors-read.ts';
+export {
+  AgentOperatorCommandSchema,
+  CompanyAgentDirectoryInputSchema,
+  CompanyAgentDirectoryResultSchema,
+  companyAgentDirectoryRead,
+} from './auth/company-agent-directory-read.ts';
+export {
+  ReplaceAgentOperatorsAuditEvidenceSchema,
+  ReplaceAgentOperatorsPayloadSchema,
+  ReplaceAgentOperatorsResultSchema,
+} from './modules/actions/agent-operator-command.ts';
+export type {
+  AgentOperatorCommand,
+  ReplaceAgentOperatorsPayload,
+  ReplaceAgentOperatorsResult,
+} from './modules/actions/agent-operator-command.ts';
 
 export {
   defineOutboxWorker,
@@ -945,6 +1154,21 @@ export type {
 // <generated-global-policy-exports>
 // </generated-global-policy-exports>
 
+export {
+  configureAgentAction,
+  ConfigureAgentPayloadSchema,
+  ConfigureAgentResultSchema,
+  ConfigureAgentAuditEvidenceSchema,
+  AgentProfileSchema,
+} from './modules/actions/configure-agent.action.ts';
+export type { ConfigureAgentPayload } from './modules/actions/configure-agent.action.ts';
+export {
+  manageAgentStatusAction,
+  ManageAgentStatusPayloadSchema,
+  ManageAgentStatusResultSchema,
+  ManageAgentStatusAuditEvidenceSchema,
+} from './modules/actions/manage-agent-status.action.ts';
+export type { ManageAgentStatusPayload } from './modules/actions/manage-agent-status.action.ts';
 export {
   humanPrincipalCandidatesForTransaction,
   PrincipalCandidatesUnavailable,

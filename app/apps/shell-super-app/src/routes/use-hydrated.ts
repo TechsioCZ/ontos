@@ -14,3 +14,6 @@ export const useHydrated = (): boolean =>
     () => true,
     () => false,
   );
+
+/** The `data-hydrated` attribute value: present once hydrated, absent before. */
+export const useHydratedMarker = (): true | undefined => (useHydrated() ? true : undefined);

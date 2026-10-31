@@ -1,19 +1,20 @@
 #!/bin/sh
-# Materialize the Outbox Worker host exactly as its zerops.yaml build does, assemble only its
-# deployFiles, and run its real start command until every hosted loop has polled the database and
-# /ready answers. Then stop it with SIGTERM and require a clean exit. A hosted owner whose layer
-# cannot start, a runtime dependency the bundle does not ship, or a shutdown that hangs fails here
-# instead of after the Cloudflare stage deploys it.
+# Run the Outbox Worker host artifact the way the app host starts it until /ready answers and every
+# hosted owner's polling loop has started. Then stop it with SIGTERM and require a clean exit. A hosted owner
+# whose layer cannot start, a runtime dependency the bundle does not ship, or a shutdown that hangs fails here
+# instead of after Zerops deploys it.
 #
 # Usage: sh scripts/prove-outbox-worker-host-artifact.sh <empty-artifact-directory>
+# The host runs on the workspace Node, so the proof needs no Zerops build.
 # The caller supplies the migrated database and SpiceDB environment (see the service-integration job).
 set -eu
 
-artifact="${1:?usage: prove-outbox-worker-host-artifact.sh <empty-artifact-directory>}"
+usage='usage: prove-outbox-worker-host-artifact.sh <empty-artifact-directory>'
+artifact="${1:?$usage}"
 app_directory="$(cd "$(dirname "$0")/.." && pwd)"
-repository="$(cd "$app_directory/.." && pwd)"
 timeout_seconds="${OUTBOX_WORKER_HOST_READY_TIMEOUT_SECONDS:-120}"
 setup='outbox-worker-host'
+runtime="app/.zerops/runtime/$setup"
 
 case "$timeout_seconds" in
   ''|*[!0-9]*)
@@ -33,41 +34,25 @@ if [ -n "$(ls -A "$artifact")" ]; then
 fi
 artifact="$(cd "$artifact" && pwd)"
 
-# One line per field: the materialize command, the deployFiles, the health port, and the start command.
-service="$(cd "$app_directory" && node --input-type=module --eval "
-import { readFileSync } from 'node:fs';
-import { parse } from 'yaml';
-const service = parse(readFileSync('zerops.yaml', 'utf-8')).zerops.find(({ setup }) => setup === '$setup');
-if (service === undefined) {
-  throw new Error('zerops.yaml has no $setup setup');
-}
-const materialize = service.build.buildCommands.find((command) => command.includes('zerops:materialize'));
-process.stdout.write([
-  materialize.slice(materialize.indexOf('pnpm run zerops:materialize')),
-  service.build.deployFiles.join(' '),
-  service.run.envVariables.OUTBOX_WORKER_HEALTH_PORT,
-  service.run.start,
-].join('\n'));
-")"
-materialize="$(printf '%s\n' "$service" | sed -n 1p)"
-deploy_files="$(printf '%s\n' "$service" | sed -n 2p)"
-port="$(printf '%s\n' "$service" | sed -n 3p)"
-start="$(printf '%s\n' "$service" | sed -n 4p)"
+# The app host (scripts/zerops/app-host.mts) starts the bundle on this health port with this command.
+port="${OUTBOX_WORKER_HEALTH_PORT:-4100}"
+start="node $runtime/worker.mjs"
 
-(cd "$app_directory" && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" sh -c "$materialize")
+# Materialize the host as scripts/zerops/build-app.sh does, with every hosted owner built from this checkout.
+(
+  cd "$app_directory"
+  ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
+    pnpm run zerops:materialize --app "$setup" --package 'app' --package-dir '.' --worker
+)
+mkdir -p "$artifact/$(dirname "$runtime")"
+cp -Rp "$app_directory/../$runtime" "$artifact/$runtime"
+if [ ! -f "$artifact/$runtime/worker.mjs" ]; then
+  echo "The Outbox Worker host artifact has no $runtime/worker.mjs" >&2
+  exit 1
+fi
 
-for deploy_file in $deploy_files; do
-  if [ ! -e "$repository/$deploy_file" ]; then
-    echo "Outbox Worker host deployFiles entry $deploy_file does not exist in the build" >&2
-    exit 1
-  fi
-  mkdir -p "$artifact/$(dirname "$deploy_file")"
-  cp -Rp "$repository/$deploy_file" "$artifact/$deploy_file"
-done
-
-# The Zerops build ships its own Node in the runtime's node/; this proof runs the start command with
-# the pinned workspace Node on PATH instead, exec'd so SIGTERM reaches the start command's own shell
-# exactly as the platform delivers it (dash does not exec the last command of `sh -c` itself).
+# The start command falls through to the pinned workspace Node on PATH. It is exec'd so SIGTERM reaches the
+# start command's own shell exactly as the platform delivers it (dash does not exec the last command of `sh -c`).
 # Readiness requires a successful cycle under the complete approved composition. The local proof
 # owns an otherwise empty authority row and a loopback source; neither is a deployment receipt.
 fixture_log="$artifact/outbox-worker-host-proof-fixture.log"
@@ -127,7 +112,7 @@ trap 'exit 143' TERM
 (
   cd "$app_directory"
   exec node scripts/outbox-worker-host-proof-fixture.mts \
-    --worker-artifact "$artifact/app/.zerops/runtime/$setup/worker-artifact.json" \
+    --worker-artifact "$artifact/$runtime/worker-artifact.json" \
     --source-url-file "$source_url_file" \
     --host-stopped-file "$host_stopped_file"
 ) >"$fixture_log" 2>&1 &
@@ -148,15 +133,28 @@ until [ -s "$source_url_file" ]; do
 done
 source_url="$(cat "$source_url_file")"
 
+# The app host (scripts/zerops/app-host.mts derivedEnvironment) derives the Shell gateway and portal origins from
+# its loopback ports and public origins, and hands the Outbox Worker host every hosted owner's secrets. Customer
+# Context's worker requires its portal realm, Core identity transport and enrollment recovery credentials before it
+# starts. The proof supplies proof-only credentials; with an empty journal the workers present them to nobody.
+shell_gateway_base_url='http://127.0.0.1:3020/shell-super-app-api'
+storefront_origin='http://127.0.0.1:3070'
+proof_secret='outbox-worker-host-proof-secret-of-at-least-32-characters'
 log="$artifact/outbox-worker-host.log"
 (
   cd "$artifact"
   exec env \
     NODE_ENV=production \
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="$source_url" \
+    COMMERCE_CORE_IDENTITY_API_KEY="$proof_secret" \
+    COMMERCE_CORE_IDENTITY_BASE_URL="$shell_gateway_base_url" \
+    COMMERCE_PORTAL_AUTH_SECRET="$proof_secret" \
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS="$storefront_origin" \
+    COMMERCE_PORTAL_AUTH_URL="$storefront_origin" \
+    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$proof_secret" \
+    ONTOS_SHELL_GATEWAY_BASE_URL="$shell_gateway_base_url" \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
-    ULTRAMODERN_ZEROPS_SERVICE="$setup" \
     sh -c "exec $start"
 ) >"$log" 2>&1 &
 host=$!

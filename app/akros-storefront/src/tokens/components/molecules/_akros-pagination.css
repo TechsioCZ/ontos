@@ -1,0 +1,6 @@
+@media (max-width: 760px) {
+  .akros-catalog-pagination {
+    --height-pagination-sm: var(--dimension-44);
+    --text-pagination-sm: var(--text-sm);
+  }
+}

@@ -1,11 +1,13 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Logger, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
+import { insideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import {
   makeContextAccess,
+  withRequestPermissionDecisions,
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
   toBusinessPermissionAccessKey,
@@ -199,6 +201,7 @@ it.effect('derives configuration scope from the exact canonical resource type an
         resourceId: 'stable-rule-1',
         resourceType: 'commerce.assortment.stable-rule',
       },
+      resourceScope: 'tenant' as const,
     };
     const ruleRevisionTarget = {
       ...stableRuleTarget,
@@ -215,6 +218,7 @@ it.effect('derives configuration scope from the exact canonical resource type an
         resourceId: 'binding-1',
         resourceType: 'commerce.assortment.applicability-binding',
       },
+      resourceScope: 'legal_entity' as const,
     };
     const boundaryTarget = {
       ...stableRuleTarget,
@@ -223,10 +227,12 @@ it.effect('derives configuration scope from the exact canonical resource type an
         resourceId: 'boundary-1',
         resourceType: 'commerce.assortment.closed-assortment-boundary',
       },
+      resourceScope: 'legal_entity' as const,
     };
+    // A resource type outside its module's namespace is never a valid configuration target.
     const unknownTarget = {
-      ...stableRuleTarget,
-      resource: { ...stableRuleTarget.resource, resourceType: 'commerce.assortment.configuration' },
+      ...bindingTarget,
+      resource: { ...bindingTarget.resource, resourceType: 'foreign.module.configuration' },
     };
 
     expect(toAssortmentPermissionAccessKey(tenantId, undefined, stableRuleTarget)).toBeDefined();
@@ -968,7 +974,14 @@ it.effect('supports empty batches and exact resource filtering', () =>
 it.effect('classifies client, partial, duplicate, malformed, and conditional results as unavailable', () =>
   Effect.gen(function* classifiesUnavailableResults() {
     const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
+    const entries: string[] = [];
+    const diagnostics = Logger.layer([
+      Logger.make((options) => {
+        entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+      }),
+    ]);
     const failures = [
+      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Cause.TimeoutError('secret timeout diagnostic')))),
       makeClient(() => Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic')))),
       makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
       makeClient((request) =>
@@ -996,7 +1009,27 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
           .legalEntities(input)
           .pipe(Effect.map((result) => expect(result).toEqual([{ decision: 'unavailable', key: legalEntityId }]))),
       { concurrency: 1 },
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(diagnostics),
     );
+    expect(entries).toHaveLength(5);
+    for (const [index, failureKind] of [
+      'timeout',
+      'client_failure',
+      'response_count_mismatch',
+      'response_unavailable',
+      'response_request_mismatch',
+    ].entries()) {
+      expect(entries[index]).toContain(`"failureKind":"${failureKind}"`);
+      expect(entries[index]).toContain('"elapsedMs":0');
+      expect(entries[index]).toContain('"operation":"CheckBulkPermissions"');
+      expect(entries[index]).toContain('"requestCount":1');
+    }
+    const logged = entries.join('\n');
+    for (const sensitive of [tenantId, legalEntityId, principalId, 'secret', 'cause', 'resourceId']) {
+      expect(logged).not.toContain(sensitive);
+    }
     expect(
       yield* makeContextAccess(failingClient).legalEntities({
         ...input,
@@ -1006,6 +1039,262 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
       { decision: 'unavailable', key: legalEntityId },
       { decision: 'unavailable', key: legalEntityId },
     ]);
+  }),
+);
+
+const moduleDecisions = {
+  'core.shell': v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+  crm: v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+  'denied.billing': v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+  'missing.crm': v1.CheckPermissionResponse_Permissionship.UNSPECIFIED,
+} as const satisfies Readonly<Record<string, v1.CheckPermissionResponse_Permissionship>>;
+const permissionshipByObjectId = new Map(
+  Object.entries(moduleDecisions).map(([moduleId, permissionship]) => [
+    toModuleAccessObjectId(tenantId, legalEntityId, moduleId),
+    permissionship,
+  ]),
+);
+
+/** Answers module checks from `moduleDecisions` and every other check as allowed. */
+const decidingByModule = (requests: v1.CheckBulkPermissionsRequest[]) =>
+  makeContextAccess(
+    makeClient((request) =>
+      Effect.sync(() => {
+        requests.push(request);
+        return responseFor(
+          request,
+          request.items.map(
+            ({ resource }) =>
+              permissionshipByObjectId.get(resource?.objectId) ??
+              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+          ),
+        );
+      }),
+    ),
+  );
+
+const checkModules = (access: ReturnType<typeof makeContextAccess>, moduleIds: readonly string[]) =>
+  access.modules({ legalEntityId, moduleIds, principalId, tenantId });
+
+it.effect('asks SpiceDB again for every check of work that shares no request decisions', () =>
+  Effect.gen(function* checksWithoutRequestDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    yield* checkModules(access, ['core.shell']);
+    yield* checkModules(access, ['core.shell']);
+    expect(requests.length).toBe(2);
+  }),
+);
+
+it.effect('reuses a request decision by exact check and asks only for the checks it has not asked yet', () =>
+  Effect.gen(function* reusesRequestDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    const [first, second, other] = yield* withRequestPermissionDecisions(
+      Effect.all(
+        [
+          checkModules(access, ['core.shell', 'denied.billing', 'crm']),
+          checkModules(access, ['denied.billing', 'core.shell']),
+          access.legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId }),
+        ],
+        { concurrency: 1 },
+      ),
+    );
+    expect(first).toEqual([
+      { decision: 'allowed', key: 'core.shell' },
+      { decision: 'denied', key: 'denied.billing' },
+      { decision: 'allowed', key: 'crm' },
+    ]);
+    expect(second).toEqual([
+      { decision: 'denied', key: 'denied.billing' },
+      { decision: 'allowed', key: 'core.shell' },
+    ]);
+    expect(other).toEqual([{ decision: 'allowed', key: legalEntityId }]);
+    // The second module check was answered from the request; the legal-entity check is a different check.
+    expect(requests.map(({ items }) => items.length)).toEqual([3, 1]);
+  }),
+);
+
+it.effect('joins a check still in flight instead of asking SpiceDB for it twice', () =>
+  Effect.gen(function* joinsInFlightDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const release = yield* Deferred.make<boolean>();
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => requests.push(request)).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(
+            responseFor(
+              request,
+              request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+            ),
+          ),
+        ),
+      ),
+    );
+    const [first, second] = yield* withRequestPermissionDecisions(
+      Effect.gen(function* overlappingChecks() {
+        const prefetch = yield* Effect.forkChild(checkModules(access, ['core.shell', 'crm']), {
+          startImmediately: true,
+        });
+        const read = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
+        yield* Deferred.succeed(release, true);
+        return [yield* Fiber.join(prefetch), yield* Fiber.join(read)] as const;
+      }),
+    );
+    expect(first.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
+    expect(second).toEqual([{ decision: 'allowed', key: 'crm' }]);
+    expect(requests.length).toBe(1);
+  }),
+);
+
+it.effect('batches different concurrent permission reads and preserves caller ordering and decisions', () =>
+  Effect.gen(function* batchesConcurrentPermissionReads() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    const [first, second, company] = yield* withRequestPermissionDecisions(
+      Effect.all(
+        [
+          checkModules(access, ['core.shell', 'denied.billing']),
+          checkModules(access, ['denied.billing', 'crm', 'core.shell']),
+          access.legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId }),
+        ],
+        { concurrency: 3 },
+      ),
+    );
+    expect(first).toEqual([
+      { decision: 'allowed', key: 'core.shell' },
+      { decision: 'denied', key: 'denied.billing' },
+    ]);
+    expect(second).toEqual([
+      { decision: 'denied', key: 'denied.billing' },
+      { decision: 'allowed', key: 'crm' },
+      { decision: 'allowed', key: 'core.shell' },
+    ]);
+    expect(company).toEqual([{ decision: 'allowed', key: legalEntityId }]);
+    expect(requests.map(({ items }) => items.length)).toEqual([4]);
+    expect(requests[0]?.consistency?.requirement).toEqual({
+      fullyConsistent: true,
+      oneofKind: 'fullyConsistent',
+    });
+  }),
+);
+
+it.effect('keeps concurrent request scopes in separate transport batches', () =>
+  Effect.gen(function* isolatesRequestBatches() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    yield* Effect.all(
+      [
+        withRequestPermissionDecisions(checkModules(access, ['core.shell'])),
+        withRequestPermissionDecisions(checkModules(access, ['core.shell'])),
+      ],
+      { concurrency: 2 },
+    );
+    expect(requests.map(({ items }) => items.length)).toEqual([1, 1]);
+  }),
+);
+
+it.effect('bounds coalesced permission batches without dropping checks', () =>
+  Effect.gen(function* boundsRequestBatches() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    const moduleIds = Array.from({ length: 300 }, (_, index) => `module${index}`);
+    const results = yield* withRequestPermissionDecisions(
+      Effect.all([checkModules(access, moduleIds.slice(0, 150)), checkModules(access, moduleIds.slice(150))], {
+        concurrency: 2,
+      }),
+    );
+    expect(results.flat().map(({ key }) => key)).toEqual(moduleIds);
+    expect(results.flat().every(({ decision }) => decision === 'allowed')).toBe(true);
+    expect(requests.map(({ items }) => items.length)).toEqual([256, 44]);
+  }),
+);
+
+it.live('settles joined decisions on interruption and allows a fresh request-scoped retry', () =>
+  Effect.gen(function* interruptsBatchedPermissionReads() {
+    const started = yield* Deferred.make<boolean>();
+    let attempts = 0;
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(
+                responseFor(
+                  request,
+                  request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+                ),
+              );
+        }),
+      ),
+    );
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* interruptedRequest() {
+        const owner = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
+        yield* Deferred.await(started);
+        const joined = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(owner);
+        expect(yield* Fiber.join(joined)).toEqual([{ decision: 'unavailable', key: 'crm' }]);
+        expect(yield* checkModules(access, ['crm'])).toEqual([{ decision: 'allowed', key: 'crm' }]);
+      }),
+    );
+    expect(attempts).toBe(2);
+  }).pipe(Effect.timeout('2 seconds')),
+);
+
+it.effect('does not retain pending decisions after a batched client defects', () =>
+  Effect.gen(function* retriesAfterBatchDefect() {
+    let attempts = 0;
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Effect.die('Unexpected test client defect')
+            : Effect.succeed(
+                responseFor(
+                  request,
+                  request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+                ),
+              );
+        }),
+      ),
+    );
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* retryRequest() {
+        const failed = yield* Effect.all([checkModules(access, ['crm']), checkModules(access, ['core.shell'])], {
+          concurrency: 2,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(yield* checkModules(access, ['crm', 'core.shell'])).toEqual([
+          { decision: 'allowed', key: 'crm' },
+          { decision: 'allowed', key: 'core.shell' },
+        ]);
+      }),
+    );
+    expect(attempts).toBe(2);
+  }),
+);
+
+it.effect('never reuses an unavailable decision and bypasses request decisions inside a governed transaction', () =>
+  Effect.gen(function* forgetsUnavailableDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* checks() {
+        expect(yield* checkModules(access, ['missing.crm'])).toEqual([{ decision: 'unavailable', key: 'missing.crm' }]);
+        yield* checkModules(access, ['missing.crm']);
+        yield* checkModules(access, ['crm']);
+        yield* checkModules(access, ['crm']).pipe(insideDatabaseTransaction('test.read'));
+      }),
+    ).pipe(Effect.exit);
+    // Unavailable asked twice; `crm` once outside, and the call inside the transaction went to the client (whose
+    // guard refuses it in production) instead of being answered from the request.
+    expect(requests.length).toBe(4);
   }),
 );
 

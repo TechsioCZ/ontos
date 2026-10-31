@@ -13,7 +13,7 @@ export interface ExternalOperationAuthenticationRequest extends Omit<Authenticat
   /** The principal is retained for adapters that bind workload/Tenant authority. */
   readonly principal: TrustedPrincipalContext;
   /** The subject kind is supplied by trusted Core context, never by request payload. */
-  readonly subjectType: 'user' | 'api_key';
+  readonly subjectType: 'user' | 'api_key' | 'oauth_grant';
 }
 
 /**

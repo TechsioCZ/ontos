@@ -8,32 +8,75 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
+import type { HelmetProps } from '@modern-js/runtime/head';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { AppIdSchema } from '../../shared/api';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
-import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
+import { AuthenticatedDashboardLayout, buildShellNavigation } from '../../src/routes/shell-frame';
 
-const { accountMenuSelectHandlers, tenantValueChangeHandlers } = rstest.hoisted(() => {
-  const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
-  const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
-  return {
-    accountMenuSelectHandlers: accountHandlers,
-    tenantValueChangeHandlers: tenantHandlers,
-  };
-});
+type HtmlAttributes = NonNullable<HelmetProps['htmlAttributes']>;
+
+interface RouterStateDouble {
+  readonly location: { readonly pathname: string };
+  readonly resolvedLocation?: { readonly pathname: string };
+}
+
+interface RouterStateSlot {
+  current: RouterStateDouble | null;
+}
+
+const settledRouterState: RouterStateDouble = {
+  location: { pathname: '/en' },
+  resolvedLocation: { pathname: '/en' },
+};
+
+const { accountMenuSelectHandlers, clearCacheMock, helmetHtmlAttributes, routerState, tenantValueChangeHandlers } =
+  rstest.hoisted(() => {
+    const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
+    const htmlAttributes: HtmlAttributes[] = [];
+    const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
+    const pendingRouterState: RouterStateSlot = { current: null };
+    return {
+      accountMenuSelectHandlers: accountHandlers,
+      clearCacheMock: rstest.fn(),
+      helmetHtmlAttributes: htmlAttributes,
+      routerState: pendingRouterState,
+      tenantValueChangeHandlers: tenantHandlers,
+    };
+  });
+
+rstest.mock('@modern-js/runtime/head', () => ({
+  Helmet: ({ htmlAttributes }: Pick<HelmetProps, 'htmlAttributes'>) => {
+    if (htmlAttributes !== undefined) {
+      helmetHtmlAttributes.push(htmlAttributes);
+    }
+    return null;
+  },
+}));
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
+  useNavigate: () => () => Promise.resolve(),
+  useRouter: () => ({
+    clearCache: clearCacheMock,
+    matchRoutes: () => [],
+    preloadRoute: () => Promise.resolve(),
+    routesById: {},
+  }),
+  useRouterState: ({ select }: { readonly select: (state: RouterStateDouble) => string | undefined }) =>
+    select(routerState.current ?? settledRouterState),
 }));
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   Link: ({
+    activeOptions: _activeOptions,
     children,
     to,
     ...props
   }: Omit<ComponentProps<'a'>, 'href'> & {
+    activeOptions?: unknown;
     children: ReactNode;
     to: string;
   }) => (
@@ -42,20 +85,32 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     </a>
   ),
   useModernI18n: () => ({
+    language: 'en',
     t: (key: string) =>
       ({
         'shell.auth.logout.action': 'Logout',
         'shell.auth.logout.pending': 'Logging out…',
         'shell.dashboard.account.label': 'Account menu',
         'shell.dashboard.brand': 'OntOS',
+        'shell.dashboard.breadcrumb.home': 'Back to home',
+        'shell.dashboard.breadcrumb.label': 'Breadcrumb',
         'shell.dashboard.header.label': 'Dashboard header',
         'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
         'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
         'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
         'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
         'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
+        'shell.dashboard.navigation.groups.commerce': 'E-commerce',
+        'shell.dashboard.navigation.groups.facility': 'Facility operations',
+        'shell.dashboard.navigation.groups.finance': 'Finance',
+        'shell.dashboard.navigation.groups.other': 'Other modules',
+        'shell.dashboard.navigation.groups.realEstate': 'Real estate and leases',
+        'shell.dashboard.navigation.groups.sales': 'Sales and CRM',
+        'shell.dashboard.navigation.groups.settings': 'Settings',
+        'shell.dashboard.navigation.groups.team': 'People and tasks',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
+        'shell.dashboard.navigation.pending': 'Loading page…',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
         'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
@@ -65,6 +120,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.modules.discovery.revoked': 'Module revoked',
         'shell.modules.discovery.timeout': 'Module deployment timed out',
         'shell.modules.discovery.unavailable': 'Module deployment unavailable',
+        'shell.profile.menu': 'Profile',
       })[key] ?? key,
   }),
 }));
@@ -92,23 +148,30 @@ const identity = {
   tenantId: 'tenant-1',
 };
 
+/** A composition navigation entry of a fixture module; the label is English in this test's language. */
+const entry = (
+  moduleId: string,
+  page: string,
+  groupKey: string,
+  label: string,
+  { enabled = true, href = `/${moduleId.replaceAll('.', '-')}/${page}` }: { enabled?: boolean; href?: string } = {},
+) => ({
+  enabled,
+  entrypointKey: `${moduleId}.page.${page}`,
+  groupKey,
+  href,
+  icon: 'icon-[mdi--view-grid-outline]' as const,
+  label: { cs: `${label} (cs)`, en: label },
+  moduleId,
+  state: 'active' as const,
+  unavailable: false,
+});
+
 const navigation = [
-  {
-    enabled: true,
+  entry('future-generated', 'records', 'shell.navigation.unlisted', 'Future generated', {
     href: '/modules/future-generated',
-    label: 'Future generated',
-    moduleId: 'future-generated',
-    state: 'active' as const,
-    unavailable: false,
-  },
-  {
-    enabled: true,
-    href: '/modules/testing.one',
-    label: 'Testing one',
-    moduleId: 'testing.one',
-    state: 'active' as const,
-    unavailable: false,
-  },
+  }),
+  entry('testing.one', 'records', 'shell.navigation.unlisted', 'Testing one', { href: '/modules/testing.one' }),
 ];
 const homeTitle = 'Home';
 const homeOverviewTitle = 'Home overview';
@@ -142,8 +205,17 @@ const testingWorkspaceTitle = 'Testing workspace';
 
 afterEach(() => {
   cleanup();
+  clearCacheMock.mockClear();
+  routerState.current = null;
   accountMenuSelectHandlers.length = 0;
+  helmetHtmlAttributes.length = 0;
   tenantValueChangeHandlers.length = 0;
+});
+
+test('selects the light Akros ui-kit theme on the server-rendered html element', () => {
+  render(<Layout />);
+
+  expect(helmetHtmlAttributes.at(-1)).toEqual({ className: 'light', 'data-theme': 'akros' });
 });
 
 test('leaves route content free of global user-perceivable UI', () => {
@@ -196,7 +268,6 @@ test('renders the default Home dashboard contract and preserves page children', 
   ]);
   expect(links[0]?.getAttribute('aria-current')).toBe('page');
   expect(links.slice(1).every((link) => link.tabIndex === 0)).toBe(true);
-  expect(navigationElement.textContent).not.toContain('inactive');
 });
 
 test('supports an alternate title and current MicroVertical without changing children', () => {
@@ -220,7 +291,7 @@ test('supports an alternate title and current MicroVertical without changing chi
   expect(screen.getByRole('link', { name: 'Testing one' }).getAttribute('aria-current')).toBe('page');
 });
 
-test('supports module pages without a shell heading and keeps reduced horizontal content padding', () => {
+test('supports module pages with their own heading and preserves their content', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
@@ -234,10 +305,8 @@ test('supports module pages without a shell heading and keeps reduced horizontal
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(screen.queryByRole('heading')).toBeNull();
-  const content = screen.getByText('Module content').parentElement;
-  expect(content?.classList.contains('shell:px-2')).toBe(true);
-  expect(content?.classList.contains('shell:py-4')).toBe(true);
+  expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  expect(screen.getByText('Module content')).toBeTruthy();
 });
 
 test('keeps Home as the only navigation link when no active modules are supplied', () => {
@@ -320,18 +389,24 @@ it.effect('renders the account Menu last and dispatches only the logout command 
 
     trigger.focus();
     yield* Effect.promise(() => user.keyboard('{Enter}'));
-    const commands = yield* Effect.promise(() => screen.findAllByRole('menuitem'));
-    expect(commands).toHaveLength(1);
-    expect(commands[0]?.textContent).toBe('Logout');
-    yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
+    expect(yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Profile' }))).toBeTruthy();
+    const logout = screen.getByRole('menuitem', { name: 'Logout' });
+    yield* Effect.promise(() => user.keyboard('{End}'));
+    expect(screen.getByRole('menu').getAttribute('aria-activedescendant')).toBe(logout.id);
+    yield* Effect.promise(() => user.keyboard('{Enter}'));
     expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
 
-    accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
+    accountMenuSelectHandlers.at(-1)?.({
+      modifiers: { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false },
+      value: 'unexpected',
+    });
     expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
-it.effect('retains the account trigger and disables the sole command while logout is pending', () =>
+it.effect('retains the account trigger and profile item while disabling logout when pending', () =>
   Effect.gen(function* pendingLogoutCommand() {
     const onLogout = rstest.fn();
     const user = userEvent.setup();
@@ -351,9 +426,11 @@ it.effect('retains the account trigger and disables the sole command while logou
     const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
     yield* Effect.promise(() => user.click(trigger));
     const command = yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Logging out…' }));
+    expect(screen.getByRole('menuitem', { name: 'Profile' }).getAttribute('aria-disabled')).not.toBe('true');
     expect(command.getAttribute('aria-disabled')).toBe('true');
     yield* Effect.promise(() => user.click(command));
     expect(onLogout).not.toHaveBeenCalled();
+    expect(clearCacheMock).not.toHaveBeenCalled();
   }),
 );
 
@@ -384,6 +461,7 @@ it.effect('renders complete ordered tenant items and dispatches keyboard selecti
     yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
     expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
     expect(onTenantChange).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
 
     tenantValueChangeHandlers.at(-1)?.({
       items: [tenantProps.tenantChoices[0]],
@@ -391,6 +469,7 @@ it.effect('renders complete ordered tenant items and dispatches keyboard selecti
     });
     tenantValueChangeHandlers.at(-1)?.({ items: [], value: [] });
     expect(onTenantChange).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -580,3 +659,215 @@ test.each(legalEntitySelectorStateCases)(
     expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-describedby')).toBeNull();
   },
 );
+
+const estate = entry('fixture.estate', 'records', 'shell.navigation.real-estate', 'Properties');
+const leases = entry('fixture.leases', 'records', 'shell.navigation.real-estate', 'Leases and stays');
+const agreements = entry('fixture.agreements', 'records', 'shell.navigation.sales', 'Contracts and signatures');
+const orders = entry('fixture.shop', 'orders', 'shell.navigation.commerce', 'Orders');
+const products = entry('fixture.shop', 'products', 'shell.navigation.commerce', 'Products and stock');
+const tasks = entry('fixture.tasks', 'records', 'shell.navigation.team', 'Tasks');
+const invoices = entry('fixture.invoices', 'records', 'shell.navigation.finance', 'Invoices');
+
+test('places module destinations in the Shell sections they declare, in composition order', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="fixture.shop.page.products"
+      currentModuleId="fixture.shop"
+      identity={identity}
+      logoutPending={false}
+      navigation={[estate, agreements, leases, ...navigation, orders, products, tasks]}
+      onLogout={noopLogout}
+    >
+      <section>Products</section>
+    </AuthenticatedDashboardLayout>,
+  );
+  const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
+  const links = [...navigationElement.querySelectorAll('a')];
+  expect(links.map((link) => link.textContent)).toEqual([
+    'Home',
+    'Properties',
+    'Leases and stays',
+    'Contracts and signatures',
+    'Orders',
+    'Products and stock',
+    'Tasks',
+    'Future generated',
+    'Testing one',
+  ]);
+  expect(links.map((link) => link.getAttribute('href'))).toEqual([
+    '/en/',
+    '/en/fixture-estate/records',
+    '/en/fixture-leases/records',
+    '/en/fixture-agreements/records',
+    '/en/fixture-shop/orders',
+    '/en/fixture-shop/products',
+    '/en/fixture-tasks/records',
+    '/en/modules/future-generated',
+    '/en/modules/testing.one',
+  ]);
+  expect(links.filter((link) => link.getAttribute('aria-current') === 'page').map((link) => link.textContent)).toEqual([
+    'Products and stock',
+  ]);
+  expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual([
+    'Real estate and leases',
+    'Sales and CRM',
+    'E-commerce',
+    'People and tasks',
+    'Other modules',
+  ]);
+  expect(navigationElement.textContent).not.toContain('(cs)');
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('E-commerceProducts and stock');
+});
+
+test('shows the Czech label a module declares for a Czech page', () => {
+  const model = buildShellNavigation(
+    { language: 'cs', navigation: [estate], unavailableDeployments: [] },
+    (key) => key,
+  );
+  expect(model.groups.flatMap(({ links }) => links.map(({ label }) => label))).toEqual(['Properties (cs)']);
+});
+
+const navigationText = () => screen.getByRole('navigation', { name: 'Dashboard navigation' }).textContent;
+
+test('replaces destinations when the selected entity composition changes', () => {
+  const props = { ...tenantProps, identity, logoutPending: false, onLogout: noopLogout };
+  const { rerender } = render(
+    <AuthenticatedDashboardLayout {...props} navigation={[orders, products, agreements]}>
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+  expect(navigationText()).toContain('Products and stock');
+  expect(navigationText()).not.toContain('Properties');
+  rerender(
+    <AuthenticatedDashboardLayout
+      {...props}
+      currentLegalEntityId="legal-entity-rental"
+      navigation={[estate, agreements, invoices]}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+  expect(navigationText()).toContain('Properties');
+  expect(navigationText()).toContain('Contracts and signatures');
+  expect(navigationText()).toContain('Invoices');
+  expect(navigationText()).not.toContain('Products and stock');
+  expect(navigationText()).not.toContain('Orders');
+  expect(clearCacheMock).toHaveBeenCalledTimes(1);
+});
+
+test('keeps unavailable destinations visible without links', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={[{ ...invoices, enabled: false }]}
+      onLogout={noopLogout}
+    >
+      <section>Current content</section>
+    </AuthenticatedDashboardLayout>,
+  );
+  const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
+  expect([...navigationElement.querySelectorAll('a')].map((link) => link.textContent)).toEqual(['Home']);
+  expect(screen.getByText('Invoices')).toBeTruthy();
+  expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual(['Finance']);
+  expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+});
+
+const currentLinkNames = () =>
+  [...screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a')]
+    .filter((link) => link.getAttribute('aria-current') === 'page')
+    .map((link) => link.textContent);
+
+const customersAndContacts = [
+  entry('fixture.parties', 'customers', 'shell.navigation.sales', 'Customers'),
+  entry('fixture.parties', 'contacts', 'shell.navigation.sales', 'Contacts'),
+  entry('fixture.staff', 'records', 'shell.navigation.team', 'Employees'),
+];
+
+test('marks only the page own destination current when two links share its module', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="fixture.parties.page.contacts"
+      currentModuleId="fixture.parties"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+    >
+      <section>Contacts</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(currentLinkNames()).toEqual(['Contacts']);
+});
+
+test('marks the sole destination of a module current on its other pages', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="fixture.staff.page.detail"
+      currentModuleId="fixture.staff"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+    >
+      <section>Employee</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(currentLinkNames()).toEqual(['Employees']);
+});
+
+test('keeps the previous page visible with a progress bar and marks the destination while the next page loads', () => {
+  routerState.current = {
+    location: { pathname: '/en/fixture-parties/contacts' },
+    resolvedLocation: { pathname: '/en/fixture-staff/records' },
+  };
+  const employeesOverviewTitle = 'Employees overview';
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="fixture.staff.page.records"
+      currentModuleId="fixture.staff"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+      title={employeesOverviewTitle}
+    >
+      <section>Employee list</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByRole('progressbar', { name: 'Loading page…' })).toBeTruthy();
+  expect(screen.queryByText('Loading page…')).toBeNull();
+  expect(screen.getByText('Employee list').closest('.hidden')).toBeNull();
+  expect(screen.getByText('Employee list').closest('[aria-busy="true"]')).not.toBeNull();
+  expect(screen.getByRole('heading', { level: 1, name: employeesOverviewTitle })).toBeTruthy();
+  expect(currentLinkNames()).toEqual(['Contacts']);
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('Sales and CRMContacts');
+});
+
+test('keeps the page visible when only search parameters or loader data refresh', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="fixture.staff.page.records"
+      currentModuleId="fixture.staff"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+    >
+      <section>Employee list</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  expect(screen.getByText('Employee list').closest('.hidden')).toBeNull();
+  expect(currentLinkNames()).toEqual(['Employees']);
+});

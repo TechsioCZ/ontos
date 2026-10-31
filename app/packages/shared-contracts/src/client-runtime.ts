@@ -16,13 +16,13 @@ export type EffectBffOperationContext = typeof EffectBffOperationContextSchema.T
 export interface EffectBffRequestContext {
   readonly locale?: string;
   readonly operationContext?: EffectBffOperationContext;
-  // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- #358 requires this browser client seam to accept and propagate the standard W3C transport field.
   readonly traceparent?: string;
 }
 
 export interface EffectBffClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;
+  readonly referenceCredentials?: Redacted.Redacted;
   readonly requestContext?: EffectBffRequestContext;
   /** Owner-resolved transport headers; undefined values stay absent on the wire. */
   readonly transportHeaders?: HttpHeaders.Input;
@@ -112,7 +112,7 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     requestCorrelation,
     requestTrace,
   }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision'>,
+  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
   // Header construction skips undefined values, so absent optional headers stay absent.
@@ -121,6 +121,8 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     'idempotency-key': idempotencyKey,
     'x-correlation-id': requestCorrelation,
     'x-ontos-composition-revision': options.compositionRevision,
+    'x-ontos-reference-credentials':
+      options.referenceCredentials === undefined ? undefined : Redacted.value(options.referenceCredentials),
     'x-trace-id': requestTrace,
   };
   return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(

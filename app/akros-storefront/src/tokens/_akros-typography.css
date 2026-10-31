@@ -1,0 +1,5 @@
+:root {
+  --font-sans: var(--font-akros);
+  --font-body: var(--font-sans);
+  --font-heading: var(--font-sans);
+}

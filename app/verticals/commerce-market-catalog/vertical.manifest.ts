@@ -23,6 +23,7 @@ import { storefrontAssociationResourceDescriptor } from './shared/resources/stor
 import { suspendMarketAction } from './src/actions/suspend-market.action.ts';
 import { VerifyMarketEligibilityV1Api } from './shared/apis/verify-market-eligibility-v1.ts';
 // </generated-module-manifest-imports>
+import { commerceMarketCatalogMcpContribution } from './shared/mcp/contribution.ts';
 
 export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -70,6 +71,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: commerceMarketCatalogMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

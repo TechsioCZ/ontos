@@ -246,6 +246,15 @@ export const makeCommerceEnrollmentCommitResolutionService = (
           'commit_resolution_invocation_not_found',
           'The original invocation is unknown to the Action runtime',
         ),
+        ActionInvocationPersistenceError: (failure) =>
+          Effect.fail(
+            unavailable(
+              originalInvocationId,
+              'commit_resolution_indeterminate',
+              'The Action runtime could not read the original invocation commit state',
+              failure,
+            ),
+          ),
         ActionInvocationStateError: onInvocationStateError,
         ActionPayloadValidationError: rejectWith(
           originalInvocationId,

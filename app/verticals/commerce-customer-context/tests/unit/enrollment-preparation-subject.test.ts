@@ -14,6 +14,8 @@ import type {
   ReservePrincipalBindingRequest,
 } from '@app/shared-contracts/server/external-identity-client';
 
+import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../shared/portal-auth-enrollment-reference.ts';
+
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import {
   EnrollmentAttemptSnapshotSchema,
@@ -119,17 +121,29 @@ const storeFor = (
 ): CommerceEnrollmentOwnerAttemptStore => ({
   claimTransition: () => Effect.die('The resolver must never claim a transition'),
   read: () => Effect.succeed(attempt),
-  readOwnerOperation: () =>
-    operation === undefined
-      ? Effect.fail(
-          new CommerceEnrollmentAttemptNotFound({
-            attemptId: attempt.portalEnrollmentAttemptId,
-            code: 'attempt_not_found',
-            reason: 'No Party transition has been journaled for this Attempt',
-            retryable: false,
-          }),
-        )
-      : Effect.succeed(operation),
+  readOwnerOperation: (input) => {
+    if (input.ownerModuleKey === 'commerce.portal-auth') {
+      return Effect.succeed(
+        Schema.decodeSync(Schema.toType(EnrollmentOwnerOperationSnapshotSchema))({
+          ...partyOperationFor({ status: 'SUCCEEDED' }),
+          ownerModuleKey: input.ownerModuleKey,
+          portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          transitionKey: input.transitionKey,
+        }),
+      );
+    }
+    if (operation === undefined) {
+      return Effect.fail(
+        new CommerceEnrollmentAttemptNotFound({
+          attemptId: attempt.portalEnrollmentAttemptId,
+          code: 'attempt_not_found',
+          reason: 'No Party transition has been journaled for this Attempt',
+          retryable: false,
+        }),
+      );
+    }
+    return Effect.succeed(operation);
+  },
   reconcileOutcome: () => Effect.die('The resolver must never reconcile an outcome'),
   recordOutcome: () => Effect.die('The resolver must never record an outcome'),
 });
@@ -279,6 +293,18 @@ it.effect('reserves and activates under keys derived from the Attempt, so a re-r
       client,
     );
 
+    const reserveProofs = recorded.reservePayloads.map((payload) =>
+      Schema.decodeUnknownSync(CommerceEnrollmentAuthenticationReferenceJsonSchema)(payload.authenticationRef),
+    );
+    expect(reserveProofs.map((proof) => proof.enrollmentAttemptId)).toEqual([ATTEMPT_ID, ATTEMPT_ID, OTHER_ATTEMPT_ID]);
+    for (const proof of reserveProofs) {
+      expect(proof.kind).toBe('commerce-enrollment-binding.v1');
+      expect(proof.providerOwnerOperationId).toBe('60000000-0000-4000-8000-000000000001');
+      expect(proof.sellingLegalEntityId).toBe(attempt.targetLegalEntityId);
+    }
+    expect(recorded.activatePayloads.map((payload) => payload.authenticationRef)).toEqual(
+      recorded.reservePayloads.map((payload) => payload.authenticationRef),
+    );
     expect(first.principalRef).toStrictEqual(second.principalRef);
     // Both runs present the same idempotency key, so Core replays the first binding instead of
     // reserving a second one. Deriving the key from a fresh invocation id breaks exactly this.

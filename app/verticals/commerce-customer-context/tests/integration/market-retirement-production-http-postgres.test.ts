@@ -65,6 +65,7 @@ import { makeAcceptanceGatewayIssuer } from '../support/enrollment-acceptance-id
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { jsonBody } from '../support/response.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const ORIGIN = 'http://commerce-customer-context.retirement.test';
 const AUDIENCE = 'commerce-customer-context';
@@ -454,6 +455,7 @@ it.live(
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
@@ -636,6 +638,7 @@ it.live(
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
@@ -786,6 +789,7 @@ it.live(
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));

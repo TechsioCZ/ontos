@@ -1,13 +1,15 @@
 import { Config, Context, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema, Stream } from 'effect';
-import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
+import { NodeHttpClient } from '@effect/platform-node';
+import { HttpBody, HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
+import type { HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 
 /**
  * Minimal adapter over the Zerops public REST API for the operations the deploy runs without zcli: project
- * variables, service stops, and subdomain access. Responses are decoded, never logged, because
- * project variable listings can contain secrets. The token is read per request, so commands that
- * never call Zerops need no credentials.
+ * variables, service stops, subdomain access and the outbox host's staged application version. Responses are
+ * decoded, never logged, because project variable listings can contain secrets. The token is read per request, so
+ * commands that never call Zerops need no credentials.
  */
 export const ZEROPS_PUBLIC_API_URL = 'https://api.app-prg1.zerops.io/api/rest/public';
 
@@ -19,6 +21,8 @@ const REQUEST_TIMEOUT = Duration.seconds(30);
 const PROJECT_ENV_FILE_QUERY = 'name=&overrideEnvIsolation=none&userOnly=false&reveal=false';
 const PROCESS_POLL_INTERVAL = Duration.seconds(3);
 const PROCESS_TIMEOUT = Duration.minutes(15);
+/** A package upload sends the whole prebuilt runtime (about 100 MB) to the version's signed URL. */
+const UPLOAD_TIMEOUT = Duration.minutes(10);
 const STOP_READBACK_TIMEOUT = Duration.seconds(60);
 
 const ZeropsClientIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsClientId'));
@@ -59,11 +63,33 @@ const SERVICE_STACK_NOT_FOUND = 'serviceStackNotFound';
 const ErrorBodySchema = Schema.Struct({ error: Schema.Struct({ code: Schema.String }) });
 const EnvFileSchema = Schema.Struct({ envFile: Schema.String });
 const ServiceUserDataPageSchema = Schema.Struct({
-  list: Schema.Array(Schema.Struct({ content: Schema.String, key: Schema.String })),
+  list: Schema.Array(Schema.Struct({ content: Schema.String, id: Schema.String, key: Schema.String })),
   total: Schema.Number,
 });
 /** The page size for service user data listings; `total` tells whether another page follows. */
 const SERVICE_USER_DATA_PAGE = 100;
+export const ZeropsServiceStackIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsServiceStackId'));
+/** A created application version and the signed URL its package uploads to. */
+const CreatedAppVersionSchema = Schema.Struct({
+  id: Schema.NonEmptyString,
+  serviceStackId: ZeropsServiceStackIdSchema,
+  uploadUrl: Schema.NonEmptyString,
+});
+const AppVersionSchema = Schema.Struct({
+  id: Schema.NonEmptyString,
+  serviceStackId: ZeropsServiceStackIdSchema,
+  /** Zerops lifecycle status, such as `UPLOADING`, `WAITING_TO_DEPLOY`, `DEPLOYING` or `ACTIVE`. */
+  status: Schema.String,
+});
+
+export type ZeropsAppVersion = typeof AppVersionSchema.Type;
+
+/** A service's own user data entry (its secrets), with the value redacted. */
+export interface ZeropsServiceUserData {
+  readonly content: Redacted.Redacted;
+  readonly id: string;
+  readonly key: string;
+}
 
 export type ZeropsProjectEnv = typeof ProjectEnvSchema.Type;
 export type ZeropsServiceStack = typeof ServiceStackSchema.Type;
@@ -75,12 +101,35 @@ interface ProjectEnvBody {
   readonly sensitive: boolean;
 }
 
+interface AppVersionBody {
+  readonly name: string;
+}
+
+interface DeployBody {
+  readonly zeropsYaml: string;
+  readonly zeropsYamlSetup: string;
+}
+
 interface ProjectSearchBody {
   readonly search: readonly { readonly name: string; readonly operator: 'eq'; readonly value: string }[];
   readonly sort: readonly never[];
 }
 
 const failure = (message: string) => (cause: unknown) => new ZeropsApiError({ cause, message });
+
+/** Zerops answers a rejected request with a machine error code; it never carries a token, URL or secret value. */
+const ZeropsErrorBodySchema = Schema.Struct({ error: Schema.Struct({ code: Schema.String }) });
+
+const rejection = (
+  response: HttpClientResponse.HttpClientResponse,
+  message: string,
+): Effect.Effect<never, ZeropsApiError> =>
+  response.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ZeropsErrorBodySchema)),
+    Effect.map(({ error }) => `: HTTP ${String(response.status)} ${error.code}`),
+    Effect.orElseSucceed(() => `: HTTP ${String(response.status)}`),
+    Effect.flatMap((detail) => Effect.fail(new ZeropsApiError({ message: `${message}${detail}` }))),
+  );
 
 const terminalProcessStatuses: ReadonlySet<string> = new Set(['CANCELED', 'FAILED', 'FINISHED']);
 
@@ -97,14 +146,34 @@ export const parseZeropsEnvFile = (envFile: string): ReadonlyMap<string, string>
   );
 
 export interface ZeropsPublicApiService {
+  /** Reads one application version. */
+  readonly appVersion: (appVersionId: string) => Effect.Effect<ZeropsAppVersion, ZeropsApiError>;
+  /**
+   * Creates an inactive application version on a service, as `zcli service deploy` does first. The signed upload URL
+   * is a credential: it stays redacted and is never rendered.
+   */
+  readonly createAppVersion: (
+    serviceId: string,
+    name: string,
+  ) => Effect.Effect<{ readonly id: string; readonly uploadUrl: Redacted.Redacted }, ZeropsApiError>;
   /** Creates a sensitive secret on one service (a Zerops service "user data" entry) and waits until Zerops applied it. */
   readonly createServiceSecret: (
     serviceId: string,
     key: string,
     content: string,
   ) => Effect.Effect<void, ZeropsApiError>;
+  /** Deletes an application version. */
+  readonly deleteAppVersion: (appVersionId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Permanently deletes a service and waits for the native deletion process to finish. */
   readonly deleteService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
+  /** Deletes every secret named `key` on one service and waits until Zerops applied each deletion. */
+  readonly deleteServiceSecret: (serviceId: string, key: string) => Effect.Effect<void, ZeropsApiError>;
+  /** Deploys an uploaded application version with the given zerops.yaml setup and waits for the deploy process. */
+  readonly deployAppVersion: (
+    appVersionId: string,
+    zeropsYaml: string,
+    setup: string,
+  ) => Effect.Effect<void, ZeropsApiError>;
   readonly enableSubdomainAccess: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Reads a service like `serviceStack`, but a deleted or unknown service is `None` rather than an error. */
   readonly findServiceStack: (serviceId: string) => Effect.Effect<Option.Option<ZeropsServiceStack>, ZeropsApiError>;
@@ -119,8 +188,19 @@ export interface ZeropsPublicApiService {
    */
   readonly serviceSecrets: (serviceId: string) => Effect.Effect<ReadonlyMap<string, Redacted.Redacted>, ZeropsApiError>;
   readonly serviceStack: (serviceId: string) => Effect.Effect<ZeropsServiceStack, ZeropsApiError>;
+  /** Every user data entry (secret) on one service, values redacted, including repeated keys. */
+  readonly serviceUserData: (serviceId: string) => Effect.Effect<readonly ZeropsServiceUserData[], ZeropsApiError>;
   /** Waits for the native stop process and independently reads the service as STOPPED. */
   readonly stopService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
+  /**
+   * Uploads an application version's package (a gzip tar, as zcli packs it) to its signed upload URL over HTTP/1.1
+   * (`putPackageOverHttp1`). The request carries no Zerops token, and neither the URL nor the response reaches an
+   * error.
+   */
+  readonly uploadAppVersionPackage: (
+    uploadUrl: Redacted.Redacted,
+    archive: Uint8Array,
+  ) => Effect.Effect<void, ZeropsApiError>;
   /** Creates the project variable, or updates it in place when it exists, and waits until Zerops applied it. */
   readonly upsertProjectEnv: (
     projectId: string,
@@ -130,6 +210,24 @@ export interface ZeropsPublicApiService {
     sensitive: boolean,
   ) => Effect.Effect<void, ZeropsApiError>;
 }
+
+/**
+ * The client package uploads run on: Node's own HTTP/1.1 client, never fetch. Node's fetch negotiates HTTP/2 with
+ * Zerops' upload proxy, whose per-stream flow-control window holds one upload to about 64 KB per round trip (about
+ * 0.4 MB/s from a runner 150 ms away, against about 6 MB/s over HTTP/1.1 on the same path). Zerops answers 200 to an
+ * upload that ran longer than about a minute but keeps none of its data, and the deploy then fails with "failed to
+ * identify artifact file format".
+ */
+interface ZeropsPackageUploadClientId {
+  readonly ZeropsPackageUploadClient: never;
+}
+export const ZeropsPackageUploadClient = Context.Service<ZeropsPackageUploadClientId, HttpClient.HttpClient>(
+  'ontos/ZeropsPackageUploadClient',
+);
+
+export const ZeropsPackageUploadClientLive = Layer.effect(ZeropsPackageUploadClient, HttpClient.HttpClient).pipe(
+  Layer.provide(NodeHttpClient.layerNodeHttp),
+);
 
 export class ZeropsPublicApi extends Context.Service<ZeropsPublicApi, ZeropsPublicApiService>()(
   '@app/scripts/zerops-public-api/ZeropsPublicApi',
@@ -231,6 +329,7 @@ const awaitStoppedService = Effect.fn('ZeropsPublicApi.awaitStoppedService')(fun
 });
 
 const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
+  const uploadClient = yield* ZeropsPackageUploadClient;
   const baseClient = yield* HttpClient.HttpClient;
   const authorizedClient = baseClient.pipe(
     HttpClient.mapRequestEffect((request) =>
@@ -242,10 +341,16 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   const client = authorizedClient.pipe(HttpClient.filterStatusOk);
 
   const send = <A, I>(request: HttpClientRequest.HttpClientRequest, schema: Schema.Codec<A, I>, label: string) =>
-    client.execute(request).pipe(
-      Effect.flatMap((response) => response.json),
-      Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+    authorizedClient.execute(request).pipe(
       Effect.mapError(failure(`Zerops ${label} failed`)),
+      Effect.flatMap((response) =>
+        response.status >= 200 && response.status < 300
+          ? response.json.pipe(Effect.mapError(failure(`Zerops ${label} failed`)))
+          : rejection(response, `Zerops ${label} failed`),
+      ),
+      Effect.flatMap((body) =>
+        Schema.decodeUnknownEffect(schema)(body).pipe(Effect.mapError(failure(`Zerops ${label} failed`))),
+      ),
       Effect.timeoutOrElse({
         duration: REQUEST_TIMEOUT,
         orElse: () => Effect.fail(new ZeropsApiError({ message: `Zerops ${label} timed out` })),
@@ -255,7 +360,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   const get = <A, I>(path: string, schema: Schema.Codec<A, I>, label: string) =>
     send(HttpClientRequest.get(`${ZEROPS_PUBLIC_API_URL}${path}`), schema, label);
 
-  const withJson = <Body extends ProjectEnvBody | ProjectSearchBody, A, I>(
+  const withJson = <Body extends DeployBody | ProjectEnvBody | ProjectSearchBody, A, I>(
     request: HttpClientRequest.HttpClientRequest,
     body: Body,
     schema: Schema.Codec<A, I>,
@@ -345,8 +450,10 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     yield* awaitProcess(process, `service secret ${key}`);
   });
 
-  const serviceSecrets = Effect.fn('ZeropsPublicApi.serviceSecrets')(function* readServiceSecrets(serviceId: string) {
-    const secrets = new Map<string, Redacted.Redacted>();
+  const serviceUserData = Effect.fn('ZeropsPublicApi.serviceUserData')(function* readServiceUserData(
+    serviceId: string,
+  ) {
+    const entries: (typeof ServiceUserDataPageSchema.Type)['list'][number][] = [];
     let offset = 0;
     let total = 1;
     while (offset < total) {
@@ -355,16 +462,115 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
         ServiceUserDataPageSchema,
         'service secret list',
       );
-      for (const { content, key } of page.list) {
-        secrets.set(key, Redacted.make(content));
-      }
+      entries.push(...page.list);
       if (page.list.length === 0) {
         break;
       }
       offset += page.list.length;
       ({ total } = page);
     }
+    return entries;
+  });
+
+  const createAppVersion = Effect.fn('ZeropsPublicApi.createAppVersion')(function* createAppVersion(
+    serviceId: string,
+    name: string,
+  ) {
+    // The answer carries the signed upload URL, so no failure keeps the response or its decoding as a cause.
+    const created = yield* client
+      .execute(
+        HttpClientRequest.bodyJsonUnsafe(
+          HttpClientRequest.post(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}/app-version`),
+          { name } satisfies AppVersionBody,
+        ),
+      )
+      .pipe(
+        Effect.flatMap((response) => response.json),
+        Effect.flatMap(Schema.decodeUnknownEffect(CreatedAppVersionSchema)),
+        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops application version create failed' })),
+        Effect.timeoutOrElse({
+          duration: REQUEST_TIMEOUT,
+          orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops application version create timed out' })),
+        }),
+      );
+    if (created.serviceStackId !== serviceId) {
+      return yield* new ZeropsApiError({ message: 'Zerops created the application version on another service' });
+    }
+    return { id: created.id, uploadUrl: Redacted.make(created.uploadUrl) };
+  });
+
+  const uploadAppVersionPackage = Effect.fn('ZeropsPublicApi.uploadAppVersionPackage')(function* uploadPackage(
+    uploadUrl: Redacted.Redacted,
+    archive: Uint8Array,
+  ) {
+    // Like zcli, the PUT carries only the package and its length: no Content-Type, and no Zerops token, because the
+    // signed URL alone authorizes it. A redirect is answered as its status, never followed.
+    const status = yield* uploadClient
+      .execute(
+        HttpClientRequest.put(Redacted.value(uploadUrl)).pipe(
+          HttpClientRequest.setBody(HttpBody.raw(archive, { contentLength: archive.byteLength })),
+        ),
+      )
+      .pipe(
+        Effect.map(({ status: answered }) => answered),
+        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops application version upload failed' })),
+        Effect.timeoutOrElse({
+          duration: UPLOAD_TIMEOUT,
+          orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops application version upload timed out' })),
+        }),
+      );
+    if (status < 200 || status >= 300) {
+      return yield* new ZeropsApiError({
+        message: `Zerops application version upload failed with HTTP ${String(status)}`,
+      });
+    }
+    return yield* Effect.void;
+  });
+
+  const deployAppVersion = Effect.fn('ZeropsPublicApi.deployAppVersion')(function* deployAppVersion(
+    appVersionId: string,
+    zeropsYaml: string,
+    setup: string,
+  ) {
+    const process = yield* withJson(
+      HttpClientRequest.put(`${ZEROPS_PUBLIC_API_URL}/app-version/${appVersionId}/deploy`),
+      { zeropsYaml, zeropsYamlSetup: setup },
+      ProcessSchema,
+      'application version deploy',
+    );
+    yield* awaitProcess(process, 'application version deploy');
+  });
+
+  const deleteAppVersion = Effect.fn('ZeropsPublicApi.deleteAppVersion')(function* deleteAppVersion(
+    appVersionId: string,
+  ) {
+    yield* send(
+      HttpClientRequest.make('DELETE')(`${ZEROPS_PUBLIC_API_URL}/app-version/${appVersionId}`),
+      Schema.Unknown,
+      'application version delete',
+    );
+  });
+
+  const serviceSecrets = Effect.fn('ZeropsPublicApi.serviceSecrets')(function* readServiceSecrets(serviceId: string) {
+    const secrets = new Map<string, Redacted.Redacted>();
+    for (const { content, key } of yield* serviceUserData(serviceId)) {
+      secrets.set(key, Redacted.make(content));
+    }
     return secrets;
+  });
+
+  const deleteServiceSecret = Effect.fn('ZeropsPublicApi.deleteServiceSecret')(function* deleteServiceSecret(
+    serviceId: string,
+    key: string,
+  ) {
+    for (const entry of (yield* serviceUserData(serviceId)).filter((candidate) => candidate.key === key)) {
+      const process = yield* send(
+        HttpClientRequest.make('DELETE')(`${ZEROPS_PUBLIC_API_URL}/user-data/${entry.id}`),
+        ProcessSchema,
+        'service secret delete',
+      );
+      yield* awaitProcess(process, `service secret ${key} delete`);
+    }
   });
 
   const serviceAction = Effect.fn('ZeropsPublicApi.serviceAction')(function* runServiceAction(
@@ -414,8 +620,13 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     });
 
   return ZeropsPublicApi.of({
+    appVersion: (appVersionId) => get(`/app-version/${appVersionId}`, AppVersionSchema, 'application version read'),
+    createAppVersion,
     createServiceSecret,
+    deleteAppVersion,
     deleteService,
+    deleteServiceSecret,
+    deployAppVersion,
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
     findServiceStack: (serviceId) => findServiceStackWith(serviceId, ServiceStackSchema),
     findServiceStackIdentity: (serviceId) => findServiceStackWith(serviceId, ServiceStackIdentitySchema),
@@ -426,10 +637,18 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     projectEnvs,
     serviceSecrets,
     serviceStack: (serviceId) => get(`/service-stack/${serviceId}`, ServiceStackSchema, 'service read'),
+    serviceUserData: (serviceId) =>
+      serviceUserData(serviceId).pipe(
+        Effect.map((entries) => entries.map(({ content, id, key }) => ({ content: Redacted.make(content), id, key }))),
+      ),
     stopService: (serviceId) =>
       serviceAction(serviceId, 'stop').pipe(Effect.andThen(awaitStoppedService(authorizedClient, serviceId))),
+    uploadAppVersionPackage,
     upsertProjectEnv,
   });
 });
 
-export const ZeropsPublicApiLive = Layer.effect(ZeropsPublicApi, makeZeropsPublicApi);
+/** The API over an injected package upload client; `ZeropsPublicApiLive` supplies Node's HTTP/1.1 one. */
+export const ZeropsPublicApiWithUploadClient = Layer.effect(ZeropsPublicApi, makeZeropsPublicApi);
+
+export const ZeropsPublicApiLive = ZeropsPublicApiWithUploadClient.pipe(Layer.provide(ZeropsPackageUploadClientLive));

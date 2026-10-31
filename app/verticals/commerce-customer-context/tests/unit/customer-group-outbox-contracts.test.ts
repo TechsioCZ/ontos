@@ -213,6 +213,7 @@ const persistenceUnavailable = () =>
 const unavailablePersistence: CustomerGroupPersistence = {
   archive: () => Effect.fail(persistenceUnavailable()),
   assign: () => Effect.fail(persistenceUnavailable()),
+  counterpartyMemberships: () => Effect.fail(persistenceUnavailable()),
   create: () => Effect.fail(persistenceUnavailable()),
   detail: () => Effect.fail(persistenceUnavailable()),
   effectiveMemberships: () => Effect.fail(persistenceUnavailable()),

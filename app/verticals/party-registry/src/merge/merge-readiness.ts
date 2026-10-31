@@ -10,6 +10,8 @@ import type { MergeCollisionInput } from './merge-collision-analysis.ts';
 import { planReferencePreservation } from './reference-preservation-plan.ts';
 import type { ConsumerReconciliationContract, PartyReferenceInventoryItem } from './reference-preservation-plan.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 export const rejectProductionMergeExecution = () =>
   ({
     _tag: 'ProductionMergeExecutionRejected',
@@ -43,7 +45,7 @@ const baseBlockers = () =>
       code: 'PRODUCTION_MERGE_DISABLED' as const,
       detail:
         'Party Merge execution is disabled until all consumer reconciliation and wrong-merge recovery contracts are behaviorally proven.',
-      ownerKey: 'party.registry',
+      ownerKey: PARTY_REGISTRY_MODULE_ID,
     },
     {
       code: 'CONSUMER_RECONCILIATION_UNPROVEN' as const,
@@ -54,7 +56,7 @@ const baseBlockers = () =>
     {
       code: 'WRONG_MERGE_RECOVERY_UNPROVEN' as const,
       detail: 'A behaviorally tested wrong-merge recovery path is required before merge execution can be enabled.',
-      ownerKey: 'party.registry',
+      ownerKey: PARTY_REGISTRY_MODULE_ID,
     },
   ] as const;
 
@@ -72,7 +74,7 @@ export const analyzePreparedMergeReadiness = (input: PreparedMergeReadinessInput
         {
           code: blocker,
           detail: `Canonical survivor selection is blocked: ${blocker}.`,
-          ownerKey: 'party.registry',
+          ownerKey: PARTY_REGISTRY_MODULE_ID,
         },
       ],
       selectedSurvivorPartyRef: null,
@@ -152,7 +154,7 @@ export const evaluateDisabledMergeReadiness = (partyRefs: readonly PartyRef[]): 
     consumerReconciliation: [],
     references: partyRefs.map((partyRef) => ({
       class: 'DIRECT_RESOURCE_REF',
-      ownerKey: 'party.registry',
+      ownerKey: PARTY_REGISTRY_MODULE_ID,
       partyRef,
     })),
     selectionInput: {
@@ -175,7 +177,7 @@ export const evaluateDisabledMergeReadiness = (partyRefs: readonly PartyRef[]): 
       {
         code: 'PREPARED_STATE_UNAVAILABLE',
         detail: 'This read-only boundary has no canonical prepared merge state for the requested Parties.',
-        ownerKey: 'party.registry',
+        ownerKey: PARTY_REGISTRY_MODULE_ID,
       },
     ],
   };

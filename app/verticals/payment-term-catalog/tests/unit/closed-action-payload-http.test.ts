@@ -52,6 +52,7 @@ const acceptSourceStatement = {
 
 const unusedActionRuntime: ActionRuntimeService = {
   resolveActionCommit: () => Effect.die('The Action runtime is outside this transport proof'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('The Action runtime is outside this transport proof'),
 };
 const unusedRedemption: GatewayAssertionRedemption = {

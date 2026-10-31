@@ -17,14 +17,7 @@ import {
   fromJsonString,
   makeFilter,
 } from 'effect/Schema';
-import {
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
-import {
-  CLOUDFLARE_WORKER_CPU_MS,
-  createWorkspaceModernConfig,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'shell-super-app';
 
@@ -50,12 +43,6 @@ getResultOrThrow(
 
 const ontos = createWorkspaceModernConfig({
   appId,
-  // Shell reaches PostgreSQL as the shared runtime and, for gateway scope grants only, as the issuer.
-  cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.shell,
-  cloudflareHyperdrives: [
-    SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive,
-    SHELL_GATEWAY_ISSUER_IDENTITY.cloudflareHyperdrive,
-  ],
   moduleUrl: import.meta.url,
 });
 
@@ -73,7 +60,7 @@ export default defineConfig(
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
-      deploy: { ...ontos.deploy, releaseEnvelopeRole: 'shell' },
+      deploy: { releaseEnvelopeRole: 'shell' },
       dev: { ...ontos.dev, lazyCompilation: getBuildConfigEnvironment('CI') ? false : undefined },
       plugins: [
         bffPlugin(),
@@ -111,7 +98,19 @@ export default defineConfig(
           configPath: fileURLToPath(new URL('module-federation.config.ts', import.meta.url)),
         }),
       ],
-      server: { ...ontos.server, ssr: { mode: 'stream', moduleFederationAppSSR: true } },
+      server: {
+        ...ontos.server,
+        publicDir: ['./.dev-public', './locales', './assets'],
+        ssr: { mode: 'stream', moduleFederationAppSSR: true },
+      },
+      source: {
+        ...ontos.source,
+        globalVars: {
+          ...ontos.source.globalVars,
+          'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ?? 'http://localhost:3070',
+        },
+      },
       splitChunks: { chunks: 'async' },
     },
     {

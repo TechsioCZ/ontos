@@ -25,9 +25,11 @@ export interface SpiceDbRpc {
     request: v1.CheckPermissionRequest,
   ) => Effect.Effect<v1.CheckPermissionResponse, SpiceDbRpcError>;
   readonly close: () => void;
+  readonly diffSchema: (request: v1.DiffSchemaRequest) => Effect.Effect<v1.DiffSchemaResponse, SpiceDbRpcError>;
   readonly readRelationships: (
     request: v1.ReadRelationshipsRequest,
   ) => Effect.Effect<readonly v1.ReadRelationshipsResponse[], SpiceDbRpcError>;
+  readonly readSchema: (request: v1.ReadSchemaRequest) => Effect.Effect<v1.ReadSchemaResponse, SpiceDbRpcError>;
   readonly writeRelationships: (
     request: v1.WriteRelationshipsRequest,
   ) => Effect.Effect<v1.WriteRelationshipsResponse, SpiceDbRpcError>;

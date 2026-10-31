@@ -65,6 +65,8 @@ import {
 } from '../unit/support/unit-price-calculation.fixture.ts';
 import { authorizationSetFor } from '../unit/support/issue-779-line-value.fixture.ts';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
@@ -271,6 +273,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
   Layer.provideMerge(staffAuthenticationNamespaceRegistryLayer(['catalog', 'pricing'])),
+  Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
 );
 class WholeCandidateReceiverTestUnavailable extends Schema.TaggedError<WholeCandidateReceiverTestUnavailable>()(
   'WholeCandidateReceiverTestUnavailable',

@@ -1,0 +1,217 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CheckoutDraft } from "@/features/checkout/checkout-state";
+import { createCheckoutDraft } from "@/features/checkout/checkout-state";
+import { callAction, readRecords } from "@/ontos/gateway";
+import { readAccount } from "@/ontos/account";
+import { GET, POST } from "@/app/api/ontos/orders/route";
+
+vi.mock("@/ontos/account", () => ({ readAccount: vi.fn() }));
+vi.mock("@/ontos/catalog-server", () => ({ readProducts: async () => ({ revision: 7 }) }));
+vi.mock("@/ontos/gateway", () => ({
+  callAction: vi.fn(),
+  readRecords: vi.fn(),
+  OntosError: class extends Error {},
+}));
+const account = {
+  id: "portal-customer-1",
+  tenantId: "admitted-tenant",
+  partyId: "admitted-party-1",
+  email: "verified@example.test",
+  name: "Customer",
+};
+const clientRequestId = "akros-12345678-1234-4234-8234-123456789abc";
+const submit = async (
+  company = "Company",
+  deliveryId = "PPL",
+  overrides: Partial<CheckoutDraft> = {},
+) => {
+  const draft = {
+    ...createCheckoutDraft(),
+    deliveryId,
+    company,
+    email: "forged@example.test",
+    billing: {
+      firstName: "Customer",
+      lastName: "Test",
+      street: "Test 1",
+      city: "Brno",
+      postalCode: "60200",
+      country: "CZ",
+      phone: "+420777123456",
+    },
+    ...overrides,
+  };
+  return POST(
+    new Request("http://localhost:3070/api/ontos/orders", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3070",
+        "content-type": "application/json",
+        cookie: "commerce-portal.session_token=admitted",
+      },
+      body: JSON.stringify({
+        customerAccountId: "attacker",
+        clientRequestId,
+        draft,
+        cart: { version: 3, lines: [{ productId: "product-1", quantity: 5, priceMinor: 105 }] },
+      }),
+    }),
+  );
+};
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(readAccount).mockResolvedValue(account);
+  vi.mocked(readRecords).mockResolvedValue({
+    checkout: {
+      shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+      paymentAvailable: false,
+      carrierTrackingAvailable: false,
+    },
+  });
+  vi.mocked(callAction).mockResolvedValue({
+    storefrontOrder: {
+      outcome: "PLACED",
+      orderId: "order-1",
+      orderNumber: "OBJ-2026-0022",
+      totalMinor: 13425,
+      totalVatMinor: 2330,
+    },
+  });
+});
+describe("real order boundary", () => {
+  it("places against fresh revision using admitted identity and owner shipping prices, not browser identity", async () => {
+    expect((await submit()).status).toBe(200);
+    expect(readAccount).toHaveBeenCalledWith(
+      "http://localhost:3070",
+      "commerce-portal.session_token=admitted",
+    );
+    const payload = vi.mocked(callAction).mock.calls[0][2];
+    expect(payload).toMatchObject({
+      expectedRevision: 7,
+      command: {
+        customerAccountId: account.id,
+        partyId: account.partyId,
+        contact: { email: account.email },
+        clientRequestId,
+        shippingMethod: "PPL",
+        expectedShippingPriceMinor: 12900,
+        note: "Company",
+      },
+    });
+    expect(JSON.stringify(payload)).not.toMatch(/DEMO|simulace|forged|attacker/);
+  });
+  it.each([false, true])(
+    "sends the selected delivery recipient separately from billing contact (different address: %s)",
+    async (differentDeliveryAddress) => {
+      const delivery = {
+        city: "Praha",
+        country: "CZ",
+        firstName: "Jana",
+        lastName: "Nováková",
+        phone: "+420777987654",
+        postalCode: "11000",
+        street: "Delivery 2",
+      };
+      const response = await submit("Company", "PPL", { delivery, differentDeliveryAddress });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
+        command: {
+          contact: { email: account.email, name: "Customer Test", phone: "+420777123456" },
+          billingAddress: { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
+          deliveryAddress: differentDeliveryAddress
+            ? {
+                city: delivery.city,
+                country: delivery.country,
+                postalCode: delivery.postalCode,
+                street: delivery.street,
+              }
+            : { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
+          deliveryRecipient: differentDeliveryAddress
+            ? { firstName: delivery.firstName, lastName: delivery.lastName, phone: delivery.phone }
+            : { firstName: "Customer", lastName: "Test", phone: "+420777123456" },
+        },
+      });
+    },
+  );
+  it.each(["firstName", "lastName", "phone"] as const)(
+    "rejects invalid separate recipient %s before placing an order",
+    async (field) => {
+      const delivery = {
+        city: "Praha",
+        country: "CZ",
+        firstName: "Jana",
+        lastName: "Nováková",
+        phone: "+420777987654",
+        postalCode: "11000",
+        street: "Delivery 2",
+      };
+      const response = await submit("Company", "PPL", {
+        delivery: { ...delivery, [field]: "" },
+        differentDeliveryAddress: true,
+      });
+      expect(response.status).toBe(400);
+      expect(callAction).not.toHaveBeenCalled();
+    },
+  );
+  it("places a guest order without a session: no customer account or Party, contact e-mail from the draft", async () => {
+    vi.mocked(readAccount).mockResolvedValue(null);
+    expect((await submit("", "PPL", { email: " guest@example.test " })).status).toBe(200);
+    const payload = vi.mocked(callAction).mock.calls[0][2] as { command: Record<string, unknown> };
+    expect(payload).toMatchObject({
+      expectedRevision: 7,
+      command: {
+        _tag: "PlaceStorefrontOrder",
+        clientRequestId,
+        contact: { name: "Customer Test", email: "guest@example.test", phone: "+420777123456" },
+        deliveryAddress: { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
+        shippingMethod: "PPL",
+        expectedShippingPriceMinor: 12900,
+      },
+    });
+    expect(payload.command).not.toHaveProperty("customerAccountId");
+    expect(payload.command).not.toHaveProperty("partyId");
+    expect(JSON.stringify(payload)).not.toMatch(/attacker/);
+  });
+  it("rejects a guest order without a valid contact e-mail", async () => {
+    vi.mocked(readAccount).mockResolvedValue(null);
+    expect((await submit("Company", "PPL", { email: "" })).status).toBe(400);
+    expect(callAction).not.toHaveBeenCalled();
+  });
+  it("rejects a delivery method absent from the current owner configuration", async () => {
+    expect((await submit("Company", "zasilkovna")).status).toBe(400);
+    expect(callAction).not.toHaveBeenCalled();
+  });
+  it("retains customer note length limit without inserting a simulation disclaimer", async () => {
+    expect((await submit("Ž".repeat(1200))).status).toBe(200);
+    expect(
+      (vi.mocked(callAction).mock.calls[0][2] as { command: { note: string } }).command.note,
+    ).toHaveLength(1000);
+  });
+  it("queries customer orders using only session subject, ignoring a forged query subject", async () => {
+    vi.mocked(readRecords).mockResolvedValue({ orders: [], totalOrders: 0 });
+    const response = await GET(
+      new Request(
+        "http://localhost:3070/api/ontos/orders?customerAccountId=attacker&order=other-order",
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
+      view: {
+        storefront: true,
+        storefrontCustomerOrders: {
+          customerAccountId: account.id,
+          orderId: "other-order",
+          offset: 0,
+        },
+      },
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+  it("fails closed if the owner returns another customer's receipt", async () => {
+    vi.mocked(readRecords).mockResolvedValue({
+      orders: [{ customerAccountId: "attacker" }],
+      totalOrders: 1,
+    });
+    expect((await GET(new Request("http://localhost:3070/api/ontos/orders"))).status).toBe(503);
+  });
+});

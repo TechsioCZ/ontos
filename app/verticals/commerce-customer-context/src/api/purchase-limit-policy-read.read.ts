@@ -5,7 +5,7 @@ import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   PurchaseLimitPolicyReadRequestSchema,
@@ -45,32 +45,34 @@ export const purchaseLimitPolicyReadRead = defineRead(
     resultSchema: PurchaseLimitPolicyReadResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input,
-    context: ReadHandlerContext<{
-      readonly policy: PurchaseLimitPolicyService;
-    }>,
-  ) =>
-    context.services.policy
-      .readCurrent({
-        counterpartyRef: input.counterpartyRef,
-        principalRef: input.principalRef,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          preserveFailureCause(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Purchase Limit policy is temporarily unavailable',
-            }),
-            cause,
+  {
+    load: (
+      input,
+      context: ReadLoadContext<{
+        readonly policy: PurchaseLimitPolicyService;
+      }>,
+    ) =>
+      context.services.policy
+        .readCurrent({
+          counterpartyRef: input.counterpartyRef,
+          principalRef: input.principalRef,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            preserveFailureCause(
+              new ReadHandlerUnavailable({
+                code: 'read_handler_unavailable',
+                reason: 'Purchase Limit policy is temporarily unavailable',
+              }),
+              cause,
+            ),
           ),
+          Effect.map((result) => ({
+            evidence: { resultCount: 1 },
+            result,
+          })),
         ),
-        Effect.map((result) => ({
-          evidence: { resultCount: 1 },
-          result,
-        })),
-      ),
+  },
   (transaction, scope) =>
     PurchaseLimitPolicyServiceFactory.pipe(
       Effect.flatMap((factory) => factory.make(transaction, scope)),

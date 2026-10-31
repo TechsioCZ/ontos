@@ -1,6 +1,8 @@
 import { defineRelations } from 'drizzle-orm';
 import type { EmptyRelations, ExtractTablesFromSchema, ExtractTablesWithRelations } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
+import { index, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { inventorySchema } from './inventory-schema.ts';
 
 import { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
 import { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
@@ -111,6 +113,22 @@ export {
   inventoryStockSharingEligibilityHistory,
 } from '../persistence/stock-sharing-eligibility-table.ts';
 
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
+export const gatewayAssertionRedemptions = inventorySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('inventory_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('inventory_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
 export const INVENTORY_TABLE_INVENTORY = [
   'backend_configurations',
   'binding_correction_reconciliations',
@@ -121,6 +139,7 @@ export const INVENTORY_TABLE_INVENTORY = [
   'effect_ledger',
   'effect_ledger_history',
   'external_stock_correlations',
+  'gateway_assertion_redemptions',
   'obligation_allocations',
   'obligation_requirements',
   'obligations',
@@ -150,6 +169,7 @@ export const INVENTORY_TABLE_INVENTORY = [
 ] as const;
 
 export const INVENTORY_TABLES: readonly PgTable[] = [
+  gatewayAssertionRedemptions,
   inventoryBackendConfigurations,
   inventoryBindingCorrectionReconciliations,
   inventoryCatalogToStockBindingHistory,
@@ -186,6 +206,8 @@ export const INVENTORY_TABLES: readonly PgTable[] = [
   inventoryStockSharingEligibilities,
   inventoryStockSharingEligibilityHistory,
 ] as const;
+
+const inventoryDatabaseSchemaSecurity = { gatewayAssertionRedemptions } as const;
 
 const inventoryDatabaseSchemaIdentity = {
   inventoryBackendConfigurations,
@@ -234,10 +256,12 @@ const inventoryDatabaseSchemaStock = {
   inventoryStockSharingEligibilityHistory,
 } as const;
 
-const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaIdentity &
+const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaSecurity &
+  typeof inventoryDatabaseSchemaIdentity &
   typeof inventoryDatabaseSchemaReservations &
   typeof inventoryDatabaseSchemaEvidence &
   typeof inventoryDatabaseSchemaStock = {
+  ...inventoryDatabaseSchemaSecurity,
   ...inventoryDatabaseSchemaIdentity,
   ...inventoryDatabaseSchemaReservations,
   ...inventoryDatabaseSchemaEvidence,

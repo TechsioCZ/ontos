@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Duration, Effect, Redacted } from 'effect';
+import { Config, Duration, Effect, Option, Redacted } from 'effect';
 
 import { DatabaseConnectionError } from './connection-error.ts';
 
@@ -36,11 +36,56 @@ const REJECTED_URL_PARAMETERS = [
  * URL startup options are unsupported because PostgreSQL can use them to override deadlines.
  * Other URL settings, including SSL, are parsed by the native driver unchanged.
  */
+/**
+ * One host process serves every owner, and each owner opens several pools, so the process environment bounds every
+ * pool: `ONTOS_DATABASE_POOL_MAX_CONNECTIONS` caps its connections and `ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS`
+ * closes idle ones soon. `ONTOS_DATABASE_POOL_SHARED=true` lets every owner in the process draw from one pool per
+ * configuration (`openDatabaseClient`), so a process holds at most the cap per database role, however many owners
+ * it serves, keeping two overlapping releases inside the server's connection slots.
+ */
+const DatabasePoolBudgetConfig = Config.all({
+  idleTimeoutMillis: Config.option(Config.Int('ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS')),
+  maxConnections: Config.option(Config.Int('ONTOS_DATABASE_POOL_MAX_CONNECTIONS')),
+  processShared: Config.Boolean('ONTOS_DATABASE_POOL_SHARED').pipe(Config.withDefault(false)),
+});
+
+/** The native pool settings, and whether owners in this process share the pool these settings describe. */
+export interface DatabasePoolConfiguration extends Pick<
+  PgClient.PgPoolConfig,
+  'connectTimeout' | 'idleTimeout' | 'maxConnections' | 'startupParameters' | 'url'
+> {
+  readonly processShared: boolean;
+}
+
+const isPositiveInt32 = (value: number) => Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
+
+/** The pool's own connection request, bounded by the process budget. */
+const budgetedMaxConnections = (requested: number | undefined, budget: Option.Option<number>) =>
+  Option.match(budget, {
+    onNone: () => requested,
+    onSome: (limit) => (requested === undefined ? limit : Math.min(requested, limit)),
+  });
+
 export const configureDatabasePool = Effect.fn('PoolConfiguration.configureDatabasePool')(
   function* configureDatabasePool(
     connectionString: Redacted.Redacted,
     poolDeadlines?: Partial<DatabasePoolDeadlines>,
-  ): Effect.fn.Return<PgClient.PgPoolConfig, DatabaseConnectionError> {
+    requestedMaxConnections?: number,
+  ): Effect.fn.Return<DatabasePoolConfiguration, DatabaseConnectionError> {
+    const budget = yield* DatabasePoolBudgetConfig.pipe(
+      Effect.mapError(
+        (cause) => new DatabaseConnectionError({ cause, reason: 'Database pool budget settings are malformed' }),
+      ),
+    );
+    if (
+      [budget.idleTimeoutMillis, budget.maxConnections].some(
+        (setting) => Option.isSome(setting) && !isPositiveInt32(setting.value),
+      )
+    ) {
+      return yield* new DatabaseConnectionError({
+        reason: 'Database pool budget settings must be positive 32-bit integers',
+      });
+    }
     const { connectTimeoutMillis, ...serverDeadlines } = { ...DEFAULT_DATABASE_POOL_DEADLINES, ...poolDeadlines };
     for (const value of [connectTimeoutMillis, ...Object.values(serverDeadlines)]) {
       if (value === undefined) {
@@ -78,6 +123,12 @@ export const configureDatabasePool = Effect.fn('PoolConfiguration.configureDatab
     }
     return {
       connectTimeout: Duration.millis(connectTimeoutMillis),
+      // Unset values leave the driver defaults (ten connections, a minute of idleness).
+      idleTimeout: Option.isSome(budget.idleTimeoutMillis)
+        ? Duration.millis(budget.idleTimeoutMillis.value)
+        : undefined,
+      maxConnections: budgetedMaxConnections(requestedMaxConnections, budget.maxConnections),
+      processShared: budget.processShared,
       startupParameters,
       url: connectionString,
     };

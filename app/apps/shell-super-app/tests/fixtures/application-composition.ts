@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
   ApplicationCompositionSchema,
@@ -15,10 +16,11 @@ import type {
   OntosModuleDeploymentContract,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
-export const contentDigest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+export const contentDigest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
 
 const shellDeployment = {
   appId: ultramodernDeliveryUnit.appId,
@@ -33,13 +35,16 @@ const shellRuntimeContractDocument = JSON.stringify({
   schemaVersion: '2',
 });
 
-/** Test fixtures use native hashing independently of the production verification code. */
+/** Test fixtures hash the exact bytes independently of the production verification code. */
 export const sealComposition = (composition: ApplicationComposition): ApplicationComposition => ({
   ...composition,
   revision: contentDigest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
 });
 
-const compositionModule = (contract: OntosModuleDeploymentContract): ApplicationCompositionModule => {
+const compositionModule = (
+  contract: OntosModuleDeploymentContract,
+  backendBaseUrl?: string,
+): ApplicationCompositionModule => {
   const contractDocument = JSON.stringify(contract);
   const digest = contentDigest(contractDocument);
   const { components, shellContributions } = contract.manifest.publicSurface;
@@ -48,7 +53,10 @@ const compositionModule = (contract: OntosModuleDeploymentContract): Application
     allowedContributions: Object.values(shellContributions).flatMap((items) =>
       items.map(({ contributionKey }) => contributionKey),
     ),
-    backend: { baseUrl: `https://${contract.deployment.appId}.example.test/`, transport: 'node-http' },
+    backend: {
+      baseUrl: backendBaseUrl ?? `https://${contract.deployment.appId}.example.test/`,
+      transport: 'node-http',
+    },
     contract: {
       sha256: digest,
       url: `https://${contract.deployment.appId}.example.test/.well-known/ontos-module-manifest.json`,
@@ -79,14 +87,17 @@ const compositionModule = (contract: OntosModuleDeploymentContract): Application
 export const makeCompositionSnapshot = (
   contractInputs: readonly unknown[],
   validityMs = 60_000,
+  backendBaseUrl?: string,
 ): Effect.Effect<ActiveApplicationCompositionSnapshot> =>
   Effect.gen(function* makeSnapshot() {
-    const contracts = contractInputs.map((input) =>
-      Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema)(input),
-    );
+    const contracts = yield* Effect.forEach(
+      contractInputs,
+      (input) => Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(input),
+      { concurrency: 1 },
+    ).pipe(Effect.orDie);
     const composition = sealComposition(
-      Schema.decodeUnknownSync(ApplicationCompositionSchema)({
-        modules: contracts.map(compositionModule),
+      yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema)({
+        modules: contracts.map((contract) => compositionModule(contract, backendBaseUrl)),
         revision: '0'.repeat(64),
         schemaVersion: ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
         shell: {
@@ -103,7 +114,7 @@ export const makeCompositionSnapshot = (
           },
           sharedSingletons: [],
         },
-      }),
+      }).pipe(Effect.orDie),
     );
     const observedAt = yield* DateTime.now;
     return { composition, observedAt, validUntil: DateTime.add(observedAt, { milliseconds: validityMs }) };

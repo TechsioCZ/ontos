@@ -20,6 +20,7 @@ import type { OperationContextUnavailable } from '../../src/operations/errors.ts
 import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
 import { persistScopedReadEvidence } from '../../src/reads/repository.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 // Failures and defects a retained cause records, so a test can prove which SQL error recovery kept.
 const retainedFailures = (cause: Cause.Cause<never> | undefined): readonly unknown[] =>
@@ -43,24 +44,61 @@ const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   { assertion: Redacted.make('verified-finalizer-test-assertion'), audience: 'party-registry' },
 );
 
+for (const [audience, role, gatewayGrant] of [
+  ['party-registry', 'party_registry_runtime', true],
+  ['catalog', 'ontos_runtime', false],
+] as const) {
+  it.effect(`scope admission uses the manifest authority and identity attestation for ${audience}`, () =>
+    Effect.gen(function* audienceScopedAdmission() {
+      const principal = trustVerifiedGatewayPrincipalContext(scopedPrincipal, 'a'.repeat(64), {
+        assertion: Redacted.make('verified-audience-test-assertion'),
+        audience,
+      });
+      const statements: string[] = [];
+      const executor = yield* makeTestDatabase((statement) => {
+        statements.push(statement);
+        return Effect.succeed(
+          statement.includes('from "core"."tenants"')
+            ? []
+            : [{ legal_entity_id: '', role, tenant_id: principal.tenantId }],
+        );
+      });
+
+      yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
+
+      const lookup = statements.find((statement) => statement.includes('from "core"."tenants"'));
+      expect(lookup).toBeDefined();
+      expect(lookup?.includes('trust.auth_binding_issuing_legal_entity')).toBe(gatewayGrant);
+      expect(lookup?.includes('binding_creation_audit')).toBe(!gatewayGrant);
+      expect(statements.some((statement) => statement.includes('trust.establish_gateway_scope'))).toBe(gatewayGrant);
+    }),
+  );
+}
+
 for (const boundary of ['context', 'evidence'] as const) {
   const run = (
     executor: CoreDatabaseExecutor,
   ): Effect.Effect<void, OperationContextUnavailable | ReadEvidencePersistenceError> =>
     boundary === 'context'
-      ? makeOperationalScopeRepository({ executor }).load(scopedPrincipal).pipe(Effect.asVoid)
-      : persistScopedReadEvidence(executor, {
-          accessKind: 'list',
-          captureMode: 'metadata_only',
-          outcome: 'denied',
-          outcomeCode: 'permission_denied',
-          outcomeStage: 'authz',
-          policyKey: 'test.read.v1',
-          readKey: 'test.read',
-          resultCount: 0,
-          scope: scopedPrincipal,
-          servingModuleKey: 'core.shell',
-        });
+      ? makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+          .load(scopedPrincipal)
+          .pipe(Effect.asVoid)
+      : persistScopedReadEvidence(
+          executor,
+          {
+            accessKind: 'list',
+            captureMode: 'metadata_only',
+            outcome: 'denied',
+            outcomeCode: 'permission_denied',
+            outcomeStage: 'authz',
+            policyKey: 'test.read.v1',
+            readKey: 'test.read',
+            resultCount: 0,
+            scope: scopedPrincipal,
+            servingModuleKey: 'core.shell',
+          },
+          FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        );
 
   for (const phase of ['BEGIN', 'COMMIT', 'ROLLBACK', 'RELEASE SAVEPOINT', 'ROLLBACK TO SAVEPOINT'] as const) {
     it.effect(`scoped ${boundary} maps native ${phase} failures to its declared persistence error`, () =>
@@ -267,7 +305,9 @@ it.effect('scoped evidence recovers failed scope installation beside a failed ro
     });
     const error = yield* Effect.flip(
       executor
-        .transaction((transaction) => installOperationalScope(transaction, scopedPrincipal))
+        .transaction((transaction) =>
+          installOperationalScope(transaction, scopedPrincipal, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        )
         .pipe(recoverSqlTransactionError),
     );
     expect(error).toBe(failure);
@@ -376,7 +416,7 @@ const surfacesSettlementFailure = (cause: Cause.Cause<unknown>, phase: string, f
   );
 
 for (const phase of ['COMMIT', 'ROLLBACK']) {
-  it.effect(`native ${phase} failure surfaces the SQL defect`, () =>
+  it.effect(`native ${phase} failure surfaces the SQL error`, () =>
     Effect.gen(function* surfaceSettlementFailure() {
       const failure = new SqlError({
         reason: new ConnectionError({ cause: new Error(`${phase} failed`) }),

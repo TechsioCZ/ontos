@@ -1,0 +1,702 @@
+// AREA: reports (C05) — owned by the crm-reports lane. Read-only aggregation over the projected state the read
+// server returns (so a salesperson's report and CSV never contain other salespeople's clients, C05-04).
+// No commands. Pure aggregation helpers live here; pages live under src/routes/[lang]/crm/prehled-prodeju.
+//
+// Rules (CRM-DEMO C03/C04/C05):
+//  - Only paired, non-duplicate orders count. Unpaired, in-review and cross-source duplicates are excluded and
+//    reported beside the totals with their reason.
+//  - Amounts are exact decimals and are summed per currency only. CZK and EUR are never added together.
+//  - Raw source statuses stay visible. A status gets a business meaning only through the versioned mapping below;
+//    anything else is "bez schváleného významu". Totals are "hodnota evidovaných objednávek", never revenue.
+//  - Salesperson grouping follows the client's CURRENT owner (C04: summaries follow the valid binding).
+import { DateTime, Schema } from 'effect';
+import type { RecordsResponse } from '../apis/records.ts';
+import { canSeeEverything } from './access.ts';
+import { statusMappingApproved } from './customer-inputs.ts';
+import { orderDateText } from './imports.ts';
+import type { ImportedOrder, OrderDate } from './imports.ts';
+
+import { CalendarDateSchema } from './common.ts';
+import type { Visit } from './visits.ts';
+import type { CrmState } from './state.ts';
+
+// ---------------------------------------------------------------------------------------------------------------
+// Status meanings
+// ---------------------------------------------------------------------------------------------------------------
+
+export const StatusMeaningSchema = Schema.Literals(['open', 'paid', 'fulfilled', 'cancelled']);
+export type StatusMeaning = typeof StatusMeaningSchema.Type;
+
+export const statusMeanings = ['open', 'paid', 'fulfilled', 'cancelled', 'unmapped'] as const;
+export const StatusMeaningOrUnmappedSchema = Schema.Literals(statusMeanings);
+export type StatusMeaningOrUnmapped = typeof StatusMeaningOrUnmappedSchema.Type;
+
+export const statusMeaningLabels = {
+  cancelled: 'Stornovaná',
+  fulfilled: 'Vyřízená / dodaná',
+  open: 'Přijatá / rozpracovaná',
+  paid: 'Uhrazená',
+  unmapped: 'Bez zařazení',
+} satisfies Record<StatusMeaningOrUnmapped, string>;
+
+export interface StatusMappingEntry {
+  readonly meaning: StatusMeaning;
+  /** Raw statuses as the sources send them (compared case- and diacritics-insensitively). */
+  readonly raw: readonly string[];
+}
+
+/**
+ * Versioned raw -> meaning mapping used by the report. Raw statuses that are not listed keep only their raw value
+ * and fall into "Bez schváleného významu". The customer confirms the final meaning of statuses, cancellations and
+ * returns separately (CRM-DEMO R04); the page says so next to the table.
+ */
+export const statusMapping = {
+  // Demo interpretation only. R04 customer approval has not been supplied.
+  approval: 'demo_only',
+  entries: [
+    { meaning: 'open', raw: ['nova', 'nová', 'prijata', 'přijatá', 'prijato', 'v reseni', 'new', 'received'] },
+    { meaning: 'paid', raw: ['zaplacena', 'uhrazena', 'uhrazeno', 'paid'] },
+    {
+      meaning: 'fulfilled',
+      raw: [
+        'dorucena',
+        'doručena',
+        'dodana',
+        'vyrizena',
+        'vyřízená',
+        'vyrizeno',
+        'dokoncena',
+        'delivered',
+        'completed',
+      ],
+    },
+    { meaning: 'cancelled', raw: ['stornovana', 'stornována', 'stornovano', 'storno', 'zrusena', 'cancelled'] },
+  ] satisfies readonly StatusMappingEntry[],
+  version: 'stavy-v1',
+} as const;
+
+/** Lower case, no diacritics, single spaces. */
+export const normalizeStatus = (raw: string) =>
+  raw
+    .normalize('NFD')
+    .replaceAll(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replaceAll(/[\s_-]+/gu, ' ')
+    .trim();
+
+const meaningByRaw: ReadonlyMap<string, StatusMeaning> = new Map(
+  statusMapping.entries.flatMap((entry) => entry.raw.map((raw) => [normalizeStatus(raw), entry.meaning] as const)),
+);
+
+export const reportStatusMeaning = (rawStatus: string): StatusMeaningOrUnmapped =>
+  meaningByRaw.get(normalizeStatus(rawStatus)) ?? 'unmapped';
+
+/** Has the customer approved this mapping version (R04)? Until then statistics use raw statuses only. */
+export const reportMappingApproved = (state: Pick<CrmState, 'customerInputs'>) =>
+  statusMappingApproved(state.customerInputs, statusMapping.version);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Exact decimal money (amounts are DecimalString with up to 4 decimals)
+// ---------------------------------------------------------------------------------------------------------------
+
+const SCALE_DIGITS = 4;
+const SCALE = 10n ** BigInt(SCALE_DIGITS);
+
+/** "1234.5" -> 12345000n (units of 1/10_000). Undefined for anything that is not a plain decimal. */
+export const decimalToUnits = (value: string): bigint | undefined => {
+  const match = /^(?<sign>-?)(?<whole>\d{1,15})(?:\.(?<fraction>\d{1,4}))?$/u.exec(value.trim());
+  if (match === null) {
+    return undefined;
+  }
+  const [, sign = '', whole = '0', fraction = ''] = match;
+  const units = BigInt(whole) * SCALE + BigInt(fraction.padEnd(SCALE_DIGITS, '0'));
+  return sign === '-' ? -units : units;
+};
+
+/** 12345000n -> "1234.50" (at least two decimals, trailing zeros beyond that dropped). */
+export const unitsToDecimal = (units: bigint): string => {
+  const negative = units < 0n;
+  const absolute = negative ? -units : units;
+  const whole = absolute / SCALE;
+  let fraction = (absolute % SCALE).toString().padStart(SCALE_DIGITS, '0');
+  while (fraction.length > 2 && fraction.endsWith('0')) {
+    fraction = fraction.slice(0, -1);
+  }
+  return `${negative ? '-' : ''}${whole.toString()}.${fraction}`;
+};
+
+export interface MoneyTotal {
+  /** Exact decimal sum, e.g. "48250.00". */
+  readonly amount: string;
+  /** Orders that make up this sum. */
+  readonly count: number;
+  readonly currency: string;
+}
+
+const normalizeCurrency = (currency: string | undefined) => {
+  const value = currency?.trim().toUpperCase();
+  return value === undefined || value === '' ? undefined : value;
+};
+
+/** Currency and exact units of an order, or undefined when the source sent no amount or no currency. */
+export const orderMoney = (order: ImportedOrder): { readonly currency: string; readonly units: bigint } | undefined => {
+  const currency = normalizeCurrency(order.currency);
+  const units = order.amount === undefined ? undefined : decimalToUnits(order.amount);
+  return currency === undefined || units === undefined ? undefined : { currency, units };
+};
+
+/** Currency order: CZK first, then alphabetical. */
+const compareCurrency = (left: string, right: string) => {
+  if (left === right) {
+    return 0;
+  }
+  if (left === 'CZK') {
+    return -1;
+  }
+  if (right === 'CZK') {
+    return 1;
+  }
+  return left.localeCompare(right);
+};
+
+interface Accumulator {
+  count: number;
+  lastOrderAt?: OrderDate;
+  money: Map<string, { count: number; units: bigint }>;
+  withoutAmount: number;
+}
+
+const newAccumulator = (): Accumulator => ({ count: 0, money: new Map(), withoutAmount: 0 });
+
+const accumulate = (target: Accumulator, row: ReportOrderRow) => {
+  target.count += 1;
+  if (target.lastOrderAt === undefined || orderDateText(row.date) > orderDateText(target.lastOrderAt)) {
+    target.lastOrderAt = row.date;
+  }
+  const money = orderMoney(row.order);
+  if (money === undefined) {
+    target.withoutAmount += 1;
+    return;
+  }
+  const current = target.money.get(money.currency) ?? { count: 0, units: 0n };
+  target.money.set(money.currency, { count: current.count + 1, units: current.units + money.units });
+};
+
+const totalsOf = (accumulator: Accumulator): MoneyTotal[] =>
+  [...accumulator.money.entries()]
+    .toSorted(([left], [right]) => compareCurrency(left, right))
+    .map(([currency, value]) => ({ amount: unitsToDecimal(value.units), count: value.count, currency }));
+
+// ---------------------------------------------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Inclusive day range "YYYY-MM-DD"; either end may be open. */
+export const ReportPeriodSchema = Schema.Struct({
+  from: Schema.optionalKey(CalendarDateSchema),
+  to: Schema.optionalKey(CalendarDateSchema),
+});
+export type ReportPeriod = typeof ReportPeriodSchema.Type;
+
+export type ReportStatusFilter =
+  | { readonly kind: 'meaning'; readonly meaning: StatusMeaningOrUnmapped }
+  | { readonly kind: 'raw'; readonly raw: string };
+
+export interface ReportFilters {
+  readonly clientId?: string;
+  readonly period?: ReportPeriod;
+  /** Salesperson id, or 'none' for clients without a salesperson. */
+  readonly salespersonId?: string;
+  readonly status?: ReportStatusFilter;
+}
+
+export const UNASSIGNED = 'none';
+
+export interface ReportOrderRow {
+  readonly clientId: string;
+  readonly clientName: string;
+  /** Order date; the time of receipt when the source sent no order date (see dateSource). */
+  readonly date: OrderDate;
+  readonly dateSource: 'ordered' | 'received';
+  readonly meaning: StatusMeaningOrUnmapped;
+  readonly month: string;
+  readonly order: ImportedOrder;
+  readonly salespersonId: string | undefined;
+  readonly salespersonName: string | undefined;
+}
+
+export interface ReportGroup {
+  readonly count: number;
+  readonly key: string;
+  readonly label: string;
+  readonly lastOrderAt: OrderDate | undefined;
+  readonly totals: readonly MoneyTotal[];
+  readonly withoutAmount: number;
+}
+
+export const ExclusionReasonSchema = Schema.Literals(['unpaired', 'review', 'duplicate', 'confirmed_duplicate']);
+export type ExclusionReason = typeof ExclusionReasonSchema.Type;
+
+export const exclusionReasonLabels = {
+  confirmed_duplicate: 'potvrzený duplikát z jiného zdroje (nepočítá se dvakrát)',
+  duplicate: 'možný duplikát z jiného zdroje, čeká na rozhodnutí',
+  review: 'vazba na klienta vyžaduje kontrolu',
+  unpaired: 'nespárováno s klientem',
+} satisfies Record<ExclusionReason, string>;
+
+export interface ReportExclusion {
+  readonly count: number;
+  readonly reason: ExclusionReason;
+}
+
+export interface SkuRow {
+  readonly key: string;
+  readonly name: string;
+  readonly orders: number;
+  /** Exact decimal quantity sum. */
+  readonly quantity: string;
+  readonly sku: string | undefined;
+}
+
+export interface SalesReport {
+  readonly byClient: readonly ReportGroup[];
+  readonly byMonth: readonly ReportGroup[];
+  readonly bySalesperson: readonly ReportGroup[];
+  readonly byStatus: readonly ReportGroup[];
+  readonly count: number;
+  /** Currencies present in the included rows, CZK first. */
+  readonly currencies: readonly string[];
+  readonly excluded: readonly ReportExclusion[];
+  readonly excludedTotal: number;
+  /** Item sales by SKU; only orders whose source really sent lines contribute. */
+  readonly items: { readonly ordersWithLines: number; readonly rows: readonly SkuRow[] };
+  readonly lastOrderAt: OrderDate | undefined;
+  /**
+   * R04 approved for the mapping version: meanings (storno / dodáno / uhrazeno) may be used. When false, `byStatus`
+   * groups by the raw source status and every row's meaning is "Bez schváleného významu".
+   */
+  readonly mappingApproved: boolean;
+  /** Included orders with a status event flagged for review (kept, but its order is uncertain). */
+  readonly reviewEvents: number;
+  readonly rows: readonly ReportOrderRow[];
+  /** Included rows whose date is the time of receipt (the source sent no order date). */
+  readonly rowsWithReceivedDate: number;
+  readonly sources: readonly string[];
+  readonly totals: readonly MoneyTotal[];
+  readonly withoutAmount: number;
+}
+
+const dayOf = (date: OrderDate) => orderDateText(date).slice(0, 10);
+
+export const orderDate = (order: ImportedOrder) => order.orderedAt ?? order.receivedAt;
+
+const inPeriod = (date: OrderDate, period: ReportPeriod | undefined) => {
+  const day = dayOf(date);
+  return (period?.from === undefined || day >= period.from) && (period?.to === undefined || day <= period.to);
+};
+
+const matchesStatus = (row: ReportOrderRow, status: ReportStatusFilter | undefined, approved: boolean) => {
+  // A meaning filter needs an approved mapping; without it only raw statuses filter (C05).
+  if (status === undefined || (status.kind === 'meaning' && !approved)) {
+    return true;
+  }
+  return status.kind === 'meaning'
+    ? row.meaning === status.meaning
+    : normalizeStatus(row.order.rawStatus) === normalizeStatus(status.raw);
+};
+
+/**
+ * Latest manual decision on a cross-source duplicate (crm-imports `decisions`), read structurally so this file
+ * also decodes documents written before the field existed.
+ */
+const duplicateDecision = (order: ImportedOrder): string | undefined => {
+  const { decisions } = order;
+  const last = decisions?.at(-1)?.decision;
+  return last;
+};
+
+const exclusionOf = (order: ImportedOrder): ExclusionReason | undefined => {
+  if (order.duplicateOf !== undefined) {
+    const decision = duplicateDecision(order);
+    if (decision === 'confirmed_duplicate') {
+      return 'confirmed_duplicate';
+    }
+    if (decision !== 'distinct') {
+      return 'duplicate';
+    }
+  }
+  if (order.pairing === 'review') {
+    return 'review';
+  }
+  if (order.pairing === 'unpaired' || order.clientId === undefined) {
+    return 'unpaired';
+  }
+  return undefined;
+};
+
+const reportGroup = ({
+  accumulator,
+  key,
+  label,
+}: {
+  readonly accumulator: Accumulator;
+  readonly key: string;
+  readonly label: string;
+}): ReportGroup => ({
+  count: accumulator.count,
+  key,
+  label,
+  lastOrderAt: accumulator.lastOrderAt,
+  totals: totalsOf(accumulator),
+  withoutAmount: accumulator.withoutAmount,
+});
+
+const groupBy = (
+  rows: readonly ReportOrderRow[],
+  keyOf: (row: ReportOrderRow) => { readonly key: string; readonly label: string },
+): ReportGroup[] => {
+  const groups = new Map<string, { accumulator: Accumulator; label: string }>();
+  for (const row of rows) {
+    const { key, label } = keyOf(row);
+    const group = groups.get(key) ?? { accumulator: newAccumulator(), label };
+    accumulate(group.accumulator, row);
+    groups.set(key, group);
+  }
+  return [...groups.entries()].map(([key, group]) => reportGroup({ ...group, key }));
+};
+
+const monthNames = [
+  'leden',
+  'únor',
+  'březen',
+  'duben',
+  'květen',
+  'červen',
+  'červenec',
+  'srpen',
+  'září',
+  'říjen',
+  'listopad',
+  'prosinec',
+];
+
+/** "2026-10" -> "říjen 2026". */
+export const monthLabel = (month: string) => {
+  const index = Number(month.slice(5, 7)) - 1;
+  return `${monthNames[index] ?? month.slice(5, 7)} ${month.slice(0, 4)}`;
+};
+
+const nextMonth = (month: string) => {
+  const year = Number(month.slice(0, 4));
+  const value = Number(month.slice(5, 7));
+  return value === 12 ? `${year + 1}-01` : `${year}-${String(value + 1).padStart(2, '0')}`;
+};
+
+/** Months between the first and last group, gaps filled with zero-order months (a real zero inside the range). */
+const continuousMonths = (groups: readonly ReportGroup[]): ReportGroup[] => {
+  const sorted = groups.toSorted((left, right) => left.key.localeCompare(right.key));
+  const [first] = sorted;
+  const last = sorted.at(-1);
+  if (first === undefined || last === undefined) {
+    return [];
+  }
+  const byKey = new Map(sorted.map((group) => [group.key, group]));
+  const result: ReportGroup[] = [];
+  for (let month = first.key; month <= last.key; month = nextMonth(month)) {
+    result.push(
+      byKey.get(month) ??
+        reportGroup({
+          accumulator: newAccumulator(),
+          key: month,
+          label: monthLabel(month),
+        }),
+    );
+  }
+  return result;
+};
+
+const itemRows = (rows: readonly ReportOrderRow[]) => {
+  const items = new Map<string, { name: string; orders: Set<string>; sku: string | undefined; units: bigint }>();
+  let ordersWithLines = 0;
+  for (const row of rows) {
+    const { lines } = row.order;
+    if (lines === undefined || lines.length === 0) {
+      continue;
+    }
+    ordersWithLines += 1;
+    for (const line of lines) {
+      const key = line.sku ?? line.externalId ?? line.name;
+      const item = items.get(key) ?? { name: line.name, orders: new Set<string>(), sku: line.sku, units: 0n };
+      item.units += decimalToUnits(line.quantity) ?? 0n;
+      item.orders.add(row.order.id);
+      items.set(key, item);
+    }
+  }
+  return {
+    ordersWithLines,
+    rows: [...items.entries()]
+      .map(([key, item]) => ({
+        key,
+        name: item.name,
+        orders: item.orders.size,
+        quantity: unitsToDecimal(item.units).replace(/\.00$/u, ''),
+        sku: item.sku,
+      }))
+      .toSorted((left, right) => right.orders - left.orders || left.name.localeCompare(right.name, 'cs')),
+  };
+};
+
+const matchesReportFilters = (row: ReportOrderRow, filters: ReportFilters, approved: boolean) =>
+  (filters.clientId === undefined || row.clientId === filters.clientId) &&
+  (filters.salespersonId === undefined || (row.salespersonId ?? UNASSIGNED) === filters.salespersonId) &&
+  matchesStatus(row, filters.status, approved);
+
+const statusMeaningOrder = new Map<string, number>(statusMeanings.map((meaning, index) => [meaning, index]));
+
+/**
+ * The C05 sales report over the (already ACL-projected) state. Filters apply to the included rows; exclusions are
+ * counted in the same period (they have no reliable client or salesperson, so those filters do not narrow them).
+ */
+export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): SalesReport => {
+  const clients = new Map(state.clients.items.map((client) => [client.id, client]));
+  const salespeople = new Map(state.salespeople.map((person) => [person.id, person.name]));
+  const exclusionCounts = new Map<ExclusionReason, number>();
+  const rows: ReportOrderRow[] = [];
+  const sources = new Set<string>();
+  const approved = reportMappingApproved(state);
+
+  for (const order of state.imports.orders) {
+    const date = orderDate(order);
+    if (inPeriod(date, filters.period)) {
+      const exclusion = exclusionOf(order);
+      if (exclusion === undefined) {
+        const clientId = order.clientId ?? '';
+        const client = order.clientId === undefined ? undefined : clients.get(order.clientId);
+        const salespersonId = client?.ownerSalespersonId;
+        const row: ReportOrderRow = {
+          clientId,
+          clientName: client?.name ?? 'Neznámý klient',
+          date,
+          dateSource: order.orderedAt === undefined ? 'received' : 'ordered',
+          meaning: approved ? reportStatusMeaning(order.rawStatus) : 'unmapped',
+          month: orderDateText(date).slice(0, 7),
+          order,
+          salespersonId,
+          salespersonName: salespersonId === undefined ? undefined : salespeople.get(salespersonId),
+        };
+        if (matchesReportFilters(row, filters, approved)) {
+          rows.push(row);
+          sources.add(order.source);
+        }
+      } else {
+        exclusionCounts.set(exclusion, (exclusionCounts.get(exclusion) ?? 0) + 1);
+      }
+    }
+  }
+
+  rows.sort(
+    (left, right) =>
+      orderDateText(right.date).localeCompare(orderDateText(left.date)) ||
+      left.clientName.localeCompare(right.clientName),
+  );
+  const all = newAccumulator();
+  for (const row of rows) {
+    accumulate(all, row);
+  }
+  const excluded = (['unpaired', 'review', 'duplicate', 'confirmed_duplicate'] as const).flatMap((reason) => {
+    const count = exclusionCounts.get(reason) ?? 0;
+    return count === 0 ? [] : [{ count, reason }];
+  });
+  const totals = totalsOf(all);
+  const byStatus = approved
+    ? groupBy(rows, (row) => ({ key: row.meaning, label: statusMeaningLabels[row.meaning] })).toSorted(
+        (left, right) => (statusMeaningOrder.get(left.key) ?? -1) - (statusMeaningOrder.get(right.key) ?? -1),
+      )
+    : groupBy(rows, (row) => ({
+        key: `raw:${normalizeStatus(row.order.rawStatus)}`,
+        label: `Ze zdroje: ${row.order.rawStatus}`,
+      })).toSorted((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'cs'));
+  return {
+    byClient: groupBy(rows, (row) => ({ key: row.clientId, label: row.clientName })).toSorted(
+      (left, right) => right.count - left.count || left.label.localeCompare(right.label, 'cs'),
+    ),
+    byMonth: continuousMonths(groupBy(rows, (row) => ({ key: row.month, label: monthLabel(row.month) }))),
+    bySalesperson: groupBy(rows, (row) => ({
+      key: row.salespersonId ?? UNASSIGNED,
+      label: row.salespersonName ?? 'Nepřiděleno',
+    })).toSorted((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'cs')),
+    byStatus,
+    count: all.count,
+    currencies: totals.map((total) => total.currency),
+    excluded,
+    excludedTotal: excluded.reduce((sum, entry) => sum + entry.count, 0),
+    items: itemRows(rows),
+    lastOrderAt: all.lastOrderAt,
+    mappingApproved: approved,
+    reviewEvents: rows.filter((row) => row.order.statusHistory.some((event) => event.review === true)).length,
+    rows,
+    rowsWithReceivedDate: rows.filter((row) => row.dateSource === 'received').length,
+    sources: [...sources].toSorted((left, right) => left.localeCompare(right, 'cs')),
+    totals,
+    withoutAmount: all.withoutAmount,
+  };
+};
+
+/** Raw statuses present among the confirmed orders, with their meaning (for the status filter and mapping table). */
+export const rawStatusesInUse = (state: CrmState) => {
+  const statuses = new Map<string, { meaning: StatusMeaningOrUnmapped; raw: string; sources: Set<string> }>();
+  for (const order of state.imports.orders) {
+    const key = normalizeStatus(order.rawStatus);
+    const entry = statuses.get(key) ?? {
+      meaning: reportStatusMeaning(order.rawStatus),
+      raw: order.rawStatus,
+      sources: new Set<string>(),
+    };
+    entry.sources.add(order.source);
+    statuses.set(key, entry);
+  }
+  return [...statuses.values()]
+    .map((entry) => ({
+      meaning: entry.meaning,
+      raw: entry.raw,
+      sources: [...entry.sources].toSorted((left, right) => left.localeCompare(right, 'cs')),
+    }))
+    .toSorted(
+      (left, right) =>
+        statusMeanings.indexOf(left.meaning) - statusMeanings.indexOf(right.meaning) ||
+        left.raw.localeCompare(right.raw, 'cs'),
+    );
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Client card facts (C05 / C06: facts only, no recommendation)
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface ClientSalesFacts {
+  /** Latest recorded contact of any kind (visit, call, video call, e-mail). */
+  readonly lastContactAt: DateTime.Utc | undefined;
+  readonly lastOrderAt: OrderDate | undefined;
+  /** Latest personal visit only (kind === 'visit'); calls and e-mails are not visits (C05/C06). */
+  readonly lastVisitAt: DateTime.Utc | undefined;
+  /** Confirmed (paired, non-duplicate) orders of the client. */
+  readonly orderCount: number;
+  /** Value of the confirmed orders per currency (never added across currencies). */
+  readonly totals: readonly MoneyTotal[];
+  readonly withoutAmount: number;
+}
+
+const latestOccurrence = (visits: readonly Pick<Visit, 'occurredAt'>[]) => {
+  let latest: DateTime.Utc | undefined;
+  for (const visit of visits) {
+    if (latest === undefined || DateTime.isGreaterThan(visit.occurredAt, latest)) {
+      latest = visit.occurredAt;
+    }
+  }
+  return latest;
+};
+
+export const clientSalesFacts = (state: CrmState, clientId: string, period?: ReportPeriod): ClientSalesFacts => {
+  const report = buildSalesReport(state, period === undefined ? { clientId } : { clientId, period });
+  const contacts = state.visits.items.filter((visit) => visit.clientId === clientId);
+  return {
+    lastContactAt: latestOccurrence(contacts),
+    lastOrderAt: report.lastOrderAt,
+    lastVisitAt: latestOccurrence(contacts.filter((visit) => visit.kind === 'visit')),
+    orderCount: report.count,
+    totals: report.totals,
+    withoutAmount: report.withoutAmount,
+  };
+};
+
+const homeDayFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
+
+// Shell home facts reuse the same report and never run a second, broader data request.
+export const buildCrmHomeSummary = (records: RecordsResponse) => {
+  const all = canSeeEverything(records.viewer);
+  const today = homeDayFormat.format(DateTime.toEpochMillis(records.now));
+  const activeClients = new Set(
+    records.state.clients.items.flatMap((client) => (client.status === 'active' ? [client.id] : [])),
+  );
+  const open = records.state.visits.plan.filter(
+    (item) =>
+      item.status === 'open' &&
+      activeClients.has(item.clientId) &&
+      (all || item.salespersonId === records.viewer.salespersonId),
+  );
+  const month = buildSalesReport(records.state, {
+    period: { from: CalendarDateSchema.make(`${today.slice(0, 7)}-01`), to: CalendarDateSchema.make(today) },
+  });
+  return {
+    clients: activeClients.size,
+    dueToday: open.filter((item) => item.dueDate.slice(0, 10) === today).length,
+    month,
+    openContacts: open.length,
+    overdue: open.filter((item) => item.dueDate.slice(0, 10) < today).length,
+    // Undefined is deliberate: a rep does not receive or learn the firm's unpaired-order count.
+    toResolve: all
+      ? buildSalesReport(records.state)
+          .excluded.filter((entry) => entry.reason !== 'confirmed_duplicate')
+          .reduce((sum, entry) => sum + entry.count, 0)
+      : undefined,
+  };
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// CSV (exactly the rows the page shows)
+// ---------------------------------------------------------------------------------------------------------------
+
+const csvCell = (value: string | number | undefined) => {
+  const text = value === undefined ? '' : String(value);
+  return /[";\r\n]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+};
+
+/** Semicolon-separated CSV with CRLF line ends (opens directly in Czech Excel; prepend a BOM when saving). */
+export const toCsv = (header: readonly string[], rows: readonly (readonly (string | number | undefined)[])[]) =>
+  [header, ...rows].map((row) => row.map(csvCell).join(';')).join('\r\n');
+
+/** Decimal for Czech spreadsheets: "1234.50" -> "1234,50". */
+const csvDecimal = (value: string | undefined) => value?.replace('.', ',');
+
+export const ordersCsv = (report: SalesReport) =>
+  toCsv(
+    [
+      'Datum objednávky',
+      'Číslo objednávky',
+      'Zdroj',
+      'Externí ID',
+      'Klient',
+      'Obchodník',
+      'Surový stav',
+      'Význam stavu',
+      'Částka',
+      'Měna',
+    ],
+    report.rows.map((row) => {
+      const money = orderMoney(row.order);
+      return [
+        dayOf(row.date),
+        row.order.number,
+        row.order.source,
+        row.order.externalId,
+        row.clientName,
+        row.salespersonName ?? 'Nepřiděleno',
+        row.order.rawStatus,
+        statusMeaningLabels[row.meaning],
+        money === undefined ? 'údaj neposkytnut' : csvDecimal(unitsToDecimal(money.units)),
+        money?.currency ?? '',
+      ];
+    }),
+  );
+
+export const groupsCsv = (groupLabel: string, groups: readonly ReportGroup[], currencies: readonly string[]) =>
+  toCsv(
+    [groupLabel, 'Počet objednávek', ...currencies.map((currency) => `Hodnota ${currency}`), 'Bez částky'],
+    groups.map((group) => [
+      group.label,
+      group.count,
+      ...currencies.map((currency) =>
+        csvDecimal(group.totals.find((total) => total.currency === currency)?.amount ?? '0.00'),
+      ),
+      group.withoutAmount,
+    ]),
+  );

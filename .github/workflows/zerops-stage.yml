@@ -1,0 +1,253 @@
+name: Zerops Stage Deploy
+
+# Deploys the sales demo branch to stage, which runs only on Zerops: one `app` service (the Shell, every owner and
+# the Outbox Worker host in one container, see app/scripts/zerops/app-host.mts) and one `storefront` service (AKROS).
+# Zerops builds both from app/zerops.yaml. The app container runs the owner migrations and publishes the Application
+# Composition itself when it starts, and Zerops switches traffic only after /_host/ready answers.
+# Cloudflare stays in front of stage only as DNS, WAF and Access.
+on:
+  push:
+    branches:
+      - demo/sales-crm
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# One deploy at a time; a newer push waits for the running one.
+concurrency:
+  group: zerops-stage
+  cancel-in-progress: false
+
+env:
+  STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
+  STAGE_STOREFRONT_URL: https://ontos-stage-akros.web-revolution.cz
+
+jobs:
+  # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
+  # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
+  # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
+  build:
+    name: Build units (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6]
+    env:
+      SHARDS: 7
+      ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+      ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+
+      - name: Restore the shard's unit builds
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-unit-cache
+          key: zerops-units-${{ matrix.shard }}-${{ github.sha }}
+          restore-keys: zerops-units-${{ matrix.shard }}-
+
+      - name: Build the shard's units
+        working-directory: app
+        env:
+          # Outside the checkout: an untracked file in the tree makes every release identity `workspace`.
+          UNIT_CACHE_DIR: ${{ runner.temp }}/zerops-unit-cache
+        run: |
+          units="$(node -e '
+            const ids = ["shell-super-app", ...require("./topology/application-release-intent.json").modules.map((m) => m.appId)];
+            console.log(ids.filter((_, index) => index % Number(process.env.SHARDS) === Number(process.argv[1])).join(" "));
+          ' "${{ matrix.shard }}")"
+          echo "units: $units"
+          # shellcheck disable=SC2086
+          BUILD_JOBS=2 mise exec -- sh scripts/zerops/build-app.sh $units
+          dirs=""
+          for unit in $units; do
+            [ "$unit" = shell-super-app ] && dirs="$dirs apps/shell-super-app/dist" || dirs="$dirs verticals/$unit/dist"
+          done
+          # shellcheck disable=SC2086
+          # Source maps, type bundles and precompressed copies never serve at runtime; they only slow the Zerops push.
+          tar --create --zstd --file "$RUNNER_TEMP/units.tar.zst" --exclude='*.map' --exclude='@mf-types*' \
+            --exclude='*.br' --exclude='*.gz' $dirs
+
+      - name: Save the shard's unit builds
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-unit-cache
+          key: zerops-units-${{ matrix.shard }}-${{ github.sha }}
+
+      - name: Upload the shard's unit builds
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zerops-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/units.tar.zst
+          compression-level: 0
+          retention-days: 3
+
+  deploy:
+    name: Build and deploy on Zerops
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment:
+      name: stage-edge
+      deployment: false
+    env:
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
+      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the unit builds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zerops-units-*
+          path: ${{ runner.temp }}/units
+
+      # The push carries every prebuilt dist/ (git-ignored) with the checkout; its digests tell the Zerops build to
+      # keep them, so Zerops only installs the workspace.
+      # The units travel as one zstd archive inside the push, which keeps the package small enough to upload in one
+      # go; the Zerops build unpacks it and keeps every unit whose digest it carries.
+      - name: Pack the unit builds for the push
+        run: |
+          mkdir -p "$RUNNER_TEMP/dists"
+          for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
+          tar --create --file - -C "$RUNNER_TEMP/dists" . | zstd -q -12 -T0 -o app/.zerops-prebuilt.tar.zst
+          ls -lh app/.zerops-prebuilt.tar.zst
+
+      # The owner secret bundle is the one GitHub copy of every owner's runtime secrets. The app host hands each owner
+      # only its own entries; the bundle itself never leaves the supervisor.
+      - name: Sync the owner secret bundle to the app service
+        env:
+          OWNER_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
+
+      - name: Push the app and the storefront
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          started="$(date +%s)"
+          bash app/scripts/zerops/push-service.sh "$ZEROPS_APP_SERVICE_ID" app "$GITHUB_SHA" >"$RUNNER_TEMP/push-app.log" 2>&1 & app=$!
+          # The builds overlap, the uploads do not: two uploads at once each run past Zerops' ~30 s upload limit.
+          until grep -q '^build and deploy process' "$RUNNER_TEMP/push-app.log" || ! kill -0 "$app" 2>/dev/null; do sleep 1; done
+          PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
+          status=0
+          wait "$app" || status=1
+          wait "$storefront" || status=1
+          for setup in app storefront; do
+            echo "::group::push $setup"
+            cat "$RUNNER_TEMP/push-$setup.log"
+            echo "::endgroup::"
+          done
+          echo "Zerops build and deploy took $(( $(date +%s) - started ))s" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Show the app log after a failed deploy
+        if: failure()
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          npm install --global @zerops/zcli@1.1.0 >/dev/null
+          zcli login "$ZEROPS_TOKEN" >/dev/null
+          zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
+
+  verify:
+    name: Verify stage
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+
+      - name: Install headless Chromium for the OAuth consent screens
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+
+      - name: Time /cs, OAuth metadata and the storefront home
+        working-directory: app
+        run: mise exec -- node scripts/ops/stage-demo-verify.mjs
+
+      # The newsletter proof only warns: its failure is reported and does not fail the run.
+      - name: Prove the native newsletter grant and withdrawal
+        id: newsletter-proof
+        if: success() || failure()
+        continue-on-error: true
+        working-directory: app
+        env:
+          AKROS_TEST_BASE_URL: ${{ env.STAGE_STOREFRONT_URL }}
+          AKROS_EVIDENCE_DIR: ${{ runner.temp }}/newsletter-consent
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs
+
+      - name: Warn about a failed newsletter proof
+        if: (success() || failure()) && steps.newsletter-proof.outcome == 'failure'
+        run: |
+          echo '::warning title=Newsletter proof::The native newsletter grant and withdrawal proof failed; see its step log and the newsletter-consent artifact.'
+          echo '> [!WARNING]' >>"$GITHUB_STEP_SUMMARY"
+          echo '> The newsletter grant and withdrawal proof failed (non-blocking).' >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the newsletter screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: newsletter-consent
+          path: ${{ runner.temp }}/newsletter-consent/*.png
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Prove MCP over OAuth end to end
+        working-directory: app
+        env:
+          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_OAUTH_ISSUER: ${{ env.STAGE_SHELL_URL }}/shell-super-app-api/oauth
+          E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
+          E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification
+
+      - name: Upload the MCP OAuth proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-oauth-e2e
+          path: ${{ runner.temp }}/mcp-oauth-e2e
+          if-no-files-found: ignore
+          retention-days: 14

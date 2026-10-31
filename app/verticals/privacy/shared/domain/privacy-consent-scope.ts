@@ -1,49 +1,16 @@
-import { Schema } from 'effect';
-
+import type { ConsentMaterialDimensionKind, ConsentScope } from '@app/consent-authority-contracts';
 import type { PurposeVersion } from './processing-purpose.ts';
-import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
-import { ProcessingPurposeRefSchema } from '../resources/processing-purpose.ts';
 
-const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const Meaning = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000));
-
-/** A dimension is included only when its value changes the business choice. */
-export const ConsentMaterialDimensionKindSchema = Schema.Literals([
-  'COMMUNICATION_CHANNEL',
-  'SITE',
-  'TECHNOLOGY_CATEGORY',
-  'TECHNOLOGY_PROVIDER_SET',
-  'JURISDICTION',
-]);
-
-export const ConsentMaterialDimensionSchema = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal('COMMUNICATION_CHANNEL'),
-    value: Schema.Literals(['EMAIL', 'SMS', 'PHONE', 'PUSH']),
-  }),
-  Schema.Struct({ kind: Schema.Literal('SITE'), value: Ref }),
-  Schema.Struct({ kind: Schema.Literal('TECHNOLOGY_CATEGORY'), value: Ref }),
-  Schema.Struct({ kind: Schema.Literal('TECHNOLOGY_PROVIDER_SET'), value: Ref }),
-  Schema.Struct({ kind: Schema.Literal('JURISDICTION'), value: Ref }),
-]);
-export type ConsentMaterialDimension = typeof ConsentMaterialDimensionSchema.Type;
-export type ConsentMaterialDimensionKind = typeof ConsentMaterialDimensionKindSchema.Type;
-
-/**
- * The stable business scope of one consent. Capture channel, UI, and transport
- * are provenance, never scope dimensions. An empty materialDimensions list is
- * the explicit representation of a channel-neutral choice.
- */
-export const ConsentScopeSchema = Schema.Struct({
-  controllerRef: Ref,
-  materialDimensions: Schema.Array(ConsentMaterialDimensionSchema).check(Schema.isMaxLength(16)),
-  privacySubjectRef: PrivacySubjectRefSchema,
-  processingPurposeRef: ProcessingPurposeRefSchema,
-  purposeMeaning: Meaning,
-  purposeVersionRef: Ref,
-  scopeRef: Ref,
-});
-export type ConsentScope = typeof ConsentScopeSchema.Type;
+export {
+  ConsentScopeSchema,
+  ConsentMaterialDimensionKindSchema,
+  ConsentMaterialDimensionSchema,
+} from '@app/consent-authority-contracts';
+export type {
+  ConsentScope,
+  ConsentMaterialDimensionKind,
+  ConsentMaterialDimension,
+} from '@app/consent-authority-contracts';
 
 export interface ConsentScopeValidation {
   readonly errors: readonly string[];

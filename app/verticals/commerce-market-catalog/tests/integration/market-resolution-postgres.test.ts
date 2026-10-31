@@ -24,6 +24,9 @@ import {
   storefrontAssociations,
 } from '../../src/database/schema.ts';
 import { marketResolutionPersistenceForScope } from '../../src/persistence/market-resolution-persistence.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
 const unrelatedTenantId = randomUUID();
@@ -84,7 +87,7 @@ const readSnapshot = (
 ) =>
   runtime.transaction((transaction) =>
     Effect.gen(function* readEligibilitySnapshot() {
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* marketResolutionPersistenceForScope(
         ownerTransaction,
         scope,

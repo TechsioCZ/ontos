@@ -101,7 +101,7 @@ Rollout measurements, calibration evidence, and follow-up scope belong to [PR #4
 ## Tests that block merges
 
 A blocking test checks observable behavior or an explicit, important restriction: auth, tenant
-isolation, database identity, API contracts, release-asset safety, or a real Node/Cloudflare build.
+isolation, database identity, API contracts, release-asset safety, or a real Node build.
 It must pass after a harmless refactor and after an intended app policy change, such as new browser
 targets or checker settings.
 

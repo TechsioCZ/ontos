@@ -1,8 +1,9 @@
+import { Base64Url } from 'effect/encoding';
 import { apiKey } from '@better-auth/api-key';
-import { betterAuth } from 'better-auth';
+import { betterAuth } from 'better-auth/minimal';
 import { isAPIError } from 'better-auth/api';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
-import { Brand, Clock, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Brand, Clock, Context, Crypto, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { AuthConfig } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -146,6 +147,12 @@ const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
   return unavailable(error);
 };
 const API_KEY_EXTERNAL_IO_TIMEOUT = Duration.seconds(10);
+
+/** Better Auth's stored form of an API key: SHA-256 of the key, base64url without padding. */
+const apiKeyLookupHash = (crypto: Crypto.Crypto, rawKey: string) =>
+  crypto
+    .digest('SHA-256', new TextEncoder().encode(rawKey))
+    .pipe(Effect.mapError(unavailable), Effect.map(Base64Url.encode));
 const PENDING_BINDING_LEASE = Duration.minutes(5);
 const PENDING_CLEANUP_BATCH_SIZE = 100;
 const IssuerPrincipalIdSchema = Schema.String.pipe(Schema.brand('ApiKeyIssuerPrincipalId'));
@@ -236,23 +243,32 @@ const apiKeyExternalTimeout = Effect.timeoutOrElse({
 
 export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeService() {
   const configuration = yield* AuthConfig;
+  const crypto = yield* Crypto.Crypto;
   const { adapter: databaseAdapter, executor: database } = yield* AuthDatabase;
-  const auth = betterAuth({
-    baseURL: configuration.baseUrl,
-    database: databaseAdapter,
-    logger: { disabled: true },
-    plugins: [
-      apiKey({
-        enableMetadata: true,
-        enableSessionForAPIKeys: false,
-        // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
-        rateLimit: { enabled: false },
-        references: 'user',
-      }),
-    ],
-    secret: configuration.secret,
-    trustedOrigins: [...configuration.trustedOrigins],
-  });
+  // Verification and metadata use SQL directly; only issuance needs the provider.
+  const makeProvider = () =>
+    betterAuth({
+      advanced: { useSecureCookies: configuration.secureCookies },
+      baseURL: configuration.baseUrl,
+      database: databaseAdapter,
+      logger: { disabled: true },
+      plugins: [
+        apiKey({
+          enableMetadata: true,
+          enableSessionForAPIKeys: false,
+          // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
+          rateLimit: { enabled: false },
+          references: 'user',
+        }),
+      ],
+      secret: configuration.secret,
+      trustedOrigins: [...configuration.trustedOrigins],
+    });
+  let retainedProvider: ReturnType<typeof makeProvider> | undefined;
+  const getProvider = () => {
+    retainedProvider ??= makeProvider();
+    return retainedProvider;
+  };
   const metadata = (keyId: string) =>
     database
       .select({
@@ -286,30 +302,33 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         Effect.asVoid,
       ),
     issue: (requestHeaders, input) =>
-      Effect.tryPromise({
-        catch: mapProviderError,
-        try: auth.api.createApiKey.bind(auth.api, {
-          body: withOptionalProperty(
-            withOptionalProperty(
-              {
-                expiresIn: input.expiresIn ?? null,
-              },
-              input.name !== undefined,
-              'name',
-              input.name,
-              {},
-            ),
-            input.prefix !== undefined,
-            'prefix',
-            input.prefix,
-            {
-              metadata: pendingBindingMarker(input),
-              remaining: null,
-            },
-          ),
-          headers: requestHeaders,
-        }),
-      }).pipe(
+      Effect.try({ catch: mapProviderError, try: getProvider }).pipe(
+        Effect.flatMap(({ api }) =>
+          Effect.tryPromise({
+            catch: mapProviderError,
+            try: api.createApiKey.bind(api, {
+              body: withOptionalProperty(
+                withOptionalProperty(
+                  {
+                    expiresIn: input.expiresIn ?? null,
+                  },
+                  input.name !== undefined,
+                  'name',
+                  input.name,
+                  {},
+                ),
+                input.prefix !== undefined,
+                'prefix',
+                input.prefix,
+                {
+                  metadata: pendingBindingMarker(input),
+                  remaining: null,
+                },
+              ),
+              headers: requestHeaders,
+            }),
+          }),
+        ),
         apiKeyExternalTimeout,
         Effect.map((created) => ({
           ...toSafe(created),
@@ -378,28 +397,26 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
             : Effect.succeed(toSafe(updated)),
         ),
       ),
-    verify: (rawKey) =>
-      Effect.tryPromise({
-        catch: mapProviderError,
-        try: auth.api.verifyApiKey.bind(auth.api, { body: { key: rawKey } }),
-      }).pipe(
-        apiKeyExternalTimeout,
-        Effect.flatMap((result): Effect.Effect<VerifiedApiKey, ApiKeyProviderError> => {
-          if (result.valid && result.key !== null) {
-            return Effect.succeed({ providerKeyId: result.key.id });
-          }
-          if (result.error?.code.includes('RATE') === true) {
-            return Effect.fail(
-              new ApiKeyRateLimitedError({
-                code: 'api_key_rate_limited',
-                reason: 'The API key rate limit was exceeded',
-                retryAfterSeconds: 60,
-              }),
-            );
-          }
-          return Effect.fail(invalid());
-        }),
-      ),
+    // Verification is one indexed read: the key is random, so Better Auth's SHA-256 lookup hash is the whole check.
+    // Better Auth's own verifyApiKey also writes the row twice per call (last request, updated at) for quota and
+    // rate-limit bookkeeping that Shell keys never carry, which serialized every caller of one key on its row.
+    verify: Effect.fn('ApiKeyService.verify')(function* verifyApiKey(rawKey: string) {
+      const keyHash = yield* apiKeyLookupHash(crypto, rawKey);
+      const [record] = yield* database
+        .select({ enabled: apikey.enabled, expiresAt: apikey.expiresAt, id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.key, keyHash))
+        .limit(1)
+        .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout);
+      if (record === undefined || record.enabled === false) {
+        return yield* invalid();
+      }
+      const now = yield* Clock.currentTimeMillis;
+      if (record.expiresAt !== null && record.expiresAt.getTime() <= now) {
+        return yield* invalid();
+      }
+      return { providerKeyId: record.id };
+    }),
   };
   return Object.freeze(service);
 });

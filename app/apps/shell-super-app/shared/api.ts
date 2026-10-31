@@ -1,7 +1,47 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
+import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import {
+  AgentActivityRequestSchema,
+  AgentActivityResponseSchema,
+  AgentDecideRequestSchema,
+  AgentDecideResponseSchema,
+  AgentProposalSubmitRequestSchema,
+  AgentProposalSubmitResponseSchema,
+  AgentQueueResponseSchema,
+  AgentQueueRequestSchema,
+  AgentRevertRequestSchema,
+  AgentRevertResponseSchema,
+} from '@app/shared-contracts/agent-proposals';
+import {
+  AgentEntityOverviewSchema,
+  AgentOperatorsRequestSchema,
+  AgentOperatorsResponseSchema,
+  ConnectionAdminListRequestSchema,
+  ConnectionAdminListResponseSchema,
+  ConnectionListResponseSchema,
+  ConnectionMutationResponseSchema,
+  ConnectionRevokeRequestSchema,
+  ConnectionUpdateRequestSchema,
+  ManageAgentEntityRequestSchema,
+  ManageAgentEntityResponseSchema,
+} from '@app/shared-contracts/agent-access';
+import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './document-gateway-api.ts';
+import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
+import {
+  PEOPLE_PATHS,
+  PeopleRoleCatalogSchema,
+  InvitePeopleRequestSchema,
+  InvitePeopleResponseSchema,
+  PeopleListRequestSchema,
+  PeopleListResponseSchema,
+  SetPeopleCompanyMembershipRequestSchema,
+  SetPeopleCompanyMembershipResponseSchema,
+  SetPeopleRoleRequestSchema,
+  SetPeopleRoleResponseSchema,
+} from './people-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -22,11 +62,15 @@ export type SwitchTenantResponse = typeof SwitchTenantResponseSchema.Type;
 export type AvailableLegalEntitiesResponse = typeof AvailableLegalEntitiesResponseSchema.Type;
 export type SwitchLegalEntityPayload = typeof SwitchLegalEntityPayloadSchema.Type;
 export type SwitchLegalEntityResponse = typeof SwitchLegalEntityResponseSchema.Type;
+export type SwitchToTenantContextResponse = typeof SwitchToTenantContextResponseSchema.Type;
 export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
 export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
 export type ShellComposition = typeof ShellCompositionSchema.Type;
 export type ShellCompositionRequest = typeof ShellCompositionRequestSchema.Type;
+export type ModuleTargetSelector = typeof ModuleTargetSelectorSchema.Type;
 export type ResolveModuleTargetPayload = typeof ResolveModuleTargetPayloadSchema.Type;
+export type ResolveModuleTargetsPayload = typeof ResolveModuleTargetsPayloadSchema.Type;
+export type ResolvedModuleTargets = typeof ResolvedModuleTargetsSchema.Type;
 export type ResolvedModuleTarget = typeof ResolvedModuleTargetSchema.Type;
 export type ResourceRef = typeof ResourceRefSchema.Type;
 export type ShellResourceRequest = typeof ShellResourceRequestSchema.Type;
@@ -58,13 +102,26 @@ export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), 
   Schema.brand('TimelineEntryId'),
 );
 
-// The creatable/assignable non-human principal kinds, declared once: `system` is reserved for
-// Core-attested workloads and is not expressible from a tenant request body or an administration read.
+// Tenant request bodies cannot create Core-attested `system` principals.
+// Demo agents have their own creation lifecycle and remain visible in managed-key reads.
 const nonHumanPrincipalKind = Schema.Literals(['service', 'integration']);
 
 export const IdentityRequestHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
+export const ConfigureDemoCompaniesPayloadSchema = Schema.Struct({ configuration: Schema.Literal('sales-rental-v1') });
+export const ConfigureDemoCompaniesResponseSchema = Schema.Struct({
+  companies: Schema.Array(
+    Schema.Struct({
+      legalEntityId: LegalEntityIdSchema,
+      legalName: Schema.String,
+    }),
+  ),
+});
+
+export const DemoAccountListPayloadSchema = Schema.Struct({});
+export const DemoAccountCapabilitySchema = Schema.Struct({ canManage: Schema.Boolean });
+
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   // `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
@@ -90,7 +147,9 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
 export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
+export const ManagedApiKeyScopeSchema = Schema.Literals(['company-agent', 'tenant-managed']);
 export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
+  scope: ManagedApiKeyScopeSchema,
   ...IssueApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
@@ -117,12 +176,14 @@ export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
     newStatus: MutableApiKeyBindingStatusSchema,
     principalId: PrincipalIdSchema,
     reason: Schema.optionalKey(identityReason),
+    scope: ManagedApiKeyScopeSchema,
   }),
   Schema.Struct({
     ...apiKeyStatusFields,
     newStatus: Schema.Literal('revoked'),
     principalId: PrincipalIdSchema,
     reason: identityReason,
+    scope: ManagedApiKeyScopeSchema,
   }),
 ]);
 export const RotateApiKeyPayloadSchema = Schema.Struct({
@@ -131,6 +192,7 @@ export const RotateApiKeyPayloadSchema = Schema.Struct({
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
 });
 export const RotateManagedApiKeyPayloadSchema = Schema.Struct({
+  scope: ManagedApiKeyScopeSchema,
   ...RotateApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
@@ -155,10 +217,27 @@ export const SelfApiKeyListResponseSchema = Schema.Struct({
   items: Schema.Array(ApiKeyLifecycleResponseSchema),
   nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
+export const ManagedApiKeyListPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...IdentityListPayloadSchema.fields,
+    scope: Schema.Literal('tenant-managed'),
+  }),
+  Schema.Struct({
+    ...IdentityListPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+    scope: Schema.Literal('company-agent'),
+  }),
+]);
 export const ManagedApiKeyListItemSchema = Schema.Struct({
   displayName: Schema.String,
-  key: Schema.Union([Schema.Null, ApiKeyLifecycleResponseSchema]),
-  kind: nonHumanPrincipalKind,
+  key: Schema.Union([
+    Schema.Null,
+    Schema.Struct({
+      ...ApiKeyLifecycleResponseSchema.fields,
+      bindingStatus: MutableApiKeyBindingStatusSchema,
+    }),
+  ]),
+  kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus,
 });
@@ -192,6 +271,7 @@ export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleR
 export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
 export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
 export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
+export type ManagedApiKeyListPayload = Schema.Schema.Type<typeof ManagedApiKeyListPayloadSchema>;
 export type ManagedApiKeyListResponse = Schema.Schema.Type<typeof ManagedApiKeyListResponseSchema>;
 export type StartSupportImpersonationPayload = Schema.Schema.Type<typeof StartSupportImpersonationPayloadSchema>;
 export type SupportImpersonationResponse = Schema.Schema.Type<typeof SupportImpersonationResponseSchema>;
@@ -278,6 +358,12 @@ export const AuthenticatedSessionSchema = Schema.Struct({
   state: Schema.Literal('authenticated'),
 });
 
+export const TenantAuthenticatedSessionSchema = Schema.Struct({
+  availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
+  identity: SafeTenantIdentitySchema,
+  state: Schema.Literal('tenant_authenticated'),
+});
+
 export const SelectionRequiredSessionSchema = Schema.Struct({
   availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
   identity: SafeTenantIdentitySchema,
@@ -292,6 +378,7 @@ export const AccessBlockedSessionSchema = Schema.Struct({
 export const CurrentSessionSchema = Schema.Union([
   AnonymousSessionSchema,
   AuthenticatedSessionSchema,
+  TenantAuthenticatedSessionSchema,
   SelectionRequiredSessionSchema,
   AccessBlockedSessionSchema,
 ]);
@@ -329,29 +416,68 @@ export const SwitchTenantResponseSchema = Schema.Struct({
 export const AvailableLegalEntitiesResponseSchema = Schema.Struct({
   legalEntities: Schema.Array(LegalEntityChoiceSchema),
   selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required']),
+  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required', 'tenant_authenticated']),
+  tenantContextAvailable: Schema.Boolean,
 });
 
 export const SwitchLegalEntityPayloadSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
 });
 
+export const SwitchToTenantContextResponseSchema = Schema.Struct({
+  selectedContext: Schema.Literal('tenant'),
+});
+
 export const SwitchLegalEntityResponseSchema = Schema.Struct({
   selectedLegalEntityId: LegalEntityIdSchema,
+});
+
+/** Czech and English text declared by the contributing module. */
+export const ShellLabelSchema = Schema.Struct({ cs: Schema.String, en: Schema.String });
+export type ShellLabel = typeof ShellLabelSchema.Type;
+
+/** Platform capability a destination needs beyond module access; the Shell decides it per person. */
+export const ShellNavigationCapabilitySchema = Schema.Literals(['people_administration']);
+
+/** Where a page's code lives: the approved remote container and the exposed module. */
+export const ModuleFederationTargetSchema = Schema.Struct({
+  expose: Schema.NonEmptyString,
+  manifest: Schema.Struct({
+    sha256: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+    url: Schema.NonEmptyString,
+  }),
+  remoteName: Schema.NonEmptyString,
 });
 
 export const ShellNavigationItemSchema = Schema.Struct({
   appId: AppIdSchema,
   enabled: Schema.Boolean,
+  entrypointKey: EntrypointKeySchema,
   groupKey: GroupKeySchema,
+  /** Rank of the destination as the place to begin on Home (lower first); absent when it is no starting point. */
+  homeStart: Schema.optional(Schema.Finite.check(Schema.isInt())),
   href: Schema.optionalKey(Schema.String),
-  label: Schema.String,
+  /** Iconify utility class, e.g. `icon-[mdi--home-outline]`. */
+  icon: Schema.TemplateLiteral(['icon-[', Schema.String, ']']),
+  label: ShellLabelSchema,
   moduleId: ModuleIdSchema,
   order: Schema.Finite.check(Schema.isInt()),
+  /** The destination page's code, so the browser can load it while idle without reading anything. */
+  remote: Schema.optionalKey(ModuleFederationTargetSchema),
+  requiresCapability: Schema.optional(ShellNavigationCapabilitySchema),
   state: Schema.Literals(['active', 'deprecated', 'read_only']),
   unavailable: Schema.Boolean,
   writable: Schema.Boolean,
 });
+
+/** A public component a module offers as the Home summary (see the core `home` placement). */
+export const ShellHomeComponentSchema = Schema.Struct({
+  entrypointKey: EntrypointKeySchema,
+  moduleId: ModuleIdSchema,
+  order: Schema.Finite.check(Schema.isInt()),
+  requiresModules: Schema.Array(ModuleIdSchema),
+});
+export type ShellHomeComponent = typeof ShellHomeComponentSchema.Type;
 
 export const ShellUnavailableDeploymentSchema = Schema.Union([
   Schema.Struct({
@@ -376,6 +502,18 @@ export const ShellCompositionSchema = Schema.Union([
   }),
   Schema.Struct({
     compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+    /**
+     * Deployments whose module access is definitely denied to the principal in the current company. Browser hint
+     * only (the gateway skips optional reads of them); every module still authorizes each request itself.
+     */
+    deniedAppIds: Schema.Array(AppIdSchema),
+    /**
+     * Module deployments a document of this person may call: every available deployment of the release except the
+     * denied ones. The Shell obtains their gateway assertions for the document in one batch.
+     */
+    gatewayAudiences: Schema.Array(AppIdSchema),
+    /** Home summary components of modules the person may open, lowest order first. */
+    homeComponents: Schema.Array(ShellHomeComponentSchema),
     navigation: Schema.Array(ShellNavigationItemSchema),
     state: Schema.Literal('available'),
     unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),
@@ -386,37 +524,106 @@ export const ShellCompositionRequestSchema = Schema.Struct({
   compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
 });
 
-export const ResolveModuleTargetPayloadSchema = Schema.Struct({
+export const ShellDocumentContextRequestSchema = Schema.Struct({
+  ...ShellCompositionRequestSchema.fields,
+  /** Only Home documents need their first authorized component resolved. */
+  home: Schema.optionalKey(Schema.Literal(true)),
+});
+export type ShellDocumentContextRequest = typeof ShellDocumentContextRequestSchema.Type;
+
+/** A Shell document's tenant choices; when they cannot be read, only the current tenant is shown. */
+export const ShellDocumentTenantsSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('available'), tenants: Schema.Array(AvailableTenantSchema) }),
+  Schema.Struct({ state: Schema.Literals(['authentication_required', 'unavailable']) }),
+]);
+
+/** A Shell document's composition, or why the document cannot show one. */
+export const ShellDocumentCompositionSchema = Schema.Union([
+  ShellCompositionSchema,
+  Schema.Struct({ state: Schema.Literals(['reload_required', 'unavailable']) }),
+]);
+
+const moduleTargetSelectorFields = {
   canonicalPath: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40_000))),
-  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   entrypointKey: Schema.optionalKey(EntrypointKeySchema),
   moduleId: Schema.optionalKey(ModuleIdSchema),
-}).check(
-  Schema.makeFilter(({ canonicalPath, entrypointKey, moduleId }) =>
-    (canonicalPath === undefined) !== (moduleId === undefined) &&
-    (canonicalPath === undefined || entrypointKey === undefined)
-      ? undefined
-      : 'select either a canonical path or a module target',
-  ),
+};
+const selectsOneModuleTarget = ({
+  canonicalPath,
+  entrypointKey,
+  moduleId,
+}: {
+  readonly canonicalPath?: string;
+  readonly entrypointKey?: string;
+  readonly moduleId?: string;
+}) =>
+  (canonicalPath === undefined) !== (moduleId === undefined) &&
+  (canonicalPath === undefined || entrypointKey === undefined)
+    ? undefined
+    : 'select either a canonical path or a module target';
+const moduleRevisionSchema = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
+
+/** One page of the release: a canonical path, or a module with an optional page entrypoint. */
+export const ModuleTargetSelectorSchema = Schema.Struct(moduleTargetSelectorFields).check(
+  Schema.makeFilter(selectsOneModuleTarget),
 );
+
+export const ResolveModuleTargetPayloadSchema = Schema.Struct({
+  ...moduleTargetSelectorFields,
+  /** The document's pinned release; without it the current release answers and the caller compares its revision. */
+  compositionRevision: Schema.optionalKey(moduleRevisionSchema),
+}).check(Schema.makeFilter(selectsOneModuleTarget));
+
+/** A menu holds far fewer destinations; this only bounds a pathological batch. */
+export const MODULE_TARGET_BATCH_LIMIT = 64;
+
+/** The targets the browser needs at once (every menu destination it prepares), resolved in one request. */
+export const ResolveModuleTargetsPayloadSchema = Schema.Struct({
+  compositionRevision: Schema.optionalKey(moduleRevisionSchema),
+  targets: Schema.Array(ModuleTargetSelectorSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MODULE_TARGET_BATCH_LIMIT),
+  ),
+});
 
 export const ResolvedModuleTargetSchema = Schema.Struct({
   appId: AppIdSchema,
   componentKey: ComponentKeySchema,
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   entrypointKey: EntrypointKeySchema,
-  federation: Schema.Struct({
-    expose: Schema.NonEmptyString,
-    manifest: Schema.Struct({
-      sha256: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-      url: Schema.NonEmptyString,
-    }),
-    remoteName: Schema.NonEmptyString,
-  }),
+  federation: ModuleFederationTargetSchema,
   moduleId: ModuleIdSchema,
   routeParameters: Schema.Record(Schema.String, Schema.String),
   writable: Schema.Boolean,
 });
+
+export const ShellHomeContributionSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('ready'), target: ResolvedModuleTargetSchema }),
+  Schema.Struct({ state: Schema.Literals(['forbidden', 'unavailable']) }),
+]);
+export type ShellHomeContribution = typeof ShellHomeContributionSchema.Type;
+
+export const ShellDocumentHomeSchema = Schema.Struct({
+  contribution: ShellHomeContributionSchema,
+  welcome: Schema.optionalKey(Schema.String),
+});
+export type ShellDocumentHome = typeof ShellDocumentHomeSchema.Type;
+
+/**
+ * One session resolution supplies a document's context and assertions. Home additionally receives its governed
+ * component target (or welcome), so hydration can load the remote without another authenticated BFF request.
+ * Each part keeps its own outcome. Signed-out or unselected sessions get no Home target or assertions.
+ */
+export const ShellDocumentContextSchema = Schema.Struct({
+  canManagePeople: Schema.optionalKey(Schema.Boolean),
+  composition: Schema.optionalKey(ShellDocumentCompositionSchema),
+  gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
+  home: Schema.optionalKey(ShellDocumentHomeSchema),
+  legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
+  session: CurrentSessionSchema,
+  tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
+});
+export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
 
 export const ResourceRefSchema = Schema.Struct({
   moduleId: ModuleIdSchema,
@@ -568,6 +775,30 @@ export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema('ShellRate
   retryAfterSeconds: Schema.Finite,
 });
 
+/**
+ * Each target's answer, in the order asked: the resolved target, or the problem the single-target read answers for
+ * it. Failures that concern the whole request (session, release) fail the request instead.
+ */
+export const ResolvedModuleTargetsSchema = Schema.Struct({
+  outcomes: Schema.Array(
+    Schema.Union([
+      Schema.Struct({ state: Schema.Literal('resolved'), target: ResolvedModuleTargetSchema }),
+      Schema.Struct({
+        problem: Schema.Union([
+          ShellAuthenticationRequiredProblemSchema,
+          ShellTargetForbiddenProblemSchema,
+          ShellTargetNotFoundProblemSchema,
+          ShellPolicyConflictProblemSchema,
+          ShellPolicyUnprocessableProblemSchema,
+          ShellCapabilityUnavailableProblemSchema,
+          ShellInternalProblemSchema,
+        ]),
+        state: Schema.Literal('failed'),
+      }),
+    ]),
+  ),
+});
+
 const identityErrors = [
   ShellAuthenticationRequiredProblemSchema,
   ShellTargetForbiddenProblemSchema,
@@ -580,6 +811,37 @@ const identityErrors = [
   ShellCapabilityUnavailableProblemSchema,
   ShellInternalProblemSchema,
 ] as const;
+
+/** Agent endpoints authenticate with the agent's API key (Better Auth), like /auth/api-key/gateway-context. */
+const AgentApiKeyHeadersSchema = Schema.Struct({
+  'x-api-key': Schema.optionalKey(Schema.String),
+});
+export const AgentActionRequestHeadersSchema = Schema.Struct({
+  'idempotency-key': Schema.requiredKey(IdentityRequestHeadersSchema.fields['idempotency-key']),
+});
+export const AgentProposalRequestHeadersSchema = Schema.Struct({
+  ...AgentApiKeyHeadersSchema.fields,
+  ...AgentActionRequestHeadersSchema.fields,
+});
+export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: LegalEntityIdSchema });
+
+/**
+ * Server rendering's one read per Shell document. It signs the document's gateway assertions too, so it is a classified
+ * session capability issuer (`shell.document-context.issue.session` in `gatewayContextAuthorizationEntrypoints`) and,
+ * like every issuer, a no-store POST.
+ */
+export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(
+  HttpApiEndpoint.post('documentContext', '/shell/document-context', {
+    error: [
+      InvalidCredentialsProblemSchema,
+      OntosIdentityForbiddenProblemSchema,
+      AuthenticationUnavailableProblemSchema,
+      AuthenticationInternalProblemSchema,
+    ],
+    payload: ShellDocumentContextRequestSchema,
+    success: ShellDocumentContextSchema,
+  }),
+);
 
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
@@ -622,6 +884,21 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
     HttpApiGroup.make('identity')
       .add(
+        HttpApiEndpoint.post('configureDemoCompanies', '/auth/identity/demo-companies', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ConfigureDemoCompaniesPayloadSchema,
+          success: ConfigureDemoCompaniesResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('demoAccountCapability', '/auth/identity/demo-accounts/capability', {
+          error: identityErrors,
+          payload: DemoAccountListPayloadSchema,
+          success: DemoAccountCapabilitySchema,
+        }),
+      )
+      .add(
         HttpApiEndpoint.post('createNonHumanPrincipal', '/auth/identity/principals', {
           error: identityErrors,
           headers: IdentityRequestHeadersSchema,
@@ -663,7 +940,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('listManagedApiKeys', '/auth/identity/api-keys/managed/list', {
           error: identityErrors,
-          payload: IdentityListPayloadSchema,
+          payload: ManagedApiKeyListPayloadSchema,
           success: ManagedApiKeyListResponseSchema,
         }),
       )
@@ -748,6 +1025,23 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           payload: ResolveModuleTargetPayloadSchema,
           success: ResolvedModuleTargetSchema,
         }),
+      )
+      .add(
+        HttpApiEndpoint.post('resolveModuleTargets', '/shell/module-targets', {
+          error: [
+            ShellReloadRequiredProblemSchema,
+            ShellAuthenticationRequiredProblemSchema,
+            ShellTargetForbiddenProblemSchema,
+            ShellTargetNotFoundProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
+            ShellSelectionRequiredProblemSchema,
+            ShellCapabilityUnavailableProblemSchema,
+            ShellInternalProblemSchema,
+          ],
+          payload: ResolveModuleTargetsPayloadSchema,
+          success: ResolvedModuleTargetsSchema,
+        }),
       ),
   )
   .add(
@@ -760,6 +1054,17 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             TenantInternalProblemSchema,
           ],
           success: AvailableLegalEntitiesResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('switchToTenantContext', '/auth/context/tenant', {
+          error: [
+            TenantAuthenticationRequiredProblemSchema,
+            TenantAccessForbiddenProblemSchema,
+            TenantCapabilityUnavailableProblemSchema,
+            TenantInternalProblemSchema,
+          ],
+          success: SwitchToTenantContextResponseSchema,
         }),
       )
       .add(
@@ -866,8 +1171,178 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
     ),
   )
   // @ontos-codesmith-core-read-api-groups:end
+  .add(
+    HttpApiGroup.make('agentPlatform')
+      .add(
+        HttpApiEndpoint.post('submitAgentProposals', '/agent-platform/proposals', {
+          error: identityErrors,
+          headers: AgentProposalRequestHeadersSchema,
+          payload: AgentProposalSubmitRequestSchema,
+          success: AgentProposalSubmitResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listOwnAgentProposals', '/agent-platform/proposals/list', {
+          error: identityErrors,
+          headers: AgentApiKeyHeadersSchema,
+          payload: AgentOwnProposalsRequestSchema,
+          success: AgentQueueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentQueue', '/agent-platform/queue', {
+          error: identityErrors,
+          payload: AgentQueueRequestSchema,
+          success: AgentQueueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentDecide', '/agent-platform/decide', {
+          error: identityErrors,
+          headers: AgentActionRequestHeadersSchema,
+          payload: AgentDecideRequestSchema,
+          success: AgentDecideResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentRevert', '/agent-platform/revert', {
+          error: identityErrors,
+          headers: AgentActionRequestHeadersSchema,
+          payload: AgentRevertRequestSchema,
+          success: AgentRevertResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentActivity', '/agent-platform/activity', {
+          error: identityErrors,
+          payload: AgentActivityRequestSchema,
+          success: AgentActivityResponseSchema,
+        }),
+      ),
+  )
+  .add(
+    HttpApiGroup.make('peopleAdministration')
+      .add(
+        HttpApiEndpoint.post('listCompanyRoleCatalog', PEOPLE_PATHS.companyRoleCatalog, {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: PeopleRoleCatalogSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listTenantRoleCatalog', PEOPLE_PATHS.tenantRoleCatalog, {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: PeopleRoleCatalogSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('invitePerson', PEOPLE_PATHS.companyInvite, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: InvitePeopleRequestSchema,
+          success: InvitePeopleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listCompanyPeople', PEOPLE_PATHS.companyList, {
+          error: identityErrors,
+          payload: PeopleListRequestSchema,
+          success: PeopleListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listTenantPeople', PEOPLE_PATHS.tenantList, {
+          error: identityErrors,
+          payload: PeopleListRequestSchema,
+          success: PeopleListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleCompanyMembership', PEOPLE_PATHS.companyMembership, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleCompanyMembershipRequestSchema,
+          success: SetPeopleCompanyMembershipResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleCompanyRole', PEOPLE_PATHS.companyRole, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleRoleRequestSchema,
+          success: SetPeopleRoleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleTenantRole', PEOPLE_PATHS.tenantRole, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleRoleRequestSchema,
+          success: SetPeopleRoleResponseSchema,
+        }),
+      ),
+  )
+  // "Připojené aplikace" and Agentní entity management (paths equal CONNECTION_MANAGEMENT_PATHS and AGENT_ACCESS_PATHS).
+  .add(
+    HttpApiGroup.make('oauthConnectionsAdmin')
+      .add(
+        HttpApiEndpoint.post('listMyConnections', '/auth/oauth-connections/mine', {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: ConnectionListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listCompanyConnections', '/auth/oauth-connections/admin-list', {
+          error: identityErrors,
+          payload: ConnectionAdminListRequestSchema,
+          success: ConnectionAdminListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('updateConnectionAccess', '/auth/oauth-connections/update', {
+          error: identityErrors,
+          payload: ConnectionUpdateRequestSchema,
+          success: ConnectionMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('revokeConnection', '/auth/oauth-connections/revoke', {
+          error: identityErrors,
+          payload: ConnectionRevokeRequestSchema,
+          success: ConnectionMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listAgentEntities', '/auth/identity/agent-entities/list', {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: AgentEntityOverviewSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('manageAgentEntity', '/auth/identity/agent-entities', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ManageAgentEntityRequestSchema,
+          success: ManageAgentEntityResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('replaceAgentOperators', '/auth/identity/agent-entities/operators', {
+          error: identityErrors,
+          payload: AgentOperatorsRequestSchema,
+          success: AgentOperatorsResponseSchema,
+        }),
+      ),
+  )
   .add(GatewayContextApiGroup)
-  .add(ExternalIdentityApiGroup);
+  .add(DocumentGatewayApiGroup)
+  .add(ShellDocumentContextApiGroup)
+  .add(ExternalIdentityApiGroup)
+  .add(EmailReceiptsApi.groups.emailReceipts)
+  .add(OAuthConnectApiGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;
@@ -876,4 +1351,7 @@ export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
   signInPath: authenticationEndpointPath(ShellAuthenticationApi.groups.authentication.endpoints.signIn),
   switchTenantPath: authenticationEndpointPath(ShellAuthenticationApi.groups.tenants.endpoints.switchTenant),
+  switchToTenantContextPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.legalEntities.endpoints.switchToTenantContext,
+  ),
 } as const;

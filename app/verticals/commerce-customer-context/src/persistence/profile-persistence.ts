@@ -203,7 +203,7 @@ interface CreateCounterpartyPurchasingProfileServices {
 interface EnsureRetailCustomerProfileServices {
   readonly ensure: (
     payload: EnsureRetailCustomerProfilePayload,
-    context: ProfileActionContext,
+    context: ProfileActionContext & { readonly compositionRevision: string },
   ) => Effect.Effect<EnsureRetailCustomerProfileResult, EnsureRetailCustomerProfileRejected>;
 }
 
@@ -276,7 +276,7 @@ interface RetailPortalProfileBindingReadServices {
     tenantId: string,
   ) => Effect.Effect<RetailPortalProfileBindingReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
-interface RetailPrincipalResolutionServices {
+export interface RetailPrincipalResolutionServices {
   readonly resolvePrincipal: (
     input: RetailPrincipalResolutionRequest,
     principalId: string,
@@ -1242,7 +1242,6 @@ export const retailEnrollmentBindingIsCurrentForPrincipal = Effect.fn('ProfilePe
     }
     const { permissions } = yield* readPermissions({
       ...scope,
-      bindingId: expected.bindingId,
       profileId: expected.profileId,
     }).pipe(
       Effect.mapError((cause) =>
@@ -1281,8 +1280,8 @@ export interface ProfilePersistenceDependencies {
     },
     ProfilePersistenceDependencyFailure
   >;
+
   readonly readRetailPermissions?: (input: {
-    readonly bindingId: string;
     readonly legalEntityId: string;
     readonly principalId: string;
     readonly profileId: string;
@@ -1307,7 +1306,17 @@ export interface ProfilePersistenceDependencies {
     readonly requestedAt: string;
     readonly tenantId: string;
   }) => Effect.Effect<GuestPartyResolutionOutcome, ProfilePersistenceDependencyFailure>;
+  readonly resolveRetailEnrollmentBinding?: (
+    payload: RetailPortalBindingPayload,
+    actionInvocationId: string,
+    actorPrincipalId: string,
+  ) => Effect.Effect<
+    { readonly authBindingId: string; readonly principalId: string },
+    ProfilePersistenceDependencyFailure
+  >;
   readonly resolveRetailParty?: (input: {
+    readonly actionInvocationId: string;
+    readonly compositionRevision: string;
     readonly partyResourceId: string;
     readonly tenantId: string;
   }) => Effect.Effect<
@@ -1352,6 +1361,8 @@ const ensureServices = (
       );
     }
     return resolveParty({
+      actionInvocationId: context.actionInvocationId,
+      compositionRevision: context.compositionRevision,
       partyResourceId: payload.subject.partyRef.resourceId,
       tenantId: scope.tenantId,
     }).pipe(
@@ -1648,49 +1659,73 @@ function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'BIND',
+  dependencies?: ProfilePersistenceDependencies,
 ): BindRetailPortalProfileServices;
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'RECOVER',
+  dependencies?: ProfilePersistenceDependencies,
 ): RecoverRetailPortalProfileBindingServices;
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'REVOKE',
+  dependencies?: ProfilePersistenceDependencies,
 ): RevokeRetailPortalProfileBindingServices;
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'BIND' | 'RECOVER' | 'REVOKE',
+  dependencies: ProfilePersistenceDependencies = {},
 ):
   | BindRetailPortalProfileServices
   | RecoverRetailPortalProfileBindingServices
   | RevokeRetailPortalProfileBindingServices {
-  const mutate = (
+  const mutate = Effect.fn('ProfilePersistence.mutateRetailBinding')(function* mutateBinding(
     payload: RetailPortalBindingPayload,
     actionInvocationId: string,
-  ): Effect.Effect<RetailPortalBindingResult, RetailPortalBindingActionRejected> => {
+  ): Effect.fn.Return<RetailPortalBindingResult, RetailPortalBindingActionRejected> {
+    let target = { authBindingId: scope.authBindingId, principalId: scope.principalId };
+    if (operation === 'BIND' && payload.principalRef.resourceId !== scope.principalId) {
+      if (dependencies.resolveRetailEnrollmentBinding === undefined) {
+        return yield* new RetailPortalBindingActionRejected({
+          code: 'BINDING_CONFLICT',
+          reason: 'No governed enrollment authority exists for this target',
+          retryable: false,
+        });
+      }
+      target = yield* dependencies.resolveRetailEnrollmentBinding(payload, actionInvocationId, scope.principalId).pipe(
+        Effect.mapError((cause) =>
+          preserveFailureCause(
+            new RetailPortalBindingActionRejected({
+              code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT',
+              reason: 'The exact enrollment target was not authorized',
+              retryable: false,
+            }),
+            cause,
+          ),
+        ),
+      );
+    }
     if (
-      scope.authBindingId === undefined ||
+      target.authBindingId === undefined ||
       payload.profileRef.tenantId !== scope.tenantId ||
-      payload.principalRef.resourceId !== scope.principalId ||
+      payload.principalRef.resourceId !== target.principalId ||
       payload.principalRef.tenantId !== scope.tenantId ||
       payload.sellingLegalEntityRef.resourceId !== scope.legalEntityId
     ) {
-      return Effect.fail(
-        new RetailPortalBindingActionRejected({
-          code: scope.authBindingId === undefined ? 'DEPENDENCY_UNAVAILABLE' : 'BINDING_CONFLICT',
-          reason: 'A current verified authentication binding and exact profile scope are required',
-          retryable: scope.authBindingId === undefined,
-        }),
-      );
+      return yield* new RetailPortalBindingActionRejected({
+        code: target.authBindingId === undefined ? 'DEPENDENCY_UNAVAILABLE' : 'BINDING_CONFLICT',
+        reason: 'A current verified authentication binding and exact profile scope are required',
+        retryable: target.authBindingId === undefined,
+      });
     }
-    return transaction
+    return yield* transaction
       .invoke(mutateBindingRoutine, [
         payload.profileRef.resourceId,
         payload.principalRef.resourceId,
-        scope.authBindingId,
+        target.authBindingId,
         payload.enrollmentEvidenceRef,
         payload.expectedState,
         payload.expectedRevision,
@@ -1726,7 +1761,7 @@ function bindingServices(
           );
         }),
       );
-  };
+  });
   if (operation === 'BIND') {
     return { bind: (payload, context) => mutate(payload, context.actionInvocationId) };
   }
@@ -2235,7 +2270,6 @@ const readServices = (
     );
 
   const readRetailPermissionProjection = (
-    bindingId: string,
     profileId: string,
     principalId: string,
     observedAt: string,
@@ -2252,7 +2286,6 @@ const readServices = (
       });
     }
     return readPermissions({
-      bindingId,
       legalEntityId: scope.legalEntityId,
       principalId,
       profileId,
@@ -2864,12 +2897,7 @@ const readServices = (
                                   ? ('CURRENT' as const)
                                   : ('INDETERMINATE' as const),
                             };
-                            return readRetailPermissionProjection(
-                              raw.bindingId,
-                              raw.profileId,
-                              principalId,
-                              raw.updatedAt,
-                            ).pipe(
+                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt).pipe(
                               Effect.map(({ freshness, permissions }) => {
                                 const decision = decideRetailPortalAccess({
                                   authorizationOperation,
@@ -2971,7 +2999,7 @@ const readServices = (
                   ? ('CURRENT' as const)
                   : ('INDETERMINATE' as const),
               };
-              return readRetailPermissionProjection(raw.bindingId, raw.profileId, principalId, observedAt).pipe(
+              return readRetailPermissionProjection(raw.profileId, principalId, observedAt).pipe(
                 Effect.map(({ freshness, permissions }): RetailPortalProfileBindingReadResponse => {
                   const binding = {
                     authorizationOperation,
@@ -3102,7 +3130,7 @@ export const profilePersistenceServicesForTransaction = (
   return {
     archiveCustomerProfile: lifecycleServices(transaction, scope, 'ARCHIVE', dependencies),
     attributeGuestRetailCustomer: guestServices(transaction, scope, dependencies),
-    bindRetailPortalProfile: bindingServices(transaction, scope, 'BIND'),
+    bindRetailPortalProfile: bindingServices(transaction, scope, 'BIND', dependencies),
     createCounterpartyPurchasingProfile: counterpartyServices(transaction, scope, dependencies),
     customerProfileRead: reads.customerProfileRead,
     customerProfileTradingGate: reads.customerProfileTradingGate,

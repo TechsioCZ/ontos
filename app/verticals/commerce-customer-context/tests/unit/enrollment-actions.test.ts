@@ -47,6 +47,7 @@ import {
   EnrollmentAttemptIdSchema,
   EnrollmentEvidenceReferenceSchema,
   EnrollmentKeySchema,
+  EnrollmentLegalEntityIdSchema,
   EnrollmentModuleKeySchema,
   EnrollmentOwnerOperationIdSchema,
   EnrollmentPrincipalIdSchema,
@@ -82,6 +83,9 @@ const subject: CommercePortalAccountSubject = Schema.decodeSync(CommercePortalAc
   providerSubjectId: 'provider-user-1',
   subjectType: 'user',
 });
+
+const legalEntityId = Schema.decodeSync(EnrollmentLegalEntityIdSchema)('71000000-0000-4000-8000-000000000024');
+const otherLegalEntityId = Schema.decodeSync(EnrollmentLegalEntityIdSchema)('71000000-0000-4000-8000-000000000025');
 
 const scope: OperationalScope = {
   authMethod: 'system',
@@ -235,6 +239,137 @@ it.effect('start derives Actor, Tenant and Action invocation from trusted Core c
     expect(collector.snapshot().domainEvents).toHaveLength(0);
   }),
 );
+
+it.effect('start preserves the verified legal entity for real retail registration', () =>
+  Effect.gen(function* startsScopedEnrollment() {
+    let request: StartEnrollmentAttemptInput | undefined;
+    const payload = Schema.decodeSync(StartPortalEnrollmentPayloadSchema)({
+      ...startPayload,
+      retailRegistration: { displayName: 'Real Customer', email: 'customer@example.test', phone: '+420777123456' },
+      targetLegalEntityId: legalEntityId,
+    });
+    const services: CommerceEnrollmentAttemptActionServices = {
+      attempt: {
+        ...unusedAttemptService(),
+        start: (input) =>
+          Effect.sync(() => {
+            request = input;
+            return { attempt: makeAttempt({ targetLegalEntityId: legalEntityId }), outcome: 'CREATED' };
+          }),
+      },
+    };
+    const collector = collectorFor(startPortalEnrollmentAction);
+    yield* getActionHandler(startPortalEnrollmentAction)(payload, {
+      ...handlerContext(collector, services),
+      scope: { ...scope, legalEntityId },
+    });
+    expect(startPortalEnrollmentAction.descriptor.legalEntityScope).toBe('optional');
+    expect(request?.targetLegalEntityId).toBe(legalEntityId);
+    expect(request?.retailRegistration).toEqual(payload.retailRegistration);
+  }),
+);
+
+for (const targetLegalEntityId of [otherLegalEntityId, undefined]) {
+  it.effect(`start refuses a scoped target mismatch (${targetLegalEntityId ?? 'missing'}) before persistence`, () =>
+    Effect.gen(function* refusesScopedStart() {
+      const payload =
+        targetLegalEntityId === undefined
+          ? startPayload
+          : Schema.decodeSync(StartPortalEnrollmentPayloadSchema)({ ...startPayload, targetLegalEntityId });
+      const collector = collectorFor(startPortalEnrollmentAction);
+      const failure = yield* Effect.flip(
+        getActionHandler(startPortalEnrollmentAction)(payload, {
+          ...handlerContext(collector, { attempt: unusedAttemptService() }),
+          scope: { ...scope, legalEntityId },
+        }),
+      );
+      expect(failure.code).toBe('attempt_invalid');
+    }),
+  );
+}
+
+it.effect('retail registration cannot use a tenant-only invocation', () =>
+  Effect.gen(function* refusesUnscopedRegistration() {
+    const payload = Schema.decodeSync(StartPortalEnrollmentPayloadSchema)({
+      ...startPayload,
+      retailRegistration: { displayName: 'Real Customer', email: 'customer@example.test' },
+      targetLegalEntityId: legalEntityId,
+    });
+    const collector = collectorFor(startPortalEnrollmentAction);
+    const failure = yield* Effect.flip(
+      getActionHandler(startPortalEnrollmentAction)(
+        payload,
+        handlerContext(collector, { attempt: unusedAttemptService() }),
+      ),
+    );
+    expect(failure.code).toBe('attempt_invalid');
+  }),
+);
+
+it.effect('claim preserves a matching verified legal entity', () =>
+  // @ts-expect-error -- This direct-handler test supplies a request-scoped owner capability double.
+  Effect.gen(function* claimsScopedTransition() {
+    let taken = false;
+    let claimed = false;
+    const services: CommerceEnrollmentPreparedAttemptActionServices = {
+      attempt: {
+        ...unusedAttemptService(),
+        claimTransition: () =>
+          Effect.sync(() => {
+            claimed = true;
+            return {
+              attempt: makeAttempt({ revision: 2, targetLegalEntityId: legalEntityId }),
+              operation: makeOperation(),
+              outcome: 'CLAIMED',
+            };
+          }),
+        read: () => Effect.succeed(makeAttempt({ targetLegalEntityId: legalEntityId })),
+      },
+      preparedOwner: preparedOwner(() => {
+        taken = true;
+      }),
+      reconcilePrepared: () => Effect.die('unused reconcilePrepared'),
+    };
+    const collector = collectorFor(claimPortalEnrollmentTransitionAction);
+    yield* getActionHandler(claimPortalEnrollmentTransitionAction)(claimPayload, {
+      ...handlerContext(collector, services),
+      scope: { ...scope, legalEntityId },
+    });
+    expect(claimPortalEnrollmentTransitionAction.descriptor.legalEntityScope).toBe('optional');
+    expect(taken).toBe(true);
+    expect(claimed).toBe(true);
+  }),
+);
+
+for (const targetLegalEntityId of [otherLegalEntityId, undefined]) {
+  it.effect(
+    `claim refuses a scoped target mismatch (${targetLegalEntityId ?? 'missing'}) before consuming authority`,
+    () =>
+      // @ts-expect-error -- This direct-handler test supplies a request-scoped owner capability double.
+      Effect.gen(function* refusesScopedClaim() {
+        let taken = false;
+        const services: CommerceEnrollmentPreparedAttemptActionServices = {
+          attempt: {
+            ...unusedAttemptService(),
+            read: () => Effect.succeed(makeAttempt(targetLegalEntityId === undefined ? {} : { targetLegalEntityId })),
+          },
+          preparedOwner: preparedOwner(() => {
+            taken = true;
+          }),
+          reconcilePrepared: () => Effect.die('unused reconcilePrepared'),
+        };
+        const collector = collectorFor(claimPortalEnrollmentTransitionAction);
+        const failure = yield* Effect.flip(
+          getActionHandler(claimPortalEnrollmentTransitionAction)(claimPayload, {
+            ...handlerContext(collector, services),
+            scope: { ...scope, legalEntityId },
+          }),
+        );
+        expect(failure.code).toBe('attempt_invalid');
+        expect(taken).toBe(false);
+      }),
+  );
+}
 
 it.effect('claim authorizes the exact prepared binding before durable transition claim', () =>
   // @ts-expect-error -- This direct-handler test supplies a request-scoped owner capability double.

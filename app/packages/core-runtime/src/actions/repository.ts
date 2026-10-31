@@ -212,10 +212,10 @@ export interface PrepareActionInvocationInput {
   readonly transport: ActionTransportMetadata;
 }
 
-interface ResolveActionInvocationInput {
-  readonly invocationId: string;
-  readonly principal: TrustedPrincipalContext;
-}
+type ResolveActionInvocationInput = { readonly principal: TrustedPrincipalContext } & (
+  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: string }
+  | { readonly actionKey: string; readonly idempotencyKey: string; readonly invocationId?: never }
+);
 
 export interface ActionInvocationRecord {
   readonly actionInvocationId: string;
@@ -310,7 +310,10 @@ export interface ActionRepositoryService {
   readonly resolveInvocation: (
     executor: ActionInvocationScopeExecutor,
     input: ResolveActionInvocationInput,
-  ) => Effect.Effect<ActionInvocationRecord, ActionInvocationNotFound | ActionInvocationPersistenceError>;
+  ) => Effect.Effect<
+    ActionInvocationRecord & { readonly actionKey: string },
+    ActionInvocationNotFound | ActionInvocationPersistenceError
+  >;
   readonly transitionInvocationToRunning: (
     executor: ActionInvocationStateExecutor,
     invocationId: string,
@@ -429,6 +432,44 @@ const isPromotedSqlFailure = Schema.is(
  * persistence failure from a transaction body (including installation of its operational scope).
  * An unrelated defect or interruption keeps the complete cause in its original channel.
  */
+/** Recover driver-promoted SQL settlement failures without swallowing body failures or interruption. */
+export const trackTransactionSettlement = () => {
+  const bodyFailures = new Set<unknown>();
+  return {
+    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      body.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            for (const reason of cause.reasons) {
+              if (Cause.isFailReason(reason)) {
+                bodyFailures.add(reason.error);
+              }
+            }
+          }),
+        ),
+      ),
+    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+      transaction.pipe(
+        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+          let settlement: SqlError | undefined;
+          for (const reason of cause.reasons) {
+            if (Cause.isInterruptReason(reason)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.isDieReason(reason)) {
+              if (isSqlError(reason.defect)) {
+                settlement = reason.defect;
+              } else if (!bodyFailures.has(reason.defect)) {
+                return Effect.failCause(cause);
+              }
+            }
+          }
+          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
+        }),
+      ),
+  };
+};
+
 export const recoverSqlTransactionError = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | SqlError, R> =>
@@ -589,14 +630,23 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
 
   const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
     const failureReason = 'Unable to resolve the Action invocation commit state';
+    const hasInvocationId = input.invocationId !== undefined;
     return executor
       .transaction((transaction) =>
         transaction
-          .select(invocationSelection)
+          .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
           .from(actionInvocations)
           .where(
             and(
-              eq(actionInvocations.actionInvocationId, input.invocationId),
+              hasInvocationId
+                ? eq(actionInvocations.actionInvocationId, input.invocationId)
+                : and(
+                    eq(actionInvocations.actionKey, input.actionKey),
+                    eq(actionInvocations.idempotencyKey, input.idempotencyKey),
+                  ),
+              input.principal.legalEntityId === undefined
+                ? isNull(actionInvocations.legalEntityId)
+                : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
               eq(actionInvocations.tenantId, input.principal.tenantId),
               eq(actionInvocations.principalId, input.principal.principalId),
             ),

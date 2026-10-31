@@ -63,6 +63,7 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
         ActionAlreadyCommitted: () => Effect.succeed('committed' as const),
         ActionCommitIndeterminate: () => Effect.succeed('indeterminate' as const),
         ActionInvocationNotFound: () => Effect.succeed('absent' as const),
+        ActionInvocationPersistenceError: () => Effect.succeed('indeterminate' as const),
         ActionInvocationStateError: () => Effect.succeed('rejected' as const),
         ActionPayloadValidationError: () => Effect.succeed('absent' as const),
         ActionTrustedContextValidationError: () => Effect.succeed('indeterminate' as const),

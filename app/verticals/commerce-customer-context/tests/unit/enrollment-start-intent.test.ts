@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Effect, Predicate, Redacted, Schema } from 'effect';
+import { Effect, Predicate, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
@@ -12,6 +12,7 @@ import {
   commercePortalAuthEnrollmentAccountCreationClaim,
   commercePortalAuthEnrollmentAccountVerificationClaim,
   commercePortalAuthEnrollmentIntent,
+  normalizeCommercePortalAuthEnrollmentPhone,
 } from '../../api/portal-auth/enrollment/intent.ts';
 import {
   PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
@@ -44,6 +45,7 @@ interface EnrollmentStartRequestBody {
   readonly invitationId?: string;
   readonly journey: string;
   readonly password?: Redacted.Redacted;
+  readonly phone?: string;
   readonly sellingLegalEntityId: string;
 }
 
@@ -76,7 +78,10 @@ const decodeStart = (payload: EnrollmentStartRequestBody) =>
   Schema.decodeUnknownEffect(CommercePortalAuthEnrollmentStartInputSchema)(payload);
 
 const intentFor = (payload: EnrollmentStartRequestBody) =>
-  decodeStart(payload).pipe(Effect.flatMap(commercePortalAuthEnrollmentIntent));
+  decodeStart(payload).pipe(
+    Effect.flatMap(normalizeCommercePortalAuthEnrollmentPhone),
+    Effect.flatMap(commercePortalAuthEnrollmentIntent),
+  );
 
 const declaresPortalTransition = (definition: JourneyDefinition, transitionKey: string): boolean =>
   definition.requiredTransitions.some(
@@ -108,11 +113,10 @@ it.effect('two people enrolling into one Tenant never derive the same Attempt id
 it.effect('the same person retrying converges on one Attempt identity', () =>
   Effect.gen(function* retryConverges() {
     const first = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT' }));
-    // The same person, presenting the address differently and correcting the credential: the
-    // identity is the normalized address, and neither the password nor the display name is in it.
+    // Address casing and credentials are not business intent. The staged registration remains
+    // immutable, so an otherwise identical retry must retain both identity and digest.
     const retry = yield* intentFor(
       startPayload({
-        displayName: 'Corrected display name',
         email: 'First.Person@Example.TEST',
         journey: 'RETAIL_SELF_ENROLLMENT',
         password: Redacted.make('Q'.repeat(24)),
@@ -121,6 +125,27 @@ it.effect('the same person retrying converges on one Attempt identity', () =>
 
     expect(retry.intentKey).toBe(first.intentKey);
     expect(retry.intentDigest).toBe(first.intentDigest);
+  }),
+);
+
+it.effect('retail registration is credential-free and changed contact intent cannot replay the original digest', () =>
+  Effect.gen(function* registrationIntentIsImmutable() {
+    const first = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777123456' }));
+    const renamed = yield* intentFor(
+      startPayload({ displayName: 'Changed name', journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777123456' }),
+    );
+    const rephoned = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777654321' }));
+    expect(first.retailRegistration).toEqual({
+      displayName: 'Enrollment start intent',
+      email: 'first.person@example.test',
+      phone: '+420777123456',
+    });
+    expect(renamed.intentKey).toBe(first.intentKey);
+    expect(rephoned.intentKey).toBe(first.intentKey);
+    expect(renamed.intentDigest).not.toBe(first.intentDigest);
+    expect(rephoned.intentDigest).not.toBe(first.intentDigest);
+    expect(JSON.stringify(first)).not.toContain('P'.repeat(24));
+    expect(first.retailRegistration).not.toHaveProperty('password');
   }),
 );
 
@@ -263,5 +288,38 @@ it.effect('mints the same owner invocation identity for every retry of one start
     // replaying — so every field this start hands the Action has to be a derivation, not a draw.
     expect(retry).toStrictEqual(first);
     expect(otherAttempt.ownerInvocationId).not.toBe(first.ownerInvocationId);
+  }),
+);
+
+it.effect('Party normalizes national and formatted international phones to the same durable intent', () =>
+  Effect.gen(function* canonicalPhoneIntent() {
+    const national = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '777 123 456' }));
+    const international = yield* intentFor(
+      startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420 (777) 123-456' }),
+    );
+    expect(national.retailRegistration?.phone).toBe('+420777123456');
+    expect(international).toEqual(national);
+  }),
+);
+
+it.effect('invalid Party phones fail before any Attempt or provider dispatch can run', () =>
+  Effect.gen(function* noInvalidPhoneWrites() {
+    for (const phone of ['---', '+0001234567', '+123', '123456', '1234567890', '+1234567890123456', 'not-a-number']) {
+      let attempts = 0;
+      let providers = 0;
+      const result = yield* decodeStart(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone })).pipe(
+        Effect.flatMap(normalizeCommercePortalAuthEnrollmentPhone),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            attempts += 1;
+            providers += 1;
+          }),
+        ),
+        Effect.result,
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      expect(attempts).toBe(0);
+      expect(providers).toBe(0);
+    }
   }),
 );

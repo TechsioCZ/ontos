@@ -23,12 +23,15 @@ import {
 import { stockSharingEligibilityResolutionRead } from '../../src/api/stock-sharing-eligibility-resolution.read.ts';
 import { makeStockSharingEligibilityEvaluator } from '../../src/services/stock-sharing-eligibility-service.ts';
 import {
-  getReadHandler,
+  runReadOwnerSteps,
   getReadPermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -171,7 +174,7 @@ it.effect('returns only a proven positive-union decision and records result evid
   Effect.gen(function* resolvePositiveUnion() {
     const calls: unknown[] = [];
     const evaluationService = makeStockSharingEligibilityEvaluator(evaluationPersistence);
-    const result = yield* getReadHandler(stockSharingEligibilityResolutionRead)(request, {
+    const result = yield* runReadOwnerSteps(stockSharingEligibilityResolutionRead, request, {
       readKey: stockSharingEligibilityResolutionRead.descriptor.readKey,
       scope,
       services: {
@@ -203,7 +206,7 @@ it.effect('fails closed before evaluation when the trusted seller is not the sel
         },
       },
     });
-    const failure = yield* getReadHandler(stockSharingEligibilityResolutionRead)(crossLegalEntityRequest, {
+    const failure = yield* runReadOwnerSteps(stockSharingEligibilityResolutionRead, crossLegalEntityRequest, {
       readKey: stockSharingEligibilityResolutionRead.descriptor.readKey,
       scope,
       services: {
@@ -256,9 +259,11 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         onStage: (stage) => {
           stages.push(stage);
         },
+
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       },
     );

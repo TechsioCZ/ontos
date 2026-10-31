@@ -118,6 +118,15 @@ const context: CommerceEnrollmentOwnerEffectContext = {
   attempt,
   operations: [
     operation({
+      ownerInvocationId: invocation('50000000-0000-4000-8000-0000000000a0'),
+      ownerModuleKey: Schema.decodeSync(EnrollmentModuleKeySchema)('commerce.portal-auth'),
+      portalEnrollmentOwnerOperationId: Schema.decodeSync(EnrollmentOwnerOperationIdSchema)(
+        '70000000-0000-4000-8000-0000000000a0',
+      ),
+      status: 'SUCCEEDED',
+      transitionKey: Schema.decodeSync(EnrollmentTransitionKeySchema)('provider.account.verify'),
+    }),
+    operation({
       outcomeCode: Schema.decodeSync(EnrollmentKeySchema)('core_binding_reserved'),
       ownerInvocationId: invocation(RESERVE_INVOCATION_ID),
       portalEnrollmentOwnerOperationId: Schema.decodeSync(EnrollmentOwnerOperationIdSchema)(RESERVE_OPERATION_ID),
@@ -211,6 +220,7 @@ const registryLive = (bindingStatus: 'active' | 'pending') =>
           existsByEmail: unreachable('existsByEmail'),
           existsByProviderSubject: unreachable('existsByProviderSubject'),
           subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
+          verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
         }),
         Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
           reissueVerificationEmail: unreachable('reissueVerificationEmail'),

@@ -647,11 +647,66 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u);
+      // The legacy shared role keeps blanket access to the platform schemas, and the demo branch
+      // appends its vertical schemas after them; contacts and party move to dedicated identities.
+      const sharedRuntimeSchemas = /const SHARED_RUNTIME_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(bootstrap)?.groups?.[
+        'schemas'
+      ];
+      expect(sharedRuntimeSchemas).toBeDefined();
+      for (const schema of [
+        'core',
+        'auth',
+        'catalog',
+        'inventory',
+        'tax',
+        'privacy',
+        'projects',
+        'property_portfolio',
+        'property_leasing',
+        'legal_agreements',
+        'work_tasks',
+        'demo_workforce',
+        'demo_tagging',
+        'demo_crm',
+        'demo_sales_pipeline',
+        'demo_merchandise',
+        'demo_email',
+        'facility_operations',
+        'demo_sales_insights',
+        'finance_billing',
+        'crm_activities',
+      ]) {
+        expect(sharedRuntimeSchemas).toContain(`'${schema}'`);
+      }
       expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
-      expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_cart',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'commerce_order',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'projects',\s*'storefront_registry',\s*'tax',\s*'trust',\s*\]/u,
-      );
+      // Every platform schema stays verified; the demo branch adds its vertical schemas to the same list.
+      const verifiedSchemas = /const EXPECTED_APPLICATION_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(verifier)?.groups?.[
+        'schemas'
+      ];
+      expect(verifiedSchemas).toBeDefined();
+      for (const schema of [
+        'assortment',
+        'auth',
+        'catalog',
+        'commerce_cart',
+        'commerce_customer_context',
+        'commerce_market_catalog',
+        'commerce_order',
+        'contacts',
+        'core',
+        'inventory',
+        'party',
+        'payment_term_catalog',
+        'price_group_catalog',
+        'pricing',
+        'privacy',
+        'projects',
+        'storefront_registry',
+        'tax',
+        'trust',
+      ]) {
+        expect(verifiedSchemas).toContain(`'${schema}'`);
+      }
       expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
       expect(verifier).toMatch(/__drizzle_migrations_catalog/u);
       expect(verifier).toMatch(/__drizzle_migrations_party/u);

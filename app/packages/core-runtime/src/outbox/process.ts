@@ -2,6 +2,8 @@ import {
   Array as Arr,
   Cause,
   Config,
+  Context,
+  DateTime,
   Effect,
   Exit,
   Function as Fn,
@@ -10,18 +12,21 @@ import {
   Option,
   Order,
   Random,
+  Ref,
   References,
   Schema,
   Tracer,
 } from 'effect';
-import type { Layer } from 'effect';
+import type { Layer, Scope } from 'effect';
 
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
-import { OntosOutboxSubscriptionContractSchema } from '../modules/manifest.ts';
+import { OutboxSubscriptionAuthoritySchema } from '../modules/manifest.ts';
+import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from './core-system-subscriptions.ts';
+import { isCoreSystemOutboxSubscription } from './definition.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 
@@ -30,13 +35,25 @@ import type {
   combineOutboxWorkerHealth,
   createOutboxWorkerHealth,
   OutboxWorkerHealth,
+  OutboxWorkerHostStatus,
   serveOutboxWorkerHealth,
 } from './health.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { OutboxPollingConfig, RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
-const sameSubscriptions = Schema.toEquivalence(Schema.Array(OntosOutboxSubscriptionContractSchema));
+const isCoreSystemRegistration = ({ descriptor }: AnyOutboxWorkerRegistration) =>
+  isCoreSystemOutboxSubscription(descriptor);
+const hasSystemEntrypoint = ({ descriptor }: AnyOutboxWorkerRegistration) => descriptor.entrypoint.scope === 'system';
+const ownerSubscriptions = (
+  catalog: Effect.Success<ReturnType<typeof buildApplicationCompositionCatalog>>,
+  ownerModules: ReadonlySet<string>,
+) =>
+  catalog.contracts.flatMap(({ runtime }) =>
+    runtime.outboxSubscriptions.filter(({ consumerModuleKey }) => ownerModules.has(consumerModuleKey)),
+  );
+
+const sameSubscriptions = Schema.toEquivalence(Schema.Array(OutboxSubscriptionAuthoritySchema));
 const subscriptionOrder = Order.mapInput(Order.String, ({ workerKey }: { readonly workerKey: string }) => workerKey);
 const unavailableSubscriptionCatalog = (cause: unknown) =>
   new ActiveApplicationCompositionUnavailableError({
@@ -46,6 +63,23 @@ const unavailableSubscriptionCatalog = (cause: unknown) =>
 
 const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
+
+type OutboxWorkerDeployment = Readonly<{ appId: string; buildMarker: string }>;
+
+/**
+ * How a hosted polling loop reports its compiled owner identity and the composition revision of each
+ * successful cycle to the host's /status. It travels in the fiber context because owner wrappers such
+ * as Commerce's recovery entry rebuild the entry and its loop input. Outside a host it reports nowhere.
+ */
+interface AdmissionReport {
+  readonly admitted: (compositionRevision: string) => Effect.Effect<void>;
+  readonly identify: (deployment: OutboxWorkerDeployment) => Effect.Effect<void>;
+}
+
+const OutboxWorkerAdmissionReport = Context.Reference<AdmissionReport>(
+  '@app/core-runtime/outbox/process/OutboxWorkerAdmissionReport',
+  { defaultValue: () => ({ admitted: () => Effect.void, identify: () => Effect.void }) },
+);
 
 export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWorkerRegistration, LayerError> {
   readonly claimOwnerPrefix: string;
@@ -74,9 +108,15 @@ export interface OutboxWorkerEntry<out LayerError> {
   readonly runLoop: (input: OutboxWorkerLoopInput) => Effect.Effect<void, LayerError>;
 }
 
-export interface RunOutboxWorkerHostInput<LayerError> {
-  readonly entries: readonly OutboxWorkerEntry<LayerError>[];
+/** Infer each owner's failure independently before combining the entries' error channels. */
+export interface RunOutboxWorkerHostInput<
+  LayerErrors extends readonly { readonly _tag: string }[],
+  StartupError = never,
+> {
+  readonly entries: { readonly [Index in keyof LayerErrors]: OutboxWorkerEntry<LayerErrors[Index]> };
   readonly health?: boolean;
+  /** Additional process services share the host Scope and its existing runtime adapter. */
+  readonly startup?: () => Effect.Effect<void, StartupError, Scope.Scope>;
 }
 
 export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
@@ -87,33 +127,34 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
   const compiledSubscriptions = Object.freeze(
     input.subscriptions.map((subscription) => Object.freeze({ ...subscription })),
   );
+
   return Object.freeze({
     claimOwnerPrefix: input.claimOwnerPrefix,
     registrations: registrations.length,
     runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
       const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
+        const report = yield* OutboxWorkerAdmissionReport;
+        yield* report.identify({ appId: expectedDeployment.appId, buildMarker: expectedDeployment.buildMarker });
         const authority = yield* ActiveApplicationCompositionService;
-        const suppliedSubscriptions = yield* Schema.decodeUnknownEffect(
-          Schema.Array(OntosOutboxSubscriptionContractSchema),
-          { onExcessProperty: 'error' },
-        )(compiledSubscriptions).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ActiveApplicationCompositionUnavailableError({
-                cause,
-                reason: 'The compiled Outbox Worker subscription contract is invalid',
-              }),
-          ),
-          Effect.map((subscriptions) => subscriptions.toSorted(subscriptionOrder)),
-        );
-        const admitComposition = Effect.gen(function* admitWorkerComposition() {
+        const admitWorkerComposition = Effect.fn('OutboxWorker.admitComposition')(function* admitCompositionEffect(
+          suppliedSubscriptions: readonly (typeof OutboxSubscriptionAuthoritySchema.Type)[],
+        ) {
           const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
           const modulesById = new Map<string, (typeof snapshot.composition.modules)[number]>();
           for (const module of snapshot.composition.modules) {
             modulesById.set(module.moduleId, module);
           }
+          const coreEntry = registrations.length > 0 && registrations.every(isCoreSystemRegistration);
+          if (!coreEntry && registrations.some(hasSystemEntrypoint)) {
+            return yield* new OutboxWorkerDescriptorError({
+              code: 'outbox_worker_descriptor_invalid',
+              reason: 'Core system workers cannot share a tenant module owner artifact',
+            });
+          }
           for (const registration of registrations) {
-            const approved = modulesById.get(registration.descriptor.consumerModuleKey);
+            const approved = coreEntry
+              ? snapshot.composition.shell
+              : modulesById.get(registration.descriptor.consumerModuleKey);
             if (
               approved === undefined ||
               approved.deployment.appId !== expectedDeployment.appId ||
@@ -137,16 +178,14 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
               ownerModules.add(moduleId);
             }
           }
-          const approvedSubscriptions: (typeof OntosOutboxSubscriptionContractSchema.Type)[] = [];
-          for (const { runtime } of catalog.contracts) {
-            for (const subscription of runtime.outboxSubscriptions) {
-              if (ownerModules.has(subscription.consumerModuleKey)) {
-                approvedSubscriptions.push(subscription);
-              }
-            }
-          }
+          const approvedSubscriptions: OutboxWorkerSubscription[] = coreEntry
+            ? [...CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS]
+            : ownerSubscriptions(catalog, ownerModules);
           approvedSubscriptions.sort(subscriptionOrder);
-          if (!sameSubscriptions(approvedSubscriptions, suppliedSubscriptions)) {
+          const approvedContract = yield* Schema.decodeUnknownEffect(Schema.Array(OutboxSubscriptionAuthoritySchema), {
+            onExcessProperty: 'error',
+          })(approvedSubscriptions).pipe(Effect.mapError(unavailableSubscriptionCatalog));
+          if (!sameSubscriptions(approvedContract, suppliedSubscriptions)) {
             return yield* new OutboxWorkerDescriptorError({
               code: 'outbox_worker_descriptor_invalid',
               reason: 'The compiled Outbox Worker subscriptions differ from the complete approved owner contract',
@@ -154,8 +193,23 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           }
           return snapshot.composition.revision;
         });
+        const suppliedSubscriptions = yield* Schema.decodeUnknownEffect(
+          Schema.Array(OutboxSubscriptionAuthoritySchema),
+          { onExcessProperty: 'error' },
+        )(compiledSubscriptions).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ActiveApplicationCompositionUnavailableError({
+                cause,
+                reason: 'The compiled Outbox Worker subscription contract is invalid',
+              }),
+          ),
+          Effect.map((subscriptions) => subscriptions.toSorted(subscriptionOrder)),
+        );
+        const admitComposition = admitWorkerComposition(suppliedSubscriptions);
         const pollingInput: RunOutboxPollingLoopInput<Registration> = {
           admitComposition,
+          admitted: report.admitted,
           config,
           registrations,
           subscriptions: compiledSubscriptions,
@@ -166,7 +220,13 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
       });
       return Effect.acquireUseRelease(
         Effect.sync(() => ManagedRuntime.make(input.layer)),
-        (runtime) => runtime.contextEffect.pipe(Effect.flatMap((context) => Effect.provideContext(loop, context))),
+        // The owner runtime's context replaces the host's, so the host's admission report crosses explicitly.
+        (runtime) =>
+          Effect.all([runtime.contextEffect, Effect.service(OutboxWorkerAdmissionReport)], { concurrency: 1 }).pipe(
+            Effect.flatMap(([context, report]) =>
+              Effect.provideContext(loop, Context.add(context, OutboxWorkerAdmissionReport, report)),
+            ),
+          ),
         (runtime) => runtime.disposeEffect,
       );
     },
@@ -205,40 +265,94 @@ const loadOutboxWorkerHealthApi = Effect.suspend(() => {
   return Effect.promise(Fn.constant(healthApi)).pipe(Effect.timeout('30 seconds'), Effect.orDie);
 });
 
+interface LoopAdmission {
+  readonly deployment: Option.Option<OutboxWorkerDeployment>;
+  readonly last: Option.Option<{ readonly at: DateTime.Utc; readonly revision: string }>;
+}
+
 interface HostedLoop<LayerError> {
+  readonly admission: Ref.Ref<LoopAdmission>;
   readonly config: OutboxPollingConfig;
   readonly entry: OutboxWorkerEntry<LayerError>;
   readonly health: Option.Option<OutboxWorkerHealth>;
 }
 
-const hostedLoop = <LayerError>(
-  entry: OutboxWorkerEntry<LayerError>,
-  config: OutboxPollingConfig,
-  healthApi: OutboxWorkerHealthApi | undefined,
-): Effect.Effect<HostedLoop<LayerError>> =>
-  healthApi === undefined
-    ? Effect.succeed({ config, entry, health: Option.none() })
-    : healthApi
-        .createOutboxWorkerHealth({ staleAfterMs: Math.max(5000, config.pollIntervalMs * 3) })
-        .pipe(Effect.map((health) => ({ config, entry, health: Option.some(health) })));
+const hostedLoop = Effect.fn('OutboxWorkerHost.hostedLoop')(function* makeHostedLoop<LayerError>({
+  config,
+  entry,
+  healthApi,
+}: {
+  readonly config: OutboxPollingConfig;
+  readonly entry: OutboxWorkerEntry<LayerError>;
+  readonly healthApi: OutboxWorkerHealthApi | undefined;
+}) {
+  const admission = yield* Ref.make<LoopAdmission>({ deployment: Option.none(), last: Option.none() });
+  const health =
+    healthApi === undefined
+      ? Option.none<OutboxWorkerHealth>()
+      : Option.some(
+          yield* healthApi.createOutboxWorkerHealth({ staleAfterMs: Math.max(5000, config.pollIntervalMs * 3) }),
+        );
+  const loop: HostedLoop<LayerError> = { admission, config, entry, health };
+  return loop;
+});
+
+const admissionReport = (admission: Ref.Ref<LoopAdmission>): AdmissionReport => ({
+  admitted: (revision) =>
+    DateTime.now.pipe(
+      Effect.flatMap((at) => Ref.update(admission, (current) => ({ ...current, last: Option.some({ at, revision }) }))),
+    ),
+  identify: (deployment) => Ref.update(admission, (current) => ({ ...current, deployment: Option.some(deployment) })),
+});
+
+/** Each owner's admission in host order; readiness is that loop's own health, never the combined host's. */
+const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<OutboxWorkerHostStatus> =>
+  Effect.forEach(
+    loops,
+    ({ admission, health }) =>
+      Effect.all(
+        [
+          Ref.get(admission),
+          Option.match(health, { onNone: () => Effect.succeed(false), onSome: (loopHealth) => loopHealth.isReady }),
+        ],
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map(([{ deployment, last }, ready]) => ({
+          admittedRevision: last.pipe(Option.map(({ revision }) => revision)),
+          appId: deployment.pipe(Option.map(({ appId }) => appId)),
+          buildMarker: deployment.pipe(Option.map(({ buildMarker }) => buildMarker)),
+          lastSuccessAt: last.pipe(Option.map(({ at }) => at)),
+          ready,
+        })),
+      ),
+    { concurrency: 1 },
+  ).pipe(Effect.map((owners) => ({ owners })));
 
 /**
  * Runs every entry's polling loop in one process behind one signal handler and one readiness
  * endpoint. The first loop to fail interrupts the others; each loop disposes its own runtime
  * before the host scope closes, so the failure surfaces only after every runtime is released.
  */
-export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<LayerError>) =>
+export const runOutboxWorkerHost = <
+  const LayerErrors extends readonly { readonly _tag: string }[],
+  StartupError = never,
+>(
+  input: RunOutboxWorkerHostInput<LayerErrors, StartupError>,
+) =>
   Effect.scoped(
     Effect.gen(function* runOutboxWorkerHostEffect() {
+      if (input.startup !== undefined) {
+        yield* input.startup();
+      }
       const processNonce = yield* Random.nextInt;
       const configs = yield* parseOutboxPollingConfig({
         claimOwnerPrefixes: input.entries.map((entry) => entry.claimOwnerPrefix),
         defaultProcessIdentity: `${process.pid}:${processNonce}`,
       });
       const healthApi = input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
-      const loops: readonly HostedLoop<LayerError>[] = yield* Effect.forEach(
+      const loops: readonly HostedLoop<LayerErrors[number]>[] = yield* Effect.forEach(
         Arr.zip(input.entries, configs),
-        ([entry, config]) => hostedLoop(entry, config, healthApi),
+        ([entry, config]) => hostedLoop({ config, entry, healthApi }),
         { concurrency: 1 },
       );
       if (healthApi !== undefined) {
@@ -246,7 +360,7 @@ export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<
         if (Option.isSome(configuredHealthPort)) {
           yield* healthApi.serveOutboxWorkerHealth(
             healthApi.combineOutboxWorkerHealth(loops.flatMap(({ health }) => Option.toArray(health))),
-            { port: configuredHealthPort.value },
+            { port: configuredHealthPort.value, status: hostStatus(loops) },
           );
         }
       }
@@ -264,7 +378,7 @@ export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<
 
       const runLoops = Effect.forEach(
         loops,
-        ({ config, entry, health }) =>
+        ({ admission, config, entry, health }) =>
           entry
             .runLoop(
               Option.match(health, {
@@ -272,7 +386,10 @@ export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<
                 onSome: (loopHealth) => ({ config, health: loopHealth }),
               }),
             )
-            .pipe(Effect.annotateLogs({ claimOwner: config.claimOwner })),
+            .pipe(
+              Effect.provideService(OutboxWorkerAdmissionReport, admissionReport(admission)),
+              Effect.annotateLogs({ claimOwner: config.claimOwner }),
+            ),
         // Every hosted loop polls forever, so the host needs exactly one fiber per loop.
         { concurrency: loops.length, discard: true },
       );
@@ -305,8 +422,11 @@ const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause
   return [...new Set(names)].join(', ');
 };
 
-export const startOutboxWorkerHost = <LayerError extends { readonly _tag: string }>(
-  input: RunOutboxWorkerHostInput<LayerError>,
+export const startOutboxWorkerHost = <
+  const LayerErrors extends readonly { readonly _tag: string }[],
+  StartupError extends { readonly _tag: string } = never,
+>(
+  input: RunOutboxWorkerHostInput<LayerErrors, StartupError>,
 ): void => {
   Effect.runCallback(
     runOutboxWorkerHost(input).pipe(

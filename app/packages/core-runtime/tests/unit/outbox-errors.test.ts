@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -137,7 +137,8 @@ it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
         .pipe(Effect.flip);
       expect(failure).toBeInstanceOf(PersistenceFailure);
       expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
-      expect(failure.cause).toBe(driverError);
+      // The idle-tick probe runs before any transaction: its failed query (wrapping the driver failure) is the cause.
+      expect(Predicate.isTagged(failure.cause, 'EffectDrizzleQueryError')).toBe(true);
     }),
   );
 });

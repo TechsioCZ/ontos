@@ -97,6 +97,38 @@ const verification = Effect.gen(function* verifyDatabase() {
     return yield* new VerificationError({ reason: 'Inventory column inventory mismatch' });
   }
 
+  const [gateway] = yield* database.executor.execute<{ readonly valid: boolean }>(
+    sql`select (
+  (select count(*) = 1 from pg_catalog.pg_class relation join pg_catalog.pg_namespace ns on ns.oid=relation.relnamespace
+    where ns.nspname='inventory' and relation.relname='gateway_assertion_redemptions' and relation.relkind='r'
+      and not relation.relrowsecurity and not relation.relforcerowsecurity)
+  and (select count(*) = 5 from information_schema.columns where table_schema='inventory' and table_name='gateway_assertion_redemptions'
+    and is_nullable='NO' and ((column_name in ('issuer','audience') and data_type='text')
+      or (column_name='jti' and data_type='uuid')
+      or (column_name in ('expires_at','redeemed_at') and data_type='timestamp with time zone')))
+  and (select count(*) = 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class t on t.oid=c.conrelid
+    join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace where ns.nspname='inventory' and t.relname='gateway_assertion_redemptions'
+      and c.contype='u' and pg_catalog.pg_get_constraintdef(c.oid)='UNIQUE (issuer, audience, jti)')
+  and (select count(*) = 1 from pg_catalog.pg_indexes where schemaname='inventory' and tablename='gateway_assertion_redemptions'
+    and indexdef like '% USING btree (expires_at)')
+  and has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','SELECT')
+  and has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','INSERT')
+  and has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','DELETE')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','UPDATE')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','REFERENCES')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','TRUNCATE')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','TRIGGER')
+  and not exists(select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace,
+    lateral pg_catalog.aclexplode(coalesce(t.relacl,pg_catalog.acldefault('r',t.relowner))) acl
+    where ns.nspname='inventory' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
+) as valid`,
+    'objects',
+  );
+  if (!gateway?.valid) {
+    return yield* new VerificationError({
+      reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
+    });
+  }
   const [infrastructure] = yield* database.executor.execute<InfrastructureRow>(
     sql`select
       count(distinct relation.oid)::integer as table_count,
@@ -211,9 +243,9 @@ const verification = Effect.gen(function* verifyDatabase() {
     infrastructure === undefined ||
     !infrastructure.effect_ledger_contract_current ||
     infrastructure.table_count !== INVENTORY_TABLES.length ||
-    infrastructure.force_rls_count !== INVENTORY_TABLES.length ||
+    infrastructure.force_rls_count !== INVENTORY_TABLES.length - 1 ||
     infrastructure.wrong_owner_count !== 0 ||
-    infrastructure.policy_count !== INVENTORY_TABLES.length * 4 ||
+    infrastructure.policy_count !== (INVENTORY_TABLES.length - 1) * 4 ||
     infrastructure.required_index_count !== 1 ||
     infrastructure.required_trigger_count !== 69 ||
     infrastructure.commitment_protection_trigger_count !== 5 ||
@@ -224,7 +256,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     !infrastructure.runtime_usage ||
     infrastructure.runtime_select_count !== INVENTORY_TABLES.length ||
     infrastructure.runtime_insert_count !== INVENTORY_TABLES.length ||
-    infrastructure.runtime_update_count !== INVENTORY_TABLES.length ||
+    infrastructure.runtime_update_count !== INVENTORY_TABLES.length - 1 ||
     infrastructure.runtime_delete_count !== INVENTORY_TABLES.length ||
     infrastructure.role_super ||
     infrastructure.role_bypass_rls

@@ -1,5 +1,10 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
-import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
+import type {
+  OwnerAuthorizationInput,
+  OwnerAuthorizationOverlayService,
+  ScopedRoutineDefinition,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -86,6 +91,13 @@ const readerFactory: ProfileRetailPermissionReaderFactoryService = {
     }),
 };
 
+/** Core's two phases in one call: the overlay's `prepare` before the transaction, then its check inside. */
+const authorize = (
+  overlay: OwnerAuthorizationOverlayService,
+  transaction: ScopedTransactionExecutor,
+  { operationAt: at, ...request }: OwnerAuthorizationInput,
+) => Effect.flatMap(overlay.prepare(request), (check) => check(transaction, at));
+
 const input = (
   target: Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'business_permission' }>,
 ): OwnerAuthorizationInput => ({
@@ -132,7 +144,7 @@ it.effect('denies a stale Core tuple when the owner row is pending revoke', () =
       return routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('PENDING_REVOKE')] : [];
     });
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
+    const decision = yield* authorize(overlay, transaction, input(counterpartyTarget()));
 
     expect(decision).toBe('denied');
     expect(calls).toEqual(['counterparty-access.lock-grant-authority']);
@@ -147,7 +159,7 @@ it.effect('uses a broad active owner row for a narrower storefront target', () =
         : [],
     );
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget('storefront-one')));
+    const decision = yield* authorize(overlay, transaction, input(counterpartyTarget('storefront-one')));
 
     expect(decision).toBe('allowed');
   }),
@@ -159,7 +171,7 @@ it.effect('returns unavailable when owner reconciliation is required', () =>
       routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('RECONCILIATION_REQUIRED')] : [],
     );
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
+    const decision = yield* authorize(overlay, transaction, input(counterpartyTarget()));
 
     expect(decision).toBe('unavailable');
   }),
@@ -173,7 +185,7 @@ it.effect('rejects Pricing business targets before entering Counterparty persist
       return [];
     });
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, {
+    const decision = yield* authorize(overlay, transaction, {
       operation: 'read',
       operationAt,
       operationKey: 'pricing.price-group.read',
@@ -223,11 +235,40 @@ it.effect('fences a grant reauthorization against a concurrent revoke', () =>
       });
     });
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decisionFiber = yield* Effect.forkScoped(overlay.authorize(transaction, input(counterpartyTarget())));
+    const decisionFiber = yield* Effect.forkScoped(authorize(overlay, transaction, input(counterpartyTarget())));
     yield* Deferred.await(lockStarted);
     revokeCommitted = true;
     yield* Deferred.succeed(releaseFence, null);
 
     expect(yield* Fiber.join(decisionFiber)).toBe('denied');
+  }),
+);
+
+it.effect('reads Retail Portal permissions before the transaction and never inside the owner check', () =>
+  Effect.gen(function* retailPermissionsBeforeTransaction() {
+    const events: string[] = [];
+    const countingReaderFactory: ProfileRetailPermissionReaderFactoryService = {
+      make: () => (request) =>
+        Effect.sync(() => {
+          events.push(`spicedb:${request.profileId}`);
+          return { observedAt: '2026-09-09T09:00:00.000Z', permissions: [] };
+        }),
+    };
+    const transaction = transactionWith((routineKey) => {
+      events.push(routineKey);
+      return [];
+    });
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(countingReaderFactory);
+    const { operationAt: at, ...request } = input({
+      kind: 'business_permission',
+      permission: 'retail.profile.read',
+      target: { kind: 'retail_profile', legalEntityId, profileId: 'profile-one', tenantId },
+    });
+    const check = yield* overlay.prepare(request);
+    expect(events).toEqual(['spicedb:profile-one']);
+    // The profile is absent in owner state, so the decision is unavailable; no SpiceDB call ran inside.
+    expect(yield* check(transaction, at)).toBe('unavailable');
+    expect(events.filter((event) => event.startsWith('spicedb:'))).toEqual(['spicedb:profile-one']);
+    expect(events.length).toBeGreaterThan(1);
   }),
 );

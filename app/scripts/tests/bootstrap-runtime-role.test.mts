@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -8,11 +9,106 @@ import {
   legacySharedEntries,
   sharedRuntimeGrantedSchemas,
   sharedRuntimeSchemaRevokeStatements,
+  tableGrantTarget,
 } from '../postgres/runtime-role-bootstrap.mts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from '../postgres/runtime-role-grants.mts';
 
+const databaseScripts = Schema.decodeUnknownSync(
+  Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) }),
+)(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'))).scripts;
+// Hand-written owners migrate before portal auth; generated provider verticals follow it, as in the deployed migrator.
+const ownerMigrations = [
+  'core-runtime',
+  'shell-super-app',
+  'party-registry',
+  'payment-term-catalog',
+  'price-group-catalog',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+  'catalog',
+  'inventory',
+  'pricing',
+  'storefront-registry',
+  'assortment',
+  'tax',
+  'privacy',
+];
+const generatedOwnerMigrations = [
+  'property-portfolio',
+  'property-leasing',
+  'legal-agreements',
+  'work-tasks',
+  'workforce',
+  'tagging',
+  'crm',
+  'sales-pipeline',
+  'merchandise',
+  'facility-operations',
+  'sales-insights',
+  'finance-billing',
+  'crm-activities',
+  'projects',
+  'commerce-cart',
+  'commerce-order',
+];
+const bootstrapRuntimeRole = 'pnpm db:bootstrap-runtime-role';
+const migrate = (owners: readonly string[]) => owners.map((owner) => `pnpm --filter @app/${owner} db:migrate`);
+
+it('migrates every owner between runtime-role bootstraps and grants again after the last owner', () => {
+  expect(databaseScripts['db:migrate']).toBe(
+    [
+      bootstrapRuntimeRole,
+      ...migrate(ownerMigrations),
+      bootstrapRuntimeRole,
+      'pnpm db:portal-auth:migrate',
+      ...migrate(generatedOwnerMigrations),
+      bootstrapRuntimeRole,
+    ].join(' && '),
+  );
+  expect(databaseScripts['db:bootstrap-runtime-role']).toBe('node ./scripts/postgres/bootstrap-runtime-role.mts');
+  expect(databaseScripts['db:portal-auth:migrate']).toBe(
+    'node ./scripts/run-optional-commerce-portal-auth-db.mts migrate',
+  );
+});
+
 const readBootstrapSource = (): string =>
   readFileSync(new URL('../postgres/runtime-role-bootstrap.mts', import.meta.url), 'utf-8');
+
+it('grants only existing auth-binding columns before the namespace migration, then grants the full manifest', () => {
+  const grant = explicitEntries
+    .find(({ identity }) => identity.role === 'party_registry_runtime')
+    ?.grants.tables.find(({ table }) => table === 'core.principal_auth_bindings');
+  if (grant?.columns?.select === undefined) {
+    throw new Error('Expected the Party request auth-binding column grant');
+  }
+  const oldColumns = [
+    'principal_auth_binding_id',
+    'tenant_id',
+    'principal_id',
+    'provider',
+    'provider_subject_id',
+    'subject_type',
+    'status',
+    'created_at',
+    'revoked_at',
+  ];
+  expect(tableGrantTarget('select', grant.columns, oldColumns)).toBe(
+    'select ("principal_auth_binding_id", "tenant_id", "principal_id", "subject_type", "status", "revoked_at")',
+  );
+  expect(
+    tableGrantTarget('select', grant.columns, [...oldColumns, 'authentication_namespace_id', 'binding_revision']),
+  ).toBe(
+    'select ("principal_auth_binding_id", "tenant_id", "principal_id", "authentication_namespace_id", "subject_type", "status", "binding_revision", "revoked_at")',
+  );
+});
+
+it('never widens an unavailable column grant to a whole-table grant', () => {
+  for (const privilege of ['select', 'insert', 'update'] as const) {
+    expect(tableGrantTarget(privilege, { [privilege]: ['not_migrated_yet'] }, ['existing_column'])).toBeUndefined();
+    expect(tableGrantTarget(privilege, undefined, ['existing_column'])).toBe(privilege);
+  }
+  expect(tableGrantTarget('delete', undefined, [])).toBe('delete');
+});
 
 const pricingMigrationRoot = new URL('../../verticals/pricing/drizzle/', import.meta.url);
 const newPricingMigrationEntries = readdirSync(pricingMigrationRoot).filter((entry) =>
@@ -348,4 +444,34 @@ it('strips every explicit role from the trust schema and every schema the manife
     }
   }
   expect(new Set(MANIFEST_MANAGED_SCHEMAS).size).toBe(MANIFEST_MANAGED_SCHEMAS.length);
+});
+
+it('preserves the DEMO shared-runtime owners while excluding Party and Contacts', () => {
+  const [entry] = legacySharedEntries;
+  if (entry === undefined) {
+    throw new Error('Expected the shared runtime manifest entry');
+  }
+  expect(sharedRuntimeGrantedSchemas(entry)).toEqual([
+    'core',
+    'auth',
+    'catalog',
+    'inventory',
+    'tax',
+    'privacy',
+    'property_portfolio',
+    'property_leasing',
+    'legal_agreements',
+    'work_tasks',
+    'demo_workforce',
+    'demo_tagging',
+    'demo_crm',
+    'demo_sales_pipeline',
+    'demo_merchandise',
+    'demo_email',
+    'facility_operations',
+    'demo_sales_insights',
+    'finance_billing',
+    'crm_activities',
+    'projects',
+  ]);
 });

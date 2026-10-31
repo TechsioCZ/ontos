@@ -254,7 +254,14 @@ export const installRetainedAccountEntrypoints = Effect.fn('RetainedConsent.inst
       ...retainedConsentAccountActionKeys.map((actionKey) =>
         v1.Relationship.create({
           relation: 'executor',
-          resource: { objectId: toSpiceDbActionObjectId(actionKey), objectType: 'action' },
+          resource: {
+            objectId: toSpiceDbActionObjectId({
+              actionKey,
+              legalEntityId: account.legalEntityId,
+              tenantId: account.tenantId,
+            }),
+            objectType: 'action',
+          },
           subject,
         }),
       ),
@@ -307,7 +314,11 @@ export const installRetainedAccountEntrypoints = Effect.fn('RetainedConsent.inst
     }
     for (const actionKey of retainedConsentAccountActionKeys) {
       const resource = v1.ObjectReference.create({
-        objectId: toSpiceDbActionObjectId(actionKey),
+        objectId: toSpiceDbActionObjectId({
+          actionKey,
+          legalEntityId: account.legalEntityId,
+          tenantId: account.tenantId,
+        }),
         objectType: 'action',
       });
       yield* assertAccountPermission(

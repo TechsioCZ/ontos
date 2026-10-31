@@ -49,6 +49,8 @@ const full = () => ({
       contributionKey: `${moduleId}.navigation.dashboard`,
       entrypoint: entrypoint('page'),
       groupKey: 'shell.navigation.primary',
+      icon: 'icon-[mdi--view-dashboard-outline]',
+      label: { cs: 'Přehled', en: 'Dashboard' },
       order: 10,
       pageKey: `${moduleId}.page.dashboard`,
     },

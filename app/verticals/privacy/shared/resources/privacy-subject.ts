@@ -2,20 +2,9 @@
 // @ontos-resource-owner privacy.core
 // @ontos-resource-slug privacy-subject
 import type { OntosResourceType } from '@app/core-runtime';
-import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('PrivacyResourceId')),
-);
-const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId')));
-
-export const PrivacySubjectRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('privacy.core'),
-  resourceId: ResourceIdSchema,
-  resourceType: Schema.Literal('privacy.core.privacy-subject'),
-  tenantId: TenantIdSchema,
-});
-export type PrivacySubjectRef = typeof PrivacySubjectRefSchema.Type;
+export { PrivacySubjectRefSchema } from '@app/consent-authority-contracts';
+export type { PrivacySubjectRef } from '@app/consent-authority-contracts';
 
 export const privacySubjectResourceDescriptor = {
   capabilities: {

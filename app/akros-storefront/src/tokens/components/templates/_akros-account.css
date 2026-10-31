@@ -1,0 +1,158 @@
+[data-akros-account] {
+  --akros-account-width: 1660px;
+  --akros-account-ink: #1c1c1a;
+  --akros-account-muted: #535353;
+  --akros-account-error: #ff0000;
+  --akros-account-divider: var(--akros-account-ink);
+  --akros-account-accent: #fdc533;
+  --akros-account-surface: #f8f9fa;
+  --akros-account-body-size: var(--dimension-20);
+  --akros-account-section-size: 25px;
+  --akros-account-leading: 1.5;
+  --akros-account-optical-sizing: none;
+  --akros-account-heading-leading: 1.2;
+  --akros-account-tab-border: 3px;
+  --akros-account-save-width: 344px;
+  --akros-account-form-width: 1160px;
+  --akros-account-billing-width: 1159px;
+  --akros-account-field-width: 567.5px;
+  --akros-account-select-glyph-size: var(--dimension-28);
+  --akros-account-disclosure-rotation: 0deg;
+  --akros-account-actions-gap: calc(var(--dimension-40) + var(--dimension-16));
+  --akros-account-list-divider: #cccccc;
+  --akros-account-action-height: 58px;
+  --font-weight-normal: var(--font-weight-medium);
+  --font-weight-input: var(--font-weight-medium);
+  --font-weight-input-placeholder: var(--font-weight-medium);
+  --text-sm: var(--dimension-20);
+  --text-xs: var(--dimension-16);
+  --color-fg-primary: var(--akros-account-ink);
+  --color-label-fg: var(--akros-account-ink);
+  --color-input-fg: var(--akros-account-ink);
+  --color-input-fg-placeholder: #a8a8a8;
+  --color-input-border-base: var(--akros-account-ink);
+  --color-input-border-hover: var(--akros-account-ink);
+  --color-input-border-danger-base: var(--akros-account-error);
+  --color-status-text-fg-error: var(--akros-account-error);
+  --text-status-text-sm: var(--dimension-20);
+  --border-width-input: 2px;
+  --border-width-form-control: 2px;
+  --height-form-control-sm: var(--dimension-60);
+  --padding-input-sm: var(--dimension-20) var(--dimension-24);
+  --padding-input-md: var(--dimension-20) var(--dimension-24);
+  --radius-input-sm: var(--dimension-8);
+  --text-input-sm: var(--dimension-20);
+  --text-label-sm: var(--dimension-20);
+  --font-weight-label: var(--font-weight-medium);
+  --text-select-trigger-sm: var(--dimension-20);
+  --text-select-value-sm: var(--dimension-20);
+  --text-phone-input-sm: var(--dimension-20);
+  --color-select-trigger-border: var(--akros-account-ink);
+  --color-form-control-bg: var(--color-base);
+  --color-form-control-border: var(--akros-account-ink);
+  --width-phone-input-trigger: 164px;
+  --border-phone-input-trigger: 2px;
+  --color-phone-input-input-bg-base: var(--color-base);
+  --color-phone-input-input-bg-hover: var(--color-base);
+  --color-phone-input-input-bg-focus: var(--color-base);
+  --color-phone-input-trigger-bg-base: var(--color-base);
+  --color-phone-input-trigger-bg-hover: var(--color-base);
+  --color-phone-input-fg-placeholder: var(--color-input-fg-placeholder);
+  --spacing-phone-input-country-value: var(--dimension-4);
+  --text-button-sm: var(--dimension-20);
+  --padding-button-sm: var(--dimension-16);
+  --radius-button-sm: var(--dimension-8);
+  --color-button-bg-primary-base: var(--akros-account-accent);
+  --color-button-fg-primary: var(--akros-account-ink);
+  --color-button-border-secondary: var(--akros-account-ink);
+  --color-button-fg-outlined-secondary: var(--akros-account-ink);
+  --color-button-bg-outlined-secondary-hover: var(--akros-account-surface);
+  --color-button-bg-outlined-secondary-active: var(--akros-account-surface);
+  --padding-accordion-title-sm: 0px;
+  --padding-accordion-content-x-sm: 0px;
+  --padding-accordion-icon-right: 0px;
+  --text-accordion-title-sm: var(--akros-account-section-size);
+  --text-accordion-content-sm: var(--akros-account-body-size);
+  --text-icon-control-sm: var(--dimension-24);
+  --color-accordion-title-fg: var(--akros-account-ink);
+  --color-accordion-content-fg: var(--akros-account-ink);
+  --color-accordion-title-bg: var(--color-base);
+  --color-accordion-title-bg-hover: var(--color-base);
+  --color-accordion-bg: var(--color-base);
+  --size-checkbox: var(--dimension-24);
+  --radius-checkbox: 4.235px;
+  --border-width-checkbox: 2px;
+  --spacing-form-checkbox-gap: var(--dimension-16);
+  --color-checkbox-border-base: var(--akros-account-ink);
+  --color-checkbox-bg-base: var(--color-base);
+  --text-breadcrumb-sm: var(--dimension-16);
+  --padding-breadcrumb-sm: 0px;
+  --spacing-breadcrumb-item: var(--dimension-4);
+  --color-breadcrumb-bg: var(--akros-account-surface);
+}
+
+[data-account-table] {
+  --text-table-sm: var(--akros-account-body-size);
+  --padding-table-cell-sm: var(--dimension-16);
+  --color-table-bg: var(--color-base);
+  --color-table-fg: var(--akros-account-ink);
+  --color-table-header-bg: var(--akros-account-surface);
+  --color-table-header-fg: var(--akros-account-ink);
+  --color-table-border: var(--akros-account-list-divider);
+  --color-data-table-bg: var(--color-table-bg);
+  --color-data-table-header-bg: var(--color-table-header-bg);
+}
+
+[data-account-products] {
+  --font-weight-normal: 400;
+  --font-weight-input: var(--font-weight-normal);
+  --font-weight-input-placeholder: var(--font-weight-normal);
+  --text-sm: var(--dimension-16);
+}
+
+[data-account-navigation] {
+  --height-form-control-sm: 62px;
+  --padding-button-sm: var(--dimension-16);
+  --radius-button-sm: 0px;
+}
+
+[data-account-navigation] [aria-current="page"] {
+  --font-weight-button: var(--font-weight-extrabold);
+  --padding-button-sm: var(--dimension-16) var(--dimension-16)
+    calc(var(--dimension-16) - var(--akros-account-tab-border));
+}
+
+[data-account-action] {
+  --height-form-control-sm: var(--akros-account-action-height);
+  --font-weight-button: var(--font-weight-bold);
+}
+
+[data-account-section-heading] {
+  --font-weight-accordion-title: var(--font-weight-bold);
+  --font-weight-button: var(--font-weight-accordion-title);
+}
+
+[data-account-field][data-invalid] {
+  --color-label-fg: var(--akros-account-error);
+}
+
+[data-account-phone-control] {
+  --border-width-form-control: 0px;
+  --color-form-control-bg: transparent;
+}
+
+[data-account-phone-control] [data-part="trigger"] {
+  --spacing-button-md: 0px;
+  --border-width-form-control: 2px;
+  --color-form-control-bg: var(--color-base);
+  --padding-select-trigger-sm: var(--dimension-20) var(--dimension-8) var(--dimension-20)
+    var(--dimension-24);
+}
+
+[data-account-newsletter] {
+  --size-checkbox: var(--dimension-28);
+  --radius-checkbox: var(--radius-full);
+  --border-width-checkbox: 1.5px;
+  --color-checkbox-bg-checked: var(--color-base);
+  --color-checkbox-fg-checked: var(--akros-account-ink);
+}

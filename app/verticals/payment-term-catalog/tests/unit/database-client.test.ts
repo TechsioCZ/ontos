@@ -3,10 +3,7 @@ import { Effect, Predicate } from 'effect';
 import { makePaymentTermCatalogDatabase } from '../../src/database/client.ts';
 
 const configuration = {
-  database: 'ontos',
-  host: 'localhost',
-  port: 5433,
-  user: 'ontos_runtime',
+  expectedRole: 'ontos_runtime',
 } as const;
 
 it.effect('keeps catalog client configuration failures in the typed channel', () =>

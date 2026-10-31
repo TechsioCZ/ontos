@@ -1,9 +1,17 @@
-/* oxlint-disable typescript/consistent-return, typescript/no-unsafe-argument -- Existing compatibility boundary; expires: 2026-12-31. */
-const { existsSync } = process.getBuiltinModule('node:fs');
-const path = process.getBuiltinModule('node:path');
-const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
+/// <reference types="node" />
+/** @type {typeof import('node:process')} */
+const nodeProcess = process;
+const { existsSync } = nodeProcess.getBuiltinModule('node:fs');
+const path = nodeProcess.getBuiltinModule('node:path');
+/** @type {{ readonly value?: unknown } | undefined} */
+const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(nodeProcess, 'env');
 
+/**
+ * @param {string} name - Environment variable name.
+ * @returns {string | undefined} The own data-property value converted to a string.
+ */
 const environmentValue = (name) => {
+  /** @type {{ readonly value?: unknown } | undefined} */
   const variableDescriptor =
     ambientEnvironmentDescriptor === undefined
       ? undefined
@@ -11,26 +19,40 @@ const environmentValue = (name) => {
   return variableDescriptor === undefined ? undefined : String(variableDescriptor.value);
 };
 
+/**
+ * @param {string} candidate - Possible application workspace directory.
+ * @returns {boolean} Whether both workspace markers exist.
+ */
 const isAppWorkspace = (candidate) =>
   existsSync(path.join(candidate, 'pnpm-workspace.yaml')) &&
   existsSync(path.join(candidate, 'packages/core-runtime/package.json'));
 
+/**
+ * @param {string} startDirectory - Directory from which to search upwards.
+ * @returns {string | undefined} The first matching workspace, if any.
+ */
 const resolveAppWorkspaceRootSync = (startDirectory) => {
   let candidate = path.resolve(startDirectory);
-  while (true) {
+  /** @type {string | undefined} */
+  let match;
+  let searching = true;
+  while (searching) {
     if (isAppWorkspace(candidate)) {
-      return candidate;
+      match = candidate;
+      searching = false;
+    } else {
+      const nestedApp = path.join(candidate, 'app');
+      if (isAppWorkspace(nestedApp)) {
+        match = nestedApp;
+        searching = false;
+      } else {
+        const parent = path.dirname(candidate);
+        searching = parent !== candidate;
+        candidate = parent;
+      }
     }
-    const nestedApp = path.join(candidate, 'app');
-    if (isAppWorkspace(nestedApp)) {
-      return nestedApp;
-    }
-    const parent = path.dirname(candidate);
-    if (parent === candidate) {
-      return;
-    }
-    candidate = parent;
   }
+  return match;
 };
 
 /**
@@ -38,7 +60,9 @@ const resolveAppWorkspaceRootSync = (startDirectory) => {
  * @returns {{ APP_ENV_PATH: string, APP_WORKSPACE_ROOT: string }} The resolved workspace paths.
  */
 const resolveWorkspaceEnvironmentSync = (candidates) => {
-  const usableCandidates = candidates.filter((candidate) => candidate !== undefined && candidate.length > 0);
+  const usableCandidates = candidates.flatMap((candidate) =>
+    candidate !== undefined && candidate.length > 0 ? [candidate] : [],
+  );
   const APP_WORKSPACE_ROOT =
     usableCandidates.map(resolveAppWorkspaceRootSync).find((candidate) => candidate !== undefined) ?? candidates[1];
   const explicitEnvironmentPath = environmentValue('APP_ENV_PATH');
@@ -53,7 +77,7 @@ const resolveWorkspaceEnvironmentSync = (candidates) => {
 
 const resolvedWorkspaceEnvironment = resolveWorkspaceEnvironmentSync([
   environmentValue('ULTRAMODERN_WORKSPACE_ROOT'),
-  process.cwd(),
+  nodeProcess.cwd(),
   environmentValue('INIT_CWD'),
 ]);
 

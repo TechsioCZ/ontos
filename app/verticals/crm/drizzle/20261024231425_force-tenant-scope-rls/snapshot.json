@@ -1,0 +1,254 @@
+{
+  "id": "d3f5177d-eabc-40f3-b835-fb2590a8e1a0",
+  "prevIds": [
+    "67e453d8-e424-4e98-bf6a-979085fb80d8"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "demo_crm",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "crm_states",
+      "entityType": "tables",
+      "schema": "demo_crm"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "demo_crm"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "demo_crm",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_crm_redemption_expiry",
+      "entityType": "indexes",
+      "schema": "demo_crm",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "nameExplicit": false,
+      "name": "crm_states_pkey",
+      "entityType": "pks",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nameExplicit": false,
+      "name": "gateway_assertion_redemptions_pkey",
+      "entityType": "pks",
+      "schema": "demo_crm",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "value": "\"revision\" >= 0",
+      "name": "demo_crm_revision_nonnegative",
+      "entityType": "checks",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "value": "jsonb_typeof(\"state\") = 'object'",
+      "name": "demo_crm_state_object",
+      "entityType": "checks",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_crm\".\"crm_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_crm\".\"crm_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_crm_state_scope_select",
+      "entityType": "policies",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_crm\".\"crm_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_crm\".\"crm_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_crm_state_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_crm\".\"crm_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_crm\".\"crm_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_crm\".\"crm_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_crm\".\"crm_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_crm_state_scope_update",
+      "entityType": "policies",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_crm\".\"crm_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_crm\".\"crm_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_crm_state_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_crm",
+      "table": "crm_states"
+    }
+  ],
+  "renames": []
+}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, rstest, test } from 'effect-rstest';
 
 import {
   AppIdSchema,
+  EntrypointKeySchema,
   GroupKeySchema,
   LegalEntityIdSchema,
   ModuleIdSchema,
@@ -19,11 +20,13 @@ import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.t
 };
 import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
+import { useSettledRouterState } from '../../../support/settled-router-state.ts';
 
 const {
   browserRunPromiseMock,
   languageState,
   localizedLinkCalls,
+  localizedLinkMock,
   navigateMock,
   signOutMock,
   switchLegalEntityMock,
@@ -35,6 +38,7 @@ const {
     browserRunPromiseMock: rstest.fn(),
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
+    localizedLinkMock: rstest.fn<(props: LocalizedLinkDoubleProps) => void>(),
     navigateMock: rstest.fn(async () => {}),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
@@ -59,6 +63,8 @@ const translations = new Map(
     'shell.dashboard.unavailable': 'Dashboard unavailable',
     'shell.modules.state.readOnly': 'Read only',
     'shell.moduleTarget.reload_required': 'Reload this page to continue',
+    'shell.search.agenda_hint': 'Open an authorized agenda and use its search.',
+    'shell.search.agenda_title': 'Search within an agenda',
     'shell.search.empty': 'No results',
     'shell.search.label': 'Search this legal entity',
     'shell.search.selection_required': 'Select a legal entity first',
@@ -69,11 +75,13 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: (props: LocalizedLinkDoubleProps) =>
-    renderLocalizedLinkDouble(props, {
+  Link: (props: LocalizedLinkDoubleProps) => {
+    localizedLinkMock(props);
+    return renderLocalizedLinkDouble(props, {
       calls: localizedLinkCalls,
       language: languageState,
-    }),
+    });
+  },
   useLocalizedLocation: () => ({
     alternates: { cs: '/cs/hledat', en: '/en/search' },
   }),
@@ -86,6 +94,10 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useLoaderData: useLoaderDataMock,
   useNavigate: () => navigateMock,
+  useRouter: () => ({ matchRoutes: () => [], preloadRoute: () => Promise.resolve(), routesById: {} }),
+
+  // Read lazily: mock factories run before this module's imports are initialized.
+  useRouterState: (options: Parameters<typeof useSettledRouterState>[0]) => useSettledRouterState(options),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -95,7 +107,12 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock, runSyncExit: browserRuntime.runSyncExit },
+  browserRuntime: {
+    runFork: browserRuntime.runFork,
+    runPromise: browserRunPromiseMock,
+    runSync: browserRuntime.runSync,
+    runSyncExit: browserRuntime.runSyncExit,
+  },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
@@ -121,13 +138,16 @@ const authenticatedShell = (): HomePageModel => ({
     state: 'available',
   },
   navigation: {
+    deniedAppIds: [],
     items: [
       {
         appId: inventoryAppId,
         enabled: true,
+        entrypointKey: Schema.decodeUnknownSync(EntrypointKeySchema)('inventory.stock.page.records'),
         groupKey: navigationGroupKey,
         href: '/modules/inventory.stock',
-        label: 'Inventory',
+        icon: 'icon-[mdi--warehouse]',
+        label: { cs: 'Sklad', en: 'Inventory' },
         moduleId: inventoryModuleId,
         order: 10,
         state: 'read_only',
@@ -135,6 +155,7 @@ const authenticatedShell = (): HomePageModel => ({
         writable: false,
       },
     ],
+    moduleIds: [inventoryModuleId],
     state: 'available',
     unavailableDeployments: [],
   },
@@ -182,15 +203,21 @@ afterEach(() => {
 test('a search result hands the canonical resource route to the framework link', () => {
   render(<SearchPage />);
 
-  const [resultCall] = resourceLinkCalls();
-  expect(resourceLinkCalls()).toHaveLength(1);
-  expect(resultCall?.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
-  expect(resultCall?.params).toEqual({
-    moduleId: 'inventory.stock',
-    resourceId: 'unit-1',
-    resourceType: 'stock-item',
-  });
-  expect(resultCall?.href).toBeUndefined();
+  const resultCalls = localizedLinkMock.mock.calls
+    .map(([props]) => props)
+    .filter(({ to }) => to.startsWith('/resources'));
+  expect(resultCalls.length).toBeGreaterThan(0);
+  for (const resultCall of resultCalls) {
+    expect(resultCall.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
+    expect(resultCall.params).toEqual({
+      moduleId: 'inventory.stock',
+      resourceId: 'unit-1',
+      resourceType: 'stock-item',
+    });
+    expect(resultCall.href).toBeUndefined();
+    expect(resultCall).toHaveProperty('prefetch', 'none');
+    expect(resultCall).toHaveProperty('preload', false);
+  }
   expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
     '/en/resources/inventory.stock/stock-item/unit-1',
   );
@@ -233,7 +260,7 @@ test('an empty result set exposes no resource affordance', () => {
   expect(resourceLinkCalls()).toHaveLength(0);
 });
 
-test('an unavailable search exposes no resource affordance', () => {
+test('an unavailable search points to the agendas and exposes no resource affordance', () => {
   useLoaderDataMock.mockReturnValue({
     query: 'unit',
     shell: authenticatedShell(),
@@ -241,7 +268,20 @@ test('an unavailable search exposes no resource affordance', () => {
   } satisfies SearchPageModel);
   render(<SearchPage />);
 
-  expect(screen.getByText('Search unavailable')).toBeTruthy();
+  expect(screen.getAllByText('Search within an agenda').length).toBeGreaterThan(0);
+  expect(screen.getByText('Open an authorized agenda and use its search.')).toBeTruthy();
+  expect(resourceLinkCalls()).toHaveLength(0);
+});
+
+test('a browser without a live session goes to sign-in instead of a bare error line', () => {
+  useLoaderDataMock.mockReturnValue({
+    query: 'faktura',
+    shell: { reason: 'account_forbidden', state: 'anonymous' },
+    state: 'selection_required',
+  } satisfies SearchPageModel);
+  render(<SearchPage />);
+
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/en/login?reason=account_forbidden', replace: true });
   expect(resourceLinkCalls()).toHaveLength(0);
 });
 

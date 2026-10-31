@@ -6,7 +6,6 @@ import {
   BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
   CoreSearchResourceRefSchema,
-  DATABASE_IDENTITIES,
   GatewayAssertionRedemptionService,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
@@ -15,11 +14,12 @@ import {
   extractOutboxWorkerSubscriptions,
   makeContextPermissionRelationshipMutationLive,
   matchOutboxMessages,
-  loadDatabaseConfig,
+  loadDatabaseConnectionPair,
   parseDatabaseConnectionPair,
   runOutboxCycle,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
+import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../../shared/actions/change-counterparty-purchase-limit.ts';
 import { executeChangeCounterpartyPurchaseLimitWithAuthorization } from '../../src/api/change-counterparty-purchase-limit-action-client.ts';
 import { beginGrant, settleGrant } from './purchasing-approval-native.ts';
@@ -610,7 +610,14 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
   readonly environment: Readonly<Record<string, string>>;
   readonly stage: string;
 }) {
-  const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const inherited = yield* Config.all({
+    HOME: Config.String('HOME'),
+    ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+      Config.withDefault(true),
+      Config.map(String),
+    ),
+    PATH: Config.String('PATH'),
+  });
   const commands = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const standardInput = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const publicLines = yield* Queue.unbounded<string, Cause.Done>();
@@ -1314,6 +1321,8 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const compositionUrl = yield* makeCompositionSource(compositionDocument);
     const owned = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      // The cloned trust catalog maps the Party gateway audience to its request role only for enrolled identities.
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1257-approval-fresh-proof',
       sourceConnections,
@@ -1359,7 +1368,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       yield* Effect.all(
         DATABASE_IDENTITIES.map((identity) =>
           Effect.gen(function* isolatedOwnerDatabaseIdentity() {
-            const configured = yield* loadDatabaseConfig({ identity });
+            const { runtime: configured } = yield* loadDatabaseConnectionPair({ identity });
             yield* requireProtocol(
               configured.host === sourceConnections.admin.host && configured.port === sourceConnections.admin.port,
               `same-isolated-database-server:${identity.id}`,
@@ -1469,6 +1478,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       principalId: identities.cccReader.principalId,
       tenantId: core.tenantId,
     };
+    const actionTransactionGuard = yield* Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+      Config.withDefault(true),
+    );
     const environment = {
       ...baseEnvironment,
       ...permissionEnvironment,
@@ -1477,6 +1489,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_OWNER_ORIGIN`]:
         owners.find((owner) => owner.appId === cartAudience)?.origin ?? '',
       [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_SHELL_ORIGIN`]: shell.origin,
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: String(actionTransactionGuard),
       ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS: JSON.stringify([
         serviceGrant,
         { ...serviceGrant, principalId: identities.pricingIssuer.principalId },

@@ -41,6 +41,8 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'purchase_proposal_bases',
   'gateway_assertion_redemptions',
   'access_mutation_journal',
+  'customer_consent_receipts',
+  'demo_newsletter_choices',
   'address_book_reconciliation_receipts',
   'portal_enrollment_attempts',
   'portal_enrollment_owner_operations',
@@ -253,12 +255,56 @@ const policyRevisionConstraints = (
     ...scopedPolicies(`${prefix}_rls`, table),
   ] as const;
 
+/** Immutable, explicit notice acknowledgement; no provider token or customer email is retained. */
+export const customerConsentReceipts = commerceCustomerContextSchema.table.withRLS(
+  'customer_consent_receipts',
+  {
+    ...scopeColumns(),
+    receipt: jsonb('receipt').$type<DatabaseJsonObject>().notNull(),
+    receiptId: uuid('receipt_id').primaryKey(),
+  },
+  (table) => [
+    unique('ccc_consent_receipt_scope_identity_uk').on(table.tenantId, table.legalEntityId, table.receiptId),
+    check(
+      'ccc_consent_receipt_object_ck',
+      sql`jsonb_typeof(${table.receipt}) = 'object' and length(${table.receipt}::text) <= 12000 and ${table.receipt}->>'requestId' = ${table.receiptId}::text`,
+    ),
+    ...scopedPolicies('ccc_consent_receipt_scope', table),
+  ],
+);
+
+/** One current demo newsletter decision per tenant, controller and Party. */
+export const demoNewsletterChoices = commerceCustomerContextSchema.table.withRLS(
+  'demo_newsletter_choices',
+  {
+    ...scopeColumns(),
+    changedAt: timestamp('changed_at', { withTimezone: true }).defaultNow().notNull(),
+    decision: text('decision').notNull(),
+    lastRequestId: uuid('last_request_id').notNull(),
+    noticeVersion: text('notice_version').notNull(),
+    partyId: uuid('party_id').notNull(),
+    revision: integer('revision').default(1).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.partyId],
+      name: 'ccc_demo_newsletter_choice_scope_party_pk',
+    }),
+    check('ccc_demo_newsletter_choice_decision_ck', sql`${table.decision} in ('GRANTED', 'WITHDRAWN')`),
+    check('ccc_demo_newsletter_choice_revision_ck', sql`${table.revision} >= 1`),
+    check('ccc_demo_newsletter_choice_notice_ck', sql`${table.noticeVersion} = 'demo-newsletter.cs.v1'`),
+    ...scopedPolicies('ccc_demo_newsletter_choice_scope', table),
+  ],
+);
+
 /** Durable Tenant-scoped correlation for one exact Commerce Portal onboarding intent. */
 export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.withRLS(
   'portal_enrollment_attempts',
   {
     authenticationNamespaceId: text('authentication_namespace_id'),
     compositionRevision: text('composition_revision').notNull(),
+    /** Latest explicitly admitted continuation release; null until the first re-admission. */
+    continuationCompositionRevision: text('continuation_composition_revision'),
     createdAt: createdAt(),
     createdByPrincipalId: uuid('created_by_principal_id').notNull(),
     intentDigest: text('intent_digest').notNull(),
@@ -273,11 +319,18 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     leaseToken: uuid('lease_token'),
     portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').defaultRandom().primaryKey(),
     providerSubjectId: text('provider_subject_id'),
+    /** Immutable, credential-free registration intent; final contacts belong to Party Registry. */
+    retailRegistration: jsonb('retail_registration').$type<DatabaseJsonObject>(),
     revision: integer('revision').default(1).notNull(),
     state: text('state').default('IN_PROGRESS').notNull(),
     subjectType: text('subject_type'),
     /** While this stands in the future one replica owns this Attempt's sweep; it expires on its own. */
     sweepClaimedUntil: timestamp('sweep_claimed_until', { withTimezone: true }),
+    /**
+     * The approved composition the sweep count was spent under. A new release can fix what the sweeps
+     * kept halting on, so it starts the budget over just as a moved revision does.
+     */
+    sweepCompositionRevision: text('sweep_composition_revision'),
     /** How many fruitless continuation sweeps this Attempt has had while standing at `sweepRevision`. */
     sweepCount: integer('sweep_count').default(0).notNull(),
     /** The revision the sweep count was spent against; a different one starts the budget over. */
@@ -296,6 +349,10 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
       sql`${table.journey} in ('RETAIL_SELF_ENROLLMENT', 'COUNTERPARTY_INVITATION', 'EXISTING_ACCOUNT')`,
     ),
     check(
+      'ccc_retail_registration_object_ck',
+      sql`${table.retailRegistration} is null or (${table.journey} = 'RETAIL_SELF_ENROLLMENT' and jsonb_typeof(${table.retailRegistration}) = 'object' and length(${table.retailRegistration}::text) <= 2000 and ${table.retailRegistration} ? 'displayName' and ${table.retailRegistration} ? 'email' and ${table.retailRegistration} - ARRAY['displayName', 'email', 'phone'] = '{}'::jsonb)`,
+    ),
+    check(
       'ccc_portal_enrollment_attempts_intent_key_ck',
       sql`${table.intentKey} = btrim(${table.intentKey}) and length(${table.intentKey}) between 1 and 300`,
     ),
@@ -305,8 +362,12 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
       sql`${table.compositionRevision} ~ '^[0-9a-f]{64}$'`,
     ),
     check(
+      'ccc_enrollment_continuation_composition_ck',
+      sql`${table.continuationCompositionRevision} is null or ${table.continuationCompositionRevision} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
       'ccc_portal_enrollment_attempts_state_ck',
-      sql`${table.state} in ('IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED', 'TERMINATED')`,
+      sql`${table.state} in ('IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED', 'TERMINATED', 'FAILED')`,
     ),
     positiveRevision('ccc_portal_enrollment_attempts_revision_ck', table.revision),
     check(
@@ -2729,6 +2790,7 @@ const commerceCustomerContextDatabaseSchema = {
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
   customerCommercePolicyCompletenessGenerations,
+  customerConsentReceipts,
   customerGroupLifecyclePeriods,
   customerGroupMemberships,
   customerGroupRevisions,
@@ -2740,6 +2802,7 @@ const commerceCustomerContextDatabaseSchema = {
   customerProfileLifecycleHistory,
   customerProfiles,
   customerSettingRevisions,
+  demoNewsletterChoices,
   gatewayAssertionRedemptions,
   guestRetailAttributions,
   marketBootstrapPolicyCandidateGenerations,
@@ -2772,6 +2835,8 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   gatewayAssertionRedemptions,
   accessMutationJournal,
   addressBookReconciliationReceipts,
+  customerConsentReceipts,
+  demoNewsletterChoices,
   portalEnrollmentAttempts,
   portalEnrollmentOwnerOperations,
   counterpartyAccessInvitations,

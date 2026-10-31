@@ -5,7 +5,7 @@ import { FetchHttpClient } from 'effect/http';
 
 import { loadCounterpartiesClient } from '../../src/api/counterparties-search-client.ts';
 
-it.effect('the issuer release overrides caller transport options on every generated client attempt', () =>
+it.effect('each client attempt obtains a fresh assertion and uses its approved issuer release', () =>
   Effect.gen(function* approvedReleaseClientTransport() {
     const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
     const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');

@@ -48,6 +48,9 @@ import { getReadPermissionTargetResolver } from '../../../../packages/core-runti
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const reservationId = '22222222-2222-4222-8222-222222222222';
@@ -303,16 +306,13 @@ it.effect('reads the exact Reservation with bounded evidence and returns typed n
 
 it.effect('denies the exact Inventory Resource before opening owner persistence or producing evidence', () =>
   Effect.gen(function* denyBeforeOwnerPersistence() {
-    let databaseCalls = 0;
+    const statements: string[] = [];
     const stages: string[] = [];
     const database = {
-      executor: yield* makeTestDatabase((text) => {
-        if (text.includes('current_setting')) {
+      executor: yield* makeTestDatabase((statement) => {
+        statements.push(statement);
+        if (statement.includes('current_setting')) {
           return Effect.succeed([{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
-        }
-        // Count persistence calls, not transaction controls or scope installation for denial evidence.
-        if (!/^(?:BEGIN|COMMIT|ROLLBACK)$/iu.test(text) && !text.includes('set_config')) {
-          databaseCalls += 1;
         }
         return Effect.succeed([]);
       }),
@@ -342,9 +342,11 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         onStage: (stage) => {
           stages.push(stage);
         },
+
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       },
     );
@@ -359,7 +361,13 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
       .pipe(Effect.flip);
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(databaseCalls).toBe(1);
+    // The only database work is Core's denial evidence, in its own transaction; no Inventory table is touched.
+    expect(statements).toHaveLength(5);
+    expect(statements[0]).toBe('BEGIN');
+    expect(statements[1]).toContain("set_config('ontos.tenant_id'");
+    expect(statements[2]).toContain('current_user::text as role');
+    expect(statements[3]).toMatch(/^insert into "core"\."data_access_events"/u);
+    expect(statements[4]).toBe('COMMIT');
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

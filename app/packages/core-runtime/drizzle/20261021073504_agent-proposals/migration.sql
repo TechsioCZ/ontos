@@ -1,0 +1,41 @@
+CREATE TABLE "core"."agent_proposals" (
+	"proposal_id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	"tenant_id" uuid NOT NULL,
+	"legal_entity_id" uuid NOT NULL,
+	"batch_id" uuid NOT NULL,
+	"batch_instruction" text NOT NULL,
+	"run_id" text,
+	"position" integer NOT NULL,
+	"agent_principal_id" uuid NOT NULL,
+	"agent_label" text NOT NULL,
+	"app_id" text NOT NULL,
+	"module_key" text NOT NULL,
+	"action_slug" text DEFAULT 'apply-command' NOT NULL,
+	"command_json" jsonb NOT NULL,
+	"reference_audiences_json" jsonb DEFAULT '[]' NOT NULL,
+	"summary" text NOT NULL,
+	"target_label" text NOT NULL,
+	"reason" text NOT NULL,
+	"risk" text NOT NULL,
+	"diff_json" jsonb DEFAULT '[]' NOT NULL,
+	"revert_json" jsonb,
+	"status" text DEFAULT 'pending' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"decided_by_principal_id" uuid,
+	"decided_at" timestamp with time zone,
+	"decision_note" text,
+	"applied_at" timestamp with time zone,
+	"apply_result_json" jsonb,
+	"failure" text,
+	"reverted_by_principal_id" uuid,
+	"reverted_at" timestamp with time zone,
+	"batch_reverted_at" timestamp with time zone,
+	"batch_reverted_by_principal_id" uuid,
+	"batch_revert_note" text,
+	CONSTRAINT "core_agent_proposals_status_ck" CHECK ("status" in ('pending', 'applied', 'rejected', 'failed', 'reverted', 'revert_failed')),
+	CONSTRAINT "core_agent_proposals_risk_ck" CHECK ("risk" in ('low', 'medium', 'high'))
+);
+--> statement-breakpoint
+CREATE INDEX "core_agent_proposals_company_created_idx" ON "core"."agent_proposals" ("tenant_id","legal_entity_id","created_at");--> statement-breakpoint
+CREATE INDEX "core_agent_proposals_batch_idx" ON "core"."agent_proposals" ("batch_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "core_agent_proposals_run_uk" ON "core"."agent_proposals" ("tenant_id","agent_principal_id","run_id","position") WHERE "run_id" is not null;

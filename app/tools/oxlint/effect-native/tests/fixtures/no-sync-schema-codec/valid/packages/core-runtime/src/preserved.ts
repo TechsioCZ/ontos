@@ -1,6 +1,6 @@
 // Audit "Existing patterns to preserve" and D tier: none of these are this rule's business.
 import { Effect, Layer, Schema } from 'effect';
-import { HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApiSchema } from 'effect/http-api';
 
 /** Outbox payloads already use `Schema.Json` + Drizzle JSONB correctly. */
 export const OutboxPayloadSchema = Schema.Struct({ payload: Schema.Json });

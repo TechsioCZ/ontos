@@ -1,6 +1,6 @@
 /** A9/A1 target shape: one long-lived client built once in a Layer, injected into every operation. */
 export const renderApiClient = (name: string): string => `import { Context, Effect, Layer } from 'effect';
-import { HttpApiClient } from 'effect/unstable/http';
+import { HttpApiClient } from 'effect/http';
 import { ${name}Api } from '../../shared/apis/${name}.ts';
 
 export class ${name}Client extends Context.Tag('${name}Client')<${name}Client, HttpApiClient.Client<typeof ${name}Api>>() {}

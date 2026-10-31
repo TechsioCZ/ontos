@@ -1,6 +1,8 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   OwnerAuthorizationOverlay,
   ContextAccessLive,
@@ -8,6 +10,7 @@ import {
   DatabaseConfigLive,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
+  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import type {
   ActionRuntime,
@@ -57,6 +60,8 @@ import {
   priceGroupCatalogCorsAllowedOrigins,
   resolvePriceGroupCatalogShellOrigin,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const priceGroupCatalogReadinessLayer = HttpApiBuilder.group(priceGroupCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -176,10 +181,12 @@ export const priceGroupCatalogOwnerAuthorizationDecision = (
   return exactOperation ? 'allowed' : 'unavailable';
 };
 
-export const priceGroupCatalogOwnerAuthorizationOverlayLive = Layer.succeed(OwnerAuthorizationOverlay, {
-  authorize: (transaction, input) =>
+export const priceGroupCatalogOwnerAuthorizationOverlayLive = Layer.succeed(
+  OwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization((transaction, input) =>
     Effect.succeed(priceGroupCatalogOwnerAuthorizationDecision(transaction.scope, input)),
-});
+  ),
+);
 
 const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(
@@ -196,6 +203,7 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeli
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
@@ -208,6 +216,7 @@ const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GovernedGatewayAssertionRedemptionDatabaseLive),
@@ -241,7 +250,9 @@ export const makePriceGroupCatalogApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive, databaseIdentitiesLive),
+    ),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

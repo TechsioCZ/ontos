@@ -339,3 +339,51 @@ it.effect('sanitizes relationship client diagnostics', () =>
     expect(failure.reason).toBe('The business permission relationship mutation could not be completed safely');
   }),
 );
+
+for (const operation of ['grant', 'revoke'] as const) {
+  it.effect(`writes only the exact Retail self-service relation for ${operation}, never membership`, () =>
+    Effect.gen(function* exactRetailSelfService() {
+      const requests: v1.WriteRelationshipsRequest[] = [];
+      const service = makeBusinessPermissionRelationshipMutation({
+        writeRelationships: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return v1.WriteRelationshipsResponse.create({});
+          }),
+      });
+      yield* service.mutate({
+        operation,
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read'),
+        principal: { principalId, tenantId },
+        target: { kind: 'retail_profile', legalEntityId, profileId: inventoryResourceId, tenantId },
+      });
+      expect(requests).toHaveLength(1);
+      expect(
+        requests[0]?.updates.map(({ operation: change, relationship }) => ({
+          change,
+          relation: relationship?.relation,
+          resourceType: relationship?.resource?.objectType,
+          subjectId: relationship?.subject?.object?.objectId,
+        })),
+      ).toEqual([
+        ...(operation === 'grant'
+          ? [
+              {
+                change: v1.RelationshipUpdate_Operation.TOUCH,
+                relation: 'legal_entity',
+                resourceType: 'business_permission',
+                subjectId: expect.any(String),
+              },
+            ]
+          : []),
+        {
+          change:
+            operation === 'grant' ? v1.RelationshipUpdate_Operation.TOUCH : v1.RelationshipUpdate_Operation.DELETE,
+          relation: 'self_service_grantee',
+          resourceType: 'business_permission',
+          subjectId: principalId,
+        },
+      ]);
+    }),
+  );
+}

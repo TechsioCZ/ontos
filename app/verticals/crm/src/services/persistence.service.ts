@@ -1,0 +1,446 @@
+import { activeAssignmentMember, loadAssignablePrincipalDirectory } from '@app/core-runtime/auth/assignable-principals';
+import { assignmentPrincipalIds } from './assignment-policy.ts';
+import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
+// CRM persistence + ACL (owned by crm-scaffold). One JSONB document per (tenant, legal entity), optimistic
+// revision. The viewer (principal + context permissions + salesperson record) is computed here for every read
+// and command; projections and reducers in shared/ enforce it (C00).
+import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+
+import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
+import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
+import { and, eq, sql } from 'drizzle-orm';
+import { DateTime, Effect, Option, Schema } from 'effect';
+
+import {
+  CrmPermissionDenied,
+  CrmPersistenceUnavailable,
+  CrmReferenceIneligible,
+  CrmReferenceUnavailable,
+  CrmRevisionConflict,
+  CrmScopeMismatch,
+} from '../../shared/actions/apply-command.ts';
+import type { CrmCommand } from '../../shared/actions/apply-command.ts';
+
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import { VerifiedPartySchema } from '../../shared/commands/context.ts';
+import type { CommandContext, VerifiedParty } from '../../shared/commands/context.ts';
+import { PrincipalIdSchema } from '../../shared/domain/common.ts';
+import type { PrincipalId } from '../../shared/domain/common.ts';
+
+import { dispatchCrmCommand, partyLinksOf } from '../../shared/commands/index.ts';
+import type { PartyLinkInput } from '../../shared/domain/clients.ts';
+import { canWriteAnything, crmPermissionKeys } from '../../shared/domain/access.ts';
+import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
+
+import { CrmStateSchema, initialCrmState, projectCrmState, withDefaultSlices } from '../../shared/domain/state.ts';
+import type { CrmState } from '../../shared/domain/state.ts';
+
+import { salespersonOfPrincipal } from '../../shared/domain/team.ts';
+import { crmStates } from '../database/schema.ts';
+
+const moduleId = 'demo.crm';
+
+const withCause = <E extends object>(error: E, cause: unknown) =>
+  Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
+
+const unavailable = (cause?: unknown) =>
+  withCause(
+    new CrmPersistenceUnavailable({
+      code: 'crm_persistence_unavailable',
+      reason: 'CRM persistence is temporarily unavailable',
+    }),
+    cause,
+  );
+
+const referenceUnavailable = (cause?: unknown) =>
+  withCause(
+    new CrmReferenceUnavailable({
+      code: 'crm_reference_unavailable',
+      reason: 'Permission decisions are temporarily unavailable',
+    }),
+    cause,
+  );
+
+const registryUnavailable = (cause?: unknown) =>
+  withCause(
+    new CrmReferenceUnavailable({
+      code: 'crm_reference_unavailable',
+      reason: 'Evidence zákazníků je dočasně nedostupná; vazbu na zákazníka teď nelze ověřit',
+    }),
+    cause,
+  );
+
+const partyIneligible = (reason: string) => new CrmReferenceIneligible({ code: 'crm_reference_ineligible', reason });
+
+const NotVisibleProblem = Schema.Struct({ status: Schema.Literals([403, 404]) });
+const isNotVisible = Schema.is(NotVisibleProblem);
+
+interface CounterpartyFacts {
+  readonly currentRoles: readonly {
+    readonly roleType: string;
+    readonly state: string;
+    readonly validFrom: string;
+    readonly validTo: string | null;
+  }[];
+  readonly legalEntityRef: { readonly resourceId: string };
+  readonly party: {
+    readonly archived: boolean;
+    readonly canonicalPartyRef: { readonly resourceId: string };
+    readonly displayName: string | null;
+    readonly storedPartyRef: { readonly resourceId: string };
+  };
+}
+
+/** A registry answer is usable when it is a current CUSTOMER of the scoped company and names the same Party. */
+export const verifiedPartyOf = (
+  link: PartyLinkInput,
+  counterparty: CounterpartyFacts,
+  legalEntityId: string,
+  today: string,
+): VerifiedParty | string => {
+  if (counterparty.legalEntityRef.resourceId !== legalEntityId) {
+    return 'Zákazník v evidenci zákazníků patří jiné firmě';
+  }
+  if (counterparty.party.archived) {
+    return 'Záznam v evidenci zákazníků je archivovaný';
+  }
+  if (
+    counterparty.party.canonicalPartyRef.resourceId !== link.partyId &&
+    counterparty.party.storedPartyRef.resourceId !== link.partyId
+  ) {
+    return 'Údaje o firmě a zákazníkovi k sobě nepatří';
+  }
+  const customer = counterparty.currentRoles.some(
+    (role) =>
+      role.roleType === 'CUSTOMER' &&
+      role.state === 'ACTIVE' &&
+      role.validFrom.slice(0, 10) <= today &&
+      (role.validTo === null || role.validTo.slice(0, 10) > today),
+  );
+  if (!customer) {
+    return 'Firma nemá v evidenci zákazníků platnou roli zákazníka';
+  }
+  const candidate = { counterpartyId: link.counterpartyId, partyId: counterparty.party.canonicalPartyRef.resourceId };
+  if (counterparty.party.displayName !== null) {
+    Object.assign(candidate, { displayName: counterparty.party.displayName });
+  }
+  return Option.getOrElse(
+    Schema.decodeOption(VerifiedPartySchema)(candidate),
+    () => 'Údaje o firmě a zákazníkovi k sobě nepatří',
+  );
+};
+
+/** One batched context-permission check for all five CRM permissions. */
+const grantedPermissions = Effect.fn('Crm.grantedPermissions')(function* grantedPermissions(
+  access: ContextAccess['Service'],
+  scope: OperationalScope,
+) {
+  if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
+    return yield* referenceUnavailable();
+  }
+  const decisions = yield* access.contextPermissions({
+    legalEntityId: scope.legalEntityId,
+    principalId: scope.principalId,
+    targets: crmPermissionKeys.map((permission) => ({ moduleId, permission })),
+    tenantId: scope.tenantId,
+  });
+  if (decisions.length !== crmPermissionKeys.length || decisions.some((entry) => entry.decision === 'unavailable')) {
+    return yield* referenceUnavailable();
+  }
+  const allowed = new Set(
+    decisions.flatMap((entry) => (entry.decision === 'allowed' ? [entry.key.replace(`${moduleId}:`, '')] : [])),
+  );
+  return (permission: CrmPermissionKey) => allowed.has(permission);
+});
+
+/** The ACL subject of every read and command: permissions + the principal's salesperson record. */
+export const viewerFor = (
+  state: CrmState,
+  principalId: PrincipalId,
+  has: (permission: CrmPermissionKey) => boolean,
+): CrmViewer => {
+  const salesperson = salespersonOfPrincipal(state.salespeople, principalId);
+  const base = {
+    assign: has('demo.crm.assign'),
+    principalId,
+    readAll: has('demo.crm.read_all'),
+    readAssigned: has('demo.crm.read_assigned'),
+    writeAll: has('demo.crm.write_all'),
+    writeAssigned: has('demo.crm.write_assigned'),
+  };
+  return salesperson === undefined ? base : { ...base, salespersonId: salesperson.id };
+};
+
+/**
+ * The viewer a records read reports. A read-only or approval-only MCP connection cannot change CRM directly, so its
+ * write flags are off; read reach stays exactly as before (write_assigned alone also lets a salesperson read).
+ */
+export const reportedViewer = (
+  viewer: CrmViewer,
+  scope: Pick<OperationalScope, 'authMethod' | 'connection'>,
+): CrmViewer =>
+  isConnectionWriteAllowed(scope, moduleId)
+    ? viewer
+    : {
+        ...viewer,
+        assign: false,
+        readAll: viewer.readAll || viewer.writeAll,
+        readAssigned: viewer.readAssigned || viewer.writeAssigned,
+        writeAll: false,
+        writeAssigned: false,
+      };
+
+export { partyLinksOf } from '../../shared/commands/index.ts';
+
+export const persistenceService = Effect.fn('Crm.persistenceService')(
+  function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+    const { legalEntityId } = scope;
+    if (
+      legalEntityId === undefined ||
+      transaction.scope.tenantId !== scope.tenantId ||
+      transaction.scope.legalEntityId !== legalEntityId
+    ) {
+      return yield* new CrmScopeMismatch({
+        code: 'crm_scope_mismatch',
+        reason: 'A scoped company transaction is required',
+      });
+    }
+    const access = yield* ContextAccess;
+    // Forwarded single-use assertions of the signed-in principal (header x-ontos-reference-credentials); the
+    // registry answers with that principal's own rights, so nobody links a Party they could not read.
+    const references = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
+    const verifyParties = Effect.fn('Crm.verifyParties')(function* verifyParties(links: readonly PartyLinkInput[]) {
+      const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
+      return yield* Effect.reduce(
+        links,
+        () => new Map<string, VerifiedParty>(),
+        Effect.fn('Crm.verifyParty')(function* verifyParty(
+          previous: ReadonlyMap<string, VerifiedParty>,
+          link: PartyLinkInput,
+        ) {
+          const credential = yield* references.issue('party-registry').pipe(Effect.mapError(registryUnavailable));
+          const counterparty = yield* executeCounterpartyReadWithAuthorization(
+            {
+              counterpartyRef: {
+                moduleId: 'party.registry',
+                resourceId: link.counterpartyId,
+                resourceType: 'party.registry.counterparty',
+                tenantId: scope.tenantId,
+              },
+            },
+            credential.authorization,
+            scope.correlationId,
+            { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
+          ).pipe(
+            Effect.mapError((failure) =>
+              isNotVisible(failure)
+                ? partyIneligible('Zákazník v evidenci zákazníků neexistuje nebo k němu nemáte přístup')
+                : registryUnavailable(failure),
+            ),
+          );
+          const outcome = verifiedPartyOf(link, counterparty, legalEntityId, today);
+          if (Schema.is(Schema.String)(outcome)) {
+            return yield* partyIneligible(outcome);
+          }
+          return new Map([...previous, [link.counterpartyId, outcome]]);
+        }),
+      );
+    });
+    const whereScope = and(eq(crmStates.tenantId, scope.tenantId), eq(crmStates.legalEntityId, legalEntityId));
+    const load = Effect.fn('Crm.load')(function* load() {
+      const rows = yield* transaction.select().from(crmStates).where(whereScope).limit(1);
+      const [row] = rows;
+      if (row === undefined) {
+        return { revision: 0, state: initialCrmState };
+      }
+      const state = yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(row.state));
+      return { revision: row.revision, state };
+    }, Effect.mapError(unavailable));
+    const save = Effect.fn('Crm.save')(function* save(expectedRevision: number, state: CrmState) {
+      const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state).pipe(
+        Effect.mapError((cause) => unavailable(cause)),
+      );
+      const updatedAt = yield* DateTime.now;
+      if (expectedRevision === 0) {
+        const inserted = yield* transaction
+          .insert(crmStates)
+          .values({
+            legalEntityId,
+            revision: 1,
+            state: encoded,
+            tenantId: scope.tenantId,
+            updatedAt: DateTime.toDateUtc(updatedAt),
+          })
+          .onConflictDoNothing()
+          .returning({ revision: crmStates.revision })
+          .pipe(Effect.mapError((cause) => unavailable(cause)));
+        if (inserted.length === 1) {
+          return 1;
+        }
+      }
+      const rows = yield* transaction
+        .update(crmStates)
+        .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })
+        .where(and(whereScope, eq(crmStates.revision, expectedRevision)))
+        .returning({ revision: crmStates.revision })
+        .pipe(Effect.mapError((cause) => unavailable(cause)));
+      if (rows.length !== 1) {
+        return yield* new CrmRevisionConflict({
+          code: 'crm_revision_conflict',
+          reason: 'CRM changed; refresh before another operation',
+        });
+      }
+      return expectedRevision + 1;
+    });
+    const apply = Effect.fn('Crm.apply')(function* apply(
+      command: CrmCommand,
+      expectedRevision: number,
+      invocationId: string,
+    ) {
+      // Permission failures must win before the transaction reads CRM state.
+      const [has, snapshot] = yield* Effect.all([grantedPermissions(access, scope), Effect.suspend(load)], {
+        concurrency: 1,
+      });
+      const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(scope.principalId).pipe(
+        Effect.mapError(referenceUnavailable),
+      );
+      const viewer = viewerFor(snapshot.state, actorPrincipalId, has);
+      if (!canWriteAnything(viewer)) {
+        return yield* new CrmPermissionDenied({
+          code: 'crm_permission_denied',
+          reason: 'Nemáte oprávnění k zápisu v CRM',
+        });
+      }
+      if (snapshot.revision !== expectedRevision) {
+        return yield* new CrmRevisionConflict({
+          code: 'crm_revision_conflict',
+          reason: 'CRM changed; refresh before another operation',
+        });
+      }
+      const targets = assignmentPrincipalIds(command, snapshot.state, scope.principalId);
+      if (targets.length > 0) {
+        const directory = yield* loadAssignablePrincipalDirectory(transaction, scope).pipe(
+          Effect.mapError(referenceUnavailable),
+        );
+        yield* Effect.forEach(
+          new Set(targets),
+          (principalId) =>
+            activeAssignmentMember(directory, { principalId, tenantId: scope.tenantId }).pipe(
+              Effect.mapError((cause) =>
+                withCause(partyIneligible('Vybraný obchodník již nemá aktivní členství ve firmě.'), cause),
+              ),
+            ),
+          { concurrency: 1, discard: true },
+        );
+      }
+      const links = partyLinksOf(command);
+      const verifiedParties = links.length === 0 ? undefined : yield* verifyParties(links);
+      const now = yield* DateTime.now;
+      const context: CommandContext = { invocationId, now, viewer };
+      if (verifiedParties !== undefined) {
+        Object.assign(context, { verifiedParties });
+      }
+      const change = yield* dispatchCrmCommand(snapshot.state, command, context);
+      const revision = yield* save(expectedRevision, change.state);
+      return { entityIds: [...change.entityIds], revision };
+    });
+    /** Ordinary records, bounded history, or only the clients needed by the owner review. */
+    type LoadRecordsArgs = [request?: RecordsRequest, reviewClientIds?: readonly string[]];
+    const loadRecords = Effect.fn('Crm.loadRecords')(
+      function* loadCrmRecords(...[request = {}, reviewClientIds]: LoadRecordsArgs) {
+        const empty = yield* Schema.encodeEffect(Schema.fromJsonString(CrmStateSchema))(initialCrmState);
+        const historySource = sql`${crmStates.state}->'aiChanges'`;
+        const history =
+          request.agentHistory === undefined
+            ? undefined
+            : agentHistoryPageSql(historySource, 'crm', request.agentHistory);
+        let state =
+          request.agentHistory === undefined
+            ? sql`${crmStates.state}`
+            : sql`(${empty}::jsonb || jsonb_build_object('aiChanges', ${history}))`;
+        if (reviewClientIds !== undefined) {
+          const ids = sql.join(
+            reviewClientIds.map((id) => sql`${id}`),
+            sql`, `,
+          );
+          const target = reviewClientIds.length === 0 ? sql`false` : sql`c->>'id' in (${ids})`;
+          state = sql`(${empty}::jsonb || jsonb_build_object(
+          'clients', (${empty}::jsonb->'clients') || jsonb_build_object('items',
+            coalesce((select jsonb_agg(c) from (select c from jsonb_array_elements(coalesce(${crmStates.state}->'clients'->'items', '[]'::jsonb)) c
+              where ${target} limit ${reviewClientIds.length}) clients), '[]'::jsonb)),
+          'salespeople', coalesce((select jsonb_agg(p) from (select p from jsonb_array_elements(coalesce(${crmStates.state}->'salespeople', '[]'::jsonb)) p
+            where p->>'principalId' = ${scope.principalId} and p->>'active' = 'true' limit 1) people), '[]'::jsonb)))`;
+        }
+        return yield* transaction
+          .select({ revision: crmStates.revision, state })
+          .from(crmStates)
+          .where(whereScope)
+          .limit(1)
+          .pipe(Effect.map(([row]): LoadedCrmRecords => Option.fromNullishOr(row)));
+      },
+      (program, ..._args: LoadRecordsArgs) => program.pipe(Effect.mapError(unavailable)),
+    );
+    const loadAssignmentDirectory = () =>
+      loadAssignablePrincipalDirectory(transaction, scope).pipe(Effect.mapError(unavailable));
+    return { apply, loadAssignmentDirectory, loadRecords };
+  },
+  Effect.mapError((cause) =>
+    withCause(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Owner-scoped services are temporarily unavailable',
+      }),
+      cause,
+    ),
+  ),
+);
+
+/** What a records read knows before its transaction opens: every CRM permission, in one bulk check. */
+export const crmRecordsGrants = Effect.fn('Crm.recordsGrants')(function* crmRecordsGrants(scope: OperationalScope) {
+  return yield* grantedPermissions(yield* ContextAccess, scope);
+});
+
+/** The stored CRM row as the owner transaction read it (still encoded). */
+export type LoadedCrmRecords = Option.Option<{ readonly revision: number; readonly state: unknown }>;
+
+/** After commit: decodes the stored CRM state and projects it for the viewer. No database access. */
+export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishCrmRecords(
+  request: RecordsRequest,
+  loaded: LoadedCrmRecords,
+  has: (permission: CrmPermissionKey) => boolean,
+  scope: OperationalScope,
+) {
+  const snapshot = Option.isNone(loaded)
+    ? { revision: 0, state: initialCrmState }
+    : {
+        revision: loaded.value.revision,
+        state: yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(loaded.value.state)).pipe(
+          Effect.mapError(unavailable),
+        ),
+      };
+  const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(scope.principalId).pipe(
+    Effect.mapError(referenceUnavailable),
+  );
+  const viewer = viewerFor(snapshot.state, actorPrincipalId, has);
+  const projected = projectCrmState(snapshot.state, viewer);
+  const narrowed =
+    request.clientId === undefined
+      ? projected
+      : projectCrmState(
+          {
+            ...projected,
+            clients: {
+              ...projected.clients,
+              items: projected.clients.items.filter((client) => client.id === request.clientId),
+            },
+          },
+          viewer,
+        );
+  return {
+    now: yield* DateTime.now,
+    revision: snapshot.revision,
+    state: narrowed,
+    viewer: reportedViewer(viewer, scope),
+  } satisfies Omit<RecordsResponse, 'assignmentCandidates' | 'departedPrincipalIds'>;
+});

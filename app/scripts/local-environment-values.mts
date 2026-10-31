@@ -1,6 +1,7 @@
+import { DATABASE_IDENTITIES } from '../database/identity-enrollment.ts';
 import { Config, ConfigProvider, Effect, Option, Redacted } from 'effect';
 
-import { DATABASE_IDENTITIES, SHARED_RUNTIME_IDENTITY } from '../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../packages/core-runtime/src/db/database-identities.ts';
 
 const assignmentPattern = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
 

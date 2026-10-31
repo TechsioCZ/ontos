@@ -6,7 +6,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { AuthorizationMutationState, OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { AuthorizationMutationState, OperationalScope, ReadLoadContext } from '@app/core-runtime';
 import { Effect, Option, Result, Schema } from 'effect';
 import {
   RetailAccessDecisionRequestSchema,
@@ -18,7 +18,11 @@ import type {
 } from '../../shared/apis/retail-access-decision.ts';
 import { decideRetailPortalAccess } from '../../shared/domain/profile-decisions.ts';
 import type { RetailPortalProfileBindingRef } from '../../shared/resources/retail-portal-profile-binding.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import type { RetailPermissionReader } from '../integrations/retail-permission-reader.ts';
+import {
+  prepareRetailPermissions,
+  profileServicesWithRetailPermissionsForVerifiedScope,
+} from '../profile-service-factory.ts';
 
 export interface RetailAccessDecisionServices {
   readonly decideAccess: (
@@ -27,6 +31,9 @@ export interface RetailAccessDecisionServices {
     tenantId: string,
   ) => Effect.Effect<RetailAccessDecisionResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
+
+/** The services a Read's `load` uses, over the Retail Portal permission snapshot its `prepare` read. */
+type RetailAccessDecisionServicesFor = (readRetailPermissions: RetailPermissionReader) => RetailAccessDecisionServices;
 
 const unavailable = () =>
   new ReadHandlerUnavailable({
@@ -129,13 +136,23 @@ export const retailAccessDecisionRead = defineRead(
     resultSchema: RetailAccessDecisionResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<RetailAccessDecisionServices>) =>
-    decideRetailAccessFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  {
+    prepare: (input, context) => prepareRetailPermissions(context.scope, input.profileRef.resourceId),
+    load: (input, context: ReadLoadContext<RetailAccessDecisionServicesFor, RetailPermissionReader>) =>
+      decideRetailAccessFromServices(
+        input,
+        context.scope.principalId,
+        context.scope.tenantId,
+        context.services(context.prepared),
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ retailAccessDecision }) => retailAccessDecision),
+    profileServicesWithRetailPermissionsForVerifiedScope(transaction, scope).pipe(
+      Effect.map(
+        (withRetailPermissions): RetailAccessDecisionServicesFor =>
+          (readRetailPermissions): RetailAccessDecisionServices =>
+            withRetailPermissions(readRetailPermissions).retailAccessDecision,
+      ),
     ),
   retailAccessDecisionPermissionTarget,
 );

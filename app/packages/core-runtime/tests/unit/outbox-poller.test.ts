@@ -223,6 +223,7 @@ it.effect('does not claim during unavailable admission and marks the next admitt
               )
             : Effect.succeed('a'.repeat(64));
         }),
+        admitted: (revision) => Effect.sync(() => healthTransitions.push(`admitted:${revision.slice(0, 1)}`)),
         config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
         health: {
           cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
@@ -239,7 +240,8 @@ it.effect('does not claim during unavailable admission and marks the next admitt
 
     expect(admissions).toBe(3);
     expect(cycles).toBe(2);
-    expect(healthTransitions).toEqual(['failed', 'ready', 'ready']);
+    // Only a successful cycle reports its revision, after health records the success.
+    expect(healthTransitions).toEqual(['failed', 'ready', 'admitted:a', 'ready', 'admitted:a']);
   }),
 );
 

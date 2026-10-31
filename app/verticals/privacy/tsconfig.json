@@ -37,6 +37,9 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../../packages/consent-authority-contracts"
     }
   ]
 }

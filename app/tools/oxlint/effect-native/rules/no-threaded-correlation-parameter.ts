@@ -23,12 +23,16 @@ import { fileURLToPath } from 'node:url';
  * interprocedural producer/consumer inference or deep/array destructuring analysis; naming-based
  * exceptions and opaque service payload aliases are limitations, not validation of architecture.
  * Providing Context alone does not annotate logs/spans: the outer seam must read and annotate it.
+ * A readonly optional traceparent field also remains wire data when an exported native BFF options
+ * factory copies that context directly into the published EffectHttpApiClientOptions.requestContext.
+ * Imported option identity and the captured input/rest/output bindings must establish that flow.
+ * This does not exempt identity parameters or unrelated fields in the same file.
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
+import { keyName as staticKeyName, parentOf, unwrapBinding, walk } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { compile, stringList } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
@@ -264,6 +268,186 @@ function isWireProjection(from: AnyNode, wireTypeNames: RegExp): boolean {
   return false;
 }
 
+function bffNativeImport(context: Context, identifier: AnyNode, name: string): boolean {
+  if (identifier.type !== 'Identifier') return false;
+  const variable = lookupVariable(context, identifier);
+  if (variable?.defs.length !== 1) return false;
+  const definition = variable.defs[0];
+  const declaration = definition?.parent;
+  const imported = definition?.node;
+  return (
+    definition?.type === 'ImportBinding' &&
+    declaration?.type === 'ImportDeclaration' &&
+    declaration.source.value === '@modern-js/bff-effect/effect-client' &&
+    imported?.type === 'ImportSpecifier' &&
+    keyName(imported.imported, false) === name
+  );
+}
+
+function nativeBffOptionsType(context: Context, node: AnyNode | null | undefined): boolean {
+  return (
+    node?.type === 'TSTypeReference' &&
+    node.typeName.type === 'Identifier' &&
+    bffNativeImport(context, node.typeName, 'EffectHttpApiClientOptions')
+  );
+}
+
+function localInterface(context: Context, name: string): ESTree.TSInterfaceDeclaration | null {
+  const declarations = context.sourceCode.ast.body.flatMap((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return declaration?.type === 'TSInterfaceDeclaration' && declaration.id.name === name ? [declaration] : [];
+  });
+  return declarations.length === 1 ? declarations[0]! : null;
+}
+
+function bffContextInput(context: Context, name: string, contextName: string, seen = new Set<string>()): boolean {
+  if (seen.has(name) || seen.size >= 4) return false;
+  seen.add(name);
+  const declaration = localInterface(context, name);
+  if (declaration === null) return false;
+  return (
+    declaration.body.body.some(
+      (field) =>
+        field.type === 'TSPropertySignature' &&
+        !field.computed &&
+        keyName(field.key, false) === 'requestContext' &&
+        field.typeAnnotation?.typeAnnotation.type === 'TSTypeReference' &&
+        field.typeAnnotation.typeAnnotation.typeName.type === 'Identifier' &&
+        field.typeAnnotation.typeAnnotation.typeName.name === contextName,
+    ) ||
+    declaration.extends.some(
+      (parent) =>
+        parent.expression.type === 'Identifier' && bffContextInput(context, parent.expression.name, contextName, seen),
+    )
+  );
+}
+
+function sameBffBinding(context: Context, left: AnyNode | undefined, right: AnyNode): boolean {
+  return (
+    left?.type === 'Identifier' &&
+    lookupVariable(context, left) !== null &&
+    lookupVariable(context, left) === lookupVariable(context, right)
+  );
+}
+
+function bffRestInput(
+  context: Context,
+  node: ESTree.VariableDeclarator,
+  input: AnyNode,
+): ESTree.BindingIdentifier | null {
+  if (
+    node.id.type !== 'ObjectPattern' ||
+    node.init?.type !== 'LogicalExpression' ||
+    node.init.operator !== '??' ||
+    !sameBffBinding(context, node.init.left, input) ||
+    node.init.right.type !== 'ObjectExpression' ||
+    node.init.right.properties.length !== 0 ||
+    node.parent?.type !== 'VariableDeclaration' ||
+    node.parent.kind !== 'const'
+  )
+    return null;
+  const rest = node.id.properties.filter((property) => property.type === 'RestElement');
+  return rest.length === 1 && rest[0]?.argument.type === 'Identifier' ? rest[0].argument : null;
+}
+
+function nativeBffContextAssignment(context: Context, assignment: ESTree.AssignmentExpression, rest: AnyNode): boolean {
+  if (
+    assignment.operator !== '=' ||
+    !sameBffBinding(context, assignment.right, rest) ||
+    assignment.left.type !== 'MemberExpression' ||
+    assignment.left.computed ||
+    assignment.left.property.type !== 'Identifier' ||
+    assignment.left.property.name !== 'requestContext' ||
+    assignment.left.object.type !== 'Identifier'
+  )
+    return false;
+  const variable = lookupVariable(context, assignment.left.object);
+  const definition = variable?.defs[0]?.node;
+  if (
+    variable?.defs.length !== 1 ||
+    definition?.type !== 'VariableDeclarator' ||
+    definition.id.type !== 'Identifier' ||
+    !nativeBffOptionsType(context, definition.id.typeAnnotation?.typeAnnotation) ||
+    definition.init?.type !== 'ObjectExpression' ||
+    definition.parent?.type !== 'VariableDeclaration' ||
+    definition.parent.kind !== 'const'
+  )
+    return false;
+  const restVariable = lookupVariable(context, rest);
+  const restUses = restVariable?.references.filter((reference) => !reference.init);
+  return (
+    restUses?.length === 1 &&
+    restUses[0]?.identifier === assignment.right &&
+    variable.references.some((reference) => reference.identifier.parent?.type === 'ReturnStatement')
+  );
+}
+
+function nativeBffContextFactory(
+  context: Context,
+  factory: ESTree.ArrowFunctionExpression,
+  contextName: string,
+): boolean {
+  const output = factory.returnType?.typeAnnotation;
+  if (
+    factory.typeParameters !== null ||
+    factory.params.length !== 1 ||
+    factory.params[0]?.type !== 'ObjectPattern' ||
+    output?.type !== 'TSTypeReference' ||
+    output.typeName.type !== 'TSQualifiedName' ||
+    output.typeName.right.name !== 'Effect' ||
+    !bffNativeImport(context, output.typeName.left, 'Effect') ||
+    !nativeBffOptionsType(context, output.typeArguments?.params[0])
+  )
+    return false;
+  const parameter = factory.params[0];
+  const inputType = parameter.typeAnnotation?.typeAnnotation;
+  if (
+    inputType?.type !== 'TSTypeReference' ||
+    inputType.typeName.type !== 'Identifier' ||
+    !bffContextInput(context, inputType.typeName.name, contextName)
+  )
+    return false;
+  const property = parameter.properties.find(
+    (entry) => entry.type === 'Property' && !entry.computed && keyName(entry.key, false) === 'requestContext',
+  );
+  if (property?.type !== 'Property' || property.value.type !== 'Identifier') return false;
+  const rests: ESTree.BindingIdentifier[] = [];
+  const assignments: ESTree.AssignmentExpression[] = [];
+  walk(factory.body, context.sourceCode.visitorKeys, (node) => {
+    if (node.type === 'VariableDeclarator') {
+      const binding = bffRestInput(context, node, property.value);
+      if (binding !== null) rests.push(binding);
+    } else if (node.type === 'AssignmentExpression') assignments.push(node);
+  });
+  return (
+    rests.length === 1 && assignments.some((assignment) => nativeBffContextAssignment(context, assignment, rests[0]!))
+  );
+}
+
+/** The published BFF option carries a W3C wire header, not an internal ambient parameter. */
+function isNativeBffWireContext(context: Context, field: AnyNode): boolean {
+  if (
+    field.type !== 'TSPropertySignature' ||
+    field.computed ||
+    keyName(field.key, false) !== 'traceparent' ||
+    !field.optional ||
+    !field.readonly ||
+    field.typeAnnotation?.typeAnnotation.type !== 'TSStringKeyword'
+  )
+    return false;
+  const owner = parentOf(parentOf(field));
+  if (owner?.type !== 'TSInterfaceDeclaration' || owner.parent?.type !== 'ExportNamedDeclaration') return false;
+  return context.sourceCode.ast.body.some((statement) => {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.declaration?.type !== 'VariableDeclaration')
+      return false;
+    return statement.declaration.declarations.some(
+      (declaration) =>
+        declaration.init?.type === 'ArrowFunctionExpression' &&
+        nativeBffContextFactory(context, declaration.init, owner.id.name),
+    );
+  });
+}
+
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -351,6 +535,7 @@ export const rule = defineRule({
       if (messageId === 'threadedField') {
         if (isAmbientOrReadType(context, from)) return;
         if (isWireProjection(from, options.wireTypeNames)) return;
+        if (isNativeBffWireContext(context, from)) return;
       }
       context.report({
         data: { key, owner: names[0] ?? '<anonymous>' },

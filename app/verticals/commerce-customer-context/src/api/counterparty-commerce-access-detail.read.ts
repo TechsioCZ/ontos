@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   CounterpartyCommerceAccessDetailRequestSchema,
@@ -100,18 +100,20 @@ export const counterpartyCommerceAccessDetailRead = defineRead(
     resultSchema: CounterpartyCommerceAccessDetailResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<CounterpartyCommerceAccessDetailServices>) => {
-    const { legalEntityId } = context.scope;
-    if (legalEntityId === undefined) {
-      return Effect.fail(unavailable());
-    }
-    return readCounterpartyCommerceAccessDetailFromServices(
-      input,
-      context.scope.principalId,
-      legalEntityId,
-      context.scope.tenantId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result })));
+  {
+    load: (input, context: ReadLoadContext<CounterpartyCommerceAccessDetailServices>) => {
+      const { legalEntityId } = context.scope;
+      if (legalEntityId === undefined) {
+        return Effect.fail(unavailable());
+      }
+      return readCounterpartyCommerceAccessDetailFromServices(
+        input,
+        context.scope.principalId,
+        legalEntityId,
+        context.scope.tenantId,
+        context.services,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result })));
+    },
   },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ list: port.list }))),

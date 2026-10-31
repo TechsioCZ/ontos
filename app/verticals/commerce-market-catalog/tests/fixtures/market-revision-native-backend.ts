@@ -6,6 +6,7 @@ import {
   runAction,
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
+  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -307,8 +308,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   yield* fixture.grantResourceAccess(secondMarketRef, fixture.manager.principalId, 'writer');
   // Exact test-owned admission. Real Core scope/resource permissions and owner SQL remain active.
   // This does not activate a production provider, default API adapter or publication authority.
-  const authorization = Layer.succeed(OwnerAuthorizationOverlay, {
-    authorize: (_transaction, input) =>
+  const authorization = Layer.succeed(
+    OwnerAuthorizationOverlay,
+    transactionalOwnerAuthorization((_transaction, input) =>
       Effect.succeed(
         input.scope.tenantId === fixture.tenantId &&
           input.scope.principalId === fixture.manager.principalId &&
@@ -331,7 +333,8 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
           ? ('allowed' as const)
           : ('unavailable' as const),
       ),
-  });
+    ),
+  );
   if (registry !== undefined) {
     yield* fixture.grantResourceAccess(
       {

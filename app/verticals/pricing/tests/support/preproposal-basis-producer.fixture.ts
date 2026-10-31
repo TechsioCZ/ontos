@@ -15,6 +15,7 @@ import {
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../../../../packages/core-runtime/src/db/client.ts';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import { ExternalPriceSourceAuthorityGrantSchema } from '../../src/services/external-price-input-boundary.service.ts';
 
@@ -155,7 +156,7 @@ const execute = Effect.gen(function* executePreproposalPricingSetup() {
           };
           return yield* database.executor.transaction(
             Effect.fn('PreproposalPricing.storeAuthority')(function* storeAuthority(transaction) {
-              const scoped = yield* installOperationalScope(transaction, scope);
+              const scoped = yield* installOperationalScope(transaction, scope, defineDatabaseIdentityEnrollment([]));
               const authority = yield* externalPriceSourceAuthorityForScope(scoped, scope);
               return yield* authority.store(command.payload.grant);
             }),

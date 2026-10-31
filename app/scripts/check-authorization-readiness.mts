@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { Clock, Config, Console, DateTime, Duration, Effect, FileSystem, Option, Path, Result, Schema } from 'effect';
 import { Argument, Command } from 'effect/cli';
 
+import { ActionProvisioningIntentSchema } from '../packages/core-runtime/src/authorization/entrypoint-classification.ts';
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -334,7 +335,7 @@ const InventoryAuthorizationSchema = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal('action_execution'),
-    provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
+    provisioning: ActionProvisioningIntentSchema,
   }),
   Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
   Schema.Struct({

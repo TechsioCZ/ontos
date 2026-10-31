@@ -108,10 +108,13 @@ const temporalValueKey = (value: { readonly validFrom: string; readonly validTo?
 
 const activeEvidence = (identity: PartySearchSourceIdentity) =>
   [...identity.identifiers, ...identity.contacts.filter((contact) => contact.privacy === 'PUBLIC')]
-    .filter((value) => value.state === 'ACTIVE' && hasNonEmptyPeriod(value))
-    .map(({ value, validFrom, validTo }) =>
-      validTo === undefined ? { validFrom, value } : { validFrom, validTo, value },
-    )
+    .flatMap((evidence) => {
+      if (evidence.state !== 'ACTIVE' || !hasNonEmptyPeriod(evidence)) {
+        return [];
+      }
+      const { value, validFrom, validTo } = evidence;
+      return [validTo === undefined ? { validFrom, value } : { validFrom, validTo, value }];
+    })
     .toSorted((left, right) => temporalValueKey(left).localeCompare(temporalValueKey(right)));
 
 const aliasEvidence = (party: PartySearchSourceParty, kind: 'resource' | 'subject') =>
@@ -176,12 +179,17 @@ export const buildPartySearchDocuments = Effect.fn('PartySearchProjectionService
           selectedLegalEntityId: counterparty.legalEntityId,
           subjectRef: party.ref,
           temporalFacets: counterparty.rolePeriods
-            .filter((period) => period.state === 'ACTIVE' && hasNonEmptyPeriod(period))
-            .map(({ role, validFrom, validTo }) =>
-              validTo === undefined
-                ? { key: 'current-role', validFrom, value: role }
-                : { key: 'current-role', validFrom, validTo, value: role },
-            )
+            .flatMap((period) => {
+              if (period.state !== 'ACTIVE' || !hasNonEmptyPeriod(period)) {
+                return [];
+              }
+              const { role, validFrom, validTo } = period;
+              return [
+                validTo === undefined
+                  ? { key: 'current-role', validFrom, value: role }
+                  : { key: 'current-role', validFrom, validTo, value: role },
+              ];
+            })
             .toSorted((left, right) => temporalValueKey(left).localeCompare(temporalValueKey(right))),
           temporalSearchableText: activeEvidence(party),
           title: party.displayName ?? 'Unnamed Party',

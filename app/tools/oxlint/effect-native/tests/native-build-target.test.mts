@@ -70,12 +70,28 @@ it('models only genuine Modern compiler target branches and retains runtime envi
       write(directory, file, source);
       return file;
     });
+    const generatedOwner = 'verticals/generated-owner';
+    write(
+      directory,
+      `${generatedOwner}/package.json`,
+      JSON.stringify({
+        ...manifest,
+        scripts: { build: 'pnpm routes-generate && modern build --deploy-target node' },
+      }),
+    );
+    write(directory, `${generatedOwner}/modern.config.ts`, nativeConfig);
+    const generatedSource = `${generatedOwner}/src/preview.tsx`;
+    write(directory, generatedSource, valid.browser);
+    validFiles.push(generatedSource);
     const runtimeScript = `${owner}/scripts/runtime.mts`;
     write(directory, runtimeScript, valid.browser);
     invalidFiles.push(runtimeScript);
     for (const [name, compilerManifest, config] of [
       ['missing-compiler', { dependencies: manifest.dependencies, scripts: manifest.scripts }, nativeConfig],
       ['runtime-build', { ...manifest, scripts: { build: 'node src/browser.tsx' } }, nativeConfig],
+      ['echo-build', { ...manifest, scripts: { build: 'echo modern build --deploy-target node' } }, nativeConfig],
+      ['quoted-build', { ...manifest, scripts: { build: "echo 'prepare && modern build'" } }, nativeConfig],
+      ['commented-build', { ...manifest, scripts: { build: 'echo prepare # && modern build' } }, nativeConfig],
       ['comment-config', manifest, `/* ${nativeConfig} */ export default {};`],
       ['counterfeit-config', manifest, 'const defineConfig = (value) => value; export default defineConfig({});'],
       [

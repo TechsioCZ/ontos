@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -45,7 +46,7 @@ import {
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, apikey, session, supportImpersonationRecovery, user } from '../../api/auth/db/schema.ts';
 import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
@@ -57,8 +58,18 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
+import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
+import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
+import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
+import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
@@ -97,7 +108,10 @@ it.live.each([
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
-    const authPersistence = yield* makeAuthDatabase(baseConfiguration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: baseConfiguration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const principalManagementRepository = principalManagementRepositoryFromTransaction(
@@ -133,21 +147,7 @@ it.live.each([
       legalEntities: () => Effect.succeed([]),
       modules: () => Effect.succeed([]),
       resources: () => Effect.succeed([]),
-      tenants: ({
-        permission,
-        tenantIds,
-      }: {
-        readonly permission:
-          | 'access'
-          | 'impersonate'
-          | 'manage_identity'
-          | 'manage_party_identity'
-          | 'manage_party_relationships'
-          | 'merge_party_identity'
-          | 'read_party_identity'
-          | 'review_party_identity';
-        readonly tenantIds: readonly string[];
-      }) =>
+      tenants: ({ permission, tenantIds }: Parameters<(typeof ContextAccess)['Service']['tenants']>[0]) =>
         Effect.succeed(
           tenantIds.map((key) => ({
             decision:
@@ -161,7 +161,7 @@ it.live.each([
     ) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
     const operationalScope = yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: coreDatabase }),
+      makeOperationalScopeRepository({ executor: coreDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       allowedContextAccess,
     );
     const actionRuntime = makeActionRuntime(
@@ -169,11 +169,34 @@ it.live.each([
       makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
-      { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
+      {
+        ...openActionRuntimeOptions,
+        contextAccess: allowedContextAccess,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      },
     );
-    const fixtureAuthentication = yield* makeAuthenticationService({
-      allowFixtureSignUp: true,
-    }).pipe(
+    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
+    const oauthAuthenticationLayer = Layer.mergeAll(
+      betterAuthRuntime,
+      BetterAuthNativeAdapterLive,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          Layer.succeed(AuthDatabase, authPersistence),
+        ),
+      ),
+    );
+    const fixtureFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(oauthAuthenticationLayer),
+    );
+    const fixtureGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(fixtureFramework));
+    const fixtureAuthentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(fixtureGuards),
       Effect.provideService(AuthConfig, baseConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -280,7 +303,10 @@ it.live.each([
       ...baseConfiguration,
       supportUserIds: [originalUserId],
     };
-    const authentication = yield* makeAuthenticationService({}).pipe(
+    const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(authenticationGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -458,6 +484,7 @@ it.live.each([
         correlationId: randomUUID(),
         idempotencyKey: randomUUID(),
         managedPrincipalId: managedPrincipal.principalId,
+        managedScope: 'tenant-managed',
         name: 'Cross-admin key',
         principal: resolvedOriginal.principal,
         requestHeaders: originalHeaders,
@@ -487,6 +514,7 @@ it.live.each([
         expectedStatus: 'active',
         idempotencyKey: randomUUID(),
         managedPrincipalId: managedPrincipal.principalId,
+        managedScope: 'tenant-managed',
         newStatus: 'disabled',
         principal: secondAdministratorContext.principal,
         reason: 'Cross-admin lifecycle integration proof',

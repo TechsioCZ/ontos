@@ -62,6 +62,7 @@ const registration = defineAction(
 
 const unusedRuntime = (onRun: () => void): ActionRuntimeService => ({
   resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => {
     onRun();
     return Effect.die('The Action runtime must not be reached');
@@ -74,6 +75,7 @@ const authorization = (value?: string) => Redacted.make(value);
 
 const alreadyCommittedRuntime = (failure: ActionAlreadyCommitted): ActionRuntimeService => ({
   resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.fail(failure),
 });
 
@@ -203,6 +205,7 @@ it.effect('takes the admission audience only from receiver configuration', () =>
     const audiences: (string | undefined)[] = [];
     const runtime: ActionRuntimeService = {
       resolveActionCommit: () => Effect.die('Not exercised'),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       runAction: (input) => {
         audiences.push(input.audience);
         return Effect.die('Stop after observing the trusted boundary');

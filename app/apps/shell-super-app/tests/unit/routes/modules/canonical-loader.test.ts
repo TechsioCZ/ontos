@@ -1,8 +1,13 @@
-import { createMemoryHistory, createRouter, isNotFound } from '@modern-js/plugin-tanstack/runtime';
+import { createMemoryHistory, createRouter, isNotFound, isRedirect } from '@modern-js/plugin-tanstack/runtime';
+import type { AnyRedirect } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
-import { canonicalPathFromRequest, loader } from '../../../../src/routes/[lang]/canonical-page-model.ts';
+import {
+  canonicalPathFromRequest,
+  legacyCanonicalRedirects,
+  loader,
+} from '../../../../src/routes/[lang]/canonical-page-model.ts';
 import { routeTree } from '../../../../src/modern-tanstack/index/router.gen.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
@@ -54,6 +59,17 @@ const target = {
 const requestFor = (pathname: string) =>
   new Request(`https://shell.example.test${pathname}`, { headers: { cookie: 'session=test-session' } });
 
+const resolveRedirectResponse = (redirect: AnyRedirect, request: Request): Response => {
+  const url = new URL(request.url);
+  const router = createRouter({
+    context: { request },
+    history: createMemoryHistory({ initialEntries: [`${url.pathname}${url.search}`] }),
+    isServer: true,
+    routeTree,
+  });
+  return router.resolveRedirect(redirect);
+};
+
 beforeEach(() => {
   loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShell));
   resolveModuleTargetMock.mockReturnValue(Effect.succeed(target));
@@ -95,17 +111,19 @@ it.effect('retains denial and never exposes a remote target for a canonical path
   }),
 );
 
-it.effect('reports unknown canonical targets through native TanStack not-found handling', () =>
-  Effect.gen(function* reportsNativeNotFound() {
-    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
-    const nativeNotFound = yield* Effect.flip(
-      Effect.tryPromise({
-        catch: isNotFound,
-        try: () => loader({ params: { lang: 'en' }, request: requestFor('/en/previously-unknown/page') }),
-      }),
-    );
-    expect(nativeNotFound).toBe(true);
-  }),
+it.effect.each(['/cs/previously-unknown/page', '/cs/sprava/lide'])(
+  'keeps Shell not-found recovery for an unregistered canonical target %s',
+  (pathname) =>
+    Effect.gen(function* reportsShellNotFound() {
+      resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
+      const model = yield* Effect.promise(() => loader({ params: { lang: 'cs' }, request: requestFor(pathname) }));
+      expect(model).toMatchObject({ shell: authenticatedShell, state: 'not_found' });
+      expect(model).not.toHaveProperty('target');
+      expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+        { canonicalPath: pathname.slice(3), compositionRevision: authenticatedShell.compositionRevision },
+        expect.any(Object),
+      );
+    }),
 );
 
 it.effect.each([
@@ -128,7 +146,7 @@ it.effect.each([
     }),
 );
 
-it.effect('the generated native catchall returns HTTP 404 for an unknown approved target', () =>
+it.effect('the generated catchall renders shell recovery for an unknown target', () =>
   Effect.gen(function* reportsGeneratedRouteNotFound() {
     resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
     const pathname = '/cs/previously-unknown/page';
@@ -144,6 +162,67 @@ it.effect('the generated native catchall returns HTTP 404 for an unknown approve
       { canonicalPath: '/previously-unknown/page', compositionRevision: 'c'.repeat(64) },
       expect.any(Object),
     );
-    expect(router._serverResult).toMatchObject({ status: 404, type: 'render' });
+    expect(router._serverResult).toMatchObject({ status: 200, type: 'render' });
+  }),
+);
+
+it.effect.each([
+  ['/siampark/overview', '/nemovitosti/prehled'],
+  ['/siampark/properties', '/nemovitosti'],
+  ['/siampark/occupancy', '/najmy'],
+  ['/siampark/agreements', '/smlouvy'],
+  ['/siampark/finance', '/finance'],
+  ['/siampark/work', '/ukoly'],
+  ['/siampark/relationships', '/aktivity'],
+  ['/siampark/provoz/prehled', '/provoz/prehled'],
+  ['/siampark/provoz/agenda', '/provoz/agenda'],
+  ['/siampark/provoz/majetek', '/provoz/majetek'],
+  ['/siampark/provoz/meridla', '/provoz/meridla'],
+  ['/siampark/provoz/nakupy', '/provoz/nakupy'],
+  ['/siampark/provoz/bezpecnost', '/provoz/bezpecnost'],
+  ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
+  ['/provoz/ukoly', '/ukoly'],
+  ['/profil', '/profile'],
+] as const)('redirects the legacy path %s to %s and keeps the query string', ([legacyPath, domainPath]) =>
+  Effect.gen(function* redirectsLegacyPath() {
+    const request = requestFor(`/cs${legacyPath}/?resourceId=abc%20123&tab=detail`);
+    const thrown = yield* Effect.flip(
+      Effect.tryPromise({
+        catch: (cause) => cause,
+        try: () => loader({ params: { lang: 'cs' }, request }),
+      }),
+    );
+    expect(isRedirect(thrown)).toBe(true);
+    if (!isRedirect(thrown)) {
+      expect.unreachable('Expected the canonical loader to throw a native redirect Response');
+    }
+    const response = resolveRedirectResponse(thrown, request);
+    expect(response.status).toBe(307);
+    expect(response.headers.get('Location')).toBe(`/cs${domainPath}?resourceId=abc%20123&tab=detail`);
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  }),
+);
+
+it('maps every legacy path exactly once', () => {
+  expect(legacyCanonicalRedirects.get('/siampark/work')).toBe('/ukoly');
+  expect(legacyCanonicalRedirects.has('/siampark')).toBe(false);
+  expect(legacyCanonicalRedirects.has('/siampark/integrations')).toBe(false);
+});
+
+it.effect('redirects a legacy path without a query string to the bare domain path', () =>
+  Effect.gen(function* redirectsBareLegacyPath() {
+    const request = requestFor('/en/siampark/finance');
+    const thrown = yield* Effect.flip(
+      Effect.tryPromise({
+        catch: (cause) => cause,
+        try: () => loader({ params: { lang: 'en' }, request }),
+      }),
+    );
+    if (!isRedirect(thrown)) {
+      expect.unreachable('Expected the canonical loader to throw a native redirect Response');
+    }
+    const response = resolveRedirectResponse(thrown, request);
+    expect(response.status).toBe(307);
+    expect(response.headers.get('Location')).toBe('/en/finance');
   }),
 );

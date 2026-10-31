@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 import {
   TaxPrivacyOwnerCoverageRequestSchema,
@@ -38,7 +38,7 @@ const taxPrivacyOwnerCoverageEntrypoint = defineTenantModuleEntrypoint({
  */
 export const readTaxPrivacyOwnerCoverage = (
   input: TaxPrivacyOwnerCoverageRequest,
-  context: ReadHandlerContext<TaxPrivacyOwnerCoverageServices>,
+  context: ReadLoadContext<TaxPrivacyOwnerCoverageServices>,
 ): Effect.Effect<ReadHandlerResult<TaxPrivacyOwnerCoverageResponse>, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   context.services.privacy.coverage(input).pipe(
     Effect.catchTag('TaxGovernancePersistenceUnavailable', () =>
@@ -80,7 +80,7 @@ export const taxPrivacyOwnerCoverageRead = defineRead(
     resultSchema: TaxPrivacyOwnerCoverageResponseSchema,
     schemaVersion: '1',
   },
-  readTaxPrivacyOwnerCoverage,
+  { load: readTaxPrivacyOwnerCoverage },
   (transaction, scope) => Effect.succeed({ privacy: taxPrivacyCoverageForScope(transaction, scope) }),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

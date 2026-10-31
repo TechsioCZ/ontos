@@ -13,7 +13,7 @@ const localValidationScripts = {
   'lint-rules': ['typecheck:lint-rules', 'test:lint-rules'],
   quality: ['quality:audit:test'],
   scripts: ['test:scripts'],
-  tooling: ['test:scripts', 'test:deployment-impact', 'test:generation'],
+  tooling: ['shell:ui-candidates:check', 'test:scripts', 'module-entrypoints:check', 'test:generation'],
   unit: ['test:unit'],
 } as const;
 
@@ -21,7 +21,7 @@ const fullScopeNotice = [
   'pnpm check does not run these CI gates:',
   '  Repository Tooling: pnpm check:local --scope tooling',
   '  Unit and component tests: pnpm check:local --scope unit',
-  '  Integration, browser, and Node/Cloudflare artifact builds run in CI.',
+  '  Integration, browser, and Node artifact builds run in CI.',
 ].join('\n');
 
 class LocalValidationError extends Schema.TaggedError<LocalValidationError>()('LocalValidationError', {

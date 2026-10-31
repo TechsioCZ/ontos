@@ -22,6 +22,7 @@ import { expect, it } from 'effect-rstest';
 import { PriceGroupContainmentProjectionRequestedPayloadSchema } from '../../shared/actions/create-price-group.ts';
 import { PriceGroupDefinitionRevisionSchema } from '../../shared/domain/price-group.ts';
 import { PriceGroupContainmentProjectionPersistenceUnavailable } from '../../src/persistence/containment-projection-errors.ts';
+import { priceGroupContainmentProjectionRepositoryFromRoutineInvoker } from '../../src/persistence/containment-projection-repository.ts';
 import {
   handleReconcilePriceGroupContainmentProjection,
   priceGroupContainmentRelationships,
@@ -84,6 +85,23 @@ const pendingIntent = {
   state: 'PENDING' as const,
 };
 const completedIntent = { ...pendingIntent, completedAt, state: 'APPLIED' as const };
+
+for (const intent of [
+  { ...pendingIntent, completedAt },
+  { ...completedIntent, completedAt: null },
+]) {
+  it.effect(`rejects ${intent.state} intent with an inconsistent completion timestamp`, () =>
+    Effect.gen(function* rejectInconsistentCompletion() {
+      const invoker: ScopedRoutineInvoker = {
+        invoke: () => Effect.succeed([{ payload: { _tag: 'found', intent } }]),
+      };
+      const repository = priceGroupContainmentProjectionRepositoryFromRoutineInvoker(invoker);
+      const failure = yield* Effect.flip(repository.load(mutationId));
+      expect(Schema.is(PriceGroupContainmentProjectionPersistenceUnavailable)(failure)).toBe(true);
+    }),
+  );
+}
+
 type CompletionInput = OutboxWorkerCompletionInput<unknown>;
 interface ObservedWorkerEffects {
   readonly completions: CompletionInput[];

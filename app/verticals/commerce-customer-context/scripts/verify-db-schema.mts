@@ -37,6 +37,7 @@ interface VerificationRow {
 
 const EXPECTED_RUNTIME_ROUTINES = [
   'add_saved_address',
+  'admit_portal_enrollment_attempt',
   'archive_customer_group',
   'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
@@ -60,6 +61,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'decide_purchase_approval_request',
   'ensure_counterparty_profile',
   'ensure_retail_profile',
+  'fail_portal_enrollment',
   'finalize_reconciled_access_invitation',
   'finalize_retail_portal_binding_authorization',
   'finalize_retail_portal_profile_binding_permission_mutation',
@@ -93,14 +95,18 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_access_invitation_claim_reconciliation',
   'read_access_reconciliation',
   'read_address_defaults',
+  'read_counterparty_customer_group_memberships',
   'read_counterparty_invitation_claimability',
   'read_current_purchase_approval_revalidation',
   'read_current_purchase_proposal_revision',
+  'read_current_retail_enrollment',
+  'read_customer_consent_receipt',
   'read_customer_group',
   'read_customer_group_history',
   'read_customer_group_members',
   'read_customer_payment_terms',
   'read_customer_profile',
+  'read_demo_newsletter_choice',
   'read_effective_customer_group_memberships',
   'read_enrollment_invitation_claim',
   'read_guest_attribution',
@@ -114,6 +120,9 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_profile_reconciliation',
   'read_profile_trading_gate',
   'read_purchase_limit_policies',
+  'read_retail_enrollment_account_party',
+  'read_retail_enrollment_registration',
+  'read_retail_enrollment_restart_context',
   'read_retail_portal_binding',
   'read_retail_portal_binding_authorization',
   'read_retail_portal_profile_binding_permission_mutation',
@@ -140,6 +149,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'resolve_profile_reconciliation',
   'resolve_retail_principal',
   'revalidate_purchase_approval',
+  'set_portal_enrollment_verification_state',
   'stage_access_invitation_claim_grants',
   'stage_invitation_claim_proof_delivery',
   'stage_retail_portal_profile_binding_permission_mutations',
@@ -152,6 +162,9 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'verify_address_book_reconciliation',
   'verify_invitation_claim_authority',
   'verify_payment_terms_reconciliation_owner',
+  'write_customer_consent_receipt',
+  'write_demo_newsletter_choice',
+  'write_retail_enrollment_registration',
 ] as const;
 
 const SECURITY_DEFINER_SEARCH_PATH = 'search_path=pg_catalog, commerce_customer_context, pg_temp';
@@ -160,6 +173,7 @@ const EXPECTED_TRIGGER_NAMES = [
   'ccc_access_invitations_claim_reset_marker',
   'ccc_access_journal_append_only',
   'ccc_address_reconciliation_receipts_append_only_trg',
+  'ccc_consent_receipts_append_only',
   'ccc_group_revisions_append_only',
   'ccc_guest_attributions_append_only',
   'ccc_invitation_claim_proofs_lifecycle_trg',
@@ -304,6 +318,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                      and trigger_record.tgname in (
                        'ccc_access_journal_append_only',
                        'ccc_address_reconciliation_receipts_append_only_trg',
+                       'ccc_consent_receipts_append_only',
                        'ccc_group_revisions_append_only',
                        'ccc_guest_attributions_append_only',
                        'ccc_portal_binding_history_append_only',
@@ -383,7 +398,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
       row.exclusion_count !== 11,
       row.group_description_column_count !== 1,
       row.group_description_constraint_count !== 1,
-      row.append_only_trigger_count !== 10,
+      row.append_only_trigger_count !== 11,
       row.trigger_count !== EXPECTED_TRIGGER_NAMES.length,
       !sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES),
       row.journal_count !== 1,
@@ -411,7 +426,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
           `replayInfrastructureSafe=${row.replay_infrastructure_safe}, rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
           `groupDescriptionColumn=${row.group_description_column_count}/1, ` +
           `groupDescriptionConstraint=${row.group_description_constraint_count}/1, ` +
-          `appendOnlyTriggers=${row.append_only_trigger_count}/10, ` +
+          `appendOnlyTriggers=${row.append_only_trigger_count}/11, ` +
           `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
           `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +
           `journal=${row.journal_count}/1, ` +

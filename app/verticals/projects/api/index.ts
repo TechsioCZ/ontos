@@ -1,4 +1,6 @@
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive as GovernedContextAccessLive,
@@ -39,6 +41,8 @@ import { readProjectReadApiLive } from './read-project-read-server.ts';
 import { unarchiveProjectActionApiLive } from './unarchive-project-action-server.ts';
 import { updateProjectActionApiLive } from './update-project-action-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
@@ -84,6 +88,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
     ),
   ),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
@@ -153,7 +158,7 @@ const projectsApiHandlersLive = Layer.mergeAll(projectsReadinessLayer, governedR
     ),
   ),
   Layer.provide(Layer.mergeAll(governedApplicationCompositionSourceLive, RequestSchemaProblemLive)),
-  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer, databaseIdentitiesLive)),
   Layer.orDie,
 );
 

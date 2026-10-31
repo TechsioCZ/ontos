@@ -40,6 +40,8 @@ export interface RunOutboxPollingLoopInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
   readonly admitComposition: Effect.Effect<string, OutboxAdmissionError>;
+  /** Receives the composition revision of every successful cycle, after health records the success. */
+  readonly admitted?: (compositionRevision: string) => Effect.Effect<void>;
   readonly config: OutboxPollingConfig;
   readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
   readonly registrations: readonly Registration[];
@@ -129,6 +131,11 @@ export const parseOutboxPollingConfig = ({
   return requireDistinctPrefixes(claimOwnerPrefixes).pipe(Effect.andThen(configs));
 };
 
+interface AdmittedCycle {
+  readonly compositionRevision: string;
+  readonly result: OutboxCycleResult;
+}
+
 const hasActivity = (result: OutboxCycleResult): boolean =>
   result.messagesMatched > 0 || result.deliveriesCreated > 0 || result.claimed > 0;
 
@@ -144,7 +151,7 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
   runCycle?: OutboxCycleRunner<Registration, RunnerRequirements>,
 ): Effect.Effect<void, never, OutboxPollingRequirements<Registration, RunnerRequirements>> {
   const cycle: Effect.Effect<
-    OutboxCycleResult,
+    AdmittedCycle,
     OutboxAdmittedCycleError,
     OutboxPollingRequirements<Registration, RunnerRequirements>
   > = input.admitComposition.pipe(
@@ -152,7 +159,7 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
       (
         compositionRevision,
       ): Effect.Effect<
-        OutboxCycleResult,
+        AdmittedCycle,
         OutboxCycleError,
         OutboxPollingRequirements<Registration, RunnerRequirements>
       > => {
@@ -163,13 +170,19 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
           registrations: input.registrations,
           subscriptions: input.subscriptions,
         };
-        return runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+        const result: Effect.Effect<
+          OutboxCycleResult,
+          OutboxCycleError,
+          OutboxPollingRequirements<Registration, RunnerRequirements>
+        > = runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+        return result.pipe(Effect.map((cycleResult) => ({ compositionRevision, result: cycleResult })));
       },
     ),
   );
   const tick = cycle.pipe(
     Effect.tap(() => input.health?.cycleSucceeded ?? Effect.void),
-    Effect.tap((result) =>
+    Effect.tap(({ compositionRevision }) => input.admitted?.(compositionRevision) ?? Effect.void),
+    Effect.tap(({ result }) =>
       hasActivity(result)
         ? Effect.annotateLogs(Effect.logInfo('Outbox polling cycle completed'), {
             claimed: result.claimed,

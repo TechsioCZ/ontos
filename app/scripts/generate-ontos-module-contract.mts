@@ -14,6 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
@@ -37,6 +38,7 @@ import {
   toCamelCase,
   toPascalCase,
 } from './scaffolding/shared.mts';
+import { deriveOntosMcpContribution } from './ontos-mcp-contribution.mts';
 
 export const OntosModuleContractTargetSchema = Schema.Literals(['cloudflare-dist', 'dist']);
 export type OntosModuleContractTarget = typeof OntosModuleContractTargetSchema.Type;
@@ -109,9 +111,9 @@ const decodeLoadedOwnerModule = Schema.decodeUnknownPromise(LoadedOwnerModuleSch
 
 const PackageJsonTextSchema = Schema.fromJsonString(ModulePackageSchema);
 const ReferenceTopologyTextSchema = Schema.fromJsonString(ReferenceTopologySchema);
-const ContractJsonTextSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema, {
-  space: 2,
-});
+// Compact text: the Application Composition embeds every contract as a JSON string, so indentation doubled the
+// snapshot every runtime reads.
+const ContractJsonTextSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const JsonDocumentTextSchema = Schema.fromJsonString(Schema.Unknown, {
   space: 2,
 });
@@ -135,6 +137,15 @@ const repositoryEsbuildPath = (): string => {
     paths: [path.dirname(createEntry)],
   });
 };
+
+const sourceOnlyReactPackages = [
+  { entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' },
+  {
+    entry: 'verticals/facility-operations/src/ui/record-discussion.tsx',
+    name: '@app/facility-operations/ui/record-discussion',
+  },
+  { entry: 'verticals/tagging/src/tags/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
+] as const;
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
   pattern.test(value) ? Effect.succeed(value) : Effect.fail(failure(`${label} must be one safe generated identifier`));
@@ -228,6 +239,12 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
               '--format=esm',
               '--platform=node',
               '--packages=external',
+              // Source-only React workspace packages ship `.tsx`, which Node's ESM loader cannot import, so
+              // they are bundled into the owner bundle instead of being left as external package imports.
+              ...sourceOnlyReactPackages.map(
+                (sourcePackage) =>
+                  `--alias:${sourcePackage.name}=${platformPath.join(workspaceRoot, sourcePackage.entry)}`,
+              ),
               `--outfile=${bundlePath}`,
             ],
             { cwd: workspaceRoot },
@@ -423,6 +440,17 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           workspaceRoot,
         }),
     });
+    const mcp = yield* Effect.try({
+      catch: (cause) => failure(Predicate.isError(cause) ? cause.message : 'MCP contribution is invalid', cause),
+      try: () =>
+        deriveOntosMcpContribution({
+          actions: owner.manifest.publicSurface.actions,
+          api: owner.manifest.publicSurface.api,
+          appId,
+          authored: owner.manifest.publicSurface.mcp,
+          moduleId: owner.manifest.module.id,
+        }),
+    });
     const contract = {
       deployment: {
         appId,
@@ -446,13 +474,28 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },
       schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
     } as const;
-    return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
+    if (owner.manifest.publicSurface.apiCookieTransport !== undefined) {
+      Object.assign(contract.manifest.publicSurface, {
+        apiCookieTransport: owner.manifest.publicSurface.apiCookieTransport,
+      });
+    }
+    if (owner.manifest.publicSurface.externalIdentityProviders !== undefined) {
+      Object.assign(contract.manifest.publicSurface, {
+        externalIdentityProviders: owner.manifest.publicSurface.externalIdentityProviders,
+      });
+    }
+    if (mcp !== undefined) {
+      Object.assign(contract.manifest.publicSurface, { mcp: mcp.contribution });
+    }
+    const decoded = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
       onExcessProperty: 'error',
     })(contract).pipe(Effect.mapError((cause) => failure('derived OntOS module contract is invalid', cause)));
+    return { contract: decoded, mcpToolCatalog: mcp?.toolCatalog };
   });
 
-export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleContractInput) =>
-  Effect.gen(function* deriveDeploymentContractProgram() {
+/** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */
+const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
+  Effect.gen(function* deriveModuleReleaseProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'));
     const vertical = yield* assertPlainTarget(input.vertical, 'vertical', canonicalSlugPattern);
@@ -461,6 +504,9 @@ export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleCont
     const owner = yield* loadOwnerValues(workspaceRoot, verticalDirectory, vertical);
     return yield* deriveContract(workspaceRoot, vertical, owner);
   });
+
+export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleContractInput) =>
+  deriveOntosModuleRelease(input).pipe(Effect.map(({ contract }) => contract));
 
 /** Derives and validates one contract without writing deployment output. */
 
@@ -474,10 +520,7 @@ export const generateOntosModuleContract = (input: GenerateInput) =>
       Effect.mapError(() => failure('target must be dist or cloudflare-dist')),
     );
     const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
-    const contract = yield* deriveOntosModuleDeploymentContract({
-      vertical,
-      workspaceRoot,
-    });
+    const { contract, mcpToolCatalog } = yield* deriveOntosModuleRelease({ vertical, workspaceRoot });
     const encodedContract = yield* Schema.encodeEffect(ContractJsonTextSchema)(contract).pipe(
       Effect.mapError((cause) => failure('unable to encode the OntOS module contract', cause)),
     );
@@ -486,29 +529,38 @@ export const generateOntosModuleContract = (input: GenerateInput) =>
     if (bytes > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
       return yield* failure('generated OntOS module contract exceeds the 1 MiB deployment limit');
     }
-    const outputPath = platformPath.join(
-      verticalDirectory,
-      outputRootByTarget[target],
-      'public',
-      ONTOS_MODULE_CONTRACT_PATH.slice(1),
-    );
-    yield* fileSystem
-      .makeDirectory(platformPath.dirname(outputPath), { recursive: true })
-      .pipe(Effect.mapError((cause) => failure('unable to create the module contract output directory', cause)));
-    const temporaryPath = `${outputPath}.tmp-${randomUUID()}`;
-    yield* fileSystem
-      .writeFileString(temporaryPath, content)
-      .pipe(Effect.mapError((cause) => failure('unable to write the temporary module contract', cause)));
-    yield* fileSystem
-      .rename(temporaryPath, outputPath)
-      .pipe(Effect.mapError((cause) => failure('unable to publish the generated module contract', cause)));
+    const publicDirectory = platformPath.join(verticalDirectory, outputRootByTarget[target], 'public');
+    // The tool catalog is written before the contract that pins it, so a served contract never names a missing one.
+    const artifacts = [
+      ...(mcpToolCatalog === undefined
+        ? []
+        : [{ content: mcpToolCatalog, path: ONTOS_MODULE_MCP_TOOL_CATALOG_PATH, what: 'MCP tool catalog' }]),
+      { content, path: ONTOS_MODULE_CONTRACT_PATH, what: 'module contract' },
+    ];
+    for (const artifact of artifacts) {
+      const outputPath = platformPath.join(publicDirectory, artifact.path.slice(1));
+      yield* fileSystem
+        .makeDirectory(platformPath.dirname(outputPath), { recursive: true })
+        .pipe(Effect.mapError((cause) => failure(`unable to create the ${artifact.what} output directory`, cause)));
+      const temporaryPath = `${outputPath}.tmp-${randomUUID()}`;
+      yield* fileSystem
+        .writeFileString(temporaryPath, artifact.content)
+        .pipe(Effect.mapError((cause) => failure(`unable to write the temporary ${artifact.what}`, cause)));
+      yield* fileSystem
+        .rename(temporaryPath, outputPath)
+        .pipe(Effect.mapError((cause) => failure(`unable to publish the generated ${artifact.what}`, cause)));
+    }
     const etag = `"${sha256(content)}"`;
-    const headersPath = platformPath.join(verticalDirectory, outputRootByTarget[target], 'public', '_headers');
-    const headers = `${ONTOS_MODULE_CONTRACT_PATH}\n  Cache-Control: no-cache\n  Content-Type: application/json\n  ETag: ${etag}\n`;
+    const headers = artifacts
+      .map(
+        (artifact) =>
+          `${artifact.path}\n  Cache-Control: no-cache\n  Content-Type: application/json\n  ETag: "${sha256(artifact.content)}"\n`,
+      )
+      .join('');
     yield* fileSystem
-      .writeFileString(headersPath, headers)
+      .writeFileString(platformPath.join(publicDirectory, '_headers'), headers)
       .pipe(Effect.mapError((cause) => failure('unable to write the module contract response headers', cause)));
-    return { bytes, etag, path: outputPath };
+    return { bytes, etag, path: platformPath.join(publicDirectory, ONTOS_MODULE_CONTRACT_PATH.slice(1)) };
   });
 
 const verticalFlag = Flag.String('vertical');

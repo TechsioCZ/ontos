@@ -1,4 +1,6 @@
 import {
+  ActionAlreadyCommitted,
+  ActionPermissionDenied,
   ActionTransactionError,
   IdentityTargetInvalidError,
   PrincipalBindingMissingError,
@@ -471,9 +473,17 @@ it.effect('cleans one bounded pending batch and requires a retry before issuing 
   }),
 );
 
-it.effect('retries provider cleanup without repeating an already committed Core transition', () =>
+it.effect('reauthorizes provider cleanup through the already committed native Action', () =>
   Effect.gen(function* testProgram10() {
-    const actionRuntime = makeActionRuntimeDouble([actionDefect(new Error('must not run'))]);
+    const actionRuntime = makeActionRuntimeDouble([
+      actionCoreFailure(
+        new ActionAlreadyCommitted({
+          code: 'action_already_committed',
+          invocationId: '00000000-0000-4000-8000-000000000006',
+          reason: 'Already committed',
+        }),
+      ),
+    ]);
     const service = makeIdentityLifecycleService(
       actionRuntime.runtime,
       makeApiKeyServiceDouble({
@@ -499,7 +509,45 @@ it.effect('retries provider cleanup without repeating an already committed Core 
       reason: 'Retry provider cleanup',
     });
     expect(result.cleanupPending).toBe(false);
-    expect(actionRuntime.invocationCount()).toBe(0);
+    expect(actionRuntime.invocationCount()).toBe(1);
+  }),
+);
+
+it.effect('denies matching-state provider reconciliation before touching the provider', () =>
+  Effect.gen(function* deniedReconciliation() {
+    const denied = new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: 'The caller no longer has company administration rights',
+    });
+    const actionRuntime = makeActionRuntimeDouble([actionCoreFailure(denied)]);
+    let providerCalls = 0;
+    const service = makeIdentityLifecycleService(
+      actionRuntime.runtime,
+      makeApiKeyServiceDouble({
+        metadata: () => {
+          providerCalls += 1;
+          return Effect.succeed(issued);
+        },
+        setEnabled: () => {
+          providerCalls += 1;
+          return Effect.succeed(issued);
+        },
+      }),
+      resolver,
+    );
+    const failure = yield* Effect.flip(
+      service.setStatus({
+        authBindingId: '00000000-0000-4000-8000-000000000005',
+        correlationId: 'denied-reconciliation',
+        expectedStatus: 'active',
+        idempotencyKey: 'denied-reconciliation',
+        newStatus: 'active',
+        principal,
+      }),
+    );
+    expect(failure).toBe(denied);
+    expect(actionRuntime.invocationCount()).toBe(1);
+    expect(providerCalls).toBe(0);
   }),
 );
 

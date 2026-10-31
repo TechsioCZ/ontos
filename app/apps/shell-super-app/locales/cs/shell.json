@@ -5,7 +5,7 @@
         "displayName": "Jméno",
         "email": "E-mail",
         "legalEntity": "Právní subjekt",
-        "principal": "Principal",
+        "principal": "Účet",
         "tenant": "Tenant",
         "title": "Přihlášená identita"
       },
@@ -28,9 +28,27 @@
         "label": "Záhlaví přehledu"
       },
       "home": {
-        "title": "Domů"
+        "title": "Domů",
+        "welcomeKicker": "Pracovní prostor",
+        "welcomeTitle": "Vítejte",
+        "welcomeCompany": "Pracujete ve společnosti {{company}}",
+        "welcomeHint": "Agendy, ke kterým máte přístup, najdete v levém menu.",
+        "start": "Začít: {{destination}}",
+        "areas": "Vaše agendy",
+        "noAreas": "Zatím nemáte přiřazenou žádnou roli — požádejte správce firmy.",
+        "groupHints": {
+          "realEstate": "Nemovitosti, nájmy a pobyty",
+          "facility": "Provoz, majetek a energie",
+          "finance": "Faktury a platby",
+          "sales": "Klienti, obchody a smlouvy",
+          "commerce": "Objednávky a produkty",
+          "team": "Úkoly a lidé v týmu",
+          "settings": "Správa firmy a přístupů"
+        }
       },
       "legalEntity": {
+        "tenantContext": "Bez vybrané firmy",
+        "tenantContextActive": "Není vybraná firma. Pro práci s jejími daty vyberte firmu v nabídce vlevo.",
         "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",
         "accessibleLabel": "Aktuální právní subjekt",
         "failed": "Přepnutí právního subjektu selhalo. Zkuste to znovu.",
@@ -41,18 +59,36 @@
       },
       "navigation": {
         "home": "Domů",
-        "label": "Navigace přehledu"
+        "label": "Navigace přehledu",
+        "pending": "Načítání stránky…",
+        "close": "Zavřít navigaci",
+        "toggle": "Přepnout navigaci",
+        "groups": {
+          "realEstate": "Nemovitosti a nájmy",
+          "facility": "Provoz",
+          "finance": "Finance",
+          "sales": "Obchod a CRM",
+          "commerce": "E-commerce",
+          "team": "Lidé a úkoly",
+          "settings": "Nastavení",
+          "other": "Další moduly"
+        }
       },
       "sidebar": {
         "label": "Postranní panel přehledu"
       },
-    "tenant": {
-        "accessibleLabel": "Aktuální tenant",
+      "tenant": {
+        "accessibleLabel": "Organizace",
         "failed": "Přepnutí tenantu selhalo. Zkuste to znovu.",
         "pending": "Přepínám tenant…",
-      "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
-    },
-    "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu."
+        "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
+      },
+      "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu.",
+      "workspace": "Obchod a provoz",
+      "breadcrumb": {
+        "label": "Drobečková navigace",
+        "home": "Hlavní přehled"
+      }
     },
     "hero": {
       "cardOne": "Přidejte první business vertical příkazem create <domain> --vertical, až ho opravdu potřebujete.",
@@ -71,11 +107,13 @@
       "switcher": "Jazyk"
     },
     "login": {
+      "welcome": "Jeden pracovní prostor pro obchod, CRM, správu areálu a e-shop.",
+      "contextHint": "Po přihlášení uvidíte jen své firmy a agendy podle přidělené role.",
       "back": "← Zpět na hlavní stránku",
       "error": {
         "forbidden": "Tento účet nemá přístup do OntOS.",
         "internal": "Přihlášení selhalo. Zkuste to znovu.",
-        "invalid": "E-mailová adresa nebo heslo nejsou správné.",
+        "invalid": "Přihlašovací jméno nebo heslo nejsou správné.",
         "title": "Přihlášení se nezdařilo",
         "unavailable": "Ověření je dočasně nedostupné. Zkuste to znovu."
       },
@@ -87,15 +125,135 @@
         "login": "Zadejte přihlašovací jméno.",
         "password": "Zadejte heslo."
       },
+      "opening": "Otevírám aplikaci…",
       "pending": "Přihlašuji…",
       "seo": {
         "description": "Přihlaste se do pracovního prostoru OntOS."
+      },
+      "oauth": {
+        "continue": "Přihlaste se, abyste mohli pokračovat.",
+        "request": "({{host}}) žádá o přístup k vašemu účtu v OntOS.",
+        "requestNoHost": "žádá o přístup k vašemu účtu v OntOS.",
+        "unknownClient": "Aplikace",
+        "unverified": "Aplikace se představuje jako {{client}}. Ověřte, že připojení zahajujete vy.",
+        "cancelHint": "Připojení zrušíte zavřením tohoto okna.",
+        "error": {
+          "title": "Připojení aplikace nelze dokončit",
+          "invalid_client": "Aplikaci, která o přístup žádá, se nepodařilo ověřit. Odkaz pro připojení je neplatný nebo aplikace není dostupná.",
+          "invalid_redirect": "Aplikace chtěla po přihlášení přesměrovat na adresu, kterou u sebe nemá zaregistrovanou. Z bezpečnostních důvodů jsme připojení zastavili.",
+          "request_failed": "Žádost o připojení není platná nebo už vypršela.",
+          "next": "Vraťte se do aplikace (například ChatGPT nebo Claude) a začněte připojení znovu. Pokud chyba trvá, obraťte se na správce OntOS.",
+          "signIn": "Přihlásit se do OntOS"
+        }
       },
       "submit": "Přihlásit se",
       "title": "Přihlášení",
       "toast": {
         "description": "Vyplňte obě povinná pole.",
         "title": "Přihlašovací údaje nejsou úplné"
+      },
+      "toaster": {
+        "close": "Zavřít oznámení",
+        "label": "Oznámení",
+        "loading": "Probíhá…"
+      },
+      "notice": {
+        "account_forbidden": {
+          "title": "Účet nemá přístup",
+          "body": "Tento účet byl deaktivován nebo už nemá přístup k žádné firmě. Přihlaste se jiným účtem, případně kontaktujte správce."
+        },
+        "session_ended": {
+          "title": "Přihlášení vypršelo",
+          "body": "Vaše relace už není platná. Přihlaste se prosím znovu."
+        },
+        "sign_in_required": {
+          "title": "Nejste přihlášeni",
+          "body": "Stránka, kterou otevíráte, vyžaduje přihlášení. Po přihlášení se na ni vrátíte."
+        }
+      }
+    },
+    "connect": {
+      "pageTitle": "Připojit aplikaci",
+      "seoDescription": "Připojení aplikace k OntOS",
+      "title": "Připojit {{client}} k OntOS",
+      "clientFallback": "aplikaci",
+      "loading": "Načítám možnosti připojení…",
+      "badge": {
+        "verified": "Ověřená aplikace",
+        "loopback": "Běží na tomto počítači"
+      },
+      "company": {
+        "title": "Firma",
+        "question": "Ve které firmě bude aplikace pracovat?",
+        "none": "K žádné firmě nemáte přístup."
+      },
+      "acting": {
+        "title": "Za koho bude jednat",
+        "me": "Za mě ({{name}})",
+        "meHint": "Aplikace uvidí a udělá jen to, co smíte vy.",
+        "agent": "Za agenta {{name}}",
+        "agentHint": "V deníku se změny zapíšou jako agent, s poznámkou, že jste ho připojil(a) vy."
+      },
+      "access": {
+        "title": "K čemu bude mít přístup",
+        "allMe": "Vše, co smím",
+        "allAgent": "Vše, co agent smí",
+        "pick": "Vybrat moduly",
+        "read": "Čtení",
+        "write": "Zápis",
+        "writeUnavailable": "K zápisu nemáte oprávnění.",
+        "writeUnavailableAgent": "Agent nemá oprávnění k zápisu.",
+        "pickRequired": "Vyberte alespoň jeden modul."
+      },
+      "policy": {
+        "title": "Jak bude zapisovat",
+        "read_only": "Jen čtení",
+        "approval": "Navrhovat změny ke schválení (doporučeno)",
+        "approvalHint": "Každou změnu nejdřív schválí člověk v Nastavení › Ke schválení.",
+        "direct": "Provádět změny přímo",
+        "directHint": "Změny se projeví hned, jako byste je udělal(a) vy.",
+        "directHintAgent": "Změny se projeví hned a v deníku se zapíšou jako změny agenta.",
+        "agentApprovalOnly": "Agent smí jen navrhovat změny (nastavení agenta).",
+        "agentReadOnly": "Agent smí jen číst (nastavení agenta)."
+      },
+      "continue": "Pokračovat",
+      "cancel": "Zrušit",
+      "error": {
+        "expired": "Odkaz pro připojení vypršel. Začněte připojení znovu v {{client}}.",
+        "signedOut": "Vaše přihlášení vypršelo. Začněte připojení znovu v {{client}}.",
+        "forbidden": "Toto nastavení připojení není povoleno.",
+        "agentGone": "Agent byl mezitím deaktivován nebo smazán, nebo ho už nesmíte připojit. Připojení se nevytvořilo; spusťte ho znovu v {{client}}.",
+        "connected": "Připojení je hotové. Toto okno můžete zavřít.",
+        "failed": "Připojení se nepodařilo. Zkuste to prosím znovu."
+      },
+      "consent": {
+        "pageTitle": "Souhlas s připojením",
+        "seoDescription": "Souhlas s připojením aplikace k OntOS",
+        "title": "Povolit {{client}} přístup?",
+        "loading": "Načítám souhrn připojení…",
+        "companyLabel": "Firma",
+        "actingLabel": "Jedná jako",
+        "actingAgent": "(agent), připojil(a) {{name}}",
+        "actingMe": "(vy)",
+        "readLabel": "Čtení",
+        "writeModulesLabel": "Zápis do modulů",
+        "allMe": "Vše, co smíte",
+        "allAgent": "Vše, co agent smí",
+        "policyLabel": "Způsob zápisu",
+        "policyValue": {
+          "read_only": "jen čtení",
+          "approval": "ke schválení",
+          "direct": "přímo"
+        },
+        "policyHint": {
+          "read_only": "aplikace nic nezmění",
+          "approval": "změny čekají na schválení v Nastavení › Ke schválení",
+          "direct": "změny se projeví hned"
+        },
+        "validity": "Přístup platí, dokud ho neodpojíte v Můj profil › Připojené aplikace. Správce firmy ho může také odpojit.",
+        "redirectBefore": "Po povolení vás přesměrujeme zpět na",
+        "allow": "Povolit přístup",
+        "deny": "Zamítnout"
       }
     },
     "modules": {
@@ -118,19 +276,30 @@
       },
       "unavailable": "Přístup k modulu je dočasně nedostupný. Zkuste to znovu."
     },
+    "recovery": {
+      "missing": "Stránka nebyla nalezena",
+      "recordMissing": "Záznam nebyl nalezen",
+      "forbidden": "Tato agenda není přístupná",
+      "unavailable": "Pracovní prostor je dočasně nedostupný",
+      "home": "Zpět na přehled",
+      "retry": "Zkusit znovu"
+    },
     "moduleTarget": {
       "forbidden": "K otevření tohoto modulu nemáte oprávnění.",
       "incompatible": "Nasazený vstupní bod modulu není kompatibilní.",
       "loading": "Načítání modulu…",
-      "not_found": "Tento modul není v aktuálním kontextu dostupný.",
+      "not_found": "Tato stránka neexistuje, nebo agenda není ve vybrané firmě dostupná. Zkontrolujte odkaz.",
       "reload_required": "Je dostupná nová verze aplikace. Pro pokračování obnovte stránku.",
       "selection_required": "Před otevřením modulu vyberte právní subjekt.",
       "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
+      "sign_in_required": "Pro otevření modulu se přihlaste. Přesměrování na přihlášení…",
       "title": "Modul",
       "timeout": "Vypršel časový limit vstupního bodu modulu. Zkuste to znovu.",
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
     },
     "search": {
+      "agenda_title": "Vyhledávání v agendách",
+      "agenda_hint": "Společné vyhledávání není součástí této ukázky. Otevřete povolenou agendu a použijte její hledání nebo filtry. Výsledky záznamů zde nepředstíráme.",
       "alias_match": "Shoda přes alias",
       "archived": "Archivováno",
       "counterparty": "Obchodní protistrana",
@@ -140,12 +309,17 @@
       "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
       "party": "Subjekt",
       "reconciliation_required": "Vyžaduje sjednocení",
-      "roles": { "CUSTOMER": "Zákazník", "SUPPLIER": "Dodavatel" },
+      "roles": {
+        "CUSTOMER": "Zákazník",
+        "SUPPLIER": "Dodavatel"
+      },
       "selection_required": "Před vyhledáváním se přihlaste a vyberte tenanta.",
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
       "submit": "Hledat",
       "title": "Výsledky hledání",
-      "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu."
+      "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
+      "clear": "Vymazat hledání",
+      "placeholder": "Hledat…"
     },
     "resource": {
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
@@ -161,7 +335,7 @@
         "title": "Média",
         "unavailable": "Autorizace médií je dočasně nedostupná."
       },
-      "not_found": "Tento zdroj nebyl v aktuálním kontextu nalezen.",
+      "not_found": "Záznam v této agendě neexistuje, byl odstraněn, nebo není ve vašem rozsahu oprávnění. Zkontrolujte odkaz.",
       "selection_required": "Před otevřením zdroje vyberte právní subjekt.",
       "seoDescription": "Autorizovaný detail zdroje OntOS.",
       "timeline": {
@@ -180,6 +354,320 @@
     "seo": {
       "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
     },
-    "title": "UltraModern Workspace"
+    "title": "Pracovní prostor OntOS",
+    "profile": {
+      "title": "Můj profil",
+      "menu": "Můj profil",
+      "seoDescription": "Profil přihlášeného účtu a připojené aplikace (ChatGPT, Claude).",
+      "identity": "Přihlášený účet",
+      "loading": "Načítám…",
+      "connections": {
+        "title": "Připojené aplikace",
+        "acting": "Jako",
+        "access": "Přístup",
+        "connected": "Připojeno",
+        "lastUsed": "Naposledy použito"
+      },
+      "href": "/cs/profil"
+    },
+    "connectedAppsGuide": {
+      "title": "Jak připojit",
+      "intro": "Použijte tuto adresu serveru a OAuth. Přihlášení proběhne pouze na stránce OntOS, kde vyberete firmu, povolené moduly a režim zápisu. Do AI nevkládejte hesla, klíče ani tokeny.",
+      "aiHelp": "Chcete pomoc? Zkopírujte pokyn pro svého AI asistenta a vložte ho do chatu. AI vás provede nastavením; konektor za vás sama nepřidá. Pro první ověření zvolte v OntOS pouze čtení.",
+      "copyUrl": "Kopírovat adresu",
+      "copyCommand": "Kopírovat konfiguraci / příkaz",
+      "copyPrompt": "Zkopírovat pokyn pro AI",
+      "copied": "Zkopírováno",
+      "copyUrlFailed": "Kopírování se nepodařilo, označte adresu ručně.",
+      "copyCommandFailed": "Kopírování se nepodařilo, označte konfiguraci nebo příkaz ručně.",
+      "copyPromptFailed": "Kopírování se nepodařilo. Rozbalte „Zobrazit pokyn“ a zkopírujte text ručně.",
+      "showPrompt": "Zobrazit pokyn",
+      "officialDocs": "Oficiální návod",
+      "networkNote": "ChatGPT i vzdálené konektory Claude (včetně Desktop) potřebují veřejnou adresu HTTPS dosažitelnou z jejich cloudu. K localhost se nepřipojí. Pro lokální demo použijte Claude Code nebo VS Code na stejném počítači.",
+      "promptIntro": "Pomoz mi v {{- client}} připojit OntOS jako vlastní MCP server. Přesná URL: {{- mcpUrl}}. Použij výhradně OAuth. Konektor nemůžeš přidat za mě: veď mě česky po jednotlivých kliknutích a po každém kroku počkej na potvrzení. Nejprve ověř můj tarif a dostupnost funkce; když položku nevidím, zeptej se, co vidím, a nevymýšlej cestu v UI. Vycházej z tohoto postupu:",
+      "promptSafety": "Hesla, API klíče ani tokeny ode mě nikdy nechtěj a nevkládej je do chatu či konfigurace. Přihlásím se sám/sama pouze na stránce OntOS přes OAuth; vyberu firmu a pro první test pouze čtení. Po připojení skutečně zavolej dostupné nástroje OntOS pouze pro čtení a vypiš připojenou firmu a dostupné moduly podle jejich výsledků. Nic neměň, nevytvářej ani nemaž. Nemáš-li nástroje k dispozici, řekni to a pomoz je zapnout; netvrď, že je spojení ověřené bez úspěšného volání.",
+      "clients": {
+        "chatgpt": {
+          "requirements": "Plné vlastní MCP včetně zápisu: Business, Enterprise a Edu, podle oprávnění správce. Pro má omezené čtení / načítání dat. Pokud volba v desktopové aplikaci chybí, otevřete ChatGPT na webu a ověřte tarif a oprávnění. Názvy níže odpovídají oficiálnímu anglickému návodu (Plugins = Pluginy). ChatGPT se OntOS prokazuje vlastním klientským dokumentem, takže ID klienta ani tajný klíč nevyplňujete.",
+          "step1": "Otevřete Pluginy (Plugins) v ChatGPT, klikněte na + a zvolte Add custom MCP server (Přidat vlastní MCP server). Developer Mode se v tomto postupu nezapíná.",
+          "step2": "Zadejte název OntOS, výše uvedenou URL serveru a ověřování OAuth. Přečtěte bezpečnostní upozornění, potvrďte jej a zvolte Create as a plugin.",
+          "step3": "V přesměrovaném přihlášení OntOS se přihlaste, vyberte firmu, moduly a pro první ověření pouze čtení. Potvrďte souhlas a vraťte se do ChatGPT.",
+          "step4": "V novém chatu vyberte připojený plugin OntOS (například přes @OntOS) a požádejte o ověření připojené firmy a modulů skutečným voláním nástrojů pouze pro čtení."
+        },
+        "claude": {
+          "requirements": "Vzdálené vlastní konektory podporují Free, Pro, Max, Team i Enterprise; Free má jeden vlastní konektor. V Team/Enterprise musí konektor nejprve přidat vlastník nebo oprávněný správce v Organization settings › Connectors. Platí i pro Claude Desktop; nejde o lokální konfigurační soubor.",
+          "step1": "Na claude.ai nebo v Claude Desktop otevřete Customize › Connectors › + Add › Add custom connector. Člen týmu místo přidání vybere konektor připravený správcem a klikne na Connect.",
+          "step2": "Při přidávání zadejte název OntOS a výše uvedenou URL › Continue. Zkontrolujte rozpoznané ověřování › Continue. Pro OAuth zvolte Sign in now a ponechte doporučenou identitu Claude; nevkládejte vlastní klíče. Dokončete tlačítkem Add.",
+          "step3": "Dokončete přihlášení a OAuth souhlas na stránce OntOS: vyberte firmu, moduly a pro první ověření pouze čtení.",
+          "step4": "V novém chatu otevřete + › Connectors a zapněte OntOS. Požádejte o ověření firmy a modulů nástroji pouze pro čtení; schvalujte jen odpovídající volání."
+        },
+        "claude-code": {
+          "requirements": "Potřebujete nainstalovaný a přihlášený Claude Code a síťový přístup k serveru. Použijte HTTP transport s OAuth, nikoli ručně kopírovaný token.",
+          "step1": "V terminálu spusťte níže uvedený příkaz pro přidání HTTP serveru ontos.",
+          "step2": "V Claude Code zadejte /mcp, vyberte ontos a postupujte podle výzvy k přihlášení v prohlížeči. V OntOS vyberte firmu, moduly a pro první ověření pouze čtení; potvrďte OAuth souhlas.",
+          "step3": "Po návratu do Claude Code ověřte připojení v /mcp a požádejte o skutečné přečtení připojené firmy a dostupných modulů nástroji OntOS."
+        },
+        "vscode": {
+          "requirements": "Potřebujete aktuální VS Code se zapnutými AI funkcemi, otevřenou lokální složku a podporovaný agentní režim. Firemní pravidla mohou MCP zakazovat; ověřte přístup ke Copilotu / zvolenému agentovi.",
+          "step1": "Otevřete paletu příkazů (⌘⇧P / Ctrl+Shift+P) › MCP: Add Server › HTTP (HTTP or Server-Sent Events). Vložte výše uvedenou URL a ID ontos; vyberte umístění konfigurace (pro osobní Global › Copilot Global, pokud je dostupné).",
+          "step2": "Zkontrolujte důvěryhodnost serveru a potvrďte přihlášení OAuth v prohlížeči. V OntOS vyberte firmu, moduly a pro první ověření pouze čtení; potvrďte souhlas.",
+          "step3": "V agentním chatu povolte nástroje ontos a požádejte o přečtení firmy a modulů. Rozbalte výsledek volání nástroje: samotná odpověď AI bez volání spojení neověřuje."
+        },
+        "cursor": {
+          "requirements": "Potřebujete aktuální Cursor s podporou MCP a přístupem k Agentovi. Správce Enterprise může povolené servery omezit. Vzdálený HTTP server používá OAuth; žádné API klíče se nevkládají.",
+          "step1": "Otevřete ~/.cursor/mcp.json pro osobní konfiguraci (nebo .cursor/mcp.json v projektu). Přidejte níže uvedený záznam ontos do mcpServers; zachovejte ostatní existující záznamy.",
+          "step2": "V Customize zkontrolujte a zapněte server ontos. Dokončete nabídnuté OAuth přihlášení v prohlížeči a v OntOS vyberte firmu, moduly a pro první ověření pouze čtení.",
+          "step3": "V novém chatu Agent požádejte o ověření připojené firmy a modulů voláním nástrojů ontos pouze pro čtení. Zkontrolujte skutečný výsledek volání."
+        }
+      }
+    },
+    "agents": {
+      "connections": {
+        "policy": {
+          "read_only": "Jen čtení",
+          "approval": "Ke schválení",
+          "direct": "Přímo"
+        },
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Deaktivovaný",
+          "archived": "Archivovaný"
+        },
+        "operators": {
+          "title": "Kdo smí agenta připojit",
+          "hint": "Vybrat lze jen lidi z firmy {{company}}.",
+          "empty": "Agenta zatím nesmí připojit nikdo.",
+          "save": "Uložit",
+          "saving": "Ukládám…",
+          "saved": "Seznam lidí pro {{name}} je uložený",
+          "revoked_one": "Odpojená připojení: {{count}}",
+          "revoked_few": "Odpojená připojení: {{count}}",
+          "revoked_many": "Odpojená připojení: {{count}}",
+          "revoked_other": "Odpojená připojení: {{count}}",
+          "confirmTitle": "Odebrat a odpojit?",
+          "confirmDescription_one": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_few": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_many": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_other": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirm": "Uložit a odpojit",
+          "cancel": "Zrušit"
+        },
+        "list": {
+          "title": "Připojení agenta",
+          "empty": "Agent zatím není připojený k žádné aplikaci.",
+          "connectedBy": "připojil(a) {{name}}",
+          "lastUsed": "Naposledy použito {{date}}",
+          "neverUsed": "Zatím nepoužito",
+          "revoke": "Odpojit",
+          "dialogTitle": "Odpojit {{client}}?",
+          "dialogDescription": "Aplikace ztratí přístup za agenta hned při dalším požadavku. Důvod se zapíše do auditu.",
+          "reason": "Důvod odpojení",
+          "reasonRequired": "Uveďte důvod.",
+          "confirm": "Odpojit",
+          "cancel": "Zrušit",
+          "revoked": "{{client}} je odpojený"
+        }
+      },
+      "keys": {
+        "title": "API klíče",
+        "description": "Nativní přihlašovací údaje tohoto agenta ve vybrané firmě. Klíč nepřidává oprávnění; nadále platí auditovaný profil a role ve zvoleném rozsahu.",
+        "requiresProfile": "Nejprve uložte auditovaný profil a aktivujte agenta. Poté můžete spravovat jeho klíče.",
+        "show": "Zobrazit klíče",
+        "refresh": "Obnovit klíče",
+        "issue": "Vydat klíč",
+        "working": "Zpracovává se…",
+        "failed": "Výsledek se nepodařilo potvrdit. Před další změnou obnovte seznam klíčů. Jednorázové tajemství nelze znovu získat.",
+        "conflict": "Požadavek už byl přijat nebo se klíč změnil. Obnovte seznam; příkaz neopakujte.",
+        "cleanupPending": "Dokončení odebrání přihlašovacích údajů čeká na zpracování. Původní klíč může stále fungovat; nepovažujte jej ještě za zrušený.",
+        "updated": "Příkaz byl přijat a aktuální seznam potvrdil očekávaný stav klíče.",
+        "projectionPending": "Příkaz byl přijat, ale seznam zatím nepotvrzuje očekávaný stav klíče. Obnovte seznam nebo načtěte další klíče; příkaz neopakujte.",
+        "refreshRequired": "Před dalším příkazem obnovte seznam. Žádný příkaz se automaticky neopakuje.",
+        "oneTime": "Tajemství se zobrazí pouze jednou. Označte a zkopírujte jej do bezpečného správce přihlašovacích údajů, ne do chatu. Zavřením panelu nebo skrytím z tohoto pohledu zmizí.",
+        "secret": "Jednorázové tajemství",
+        "selectSecret": "Označit tajemství",
+        "hideSecret": "Mám uloženo — skrýt",
+        "empty": "Agent v této firmě nemá žádné nezrušené API klíče.",
+        "unnamed": "Klíč bez názvu",
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Pozastavený"
+        },
+        "noExpiry": "Poskytovatel přihlašovacích údajů neuvádí konec platnosti",
+        "expires": "Platnost do: {{date}}",
+        "rotate": "Obměnit klíč",
+        "disable": "Pozastavit klíč",
+        "enable": "Aktivovat klíč",
+        "revoke": "Zrušit klíč",
+        "more": "Další klíče",
+        "cancel": "Zrušit",
+        "confirm": "Jednou potvrdit",
+        "confirmDescription": "Změníte skutečné přihlašovací údaje tohoto agenta ve vybrané firmě. Obměna nahradí původní klíč; zrušení je trvalé. Příkaz je auditovaný a nikdy se automaticky neopakuje.",
+        "name": "Název klíče",
+        "reason": "Důvod"
+      },
+      "editor": {
+        "createTitle": "Nový agent",
+        "editTitle": "Upravit agenta {{name}}",
+        "createDescription": "Agent jedná jen v modulech a s oprávněními, které mu tu dáte. Připojit ho smí jen lidé, které vyberete.",
+        "name": "Název agenta",
+        "description": "K čemu agent slouží",
+        "owner": "Kdo za agenta odpovídá",
+        "modulesTitle": "Oprávnění v modulech",
+        "modulesHint": "Stejná oprávnění jako u lidí: čtení, nebo čtení a zápis.",
+        "preset": "Převzít oprávnění z role",
+        "choice": {
+          "none": "Bez přístupu",
+          "read": "Čtení",
+          "write": "Čtení a zápis"
+        },
+        "policyTitle": "Jak smí agent zapisovat",
+        "policy": {
+          "read_only": {
+            "label": "Jen čtení",
+            "description": "Agent nic nemění, jen čte."
+          },
+          "approval": {
+            "label": "Přes schválení",
+            "description": "Změny agent jen navrhuje; provede je až člověk v Nastavení › Ke schválení."
+          },
+          "direct": {
+            "label": "Přímo",
+            "description": "Agent zapisuje sám v modulech se zápisem. Každá změna je v auditu."
+          }
+        },
+        "readOnlyIgnoresWrite": "V režimu Jen čtení agent nic nezapíše, ani v modulech se zápisem.",
+        "operatorsTitle": "Kdo smí agenta připojit",
+        "operatorsHint": "Tito lidé ho mohou připojit k ChatGPT nebo Claude volbou „Za agenta“. Žádné klíče se nekopírují.",
+        "errors": {
+          "nameRequired": "Vyplňte název agenta.",
+          "nameTooLong": "Název může mít nejvýš 200 znaků.",
+          "descriptionTooLong": "Popis může mít nejvýš 500 znaků.",
+          "ownerRequired": "Vyberte, kdo za agenta odpovídá.",
+          "modulesRequired": "Vyberte aspoň jeden modul."
+        },
+        "cancel": "Zrušit",
+        "create": "Vytvořit agenta",
+        "save": "Uložit změny",
+        "saving": "Ukládám…",
+        "toast": {
+          "created": "Agent {{name}} je vytvořený",
+          "saved": "Změny agenta {{name}} jsou uložené"
+        }
+      },
+      "section": {
+        "title": "Agentní entity",
+        "description": "Agent je samostatná identita firmy s vlastními oprávněními. K ChatGPT nebo Claude jej připojíte přes OntOS volbou „Jako agent“. API klíče pro automatizaci spravujete v detailu agenta.",
+        "create": "Nový agent",
+        "loading": "Načítám agenty…",
+        "retry": "Zkusit znovu",
+        "empty": "Firma zatím nemá žádného agenta.",
+        "emptyHint": "Vytvořte agenta tlačítkem Nový agent a nastavte mu oprávnění.",
+        "owner": "Odpovídá: {{name}}",
+        "noOwner": "Odpovídá: nikdo",
+        "reads": "Čte: {{modules}}",
+        "writes": "Zapisuje přímo: {{modules}}",
+        "proposes": "Navrhuje ke schválení: {{modules}}",
+        "noProfile": "Bez profilu",
+        "noProfileDescription": "Agent dosud nemá auditovaný profil oprávnění. Nastavte jej pomocí Upravit.",
+        "noWrites": "Nic nezapisuje",
+        "disabledNotice": "Agent je deaktivovaný. Jeho připojení byla odpojena; po aktivaci ho je potřeba připojit znovu.",
+        "edit": "Upravit",
+        "deactivate": "Deaktivovat",
+        "activate": "Aktivovat",
+        "delete": "Smazat",
+        "dialog": {
+          "deactivateTitle": "Deaktivovat agenta {{name}}?",
+          "deactivateDescription": "Agent okamžitě ztratí přístup a všechna jeho připojení se odpojí. Důvod se zapíše do auditu.",
+          "deactivateReason": "Důvod deaktivace",
+          "deactivateConfirm": "Deaktivovat",
+          "activateTitle": "Aktivovat agenta {{name}}?",
+          "activateDescription": "Agent znovu dostane svá oprávnění. Připojit ho bude potřeba znovu.",
+          "activateConfirm": "Aktivovat",
+          "deleteTitle": "Smazat agenta {{name}}?",
+          "deleteDescription": "Agent přijde o všechna oprávnění, připojení i seznam lidí, kteří ho smí připojit, a zmizí ze seznamu. Záznamy v auditu zůstanou.",
+          "deleteReason": "Důvod smazání",
+          "deleteConfirm": "Smazat agenta",
+          "cancel": "Zrušit",
+          "reasonRequired": "Uveďte důvod."
+        },
+        "toast": {
+          "deactivated": "Agent {{name}} je deaktivovaný",
+          "activated": "Agent {{name}} je znovu aktivní",
+          "deleted": "Agent {{name}} je smazaný",
+          "revoked_one": "Odpojená připojení: {{count}}",
+          "revoked_few": "Odpojená připojení: {{count}}",
+          "revoked_many": "Odpojená připojení: {{count}}",
+          "revoked_other": "Odpojená připojení: {{count}}"
+        },
+        "audit": {
+          "title": "Historie změn agentů",
+          "empty": "Zatím žádné změny.",
+          "created": "vytvořil(a) agenta {{target}}",
+          "configured": "upravil(a) agenta {{target}}",
+          "deactivated": "deaktivoval(a) agenta {{target}}",
+          "activated": "aktivoval(a) agenta {{target}}",
+          "deleted": "smazal(a) agenta {{target}}",
+          "operators": "změnil(a), kdo smí připojit agenta {{target}}",
+          "denied": "zkusil(a) {{action}}, ale agenty spravuje jen správce firmy",
+          "reason": "Důvod: {{reason}}",
+          "system": "Systém",
+          "unknownAgent": "agenta",
+          "operatorsRevoked_one": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_few": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_many": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_other": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsCreated": "určil(a), kdo smí připojit agenta {{target}}",
+          "deniedAction": {
+            "create": "vytvořit agenta",
+            "configure": "upravit agenta {{target}}",
+            "change-status": "změnit stav agenta {{target}}",
+            "delete": "smazat agenta {{target}}",
+            "other": "změnit agenta {{target}}"
+          },
+          "succeeded": "Provedeno",
+          "deniedStatus": "Zamítnuto"
+        },
+        "loadError": "Agenty se nepodařilo načíst. Zkuste to znovu."
+      },
+      "errors": {
+        "forbidden": "Akci smí provést jen správce firmy. Pokus byl zaznamenán v auditu.",
+        "conflict": "Konflikt: e-mail je obsazený nebo se účet mezitím změnil. Obnovte seznam.",
+        "invalid": "Požadavek nelze provést (např. změna vlastního účtu).",
+        "error": "Uložení se nepodařilo. Zkuste to znovu.",
+        "signedOut": "Relace vypršela, přihlaste se znovu."
+      },
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku.",
+      "selectPlaceholder": "Vyberte…"
+    },
+    "invitation": {
+      "title": "Nastavení hesla",
+      "description": "Jednorázové nastavení hesla z pozvánky.",
+      "newPassword": "Nové heslo",
+      "confirmPassword": "Zopakujte nové heslo"
+    },
+    "demoGuide": {
+      "title": "Průvodce ukázkou",
+      "resize": "Změnit šířku průvodce. Šipky vlevo a vpravo mění šířku, Home vrátí výchozí.",
+      "close": "Zavřít průvodce",
+      "progress": "Postup ukázky",
+      "publicDemoSignInHint": "Heslo všech ukázkových účtů: password1234. Pro jinou personu použijte samostatný profil prohlížeče, nebo se odhlaste a přihlaste znovu."
+    },
+    "people": {
+      "invite": "Pozvat člověka",
+      "fullName": "Jméno a příjmení",
+      "tabs": "Lidé a agenti",
+      "title": "Lidé a role",
+      "changeReason": "Důvod změny"
+    },
+    "agentPlatform": {
+      "approvals": {
+        "note": "Poznámka k rozhodnutí (nepovinná)",
+        "notePlaceholder": "Např. ověřeno s obchodníkem",
+        "filters": "Zobrazení dávek"
+      },
+      "activity": {
+        "table": "Aktivita agentů"
+      }
+    }
   }
 }

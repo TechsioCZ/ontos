@@ -89,12 +89,13 @@ export interface PricingPurchaseContextVerificationServices {
   ) => Effect.Effect<PricingPurchaseContextVerificationResponse>;
 }
 
+const pricingPurchaseContextVerificationServiceKey =
+  '@app/commerce-customer-context/services/pricing-purchase-context-owner-authority/PricingPurchaseContextVerification';
+
 export class PricingPurchaseContextVerification extends Context.Service<
   PricingPurchaseContextVerification,
   PricingPurchaseContextVerificationServices
->()(
-  '@app/commerce-customer-context/services/pricing-purchase-context-owner-authority/PricingPurchaseContextVerification',
-) {}
+>()(pricingPurchaseContextVerificationServiceKey) {}
 
 const sameSubject = Schema.toEquivalence(PurchaseCurrencySubjectSchema);
 const sameActor = Schema.toEquivalence(PricingPurchaseContextActorSchema);

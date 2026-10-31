@@ -39,6 +39,8 @@ import {
 } from '../auth/external-identity/verifier.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -53,8 +55,10 @@ import {
 } from '../db/schema.ts';
 import {
   buildActionAuthorizationRelationships,
-  buildExplicitActionGrantRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
 } from '../install/action-authorization-provisioning.ts';
+import type { ScopedActionAuthorization } from '../install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
@@ -112,6 +116,8 @@ const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const fixtureConfigurationFields = {
   actionExecutor: Schema.optionalKey(Schema.Literals([managerOnlyExecution, tenantMembershipExecution])),
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  /** Exact subset of actionKeys granted only to the Legal Entity-only actor in its company scope. */
+  legalEntityOnlyActionKeys: Schema.optionalKey(Schema.Array(ActionKeySchema)),
   /**
    * Seeds Core tenancy rows. Defaults to the configured `DATABASE_ADMIN_URL`: dedicated runtime roles
    * cannot insert tenants, Legal Entities or principals.
@@ -137,7 +143,10 @@ const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
-export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
+export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded & {
+  /** Dedicated database identities the fixture's runtimes install; Core-only fixtures enroll none. */
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
+};
 
 /** Exact grants for a real service created through the fixture's public identity owner. */
 export interface ExistingServiceFixtureGrant {
@@ -345,42 +354,115 @@ const secondaryLegalEntityRelationships = (tenantId: string, legalEntityId: stri
   ];
 };
 
+const FIXTURE_EXECUTOR_ROLE = 'live-fixture-executor';
+const FIXTURE_LEGAL_ENTITY_ONLY_ROLE = 'live-fixture-legal-entity-only';
+
+interface FixtureActionScope {
+  readonly legalEntityId?: string;
+  readonly tenantId: string;
+}
+
+/**
+ * Scoped Actions and their grant links (unless another role already wrote them in the same request, which
+ * SpiceDB rejects as duplicate updates), exact role grants and role memberships for one set of members.
+ */
+const fixtureActionRoleRelationships = (input: {
+  readonly actionKeys: readonly string[];
+  readonly actionsWritten: boolean;
+  readonly members: readonly string[];
+  readonly moduleKeys: readonly string[];
+  readonly roleKey: string;
+  readonly scopes: readonly FixtureActionScope[];
+}) => {
+  if (input.actionKeys.length === 0) {
+    return [];
+  }
+  const actions: readonly ScopedActionAuthorization[] = input.scopes.flatMap((scope) =>
+    input.actionKeys.map((actionKey) => ({ ...scope, actionKey })),
+  );
+  return [
+    ...(input.actionsWritten ? [] : buildActionAuthorizationRelationships(actions)),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      actions.map((action) => ({ ...action, roleKey: input.roleKey })),
+      input.scopes.map((scope) => ({ ...scope, moduleKeys: input.moduleKeys })),
+    ),
+    ...input.scopes.flatMap((scope) =>
+      input.members.map((principalId) =>
+        relationship(
+          'scoped_role',
+          toScopedRoleObjectId({ ...scope, roleKey: input.roleKey }),
+          'member',
+          'principal',
+          principalId,
+        ),
+      ),
+    ),
+  ];
+};
+
 const fixtureAuthorizationRelationships = (input: {
   readonly actionExecutor: 'manager-only' | 'tenant-membership';
   readonly actionKeys: readonly string[];
   readonly actors: readonly FixtureActor[];
   readonly entityObject: string;
+  readonly legalEntityId: string;
   readonly legalEntityOnly: FixtureActor;
+  readonly legalEntityOnlyActionKeys: readonly string[];
   readonly manager: FixtureActor;
+  readonly moduleKeys: readonly string[];
   readonly moduleObject: string;
   readonly reader: FixtureActor;
+  readonly secondaryLegalEntityId: string | undefined;
   readonly tenantId: string;
-}) => [
-  ...input.actors.map((principal) =>
-    relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
-  ),
-  ...['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer', 'party_relationship_manager'].map(
-    (relation) => relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
-  ),
-  relationship('tenant', input.tenantId, 'party_identity_reader', 'principal', input.reader.principalId),
-  relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
-  ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
-    ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
-      relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
+}) => {
+  // Actions are scoped graph objects. Tenant membership execution makes every fixture actor a member
+  // of the executor role; manager-only execution grants it to the manager alone. Neither scope
+  // inherits the other's grant, and the Legal Entity-only actor's subset stays in its company.
+  const companyScope = { legalEntityId: input.legalEntityId, tenantId: input.tenantId };
+  const executorScopes: FixtureActionScope[] = [{ tenantId: input.tenantId }, companyScope];
+  if (input.secondaryLegalEntityId !== undefined) {
+    executorScopes.push({ legalEntityId: input.secondaryLegalEntityId, tenantId: input.tenantId });
+  }
+  return [
+    ...input.actors.map((principal) =>
+      relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
     ),
-  ),
-  relationship('module_access', input.moduleObject, 'legal_entity', 'legal_entity', input.entityObject),
-  ...[input.manager, input.legalEntityOnly].map((principal) =>
-    relationship('module_access', input.moduleObject, 'accessor', 'principal', principal.principalId),
-  ),
-  ...(input.actionExecutor === managerOnlyExecution
-    ? buildExplicitActionGrantRelationships(
-        input.actionKeys.map((actionKey) => ({ actionKey, principalIds: [input.manager.principalId] })),
-      )
-    : buildActionAuthorizationRelationships(input.actionKeys, [
-        { principalId: input.manager.principalId, tenantId: input.tenantId },
-      ])),
-];
+    ...['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer', 'party_relationship_manager'].map(
+      (relation) => relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
+    ),
+    relationship('tenant', input.tenantId, 'party_identity_reader', 'principal', input.reader.principalId),
+    relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
+    ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
+      ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
+        relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
+      ),
+    ),
+    relationship('module_access', input.moduleObject, 'legal_entity', 'legal_entity', input.entityObject),
+    ...[input.manager, input.legalEntityOnly].map((principal) =>
+      relationship('module_access', input.moduleObject, 'accessor', 'principal', principal.principalId),
+    ),
+    ...fixtureActionRoleRelationships({
+      actionKeys: input.actionKeys,
+      actionsWritten: false,
+      members:
+        input.actionExecutor === managerOnlyExecution
+          ? [input.manager.principalId]
+          : input.actors.map(({ principalId }) => principalId),
+      moduleKeys: input.moduleKeys,
+      roleKey: FIXTURE_EXECUTOR_ROLE,
+      scopes: executorScopes,
+    }),
+    // The subset is validated against actionKeys, so the executor role already wrote these company Actions.
+    ...fixtureActionRoleRelationships({
+      actionKeys: input.legalEntityOnlyActionKeys,
+      actionsWritten: true,
+      members: [input.legalEntityOnly.principalId],
+      moduleKeys: input.moduleKeys,
+      roleKey: FIXTURE_LEGAL_ENTITY_ONLY_ROLE,
+      scopes: [companyScope],
+    }),
+  ];
+};
 
 const fixtureProvisioningNamespaces = (
   configuration: LiveOperationFixtureConfiguration,
@@ -449,6 +531,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
     readonly legalEntityOnly: FixtureActor;
+    readonly legalEntityOnlyActionKeys: readonly string[];
     readonly manager: FixtureActor;
     readonly managerIdentityAdmin: boolean | undefined;
     readonly managerProviderSubjectId: string | undefined;
@@ -534,10 +617,14 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       actionKeys: input.actionKeys,
       actors: input.actors,
       entityObject,
+      legalEntityId: input.legalEntityId,
       legalEntityOnly: input.legalEntityOnly,
+      legalEntityOnlyActionKeys: input.legalEntityOnlyActionKeys,
       manager: input.manager,
+      moduleKeys: input.moduleKeys,
       moduleObject,
       reader: input.reader,
+      secondaryLegalEntityId: input.secondaryLegalEntityId,
       tenantId: input.tenantId,
     });
     relations.push(...configuredModuleRelations, ...input.namespaceRelationships);
@@ -841,6 +928,8 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
     if (moduleObjects.some((key) => key === undefined)) {
       return yield* fixtureFailure(INVALID_SERVICE_GRANT);
     }
+    const serviceScope = { legalEntityId: fixture.legalEntityId, tenantId: fixture.tenantId };
+    const actionObjectId = (actionKey: string) => toSpiceDbActionObjectId({ ...serviceScope, actionKey });
     const relations = [
       relationship('tenant', fixture.tenantId, 'member', 'principal', grant.principalId),
       relationship('legal_entity', entityObject, 'tenant', 'tenant', fixture.tenantId),
@@ -853,9 +942,14 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
               relationship('module_access', objectId, 'accessor', 'principal', grant.principalId),
             ],
       ),
-      ...buildExplicitActionGrantRelationships(
-        grant.actionKeys.map((actionKey) => ({ actionKey, principalIds: [grant.principalId] })),
-      ),
+      ...fixtureActionRoleRelationships({
+        actionKeys: grant.actionKeys,
+        actionsWritten: false,
+        members: [grant.principalId],
+        moduleKeys: grant.moduleKeys,
+        roleKey: `live-fixture-service-${grant.principalId}`,
+        scopes: [serviceScope],
+      }),
     ];
     const permissionCheck = (resourceType: string, resourceId: string, permission: string, allowed: boolean) =>
       verifyFixturePermission(spice, grant.principalId, resourceType, resourceId, permission, allowed);
@@ -871,7 +965,7 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
         [
           Effect.forEach(
             unrequestedActions,
-            (key) => permissionCheck('action', toSpiceDbActionObjectId(key), 'execute', false),
+            (key) => permissionCheck('action', actionObjectId(key), 'execute', false),
             { concurrency: 8 },
           ),
           Effect.forEach(
@@ -903,11 +997,9 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
     yield* Effect.forEach(moduleObjects, (key) => permissionCheck('module_access', key ?? '', 'access', true), {
       concurrency: 8,
     });
-    yield* Effect.forEach(
-      grant.actionKeys,
-      (key) => permissionCheck('action', toSpiceDbActionObjectId(key), 'execute', true),
-      { concurrency: 8 },
-    );
+    yield* Effect.forEach(grant.actionKeys, (key) => permissionCheck('action', actionObjectId(key), 'execute', true), {
+      concurrency: 8,
+    });
     // Membership can activate preexisting inherited grants that were denied before the write.
     return yield* verifyExcludedPermissions();
   },
@@ -916,12 +1008,13 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(function* makeLiveOperationRuntime(input: {
   readonly closeResources: Effect.Effect<void, LiveOperationFixtureError>;
+  readonly databaseIdentities: DatabaseIdentityEnrollment;
   readonly executor: FixtureExecutor;
   readonly runtimeHandoff: LiveOperationFixtureRuntimeHandoff;
   readonly spice: FixtureSpiceClient;
   readonly spiceDb: Effect.Success<ReturnType<typeof loadSpiceDbConfig>>;
 }) {
-  const { closeResources, executor, runtimeHandoff, spice, spiceDb } = input;
+  const { closeResources, databaseIdentities, executor, runtimeHandoff, spice, spiceDb } = input;
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
   const crypto = yield* Crypto.Crypto;
@@ -968,7 +1061,10 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       return yield* fixtureFailure('Owner fixtures require a runtime role without RLS bypass');
     }
     const contextAccess = yield* makeContextAccessLive(undefined, () => Effect.succeed(spiceDb));
-    const resolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(actionDatabase), contextAccess);
+    const resolver = yield* makeOperationalScopeResolver(
+      makeOperationalScopeRepository(actionDatabase, databaseIdentities),
+      contextAccess,
+    );
     const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(
       legalEntityScope === 'required' ? { ...manager, legalEntityId } : manager,
     );
@@ -979,7 +1075,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
     });
     return yield* executor.transaction(
       Effect.fn('LiveOperations.produceOwner')(function* produceOwner(transaction) {
-        const scoped = yield* installOperationalScope(transaction, scope);
+        const scoped = yield* installOperationalScope(transaction, scope, databaseIdentities);
         return yield* producer(scoped, scope);
       }),
     );
@@ -997,13 +1093,13 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       const actionModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(actionDatabase));
       const actionModuleEntrypointGateway = makeModuleEntrypointGateway(actionModuleStateGate);
       const actionScopeResolver = yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(actionDatabase),
+        makeOperationalScopeRepository(actionDatabase, databaseIdentities),
         contextAccess,
       );
       const readModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(readDatabase));
       const readModuleEntrypointGateway = makeModuleEntrypointGateway(readModuleStateGate);
       const readScopeResolver = yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(readDatabase),
+        makeOperationalScopeRepository(readDatabase, databaseIdentities),
         contextAccess,
       );
       const baseActionRuntime = makeActionRuntime(
@@ -1013,6 +1109,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
         actionScopeResolver,
         {
           contextAccess,
+          databaseIdentities,
           // This fixture owns authorization and commit-fault acceptance. Release publication
           // is exercised separately against its own disposable composition authority.
           lockCompositionAuthority: () => Effect.succeed([]),
@@ -1050,12 +1147,14 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       );
       const actionRuntime = { ...baseActionRuntime, runAction };
       const readRuntime = makeReadRuntime(readDatabase, readModuleEntrypointGateway, readScopeResolver, contextAccess, {
+        databaseIdentities,
         ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
       });
       return Context.empty().pipe(
         Context.add(ActionRuntime, actionRuntime),
         Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
         Context.add(CoreDatabase, readDatabase),
+        Context.add(DatabaseIdentityEnrollmentContext, databaseIdentities),
         Context.add(ReadRuntime, readRuntime),
       );
     }),
@@ -1173,6 +1272,12 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     ) {
       return yield* fixtureFailure(INVALID_FIXTURE_CONFIGURATION);
     }
+    const actionKeys = configuration.actionKeys ?? [];
+    const legalEntityOnlyActionKeys = configuration.legalEntityOnlyActionKeys ?? [];
+    if (legalEntityOnlyActionKeys.some((actionKey) => !actionKeys.includes(actionKey))) {
+      return yield* fixtureFailure('Legal Entity-only fixture Action keys must be included in actionKeys');
+    }
+    const databaseIdentities = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
     const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
@@ -1238,12 +1343,13 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         );
         yield* setupLiveOperationFixture({
           actionExecutor: configuration.actionExecutor ?? tenantMembershipExecution,
-          actionKeys: configuration.actionKeys ?? [],
+          actionKeys,
           actors,
           authenticationNamespaceId: configuration.authenticationNamespaceId,
           executor: admin.executor,
           legalEntityId,
           legalEntityOnly,
+          legalEntityOnlyActionKeys,
           manager,
           managerIdentityAdmin: configuration.managerIdentityAdmin,
           managerProviderSubjectId: configuration.managerProviderSubjectId,
@@ -1278,7 +1384,14 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Object.assign(handoffInput, { secondaryLegalEntityId });
     }
     const runtimeHandoff = yield* Schema.decodeUnknownEffect(LiveOperationFixtureRuntimeHandoffSchema)(handoffInput);
-    return yield* makeLiveOperationRuntime({ closeResources, executor, runtimeHandoff, spice, spiceDb });
+    return yield* makeLiveOperationRuntime({
+      closeResources,
+      databaseIdentities,
+      executor,
+      runtimeHandoff,
+      spice,
+      spiceDb,
+    });
   },
 );
 
@@ -1381,6 +1494,7 @@ const verifyRuntimeFixtureState = Effect.fn('LiveOperations.verifyRuntimeState')
 export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachRuntime')(
   function* makeLiveOperationFixtureRuntime(input: {
     readonly configuration: typeof RuntimeFixtureConfigurationSchema.Encoded;
+    readonly databaseIdentities?: DatabaseIdentityEnrollment;
     readonly handoff: typeof LiveOperationFixtureRuntimeHandoffSchema.Encoded;
     readonly runtimeConnectionString: Redacted.Redacted;
   }) {
@@ -1446,7 +1560,14 @@ export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachR
     const spice = newSpiceDbGrpcClient(spiceDb);
     yield* Effect.addFinalizer(() => Effect.sync(spice.close.bind(spice))).pipe(Scope.provide(databaseScope));
     const closeResources = Scope.close(databaseScope, Exit.void);
-    return yield* makeLiveOperationRuntime({ closeResources, executor, runtimeHandoff, spice, spiceDb });
+    return yield* makeLiveOperationRuntime({
+      closeResources,
+      databaseIdentities: input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]),
+      executor,
+      runtimeHandoff,
+      spice,
+      spiceDb,
+    });
   },
 );
 

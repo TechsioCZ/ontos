@@ -12,6 +12,7 @@ import {
 import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
+import { BadRequestNoContent } from 'effect/http-api/HttpApiError';
 
 import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 
@@ -132,6 +133,29 @@ export const GatewayContextRequestSchema = Schema.Struct({
 });
 export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
 
+/** Server credentials may bind to the active release without first downloading its composition. */
+export const ApiKeyGatewayContextRequestSchema = Schema.Struct({
+  ...GatewayContextRequestSchema.fields,
+  compositionRevision: Schema.optionalKey(compositionRevision),
+});
+export type ApiKeyGatewayContextRequest = typeof ApiKeyGatewayContextRequestSchema.Encoded;
+
+/**
+ * Whole HTTP JSON body for the credential-authenticated owner proxy. Typed clients send bytes, not a
+ * shared owner DTO. Shell decodes routing metadata privately; the receiving owner validates its query.
+ */
+export const ApiKeyGatewayReadRequestSchema = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: 'application/json' }),
+);
+
+/** Owner response bytes, without a shared JSON wrapper or a second JSON serialization. */
+const ApiKeyGatewayReadResponseSchema = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: 'application/json' }),
+);
+
+/** Server-only response metadata; never exposed through CORS or persisted by an intermediary. */
+export const API_KEY_GATEWAY_CONTEXT_HEADER = 'x-ontos-gateway-context';
+
 export const GatewayContextResponseSchema = Schema.Struct({
   apiBaseUrl: Schema.String.check(
     Schema.isMinLength(1),
@@ -230,8 +254,25 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
         GatewayInternalProblemSchema,
       ],
       headers: ApiKeyGatewayHeadersSchema,
-      payload: GatewayContextRequestSchema,
+      payload: ApiKeyGatewayContextRequestSchema,
       success: GatewayContextResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {
+      error: [
+        BadRequestNoContent,
+        GatewayAuthenticationRequiredProblemSchema,
+        GatewayAudienceInvalidProblemSchema,
+        GatewayReloadRequiredProblemSchema,
+        GatewayForbiddenProblemSchema,
+        GatewayRateLimitedProblemSchema,
+        GatewayUnavailableProblemSchema,
+        GatewayInternalProblemSchema,
+      ],
+      headers: ApiKeyGatewayHeadersSchema,
+      payload: ApiKeyGatewayReadRequestSchema,
+      success: ApiKeyGatewayReadResponseSchema,
     }),
   );
 
@@ -239,9 +280,12 @@ export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(Gate
 
 export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
+  documentContextPath: '/shell-super-app-api/shell/document-context',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
+  issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
+  readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read',
 } as const;
 
 export const gatewayContextAuthorizationEntrypoints = [
@@ -259,6 +303,31 @@ export const gatewayContextAuthorizationEntrypoints = [
     entrypointKey: 'shell.gateway-context.issue.api-key',
     owner: shellGatewayContextContract.ownerId,
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-read.issue.api-key',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.readWithApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-contexts.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
+    surface: 'capability_issuance',
+  },
+  // Server rendering's one context read also signs the document's assertions, so they need no second invocation.
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.document-context.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.documentContextPath,
     surface: 'capability_issuance',
   },
 ] as const;

@@ -1,0 +1,4 @@
+:root {
+  /* The Akros Figma breadcrumb is intentionally bound to color/base. */
+  --color-breadcrumb-bg: var(--color-base);
+}

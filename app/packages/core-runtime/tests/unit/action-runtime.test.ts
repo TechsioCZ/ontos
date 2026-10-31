@@ -12,6 +12,7 @@ import {
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
+  ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionPermissionCheckError,
@@ -37,10 +38,17 @@ import {
   makeActionRepository,
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
+import {
+  ACTION_RUNTIME_STAGES,
+  ActionExecutionResolutionSchema,
+  makeActionRuntime,
+} from '../../src/actions/runtime.ts';
 import { makeActionAuthorizationPreflightPermit } from '../../src/permissions/action-authorization-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../../src/permissions/action-authorization-preflight.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+import {
+  allowOwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
+} from '../../src/permissions/owner-authorization-overlay.ts';
 import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
@@ -68,6 +76,7 @@ import {
 } from '../../src/permissions/context-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -144,7 +153,7 @@ interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly compositionAuthority?: TestCompositionAuthority | 'missing';
   readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
-  readonly createRecord?: ActionInvocationRecord;
+  readonly createRecord?: ActionInvocationRecord & { readonly actionKey?: string };
   readonly failCompositionAuthorityLock?: boolean;
   readonly failTransactionTimestamp?: boolean;
   readonly legalEntityPermissionDecision?: PermissionDecision;
@@ -162,6 +171,7 @@ interface HarnessOptions {
   /** Simulates a concurrent request whose rejection committed before this one finalizes. */
   readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
+  readonly resolutionMissing?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
   readonly resourcePermissionDecision?: PermissionDecision;
@@ -196,14 +206,16 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let compositionAuthorityLockCount = 0;
   let compositionAuthorityLockHeld = false;
   const transactionSteps: string[] = [];
-  const invocation =
-    options.createRecord ??
-    ({
-      actionInvocationId: 'invocation-1',
-      completedAt: null,
-      requestHash: '',
-      status: 'received',
-    } satisfies ActionInvocationRecord);
+  const invocation: ActionInvocationRecord & { readonly actionKey: string } =
+    options.createRecord === undefined
+      ? {
+          actionInvocationId: 'invocation-1',
+          actionKey: 'shell.counter.write',
+          completedAt: null,
+          requestHash: '',
+          status: 'received',
+        }
+      : { actionKey: 'shell.counter.write', ...options.createRecord };
   let currentInvocation = invocation;
   let preparedHash = '';
 
@@ -272,15 +284,25 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       };
       return Effect.succeed(Option.fromNullishOr(options.recordedByConcurrentRequest));
     },
-    resolveInvocation: () =>
-      options.resolutionUnavailable === true
-        ? Effect.fail(
-            new ActionInvocationPersistenceError({
-              code: 'action_invocation_persistence_failed',
-              reason: 'test database unavailable',
-            }),
-          )
-        : Effect.succeed(currentInvocation),
+    resolveInvocation: () => {
+      if (options.resolutionUnavailable === true) {
+        return Effect.fail(
+          new ActionInvocationPersistenceError({
+            code: 'action_invocation_persistence_failed',
+            reason: 'test database unavailable',
+          }),
+        );
+      }
+      if (options.resolutionMissing === true) {
+        return Effect.fail(
+          new ActionInvocationNotFound({
+            code: 'action_invocation_not_found',
+            reason: 'No exact caller-owned invocation',
+          }),
+        );
+      }
+      return Effect.succeed(currentInvocation);
+    },
     transitionInvocationToRunning: () => {
       transitionCount += 1;
       if (
@@ -354,6 +376,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return [];
     }
     if (text.includes('pg_advisory_xact_lock_shared')) {
+      const isolation = options.compositionIsolation ?? 'read committed';
+      if (isolation !== 'read committed') {
+        return [{ isolation }];
+      }
       compositionAuthorityLockCount += 1;
       transactionSteps.push('composition_authority_locked');
       if (options.failCompositionAuthorityLock === true) {
@@ -362,7 +388,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         });
       }
       compositionAuthorityLockHeld = true;
-      return [];
+      return [{ isolation }];
     }
     if (text.includes('application_composition_authority')) {
       const authority = options.compositionAuthority ?? {
@@ -380,9 +406,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
               unexpired: authority.unexpired,
             },
           ];
-    }
-    if (text.includes("current_setting('transaction_isolation')")) {
-      return [{ isolation: options.compositionIsolation ?? 'read committed' }];
     }
     if (text.includes('current_setting')) {
       return [
@@ -538,6 +561,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       },
     },
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
     moduleStateGate,
     ...ownerAuthorizationOptions,
@@ -944,7 +968,9 @@ it.effect(
       {
         actionKey: 'shell.counter.change',
         correlationId: 'correlation-intent-1',
+        legalEntityId: principal.legalEntityId,
         principalId: principal.principalId,
+        tenantId: principal.tenantId,
       },
     ]);
     expect(harness.gateCounts()).toEqual({
@@ -967,12 +993,10 @@ it.effect('rejects missing, stale, draining, and expired composition authority b
       let ownerAuthorizationCalls = 0;
       const harness = yield* makeHarness({
         compositionAuthority,
-        ownerAuthorizationOverlay: {
-          authorize: () => {
-            ownerAuthorizationCalls += 1;
-            return Effect.succeed('allowed' as const);
-          },
-        },
+        ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
+          ownerAuthorizationCalls += 1;
+          return Effect.succeed('allowed' as const);
+        }),
       });
       const failure = yield* Effect.flip(
         harness.runtime.runAction({
@@ -1123,12 +1147,10 @@ it.effect(
   Effect.fn(function* testOwnerOverlayDenial() {
     const ownerInputs: OwnerAuthorizationInput[] = [];
     const harness = yield* makeHarness({
-      ownerAuthorizationOverlay: {
-        authorize: (_transaction, input) => {
-          ownerInputs.push(input);
-          return Effect.succeed('denied' as const);
-        },
-      },
+      ownerAuthorizationOverlay: transactionalOwnerAuthorization((_transaction, input) => {
+        ownerInputs.push(input);
+        return Effect.succeed('denied' as const);
+      }),
     });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({
@@ -1159,12 +1181,10 @@ it.effect('fails closed before owner authorization when PostgreSQL cannot provid
     let overlayCalls = 0;
     const harness = yield* makeHarness({
       failTransactionTimestamp: true,
-      ownerAuthorizationOverlay: {
-        authorize: () => {
-          overlayCalls += 1;
-          return Effect.succeed('allowed' as const);
-        },
-      },
+      ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
+        overlayCalls += 1;
+        return Effect.succeed('allowed' as const);
+      }),
     });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({
@@ -2746,7 +2766,7 @@ it.effect('checks every plural Assortment target conjunctively before the handle
   }),
 );
 
-it.effect('fails closed for an unknown Assortment configuration resource type', () =>
+it.effect('fails closed for a configuration resource type outside its module namespace', () =>
   Effect.gen(function* rejectsUnknownConfigurationType() {
     let handlerCalls = 0;
     let serviceFactoryCalls = 0;
@@ -2761,8 +2781,9 @@ it.effect('fails closed for an unknown Assortment configuration resource type', 
             resource: {
               moduleId: 'commerce.assortment',
               resourceId: 'configuration-1',
-              resourceType: 'commerce.assortment.configuration',
+              resourceType: 'foreign.module.configuration',
             },
+            resourceScope: 'tenant',
           },
         ]),
         auditProfile: 'standard',
@@ -4232,6 +4253,32 @@ it.effect(
       throw new Error('Expected typed test outcome');
     }
     expect(unavailableResolution.invocationId).toBe(invocationId);
+
+    const keyed = { actionKey: 'shell.counter.write', idempotencyKey: 'not-an-invocation-uuid', principal };
+    const keyedOpen = yield* open.runtime.resolveActionCommit(keyed);
+    expect(keyedOpen.invocationId).toBe(invocationId);
+    const keyedCommitted = yield* Effect.flip(committed.runtime.resolveActionCommit(keyed));
+    expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
+    if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
+      expect(keyedCommitted.invocationId).toBe(invocationId);
+    }
+    const keyedUnavailable = yield* Effect.flip(unavailable.runtime.resolveActionCommit(keyed));
+    expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
+    expect('invocationId' in keyedUnavailable).toBe(false);
+
+    for (const invalid of [
+      { actionKey: '', idempotencyKey: 'key', principal },
+      { actionKey: ' shell.counter.write', idempotencyKey: 'key', principal },
+      { actionKey: 'shell.counter.write', idempotencyKey: 'x'.repeat(201), principal },
+      { actionKey: 'shell.counter.write', idempotencyKey: undefined, principal },
+      { invocationId: 'invalid-uuid', principal },
+    ]) {
+      const failure = yield* Effect.flip(open.runtime.resolveActionCommit(invalid));
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
+    }
+    // @ts-expect-error Exercise a forged transport object that violates the exclusive lookup union.
+    const mixed = yield* Effect.flip(open.runtime.resolveActionCommit({ ...keyed, invocationId }));
+    expect(Predicate.isTagged(mixed, 'ActionPayloadValidationError')).toBe(true);
   }),
 );
 
@@ -4488,3 +4535,67 @@ it.effect(
 it('the Core database service identity remains server-only', () => {
   expect(Predicate.isFunction(CoreDatabase)).toBe(true);
 });
+
+for (const scenario of [
+  { actionKey: 'shell.counter.write', completed: false, retryCommand: true, state: 'RETRYABLE', status: 'received' },
+  { actionKey: 'shell.counter.write', completed: false, retryCommand: false, state: 'RUNNING', status: 'running' },
+  {
+    actionKey: 'shell.counter.write',
+    completed: false,
+    retryCommand: false,
+    state: 'RUNNING',
+    status: 'indeterminate',
+  },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'COMMITTED', status: 'succeeded' },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'rejected' },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'failed' },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'received' },
+] as const) {
+  it.effect(
+    `projects native execution ${scenario.status}/${String(scenario.completed)} as ${scenario.state} without executing`,
+    () =>
+      Effect.gen(function* nativeExecutionState() {
+        const invocationId = '00000000-0000-4000-8000-000000000099';
+        const h = yield* makeHarness({
+          createRecord: {
+            actionInvocationId: invocationId,
+            actionKey: scenario.actionKey,
+            completedAt: scenario.completed ? completionTime() : null,
+            requestHash: 'original',
+            status: scenario.status,
+          },
+        });
+        const executionState = { invocationId, retryCommand: scenario.retryCommand, state: scenario.state };
+        const expected =
+          scenario.state === 'COMMITTED' ? { actionKey: scenario.actionKey, ...executionState } : executionState;
+        expect(Schema.is(ActionExecutionResolutionSchema)(expected)).toBe(true);
+        if (scenario.state === 'COMMITTED') {
+          expect(Schema.is(ActionExecutionResolutionSchema)(executionState)).toBe(false);
+        }
+        expect(yield* h.runtime.resolveActionExecution({ invocationId, principal })).toEqual(expected);
+        expect(
+          yield* h.runtime.resolveActionExecution({
+            actionKey: 'shell.counter.write',
+            idempotencyKey: 'original-key',
+            principal,
+          }),
+        ).toEqual(expected);
+        expect(h.counts()).toEqual({ createCount: 0, lockCount: 0, transactionCount: 0, transitionCount: 0 });
+      }),
+  );
+}
+it.effect('distinguishes native absence from unavailable persistence and invalid recovery identities', () =>
+  Effect.gen(function* exactRecoveryFailures() {
+    const input = { actionKey: 'shell.counter.write', idempotencyKey: 'original-key', principal };
+    const missing = yield* makeHarness({ resolutionMissing: true });
+    expect(yield* missing.runtime.resolveActionExecution(input)).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+    const unavailable = yield* makeHarness({ resolutionUnavailable: true });
+    expect(
+      Schema.is(ActionInvocationPersistenceError)(
+        yield* unavailable.runtime.resolveActionExecution(input).pipe(Effect.flip),
+      ),
+    ).toBe(true);
+    const malformed = yield* missing.runtime.resolveActionExecution({ ...input, idempotencyKey: '' }).pipe(Effect.flip);
+    expect(Predicate.isTagged(malformed, 'ActionPayloadValidationError')).toBe(true);
+  }),
+);

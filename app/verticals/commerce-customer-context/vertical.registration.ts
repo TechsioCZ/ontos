@@ -162,6 +162,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   ],
   entrypoints: {
     api: {
+      'customer-profile-read-own': () => import('./src/api/customer-profile-self-service-client.ts'),
+      'customer-profile-update-own': () => import('./src/api/customer-profile-self-service-client.ts'),
       // <generated-module-registration-apis>
       'commerce-quantity-policy-current': () => import('./src/api/commerce-quantity-policy-current-client.ts'),
       'commerce-quantity-resolution': () => import('./src/api/commerce-quantity-resolution-client.ts'),
@@ -173,6 +175,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'counterparty-commerce-access-check': () => import('./src/api/counterparty-commerce-access-check-client.ts'),
       'counterparty-commerce-access-detail': () => import('./src/api/counterparty-commerce-access-detail-client.ts'),
       'counterparty-commerce-access-list': () => import('./src/api/counterparty-commerce-access-list-client.ts'),
+      'counterparty-customer-group-memberships': () =>
+        import('./src/api/counterparty-customer-group-memberships-client.ts'),
       'counterparty-order-history': () => import('./src/api/counterparty-order-history-client.ts'),
       'counterparty-order-history-detail': () => import('./src/api/counterparty-order-history-detail-client.ts'),
       'customer-archive': () => import('./src/api/customer-archive-client.ts'),

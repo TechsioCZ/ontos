@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Crypto, Effect, Layer, Redacted, Schema, Scope } from 'effect';
+import { Crypto, Effect, Layer, Option, Redacted, Schema, Scope } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
@@ -18,6 +18,7 @@ import {
   tenantModuleStates,
   tenants,
 } from '../db/schema.ts';
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
@@ -286,10 +287,17 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     { concurrency: 1 },
   );
   yield* write([...relationships.values()], v1.RelationshipUpdate_Operation.TOUCH);
+  // An owner with dedicated database identities supplies its enrollment; Core-only owners enroll none.
+  const databaseIdentities = Option.getOrElse(yield* Effect.serviceOption(DatabaseIdentityEnrollmentContext), () =>
+    defineDatabaseIdentityEnrollment([]),
+  );
   const contextAccess = yield* makeContextAccessLive();
-  const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+  const scopeResolver = yield* makeOperationalScopeResolver(
+    makeOperationalScopeRepository(database, databaseIdentities),
+    contextAccess,
+  );
   const gateway = makeModuleEntrypointGateway(makeModuleStateGate(makeTenantModuleStateService(database)));
-  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess);
+  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess, { databaseIdentities });
   const registry = staffAuthenticationNamespaceRegistryLayer(['catalog']);
   const layer = Layer.mergeAll(
     registry,
@@ -314,7 +322,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     const produce = Effect.fn('NativeReadTestContext.produce')(function* produce(
       transaction: CoreTransaction,
     ): Effect.fn.Return<Value, Failure | OperationContextError, Requirements> {
-      const scoped = yield* installOperationalScope(transaction, scope);
+      const scoped = yield* installOperationalScope(transaction, scope, databaseIdentities);
       return yield* producer(scoped, scope);
     });
     ownerProducerStarted = true;

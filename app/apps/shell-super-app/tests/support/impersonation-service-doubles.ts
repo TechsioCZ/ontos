@@ -9,24 +9,24 @@ const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
   createFixtureUser: () => unconfiguredEffect('createFixtureUser'),
   currentSession: () => unconfiguredEffect('currentSession'),
+  resolveDocumentContext: () => unconfiguredEffect('resolveDocumentContext'),
   resolveShellContext: () => unconfiguredEffect('resolveShellContext'),
   resolveTenantContext: () => unconfiguredEffect('resolveTenantContext'),
   signIn: () => unconfiguredEffect('signIn'),
   signOut: () => unconfiguredEffect('signOut'),
   switchLegalEntity: () => unconfiguredEffect('switchLegalEntity'),
   switchTenant: () => unconfiguredEffect('switchTenant'),
+  switchToTenantContext: () => unconfiguredEffect('switchToTenantContext'),
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
-  getSession: rs
-    .fn<SupportAuthProvider['api']['getSession']>()
-    .mockRejectedValue(new Error('getSession is not configured in this test')),
+  getSession: rs.fn<SupportAuthProvider['api']['getSession']>().mockReturnValue(unconfiguredEffect('getSession')),
   impersonateUser: rs
     .fn<SupportAuthProvider['api']['impersonateUser']>()
-    .mockRejectedValue(new Error('impersonateUser is not configured in this test')),
+    .mockReturnValue(unconfiguredEffect('impersonateUser')),
   stopImpersonating: rs
     .fn<SupportAuthProvider['api']['stopImpersonating']>()
-    .mockRejectedValue(new Error('stopImpersonating is not configured in this test')),
+    .mockReturnValue(unconfiguredEffect('stopImpersonating')),
 };
 
 const storeDefaults: SupportImpersonationStore = {

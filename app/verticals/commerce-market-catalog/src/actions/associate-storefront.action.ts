@@ -3,6 +3,7 @@
 // @ontos-action-slug associate-storefront
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { prepareStorefrontAssociationServices } from '../services/storefront-association-preflight.ts';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
@@ -54,7 +55,7 @@ export type AssociateStorefrontServices = MarketAdministrationService & CurrentS
 const makeAssociateStorefrontServices: ActionServiceFactory<AssociateStorefrontServices> = Effect.fn(
   'AssociateStorefrontAction.makeServices',
 )(function* makeServices(transaction, scope, compositionRevision) {
-  const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+  const catalog = yield* marketAdministrationService(transaction, scope);
   return {
     ...catalog,
     ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, legalEntityId: scope.legalEntityId }),
@@ -194,4 +195,5 @@ export const associateStorefrontAction = defineAction(
   },
   handleAssociateStorefront,
   makeAssociateStorefrontServices,
+  { prepareServices: prepareStorefrontAssociationServices },
 );

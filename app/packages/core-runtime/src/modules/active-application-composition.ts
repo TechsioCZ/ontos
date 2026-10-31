@@ -1,13 +1,18 @@
-import { Clock, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schema, Semaphore } from 'effect';
 
 import {
   ApplicationCompositionSchema,
   freezeApplicationCompositionArtifact,
   ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
 } from './application-composition.ts';
-import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
+import {
+  buildApplicationCompositionCatalog,
+  validatedApplicationCompositionCatalog,
+} from './application-composition-catalog.ts';
 import { ActiveApplicationCompositionUnavailableError } from './active-application-composition-errors.ts';
 import { ActiveApplicationCompositionSource } from './active-application-composition-source-service.ts';
+import { ProcessCompositionValidation } from './process-composition-validation.ts';
+import type { ProcessCompositionValidationRegistry } from './process-composition-validation.ts';
 
 /**
  * One bounded observation of the deployment-owned active revision. The publisher owns promotion;
@@ -43,6 +48,7 @@ export const makeActiveApplicationCompositionLayer = (
 const activeApplicationCompositionSnapshotJsonSchema = Schema.fromJsonString(
   ActiveApplicationCompositionSnapshotSchema,
 );
+const encodeComposition = Schema.encodeEffect(Schema.fromJsonString(ApplicationCompositionSchema));
 
 const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicationCompositionUnavailableError =>
   new ActiveApplicationCompositionUnavailableError({
@@ -50,62 +56,127 @@ const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicat
     reason: 'The active Application Composition snapshot is unavailable or invalid',
   });
 
-/** Every injected/runtime source is checked at the operation edge; expiry never selects an old revision. */
-export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.validateSnapshot')(
-  function* validateSnapshot(snapshot: ActiveApplicationCompositionSnapshot) {
-    const decoded = yield* Schema.decodeEffect(Schema.toType(ActiveApplicationCompositionSnapshotSchema), {
-      onExcessProperty: 'error',
-    })(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
-    const observedAt = DateTime.make(DateTime.toEpochMillis(decoded.observedAt));
-    const validUntil = DateTime.make(DateTime.toEpochMillis(decoded.validUntil));
-    if (Option.isNone(observedAt) || Option.isNone(validUntil)) {
-      return yield* unavailableActiveApplicationComposition('Application Composition authority dates are invalid');
-    }
-    // Utc values have one lazy parts cache. Hydrate it before freezing a private copy so native
-    // DateTime operations remain usable and caller-owned values cannot extend a validated lease.
-    Object.freeze(DateTime.toPartsUtc(observedAt.value));
-    Object.freeze(DateTime.toPartsUtc(validUntil.value));
-    const observed = Object.freeze(observedAt.value);
-    const expires = Object.freeze(validUntil.value);
-    const now = yield* Clock.currentTimeMillis;
-    if (DateTime.toEpochMillis(observed) > now || DateTime.toEpochMillis(expires) <= now) {
-      return yield* unavailableActiveApplicationComposition(
-        'Application Composition authority is expired or not yet valid',
-      );
-    }
-    yield* buildApplicationCompositionCatalog(decoded.composition).pipe(
-      Effect.mapError(unavailableActiveApplicationComposition),
-    );
-    if (DateTime.toEpochMillis(expires) <= (yield* Clock.currentTimeMillis)) {
-      return yield* unavailableActiveApplicationComposition(
-        'Application Composition authority expired during validation',
-      );
-    }
-    return Object.freeze({
-      ...decoded,
-      composition: freezeApplicationCompositionArtifact(decoded.composition),
-      observedAt: observed,
-      validUntil: expires,
-    });
-  },
-);
+// Only immutable values minted by this validator are reusable. Never retain request-owned I/O,
+// promises, or failures: a Worker builds a new scoped runtime for each request.
+const validatedSnapshots = Ref.makeUnsafe(new WeakSet<ActiveApplicationCompositionSnapshot>());
+const decodeSnapshot = Schema.decodeEffect(Schema.toType(ActiveApplicationCompositionSnapshotSchema), {
+  onExcessProperty: 'error',
+});
 
-const configuredActiveApplicationCompositionSnapshot = (encoded: string) => {
+const checkLease = Effect.fnUntraced(function* checkLease(snapshot: ActiveApplicationCompositionSnapshot) {
+  const now = yield* Clock.currentTimeMillis;
+  if (DateTime.toEpochMillis(snapshot.observedAt) > now || DateTime.toEpochMillis(snapshot.validUntil) <= now) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority is expired or not yet valid',
+    );
+  }
+  return snapshot;
+});
+
+/**
+ * Admits one decoded snapshot: lease, then the complete catalog of the frozen composition. Building the catalog
+ * from the frozen value retains it, so every consumer of this revision reuses the same verified catalog.
+ */
+const approveDecodedSnapshot = Effect.fn('ActiveApplicationComposition.approveDecodedSnapshot')(function* approve(
+  decoded: ActiveApplicationCompositionSnapshot,
+) {
+  const observedAt = DateTime.make(DateTime.toEpochMillis(decoded.observedAt));
+  const validUntil = DateTime.make(DateTime.toEpochMillis(decoded.validUntil));
+  if (Option.isNone(observedAt) || Option.isNone(validUntil)) {
+    return yield* unavailableActiveApplicationComposition('Application Composition authority dates are invalid');
+  }
+  // Utc values have one lazy parts cache. Hydrate it before freezing a private copy so native
+  // DateTime operations remain usable and caller-owned values cannot extend a validated lease.
+  Object.freeze(DateTime.toPartsUtc(observedAt.value));
+  Object.freeze(DateTime.toPartsUtc(validUntil.value));
+  const observed = Object.freeze(observedAt.value);
+  const expires = Object.freeze(validUntil.value);
+  const now = yield* Clock.currentTimeMillis;
+  if (DateTime.toEpochMillis(observed) > now || DateTime.toEpochMillis(expires) <= now) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority is expired or not yet valid',
+    );
+  }
+  const composition = freezeApplicationCompositionArtifact(decoded.composition);
+  yield* buildApplicationCompositionCatalog(composition).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+  if (DateTime.toEpochMillis(expires) <= (yield* Clock.currentTimeMillis)) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority expired during validation',
+    );
+  }
+  const validated = Object.freeze({ ...decoded, composition, observedAt: observed, validUntil: expires });
+  yield* Ref.update(validatedSnapshots, (snapshots) => snapshots.add(validated));
+  return validated;
+});
+
+const validateSnapshotLocally = Effect.fn('ActiveApplicationComposition.validateSnapshot')(function* validateSnapshot(
+  snapshot: ActiveApplicationCompositionSnapshot,
+) {
+  if ((yield* Ref.get(validatedSnapshots)).has(snapshot)) {
+    return yield* checkLease(snapshot);
+  }
+  const decoded = yield* decodeSnapshot(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+  return yield* approveDecodedSnapshot(decoded);
+});
+
+/** Every injected/runtime source is checked at the operation edge; expiry never selects an old revision. */
+export const validateActiveApplicationCompositionSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
+  globalThis.ontosProcessCompositionValidation?.validate(snapshot) ?? validateSnapshotLocally(snapshot);
+
+// Bounded to one successful wire value across request-scoped Layers. Exact text, not a claimed
+// revision, identifies the cache entry: the wire value is decoded and verified once per isolate,
+// while each source read and each lease check still runs per request.
+const configuredSnapshot = Ref.makeUnsafe<{
+  readonly compositionEncoded: string;
+  readonly encoded: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+} | null>(null);
+
+const configuredActiveApplicationCompositionSnapshot = Effect.fn(
+  'ActiveApplicationComposition.configuredActiveApplicationCompositionSnapshot',
+)(function* loadConfiguredSnapshot(encoded: string) {
+  const cached = yield* Ref.get(configuredSnapshot);
+  if (cached?.encoded === encoded) {
+    return yield* checkLease(cached.snapshot);
+  }
   if (
     encoded.length > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES ||
     new TextEncoder().encode(encoded).byteLength > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES
   ) {
-    return Effect.fail(
-      unavailableActiveApplicationComposition('Application Composition snapshot exceeds its byte budget'),
-    );
+    return yield* unavailableActiveApplicationComposition('Application Composition snapshot exceeds its byte budget');
   }
-  return Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
+  const decoded = yield* Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
     onExcessProperty: 'error',
-  })(encoded).pipe(
+  })(encoded).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+  // Publication renews the observation lease without changing the immutable deployment. Reuse only
+  // an exact, schema-decoded composition value, never a claimed revision: a same-revision edit must
+  // still pass digest/catalog validation. Every new envelope is decoded and its own lease checked.
+  const compositionEncoded = yield* encodeComposition(decoded.composition).pipe(
     Effect.mapError(unavailableActiveApplicationComposition),
-    Effect.flatMap(validateActiveApplicationCompositionSnapshot),
   );
-};
+  const composition =
+    cached?.compositionEncoded === compositionEncoded ? cached.snapshot.composition : decoded.composition;
+  const snapshot = yield* approveDecodedSnapshot({ ...decoded, composition });
+  yield* Ref.set(configuredSnapshot, { compositionEncoded, encoded, snapshot });
+  return snapshot;
+});
+
+/**
+ * Native hosts initialize this before importing owners. The permit coalesces concurrent first validation of the
+ * same exact bytes, including calls from distinct bundles. It never wraps source I/O. Only one successful wire
+ * observation and weakly held immutable artifacts survive a call; failures and principal decisions do not.
+ */
+export const ProcessCompositionValidationLive = Layer.effect(
+  ProcessCompositionValidation,
+  Effect.gen(function* makeProcessValidation() {
+    const permit = yield* Semaphore.make(1);
+    return Object.freeze({
+      catalog: validatedApplicationCompositionCatalog,
+      decode: (encoded: string) => permit.withPermit(configuredActiveApplicationCompositionSnapshot(encoded)),
+      validate: validateSnapshotLocally,
+    } satisfies ProcessCompositionValidationRegistry);
+  }),
+);
 
 /**
  * Server runtime adapter. Deployment automation publishes the immutable active snapshot as one atomic
@@ -119,7 +190,11 @@ export const ActiveApplicationCompositionConfigLive = Layer.effect(ActiveApplica
     return Object.freeze({
       load: source.load.pipe(
         Effect.mapError(unavailableActiveApplicationComposition),
-        Effect.flatMap(configuredActiveApplicationCompositionSnapshot),
+        Effect.flatMap(
+          (encoded) =>
+            globalThis.ontosProcessCompositionValidation?.decode(encoded) ??
+            configuredActiveApplicationCompositionSnapshot(encoded),
+        ),
       ),
     });
   }),

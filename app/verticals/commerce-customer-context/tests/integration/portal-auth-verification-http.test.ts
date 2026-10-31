@@ -79,6 +79,7 @@ const now = DateTime.makeUnsafe('2026-09-17T09:00:00.000Z');
 const request = Schema.decodeUnknownSync(CommercePortalAuthVerificationRequestSchema)({
   audience: 'commerce-customer-context',
   authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+  authenticationOperation: 'resolve',
   nonce: '50000000-0000-4000-8000-000000000011',
   operation: 'commerce-portal-authentication.verify-external-authentication.v1',
   operationRef: 'integration-operation-1',
@@ -107,6 +108,7 @@ const verification = {
         Schema.decodeUnknownSync(VerifyExternalAuthenticationResultSchema)({
           authenticatedAt: now,
           authenticationNamespaceId: decoded.authenticationNamespaceId,
+          authenticationOperation: 'resolve',
           emailVerified: true,
           nonce: decoded.nonce,
           observedAt: now,
@@ -127,6 +129,7 @@ type AuthorityMode = typeof AuthorityModeSchema.Type;
 const makeApp = (
   mode: { value: AuthorityMode },
   captures: CommercePortalAuthVerificationWorkloadAuthorizationInput[],
+  provider: CommercePortalAuthVerificationService['Service'] = verification,
 ) =>
   Effect.gen(function* makeAppEffect() {
     const authority: CommercePortalAuthVerificationWorkloadAuthorizationService = {
@@ -158,7 +161,7 @@ const makeApp = (
       Layer.provide(commercePortalAuthVerificationApiLive),
       Layer.provide(commercePortalAuthVerificationHttpExecutorLive),
       Layer.provide(Layer.succeed(CommercePortalAuthVerificationWorkloadAuthorization, authority)),
-      Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, verification)),
+      Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, provider)),
       Layer.provide(HttpServer.layerServices),
     );
     return yield* Effect.acquireRelease(
@@ -432,6 +435,7 @@ const makeBridgeProvider = (reads: Ref.Ref<number>) =>
       Layer.succeed(CommerceEnrollmentProofService, {
         authorizeAccountCreation: () => Effect.fail(new CommerceEnrollmentProofRejected({})),
         verify: () => Effect.fail(new CommerceEnrollmentProofRejected({})),
+        verifyBinding: () => Effect.fail(new CommerceEnrollmentProofRejected({})),
       }),
     ),
   );
@@ -589,9 +593,9 @@ it.effect('redeems once before provider access and refuses replay or invalid cre
   }).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock)),
 );
 
-it.effect('keeps optional construction lazy and authenticates direct executor calls', () =>
-  Effect.gen(function* optionalRootBoundary() {
-    expect(Object.hasOwn(commerceCustomerContextApi.groups, 'externalAuthenticationVerification')).toBe(false);
+it.effect('mounts the gated route in the Commerce API and authenticates direct executor calls', () =>
+  Effect.gen(function* productionRootBoundary() {
+    expect(Object.hasOwn(commerceCustomerContextApi.groups, 'externalAuthenticationVerification')).toBe(true);
     expect(apiRuntime).toBeDefined();
     // No workload, provider, database or request proof is required to describe/build this executor.
     const executor = Context.get(

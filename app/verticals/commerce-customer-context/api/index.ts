@@ -1,3 +1,4 @@
+import { customerOwnConsentReadApiLive, customerOwnConsentUpdateApiLive } from './portal-auth/consent/http.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { HttpServerRequest } from 'effect/http';
 import {
@@ -10,8 +11,14 @@ import { CommercePortalAuthVerificationCallerRejected } from './portal-auth/prov
 import { CommercePortalAuthVerificationCallerUnavailable } from './portal-auth/provider/verification-caller-unavailable.ts';
 import { VerifyExternalAuthenticationRequestSchema } from '../shared/portal-auth-contracts.ts';
 import type { CommercePortalAuthVerificationRequest } from '../shared/portal-auth-verification.ts';
-import { CommercePortalAuthVerificationHttpExecutor } from './portal-auth/verification-http/server.ts';
-import { CommercePortalAuthVerificationWorkloadAuthorization } from './portal-auth/verification-http/workload-authorization.ts';
+import {
+  CommercePortalAuthVerificationHttpExecutor,
+  commercePortalAuthVerificationCommerceApiLive,
+} from './portal-auth/verification-http/server.ts';
+import {
+  CommercePortalAuthVerificationWorkloadAuthorization,
+  commercePortalAuthVerificationWorkloadAuthorizationLive,
+} from './portal-auth/verification-http/workload-authorization.ts';
 import {
   commercePortalAuthVerificationForbiddenProblem,
   commercePortalAuthVerificationInvalidProblem,
@@ -20,10 +27,16 @@ import {
 } from './portal-auth/verification-http/problems.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { EmailDeliveryService } from '@app/email-delivery/server';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionRuntime,
   ActionAuthorizationPreflight,
   makeActionRuntimeLive,
@@ -52,6 +65,16 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, Redacted, References, Schema, Tracer } from 'effect';
+import {
+  PartyRegistryRetailPartyResolverFactory,
+  preparedRetailPartyResolution,
+} from '../src/integrations/party-registry-retail-party-resolver.ts';
+import {
+  RetailEnrollmentBindingAuthority,
+  RetailEnrollmentBindingCapability,
+  prepareRetailEnrollmentBinding,
+} from '../src/integrations/retail-enrollment-binding.ts';
+import { retailEnrollmentBindingAuthorityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -64,7 +87,6 @@ import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/
 import { CommerceEnrollmentOwnerEffectRegistryLive } from '../src/enrollment/orchestration/owner-effect-registry.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
-import { CommerceEnrollmentSweptContinuationLive } from '../src/workers/enrollment-continuation-sweeper.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './portal-auth/provider/account-creation-unavailable.ts';
 import { CommercePortalAuthAccountLookupService } from './portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
@@ -76,13 +98,17 @@ import {
 import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unavailable.ts';
 import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
 import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
+import { CommercePortalAuthPlatformEmailDeliveryLive } from './portal-auth/provider/platform-email-delivery.ts';
+import type { CommercePortalAuthPlatformEmailSubmit } from './portal-auth/provider/platform-email-delivery.ts';
 import { CommercePortalAuthRecoveryStoreLive } from '../src/portal-auth/persistence/portal-auth-recovery-store.ts';
 import { CommercePortalAuthTransactionalEmailLive } from './portal-auth/provider/transactional-email.ts';
 import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
+import { enrollmentCommandRecoveryLive } from './enrollment-command-recovery.ts';
 import { portalAuthEnrollmentApiLive } from './portal-auth/enrollment/http.ts';
+import { customerOwnProfileReadApiLive, customerOwnProfileUpdateApiLive } from './portal-auth/profile/http.ts';
 import {
   CommercePortalAuthAccountCreationGatewayLive,
   CommercePortalAuthAccountCreationProviderLive,
@@ -107,6 +133,7 @@ import {
   CommercePortalAuthRecoveryRateLimitLive,
 } from './portal-auth/provider/recovery/provider-service.ts';
 import { CommercePortalAuthRecoveryServiceLive } from './portal-auth/provider/recovery/service.ts';
+import { CommercePortalAuthVerificationWorkloadGrantConfigurationLive } from './portal-auth/verification-http/workload-grants.ts';
 import { CommercePortalAuthSessionReaderLive } from '../src/portal-auth/persistence/portal-auth-session-reader.ts';
 import { portalAuthStepUpApiLive } from './portal-auth/provider/step-up/http.ts';
 import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './portal-auth/provider/step-up/http-provider-unavailable.ts';
@@ -116,8 +143,11 @@ import { CommercePortalAuthSessionLifecycleLive } from './portal-auth/session/li
 import { CommercePortalAuthSessionProviderLive } from './portal-auth/session/provider.ts';
 import { CommercePortalAuthSessionStoreLive } from '../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthServiceLive, portalAuthSessionApiLive } from './portal-auth/session/http.ts';
+import {
+  commerceCustomerAuthorityLive,
+  commerceCustomerAuthorityUnavailableLive,
+} from './portal-auth/session/customer-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
-import { ResendEmailDeliveryConfigLive, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import {
   CommerceEnrollmentOwnerTransitionPreparation,
@@ -185,6 +215,7 @@ import { counterpartyAllOrderHistoryReadApiLive } from './counterparty-all-order
 import { counterpartyCommerceAccessCheckReadApiLive } from './counterparty-commerce-access-check-read-server.ts';
 import { counterpartyCommerceAccessDetailReadApiLive } from './counterparty-commerce-access-detail-read-server.ts';
 import { counterpartyCommerceAccessListReadApiLive } from './counterparty-commerce-access-list-read-server.ts';
+import { counterpartyCustomerGroupMembershipsReadApiLive } from './counterparty-customer-group-memberships-read-server.ts';
 import { counterpartyOrderHistoryDetailReadApiLive } from './counterparty-order-history-detail-read-server.ts';
 import { counterpartyOrderHistoryReadApiLive } from './counterparty-order-history-read-server.ts';
 import { createApprovalHierarchyActionApiLive } from './create-approval-hierarchy-action-server.ts';
@@ -281,6 +312,20 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { commerceCustomerContextApi, commerceCustomerContextOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
+const commercePortalAuthPlatformEmailDeliveryLive = CommercePortalAuthPlatformEmailDeliveryLive(
+  Effect.fn('CommercePortalAuth.submitPlatformEmail')(function* submitPortalEmail(
+    transport: Parameters<CommercePortalAuthPlatformEmailSubmit>[0],
+    from: Parameters<CommercePortalAuthPlatformEmailSubmit>[1],
+    message: Parameters<CommercePortalAuthPlatformEmailSubmit>[2],
+  ) {
+    const delivery = yield* Layer.build(transport.deliveryLayer(from, message.to));
+    const service = Context.get(delivery, EmailDeliveryService);
+    return yield* service.send(message);
+  }, Effect.scoped),
+).pipe(Layer.provide(commercePortalAuthPlatformCryptoLive));
+
 const workloadRejectedProblem = () => Effect.fail(commercePortalAuthVerificationForbiddenProblem);
 const workloadUnavailableProblem = () => Effect.fail(commercePortalAuthVerificationUnavailableProblem);
 const providerInvalidProblem = () => Effect.fail(commercePortalAuthVerificationInvalidProblem);
@@ -290,6 +335,7 @@ const providerUnavailableProblem = () => Effect.fail(commercePortalAuthVerificat
 const providerRequest = (request: CommercePortalAuthVerificationRequest) => {
   const base = {
     authenticationNamespaceId: request.authenticationNamespaceId,
+    authenticationOperation: request.authenticationOperation,
     nonce: request.nonce,
     providerSubjectId: request.providerSubjectId,
     sessionRef: request.sessionRef,
@@ -329,7 +375,7 @@ const verificationCallerLive = Layer.succeed(CommercePortalAuthVerificationCalle
   }),
 });
 
-/** Optional lazy provider graph; it is not installed in the default aggregate. */
+/** Provider graph the configured portal realm installs; caller authority is request-scoped by the executor. */
 export const commercePortalAuthVerificationProviderLive = CommercePortalAuthVerificationLive.pipe(
   Layer.provide(verificationCallerLive),
 );
@@ -398,10 +444,8 @@ export const commercePortalAuthProviderLive = CommercePortalAuthLive.pipe(
  * — `Layer.mergeAll` builds its operands in parallel and would not satisfy a dependency declared
  * beside it.
  */
-const commercePortalAuthEmailTransportLive = ResendEmailDeliveryLive.pipe(Layer.provide(FetchHttpClient.layer));
 const commercePortalAuthProviderRealmLive = commercePortalAuthProviderLive.pipe(
   Layer.provideMerge(commercePortalAuthPlatformCryptoLive),
-  Layer.provideMerge(commercePortalAuthEmailTransportLive),
 );
 const commercePortalAuthRealmPortsLive = Layer.mergeAll(
   CommercePortalAuthAuditLive,
@@ -449,7 +493,7 @@ const commercePortalAuthAccountCreationReconciliationRealmLive =
         CommercePortalAuthAccountCreationProviderLive.pipe(Layer.provide(commercePortalAuthProviderRealmLive)),
       ),
     ),
-    Layer.provide(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+    Layer.provide(Layer.mergeAll(CommercePortalAuthConfigLive, commercePortalAuthPlatformEmailDeliveryLive)),
   );
 /**
  * The private provider account-creation capability the enrollment start route dispatches through.
@@ -483,9 +527,17 @@ const commercePortalAuthAccountCreationLive = CommercePortalAuthAccountCreationS
  * Account creation is composed on top of the session-facing services rather than merged beside
  * them because it is built from the very Better Auth instance those services publish.
  */
-export const commercePortalAuthRealmLive = commercePortalAuthAccountCreationLive.pipe(
-  Layer.provideMerge(commercePortalAuthRealmServicesLive),
-);
+export const commercePortalAuthRealmLive = Layer.mergeAll(
+  commercePortalAuthAccountCreationLive,
+  commercePortalAuthVerificationProviderLive.pipe(
+    Layer.provide(
+      CommerceEnrollmentProofServiceLive.pipe(
+        Layer.provide(commerceEnrollmentOwnerTransactionRunnerProductionLive),
+        Layer.provide(DatabaseConfigLive),
+      ),
+    ),
+  ),
+).pipe(Layer.provideMerge(commercePortalAuthRealmServicesLive));
 
 const commerceCustomerContextReadinessLayer = HttpApiBuilder.group(
   commerceCustomerContextApi,
@@ -576,6 +628,15 @@ const readRuntimeCoreLive = ReadRuntimeLive.pipe(
   ),
 );
 
+/**
+ * Publish the request's owner capability with its matching preflight/execution. The Action wrapper
+ * still installs a fresh pair for each invocation, so concurrent Actions never share prepared evidence.
+ */
+const commerceEnrollmentPreparedOwnerCapabilityLive = Layer.effect(
+  CommerceEnrollmentPreparedOwnerCapability,
+  CommerceEnrollmentPreparedOwnerExecutionService.pipe(Effect.map((execution) => execution.capability)),
+).pipe(Layer.provideMerge(commerceEnrollmentPreparedOwnerExecutionLive));
+
 /** Each Action owns its prepared evidence and runtime factory; persistence stays deployment-scoped. */
 const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   ActionRuntime,
@@ -583,13 +644,16 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   | ActionRuntime
   | ActionAuthorizationPreflight
   | CommerceEnrollmentOwnerTransitionPreparation
+  | ActiveApplicationCompositionService
   | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* commerceEnrollmentActionRuntime() {
+    const bindingAuthority = yield* RetailEnrollmentBindingAuthority;
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
+    const compositions = yield* ActiveApplicationCompositionService;
     const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
     const runAction: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
@@ -600,18 +664,31 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             scope,
           ).pipe(Effect.provideService(CommerceEnrollmentOwnerTransitionPreparation, preparation));
           const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
-          yield* Effect.addFinalizer(() => Effect.sync(execution.clear));
-          const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
+          const retailParty = yield* preparedRetailPartyResolution.pipe(
+            Effect.provideService(ActiveApplicationCompositionService, compositions),
+          );
+          const binding = prepareRetailEnrollmentBinding(bindingAuthority);
+          yield* Effect.addFinalizer(() => Effect.sync(binding.clear));
+          const preflight = composeActionAuthorizationPreflights([
+            execution.preflight,
+            binding.preflight,
+            retailParty.preflight,
+            existingPreflight,
+          ]);
           const runtimeContext = yield* Layer.buildWithScope(
             Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit)),
             scope,
           ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)));
           return yield* Context.get(runtimeContext, ActionRuntime)
             .runAction(input)
-            .pipe(Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability));
+            .pipe(
+              Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability),
+              Effect.provideService(RetailEnrollmentBindingCapability, binding.capability),
+              Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailParty.factory),
+            );
         }),
       );
-    return { resolveActionCommit: existingRuntime.resolveActionCommit, runAction };
+    return { ...existingRuntime, runAction };
   }),
 );
 
@@ -634,7 +711,7 @@ const invitationClaimPreflightWithOwnerServicesLive =
   commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive.pipe(
     Layer.provide(actionRuntimeDependenciesLive),
     Layer.provide(productionOwnerRuntimeServicesLive),
-    Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
+    Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive, commercePortalAuthPlatformCryptoLive)),
   );
 /**
  * Fail-closed until a Commerce owner preparation port is installed: no governed Action may proceed
@@ -648,7 +725,9 @@ const commerceEnrollmentOwnerTransitionPreparationUnavailableLive = Layer.succee
 );
 /** The realm a host that opted in gets, with both operator configurations supplied. */
 const portalAuthConfiguredRuntimeLive = commercePortalAuthRealmLive.pipe(
-  Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+  Layer.provideMerge(CommercePortalAuthConfigLive),
+  // The deployment's installed mail transport; a test composition provides its own.
+  Layer.provide(commercePortalAuthPlatformEmailDeliveryLive),
 );
 
 /**
@@ -675,6 +754,34 @@ const deploymentPortalAuthRuntimeLive = Layer.unwrap(
  */
 const commerceCoreIdentityRealmLive = CommerceCoreIdentityClientLive.pipe(
   Layer.provideMerge(CommerceCoreIdentityClientConfigLive),
+);
+const deploymentCustomerAuthorityLive = Layer.unwrap(
+  coreIdentityTransportConfigured.pipe(
+    Effect.map((configured) =>
+      configured
+        ? commerceCustomerAuthorityLive.pipe(
+            Layer.provide(Layer.mergeAll(commerceCoreIdentityRealmLive, commercePortalAuthPlatformCryptoLive)),
+          )
+        : commerceCustomerAuthorityUnavailableLive,
+    ),
+  ),
+);
+const deploymentRetailEnrollmentBindingAuthorityLive = Layer.unwrap(
+  Effect.all({ core: coreIdentityTransportConfigured, realm: portalAuthRealmConfigured }, { concurrency: 2 }).pipe(
+    Effect.map(({ core, realm }) =>
+      core && realm
+        ? retailEnrollmentBindingAuthorityLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                commerceCoreIdentityRealmLive,
+                commerceEnrollmentOwnerTransactionRunnerProductionLive,
+                commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+              ),
+            ),
+          )
+        : Layer.succeed(RetailEnrollmentBindingAuthority, null),
+    ),
+  ),
 );
 const commerceEnrollmentPreparationSubjectRealmLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
   Layer.provide(Layer.mergeAll(commerceEnrollmentOwnerTransactionRunnerProductionLive, commerceCoreIdentityRealmLive)),
@@ -791,15 +898,6 @@ const deploymentEnrollmentContinuationLive = Layer.unwrap(
   ),
 );
 /**
- * The continuation the routes are handed is the swept one: `advance` is the only thing that moves a
- * journey and its only callers are detached request forks, so a halted Attempt would otherwise wait
- * for a read that may never come. The sweeper records every halt and re-advances it once the lease
- * window has lapsed, for the lifetime of this handler tree.
- */
-const deploymentEnrollmentSweptContinuationLive = CommerceEnrollmentSweptContinuationLive.pipe(
-  Layer.provide(deploymentEnrollmentContinuationLive),
-);
-/**
  * The provider account directory the Existing-account journey's start is verified against. It is
  * the same narrow lookup the owner reconciler reads — one yes/no about one address — and a
  * deployment without the realm has no directory to answer from, so it refuses retryably.
@@ -814,6 +912,7 @@ const commercePortalAuthAccountLookupUnavailableLive = Layer.succeed(CommercePor
   existsByEmail: commercePortalAuthAccountDirectoryUnavailable,
   existsByProviderSubject: commercePortalAuthAccountDirectoryUnavailable,
   subjectForOwnerInvocation: commercePortalAuthAccountDirectoryUnavailable,
+  verifiedEmailForOwnerInvocation: commercePortalAuthAccountDirectoryUnavailable,
 });
 const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
   portalAuthRealmConfigured.pipe(
@@ -826,10 +925,12 @@ const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
 );
 /** The owner preflight remains an explicit input to the enrollment-aware runtime. */
 const actionRuntimeAwaitingOwnerPreflight = commerceEnrollmentActionRuntimeLive.pipe(
+  Layer.provide(deploymentRetailEnrollmentBindingAuthorityLive.pipe(Layer.provide(DatabaseConfigLive))),
   Layer.provideMerge(activeApplicationCompositionLive),
   Layer.provideMerge(ContextAccessLive),
   Layer.provideMerge(PurchaseApprovalFinalBindingAuthorityLive.pipe(Layer.provide(activeApplicationCompositionLive))),
   Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeDependenciesLive)),
+  Layer.provideMerge(commerceEnrollmentPreparedOwnerCapabilityLive),
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
@@ -839,7 +940,7 @@ const actionRuntimeAwaitingOwnerPreflight = commerceEnrollmentActionRuntimeLive.
   // Scoped owner factories execute after receiving; their declared Crypto requirement must remain
   // visible in the runtime context, exactly as for the Read runtime.
   Layer.provideMerge(commercePortalAuthPlatformCryptoLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive)),
 );
 const actionRuntimeAwaitingOwnerPreparation = actionRuntimeAwaitingOwnerPreflight.pipe(
   Layer.provide(invitationClaimPreflightWithOwnerServicesLive),
@@ -854,7 +955,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive)),
   // Scoped owner factories execute after receiving; their declared ContextAccess/Crypto
   // requirements must remain visible alongside the Read runtime's captured gate services.
   Layer.provideMerge(Layer.mergeAll(ContextAccessLive, commercePortalAuthPlatformCryptoLive)),
@@ -953,8 +1054,42 @@ export const makeCommerceCustomerContextApiRuntime = (
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
   );
+  /**
+   * Owner services the portal groups read beside the realm: enrollment convergence, continuation and
+   * account lookup, the customer authority, and the owner transaction runner the invitation claim and
+   * enrollment start dispatch their governed Actions through.
+   */
+  const ownerTransactionRunnerLive = commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(
+    GovernedReadLayer.provide(databaseConfiguration),
+  );
+  const portalOwnerServicesLive = Layer.mergeAll(
+    portalAuthRuntimeLive,
+    // The enrollment convergence capability is installed beside the Action runtime it reads: an
+    // uncertain enrollment write is converged from the original invocation, never re-dispatched.
+    deploymentEnrollmentCommitResolutionLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    governedActionRuntimeLive,
+    // The start route commits the Attempt and account, then advances the journey inside the request;
+    // durable recovery of halted Attempts is supervised by the owner host, not this handler tree.
+    deploymentEnrollmentContinuationLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
+    // The Existing-account journey creates no account, so its start verifies the presented one
+    // exists here instead of claiming a provider transition its journey never declares.
+    deploymentEnrollmentAccountLookupLive,
+    // Invitation claims digest the one-time secret and dispatch an owner Action in the same transaction.
+    commercePortalAuthPlatformCryptoLive,
+    deploymentCustomerAuthorityLive.pipe(Layer.provide(Layer.mergeAll(contextAccess, ownerTransactionRunnerLive))),
+    contextAccess,
+    moduleEntrypointGatewayLive.pipe(Layer.provide(databaseConfiguration)),
+    ownerTransactionRunnerLive,
+  ).pipe(Layer.provideMerge(activeApplicationCompositionLive));
+  /** The trusted provider verification route: workload gate, exact request delegation, realm reader. */
+  const verificationRouteServicesLive = Layer.mergeAll(
+    commercePortalAuthVerificationHttpExecutorLive,
+    commercePortalAuthVerificationWorkloadAuthorizationLive,
+    CommercePortalAuthVerificationWorkloadGrantConfigurationLive,
+    portalAuthRuntimeLive,
+  );
   const apiHandlerGroupsLive = Layer.mergeAll(
-    portalAuthSessionApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
+    portalAuthSessionApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     portalAuthMfaApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthRecoveryApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthStepUpApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
@@ -965,35 +1100,13 @@ export const makeCommerceCustomerContextApiRuntime = (
      * enrollment-aware Action runtime every other governed route uses. A deployment without the
      * realm gets the fail-closed realm here exactly as the other four groups do.
      */
-    portalAuthEnrollmentApiLive.pipe(
-      GovernedReadLayer.provide(portalAuthRuntimeLive),
-      // The enrollment convergence capability is installed beside the Action runtime it reads: an
-      // uncertain enrollment write is converged from the original invocation, never re-dispatched.
-      GovernedReadLayer.provide(
-        deploymentEnrollmentCommitResolutionLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-      ),
-      GovernedReadLayer.provide(governedActionRuntimeLive),
-      // The start route commits the Attempt and the one provider account its claim authorizes, then
-      // hands the rest of the journey to the continuation. Without this the journeys never run.
-      GovernedReadLayer.provide(
-        deploymentEnrollmentSweptContinuationLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
-      ),
-      // The Existing-account journey creates no account, so its start verifies the presented one
-      // exists here instead of claiming a provider transition its journey never declares.
-      GovernedReadLayer.provide(deploymentEnrollmentAccountLookupLive),
-      // The invitation claim route redeems the recipient's one-time secret itself: the digest it
-      // compares is computed here rather than by an owner Action, so the host platform crypto this
-      // vertical already publishes is installed beside the transaction runner that carries it.
-      GovernedReadLayer.provide(commercePortalAuthPlatformCryptoLive),
-      // The claim route dispatches the governed `claim-counterparty-access-invitation` Action from
-      // inside an owner transition, so the Action's own service graph travels with it explicitly.
-      // Core's relationship projection is part of that graph — the claim re-verifies the grantor's
-      // current administrative authority against it — and the Action runtime keeps it private.
-      GovernedReadLayer.provide(contextAccess),
-      GovernedReadLayer.provide(
-        commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
-      ),
-    ),
+    portalAuthEnrollmentApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    enrollmentCommandRecoveryLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    commercePortalAuthVerificationCommerceApiLive.pipe(GovernedReadLayer.provide(verificationRouteServicesLive)),
+    customerOwnConsentReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnConsentUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnProfileReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnProfileUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     // <generated-governed-http-handler-layers>
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1024,6 +1137,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     counterpartyCommerceAccessCheckReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyCommerceAccessDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyCommerceAccessListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    counterpartyCustomerGroupMembershipsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyOrderHistoryDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyOrderHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     createApprovalHierarchyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1134,7 +1248,15 @@ export const makeCommerceCustomerContextApiRuntime = (
     ),
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    Layer.provide(
+      Layer.mergeAll(
+        runtimeObservabilityLive,
+        RequestSchemaProblemLive,
+        compositionSourceLive,
+        compositionHttpClientLive,
+        databaseIdentitiesLive,
+      ),
+    ),
     // The deployment configuration belongs to the whole assembly: source HTTP, admission and
     // gateway verification capture the same configuration and transport references.
     Layer.provide(gatewayVerification),

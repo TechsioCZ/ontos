@@ -5,13 +5,13 @@ import {
   toBusinessPermissionAccessKey,
 } from '@app/core-runtime';
 import type { BusinessPermissionAccessTarget, BusinessPermissionCode, ContextAccessService } from '@app/core-runtime';
-import { Context, DateTime, Effect, Layer, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Layer, Result, Schema } from 'effect';
 
 import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../../shared/domain/profile-contracts.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 
-type RetailPermissionReader = NonNullable<ProfilePersistenceDependencies['readRetailPermissions']>;
+export type RetailPermissionReader = NonNullable<ProfilePersistenceDependencies['readRetailPermissions']>;
 type RetailPermission = (typeof RETAIL_PORTAL_SELF_SERVICE_BASELINE)[number];
 
 export interface ProfileRetailPermissionReaderScope {
@@ -119,6 +119,46 @@ const makeReader =
       );
   };
 /* oxlint-enable effect-native/no-dependency-parameters */
+
+/** The reader of an operation that read no Retail Portal permissions: every lookup is unavailable. */
+export const unreadRetailPermissions: RetailPermissionReader = () =>
+  Effect.fail(dependencyFailure('No Retail Portal Permission snapshot was read before the transaction'));
+
+/**
+ * Reads the Retail Portal permission snapshots of the given profiles before a transaction opens. The
+ * returned reader serves only those snapshots (or their failures), so owner code that consumes it inside
+ * the transaction never calls SpiceDB.
+ */
+export const prefetchRetailPermissions = (
+  reader: RetailPermissionReader,
+  scope: ProfileRetailPermissionReaderScope,
+  profileIds: readonly string[],
+): Effect.Effect<RetailPermissionReader> =>
+  Effect.forEach(
+    [...new Set(profileIds)],
+    (profileId) =>
+      Effect.map(Effect.exit(reader({ ...scope, profileId })), (snapshot) => [profileId, snapshot] as const),
+    // One target profile per Read; an owner overlay names a handful at most.
+    { concurrency: 4 },
+  ).pipe(
+    Effect.map((entries): RetailPermissionReader => {
+      const snapshots = new Map(entries);
+      return (input) => {
+        const snapshot = snapshots.get(input.profileId);
+        if (
+          snapshot === undefined ||
+          input.legalEntityId !== scope.legalEntityId ||
+          input.principalId !== scope.principalId ||
+          input.tenantId !== scope.tenantId
+        ) {
+          return Effect.fail(
+            dependencyFailure('The Retail Portal Permission snapshot was not read before the transaction'),
+          );
+        }
+        return Exit.isSuccess(snapshot) ? Effect.succeed(snapshot.value) : Effect.failCause(snapshot.cause);
+      };
+    }),
+  );
 
 export interface ProfileRetailPermissionReaderFactoryService {
   readonly make: (scope: ProfileRetailPermissionReaderScope) => RetailPermissionReader;

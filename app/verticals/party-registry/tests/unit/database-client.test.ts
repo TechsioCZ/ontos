@@ -9,10 +9,7 @@ it.effect('keeps Party Registry client configuration failure in the typed error 
       Effect.scoped(
         makePartyDatabase({
           connectionString: 'postgresql://party_registry_runtime:test@localhost:5433/ontos?statement_timeout=1',
-          database: 'ontos',
-          host: 'localhost',
-          port: 5433,
-          user: 'party_registry_runtime',
+          expectedRole: 'party_registry_runtime',
         }),
       ),
     );

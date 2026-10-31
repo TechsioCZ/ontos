@@ -35,6 +35,9 @@ import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rul
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
@@ -81,7 +84,11 @@ const runScoped = <Value, Failure>(
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* runTaxOwnerScopedOperation() {
-      const scopedTransaction = yield* installOperationalScope(transaction, scope);
+      const scopedTransaction = yield* installOperationalScope(
+        transaction,
+        scope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       return yield* operation(scopedTransaction);
     }),
   );

@@ -23,6 +23,7 @@ const connection = (database: string, user: string) =>
   Object.freeze({
     connectionString: `postgresql://${user}:fixture@localhost/${database}`,
     database,
+    expectedRole: user,
     host: 'localhost',
     port: 5432,
     user,

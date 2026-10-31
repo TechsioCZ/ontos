@@ -17,7 +17,10 @@ export class BrowserModuleRevisionConflict extends Schema.TaggedError<BrowserMod
 
 /** A browser document cannot replace an admitted release or a registered remote container. */
 export const pinBrowserModuleTarget = Effect.fn('ModuleEntrypointLoader.pinBrowserModuleTarget')(
-  function* pinBrowserModuleTargetEffect(target: ResolvedModuleTarget, browserDocument: Document) {
+  function* pinBrowserModuleTargetEffect(
+    target: Pick<ResolvedModuleTarget, 'compositionRevision' | 'federation'>,
+    browserDocument: Document,
+  ) {
     yield* pinDocumentCompositionRevision(target.compositionRevision, browserDocument).pipe(
       Effect.catchTag('DocumentCompositionRevisionError', (cause) =>
         Effect.fail(new BrowserModuleRevisionConflict({ cause })),

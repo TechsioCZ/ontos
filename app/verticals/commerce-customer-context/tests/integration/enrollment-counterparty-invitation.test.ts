@@ -7,7 +7,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import { eq, sql } from 'drizzle-orm';
 import { Config, Context, Deferred, Effect, Fiber, Layer, Option, Redacted, Schema } from 'effect';
@@ -164,7 +164,9 @@ const portalAuthConfiguration = Effect.fnUntraced(function* portalAuthConfigurat
 const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
   const configuration = yield* portalAuthConfiguration();
   return commercePortalAuthRealmLive.pipe(
-    Layer.provide(emailDeliveryConfiguration),
+    Layer.provide(
+      ResendEmailDeliveryLive.pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(emailDeliveryConfiguration)),
+    ),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });

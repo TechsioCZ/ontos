@@ -1,4 +1,6 @@
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActiveApplicationCompositionSnapshotSchema,
   ContextAccess,
   CorePersistenceLive,
@@ -368,7 +370,9 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.merge(persistence, accessLayer)));
     readRuntime = ReadRuntimeLive.pipe(
       Layer.provide(Layer.mergeAll(persistence, accessLayer, gateway, resolver)),
-      Layer.provide(NodeCrypto.layer),
+      Layer.provide(
+        Layer.mergeAll(NodeCrypto.layer, makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
+      ),
     );
   }
   const runtime = makePrivacyApiRuntime(readRuntime, Layer.succeedContext(native.context), redemption);

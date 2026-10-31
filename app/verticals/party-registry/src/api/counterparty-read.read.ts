@@ -1,4 +1,4 @@
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 
@@ -38,20 +38,22 @@ export const counterpartyReadRead = defineRead(
     resultSchema: CounterpartyReadResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input,
-    context: ReadHandlerContext<{
-      readonly find: (
-        counterpartyId: string,
-      ) => Effect.Effect<LookupResult<CounterpartyReadResponse>, CounterpartyPersistenceUnavailable>;
-    }>,
-  ) =>
-    resolveCounterpartyRead(
-      input.counterpartyRef,
-      context.scope.tenantId,
-      context.services.find,
-      'Counterparty persistence is temporarily unavailable',
-    ).pipe(Effect.map((value) => ({ evidence: { resultCount: 1 }, result: value }))),
+  {
+    load: (
+      input,
+      context: ReadLoadContext<{
+        readonly find: (
+          counterpartyId: string,
+        ) => Effect.Effect<LookupResult<CounterpartyReadResponse>, CounterpartyPersistenceUnavailable>;
+      }>,
+    ) =>
+      resolveCounterpartyRead(
+        input.counterpartyRef,
+        context.scope.tenantId,
+        context.services.find,
+        'Counterparty persistence is temporarily unavailable',
+      ).pipe(Effect.map((value) => ({ evidence: { resultCount: 1 }, result: value }))),
+  },
   (transaction, scope) =>
     Effect.succeed({
       find: (counterpartyId: string) =>

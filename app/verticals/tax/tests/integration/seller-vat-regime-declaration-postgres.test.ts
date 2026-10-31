@@ -19,6 +19,9 @@ import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/sell
 import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database/schema.ts';
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
@@ -52,7 +55,11 @@ const runScoped = <Value, Failure>(
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* runTaxOwnerScopedOperation() {
-      const scopedTransaction = yield* installOperationalScope(transaction, scope);
+      const scopedTransaction = yield* installOperationalScope(
+        transaction,
+        scope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       return yield* operation(scopedTransaction);
     }),
   );

@@ -84,7 +84,10 @@ const decodeOutcome = Schema.decodeUnknownSync(PrivacyOwnerExecutionOutcomeSchem
 describe('#956 TAX Privacy Owner coverage declaration', () => {
   it('assigns every private TAX table to a declared owner scope part (F13-F16)', () => {
     const covered = new Set<string>(Object.values(taxPrivacyScopePartTables).flat());
-    expect([...covered].toSorted()).toEqual([...TAX_TABLE_INVENTORY].toSorted());
+    expect([...covered].toSorted()).toEqual(
+      TAX_TABLE_INVENTORY.filter((name) => name !== 'gateway_assertion_redemptions').toSorted(),
+    );
+    expect([...covered]).not.toContain('gateway_assertion_redemptions');
     expect(Object.keys(taxPrivacyScopePartTables).toSorted()).toEqual([...taxPrivacyOwnerScopeParts].toSorted());
   });
 

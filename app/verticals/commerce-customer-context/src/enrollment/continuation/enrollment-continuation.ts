@@ -17,6 +17,11 @@ import type {
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
+import {
+  admitEnrollmentAttempt,
+  failRejectedEnrollmentAttempt,
+  setEnrollmentVerificationState,
+} from '../attempts/attempt-persistence.ts';
 import type {
   ClaimEnrollmentSweepInput,
   DueEnrollmentAttempt,
@@ -76,7 +81,9 @@ interface CommerceEnrollmentContinuationHalt {
   /**
    * `IN_FLIGHT`: another worker holds the transition's lease. `NO_OWNER_EFFECT`: this deployment
    * registers no owner effect that may dispatch it, so the Attempt is left exactly as it was.
-   * `RECONCILIATION_REQUIRED`: an owner decision is pending. None of the six is a completed journey.
+   * `RECONCILIATION_REQUIRED`: an owner decision is pending. `VERIFICATION_ACCEPTED`: the native
+   * verification wake committed and further progress is discoverable by the hosted worker.
+   * A halt is not completion.
    */
   readonly reason:
     | 'ATTEMPT_TERMINAL'
@@ -84,6 +91,7 @@ interface CommerceEnrollmentContinuationHalt {
     | 'NO_OWNER_EFFECT'
     | 'OWNER_REJECTED'
     | 'RECONCILIATION_REQUIRED'
+    | 'VERIFICATION_ACCEPTED'
     | 'VERIFICATION_REQUIRED';
   /** `none` when the halt is about the Attempt itself rather than about one transition. */
   readonly transition: Option.Option<JourneyTransitionSpec>;
@@ -93,6 +101,14 @@ export type CommerceEnrollmentContinuationResult =
   | { readonly outcome: 'COMPLETE' }
   | { readonly halt: CommerceEnrollmentContinuationHalt; readonly outcome: 'HALTED' };
 
+export interface CommerceEnrollmentContinuationOptions {
+  /**
+   * HTTP resume may return after a native verification wake, before downstream owner preparation.
+   * Already-running work still advances explicitly, even when background discovery is exhausted.
+   */
+  readonly yieldAfterVerification?: boolean;
+}
+
 export interface CommerceEnrollmentContinuationSweepPass {
   /**
    * Advance one Attempt as far as its journey and its durable journal allow. Failure is always a
@@ -100,6 +116,7 @@ export interface CommerceEnrollmentContinuationSweepPass {
    */
   readonly advance: (
     input: ReadEnrollmentAttemptInput,
+    options?: CommerceEnrollmentContinuationOptions,
   ) => Effect.Effect<CommerceEnrollmentContinuationResult, CommerceEnrollmentAttemptError>;
   /**
    * Take one Attempt's next sweep against the revision it stands at, charging the durable budget in
@@ -272,10 +289,22 @@ const readJournal = (
   );
 
 interface ContinuationSeams {
+  readonly admit: (
+    input: ReadEnrollmentAttemptInput,
+    compositionRevision: string,
+  ) => Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly compositionRevision: string;
+  readonly fail: (
+    input: ReadEnrollmentAttemptInput,
+    transition: JourneyTransitionSpec,
+  ) => Effect.Effect<boolean, CommerceEnrollmentAttemptError>;
   readonly lease: Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly registry: CommerceEnrollmentOwnerEffectRegistry['Service'];
   readonly resolveSubject: CommerceEnrollmentPreparationSubjectResolve;
+  readonly setVerificationState: (
+    attempt: EnrollmentAttemptSnapshot,
+    required: boolean,
+  ) => Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly store: (attempt: ReadEnrollmentAttemptInput) => CommerceEnrollmentOwnerAttemptStore;
 }
 
@@ -410,10 +439,15 @@ const runTransition = Effect.fn('CommerceEnrollmentContinuation.runTransition')(
 const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* advancePassEffect(
   seams: ContinuationSeams,
   input: ReadEnrollmentAttemptInput,
+  options: CommerceEnrollmentContinuationOptions,
 ): Effect.fn.Return<PassResult, CommerceEnrollmentAttemptError> {
   yield* seams.lease;
   const store = seams.store(input);
-  const attempt = yield* store.read(input);
+  let attempt = yield* store.read(input);
+  if (attempt.compositionRevision !== seams.compositionRevision && !isEnrollmentAttemptTerminal(attempt.state)) {
+    yield* seams.admit(input, seams.compositionRevision);
+    attempt = yield* store.read(input);
+  }
   if (attempt.compositionRevision !== seams.compositionRevision) {
     return yield* attemptUnavailable(
       'The durable Attempt belongs to a different Application Composition than this continuation pass',
@@ -425,6 +459,20 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   }
   const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt);
   const operations = yield* readJournal(store, attempt, journeyTransitions(definition));
+  const rejected = journeyTransitions(definition).find(
+    (transition) =>
+      transition.required &&
+      operations.some(
+        (operation) =>
+          operation.ownerModuleKey === transition.ownerModuleKey &&
+          operation.transitionKey === transition.transitionKey &&
+          operation.status === 'FAILED' &&
+          operation.failureCode === 'owner_rejected',
+      ),
+  );
+  if (rejected !== undefined) {
+    return halted('OWNER_REJECTED', rejected);
+  }
   const proven = new Set(
     operations.flatMap((operation) => (operation.status === 'SUCCEEDED' ? [journeyTransitionIdentity(operation)] : [])),
   );
@@ -432,14 +480,40 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   if (next === undefined) {
     return { attemptState: attempt.state, kind: 'SETTLED' };
   }
+  const operation = Option.fromNullishOr(
+    operations.find(
+      (candidate) => candidate.ownerModuleKey === next.ownerModuleKey && candidate.transitionKey === next.transitionKey,
+    ),
+  );
+  yield* seams.lease;
+  const isProviderCreation =
+    next.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+    next.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY;
+  if (!isProviderCreation && attempt.journey === 'RETAIL_SELF_ENROLLMENT' && Option.isNone(operation)) {
+    // Verification gates new downstream work, not settlement of an admitted owner invocation.
+    // Its original outcome must remain reconcilable even if current verification is unavailable.
+    const required = yield* seams.registry.verificationRequired({ attempt, operations });
+    const wasAwaitingVerification = attempt.state === 'VERIFICATION_REQUIRED';
+    if ((attempt.state === 'IN_PROGRESS' && required) || (attempt.state === 'VERIFICATION_REQUIRED' && !required)) {
+      yield* seams.setVerificationState(attempt, required);
+      attempt = yield* store.read(input);
+    }
+    if (required) {
+      // No downstream subject resolution, owner claim, lease or command while the person verifies.
+      return halted('VERIFICATION_REQUIRED', next);
+    }
+    if (wasAwaitingVerification && options.yieldAfterVerification === true) {
+      // The native wake makes this revision discoverable. Do not hold request-scoped services
+      // through the remaining distributed journey or detach work that needs those services.
+      return halted('VERIFICATION_ACCEPTED', next);
+    }
+  }
   const ownerContext = {
     attempt,
     operations,
     requestCorrelation: `${CONTINUATION_WORKER_PREFIX}:${attempt.portalEnrollmentAttemptId}`,
   } as const;
-  yield* seams.lease;
-  const owner = yield* next.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
-  next.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY
+  const owner = yield* isProviderCreation
     ? seams.registry.resolve(next, ownerContext)
     : seams
         .resolveSubject({
@@ -450,11 +524,6 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   if (Option.isNone(owner)) {
     return halted('NO_OWNER_EFFECT', next);
   }
-  const operation = Option.fromNullishOr(
-    operations.find(
-      (candidate) => candidate.ownerModuleKey === next.ownerModuleKey && candidate.transitionKey === next.transitionKey,
-    ),
-  );
   return yield* runTransition({ attempt, lease: seams.lease, operation, owner: owner.value, store, transition: next });
 });
 
@@ -463,7 +532,7 @@ const settledResult = (attemptState: EnrollmentAttemptState): CommerceEnrollment
     ? { outcome: 'COMPLETE' }
     : {
         halt: {
-          reason: attemptState === 'TERMINATED' ? 'ATTEMPT_TERMINAL' : 'VERIFICATION_REQUIRED',
+          reason: isEnrollmentAttemptTerminal(attemptState) ? 'ATTEMPT_TERMINAL' : 'VERIFICATION_REQUIRED',
           transition: Option.none(),
         },
         outcome: 'HALTED',
@@ -477,16 +546,28 @@ const advanceLoop = (
   seams: ContinuationSeams,
   input: ReadEnrollmentAttemptInput,
   remaining: number,
+  options: CommerceEnrollmentContinuationOptions,
 ): Effect.Effect<CommerceEnrollmentContinuationResult, CommerceEnrollmentAttemptError> =>
-  advancePass(seams, input).pipe(
+  advancePass(seams, input, options).pipe(
     Effect.flatMap((pass) => {
       if (pass.kind === 'HALTED') {
+        if (pass.halt.reason === 'OWNER_REJECTED' && Option.isSome(pass.halt.transition)) {
+          const transition = pass.halt.transition.value;
+          return seams.lease.pipe(
+            Effect.andThen(() => seams.fail(input, transition)),
+            Effect.map((failed) =>
+              failed ? settledResult('FAILED') : ({ halt: pass.halt, outcome: 'HALTED' } as const),
+            ),
+          );
+        }
         return Effect.succeed<CommerceEnrollmentContinuationResult>({ halt: pass.halt, outcome: 'HALTED' });
       }
       if (pass.kind === 'SETTLED') {
         return Effect.succeed(settledResult(pass.attemptState));
       }
-      return remaining <= 1 ? Effect.succeed(settledResult('IN_PROGRESS')) : advanceLoop(seams, input, remaining - 1);
+      return remaining <= 1
+        ? Effect.succeed(settledResult('IN_PROGRESS'))
+        : advanceLoop(seams, input, remaining - 1, options);
     }),
   );
 
@@ -506,15 +587,18 @@ const continuationSweepPassForSnapshot = (
     Effect.asVoid,
   );
   const seams: ContinuationSeams = {
+    admit: ports.admit,
     compositionRevision,
+    fail: ports.fail,
     lease,
     registry: ports.registry,
     resolveSubject: ports.resolveSubject,
+    setVerificationState: ports.setVerificationState,
     store: ports.store,
   };
   return Object.freeze({
-    advance: (input: ReadEnrollmentAttemptInput) =>
-      ports.permits.withPermit(advanceLoop(seams, input, CONTINUATION_PASS_BUDGET)),
+    advance: (input: ReadEnrollmentAttemptInput, options: CommerceEnrollmentContinuationOptions = {}) =>
+      ports.permits.withPermit(advanceLoop(seams, input, CONTINUATION_PASS_BUDGET, options)),
     claimSweep: (input: ClaimEnrollmentSweepInput) =>
       lease.pipe(
         Effect.filterOrFail(
@@ -528,14 +612,7 @@ const continuationSweepPassForSnapshot = (
         Effect.flatMap(() => ports.due.claimSweep(input)),
       ),
     compositionRevision,
-    listDue: (input: ListDueEnrollmentAttemptsInput) =>
-      lease.pipe(
-        Effect.flatMap(() => ports.due.listDue(input)),
-        Effect.filterOrFail(
-          (rows) => rows.every((attempt) => attempt.compositionRevision === compositionRevision),
-          () => attemptUnavailable('The due journal contains Attempts from a different continuation release'),
-        ),
-      ),
+    listDue: (input: ListDueEnrollmentAttemptsInput) => lease.pipe(Effect.flatMap(() => ports.due.listDue(input))),
   });
 };
 
@@ -603,16 +680,28 @@ export const CommerceEnrollmentContinuationLive = (
       );
       const due = commerceEnrollmentDueAttemptStoreForRun(runner.runWorker);
       const passPorts: Parameters<typeof continuationSweepPassForSnapshot>[1] = {
+        admit: (input, compositionRevision) =>
+          runner.run({ tenantId: input.tenantId }, (transaction) =>
+            admitEnrollmentAttempt(transaction, input, compositionRevision),
+          ),
         due,
+        fail: (input, transition) =>
+          runner.run({ tenantId: input.tenantId }, (transaction) =>
+            failRejectedEnrollmentAttempt(transaction, input.portalEnrollmentAttemptId, transition),
+          ),
         permits,
         registry,
         resolveSubject: resolver.resolve,
+        setVerificationState: (attempt, required) =>
+          runner.run({ tenantId: attempt.tenantId }, (transaction) =>
+            setEnrollmentVerificationState(transaction, attempt, required),
+          ),
         store: (attempt) => commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: attempt.tenantId }, runner.run),
       };
       const openSweepPass = admit.pipe(Effect.map((snapshot) => continuationSweepPassForSnapshot(snapshot, passPorts)));
       return Object.freeze({
-        advance: (input: ReadEnrollmentAttemptInput) =>
-          openSweepPass.pipe(Effect.flatMap((pass) => pass.advance(input))),
+        advance: (input: ReadEnrollmentAttemptInput, options?: CommerceEnrollmentContinuationOptions) =>
+          openSweepPass.pipe(Effect.flatMap((pass) => pass.advance(input, options))),
         openSweepPass,
       });
     }),

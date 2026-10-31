@@ -17,6 +17,7 @@ import { PaymentTermSourceStatementApi } from './shared/apis/payment-term-source
 import { reconcilePaymentTermReferenceAction } from './src/actions/reconcile-payment-term-reference.action.ts';
 import { retirePaymentTermAction } from './src/actions/retire-payment-term.action.ts';
 // </generated-module-manifest-imports>
+import { paymentTermCatalogMcpContribution } from './shared/mcp/contribution.ts';
 
 export const paymentTermCatalogManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -60,6 +61,7 @@ export const paymentTermCatalogManifest: OntosModuleManifestInput = defineOntosM
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: paymentTermCatalogMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

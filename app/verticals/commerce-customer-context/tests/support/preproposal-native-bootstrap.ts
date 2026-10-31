@@ -1,4 +1,6 @@
-import { DATABASE_IDENTITIES, loadDatabaseIdentityConnections, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { loadDatabaseIdentityConnections, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { testDatabaseIdentityConnection } from '../../../../packages/core-runtime/tests/support/database-identities.ts';
+import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { readAllocatedPermissionEnvironment } from './preproposal-basis-native.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { Config, Effect, FileSystem, Path, Schema, Stream } from 'effect';
@@ -13,7 +15,7 @@ class PreproposalBootstrapError extends Schema.TaggedError<PreproposalBootstrapE
 /** Test infrastructure only. Migrate a fresh empty allocation, never the configured source. */
 export const bootstrapPreproposalNativeSource = Effect.fn('PreproposalNative.bootstrapSource')(
   function* bootstrapPreproposalNativeSource() {
-    const identities = yield* loadDatabaseIdentityConnections();
+    const identities = yield* loadDatabaseIdentityConnections({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT });
     const sourceConnections = yield* loadDatabaseConnectionPair();
     const source = yield* makeIsolatedNativeDatabaseFixture({
       mode: 'empty',
@@ -32,15 +34,23 @@ export const bootstrapPreproposalNativeSource = Effect.fn('PreproposalNative.boo
       ...Object.fromEntries(
         DATABASE_IDENTITIES.map((identity) => [
           identity.urlKey,
-          retarget(identities.runtime[identity.id].connectionString),
+          retarget(testDatabaseIdentityConnection(identities, identity.id).connectionString),
         ]),
       ),
     };
     // Explicit environment wins over dotenv in every migrator/verifier. Validate all
     // derived identities before any process can mutate the disposable allocation.
-    yield* loadDatabaseIdentityConnections({ environment, envPath: '/dev/null' });
+    yield* loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      environment,
+      envPath: '/dev/null',
+    });
     const inherited = yield* Config.all({
       HOME: Config.String('HOME'),
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+        Config.withDefault(true),
+        Config.map(String),
+      ),
       PATH: Config.String('PATH'),
       TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
     });
@@ -101,6 +111,10 @@ export const runStandalonePreproposalNativeTest = Effect.fn('PreproposalNative.s
     const environment = yield* bootstrapPreproposalNativeSource();
     const inherited = yield* Config.all({
       HOME: Config.String('HOME'),
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+        Config.withDefault(true),
+        Config.map(String),
+      ),
       PATH: Config.String('PATH'),
       TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
     });

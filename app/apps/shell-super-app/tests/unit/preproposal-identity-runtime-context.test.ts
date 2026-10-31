@@ -33,8 +33,10 @@ rs.mock('@app/core-runtime', () => {
     ContextAccessLive: Layer.empty,
     CorePersistenceLive: Layer.empty,
     DatabaseConfig: Context.Service<object>('PreproposalContextTest/DatabaseConfig'),
+    defineDatabaseIdentityEnrollment: () => ({}),
     LegalEntityContextLive: Layer.empty,
     makeActionRuntimeLive: () => Layer.effect(actionRuntime, AuthenticationNamespaceRegistry.pipe(Effect.as({}))),
+    makeDatabaseIdentityEnrollmentLive: () => Layer.empty,
     parseDatabaseConfig: () => Effect.succeed({ database: fixture.database, host: 'localhost', user: 'ontos_runtime' }),
     PrincipalResolver: principalResolver,
     PrincipalResolverLive: () => Layer.succeed(principalResolver, {}),
@@ -113,6 +115,7 @@ rs.mock('../../api/auth/service.ts', () => ({
     ),
 }));
 rs.mock('../../api/auth/api-key-service.ts', () => ({ makeApiKeyService: () => Effect.succeed({}) }));
+rs.mock('../support/shell-authentication.ts', () => ({ shellAuthenticationFrameworkLive: () => Layer.empty }));
 
 rs.mock('../../api/auth/identity-lifecycle.ts', () => ({
   makeIdentityLifecycleService: () => ({

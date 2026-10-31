@@ -4,7 +4,7 @@ import type { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
 import { expect, it, rstest } from 'effect-rstest';
 
-import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 const normalizeSql = (sql: string): string => sql.replaceAll('"', '').replaceAll(/\s+/gu, ' ').trim().toLowerCase();
 const ownerMigration = readFileSync(
@@ -57,6 +57,7 @@ it.live(
             return [
               {
                 rolbypassrls: false,
+                rolcanlogin: true,
                 rolcreatedb: false,
                 rolcreaterole: false,
                 rolinherit: false,
@@ -89,7 +90,11 @@ it.live(
     rstest.doMock('../../packages/core-runtime/src/db/config.ts', () => ({
       loadDatabaseIdentityConnections: () =>
         Effect.succeed({
-          admin: { connectionString: 'postgres://admin:fixture@invalid/catalog', database: 'catalog' },
+          admin: {
+            connectionString: 'postgres://admin:fixture@localhost/catalog',
+            database: 'catalog',
+            host: 'localhost',
+          },
           runtime: Object.fromEntries(
             DATABASE_IDENTITIES.map(({ id, role }) => [
               id,
@@ -103,6 +108,8 @@ it.live(
         }),
     }));
     const previousExitCode = process.exitCode;
+    // Creating the explicit owner logins is local initialization; deployed reconciliation only verifies them.
+    rstest.stubEnv('DATABASE_LOGIN_ROLE_POLICY', 'initialize-local');
     try {
       for (const repeat of [false, true]) {
         statements.length = 0;
@@ -134,6 +141,7 @@ it.live(
       );
     } finally {
       process.exitCode = previousExitCode;
+      rstest.unstubAllEnvs();
       rstest.doUnmock('@effect/sql-pg');
       rstest.doUnmock('../../packages/core-runtime/src/db/config.ts');
       rstest.resetModules();

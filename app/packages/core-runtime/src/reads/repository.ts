@@ -4,6 +4,7 @@ import { recoverSqlTransactionError } from '../actions/repository.ts';
 import { dataAccessEvents } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreDbExecutor } from '../db/types.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { ReadAccessKind, ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidencePersistenceError } from './errors.ts';
@@ -89,10 +90,11 @@ export const persistReadEvidence = (
 export const persistScopedReadEvidence = (
   executor: Pick<CoreDatabaseExecutor, 'transaction'>,
   input: PersistReadEvidenceInput,
+  enrollment: DatabaseIdentityEnrollment,
 ): Effect.Effect<void, ReadEvidencePersistenceError> =>
   executor
     .transaction((transaction) =>
-      installOperationalScope(transaction, input.scope).pipe(
+      installOperationalScope(transaction, input.scope, enrollment).pipe(
         Effect.andThen(() => persistReadEvidence(transaction, input)),
       ),
     )

@@ -1,8 +1,10 @@
 import {
-  gatewayScopedTenantLegalEntityRlsPolicies,
-  gatewayScopedTenantRlsPolicies,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry-identity-contracts';
+import {
+  gatewayScopedTenantLegalEntityRlsPolicies,
+  gatewayScopedTenantRlsPolicies,
   sessionScopedTenantLegalEntityReadRlsPolicy,
   sessionScopedTenantReadRlsPolicy,
 } from '@app/core-runtime';

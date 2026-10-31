@@ -37,7 +37,7 @@ Read a specification only when the task or GitHub issue names it. A specificatio
 - Start supported business artifacts with Codesmith. If a category has no approved generator or gateway, extend or approve that boundary before creating the artifact.
 - Infrastructure and architecture files may be created directly when no generator applies.
 - Keep third-party HTTP adapters private to their owner. Define provider schemas, typed failures, request construction, resilience, diagnostics, and business mapping; use the generated Effect `HttpClient` service as the test seam.
-- Run pnpm commands from `app/` through `mise exec -- pnpm`.
+- Run pnpm commands from `app/` through `mise exec -- pnpm`. Install dependencies with `mise run deps`; this task caps pnpm importer workers to reduce APFS clone contention without limiting lint or build concurrency.
 
 ## Codesmith
 
@@ -65,7 +65,8 @@ Then generate its MicroVertical module contract before its business artifacts. G
 | Framework release and package aliases   | `pnpm-workspace.yaml#catalogs.ultramodern` and the installed generator's `release-cohort.json` |
 | Deployments, remotes, ports, and owners | `topology/` and generated ownership metadata                                                   |
 | Agent skill sources and install target  | `.agents/skills-lock.json` and its bootstrap script                                            |
-| CI and stage delivery                   | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
+| CI gates                                | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
+| Stage delivery                          | `../.github/workflows/zerops-stage.yml` and `topology/stage-edge.json`                         |
 | Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
 Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
@@ -156,7 +157,6 @@ Use the source-owned operator evidence commands:
 mise exec -- pnpm authorization:inventory:check
 mise exec -- pnpm authorization:impact:report -- .codex/reports/authorization/would-deny.json
 mise exec -- pnpm authorization:readiness:check -- stage
-mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage --outbox-worker-mode host
 mise exec -- pnpm test:scripts
 ```
 
@@ -181,8 +181,8 @@ mise exec -- pnpm check:local --dry-run
 Scopes run existing package scripts; they do not infer impacted packages or replace the full gate.
 No scope means `full`, which runs `pnpm check`; an unknown scope fails rather than silently skipping
 validation. `pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact
-commands (`test:scripts`, `test:deployment-impact`, `test:generation`). Use existing package-filtered
-tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
+commands (`shell:ui-candidates:check`, `test:scripts`, `module-entrypoints:check`, `test:generation`).
+Use existing package-filtered tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
 the full scope leaves out without running anything; it is not validation.
 
 Installation bootstraps agent skills but does not format source. Format deliberately with

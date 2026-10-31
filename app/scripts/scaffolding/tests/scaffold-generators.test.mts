@@ -30,11 +30,11 @@ import {
   issueGatewayContextAssertion,
   makeGatewayIssuerLayer,
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
-import { scopeGrantRegistrarLayer } from '../../../apps/shell-super-app/tests/support/gateway-issuer-layer.ts';
 import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import { GatewayScopeGrantRegistrar } from '../../../packages/core-runtime/src/auth/gateway-scope-grant.ts';
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
@@ -62,6 +62,7 @@ import {
   publishedOutboxContractExports,
 } from '../../published-outbox-contracts.mts';
 import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
+import { customizeOutboxWorkerHostEntry } from '../outbox-worker/scaffold.mts';
 import type { ScaffoldCommand } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 import {
@@ -584,6 +585,7 @@ const inventoryActionFile = 'verticals/inventory-stock/src/actions/create-order.
 const inventoryOutboxContractFile = 'verticals/inventory-stock/shared/outbox/orders-created.ts';
 const billingApiIndexFile = 'verticals/billing/api/index.ts';
 const billingWorkersIndexFile = 'verticals/billing/src/workers/index.ts';
+const billingWorkerHostEntryFile = 'verticals/billing/src/worker-host/entry.ts';
 const inventoryTsconfigFile = 'verticals/inventory-stock/tsconfig.json';
 const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/inventory.json';
 const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
@@ -706,10 +708,9 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-          'cloudflare:build':
-            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: preservedFixtureValue,
         },
+        type: 'module',
         version: '0.1.0',
       }),
     );
@@ -1194,7 +1195,7 @@ it.live(
           [
             '--input-type=module',
             '--eval',
-            `import { Effect, Match, Result } from 'effect';
+            `import { Clock, Effect, Match, Result } from 'effect';
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { FetchHttpClient } from 'effect/http';
 import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
@@ -1205,6 +1206,9 @@ Effect.gen(function* generatedHttpProof() {
 const calls = [];
 let gatewayAttempts = 0;
 const compositionRevision = 'a'.repeat(64);
+// Still valid, but inside the browser assertion reuse margin: each scenario must
+// acquire its own response so an earlier success cannot mask an issuer failure.
+const gatewayExpiresAt = Math.floor((yield* Clock.currentTimeMillis) / 1000) + 10;
 const cases = [
         [executeResourceDetailWithAuthorization, {}, { ok: true }, executeResourceDetail],
         [loadInventoryItemsClientWithAuthorization, { query: 'chair' }, [], loadInventoryItemsClient],
@@ -1244,7 +1248,7 @@ for (const [, payload, response, invoke] of cases) {
             gatewayAttempts += 1;
             const request = JSON.parse(String(init.body));
             if (request.compositionRevision !== compositionRevision) throw new Error('Gateway did not request the pinned composition');
-            return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision, expiresAt: 2_000_000_000, token: 'proof' }));
+            return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision, expiresAt: gatewayExpiresAt, token: 'proof' }));
           }
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id'), compositionRevision: new Headers(init.headers).get('x-ontos-composition-revision') });
           return Promise.resolve(Response.json(response));
@@ -1314,7 +1318,7 @@ const mismatch = yield* executeResourceDetail({}, 'revision-mismatch').pipe(
   Effect.provideService(FetchHttpClient.Fetch, (url) => {
     if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
       gatewayAttempts += 1;
-      return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision: 'b'.repeat(64), expiresAt: 2_000_000_000, token: 'proof' }));
+      return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision: 'b'.repeat(64), expiresAt: gatewayExpiresAt, token: 'proof' }));
     }
     endpointRequestsAfterRevisionMismatch += 1;
     return Promise.resolve(Response.json({ ok: true }));
@@ -1403,9 +1407,30 @@ it.live(
           'item',
         ]);
         const owner = path.join(appRoot, 'verticals/party-registry');
+        const registration = yield* Effect.promise(() =>
+          readFile(path.join(owner, 'vertical.registration.ts'), 'utf-8'),
+        );
+        // The public owner registration is the inventory, not a frozen count of
+        // transports. Compare the full set so missing and unregistered servers fail.
+        const registeredServerNames = ['apis', 'search'].flatMap((slot) => {
+          const entries = readGeneratedSlotEntries(
+            registration,
+            `// <generated-module-registration-${slot}>`,
+            `// </generated-module-registration-${slot}>`,
+          );
+          expect(entries.length, slot).toBeGreaterThan(0);
+          return entries.map((entry) => {
+            const clientImport = /import\('\.\/src\/api\/(?<client>[a-z0-9-]+-client\.ts)'\)/u.exec(entry);
+            const client = clientImport?.groups?.['client'];
+            if (client === undefined) {
+              expect.unreachable(`expected an owned ${slot} client registration: ${entry}`);
+            }
+            return client.replace('-client.ts', slot === 'apis' ? '-read-server.ts' : '-server.ts');
+          });
+        });
         const ownerFiles = yield* Effect.promise(() => readdir(path.join(owner, 'api')));
         const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
-        expect(serverNames.length).toBe(20);
+        expect(serverNames.toSorted()).toEqual(registeredServerNames.toSorted());
         yield* Effect.all(
           serverNames.map(
             Effect.fn(function* compareLiveTransport(serverName) {
@@ -1809,6 +1834,17 @@ for (const [route, payload] of requests) {
     successes.push({ body: (yield* Effect.promise(() => response.json())), status: response.status });
   }
 const callsAfterSuccess = calls.length;
+const missingAuthorizationStatuses = [];
+for (const [route, payload] of requests) {
+  const response = (yield* Effect.promise(() => server.handler(
+    new Request('http://fixture.test' + route, {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json', 'x-correlation-id': 'generated-correlation' },
+      method: 'POST',
+    }),
+  )));
+  missingAuthorizationStatuses.push(response.status);
+}
 const missingCorrelationStatuses = [];
 for (const [route, payload] of requests) {
     const response = (yield* Effect.promise(() => server.handler(
@@ -1832,6 +1868,7 @@ console.log(
       calls,
       callsAfterSuccess,
       generatedRootStatus: generatedRootResponse.status,
+      missingAuthorizationStatuses,
       missingCorrelationStatuses,
       successes,
     }),
@@ -1847,7 +1884,7 @@ console.log(
             DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
           },
         });
-        expect(execution.status, execution.stderr).toBe(0);
+        expect(execution.status, `${execution.stdout}\n${execution.stderr}`).toBe(0);
         const expectedGeneratedPrincipal = {
           authContextRef: 'job:generated-fixture:run:governed-read',
           authMethod: 'system',
@@ -1890,6 +1927,7 @@ console.log(
           ],
           callsAfterSuccess: 4,
           generatedRootStatus: 400,
+          missingAuthorizationStatuses: [401, 401, 401, 401],
           missingCorrelationStatuses: [400, 400, 400, 400],
           successes: [
             { body: { ok: true }, status: 200 },
@@ -2834,6 +2872,8 @@ it.live(
             `--metafile=${edgeMetafile}`,
             `--outfile=${path.join(edgeBundleDirectory, 'action-principal.mjs')}`,
             '--platform=browser',
+            '--conditions=workerd',
+            '--external:cloudflare:workers',
           ],
           { encoding: 'utf-8' },
         );
@@ -2889,6 +2929,13 @@ it.live(
           principalId: '40000000-0000-4000-8000-000000000001',
           tenantId: '50000000-0000-4000-8000-000000000001',
         };
+        const registeredAudiences: string[] = [];
+        const registrar: GatewayScopeGrantRegistrar['Service'] = {
+          register: ({ audience }) =>
+            Effect.sync(() => {
+              registeredAudiences.push(audience);
+            }),
+        };
         const issue = Effect.fn(function* mergedScenario63(
           configuration: GatewayIssuerConfigValue,
           issuedAt: number,
@@ -2911,7 +2958,7 @@ it.live(
                   revision: approvedSnapshot.composition.revision,
                 }),
                 loadConfig: Effect.succeed(configuration),
-              }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+              }).pipe(Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, registrar))),
             ),
           );
         });
@@ -2924,6 +2971,7 @@ it.live(
         const currentAssertion = yield* issue(current.configuration, 1_700_000_000);
         const billingAssertion = yield* issue(current.configuration, 1_700_000_000, 'billing');
         const retiringAssertion = yield* issue(retiring.configuration, 1_700_000_000);
+        expect(registeredAudiences).toEqual([inventorySlug, 'billing', inventorySlug]);
         const testRedemption = { consume: () => Effect.void };
         const verify = (token: string, override: GeneratedPrincipalEnvironment = environment, now = 1_700_000_001) =>
           generatedModule
@@ -2945,19 +2993,23 @@ it.live(
             .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
         ).toEqual(principal);
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         yield* expectFailure(
-          billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          billingGeneratedModule
+            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         expect(yield* verify(retiringAssertion.token)).toEqual(principal);
@@ -3088,27 +3140,33 @@ it.live(
           expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(undefined, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(undefined, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalMissingError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal('bearer malformed', {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal('bearer malformed', {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment: {},
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment: {},
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalConfigurationError')(error)).toBe(true),
         );
         let acquisitions = 0;
@@ -4359,18 +4417,23 @@ export const outboxWorkers = Object.freeze([
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
+import { defineDatabaseIdentityEnrollment, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
 export { OutboxRepositoryLive as outboxWorkerRepositoryLive } from '@app/core-runtime/outbox/worker';
 
+export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEnrollmentLive(
+  defineDatabaseIdentityEnrollment([]),
+);
+
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.empty;
 
 export const outboxWorkerLayer = Layer.merge(OutboxWorkerInfrastructureLive, outboxWorkerHandlerLayer);
 `);
-        expect(yield* readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/entry.ts'))
+        expect(yield* readFixtureFile(fixture.root, billingWorkerHostEntryFile))
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { NodeCrypto } from '@effect/platform-node';
@@ -4387,6 +4450,7 @@ import { outboxWorkers } from '../workers/index.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
+  outboxWorkerDatabaseIdentityEnrollmentLive,
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
   outboxWorkerRepositoryLive,
 } from './layer.ts';
@@ -4412,6 +4476,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
+    Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
     Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
@@ -4459,6 +4524,24 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
         );
         expect(producerAfter).toEqual(producerBefore);
 
+        const ownerEntryPath = billingWorkerHostEntryFile;
+        const customizedEntry = yield* customizeOutboxWorkerHostEntry(
+          yield* readFixtureFile(fixture.root, ownerEntryPath),
+          {
+            composition: 'const recovery = makeOwnerRecovery();',
+            entry: 'withOwnerRecovery(compiledOutboxWorkerEntry, recovery)',
+            imports: [
+              "import { Effect } from 'effect';",
+              "import { makeOwnerRecovery, withOwnerRecovery } from './recovery.ts';",
+            ].join('\n'),
+          },
+        );
+        yield* Effect.promise(() => writeFile(path.join(fixture.root, ownerEntryPath), customizedEntry));
+        expect(customizedEntry).toContain('expectedDeployment: ultramodernApiMarker,');
+        expect(customizedEntry).toContain('const compiledOutboxWorkerEntry = defineOutboxWorkerEntry({');
+        expect(customizedEntry.match(/from 'effect'/gu)).toHaveLength(1);
+        expect(yield* customizeOutboxWorkerHostEntry(customizedEntry)).toBe(customizedEntry);
+
         yield* run(fixture, scaffoldCommand.outboxMessage, [
           scaffoldFlag.vertical,
           inventorySlug,
@@ -4477,6 +4560,7 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
           '--topic',
           fixtureName.ordersShipped,
         ]);
+        expect(yield* readFixtureFile(fixture.root, ownerEntryPath)).toBe(customizedEntry);
         const registry = yield* readFixtureFile(fixture.root, billingWorkersIndexFile);
         expect(
           registry.indexOf('ordersCreatedLoggerWorker') < registry.indexOf('ordersShippedProjectorWorker'),
@@ -4498,6 +4582,29 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
         );
       }),
     );
+  }),
+);
+
+it.effect('owner worker lifecycle customization refuses handwritten entries', () =>
+  Effect.gen(function* refusesForeignWorkerEntry() {
+    const failure = yield* Effect.flip(
+      customizeOutboxWorkerHostEntry('export const outboxWorkerEntry = {};\n', {
+        composition: '',
+        entry: 'compiledOutboxWorkerEntry',
+        imports: '',
+      }),
+    );
+    expect(failure.message).toContain('Only a generated owner worker entry');
+  }),
+);
+
+it.live('owner worker lifecycle regeneration preserves the production Commerce root', () =>
+  Effect.gen(function* preservesCommerceWorkerRoot() {
+    const source = yield* readFixtureFile(appRoot, 'verticals/commerce-customer-context/src/worker-host/entry.ts');
+    expect(source).toContain('withCommerceEnrollmentRecovery(compiledOutboxWorkerEntry');
+    expect(source).toContain('expectedDeployment: ultramodernApiMarker,');
+    expect(source).toContain('Layer.build(commerceEnrollmentRecoveryLive)');
+    expect(yield* customizeOutboxWorkerHostEntry(source)).toBe(source);
   }),
 );
 
@@ -5832,6 +5939,99 @@ export default OrdersPage;
   }),
 );
 
+const inventoryModernRuntimeFile = 'verticals/inventory-stock/src/modern.runtime.ts';
+
+const configureRuntimeLocaleFixture = Effect.fn(function* runtimeLocaleFixture(fixture: Fixture) {
+  const packagePath = path.join(fixture.root, inventoryPackageFile);
+  const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
+  const exports = Object.fromEntries(
+    Object.entries(packageJson.exports).filter(([key]) => !key.startsWith('./locales/')),
+  );
+  yield* Effect.promise(() => writeFile(packagePath, json({ ...packageJson, exports }), 'utf-8'));
+  yield* Effect.promise(() => rm(path.join(fixture.root, 'verticals/inventory-stock/src/i18n/resources.ts')));
+  yield* write(
+    fixture.root,
+    inventoryModernRuntimeFile,
+    `import csResource from '../locales/cs/inventory.json';
+import enResource from '../locales/en/inventory.json';
+import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
+const resources = {
+  cs: { [ultramodernRouteNamespace]: csResource },
+  en: { [ultramodernRouteNamespace]: enResource },
+} as const;
+export default defineRuntimeConfig({ i18n: { initOptions: { defaultNS: ultramodernRouteNamespace, resources } } });
+`,
+  );
+});
+
+it.live(
+  'generates and safely reruns pages using pinned runtime-local catalogs without legacy locale exports',
+  Effect.fn(function* runtimeLocalePage() {
+    yield* withFixture(
+      Effect.fn(function* runtimeLocalePageFixture(fixture) {
+        yield* configureRuntimeLocaleFixture(fixture);
+        const runtimeBefore = yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile);
+        const args = [scaffoldFlag.vertical, inventorySlug, '--page', 'records', '--url', '/nemovitosti'];
+        yield* run(fixture, scaffoldCommand.microverticalPage, args);
+        const page = yield* readFixtureFile(
+          fixture.root,
+          'verticals/inventory-stock/src/routes/[lang]/nemovitosti/page.tsx',
+        );
+        expect(page).toContain("import csResource from '../../../../locales/cs/inventory.json';");
+        expect(page).toContain("import enResource from '../../../../locales/en/inventory.json';");
+        expect(page).toMatch(/cs:\s*\{\s*inventory:\s*csResource/u);
+        expect(page).toMatch(/en:\s*\{\s*inventory:\s*enResource/u);
+        expect(page).toContain("t('inventory.pages.records.title')");
+        expect(page).not.toContain('i18n/resources');
+        const catalog = yield* decodeInventoryLocale(yield* readFixtureFile(fixture.root, inventoryEnglishLocaleFile));
+        expect(catalog.inventory.pages['records']).toEqual({ description: pagePlaceholder, title: 'New Page' });
+        expect(yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile)).toBe(runtimeBefore);
+        const beforeRerun = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.microverticalPage, args);
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'rejects broken runtime locale bindings and conflicting locale exports before any page write',
+  Effect.fn(function* invalidRuntimeLocalePage() {
+    for (const invalid of ['binding', 'export', 'comment']) {
+      yield* withFixture(
+        Effect.fn(function* invalidRuntimeLocalePageFixture(fixture) {
+          yield* configureRuntimeLocaleFixture(fixture);
+          if (invalid === 'binding') {
+            const runtimeFile = inventoryModernRuntimeFile;
+            const content = yield* readFixtureFile(fixture.root, runtimeFile);
+            yield* write(
+              fixture.root,
+              runtimeFile,
+              content.replace('[ultramodernRouteNamespace]: csResource', '[ultramodernRouteNamespace]: enResource'),
+            );
+          } else {
+            const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
+            yield* write(
+              fixture.root,
+              inventoryPackageFile,
+              json({
+                ...packageJson,
+                exports: { ...packageJson.exports, './locales/cs': './locales/cs/wrong-owner.json' },
+              }),
+            );
+          }
+          yield* assertScaffoldRefused(
+            fixture,
+            scaffoldCommand.microverticalPage,
+            [scaffoldFlag.vertical, inventorySlug, '--page', 'records'],
+            /missing its generated cs locale export/u,
+          );
+        }),
+      );
+    }
+  }),
+);
+
 it.live(
   'rejects page generation when an owning locale has no truthful starter translation',
   Effect.fn(function* scenario124() {
@@ -6096,7 +6296,7 @@ it.live(
           billingApiIndexFile,
           'verticals/billing/src/workers/orders-created-logger.worker.ts',
           'verticals/billing/src/worker-host/layer.ts',
-          'verticals/billing/src/worker-host/entry.ts',
+          billingWorkerHostEntryFile,
           'verticals/billing/src/worker-host/main.ts',
           'verticals/inventory-stock/src/policies/stock-available.policy.ts',
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
@@ -6263,12 +6463,9 @@ it.live(
           writeFile(
             fixtureTsconfig,
             json({
+              // Use the same strictness as Core and the owning verticals, including
+              // exact optional-property semantics for schema-decoded union inputs.
               compilerOptions: {
-                allowImportingTsExtensions: true,
-                jsx: 'preserve',
-                module: 'preserve',
-                moduleResolution: 'Bundler',
-                noEmit: true,
                 paths: {
                   ...coreRuntimePaths,
                   '@app/gateway-principal-verifier/server': [
@@ -6286,12 +6483,10 @@ it.live(
                     path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
                   ],
                 },
-                resolveJsonModule: true,
                 skipLibCheck: true,
-                strict: true,
-                target: 'ESNext',
                 types: ['node', 'react'],
               },
+              extends: path.join(appRoot, 'tsconfig.base.json'),
               include: [
                 modernAppEnvironmentTypes,
                 'packages/core-runtime/src/modules/actions/**/*.ts',
@@ -6436,6 +6631,73 @@ it('generated fluent slots preserve multiline call entries', () => {
   expect(entries.length).toBe(3);
   expect(entries[0] ?? '').toMatch(/FirstApi/u);
 });
+
+it.live(
+  'governed generation preserves formatter-merged support imports without duplicating canonical bindings',
+  Effect.fn(function* mergedSupportImports() {
+    yield* withFixture(
+      Effect.fn(function* supportImportFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]);
+        const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
+        const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
+        const canonical =
+          "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+        const merged =
+          "import {\n  GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,\n} from './auth/gateway-assertion-redemption.ts';";
+        expect(source.includes(canonical)).toBe(true);
+        yield* Effect.promise(() => writeFile(rootPath, source.replace(canonical, merged)));
+        const flags = [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail];
+        yield* run(fixture, scaffoldCommand.moduleApi, flags);
+        const generated = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
+        expect(generated).toContain(merged);
+        const beforeRerun = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.moduleApi, flags);
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
+        const entries = readGeneratedSlotEntries(
+          generated,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+        );
+        expect(entries.filter((entry) => entry.includes("'./auth/gateway-assertion-redemption.ts'"))).toHaveLength(1);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'governed generation rejects a merged support import whose generated binding points at another export',
+  Effect.fn(function* invalidMergedSupportImports() {
+    yield* withFixture(
+      Effect.fn(function* invalidSupportImportFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]);
+        const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
+        const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
+        const invalid = source.replace(
+          'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+          'GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionLive',
+        );
+        expect(invalid).not.toBe(source);
+        yield* Effect.promise(() => writeFile(rootPath, invalid));
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+          /unsupported developer content/u,
+        );
+      }),
+    );
+  }),
+);
 
 for (const [start, end] of [
   [GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END],
@@ -6635,6 +6897,17 @@ it.live(
         'ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime',
         'ActionRuntime, CounterfeitRedemptionService as GatewayAssertionRedemptionService, ReadRuntime',
       ],
+      [
+        '  GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as',
+        '  CounterfeitDatabaseLive as GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as',
+      ],
+      ['Layer.provide(GatewayAssertionRedemptionDatabaseLive),', 'Layer.provide(CounterfeitDatabaseLive),'],
+      [
+        'Layer.Error<typeof productionGatewayAssertionRedemptionLive>',
+        'Layer.Error<typeof productionActionRuntimeLive>',
+      ],
+      [tuple, `${tuple}\n  mutate(productionGatewayAssertionRedemptionLive);`],
+      [tuple, `${tuple}\n  mutate(GatewayAssertionRedemptionDatabaseLive);`],
 
       [merge, `${merge}\n  governedReadRuntimeLive['service'] = evil;`],
     ];

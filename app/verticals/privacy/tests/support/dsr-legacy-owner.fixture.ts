@@ -1,5 +1,7 @@
 // Explicit TEST entry, compiled independently into genuine old/current owner trees.
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -262,11 +264,23 @@ const serve = Effect.scoped(
     const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
       Layer.provideMerge(authorities),
       Layer.provide(infrastructure),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          DatabaseConfigLive,
+          NodeCrypto.layer,
+          makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+        ),
+      ),
     );
     const read = ReadRuntimeLive.pipe(
       Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, entrypoint, scope)),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          DatabaseConfigLive,
+          NodeCrypto.layer,
+          makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+        ),
+      ),
     );
     const api = makePrivacyApiRuntime(read, action, redemption);
     const handler = yield* Effect.acquireRelease(

@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -43,6 +45,8 @@ import {
   commerceMarketCatalogCorsAllowedOrigins,
   resolveCommerceMarketCatalogShellOrigin,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const commerceMarketCatalogReadinessLayer = HttpApiBuilder.group(commerceMarketCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -96,6 +100,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
@@ -131,6 +136,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
       Layer.mergeAll(
         runtimeObservabilityLive,
         RequestSchemaProblemLive,
+        databaseIdentitiesLive,
         ActiveApplicationCompositionSourceLive.pipe(
           Layer.provide(
             FetchHttpClient.layer.pipe(

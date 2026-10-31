@@ -420,7 +420,9 @@ export const commerceEnrollmentPreparedOwnerExecutionLive = Layer.effect(
   CommerceEnrollmentPreparedOwnerExecutionService,
   Effect.gen(function* makeCommerceEnrollmentPreparedOwnerExecutionLive() {
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
-    return makeCommerceEnrollmentPreparedOwnerExecution(preparation);
+    const execution = makeCommerceEnrollmentPreparedOwnerExecution(preparation);
+    yield* Effect.addFinalizer(() => Effect.sync(execution.clear));
+    return execution;
   }),
 );
 

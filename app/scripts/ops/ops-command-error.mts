@@ -5,4 +5,6 @@ export class OpsCommandError extends Schema.TaggedError<OpsCommandError>()('OpsC
   cause: Schema.optional(Schema.Defect()),
   command: Schema.String,
   message: Schema.String,
+  /** The provider reported a failure its own retry guidance covers; the command itself was valid. */
+  transient: Schema.optional(Schema.Boolean),
 }) {}

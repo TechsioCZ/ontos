@@ -37,13 +37,9 @@
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target cloudflare-dist && ultramodern-create ultramodern public-surface --app party-registry --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app party-registry",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts && drizzle-kit generate --config drizzle.contacts.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts && drizzle-kit check --config drizzle.contacts.config.ts",
-    "db:migrate": "node scripts/prepare-contacts-migration.mts && drizzle-kit migrate --config drizzle.contacts.config.ts && drizzle-kit migrate --config drizzle.config.ts",
+    "db:migrate": "node ../../scripts/migration-convergence-cli.mts party",
     "db:test": "pnpm test:unit && pnpm test:integration",
     "db:verify": "node scripts/verify-db-schema.mts && node scripts/verify-engagement-db-schema.mts",
     "dev": "node ../../scripts/prepare-dev-module-contract.mts party-registry && modern dev",
@@ -85,7 +81,12 @@
     "effect": "4.0.7",
     "i18next": "26.4.2",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "@app/tagging": "workspace:*",
+    "@app/admin-ui": "workspace:*",
+    "@techsio/ui-kit": "catalog:",
+    "uuid": "14.0.3",
+    "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.63.0",
@@ -109,7 +110,6 @@
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
     "zephyr-rspack-plugin": "1.2.4",
     "tsrs": "0.20.1-ts7.1.0-beta"
   },

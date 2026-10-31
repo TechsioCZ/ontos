@@ -16,7 +16,6 @@ import {
   TrustedPrincipalContextSchema,
   loadDatabaseConnectionPair,
   loadDatabaseIdentityConnections,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   makePrincipalResolver,
@@ -32,10 +31,11 @@ import {
   PrincipalResolverLive,
   runAction,
 } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
@@ -74,6 +74,7 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { shellAuthenticationFrameworkLive } from '../support/shell-authentication.ts';
 import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import {
   AuthenticationNamespaceRegistry,
@@ -82,17 +83,31 @@ import {
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, apikey, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
+import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
+import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
+import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
+import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { ShellDocumentContextSchema } from '../../shared/api.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+
+import { makeDatabaseIdentityEnrollmentLive } from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -318,6 +333,8 @@ const installedPageCatalog = () =>
                     scope: 'tenant',
                   },
                   groupKey: 'shell.navigation.modules',
+                  icon: 'icon-[mdi--view-grid-outline]',
+                  label: { cs: 'Domů', en: 'Home' },
                   order: 100,
                   pageKey: 'testing.pages.page.home',
                 },
@@ -368,18 +385,41 @@ const installedPageCatalog = () =>
 it.live(
   'creates, resolves, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
-    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
+    // Production also requires secure cookies when its local/public origin is HTTP.
+    const configuration = { ...(yield* loadAuthConfig({ envPath: '/dev/null' })), secureCookies: true };
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeAuthenticationService({
-      allowFixtureSignUp: true,
-    }).pipe(
+    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
+    const oauthAuthenticationLayer = Layer.mergeAll(
+      betterAuthRuntime,
+      BetterAuthNativeAdapterLive,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          Layer.succeed(AuthDatabase, authPersistence),
+        ),
+      ),
+    );
+    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(oauthAuthenticationLayer),
+    );
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(authenticationGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -588,6 +628,28 @@ it.live(
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
+    const apiKeys = yield* makeApiKeyService().pipe(
+      Effect.provideService(AuthConfig, configuration),
+      Effect.provideService(AuthDatabase, authPersistence),
+    );
+    const issuedKey = yield* apiKeys.issue(authenticatedHeaders, {
+      issuerPrincipalId: principalId,
+      lifecycleOperationId: globalThis.crypto.randomUUID(),
+      name: 'secure-session-issuance',
+      tenantId,
+    });
+    yield* Effect.addFinalizer(() =>
+      authDatabase.delete(apikey).where(eq(apikey.id, issuedKey.providerKeyId)).pipe(Effect.orDie),
+    );
+    expect(signedInCookies.some((cookie) => cookie.startsWith('__Secure-better-auth.session_token='))).toBe(true);
+    expect((yield* apiKeys.verify(Redacted.value(issuedKey.secret))).providerKeyId).toBe(issuedKey.providerKeyId);
+    yield* apiKeys.setEnabled(issuedKey.providerKeyId, false);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(apiKeys.verify(Redacted.value(issuedKey.secret))),
+        'ApiKeyCredentialInvalidError',
+      ),
+    ).toBe(true);
     const approvedPageCatalog = yield* installedPageCatalog();
     const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
       new Request(`${configuration.baseUrl}/shell/module-target`, {
@@ -868,7 +930,9 @@ it.live(
               | 'manage_party_relationships'
               | 'merge_party_identity'
               | 'read_party_identity'
-              | 'review_party_identity';
+              | 'read_people'
+              | 'review_party_identity'
+              | 'select_context';
             readonly tenantIds: readonly string[];
           }) =>
             Effect.succeed(
@@ -933,6 +997,9 @@ it.live(
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -961,6 +1028,88 @@ it.live(
       queryHash: null,
       resultCount: 0,
     });
+    // Company admission must open the Shell frame even when every module capability is denied.
+    const zeroRoleModuleChecks: string[] = [];
+    const zeroRoleContextAccess = {
+      ...legalEntitySelectionOptions.contextAccess,
+      legalEntities: ({
+        legalEntityIds,
+        permission,
+      }: Parameters<(typeof ContextAccess)['Service']['legalEntities']>[0]) =>
+        Effect.succeed(
+          legalEntityIds.map((key) => ({
+            decision: permission === undefined || permission === 'access' ? ('allowed' as const) : ('denied' as const),
+            key,
+          })),
+        ),
+      modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) => {
+        zeroRoleModuleChecks.push(...moduleIds);
+        return Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key })));
+      },
+      tenants: ({ permission, tenantIds }: Parameters<(typeof ContextAccess)['Service']['tenants']>[0]) =>
+        Effect.succeed(
+          tenantIds.map((key) => ({
+            decision: permission === 'access' ? ('allowed' as const) : ('denied' as const),
+            key,
+          })),
+        ),
+    };
+    const zeroRoleRuntime = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000003'),
+        loadAdmission: installedAdmission(['testing.one']),
+        loadConfig: parseGatewayIssuerConfig({}),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      moduleStateLayer,
+      installedCatalog(['testing.one']),
+      false,
+      Layer.mergeAll(
+        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Layer.succeed(ContextAccess, zeroRoleContextAccess),
+      ),
+    ).createHandler();
+    handlers.push(zeroRoleRuntime);
+    const zeroRoleDocumentResponse = yield* Effect.tryPromise(() =>
+      zeroRoleRuntime.handler(
+        new Request(`${configuration.baseUrl}/shell/document-context`, {
+          body: JSON.stringify({ home: true }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: headerValue(authenticatedHeaders, 'cookie'),
+            origin: configuration.baseUrl,
+          }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(zeroRoleDocumentResponse.status).toBe(200);
+    const zeroRoleDocument = yield* Schema.decodeUnknownEffect(ShellDocumentContextSchema)(
+      yield* Effect.tryPromise(() => zeroRoleDocumentResponse.json()),
+    );
+    expect(zeroRoleDocument.session).toMatchObject({
+      identity: { legalEntityId: fixtureLegalEntityId },
+      state: 'authenticated',
+    });
+    expect(zeroRoleDocument.composition).toEqual({
+      compositionRevision: testRevision,
+      deniedAppIds: ['inventory-stock'],
+      gatewayAudiences: [],
+      homeComponents: [],
+      navigation: [],
+      state: 'available',
+      unavailableDeployments: [],
+    });
+    expect(zeroRoleDocument.home?.contribution).toEqual({ state: 'forbidden' });
+    expect(zeroRoleDocument.canManagePeople).toBe(false);
+    expect(zeroRoleDocument.legalEntities).toMatchObject({
+      legalEntities: [{ legalEntityId: fixtureLegalEntityId }],
+      selectedLegalEntityId: fixtureLegalEntityId,
+      state: 'authenticated',
+    });
+    expect(zeroRoleModuleChecks).toContain('testing.one');
+    expect(zeroRoleModuleChecks).not.toContain('core.shell');
     const refreshingRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
         ...authentication,
@@ -1125,6 +1274,127 @@ it.live(
       contextAccessLayer,
     ).createHandler();
     handlers.push(issuingHandler);
+    // Native Better Auth and PostgreSQL own the selected scope. Graph semantics are
+    // covered separately against real SpiceDB; these decisions exercise session transitions.
+    const tenantSwitch = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/context/tenant`, {
+          headers: authenticatedHeaders,
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(tenantSwitch.status).toBe(200);
+    expect(yield* Effect.tryPromise(() => tenantSwitch.json())).toEqual({ selectedContext: 'tenant' });
+    const persistedTenantScope = yield* authDatabase
+      .select({
+        activeContextKind: session.activeContextKind,
+        activeLegalEntityId: session.activeLegalEntityId,
+        activeTenantId: session.activeTenantId,
+      })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    expect(persistedTenantScope).toEqual([
+      {
+        activeContextKind: 'tenant',
+        activeLegalEntityId: null,
+        activeTenantId: tenantId,
+      },
+    ]);
+    let selectionAllowed = true;
+    let selectionChecks = 0;
+    const selectedScopeLayer = Layer.mergeAll(
+      Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
+      Layer.succeed(ContextAccess, {
+        ...legalEntitySelectionOptions.contextAccess,
+        tenants: ({
+          permission,
+          principalId: checkedPrincipal,
+          tenantIds,
+        }: {
+          readonly permission: string;
+          readonly principalId: string;
+          readonly tenantIds: readonly string[];
+        }) =>
+          Effect.sync(() => {
+            expect(permission).toBe('select_context');
+            expect(checkedPrincipal).toBe(principalId);
+            expect(tenantIds).toEqual([tenantId]);
+            selectionChecks += 1;
+            return tenantIds.map((key) => ({
+              decision: selectionAllowed ? ('allowed' as const) : ('denied' as const),
+              key,
+            }));
+          }),
+      }),
+    );
+    for (let reload = 0; reload < 2; reload += 1) {
+      const selected = yield* authentication
+        .resolveShellContext(authenticatedHeaders)
+        .pipe(Effect.provide(selectedScopeLayer));
+      expect(selected.state).toBe('tenant_authenticated');
+      if (selected.state === 'tenant_authenticated') {
+        expect(selected.principal.tenantId).toBe(tenantId);
+        expect(selected.principal.legalEntityId).toBeUndefined();
+      }
+    }
+    expect(selectionChecks).toBe(2);
+    const tenantGateway = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
+          headers: {
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          },
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(tenantGateway.status).toBe(200);
+    const tenantAssertion = yield* verifiedGatewayAssertion(tenantGateway, pair.publicKey, testRevision);
+    expect(tenantAssertion.principal.tenantId).toBe(tenantId);
+    expect(tenantAssertion.principal.legalEntityId).toBeUndefined();
+    const companyFromTenantScope = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+          body: JSON.stringify({
+            audience: 'inventory-stock',
+            compositionRevision: testRevision,
+            legalEntityId: fixtureLegalEntityId,
+          }),
+          headers: {
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          },
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(companyFromTenantScope.status).toBe(403);
+    selectionAllowed = false;
+    const revoked = yield* authentication
+      .resolveShellContext(authenticatedHeaders)
+      .pipe(Effect.provide(selectedScopeLayer));
+    expect(revoked.state).toBe('access_blocked');
+    expect(selectionChecks).toBe(3);
+    const deniedSelection = yield* authentication
+      .switchToTenantContext(authenticatedHeaders)
+      .pipe(Effect.provide(selectedScopeLayer), Effect.flip);
+    expect(Predicate.isTagged(deniedSelection, 'TenantAccessForbiddenError')).toBe(true);
+    yield* authentication
+      .switchLegalEntity(fixtureLegalEntityId, authenticatedHeaders)
+      .pipe(Effect.provide(authenticationContextLayer));
+    const restoredCompanyScope = yield* authDatabase
+      .select({
+        activeContextKind: session.activeContextKind,
+        activeLegalEntityId: session.activeLegalEntityId,
+      })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    expect(restoredCompanyScope).toEqual([{ activeContextKind: 'company', activeLegalEntityId: fixtureLegalEntityId }]);
     const assertionResponse = yield* Effect.tryPromise(() =>
       issuingHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
@@ -1139,6 +1409,7 @@ it.live(
       ),
     );
     expect(assertionResponse.status, yield* Effect.tryPromise(() => assertionResponse.clone().text())).toBe(200);
+    expect(headerValue(assertionResponse.headers, 'cache-control')).toBe('no-store');
     const { principal: verifiedPrincipal, token: assertionToken } = yield* verifiedGatewayAssertion(
       assertionResponse,
       pair.publicKey,
@@ -1150,6 +1421,46 @@ it.live(
     expect(verifiedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(verifiedPrincipal.principalId).toBe(principalId);
     expect(verifiedPrincipal.tenantId).toBe(tenantId);
+    // The document batch issues the same session assertion per admitted audience and leaves out the rest.
+    const documentBatchResponse = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-contexts`, {
+          body: JSON.stringify({ audiences: ['inventory-stock', 'not-admitted'], compositionRevision: testRevision }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(documentBatchResponse.status).toBe(200);
+    expect(headerValue(documentBatchResponse.headers, 'cache-control')).toBe('no-store');
+    const documentBatch = Schema.decodeUnknownSync(
+      Schema.Struct({ assertions: Schema.Array(Schema.Struct({ audience: Schema.String })) }),
+    )(yield* Effect.tryPromise(() => documentBatchResponse.clone().json()));
+    expect(documentBatch.assertions.map(({ audience }) => audience)).toEqual(['inventory-stock']);
+    const [batchAssertion] = Schema.decodeUnknownSync(Schema.Struct({ assertions: Schema.Array(Schema.Unknown) }))(
+      yield* Effect.tryPromise(() => documentBatchResponse.json()),
+    ).assertions;
+    const { principal: batchPrincipal } = yield* verifiedGatewayAssertion(
+      Response.json(batchAssertion),
+      pair.publicKey,
+      testRevision,
+    );
+    expect(batchPrincipal).toEqual(verifiedPrincipal);
+    const anonymousBatchResponse = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-contexts`, {
+          body: JSON.stringify({ audiences: ['inventory-stock'], compositionRevision: testRevision }),
+          headers: new Headers({ 'content-type': 'application/json', origin: configuration.baseUrl }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(anonymousBatchResponse.status).toBe(401);
+    expect(headerValue(anonymousBatchResponse.headers, 'cache-control')).toBe('no-store');
     yield* Effect.tryPromise(() =>
       mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), {
         recursive: true,
@@ -1258,7 +1569,13 @@ it.live(
           audiences: new Map([['party-registry', 'integration-build']]),
           revision: testRevision,
         }),
-      }).pipe(Layer.provide(GatewayScopeGrantRegistrarLive)),
+      }).pipe(
+        Layer.provide(
+          GatewayScopeGrantRegistrarLive.pipe(
+            Layer.provide(makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
+          ),
+        ),
+      ),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1422,7 +1739,7 @@ it.live(
     );
     expect(expiredModulesResponse.status).toBe(401);
     expect(yield* Effect.tryPromise(() => expiredModulesResponse.text())).not.toMatch(/30000000|40000000/u);
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );
 it.live(
   'selects, lists, switches, revalidates, and upgrades a multi-tenant session',
@@ -1475,16 +1792,38 @@ it.live(
     const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeAuthenticationService({
-      allowFixtureSignUp: true,
-    }).pipe(
+    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
+    const oauthAuthenticationLayer = Layer.mergeAll(
+      betterAuthRuntime,
+      BetterAuthNativeAdapterLive,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          Layer.succeed(AuthDatabase, authPersistence),
+        ),
+      ),
+    );
+    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(oauthAuthenticationLayer),
+    );
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(authenticationGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -1498,6 +1837,8 @@ it.live(
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
+      // The switch to a disabled principal records an authn.rejected audit event bound to its auth binding.
+      yield* coreDatabase.delete(auditEvents).where(inArray(auditEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
@@ -1706,6 +2047,9 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1728,7 +2072,11 @@ it.live(
       .update(principals)
       .set({ status: 'active' })
       .where(eq(principals.principalId, secondPrincipalId));
-    const resolverUnavailableAuthentication = yield* makeAuthenticationService({}).pipe(
+    // The framework captures the same overridden resolver as the service; only ready SDK instances are shared.
+    const resolverUnavailableFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
+    const resolverUnavailableGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(resolverUnavailableFramework));
+    const resolverUnavailableAuthentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(resolverUnavailableGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, {
@@ -1911,6 +2259,9 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2045,12 +2396,13 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, secondTenantId)),
       coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
       authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );
 
 class TenantPartyGatewayTestError extends Schema.TaggedError<TenantPartyGatewayTestError>()(
@@ -2215,12 +2567,21 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
   const publicJwk = yield* Effect.tryPromise(() => exportJWK(pair.publicKey));
-  const sourceIdentities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
-  const partyUrl = new URL(sourceIdentities.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString);
-  const issuerUrl = new URL(sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString);
-  const sourceShared = sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id];
+  const sourceIdentities = yield* loadDatabaseIdentityConnections({
+    enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+    envPath: '/dev/null',
+  });
+  const sourceConnection = (identity: { readonly id: string }) => {
+    const connection = sourceIdentities.runtime[identity.id];
+    return connection === undefined
+      ? Effect.fail(new TenantPartyGatewayTestError({ reason: 'A dedicated identity has no source connection' }))
+      : Effect.succeed(connection);
+  };
+  const partyUrl = new URL((yield* sourceConnection(PARTY_REGISTRY_REQUEST_IDENTITY)).connectionString);
+  const issuerUrl = new URL((yield* sourceConnection(SHELL_GATEWAY_ISSUER_IDENTITY)).connectionString);
+  const sourceShared = yield* sourceConnection(SHARED_RUNTIME_IDENTITY);
   for (const identity of [PARTY_REGISTRY_REQUEST_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY]) {
-    const canonical = sourceIdentities.runtime[identity.id];
+    const canonical = yield* sourceConnection(identity);
     const address = new URL(canonical.connectionString);
     const exactSourceAndOwnedTarget = [
       canonical.database === sourceIdentities.admin.database,
@@ -2277,18 +2638,24 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   const sourceConfiguration = yield* loadAuthConfig({ envPath: '/dev/null' });
   const configuration = { ...sourceConfiguration, connectionString: isolated.connections.runtime.connectionString };
   expect(new URL(configuration.connectionString).pathname === `/${isolated.connections.runtime.database}`).toBe(true);
-  const authPersistence = yield* makeAuthDatabase(configuration);
-  const resolverContext = yield* Layer.build(
-    PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
-      Layer.provide(CorePersistenceLive),
-      Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
+  const authPersistence = yield* makeAuthDatabase({
+    connectionString: configuration.connectionString,
+    expectedRole: isolated.connections.runtime.expectedRole,
+  });
+  const authenticationContext = yield* Layer.build(
+    shellAuthenticationFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID })),
+      Layer.provideMerge(CorePersistenceLive),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(AuthConfig, configuration),
+          Layer.succeed(AuthDatabase, authPersistence),
+          Layer.succeed(DatabaseConfig, isolated.connections.runtime),
+        ),
+      ),
     ),
   );
-  const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-    Effect.provideService(AuthConfig, configuration),
-    Effect.provideService(AuthDatabase, authPersistence),
-    Effect.provideContext(resolverContext),
-  );
+  const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
   const fixtureEmail = `party-gateway-${suffix}@example.test`;
   const providerSubjectId = yield* authentication.createFixtureUser(fixtureEmail, 'Party gateway fixture', password);
   const fixture = yield* Effect.acquireRelease(

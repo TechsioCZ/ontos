@@ -53,12 +53,16 @@ it('attaches every stable Profile registration to scoped production persistence'
   );
   expect(getActionServiceFactory(suspendCustomerProfileAction).toString()).toContain('profileServicesForVerifiedScope');
   expect(getReadServiceFactory(customerProfileReadRead).toString()).toContain('profileServicesForVerifiedScope');
-  expect(getReadServiceFactory(customerProfileTradingGateRead).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(customerProfileTradingGateRead).toString()).toContain(
+    'profilePersistenceServicesForTransaction',
+  );
   expect(getReadServiceFactory(guestAttributionStatusRead).toString()).toContain('profileServicesForVerifiedScope');
   expect(getReadServiceFactory(profileReconciliationReadRead).toString()).toContain('profileServicesForVerifiedScope');
-  expect(getReadServiceFactory(retailAccessDecisionRead).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(retailAccessDecisionRead).toString()).toContain(
+    'profileServicesWithRetailPermissionsForVerifiedScope',
+  );
   expect(getReadServiceFactory(retailPortalProfileBindingReadRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
+    'profileServicesWithRetailPermissionsForVerifiedScope',
   );
   expect(getReadServiceFactory(retailPrincipalResolutionRead).toString()).toContain('profileServicesForVerifiedScope');
   expect(getActionServiceFactory(resolveProfileReconciliationAction).toString()).toContain(

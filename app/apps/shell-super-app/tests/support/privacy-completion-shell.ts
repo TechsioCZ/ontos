@@ -8,6 +8,8 @@ import {
   DatabaseConfigLive,
   InstalledModuleCatalogService,
   makeContextAccessLive,
+  OAuthAuthenticationAuditLive,
+  OAuthGrantRegistryLive,
   PrincipalResolverLive,
   runAction,
   TrustedPrincipalContextSchema,
@@ -27,8 +29,14 @@ import { Reactivity } from 'effect/reactivity';
 
 import apiRuntime from '../../api/index.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
+import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
 import { makeAuthenticationService } from '../../api/auth/service.ts';
+import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -158,17 +166,43 @@ const serve = Effect.scoped(
     if (!valid) {
       return yield* new PrivacyCompletionShellFailure({ reason: 'Shell native runtime identity was refused' });
     }
-    const database = yield* makeAuthDatabase(configuration);
+    const database = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: expectedUser,
+    });
     const resolver = yield* Layer.build(
       PrincipalResolverLive({
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       }).pipe(Layer.provide(CorePersistenceLive), Layer.provide(DatabaseConfigLive)),
     );
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-      Effect.provideService(AuthConfig, configuration),
-      Effect.provideService(AuthDatabase, database),
-      Effect.provideContext(resolver),
+    // The same framework, OAuth endpoint guards and native adapter layers as the Shell, with fixture sign-up enabled.
+    const persistence = Layer.mergeAll(
+      CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive)),
+      Layer.succeed(AuthDatabase, database),
     );
+    const oauthAuthentication = Layer.mergeAll(
+      BetterAuthRuntimeLive,
+      BetterAuthNativeAdapterLive,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)), Layer.provide(persistence));
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(
+      Layer.provideMerge(BetterAuthFrameworkLive({ allowFixtureSignUp: true })),
+      Layer.provideMerge(oauthAuthentication),
+    );
+    const authenticationContext = yield* Layer.build(
+      authenticationGuards.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            Layer.succeed(AuthConfig, configuration),
+            Layer.succeed(AuthDatabase, database),
+            Layer.succeedContext(resolver),
+          ),
+        ),
+      ),
+    );
+    const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
     const email = `privacy-completion-${suffix}@example.test`;
     const password = `privacy-completion-${suffix}`;
     const providerSubjectId = yield* authentication.createFixtureUser(email, 'Privacy completion test', password);

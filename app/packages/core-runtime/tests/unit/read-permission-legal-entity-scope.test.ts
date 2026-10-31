@@ -74,9 +74,11 @@ const registration = (input: RegistrationInput) => {
       resultSchema: Schema.String,
       schemaVersion: '1',
     },
-    () => {
-      input.onHandler?.();
-      return Effect.succeed({ evidence: { resultCount: 1 }, result: 'probe-result' });
+    {
+      load: () => {
+        input.onHandler?.();
+        return Effect.succeed({ evidence: { resultCount: 1 }, result: 'probe-result' });
+      },
     },
     () => Effect.succeed({}),
     input.permissionTarget === 'resource' ? resourceResolver : moduleResolver,

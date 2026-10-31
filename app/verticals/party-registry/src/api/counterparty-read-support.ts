@@ -16,7 +16,7 @@ export const counterpartyPermissionTarget = (input: { readonly counterpartyRef: 
         resourceType: input.counterpartyRef.resourceType,
       },
     },
-    { kind: 'tenant' as const, permission: 'manage_party_identity' as const },
+    { kind: 'legal_entity' as const, permission: 'read_counterparty' as const },
   ] as const,
 });
 

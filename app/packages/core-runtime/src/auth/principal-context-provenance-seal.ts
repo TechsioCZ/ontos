@@ -7,20 +7,22 @@ const provenanceProperty = '__ontosCorePrincipalContextProvenance';
 
 /**
  * Provenance sealed in a class only this module constructs. The private-field brand check rejects
- * look-alike objects, and the carrier holds the seal in a non-enumerable property, so a copy of a
- * carrier (spread, decode, structured clone) is a new object without provenance.
+ * look-alike objects, and the carrier identity check rejects transplanted property descriptors.
+ * The non-enumerable seal does not survive ordinary copies; explicit trusted copies get a new seal.
  */
 class PrincipalContextProvenanceSeal {
+  readonly #carrier: TrustedPrincipalContext;
   readonly #provenance: PrincipalContextProvenance;
 
-  constructor(provenance: PrincipalContextProvenance) {
+  constructor(carrier: TrustedPrincipalContext, provenance: PrincipalContextProvenance) {
+    this.#carrier = carrier;
     this.#provenance = Object.freeze(provenance);
     Object.freeze(this);
   }
 
   static read(carrier: TrustedPrincipalContext): PrincipalContextProvenance | undefined {
     const seal: unknown = Object.getOwnPropertyDescriptor(carrier, provenanceProperty)?.value;
-    return Predicate.isObject(seal) && #provenance in seal ? seal.#provenance : undefined;
+    return Predicate.isObject(seal) && #provenance in seal && seal.#carrier === carrier ? seal.#provenance : undefined;
   }
 }
 
@@ -29,7 +31,9 @@ export const sealPrincipalContextProvenance = (
   carrier: TrustedPrincipalContext,
   provenance: PrincipalContextProvenance,
 ): void => {
-  Object.defineProperty(carrier, provenanceProperty, { value: new PrincipalContextProvenanceSeal(provenance) });
+  Object.defineProperty(carrier, provenanceProperty, {
+    value: new PrincipalContextProvenanceSeal(carrier, provenance),
+  });
 };
 
 /** Returns the provenance sealed on this exact carrier, if any. */

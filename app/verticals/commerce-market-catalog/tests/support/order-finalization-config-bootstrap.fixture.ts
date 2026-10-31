@@ -8,6 +8,8 @@ import {
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
   parseDatabaseConfig,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import {
   ActionPermissionLive,
@@ -109,6 +111,7 @@ const main = Effect.scoped(
         ),
       ),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
     );
     const context = yield* Layer.build(live);
     const line = yield* Effect.gen(function* invokeActualOwnerAction() {

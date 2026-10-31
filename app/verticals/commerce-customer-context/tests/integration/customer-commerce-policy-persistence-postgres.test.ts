@@ -4,6 +4,7 @@ import {
   ReadRuntime,
   ContextAccessLive,
   ContextAccess,
+  defineDatabaseIdentityEnrollment,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
   scopedRoutineInvokerFromTransaction,
@@ -1128,7 +1129,8 @@ const runOwnedPolicyAcceptance = Effect.fn('QuantityProfileAdmissionTests.ownedP
     const replacementScope = yield* ContextAccess.pipe(
       Effect.flatMap((actualContextAccess) =>
         makeOperationalScopeResolver(
-          makeOperationalScopeRepository({ executor: coreRuntime }),
+          // This seller partition enrolls no dedicated database identities, like the fixture's Core-only owner.
+          makeOperationalScopeRepository({ executor: coreRuntime }, defineDatabaseIdentityEnrollment([])),
           actualContextAccess,
         ).pipe(
           Effect.flatMap((resolver) =>

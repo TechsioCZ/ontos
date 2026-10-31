@@ -1,9 +1,15 @@
+import {
+  RetailEnrollmentEvidenceSchema,
+  AddContactPointPayloadSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
+} from '@app/party-registry/api';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-customer-owner.ts';
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
@@ -26,7 +32,9 @@ const decisionRef = {
   resourceType: 'party.registry.party-match-decision',
   tenantId,
 };
-const input: RetailPartyCandidateOwnerInput = {
+const input: RetailPartyCandidateOwnerInput & {
+  readonly verifiedEvidence: Effect.Effect<typeof RetailEnrollmentEvidenceSchema.Type>;
+} = {
   candidate: {
     evidenceRefs: [],
     officialIdentifiers: [],
@@ -38,6 +46,19 @@ const input: RetailPartyCandidateOwnerInput = {
   legalEntityId,
   requestCorrelation,
   tenantId,
+  verifiedEvidence: Effect.succeed(
+    Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+      authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+      candidateEvidenceRef: '10000000-0000-4000-8000-000000000001',
+      emailOwnership: 'VERIFIED' as const,
+      enrollmentAttemptId: '20000000-0000-4000-8000-000000000001',
+      journey: 'RETAIL_SELF_ENROLLMENT' as const,
+      providerOwnerInvocationId: ownerInvocationId,
+      providerSubjectId: 'provider-subject',
+      sellingLegalEntityId: '50000000-0000-4000-8000-000000000001',
+      tenantId,
+    }),
+  ),
 };
 const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
   actorPrincipalId,
@@ -90,12 +111,7 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
   Effect.gen(function* nativeScheduledDispatch() {
     expect(globalThis.document).toBeUndefined();
     const requests: Request[] = [];
-    const responses = [
-      gatewayResponse(),
-      { candidateParties: [], evidenceExplanation: [], matchRuleVersion: '1', outcome: 'NO_MATCH' },
-      gatewayResponse(tenantId, 2),
-      { decisionRef, outcome: 'CREATED', partyRef },
-    ];
+    const responses = [gatewayResponse(), { decisionRef, outcome: 'CREATED', partyRef }];
     const fakeFetch: typeof fetch = (target, init) => {
       requests.push(new Request(target, init));
       return Promise.resolve(Response.json(responses.shift()));
@@ -106,11 +122,9 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
     expect(outcome.status).toBe('SUCCEEDED');
     expect(requests.map((request) => request.url)).toEqual([
       'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
-      'https://shell.example.test/api/approved/party-registry/reads/party-match',
-      'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
       'https://shell.example.test/api/approved/party-registry/party-registry/actions/create-party',
     ]);
-    for (const request of [requests[0], requests[2]]) {
+    for (const request of [requests[0]]) {
       expect(request?.headers.get('x-api-key')).toBe('scheduled-service-api-key');
       expect(yield* Effect.promise(() => request.json())).toEqual({
         audience: 'party-registry',
@@ -119,12 +133,11 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
       });
     }
     expect(requests[1]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 1)}`);
-    expect(requests[3]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 2)}`);
-    for (const request of [requests[1], requests[3]]) {
+    for (const request of [requests[1]]) {
       expect(request?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
       expect(request?.headers.get('x-correlation-id')).toBe(requestCorrelation);
     }
-    expect(requests[3]?.headers.get('idempotency-key')).toBe(ownerInvocationId);
+    expect(requests[1]?.headers.get('idempotency-key')).toBe(ownerInvocationId);
   }),
 );
 
@@ -170,7 +183,7 @@ it.effect('a mismatched issuer Tenant fails before any Party match or create', (
       .dispatch(transition)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
-    expect(failure.reason).toContain('match operation is unavailable');
+    expect(failure.reason).toContain('create operation is unavailable');
     expect(requests).toHaveLength(1);
   }),
 );
@@ -194,10 +207,9 @@ it.effect('keeps the original Attempt revision and scope when a caller later mut
           requests.length === 1
             ? gatewayResponse()
             : {
-                candidateParties: [partyRef],
-                evidenceExplanation: [],
-                matchRuleVersion: '1',
-                outcome: 'MATCHED',
+                decisionRef,
+                outcome: 'MATCHED_EXISTING',
+                partyRef,
               },
         ),
       );
@@ -230,7 +242,7 @@ it.effect('scheduled reconciliation reads the original invocation through native
                 _tag: 'PartyCommandCommitResolution',
                 invocationId: ownerInvocationId,
                 retryCommand: false,
-                state: 'OPEN',
+                state: 'RUNNING',
               },
         ),
       );
@@ -242,18 +254,21 @@ it.effect('scheduled reconciliation reads the original invocation through native
         ownerOperationRevision: 1,
       })
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.url).toBe(
       'https://shell.example.test/api/approved/party-registry/party-registry/action-commits/resolve',
     );
     expect(requests[1]?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
     expect(requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
-    expect(yield* Effect.promise(() => requests[1].json())).toEqual({ invocationId: ownerInvocationId });
+    expect(yield* Effect.promise(() => requests[1].json())).toEqual({
+      actionKey: 'party.registry.create-party',
+      idempotencyKey: ownerInvocationId,
+    });
   }),
 );
 
-it.effect('committed native recovery acquires distinct one-use assertions for commit and decision reads', () =>
+it.effect('committed native recovery uses one owned-result assertion without reviewer reads', () =>
   Effect.gen(function* singleUseGatewayRecovery() {
     expect(globalThis.document).toBeUndefined();
     const requests: Request[] = [];
@@ -290,6 +305,7 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
           request.url.endsWith('/action-commits/resolve')
             ? {
                 _tag: 'PartyCommandCommitResolution',
+                createResult: { decisionRef, outcome: 'CREATED', partyRef },
                 invocationId: ownerInvocationId,
                 retryCommand: false,
                 state: 'COMMITTED',
@@ -318,15 +334,306 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(resolution.status).toBe('SUCCEEDED');
     expect(resolution.resultReference).toBe(partyRef.resourceId);
-    expect(issued).toBe(2);
-    expect(consumed.size).toBe(2);
-    expect([...consumed]).toEqual(['70000000-0000-4000-8000-000000000001', '70000000-0000-4000-8000-000000000002']);
-    expect(requests).toHaveLength(4);
+    expect(issued).toBe(1);
+    expect(consumed.size).toBe(1);
+    expect([...consumed]).toEqual(['70000000-0000-4000-8000-000000000001']);
+    expect(requests).toHaveLength(2);
     expect(requests[1]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 1)}`);
-    expect(requests[3]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 2)}`);
-    for (const request of [requests[1], requests[3]]) {
+    for (const request of [requests[1]]) {
       expect(request?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
       expect(request?.url.startsWith('https://shell.example.test/api/approved/party-registry/')).toBe(true);
     }
+  }),
+);
+
+const customerDirectoryInput = {
+  compositionRevision,
+  legalEntityId,
+  partyRef: {
+    ...partyRef,
+    moduleId: 'party.registry',
+    resourceId: '90000000-0000-4000-8000-000000000001',
+    resourceType: 'party.registry.party',
+  } as const,
+  registration: { displayName: 'Skutečný Zákazník', email: 'customer@example.test', phone: '+420 777 123 456' },
+  requestCorrelation,
+  tenantId,
+  validFrom: '2026-09-19T10:00:00.000Z',
+};
+
+const customerCommandPayloadSchema = Schema.Union([
+  Schema.toEncoded(AddContactPointPayloadSchema),
+  Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
+]);
+
+const customerDirectoryTransport = (
+  state: 'ABSENT' | 'RUNNING' | 'COMMITTED',
+  failCommand = false,
+  onboardProblem?: { readonly body: Readonly<Record<string, string | number | boolean>>; readonly status: number },
+) => {
+  const requests: Request[] = [];
+  const commands: (typeof customerCommandPayloadSchema.Type)[] = [];
+  let issued = 0;
+  const fakeFetch: typeof fetch = (target, init) => {
+    const request = new Request(target, init);
+    requests.push(request);
+    if (request.url.endsWith('/auth/api-key/gateway-context')) {
+      issued += 1;
+      return Promise.resolve(Response.json(gatewayResponse(tenantId, issued)));
+    }
+    if (request.url.endsWith('/action-commits/resolve')) {
+      return Promise.resolve(
+        state === 'ABSENT'
+          ? Response.json({ _tag: 'PartyCommandCommitResolution', retryCommand: true, state: 'NOT_STARTED' })
+          : Response.json({
+              _tag: 'PartyCommandCommitResolution',
+              invocationId: '99000000-0000-4000-8000-000000000001',
+              retryCommand: false,
+              state,
+            }),
+      );
+    }
+    return request
+      .clone()
+      .json()
+      .then(Schema.decodeUnknownSync(customerCommandPayloadSchema))
+      .then((payload) => {
+        commands.push(payload);
+        if (failCommand) {
+          throw new Error('Acknowledgement lost');
+        }
+        if (onboardProblem !== undefined && request.url.endsWith('/counterparty-customer-onboard')) {
+          return Response.json(onboardProblem.body, { status: onboardProblem.status });
+        }
+        if (request.url.endsWith('/counterparty-customer-onboard')) {
+          return Response.json({
+            counterpartyCreated: true,
+            counterpartyRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.counterparty' },
+            legalEntityRef: {
+              moduleId: 'core.identity',
+              resourceId: legalEntityId,
+              resourceType: 'core.identity.legal-entity',
+              tenantId,
+            },
+            partyRef: customerDirectoryInput.partyRef,
+            rolePeriodCreated: true,
+            rolePeriodRef: {
+              ...customerDirectoryInput.partyRef,
+              resourceType: 'party.registry.counterparty-role-period',
+            },
+            roleType: 'CUSTOMER',
+            validFrom: customerDirectoryInput.validFrom,
+            validTo: null,
+          });
+        }
+        if (!('contactPoint' in payload)) {
+          throw new Error('Expected contact command');
+        }
+        const point = payload.contactPoint;
+        if (point.type !== 'EMAIL' && point.type !== 'PHONE') {
+          throw new Error('Expected email or phone contact');
+        }
+        return Response.json({
+          contactPointRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.party-contact-point' },
+          current: true,
+          end: null,
+          partyRef: customerDirectoryInput.partyRef,
+          privacyClassification: payload.privacyClassification,
+          provenance: payload.provenance,
+          recordedAt: customerDirectoryInput.validFrom,
+          revision: 1,
+          state: 'ACTIVE',
+          storedPartyRef: customerDirectoryInput.partyRef,
+          validFrom: payload.validFrom,
+          validTo: null,
+          value:
+            point.type === 'PHONE'
+              ? {
+                  countryCode: null,
+                  displayValue: point.value,
+                  extension: null,
+                  lookupValue: '+420777123456',
+                  preferred: true,
+                  type: point.type,
+                }
+              : { displayValue: point.value, lookupValue: point.value, preferred: true, type: point.type },
+          verification: payload.verification,
+        });
+      });
+  };
+  return { commands, fakeFetch, issued: () => issued, requests };
+};
+
+it.effect('enrolls a scoped CUSTOMER and real email/phone through three independently keyed governed commands', () =>
+  Effect.gen(function* customerDirectoryCommands() {
+    const transport = customerDirectoryTransport('ABSENT');
+    const result = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(result.status).toBe('SUCCEEDED');
+    expect(result.resultReference).toBe(customerDirectoryInput.partyRef.resourceId);
+    expect(transport.commands).toHaveLength(3);
+    expect(transport.commands[0]?.partyRef).toEqual(customerDirectoryInput.partyRef);
+    const contacts = transport.commands
+      .slice(1)
+      .map((command) => Schema.decodeUnknownSync(Schema.toEncoded(AddContactPointPayloadSchema))(command));
+    expect(contacts.map((command) => command.contactPoint)).toEqual([
+      { preferred: true, type: 'EMAIL', value: 'customer@example.test' },
+      { preferred: true, type: 'PHONE', value: '+420 777 123 456' },
+    ]);
+    expect(contacts.every((command) => JSON.stringify(command.verification) === '{"state":"UNVERIFIED"}')).toBe(true);
+    const commandRequests = transport.requests.filter((request) => request.url.includes('/actions/'));
+    expect(new Set(commandRequests.map((request) => request.headers.get('idempotency-key'))).size).toBe(3);
+    expect(transport.issued()).toBe(6);
+    const recoveryRequests = transport.requests.filter((request) => request.url.endsWith('/resolve'));
+    const identities = yield* Effect.promise(() => Promise.all(recoveryRequests.map((request) => request.json())));
+    expect(identities.map((identity) => identity.idempotencyKey)).toEqual(
+      commandRequests.map((request) => request.headers.get('idempotency-key')),
+    );
+    expect(identities.map((identity) => identity.actionKey)).toEqual([
+      'party.registry.counterparty-customer-onboard',
+      'party.registry.add-contact-point',
+      'party.registry.add-contact-point',
+    ]);
+    const ownerRequests = transport.requests.filter((request) => !request.url.endsWith('/gateway-context'));
+    expect(new Set(ownerRequests.map((request) => request.headers.get('authorization'))).size).toBe(6);
+    expect(
+      ownerRequests.every((request) => request.headers.get('x-ontos-composition-revision') === compositionRevision),
+    ).toBe(true);
+  }),
+);
+
+it.effect('reconciles committed customer commands without replaying any mutations', () =>
+  Effect.gen(function* committedCustomerDirectory() {
+    const transport = customerDirectoryTransport('COMMITTED');
+    const result = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .reconcile({ ...transition, observedRevision: 2, ownerOperationRevision: 1 })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(result.status).toBe('SUCCEEDED');
+    expect(transport.commands).toHaveLength(0);
+    expect(transport.issued()).toBe(3);
+  }),
+);
+
+it.effect('halts on an OPEN customer command without dispatching a duplicate', () =>
+  Effect.gen(function* openCustomerDirectory() {
+    const transport = customerDirectoryTransport('RUNNING');
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(transport.commands).toHaveLength(0);
+    expect(transport.issued()).toBe(1);
+  }),
+);
+
+it.effect('never retries a customer command after its acknowledgement is lost', () =>
+  Effect.gen(function* unknownCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', true);
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(transport.commands).toHaveLength(1);
+    expect(transport.issued()).toBe(2);
+  }),
+);
+
+const roleOverlap = {
+  body: {
+    _tag: 'PartyCommandConflictProblem',
+    code: 'counterparty_role_overlap',
+    detail: 'The command conflicts with the current state. Review the resource before trying again.',
+    status: 409,
+    title: 'Party Registry command conflict',
+    type: 'https://ontos.dev/problems/party-command-conflict',
+  },
+  status: 409,
+};
+
+it.effect('records a definite Party refusal of the customer role as an owner rejection', () =>
+  Effect.gen(function* refusedCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', false, roleOverlap);
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure)).toBe(true);
+    expect(failure.code).toBe('counterparty_role_overlap');
+    // Contact points are never attempted after the customer role was refused.
+    expect(transport.commands).toHaveLength(1);
+  }),
+);
+
+it.effect('reconciles a fenced customer directory operation that Party refused into a terminal rejection', () =>
+  Effect.gen(function* reconcileRefusedCustomerDirectory() {
+    // Party commits nothing for a refused command, so its key resolves as never started.
+    const transport = customerDirectoryTransport('ABSENT', false, roleOverlap);
+    const resolution = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .reconcile({ ...transition, observedRevision: 2, ownerOperationRevision: 1 })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(resolution.status).toBe('FAILED');
+    expect(resolution.failureCode).toBe('owner_rejected');
+    expect(resolution.outcomeCode).toBe('counterparty_role_overlap');
+    expect(transport.commands).toHaveLength(1);
+  }),
+);
+
+it.effect('keeps a Party outage on the customer role indeterminate', () =>
+  Effect.gen(function* unavailableCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', false, {
+      body: {
+        _tag: 'PartyCommandUnavailableProblem',
+        detail: 'Party Registry is unavailable',
+        retryable: true,
+        status: 503,
+        title: 'Party Registry unavailable',
+        type: 'https://ontos.dev/problems/party-command-unavailable',
+      },
+      status: 503,
+    });
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect('treats a customer role that committed under the same key during dispatch as enrolled', () =>
+  Effect.gen(function* alreadyCommittedCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', false, {
+      body: {
+        _tag: 'PartyCommandAlreadyCommittedProblem',
+        code: 'action_already_committed',
+        detail: 'The command already committed',
+        invocationId: '99000000-0000-4000-8000-000000000001',
+        resolution: 'REFRESH_GOVERNED_READS',
+        retryCommand: false,
+        status: 409,
+        title: 'Party Registry command already committed',
+        type: 'https://ontos.dev/problems/party-command-already-committed',
+      },
+      status: 409,
+    });
+    const result = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(result.status).toBe('SUCCEEDED');
+    expect(transport.commands).toHaveLength(3);
   }),
 );

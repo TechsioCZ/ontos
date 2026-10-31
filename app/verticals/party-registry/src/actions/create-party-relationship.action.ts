@@ -20,6 +20,8 @@ import type {
 import { createCreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxMessage } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
 import { encodeRelationshipEventPayload } from './relationship-event-payload.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 interface Services {
   readonly create: (
     payload: Payload,
@@ -43,8 +45,8 @@ const handleCreatePartyRelationship = Effect.fn('CreatePartyRelationshipAction.h
       accessKind: 'read',
       queryHash: `party-relationship-endpoints:${payload.fromPartyRef.resourceId}:${payload.toPartyRef.resourceId}`,
       resultCount: 2,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
+      servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+      targetModuleKey: PARTY_REGISTRY_MODULE_ID,
       targetResourceId: result.relationship.relationshipRef.resourceId,
       targetResourceType: result.relationship.relationshipRef.resourceType,
     });
@@ -53,8 +55,8 @@ const handleCreatePartyRelationship = Effect.fn('CreatePartyRelationshipAction.h
       const domainEvent = yield* context.addDomainEvent({
         eventType: 'party.registry.relationship-created.v1',
         payloadJson,
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
+        producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+        subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
         subjectResourceId: result.relationship.relationshipRef.resourceId,
         subjectResourceType: result.relationship.relationshipRef.resourceType,
       });
@@ -86,12 +88,12 @@ export const createPartyRelationshipAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.create-party-relationship',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CreatePartyRelationshipPayloadSchema,
     policies: [],
     resultSchema: CreatePartyRelationshipResultSchema,

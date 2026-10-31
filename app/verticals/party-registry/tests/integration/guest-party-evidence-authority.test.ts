@@ -4,6 +4,7 @@ import {
 } from '../support/party-reconciliation-native.fixture.ts';
 import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -57,6 +58,8 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+        // The Party request role installs scope through its gateway grant only as an enrolled identity.
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         runtimeConnectionString: Redacted.make(native.partyConfiguration.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),

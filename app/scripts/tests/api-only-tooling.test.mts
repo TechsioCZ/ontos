@@ -15,7 +15,6 @@ import type {
   verifyBuildOutputReleaseEnvelope,
   verifyNodeReleaseEnvelopeStaging,
 } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
-import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
@@ -90,8 +89,6 @@ const mfManifestPath = '/mf-manifest.json';
 
 const readinessPath = '/party-registry-api/party-registry/readiness';
 const partyContactsSsrRoute = '/en/contacts';
-const apiOnlyId = 'payment-term-catalog';
-const apiOnlyReadinessPath = '/payment-term-catalog-api/payment-term-catalog/readiness';
 
 const localePath = '/locales/en/party-registry.json';
 
@@ -162,7 +159,9 @@ const microVerticalApiBaselineViolation = Effect.fn(function* inspectMicroVertic
     additionalPaths: {},
     apiPrefix: `/${stem}-api`,
     baselinePackage: frameworkBaselinePackage,
-    baselinePackageDirectory: frameworkBaselinePackageDirectory,
+    // pnpm can install distinct peer-context owners for the workspace and a vertical.
+    // Check the framework identity installed for this contract, not the test runner's owner.
+    baselinePackageDirectory: path.dirname(createRequire(contractPath).resolve('@modern-js/bff-effect/package.json')),
     basePath: `/${stem}-api/${stem}`,
     effectClientPackage,
     ownerId: stem,
@@ -504,16 +503,6 @@ const TopologySchema = Schema.Struct({
       moduleFederation: Schema.optionalKey(Schema.Struct({ exposes: Schema.Array(Schema.String) })),
     }),
   ),
-});
-
-const CloudflareReportSchema = Schema.Struct({
-  results: Schema.Array(
-    Schema.Struct({
-      appId: AppIdSchema,
-      assertions: Schema.Array(Schema.Struct({ status: Schema.String })),
-    }),
-  ),
-  status: Schema.String,
 });
 
 const loadReleaseFramework = (modulePath: string): Effect.Effect<ReleaseFramework, unknown> =>
@@ -2244,6 +2233,9 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
       readFile(path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts'), 'utf-8'),
     );
     const effectModuleUrl = pathToFileURL(require.resolve('effect', { paths: [workspaceRoot] })).href;
+    const databaseIdentitiesUrl = pathToFileURL(
+      path.join(workspaceRoot, 'packages/party-registry-identity-contracts/src/database-identity-data.ts'),
+    ).href;
     const { code } = yield* Effect.promise(() =>
       transform(configSource, {
         define: {
@@ -2259,8 +2251,8 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
       writeFile(
         harnessPath,
         `import * as effect from ${JSON.stringify(effectModuleUrl)};
+import * as databaseIdentities from ${JSON.stringify(databaseIdentitiesUrl)};
 import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
-import * as databaseIdentities from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/core-runtime/src/db/database-identity-manifest.ts')).href)};
 import { runInNewContext } from 'node:vm';
 import * as nodeUrl from 'node:url';
 import * as nodePath from 'node:path';
@@ -2287,10 +2279,14 @@ runInNewContext(${JSON.stringify(code)}, {
   exports: module.exports,
   module,
   URL,
-  require: specifier => {
-    if (specifier === '../../packages/core-runtime/src/db/database-identity-manifest.ts') return databaseIdentities;
-    return specifier === 'effect' ? effect : specifier === 'node:url' ? nodeUrl : specifier === 'node:path' ? nodePath : framework;
-  },
+  require: specifier => ({
+    effect,
+    'effect/Result': effect.Result,
+    'effect/Schema': effect.Schema,
+    '../../packages/party-registry-identity-contracts/src/database-identity-data.ts': databaseIdentities,
+    'node:url': nodeUrl,
+    'node:path': nodePath,
+  }[specifier] ?? framework),
 });
 process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,
@@ -3326,93 +3322,6 @@ it.live(
     expect(party.cloudflare.routes.apiReadiness).toBe(readinessPath);
     expect(party.backendFederation.exposes['./effect-api'].contract).toBe('verticals/party-registry/shared/api.ts');
     expect(party.backendFederation.exposes['./effect-api'].openapi).toBe('/party-registry-api/openapi.json');
-  }),
-);
-
-it.live(
-  'installed Cloudflare CLI preserves API-only routes when synthesizing a real API-only contract',
-  Effect.fn(function* scenario38() {
-    const fixture = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-proof-'))),
-      (dir) => Effect.promise(() => rm(dir, { force: true, recursive: true })),
-    );
-    const build = yield* readJson(
-      BuildArtifactSchema,
-      path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
-    );
-    // A headless unit's build artifact carries only its API surface.
-    expect(build.surfaces.ui).toBe(undefined);
-    // A deployed Worker serves the release identity of the revision being proven,
-    // which is only the generation marker for an uncommitted workspace.
-    const releaseIdentity = resolveUltramodernReleaseIdentity({
-      generationBuildMarker: build.deliveryUnit.buildMarker,
-      unitId: build.deliveryUnit.unitId,
-      workspaceRoot,
-    });
-    const requestedPath = path.join(fixture, 'requested-routes.txt');
-    const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
-    yield* Effect.promise(() =>
-      writeFile(
-        fetchMockPath,
-        `import { appendFileSync } from 'node:fs';
-const requestedPath = ${JSON.stringify(requestedPath)};
-const publicUrl = ${JSON.stringify(publicUrl)};
-const manifestPath = ${JSON.stringify(mfManifestPath)};
-const readinessPath = ${JSON.stringify(apiOnlyReadinessPath)};
-const buildMarker = ${JSON.stringify(releaseIdentity.buildMarker)};
-const headers = {
-  'access-control-allow-origin': '*',
-  'content-type': 'application/json',
-  'permissions-policy': 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-  'referrer-policy': 'strict-origin-when-cross-origin',
-  'x-content-type-options': 'nosniff',
-  'x-robots-tag': 'noindex, nofollow',
-};
-globalThis.fetch = input => {
-  const route = new URL(String(input)).pathname;
-  appendFileSync(requestedPath, route + '\\n');
-  if (route === manifestPath) {
-    return Promise.resolve(Response.json({ metaData: { publicPath: publicUrl + '/' } }, { headers }));
-  }
-  if (route === readinessPath) {
-    return Promise.resolve(Response.json({
-      checks: { api: 'ready', moduleFederation: 'ready', ssr: 'ready' },
-      marker: { build: buildMarker },
-      status: 'ready',
-    }, { headers }));
-  }
-  return Promise.resolve(Response.json({ error: 'No owner route or locale exists' }, { headers, status: 404 }));
-};
-`,
-      ),
-    );
-    const reportPath = path.join(fixture, 'proof.json');
-    runNode(
-      [
-        '--import',
-        pathToFileURL(fetchMockPath).href,
-        path.join(generatorRoot, 'templates/workspace-scripts/proof-cloudflare-version.mjs'),
-        '--app',
-        apiOnlyId,
-        '--require-public-urls',
-        '--out',
-        reportPath,
-      ],
-      {
-        env: {
-          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: publicUrl,
-          ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot,
-        },
-      },
-    );
-    const requestedSource = yield* Effect.promise(() => readFile(requestedPath, 'utf-8'));
-    const requested = requestedSource.trimEnd().split('\n');
-    // An API-only contract has no SSR or Module Federation route to probe: only its readiness route.
-    expect(requested).toEqual([apiOnlyReadinessPath, apiOnlyReadinessPath]);
-    const report = yield* readJson(CloudflareReportSchema, reportPath);
-    expect(report.status).toBe('pass');
-    expect(report.results[0].appId).toBe(apiOnlyId);
-    expect(report.results[0].assertions.every((entry) => entry.status === 'pass')).toBe(true);
   }),
 );
 

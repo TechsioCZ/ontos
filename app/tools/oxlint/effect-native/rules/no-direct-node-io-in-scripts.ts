@@ -183,7 +183,7 @@ export const rule = defineRule({
         'child processes belong to no Scope, its errors are untyped ErrnoException defects, and it can only ' +
         'be tested against the real disk. Yield the services instead — `const fs = yield* FileSystem.FileSystem` ' +
         '(effect/FileSystem), `const path = yield* Path.Path` (effect/Path), a command/process service ' +
-        '(effect/unstable/process) — and provide the Node platform layer once at the executable edge.',
+        '(effect/process) — and provide the Node platform layer once at the executable edge.',
       nodeIoDynamicImport:
         'Audit B3/A8: dynamically importing "{{module}}" is the same unscoped filesystem/process dependency, ' +
         'loaded at an unpredictable point. Yield FileSystem.FileSystem / Path.Path / the process service from ' +

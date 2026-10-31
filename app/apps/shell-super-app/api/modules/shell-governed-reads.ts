@@ -7,6 +7,7 @@ import {
   TenantModuleStateService,
   defineRead,
   defineSystemModuleEntrypoint,
+  withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import type {
   ReadCoreError,
@@ -15,6 +16,7 @@ import type {
   TenantModuleStateServiceContract,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
+import { makeLegalEntityNavigationExclusions } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import {
@@ -38,7 +40,7 @@ import {
   GovernedResolvedModuleTargetSchema,
   GovernedResolveModuleTargetPayloadSchema,
 } from './shell-governed-read-schemas.ts';
-import { ShellResourceServicesFactory } from './shell-resources.ts';
+import { searchProviderModuleIds, ShellResourceServicesFactory } from './shell-resources.ts';
 import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -67,7 +69,8 @@ export interface ShellGovernedReadsService {
   readonly moduleTarget: (
     input: ShellReadRequest & {
       readonly canonicalPath?: string;
-      readonly compositionRevision: string;
+      /** Absent: resolve against the current release; the caller compares the returned revision. */
+      readonly compositionRevision?: string;
       readonly entrypointKey?: string;
       readonly moduleId?: string;
     },
@@ -92,7 +95,8 @@ export class ShellGovernedReads extends Context.Service<ShellGovernedReads, Shel
 const emptyInput = Schema.Struct({});
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  // The frame is company-admission metadata; module/page capabilities still filter its contents below.
+  authorization: { kind: 'authenticated_principal' },
   entrypointKey: 'core.shell.composition',
   moduleKey: 'core.shell',
   role: 'api',
@@ -119,6 +123,20 @@ const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   role: 'api',
 });
 
+const unavailableBecause = (reason: string) => (cause: unknown) =>
+  Object.defineProperty(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }), 'cause', {
+    configurable: true,
+    value: cause,
+  });
+const committedModuleStates = (
+  records: Effect.Success<ReturnType<TenantModuleStateServiceContract['getTenantModuleStates']>>,
+) => ({
+  getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) => {
+    const requested = new Set(moduleIds);
+    return Effect.succeed(records.filter((record) => requested.has(record.moduleKey)));
+  },
+});
+
 const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(function* makeShellRegistrations(
   ...[gateways, assertionIssuer, scopedModuleStateFactory]: readonly [
     ShellResourceGateways,
@@ -136,19 +154,34 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     contextAccess,
     moduleStates,
   };
+  // Catalog and SpiceDB decisions run before and after the governed-read transaction; it holds tenant data only.
+  const compositionAccess = compositionFactory.access(dependencies);
   const serviceFactory = (transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor']) => {
-    const scopedDependencies = {
-      ...dependencies,
-      moduleStates: scopedModuleStateFactory(transaction),
-    };
+    const moduleStatesInTransaction = scopedModuleStateFactory(transaction);
     return Effect.succeed(
       Object.freeze({
-        composition: compositionFactory.create(scopedDependencies),
-        resourceDetail: resourceServicesFactory.createResourceDetail(scopedDependencies, gateways.resource),
-        search: resourceServicesFactory.createSearch(scopedDependencies, gateways.search),
+        composition: compositionFactory.data({
+          moduleStates: moduleStatesInTransaction,
+          navigationExclusions: makeLegalEntityNavigationExclusions({ executor: transaction }),
+        }),
+        moduleStates: moduleStatesInTransaction,
       }),
     );
   };
+  /**
+   * Search and resource detail read only module states in the transaction. Their provider calls and SpiceDB
+   * checks run after commit against exactly the states that transaction read.
+   */
+  const loadModuleStates = (
+    services: Effect.Success<ReturnType<typeof serviceFactory>>,
+    tenantId: string,
+    moduleIds: readonly string[],
+  ) =>
+    services.moduleStates
+      .getTenantModuleStates(tenantId, moduleIds)
+      .pipe(Effect.mapError(unavailableBecause('Shell module states are temporarily unavailable')));
+  const compositionUnavailable = unavailableBecause('Shell composition is temporarily unavailable');
+  const moduleTargetUnavailable = unavailableBecause('The Shell module target is temporarily unavailable');
   const composition = defineRead(
     {
       accessKind: 'list',
@@ -166,21 +199,24 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       resultSchema: ShellCompositionSchema,
       schemaVersion: '1',
     },
-    (_input, context) =>
-      context.services.composition.compose(context.scope).pipe(
-        Effect.map((result) => ({
-          evidence: { resultCount: result.navigation.length },
-          result,
-        })),
-        Effect.catchTag('ShellCompositionUnavailableError', () =>
-          Effect.fail(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Shell composition is temporarily unavailable',
-            }),
-          ),
+    {
+      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+      prepare: (_input, context) =>
+        compositionAccess.authorizeComposition(context.scope).pipe(Effect.mapError(compositionUnavailable)),
+      load: (_input, context) =>
+        context.services.composition
+          .loadComposition(context.scope, context.prepared)
+          .pipe(Effect.mapError(compositionUnavailable)),
+      finish: (_input, context) =>
+        compositionAccess.finishComposition(context.prepared, context.loaded).pipe(
+          Effect.map((result) => ({
+            evidence: { resultCount: result.navigation.length },
+            result,
+          })),
+          Effect.mapError(compositionUnavailable),
         ),
-      ),
+      // oxlint-enable perfectionist/sort-objects
+    },
     serviceFactory,
     () => ({ kind: 'legal_entity' }),
   );
@@ -201,21 +237,35 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       resultSchema: ShellSearchResponseSchema,
       schemaVersion: '1',
     },
-    (request, context) =>
-      context.services.search.search(context.scope, request).pipe(
-        Effect.map((result) => ({
-          evidence: { resultCount: result.results.length },
-          result,
-        })),
-        Effect.catchTag('ShellProviderUnavailableError', () =>
-          Effect.fail(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Shell search is temporarily unavailable',
-            }),
-          ),
+    {
+      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+      load: (_request, context) =>
+        capturedShellCatalog.pipe(
+          Effect.map(searchProviderModuleIds),
+          // An unavailable catalog fails the search itself after commit.
+          Effect.orElseSucceed((): readonly string[] => []),
+          Effect.flatMap((moduleIds) => loadModuleStates(context.services, context.scope.tenantId, moduleIds)),
         ),
-      ),
+      finish: (request, context) =>
+        resourceServicesFactory
+          .createSearch({ ...dependencies, moduleStates: committedModuleStates(context.loaded) }, gateways.search)
+          .search(context.scope, request)
+          .pipe(
+            Effect.map((result) => ({
+              evidence: { resultCount: result.results.length },
+              result,
+            })),
+            Effect.catchTag('ShellProviderUnavailableError', () =>
+              Effect.fail(
+                new ReadHandlerUnavailable({
+                  code: 'read_handler_unavailable',
+                  reason: 'Shell search is temporarily unavailable',
+                }),
+              ),
+            ),
+          ),
+      // oxlint-enable perfectionist/sort-objects
+    },
     serviceFactory,
     // Provider-specific Party tenant and Counterparty resource checks run inside the orchestrator.
     () => ({ kind: 'tenant', permission: 'access' }),
@@ -238,76 +288,78 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       resultSchema: GovernedResolvedModuleTargetSchema,
       schemaVersion: '1',
     },
-    (input, context) =>
-      context.services.composition.resolveModuleTarget(context.scope, input).pipe(
-        Effect.catchTag('ShellCompositionUnavailableError', () =>
-          Effect.fail(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'The Shell module target is temporarily unavailable',
-            }),
+    {
+      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+      prepare: (input, context) =>
+        compositionAccess.authorizeModuleTarget(context.scope, input).pipe(Effect.mapError(moduleTargetUnavailable)),
+      load: (_input, context) =>
+        context.services.composition
+          .loadModuleTarget(context.scope, context.prepared)
+          .pipe(Effect.mapError(moduleTargetUnavailable)),
+      finish: (_input, context) =>
+        Effect.succeed(compositionAccess.finishModuleTarget(context.prepared, context.loaded)).pipe(
+          Effect.flatMap(
+            (
+              resolution,
+            ): Effect.Effect<
+              ReadHandlerResult<ResolvedModuleTarget>,
+              ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
+            > => {
+              if (resolution.outcome === 'not_found') {
+                return Effect.fail(
+                  new ReadHandlerNotFound({
+                    code: 'read_handler_not_found',
+                    reason: 'The requested module target was not found',
+                  }),
+                );
+              }
+              if (resolution.outcome === 'forbidden') {
+                return Effect.fail(
+                  new ReadPermissionDenied({
+                    code: 'read_permission_denied',
+                    reason: 'The requested module target is forbidden',
+                  }),
+                );
+              }
+              if (resolution.outcome !== 'resolved') {
+                return Effect.fail(
+                  new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'The Shell module target is temporarily unavailable',
+                  }),
+                );
+              }
+              return Schema.decodeEffect(GovernedResolvedModuleTargetSchema)({
+                appId: resolution.appId,
+                componentKey: resolution.page.componentKey,
+                compositionRevision: resolution.compositionRevision,
+                entrypointKey: resolution.page.entrypoint.entrypointKey,
+                federation: resolution.federation,
+                moduleId: resolution.moduleId,
+                routeParameters: resolution.routeParameters,
+                writable: resolution.writable,
+              }).pipe(
+                Effect.map((result) => ({
+                  evidence: { resultCount: 1 },
+                  result,
+                })),
+                Effect.mapError((cause) => {
+                  const error = new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'The Shell module target is temporarily unavailable',
+                  });
+                  Object.defineProperty(error, 'cause', {
+                    configurable: true,
+                    value: cause,
+                  });
+                  return error;
+                }),
+              );
+            },
           ),
         ),
-        Effect.flatMap(
-          (
-            resolution,
-          ): Effect.Effect<
-            ReadHandlerResult<ResolvedModuleTarget>,
-            ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
-          > => {
-            if (resolution.outcome === 'not_found') {
-              return Effect.fail(
-                new ReadHandlerNotFound({
-                  code: 'read_handler_not_found',
-                  reason: 'The requested module target was not found',
-                }),
-              );
-            }
-            if (resolution.outcome === 'forbidden') {
-              return Effect.fail(
-                new ReadPermissionDenied({
-                  code: 'read_permission_denied',
-                  reason: 'The requested module target is forbidden',
-                }),
-              );
-            }
-            if (resolution.outcome !== 'resolved') {
-              return Effect.fail(
-                new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: 'The Shell module target is temporarily unavailable',
-                }),
-              );
-            }
-            return Schema.decodeEffect(GovernedResolvedModuleTargetSchema)({
-              appId: resolution.appId,
-              componentKey: resolution.page.componentKey,
-              compositionRevision: resolution.compositionRevision,
-              entrypointKey: resolution.page.entrypoint.entrypointKey,
-              federation: resolution.federation,
-              moduleId: resolution.moduleId,
-              routeParameters: resolution.routeParameters,
-              writable: resolution.writable,
-            }).pipe(
-              Effect.map((result) => ({
-                evidence: { resultCount: 1 },
-                result,
-              })),
-              Effect.mapError((cause) => {
-                const error = new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: 'The Shell module target is temporarily unavailable',
-                });
-                Object.defineProperty(error, 'cause', {
-                  configurable: true,
-                  value: cause,
-                });
-                return error;
-              }),
-            );
-          },
-        ),
-      ),
+      // oxlint-enable perfectionist/sort-objects
+    },
     serviceFactory,
     () => ({ kind: 'legal_entity' }),
   );
@@ -322,72 +374,112 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: ResourceRefSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'resource',
+      // The handler decides module access, then record existence and record access, so an unknown record of
+      // an allowed agenda is "not found" while a denied agenda stays "forbidden".
+      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.resource-detail-timeline',
       resultSchema: ShellResourceResponseSchema,
       schemaVersion: '1',
     },
-    (ref, context) => {
-      const { legalEntityId } = context.scope;
-      if (legalEntityId === undefined) {
-        return Effect.fail(
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Shell resource scope is unavailable',
-          }),
-        );
-      }
-      return context.services.resourceDetail.resolve({ ...context.scope, legalEntityId }, ref).pipe(
-        Effect.flatMap(
-          (
-            resolution,
-          ): Effect.Effect<
-            ReadHandlerResult<ShellResourceResponse>,
-            ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
-          > => {
-            if (resolution.outcome === 'not_found') {
-              return Effect.fail(
-                new ReadHandlerNotFound({
-                  code: 'read_handler_not_found',
-                  reason: 'The requested Shell resource was not found',
-                }),
-              );
-            }
-            if (resolution.outcome === 'forbidden') {
-              return Effect.fail(
-                new ReadPermissionDenied({
-                  code: 'read_permission_denied',
-                  reason: 'The requested Shell resource is forbidden',
-                }),
-              );
-            }
-            if (resolution.outcome !== 'resolved') {
-              return Effect.fail(
-                new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: 'The Shell resource provider is temporarily unavailable',
-                }),
-              );
-            }
-            return Effect.succeed({
-              evidence: { resultCount: 1 },
-              result: {
-                detail: resolution.detail,
-                media: resolution.media,
-                projectionLagging: resolution.projectionLagging,
-                ref,
-                timeline: resolution.timeline,
+    {
+      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+      load: (ref, context) => loadModuleStates(context.services, context.scope.tenantId, [ref.moduleId]),
+      finish: (ref, context) => {
+        const { legalEntityId } = context.scope;
+        if (legalEntityId === undefined) {
+          return Effect.fail(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'Shell resource scope is unavailable',
+            }),
+          );
+        }
+        return resourceServicesFactory
+          .createResourceDetail(
+            { ...dependencies, moduleStates: committedModuleStates(context.loaded) },
+            gateways.resource,
+          )
+          .resolve({ ...context.scope, legalEntityId }, ref)
+          .pipe(
+            Effect.flatMap(
+              (
+                resolution,
+              ): Effect.Effect<
+                ReadHandlerResult<ShellResourceResponse>,
+                ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
+              > => {
+                if (resolution.outcome === 'not_found') {
+                  return Effect.fail(
+                    new ReadHandlerNotFound({
+                      code: 'read_handler_not_found',
+                      reason: 'The requested Shell resource was not found',
+                    }),
+                  );
+                }
+                if (resolution.outcome === 'forbidden') {
+                  return Effect.fail(
+                    new ReadPermissionDenied({
+                      code: 'read_permission_denied',
+                      reason: 'The requested Shell resource is forbidden',
+                    }),
+                  );
+                }
+                if (resolution.outcome !== 'resolved') {
+                  return Effect.fail(
+                    new ReadHandlerUnavailable({
+                      code: 'read_handler_unavailable',
+                      reason: 'The Shell resource provider is temporarily unavailable',
+                    }),
+                  );
+                }
+                return Effect.succeed({
+                  evidence: { resultCount: 1 },
+                  result: {
+                    detail: resolution.detail,
+                    media: resolution.media,
+                    projectionLagging: resolution.projectionLagging,
+                    ref,
+                    timeline: resolution.timeline,
+                  },
+                });
               },
-            });
-          },
-        ),
-      );
+            ),
+          );
+      },
+      // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
-    (ref) => ({ kind: 'resource', resource: ref }),
+    () => ({ kind: 'legal_entity' }),
   );
-  return { composition, moduleTarget, resourceDetail, search } as const;
+  return {
+    composition,
+    moduleTarget,
+    prefetchCompositionDecisions: (principal: TrustedPrincipalContext) =>
+      compositionAccess.prefetchCompositionDecisions(
+        principal.legalEntityId === undefined
+          ? { principalId: principal.principalId, tenantId: principal.tenantId }
+          : {
+              legalEntityId: principal.legalEntityId,
+              principalId: principal.principalId,
+              tenantId: principal.tenantId,
+            },
+      ),
+    prefetchModuleTargetDecisions: (principal: TrustedPrincipalContext, selector: MutableModuleTargetSelector) =>
+      compositionAccess.prefetchModuleTargetDecisions(
+        principal.legalEntityId === undefined
+          ? { principalId: principal.principalId, tenantId: principal.tenantId }
+          : {
+              legalEntityId: principal.legalEntityId,
+              principalId: principal.principalId,
+              tenantId: principal.tenantId,
+            },
+        selector,
+        moduleTargetEntrypoint.moduleKey,
+      ),
+    resourceDetail,
+    search,
+  } as const;
 });
 
 export const createShellGovernedReadsLayer = (
@@ -403,15 +495,27 @@ export const createShellGovernedReadsLayer = (
       const runtime = yield* ReadRuntime;
       const registrations = yield* makeRegistrations(gateways, assertionIssuer, scopedModuleStateFactory);
       return {
+        // The read's SpiceDB checks join decisions asked for beside it, in one round trip with the read's own start.
         composition: (request) =>
-          runtime.runRead({
-            input: {},
-            principal: request.principal,
-            registration: registrations.composition,
-            transport: { correlationId: request.correlationId },
-          }),
+          withRequestPermissionDecisions(
+            Effect.all(
+              [
+                registrations.prefetchCompositionDecisions(request.principal),
+                runtime.runRead({
+                  input: {},
+                  principal: request.principal,
+                  registration: registrations.composition,
+                  transport: { correlationId: request.correlationId },
+                }),
+              ],
+              { concurrency: 2 },
+            ).pipe(Effect.map(([, composition]) => composition)),
+          ),
         moduleTarget: (request) => {
-          const input: MutableModuleTargetSelector = { compositionRevision: request.compositionRevision };
+          const input: MutableModuleTargetSelector = {};
+          if (request.compositionRevision !== undefined) {
+            input.compositionRevision = request.compositionRevision;
+          }
           if (request.canonicalPath !== undefined) {
             input.canonicalPath = request.canonicalPath;
           }
@@ -425,12 +529,20 @@ export const createShellGovernedReadsLayer = (
             request.moduleId === undefined
               ? { correlationId: request.correlationId }
               : { correlationId: request.correlationId, targetModuleKey: request.moduleId };
-          return runtime.runRead({
-            input,
-            principal: request.principal,
-            registration: registrations.moduleTarget,
-            transport,
-          });
+          return withRequestPermissionDecisions(
+            Effect.all(
+              [
+                registrations.prefetchModuleTargetDecisions(request.principal, input),
+                runtime.runRead({
+                  input,
+                  principal: request.principal,
+                  registration: registrations.moduleTarget,
+                  transport,
+                }),
+              ],
+              { concurrency: 2 },
+            ).pipe(Effect.map(([, target]) => target)),
+          );
         },
         resourceDetail: (request) =>
           runtime.runRead({

@@ -5,10 +5,14 @@ import {
   classifyActiveLegalEntities,
 } from '@app/core-runtime';
 import type { ContextAccessService, LegalEntityContextService, SafeLegalEntity } from '@app/core-runtime';
-import { Effect, Layer, Predicate } from 'effect';
+import { Effect, Layer, Option, Predicate, Ref } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
+import { GatewayTimings } from '../../api/auth/gateway-timing.ts';
+import type { GatewayPhase } from '../../api/auth/gateway-timing.ts';
 import {
+  canSelectTenantContext,
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
 } from '../../api/auth/legal-entity-selection.ts';
@@ -133,6 +137,61 @@ it.effect('fails closed for authorization uncertainty and validates a switch ind
   }),
 );
 
+it.effect('starts the shared demo tenant in a stable authorized company without changing other tenants', () =>
+  Effect.gen(function* verifyDemoDefault() {
+    const selected = yield* provideSelectionServices(
+      resolveAuthorizedLegalEntities({ principalId, tenantId: '70000000-0000-4000-8000-000000000020' }),
+      context([beta, alpha]),
+      access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
+    );
+    expect(selected).toEqual({ available: [beta, alpha], selected: alpha, state: 'selected' });
+  }),
+);
+
+it.effect('selects tenant context only through its exact graph capability, never company access', () =>
+  Effect.gen(function* verifyTenantContextCapability() {
+    const calls: unknown[] = [];
+    const contextAccess: ContextAccessService = {
+      ...access({ [alpha.legalEntityId]: 'allowed' }),
+      tenants: (input) => {
+        calls.push(input);
+        return Effect.succeed([{ decision: 'allowed', key: tenantId }]);
+      },
+    };
+    expect(
+      yield* canSelectTenantContext({ principalId, tenantId }).pipe(
+        Effect.provideService(ContextAccess, contextAccess),
+      ),
+    ).toBe(true);
+    expect(calls).toEqual([{ permission: 'select_context', principalId, tenantIds: [tenantId] }]);
+    expect(
+      yield* canSelectTenantContext({ principalId, tenantId }).pipe(
+        Effect.provideService(ContextAccess, access({ [alpha.legalEntityId]: 'allowed' })),
+      ),
+    ).toBe(false);
+  }),
+);
+
+it.effect('rejects missing, foreign, duplicate or unavailable tenant context decisions', () =>
+  Effect.gen(function* verifyTenantContextDecisions() {
+    for (const decisions of [
+      [],
+      [{ decision: 'allowed' as const, key: 'another-tenant' }],
+      [{ decision: 'unavailable' as const, key: tenantId }],
+      [
+        { decision: 'allowed' as const, key: tenantId },
+        { decision: 'allowed' as const, key: tenantId },
+      ],
+    ]) {
+      const error = yield* canSelectTenantContext({ principalId, tenantId }).pipe(
+        Effect.provideService(ContextAccess, { ...access({}), tenants: () => Effect.succeed(decisions) }),
+        Effect.flip,
+      );
+      expect(Predicate.isTagged(error, 'LegalEntitySelectionUnavailableError')).toBe(true);
+    }
+  }),
+);
+
 const gamma = {
   legalEntityId: '30000000-0000-4000-8000-000000000003',
   legalName: 'Gamma',
@@ -149,6 +208,39 @@ it.effect('replaces stale A only with the sole currently authorized same-Tenant 
         ),
       ).toEqual({ available: [beta], selected: beta, state: 'selected' });
     }
+  }),
+);
+
+it.effect('times SQL and SpiceDB independently for API-key and session legal-entity selection', () =>
+  Effect.gen(function* timedSelections() {
+    const timings = yield* Ref.make<readonly { readonly durationMs: number; readonly phase: GatewayPhase }[]>([]);
+    const records = context();
+    const permissions = access({ [alpha.legalEntityId]: 'allowed' });
+    const timedRecords: LegalEntityContextService = {
+      listActiveForTenant: (tenant) => TestClock.adjust(20).pipe(Effect.andThen(records.listActiveForTenant(tenant))),
+      validateSelection: (tenant, entity) =>
+        TestClock.adjust(20).pipe(Effect.andThen(records.validateSelection(tenant, entity))),
+    };
+    const timedPermissions: ContextAccessService = {
+      ...permissions,
+      legalEntities: (input) => TestClock.adjust(2000).pipe(Effect.andThen(permissions.legalEntities(input))),
+    };
+    yield* provideSelectionServices(
+      validateAuthorizedLegalEntity({ legalEntityId: alpha.legalEntityId, principalId, tenantId }),
+      timedRecords,
+      timedPermissions,
+    ).pipe(Effect.provideService(GatewayTimings, Option.some(timings)));
+    yield* provideSelectionServices(
+      resolveAuthorizedLegalEntities({ principalId, tenantId }),
+      timedRecords,
+      timedPermissions,
+    ).pipe(Effect.provideService(GatewayTimings, Option.some(timings)));
+    expect(yield* Ref.get(timings)).toEqual([
+      { durationMs: 20, phase: 'legal-entity-sql' },
+      { durationMs: 2000, phase: 'legal-entity-spicedb' },
+      { durationMs: 20, phase: 'legal-entity-sql' },
+      { durationMs: 2000, phase: 'legal-entity-spicedb' },
+    ]);
   }),
 );
 

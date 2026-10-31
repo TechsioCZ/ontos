@@ -1,3 +1,5 @@
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
+import type { ActionRuntimeService } from '@app/core-runtime';
 import type { Issue } from 'effect/SchemaIssue';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
 import { Socket } from 'effect/socket';
@@ -5,6 +7,7 @@ import { NodeSocket, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } fro
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ContextAccessLive,
+  ActiveApplicationCompositionService,
   findPostgresFailure,
   CorePersistenceLive,
   DatabaseConfig,
@@ -14,7 +17,11 @@ import {
   ReadEvidenceValidationError,
   ReadHandlerExecutionError,
   TenantModuleStateServiceLive,
+  defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
+  ActionRuntime,
+  ActionAuthorizationPreflight,
+  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
@@ -98,8 +105,9 @@ import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-
 import { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 import {
   PartyRegistryRetailPartyResolverFactory,
-  partyRegistryRetailPartyResolverFactoryLive,
+  preparedRetailPartyResolution,
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
   profileCounterpartyRoleEligibilityResolverFactoryLive,
@@ -456,12 +464,9 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
   const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
   if (owner === 'party') {
-    // Follow Party's source-owned db:migrate gateway: prepare Contacts, migrate Contacts, then Party.
-    const steps = [
-      ['scripts/prepare-contacts-migration.mts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.contacts.config.ts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.config.ts'],
-    ];
+    // Follow Party's source-owned db:migrate: its Contacts and Party lineages converge through the reviewed
+    // equivalence plan, which plain `drizzle-kit migrate` runs would replay twice.
+    const steps = [['../../scripts/migration-convergence-cli.mts', 'party']];
     for (const args of steps) {
       const child = yield* ChildProcess.make(process.execPath, args, {
         cwd: directory,
@@ -547,7 +552,7 @@ const makeChildAuthority = Effect.fn('PriceGroupTemporal.makeChildAuthority')(fu
     yield* Layer.build(PgClient.layer({ maxConnections: 1, url: bootstrap.identities.issuerUrl })),
     PgClient.PgClient,
   );
-  const registrar = makeGatewayScopeGrantRegistrar(issuerClient);
+  const registrar = makeGatewayScopeGrantRegistrar(issuerClient, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
   const partyClient = Context.get(
     yield* Layer.build(PgClient.layer({ maxConnections: 1, url: bootstrap.identities.partyUrl })),
     PgClient.PgClient,
@@ -865,7 +870,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   });
   const compositionRevision = bootstrap.composition.composition.revision;
   const authorityContext = yield* Effect.context<Crypto.Crypto>();
-  const readParty: typeof executePartyDetail = (request, correlation) =>
+  const readParty = (request: Parameters<typeof executePartyDetail>[0], correlation: string) =>
     authority.issue(partyAppId, party.buildMarker).pipe(
       Effect.provideContext(authorityContext),
       Effect.orDie,
@@ -887,16 +892,10 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
         }),
       ),
     );
-  const factories = yield* Layer.build(
-    Layer.mergeAll(partyRegistryRetailPartyResolverFactoryLive, profileCounterpartyRoleEligibilityResolverFactoryLive),
-  );
-  const retailFactory = Context.get(factories, PartyRegistryRetailPartyResolverFactory);
+  const factories = yield* Layer.build(profileCounterpartyRoleEligibilityResolverFactoryLive);
   const counterpartyFactory = Context.get(factories, ProfileCounterpartyRoleEligibilityResolverFactory);
   const profileReader = profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive));
   const ownerServices = Layer.mergeAll(
-    Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-      make: (input) => retailFactory.make(input, readParty),
-    }),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (input) => counterpartyFactory.make(input, readCounterparty),
     }),
@@ -934,6 +933,8 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
   const namespace = staffAuthenticationNamespaceRegistryLayer([commerceAppId]);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
+  // The Commerce API composes no dedicated database identities.
+  const databaseIdentities = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
   const common = Layer.mergeAll(
     persistence,
     ContextAccessLive,
@@ -943,8 +944,40 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     namespace,
     composition,
     ownerServices,
+  ).pipe(Layer.provideMerge(databaseIdentities));
+  const baseActions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provideMerge(ownerServices),
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  // Match the native API's invocation scope. Party HTTP runs in preflight and only
+  // its single-use prepared result reaches transaction-scoped profile persistence.
+  const actions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* preparedActionRuntime() {
+      const existing = yield* ActionRuntime;
+      const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
+      const compositions = yield* ActiveApplicationCompositionService;
+      const runAction: ActionRuntimeService['runAction'] = (input) =>
+        Effect.scoped(
+          Effect.gen(function* runPreparedAction() {
+            const scope = yield* Effect.scope;
+            const retail = yield* preparedRetailPartyResolution.pipe(
+              Effect.provideService(RetailPartyDetailExecutor, { execute: readParty }),
+              Effect.provideService(ActiveApplicationCompositionService, compositions),
+            );
+            const runtime = yield* Layer.buildWithScope(makeActionRuntimeLive(ultramodernDeliveryUnit), scope).pipe(
+              Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, retail.preflight)),
+            );
+            return yield* Context.get(runtime, ActionRuntime)
+              .runAction(input)
+              .pipe(Effect.provideService(PartyRegistryRetailPartyResolverFactory, retail.factory));
+          }),
+        );
+      return { ...existing, runAction };
+    }),
+  ).pipe(
+    Layer.provide(baseActions),
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(ownerServices),
@@ -990,7 +1023,9 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     customerPriceGroupAssignmentReadReadApiLive,
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(actions))),
-    Layer.provide(Layer.mergeAll(actions, reads, namespace, redemption, source, RequestSchemaProblemLive)),
+    Layer.provide(
+      Layer.mergeAll(actions, reads, namespace, redemption, source, databaseIdentities, RequestSchemaProblemLive),
+    ),
   );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>

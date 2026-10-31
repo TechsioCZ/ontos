@@ -10,6 +10,7 @@ import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/mod
 import { coreRelations, tenants } from '../../src/db/schema.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -422,6 +423,8 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
           Effect.gen(function* independentClone() {
             const fixture = yield* makeIsolatedNativeDatabaseFixture({
               compositionSnapshot: snapshot,
+              // The clone mirrors exactly the enrollment it is given, never the source's noncanonical rows.
+              databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
               mode: 'schema-only',
               purpose: 'stabilization-1267-party-gateway',
               sourceConnections,

@@ -1,14 +1,80 @@
 import { NodeSocketServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Match, Predicate, Redacted, Stream } from 'effect';
+import { Context, Effect, Exit, Layer, Match, Predicate, Redacted, Schema, Stream } from 'effect';
+import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
 import { NetAddress } from 'effect/net';
 import { Reactivity } from 'effect/reactivity';
 import { Socket } from 'effect/socket';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
-import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
+import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive } from '../../src/db/client.ts';
+import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
+import { SESSION_ROLE_MISMATCH_REASON, verifySessionRoleOnFirstUse } from '../../src/db/session-identity.ts';
+
+class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()(
+  '@app/core-runtime/tests/integration/pool-deadlines.test/RuntimeDatabaseIdentity',
+) {}
+
+const currentDatabaseUser = Effect.gen(function* readDatabaseIdentity() {
+  const database = yield* CoreDatabase;
+  const rows = yield* database.executor.execute<{ current_user: string }>(sql`select current_user`, 'objects');
+  return rows[0]?.current_user ?? '';
+});
+const runtimeIdentityLive = Layer.effect(RuntimeDatabaseIdentity, currentDatabaseUser).pipe(
+  Layer.provide(CoreDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
+it.live('keeps administrator and runtime identities distinct in one memoized operator composition', () =>
+  Effect.gen(function* distinctOperatorClients() {
+    const configuration = yield* loadDatabaseConnectionPair();
+    const context = yield* Layer.build(Layer.mergeAll(runtimeIdentityLive, CoreAdminDatabaseLive));
+    const admin = yield* currentDatabaseUser.pipe(
+      Effect.provideService(CoreDatabase, Context.get(context, CoreDatabase)),
+    );
+    const runtime = Context.get(context, RuntimeDatabaseIdentity);
+    expect(admin).toBe(configuration.admin.user);
+    expect(runtime).toBe(configuration.runtime.user);
+    expect(admin).not.toBe(runtime);
+  }),
+);
+
+const nativeSessionClient = Effect.gen(function* nativeSessionClient() {
+  const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
+  const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString));
+  const reactivity = yield* Reactivity.make;
+  const client = yield* PgClient.makeClient(poolConfiguration).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
+  );
+  return { client, configuration };
+});
+
+it.live('builds a database service without a connection and refuses the first use under a foreign role', () =>
+  Effect.gen(function* refuseWrongDatabaseRole() {
+    const { client } = yield* nativeSessionClient;
+    const verified = verifySessionRoleOnFirstUse(client, SHELL_GATEWAY_ISSUER_IDENTITY.role);
+    const failure = yield* Effect.flip(verified.unsafe('select 1'));
+
+    expect(Schema.is(SqlError)(failure)).toBe(true);
+    expect(Schema.is(ConnectionError)(failure.reason)).toBe(true);
+    expect(failure.reason.message).toBe(SESSION_ROLE_MISMATCH_REASON);
+  }),
+);
+
+it.live('fails a use whose role query fails and verifies again on the next use', () =>
+  Effect.gen(function* retryFailedRoleQuery() {
+    const { client, configuration } = yield* nativeSessionClient;
+    const verified = verifySessionRoleOnFirstUse(client, configuration.expectedRole);
+    yield* client.unsafe('begin');
+    yield* Effect.flip(client.unsafe('select 1 / 0'));
+    expect(Exit.isFailure(yield* Effect.exit(verified.unsafe('select 1')))).toBe(true);
+    yield* client.unsafe('rollback');
+    expect(yield* verified.unsafe<{ value: number }>('select 1 as value')).toEqual([{ value: 1 }]);
+  }),
+);
 
 /**
  * A TCP listener that reads the startup packet and never answers, so only the connect deadline ends it.
@@ -42,7 +108,7 @@ it.live('applies PostgreSQL connect and statement deadlines', () =>
     expect(settings[0]?.statement_timeout).toBe('120ms');
 
     const identity = yield* client.unsafe<{ current_user: string }>('select current_user');
-    expect(identity[0]?.current_user).toBe(databaseConfiguration.user);
+    expect(identity[0]?.current_user).toBe(databaseConfiguration.expectedRole);
 
     const pidResult = yield* client.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
     const pid = pidResult[0]?.pid;

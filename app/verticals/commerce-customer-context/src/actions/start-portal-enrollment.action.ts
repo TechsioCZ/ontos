@@ -52,6 +52,17 @@ const handleStartPortalEnrollment = Effect.fn('StartPortalEnrollmentAction.handl
       },
       { concurrency: 2 },
     ).pipe(Effect.mapError((cause) => invalid(cause)));
+    const { legalEntityId } = context.scope;
+    if (
+      (legalEntityId !== undefined && payload.targetLegalEntityId !== legalEntityId) ||
+      (payload.retailRegistration !== undefined && legalEntityId === undefined)
+    ) {
+      return yield* new CommerceEnrollmentAttemptRejected({
+        code: 'attempt_invalid',
+        reason: 'The enrollment target does not match the verified legal entity',
+        retryable: false,
+      });
+    }
     return yield* context.services.attempt.start({
       ...payload,
       actionInvocationId,
@@ -80,7 +91,7 @@ export const startPortalEnrollmentAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
     payloadSchema: StartPortalEnrollmentPayloadSchema,
     policies: [],

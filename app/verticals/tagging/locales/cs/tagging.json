@@ -1,0 +1,134 @@
+{
+  "tagging": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "tagging",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Štítky",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "colors": {
+      "blue": "Modrá",
+      "gray": "Šedá",
+      "green": "Zelená",
+      "orange": "Oranžová",
+      "pink": "Růžová",
+      "purple": "Fialová",
+      "red": "Červená",
+      "yellow": "Žlutá"
+    },
+    "kinds": {
+      "customer": "Zákazníci",
+      "employee": "Zaměstnanci",
+      "opportunity": "Příležitosti",
+      "order": "Objednávky",
+      "product": "Produkty"
+    },
+    "pages": {
+      "records": {
+        "title": "Štítky",
+        "description": "Správa štítků a jejich přiřazení.",
+        "forbidden": "Štítky nemáte oprávnění zobrazit.",
+        "unavailable": "Data se nepodařilo načíst."
+      }
+    },
+    "tags": {
+      "assigned": {
+        "description": "Záznamy, které mají tento štítek, podle oblasti.",
+        "empty": "Žádné přiřazení.",
+        "failed": "Přiřazení se nepodařilo načíst.",
+        "loading": "Načítání přiřazení…",
+        "title": "Přiřazení štítku {{name}}",
+        "unknown": "Neznámý záznam",
+        "unknownCustomer": "Neznámý zákazník"
+      },
+      "assignments": "Přiřazení",
+      "bulk": {
+        "action": "Akce",
+        "add": "Přidat",
+        "busy": "Ukládám…",
+        "chooseTag": "Vyberte štítek.",
+        "description": "Změna se použije na vybrané záznamy ({{total}}).",
+        "failure": "Štítky se nepodařilo upravit. Zkuste to znovu.",
+        "forbidden": "Nemáte oprávnění upravovat štítky.",
+        "remove": "Odebrat",
+        "submit": "Použít štítek",
+        "submitRemove": "Odebrat štítek",
+        "success": "Štítky upraveny",
+        "tag": "Štítek",
+        "title": "Upravit štítky"
+      },
+      "created": "Štítek vytvořen",
+      "deleted": "Štítek smazán",
+      "delete": {
+        "alreadyDeleted": "Štítek už byl smazán.",
+        "busy": "Mažu…",
+        "conflict": "Štítky se mezitím změnily. Zkontrolujte seznam a zkuste to znovu.",
+        "description": "Smazáním štítku se odebere ze všech záznamů.",
+        "failure": "Štítek se nepodařilo smazat. Zkuste to znovu.",
+        "forbidden": "Nemáte oprávnění mazat štítky.",
+        "submit": "Smazat štítek",
+        "title": "Smazat štítek „{{name}}“?"
+      },
+      "edit": "Upravit štítek",
+      "failure": "Změnu se nepodařilo uložit. Zkuste to znovu.",
+      "filter": {
+        "all": "Všechny štítky",
+        "noResults": "Žádný štítek neodpovídá.",
+        "placeholder": "Štítek",
+        "toggle": "Zobrazit štítky"
+      },
+      "form": {
+        "cancel": "Zrušit",
+        "color": "Barva",
+        "createSubmit": "Vytvořit štítek",
+        "description": "Popis",
+        "discardConfirm": "Zahodit změny",
+        "discardDescription": "Údaje, které jste ve formuláři zadali, se ztratí.",
+        "discardKeep": "Pokračovat v úpravách",
+        "discardTitle": "Zahodit neuložené změny?",
+        "editSubmit": "Uložit změny",
+        "kinds": "Platí pro",
+        "kindsRequired": "Vyberte alespoň jednu oblast.",
+        "name": "Název",
+        "nameRequired": "Vyplňte název štítku.",
+        "nameTooLong": "Název může mít nejvýše 60 znaků.",
+        "saving": "Ukládám…"
+      },
+      "loadFailed": "Štítky se nepodařilo načíst.",
+      "new": "Nový štítek",
+      "retry": "Zkusit znovu",
+      "table": {
+        "actions": "Akce",
+        "appliesTo": "Platí pro",
+        "clearSearch": "Zrušit hledání",
+        "description": "Popis",
+        "empty": "Zatím tu nejsou žádné štítky.",
+        "emptyDescription": "Založte první štítek a přiřaďte ho záznamům.",
+        "loadingLabel": "Načítání dat",
+        "name": "Název",
+        "noResults": "Hledání nenašlo žádný štítek.",
+        "pageSize": "Řádků na stránku",
+        "range": "{{start}}–{{end}} z {{total}}",
+        "search": "Hledat štítky…",
+        "searchLabel": "Filtrovat štítky"
+      },
+      "updated": "Štítek upraven",
+      "selectPlaceholder": "Vyberte…",
+      "loading": "Načítám…"
+    },
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
+  }
+}

@@ -63,7 +63,7 @@ const attachPrincipalContextProvenance = <Context extends TrustedPrincipalContex
 ): Context => {
   const carrier = { ...context };
   sealPrincipalContextProvenance(carrier, provenance);
-  return Object.isFrozen(context) ? Object.freeze(carrier) : carrier;
+  return Object.freeze(carrier);
 };
 
 const readPrincipalContextProvenance = <Context>(

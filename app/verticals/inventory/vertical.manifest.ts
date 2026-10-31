@@ -68,6 +68,7 @@ import { stockReceiptAction } from './src/actions/stock-receipt.action.ts';
 import { StockSharingEligibilityResolutionApi } from './shared/apis/stock-sharing-eligibility-resolution.ts';
 import { stockSharingEligibilityResourceDescriptor } from './shared/resources/stock-sharing-eligibility.ts';
 // </generated-module-manifest-imports>
+import { inventoryMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -159,6 +160,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: inventoryMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

@@ -11,6 +11,8 @@ import type { OfficialIdentifierUpdatedEventSchema } from './update-party-offici
 import { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxMessage } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
 import { makePartyOfficialIdentifierRef } from '../services/party-official-identifier-reference.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 export const publishAttachedOfficialIdentifiers = (
   context: Pick<
     ActionHandlerContext<{
@@ -28,8 +30,8 @@ export const publishAttachedOfficialIdentifiers = (
       const event = yield* context.addDomainEvent({
         eventType: 'party.registry.official-identifier-added.v1',
         payloadJson: payload,
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
+        producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+        subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
         subjectResourceId: officialIdentifierRef.resourceId,
         subjectResourceType: officialIdentifierRef.resourceType,
       });
@@ -68,8 +70,8 @@ export const publishUpdatedOfficialIdentifiers = (
       const event = yield* context.addDomainEvent({
         eventType: 'party.registry.official-identifier-updated.v1',
         payloadJson: payload,
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
+        producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+        subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
         subjectResourceId: payload.officialIdentifierRef.resourceId,
         subjectResourceType: payload.officialIdentifierRef.resourceType,
       });

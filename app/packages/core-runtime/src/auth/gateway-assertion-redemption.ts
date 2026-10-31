@@ -17,6 +17,7 @@ export interface GatewayAssertionRedemptionInput {
 export type GatewayAssertionRedemptionError = GatewayAssertionReplayError | GatewayAssertionRedemptionUnavailableError;
 
 export interface GatewayAssertionRedemption {
+  /** Atomically records the first redemption of (issuer, audience, jti); every replay fails closed. */
   readonly consume: (input: GatewayAssertionRedemptionInput) => Effect.Effect<void, GatewayAssertionRedemptionError>;
 }
 

@@ -174,6 +174,7 @@ const getWithCookie = (app: SessionApp) => (route: string, cookie: string) =>
 it('publishes only the explicitly reviewed provider routes', () => {
   expect(COMMERCE_PORTAL_AUTH_SESSION_PUBLIC_ROUTE_ALLOWLIST).toEqual([
     '/get-session',
+    '/customer-account',
     '/refresh',
     '/sign-in/email',
     '/sign-out',
@@ -889,4 +890,62 @@ it.effect('rejects a disabled session on read without renewing it', () =>
       expect(response.headers.getSetCookie()).toStrictEqual([]);
     }),
   ),
+);
+
+it.live('native realm rejects forged and expired portal cookies without granting owner session evidence', () =>
+  Effect.gen(function* nativeCookieRejection() {
+    const realm = betterAuth({
+      advanced: { cookiePrefix: 'commerce-portal', useSecureCookies: true },
+      baseURL: trustedOrigin,
+      database: memoryAdapter({ account: [], session: [], user: [], verification: [] }),
+      emailAndPassword: { autoSignIn: false, enabled: true },
+      secret: 'native-cookie-rejection-test-secret-not-a-live-credential',
+      trustedOrigins: [trustedOrigin],
+    });
+    const email = 'native-cookie-rejection@example.test';
+    const password = 'N'.repeat(24);
+    yield* Effect.promise(() => realm.api.signUpEmail({ body: { email, name: 'Native cookie proof', password } }));
+    const signedIn = yield* Effect.promise(() =>
+      realm.api.signInEmail({
+        body: { email, password },
+        headers: new Headers({ origin: trustedOrigin }),
+        returnHeaders: true,
+      }),
+    );
+    const cookie = signedIn.headers
+      .getSetCookie()
+      .map((header) => header.split(';')[0])
+      .join('; ');
+    expect(cookie).toContain('__Secure-commerce-portal.session_token=');
+    let evidenceReads = 0;
+    const app = yield* makeApp(
+      {
+        ...unusedLifecycle,
+        evidenceForSession: () => {
+          evidenceReads += 1;
+          return Effect.succeed(admittedEvidence);
+        },
+      },
+      makeCountingBudget(),
+      realm.api,
+    );
+    const valid = yield* getWithCookie(app)('/api/portal-auth/get-session', cookie);
+    expect((yield* jsonBody(valid)).state).toBe('authenticated');
+    expect(evidenceReads).toBe(1);
+    const forged = yield* getWithCookie(app)(
+      '/api/portal-auth/get-session',
+      '__Secure-commerce-portal.session_token=forged.invalid-signature',
+    );
+    expect((yield* jsonBody(forged)).state).toBe('anonymous');
+    expect(forged.headers.get('set-cookie')).toBeNull();
+    // Expire the actual provider row through its native adapter, retaining the original signed browser cookie.
+    const nativeContext = yield* Effect.promise(() => realm.$context);
+    yield* Effect.promise(() =>
+      nativeContext.internalAdapter.updateSession(signedIn.response.token, { expiresAt: new Date(0) }),
+    );
+    const expired = yield* getWithCookie(app)('/api/portal-auth/get-session', cookie);
+    expect((yield* jsonBody(expired)).state).toBe('anonymous');
+    expect(expired.headers.get('set-cookie')).toBeNull();
+    expect(evidenceReads).toBe(1);
+  }).pipe(Effect.scoped),
 );

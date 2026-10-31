@@ -73,7 +73,7 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
       access: 'write',
       authorization: {
         kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
+        provisioning: 'principal_self_credentials',
       },
       entrypointKey: 'core.identity.set-self-api-key-binding-status',
       moduleKey: 'core.identity',

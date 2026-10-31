@@ -1154,10 +1154,25 @@ export const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadat
   );
   const tuple = `type ${appType}ApiRuntimeArguments = readonly [\n`;
   const readRuntimeDefinition = `const productionReadRuntimeLive = ${readLive}.pipe(`;
-  const actionRuntimeDefinition = `const productionActionRuntimeLive = ${actionLive}.pipe(\n  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),\n);\n`;
+  const actionRuntimeDefinition = `const actionHttpDatabaseIdentitiesLive = makeActionHttpDatabaseIdentityEnrollmentLive(
+  defineActionHttpDatabaseIdentityEnrollment([]),
+);
+const productionActionRuntimeLive = ${actionLive}.pipe(
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(actionHttpDatabaseIdentitiesLive),
+);
+`;
   if (nextContent.includes(readRuntimeDefinition) && !nextContent.includes('const productionActionRuntimeLive =')) {
+    nextContent = `import {
+  defineDatabaseIdentityEnrollment as defineActionHttpDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive as makeActionHttpDatabaseIdentityEnrollmentLive,
+} from '@app/core-runtime';
+${nextContent}`;
     nextContent = withNodeCryptoImport(
-      nextContent.replace(readRuntimeDefinition, `${actionRuntimeDefinition}${readRuntimeDefinition}`),
+      nextContent.replace(
+        readRuntimeDefinition,
+        `${actionRuntimeDefinition}${readRuntimeDefinition}\n  Layer.provide(actionHttpDatabaseIdentitiesLive),`,
+      ),
       vertical,
     );
   }

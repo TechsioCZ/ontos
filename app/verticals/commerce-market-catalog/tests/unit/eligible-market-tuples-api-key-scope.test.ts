@@ -5,8 +5,9 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
+import type { EligibleMarketTuplesRequest } from '../../shared/apis/eligible-market-tuples.ts';
 import type { EligibleMarketTuple } from '../../shared/market-contracts.ts';
-import { handleEligibleMarketTuples } from '../../src/api/eligible-market-tuples.read.ts';
+import { handleEligibleMarketTuples, prepareEligibleMarketTuples } from '../../src/api/eligible-market-tuples.read.ts';
 import type { MarketEligibilitySnapshot } from '../../src/domain/market-resolution.ts';
 import type { MarketResolutionPersistence } from '../../src/persistence/market-resolution-persistence.ts';
 
@@ -98,17 +99,19 @@ const request = (overrides: Partial<typeof EligibleMarketTuplesRequestSchema.Enc
     ...overrides,
   });
 
-const contextFor = (scope: OperationalScope) => ({
-  readKey: 'commerce.market-catalog.api.eligible-market-tuples',
-  scope,
-  services: { ...available, ...subjectReader },
-});
+/** prepare (trusted scope, Customer Context restrictions) then load (the owner snapshot), as the runtime runs them. */
+const eligibleMarketTuples = (input: EligibleMarketTuplesRequest, scope: OperationalScope) => {
+  const steps = { readKey: 'commerce.market-catalog.api.eligible-market-tuples', scope, services: available };
+  return prepareEligibleMarketTuples(input, steps, subjectReader).pipe(
+    Effect.flatMap((prepared) => handleEligibleMarketTuples(input, { ...steps, prepared })),
+  );
+};
 
 describe('Commerce Market eligible tuples api_key service callers without a Storefront', () => {
   it.effect('admits an api_key service caller that carries no trusted Storefront', () =>
     Effect.gen(function* admitsApiKey() {
       expect(apiKeyWithoutStorefront.trustedStorefrontId).toBeUndefined();
-      const result = yield* handleEligibleMarketTuples(request(), contextFor(apiKeyWithoutStorefront));
+      const result = yield* eligibleMarketTuples(request(), apiKeyWithoutStorefront);
       expect(result.result).toMatchObject({ outcome: 'ELIGIBLE_MARKET_TUPLES', tuples: [eligibleTuple] });
       expect(result.evidence.resultCount).toBe(1);
     }),
@@ -121,14 +124,11 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
         'api-key:eligible-market-tuples',
         'api_key',
       );
-      const admitted = yield* handleEligibleMarketTuples(request(), contextFor(scope));
+      const admitted = yield* eligibleMarketTuples(request(), scope);
       expect(admitted.result.outcome).toBe('ELIGIBLE_MARKET_TUPLES');
 
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
-          request({ storefrontRef: { ...storefrontRef, appId: 'untrusted-shop' } }),
-          contextFor(scope),
-        ),
+        eligibleMarketTuples(request({ storefrontRef: { ...storefrontRef, appId: 'untrusted-shop' } }), scope),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
@@ -137,9 +137,9 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
   it.effect('rejects an api_key caller whose requested Storefront belongs to another Tenant', () =>
     Effect.gen(function* crossTenantStorefront() {
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
+        eligibleMarketTuples(
           request({ storefrontRef: { appId: storefrontRef.appId, tenantId: otherTenantId } }),
-          contextFor(apiKeyWithoutStorefront),
+          apiKeyWithoutStorefront,
         ),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
@@ -149,11 +149,11 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
   it.effect('rejects an api_key caller whose seller restriction belongs to another Tenant', () =>
     Effect.gen(function* crossTenantSeller() {
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
+        eligibleMarketTuples(
           request({
             sellingLegalEntityRestriction: { ...eligibleTuple.sellingLegalEntityRef, tenantId: otherTenantId },
           }),
-          contextFor(apiKeyWithoutStorefront),
+          apiKeyWithoutStorefront,
         ),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
@@ -163,7 +163,7 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
   it.effect('rejects an api_key caller whose purchasing subject belongs to another Tenant', () =>
     Effect.gen(function* crossTenantSubject() {
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
+        eligibleMarketTuples(
           request({
             subject: {
               kind: 'RETAIL_PROFILE',
@@ -175,7 +175,7 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
               },
             },
           }),
-          contextFor(apiKeyWithoutStorefront),
+          apiKeyWithoutStorefront,
         ),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
@@ -186,7 +186,7 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
     Effect.gen(function* sessionWithoutStorefront() {
       const scope = makeScope(sessionPrincipal, 'session:eligible-market-tuples', 'session');
       expect(scope.trustedStorefrontId).toBeUndefined();
-      const error = yield* Effect.flip(handleEligibleMarketTuples(request(), contextFor(scope)));
+      const error = yield* Effect.flip(eligibleMarketTuples(request(), scope));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );
@@ -201,7 +201,7 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
         'impersonation:eligible-market-tuples',
         'support_impersonation',
       );
-      const error = yield* Effect.flip(handleEligibleMarketTuples(request(), contextFor(scope)));
+      const error = yield* Effect.flip(eligibleMarketTuples(request(), scope));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );
@@ -209,7 +209,7 @@ describe('Commerce Market eligible tuples api_key service callers without a Stor
   it.effect('rejects a system caller without a trusted Storefront', () =>
     Effect.gen(function* systemWithoutStorefront() {
       const scope = makeScope({}, 'job:eligible-market-tuples:run:1', 'system');
-      const error = yield* Effect.flip(handleEligibleMarketTuples(request(), contextFor(scope)));
+      const error = yield* Effect.flip(eligibleMarketTuples(request(), scope));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );

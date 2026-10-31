@@ -106,7 +106,7 @@ export const HostWorkerArtifactSchema = Schema.Struct({
       unitId: UnitIdSchema,
     }),
   ),
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(4),
   serviceId: Schema.Literal(OUTBOX_WORKER_HOST.id),
   sourceInputs: Schema.Array(Schema.NonEmptyString),
   sourceRevision: Schema.NonEmptyString,
@@ -139,10 +139,12 @@ export const verifyHostProofOwnerIdentities = Effect.fn('OutboxWorkerHostProof.v
     readonly artifact: HostWorkerArtifact;
     readonly contracts: readonly OntosModuleDeploymentContract[];
     readonly hostedOwnerIds: readonly string[];
+    /** The Shell release's build marker; the Shell hosts the Core system worker. */
+    readonly shellBuildMarker: string;
     readonly sourceRevision: string;
     readonly topology: HostProofTopology;
   }) {
-    const { artifact, contracts, hostedOwnerIds, sourceRevision, topology } = input;
+    const { artifact, contracts, hostedOwnerIds, shellBuildMarker, sourceRevision, topology } = input;
     const identities = new Map<string, HostWorkerArtifact['ownerBuildIdentities'][number]>(
       artifact.ownerBuildIdentities.map((identity) => [identity.appId, identity]),
     );
@@ -162,16 +164,19 @@ export const verifyHostProofOwnerIdentities = Effect.fn('OutboxWorkerHostProof.v
     }
     for (const appId of hostedOwnerIds) {
       const identity = identities.get(appId);
-      const owner = topology.verticals.find(({ id }) => id === appId);
-      const contract = contracts.find(({ deployment }) => deployment.appId === appId);
+      const isShell = appId === topology.shell.id;
+      const owner = isShell ? topology.shell : topology.verticals.find(({ id }) => id === appId);
+      const buildMarker = isShell
+        ? shellBuildMarker
+        : contracts.find(({ deployment }) => deployment.appId === appId)?.deployment.buildMarker;
       if (
         identity === undefined ||
         owner === undefined ||
-        contract === undefined ||
+        buildMarker === undefined ||
         identity.sourceRevision !== sourceRevision ||
         identity.unitId !== owner.deliveryUnit.unitId ||
         identity.unitId !== `app/${appId}` ||
-        identity.buildMarker !== contract.deployment.buildMarker
+        identity.buildMarker !== buildMarker
       ) {
         return yield* fail(`the ${appId} contract does not match the actually compiled worker owner`);
       }
@@ -310,10 +315,21 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
       ({ id }) => deriveOntosModuleDeploymentContract({ vertical: id, workspaceRoot }),
       { concurrency: 1 },
     );
+    const shellIdentity = yield* Effect.try({
+      catch: () => fail('the native Shell source identity cannot be resolved'),
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
+          sourceRevision: artifact.sourceRevision,
+          unitId: topology.shell.deliveryUnit.unitId,
+          workspaceRoot,
+        }),
+    });
     yield* verifyHostProofOwnerIdentities({
       artifact,
       contracts,
-      hostedOwnerIds: host.owners.map(({ ownerId }) => ownerId),
+      hostedOwnerIds: [host.coreOwner.ownerId, ...host.owners.map(({ ownerId }) => ownerId)],
+      shellBuildMarker: shellIdentity.buildMarker,
       sourceRevision,
       topology,
     });
@@ -361,16 +377,6 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
         }),
       { concurrency: 1 },
     );
-    const shellIdentity = yield* Effect.try({
-      catch: () => fail('the native Shell source identity cannot be resolved'),
-      try: () =>
-        resolveUltramodernReleaseIdentity({
-          generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
-          sourceRevision: artifact.sourceRevision,
-          unitId: topology.shell.deliveryUnit.unitId,
-          workspaceRoot,
-        }),
-    });
     const shellRuntime = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
       createShellRuntimeContract(shellIdentity.buildMarker),
     );

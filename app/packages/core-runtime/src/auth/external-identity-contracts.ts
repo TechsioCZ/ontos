@@ -7,7 +7,7 @@ export const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
 export const ActionInvocationIdSchema = uuid.pipe(Schema.brand('ActionInvocationId'));
 const boundedReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 export const ProviderSubjectIdSchema = boundedReference.pipe(Schema.brand('ProviderSubjectId'));
-export const BindingSubjectTypeSchema = Schema.Literals(['user', 'api_key']);
+export const BindingSubjectTypeSchema = Schema.Literals(['user', 'api_key', 'oauth_grant']);
 export const AuthenticationNamespaceIdSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(200),

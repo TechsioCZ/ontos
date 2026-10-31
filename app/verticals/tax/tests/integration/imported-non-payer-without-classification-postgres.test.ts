@@ -1,4 +1,9 @@
-import { ContextAccess, ReadRuntime, toContextPermissionAccessKey } from '@app/core-runtime';
+import {
+  ContextAccess,
+  ReadRuntime,
+  defineDatabaseIdentityEnrollment,
+  toContextPermissionAccessKey,
+} from '@app/core-runtime';
 import type {
   ContextAccessService,
   DomainEventReference,
@@ -88,7 +93,10 @@ const runScoped = <Value, Failure>(
   database: CoreTestDatabase,
   scope: OperationalScope,
   operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
-) => database.transaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(operation)));
+) =>
+  database.transaction((transaction) =>
+    installOperationalScope(transaction, scope, defineDatabaseIdentityEnrollment([])).pipe(Effect.flatMap(operation)),
+  );
 
 /** Trusted Action admission/collector seam; owner persistence is native PostgreSQL, not a scripted service. */
 const actionContext = <Services>(scope: OperationalScope, actionInvocationId: string, services: Services) => {

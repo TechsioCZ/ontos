@@ -1,0 +1,306 @@
+import { NodeServices } from '@effect/platform-node';
+import { counterpartyResourceDescriptor } from '@app/party-registry/resources/counterparty';
+import {
+  toContextPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
+} from '@app/core-runtime';
+import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import { Command, Flag } from 'effect/cli';
+
+import {
+  demoAccounts,
+  demoId,
+  demoLegalEntityId,
+  demoOwnerPorts,
+  demoSearchDocuments,
+  AccountsFixtureSchema,
+  ContextFixtureSchema,
+  PartyFixtureSchema,
+  encodeOperatorFixture,
+  demoRef,
+  demoTenantId,
+  partyFixture,
+} from './fixtures.mts';
+import type { Relationship } from './fixtures.mts';
+import { demoPrincipalRoleKey, roleRelationship } from '../demo/permissions.mts';
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
+import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from './reset-configuration.mts';
+
+class DemoResetError extends Schema.TaggedError<DemoResetError>()('DemoResetError', { reason: Schema.String }) {}
+const workModuleId = 'work.tasks';
+const relationshipsModuleId = 'crm.activities';
+const financeModuleId = 'finance.billing';
+const partyModuleId = 'party.registry';
+/** Sales-demo MicroVerticals activated for the shared demo tenant (demo/sales-crm). */
+const salesDemoModuleIds = [
+  'demo.workforce',
+  'demo.tagging',
+  'demo.sales-pipeline',
+  'demo.merchandise',
+  'demo.sales-insights',
+] as const;
+const moduleIds = [
+  partyModuleId,
+  'property.portfolio',
+  'property.leasing',
+  'legal.agreements',
+  workModuleId,
+  financeModuleId,
+  relationshipsModuleId,
+  ...salesDemoModuleIds,
+  // Customer segments (commerce customer groups). Kept last: module state ids derive from the index, and it has no
+  // read_all/write_all context permissions, so it stays out of `salesDemoModuleIds`.
+  'commerce.customer-context',
+] as const;
+type AddRelationship = (
+  resourceType: string,
+  resourceId: string,
+  relation: string,
+  subjectType: string,
+  subjectId: string,
+) => number;
+/** Indexes into `demoAccounts`: Vedení, Provoz, Účetní and provoz@ (same read pattern); external@ stays outside it. */
+const internalStaffIndexes = new Set([0, 1, 2, 4]);
+/** Operations and provoz@ share the write_all grant; no other Nájempark account holds it. */
+const operationsStaffIndexes = new Set([1, 4]);
+const addPermissionRelationships = (add: AddRelationship, index: number, principalId: string) => {
+  for (const moduleId of [workModuleId, relationshipsModuleId, ...salesDemoModuleIds]) {
+    for (const permission of ['read_all', 'write_all']) {
+      const objectId =
+        toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, {
+          moduleId,
+          // Permission keys allow only [a-z0-9_] segments; hyphenated module ids use underscores.
+          permission: `${moduleId.replaceAll('-', '_')}.${permission}`,
+        }) ?? '';
+      add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
+      add(
+        'context_permission',
+        objectId,
+        'legal_entity',
+        'legal_entity',
+        toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '',
+      );
+      if (
+        (permission === 'read_all' && internalStaffIndexes.has(index)) ||
+        (permission === 'write_all' && operationsStaffIndexes.has(index))
+      ) {
+        add('context_permission', objectId, 'grantee', 'principal', principalId);
+      }
+    }
+  }
+};
+const relationships = (): readonly Relationship[] => {
+  const result: Relationship[] = [];
+  const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) => {
+    if (subjectType !== 'principal' || ['member', 'company_member'].includes(relation)) {
+      return result.push({ relation, resourceId, resourceType, subjectId, subjectType });
+    }
+    const roleId = toScopedRoleObjectId({
+      legalEntityId: demoLegalEntityId,
+      roleKey: demoPrincipalRoleKey(subjectId),
+      tenantId: demoTenantId,
+    });
+    let roleRelation = relation;
+    if (relation === 'accessor') {
+      roleRelation = 'accessor_role';
+    }
+    if (relation === 'grantee') {
+      roleRelation = 'role_grantee';
+    }
+    return result.push(roleRelationship(resourceType, resourceId, roleRelation, roleId));
+  };
+  const legal = toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '';
+  add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
+  for (const [index, account] of demoAccounts.entries()) {
+    add('tenant', demoTenantId, 'company_member', 'principal', account.principalId);
+    add(
+      'scoped_role',
+      toScopedRoleObjectId({
+        legalEntityId: demoLegalEntityId,
+        roleKey: demoPrincipalRoleKey(account.principalId),
+        tenantId: demoTenantId,
+      }),
+      'member',
+      'principal',
+      account.principalId,
+    );
+    add('legal_entity', legal, 'member', 'principal', account.principalId);
+    const shell = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, 'core.shell') ?? '';
+    add('module_access', shell, 'legal_entity', 'legal_entity', legal);
+    add('module_access', shell, 'accessor', 'principal', account.principalId);
+    if (internalStaffIndexes.has(index)) {
+      add('tenant', demoTenantId, 'party_identity_reader', 'principal', account.principalId);
+      add('legal_entity', legal, 'counterparty_reader', 'principal', account.principalId);
+      for (const counterparty of partyFixture.counterparties) {
+        const reference = {
+          moduleId: partyModuleId,
+          resourceId: counterparty.id,
+          resourceType: counterpartyResourceDescriptor.key,
+        };
+        const resource = toResourceAccessObjectId(demoTenantId, demoLegalEntityId, reference) ?? '';
+        add(
+          'resource',
+          resource,
+          'module',
+          'module_access',
+          toModuleAccessObjectId(demoTenantId, demoLegalEntityId, partyModuleId) ?? '',
+        );
+        add('resource', resource, 'reader', 'principal', account.principalId);
+      }
+    }
+    for (const moduleId of moduleIds) {
+      const module = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, moduleId) ?? '';
+      add('module_access', module, 'legal_entity', 'legal_entity', legal);
+      if (
+        internalStaffIndexes.has(index) ||
+        moduleId === partyModuleId ||
+        moduleId === workModuleId ||
+        moduleId === relationshipsModuleId
+      ) {
+        add('module_access', module, 'accessor', 'principal', account.principalId);
+      }
+    }
+    addPermissionRelationships(add, index, account.principalId);
+  }
+  for (const reference of [
+    demoRef(workModuleId, 'task', 'task.external-agent-assigned'),
+    demoRef(relationshipsModuleId, 'activity', 'activity.external'),
+    demoRef(partyModuleId, 'counterparty', 'counterparty.b201'),
+  ]) {
+    const objectId = toResourceAccessObjectId(demoTenantId, demoLegalEntityId, reference) ?? '';
+    add(
+      'resource',
+      objectId,
+      'module',
+      'module_access',
+      toModuleAccessObjectId(demoTenantId, demoLegalEntityId, reference.moduleId) ?? '',
+    );
+    add('resource', objectId, 'reader', 'principal', demoAccounts[3].principalId);
+  }
+  return [
+    ...new Map(
+      result.map((relationship) => [
+        [
+          relationship.resourceType,
+          relationship.resourceId,
+          relationship.relation,
+          relationship.subjectType,
+          relationship.subjectId,
+          relationship.subjectRelation ?? '',
+        ].join('|'),
+        relationship,
+      ]),
+    ).values(),
+  ];
+};
+const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
+  const accounts = yield* encodeOperatorFixture(AccountsFixtureSchema, { accounts: demoAccounts });
+  const context = yield* encodeOperatorFixture(ContextFixtureSchema, {
+    accounts: demoAccounts,
+    companyMemberships: [
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[0].principalId },
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[1].principalId },
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[2].principalId },
+      { affiliation: 'external', legalEntityId: demoLegalEntityId, principalId: demoAccounts[3].principalId },
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[4].principalId },
+    ],
+    legalEntity: {
+      legalEntityId: demoLegalEntityId,
+      legalName: 'Nájempark DEMO s.r.o.',
+      registrationCountry: 'CZ',
+      registrationNumber: 'DEMO-NAJEMPARK',
+    },
+    modules: moduleIds.map((moduleId, index) => ({
+      moduleId,
+      stateId: `78000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    })),
+    relationships: relationships(),
+    searchDocuments: demoSearchDocuments,
+    tenant: { defaultLocale: 'cs', displayName: 'Nájempark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+  });
+  const parties = yield* encodeOperatorFixture(PartyFixtureSchema, {
+    invocationId: demoId('seed.invocation'),
+    legalEntityId: demoLegalEntityId,
+    principalId: demoAccounts[1].principalId,
+    tenantId: demoTenantId,
+    ...partyFixture,
+  });
+  const ownerPorts = yield* demoOwnerPorts;
+  const ports = [
+    { encodedFixture: accounts, script: 'apps/shell-super-app/scripts/reset-demo-accounts.mts' },
+    { encodedFixture: context, script: 'packages/core-runtime/scripts/bootstrap-development-context.mts' },
+    { encodedFixture: parties, script: 'verticals/party-registry/scripts/reset-siampark-demo.mts' },
+    ...ownerPorts,
+  ];
+  return ports;
+});
+const resetNajemparkDemo = (validateOnly: boolean, configuration?: Readonly<Record<string, string>>) =>
+  Effect.gen(function* resetDemoPorts() {
+    yield* Config.schema(Schema.Literal('development'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
+      Config.withDefault('development'),
+    );
+    const ports = yield* encodedPorts;
+    if (validateOnly) {
+      return yield* Console.log(`Validated ${ports.length} typed demo fixture ports; no data changed.`);
+    }
+
+    const path = yield* Path.Path;
+    const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
+    const provider =
+      configuration === undefined
+        ? ConfigProvider.orElse(
+            ConfigProvider.fromEnv(),
+            yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') }),
+          )
+        : ConfigProvider.fromUnknown(configuration);
+    const environment = yield* resetEnvironment.parse(provider);
+
+    const childEnvironment = { ...configuration, ...resetChildEnvironment(environment) };
+    yield* validateResetEnvironment(childEnvironment);
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-demo-' });
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const run = Effect.fn('NajemparkDemo.runOwnerPort')(function* runOwnerPort(script: string, encodedFixture: string) {
+      const file = path.join(directory, `${script.split('/').join('-')}.json`);
+      yield* fs.writeFileString(file, encodedFixture);
+      const code = yield* spawner.exitCode(
+        ChildProcess.make(process.execPath, [path.join(root, script), '--fixture', file], {
+          cwd: root,
+          env: { ...childEnvironment, MISE_ARGV0: '' },
+          stderr: 'inherit',
+          stdin: 'ignore',
+          stdout: 'inherit',
+        }),
+      );
+      if (code !== ChildProcessSpawner.ExitCode(0)) {
+        return yield* new DemoResetError({ reason: `Owner fixture port failed: ${script}` });
+      }
+      return yield* Effect.void;
+    });
+    for (const port of ports) {
+      yield* run(port.script, port.encodedFixture);
+    }
+    return yield* Console.log(
+      'Nájempark baseline restored. Sign in as operations@najempark.demo; password1234. Business date: 2026-10-05.',
+    );
+  });
+const reportFailure = Effect.fn('NajemparkDemo.reportFailure')(function* reportFailure(
+  failure: Effect.Error<ReturnType<typeof resetNajemparkDemo>>,
+) {
+  return yield* Console.error(`Nájempark reset failed (${failure._tag}); inspect the failing owner port.`);
+});
+const command = Command.make(
+  'siampark-demo-reset',
+  { validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)) },
+  ({ validateOnly }) => resetNajemparkDemo(validateOnly).pipe(Effect.scoped, Effect.tapError(reportFailure)),
+);
+const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
+  Layer.provide(NodeServices.layer),
+);
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
+  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+}

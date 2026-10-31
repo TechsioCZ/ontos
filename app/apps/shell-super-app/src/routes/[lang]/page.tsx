@@ -1,12 +1,19 @@
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
-import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { Match } from 'effect';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 
+import { DemoGuideHomeCard } from '../../demo-guide/demo-guide-home-card.tsx';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
+import { SignInRedirect } from '../sign-in-redirect.tsx';
 import { useShellControls } from '../use-shell-controls.ts';
+import { HomeWelcome } from './home-welcome.tsx';
+import { ResolvedTarget } from './modules/[moduleId]/page.tsx';
 import type { HomePageModel } from './home-page-model.ts';
+
+/** Home components take no route parameters; one frozen record keeps their props stable across renders. */
+const homeRouteParams: Readonly<Record<string, string>> = Object.freeze({});
 
 interface HomeViewProps {
   readonly initialModel: HomePageModel;
@@ -17,15 +24,12 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
   const model = initialModel;
   const controls = useShellControls(model.state === 'authenticated' ? model : undefined);
 
+  // Loaders already send a browser without a live session to sign-in; this is the in-page fallback.
   if (model.state === 'anonymous') {
     return (
       <>
         <UltramodernRouteHead />
-        <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
-          <LinkButton as={LocalizedLink} size="md" theme="solid" to="/login" variant="primary">
-            {t('shell.auth.loginLink')}
-          </LinkButton>
-        </main>
+        <SignInRedirect reason={model.reason} />
       </>
     );
   }
@@ -47,6 +51,10 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     );
   }
 
+  const companyName = model.legalEntities.items.find(
+    ({ legalEntityId }) => legalEntityId === model.selectedLegalEntityId,
+  )?.legalName;
+
   return (
     <>
       <UltramodernRouteHead />
@@ -54,7 +62,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         {...(model.compositionRevision === undefined ? {} : { compositionRevision: model.compositionRevision })}
         {...(model.selectedLegalEntityId === undefined ? {} : { currentLegalEntityId: model.selectedLegalEntityId })}
         currentTenantId={model.identity.tenantId}
-        identity={{ displayName: model.identity.displayName }}
+        identity={{ displayName: model.identity.displayName, email: model.identity.email }}
         legalEntityChoices={model.legalEntities.items}
         legalEntityState={model.legalEntities.state}
         legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
@@ -65,41 +73,55 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         onLogout={controls.handleLogout}
         onSearch={controls.handleSearch}
         onTenantChange={controls.handleTenantChange}
+        onTenantContextChange={controls.handleTenantContextChange}
         tenantChoices={model.tenants.items}
+        tenantContextActive={model.contextState === 'tenant_authenticated'}
+        tenantContextAvailable={
+          model.legalEntities.state === 'available' && model.legalEntities.tenantContextAvailable === true
+        }
         tenantState={model.tenants.state}
         tenantSwitchFailed={controls.tenantSwitchFailed}
         tenantSwitchPending={controls.tenantSwitchPending}
         title={t('shell.dashboard.home.title')}
         unavailableDeployments={model.navigation.unavailableDeployments}
       >
-        <section
-          aria-label={t('shell.auth.identity.title')}
-          className="shell:flex shell:w-full shell:max-w-lg shell:flex-col shell:gap-4 shell:bg-(--color-surface) shell:p-6"
-        >
-          <dl className="shell:grid shell:gap-3">
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.displayName')}</dt>
-              <dd>{model.identity.displayName}</dd>
-            </div>
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.email')}</dt>
-              <dd>{model.identity.email}</dd>
-            </div>
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.principal')}</dt>
-              <dd>{model.identity.principalId}</dd>
-            </div>
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.tenant')}</dt>
-              <dd>{model.identity.tenantId}</dd>
-            </div>
-            {model.contextState === 'authenticated' ? (
-              <div>
-                <dt className="shell:font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
-                <dd>{model.selectedLegalEntityId}</dd>
-              </div>
-            ) : null}
-          </dl>
+        <section className="shell:flex shell:w-full shell:flex-col shell:gap-4">
+          <DemoGuideHomeCard legalEntityId={model.selectedLegalEntityId} />
+          {Match.value(model.homeContribution).pipe(
+            Match.when({ state: 'ready' }, (contribution) => (
+              <ResolvedTarget
+                key={`${model.identity.principalId}:${model.identity.tenantId}:${model.selectedLegalEntityId}`}
+                model={{
+                  routeParams: homeRouteParams,
+                  search: '',
+                  shell: model,
+                  state: 'resolved',
+                  target: contribution.target,
+                }}
+              />
+            )),
+            // Roles without a module Home component get the shell welcome page: company, where to start, their areas.
+            Match.when({ state: 'forbidden' }, () => (
+              <HomeWelcome
+                companyName={companyName}
+                companyWelcome={model.companyWelcome}
+                displayName={model.identity.displayName}
+                navigation={model.navigation.items}
+                unavailableDeployments={model.navigation.unavailableDeployments}
+              />
+            )),
+            Match.when({ state: 'unavailable' }, () => (
+              <StatusText aria-live="polite" showIcon status="error">
+                {t('shell.dashboard.unavailable')}
+              </StatusText>
+            )),
+            Match.orElse(() => null),
+          )}
+          {model.contextState === 'tenant_authenticated' ? (
+            <StatusText aria-live="polite" showIcon status="warning">
+              {t('shell.dashboard.legalEntity.tenantContextActive')}
+            </StatusText>
+          ) : null}
           {model.contextState === 'selection_required' ? (
             <StatusText aria-live="polite" showIcon status="warning">
               {t('shell.dashboard.legalEntity.selectionRequired')}

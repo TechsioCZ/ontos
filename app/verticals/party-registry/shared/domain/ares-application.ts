@@ -275,12 +275,13 @@ const historicalConflict = (
   ) {
     return undefined;
   }
+  const icoValues = new Set(canonical.icoValues);
   const assertions = (canonical.factEvidence ?? []).filter(
     (assertion) =>
       assertion.fact === fact &&
       (fact === 'BUSINESS_NAME'
         ? normalizeText(assertion.value) === normalizeText(canonical.displayName)
-        : canonical.icoValues.includes(assertion.value)) &&
+        : icoValues.has(assertion.value)) &&
       normalizeText(assertion.value) !== normalizeText(observedValue) &&
       acceptedEvidenceConflicts(assertion, evidence, fact),
   );

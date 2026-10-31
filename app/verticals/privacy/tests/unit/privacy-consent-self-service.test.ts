@@ -132,6 +132,11 @@ const portalFact: TrustedPortalConsentAuthorityFact = {
 
 const operationFact: TrustedOperationConsentAuthorityFact = {
   authorizedScope: consentScope,
+  decisionReceipt: {
+    acknowledgedAt: '2026-09-14T10:00:00Z',
+    decision: 'WITHDRAWN',
+    requestRef: operationPath.requestRef,
+  },
   evidenceRefs: ['verification-evidence:one'],
   expiresAt: '2026-09-14T12:00:00Z',
   kind: 'OPERATION_SCOPED',
@@ -197,6 +202,38 @@ const portsFor = (facts: {
 });
 
 describe('Consent self-service authoritative boundary', () => {
+  it('rejects caller-authored legal decision times and receipts at the public boundary', () => {
+    const request = requestFor(operationPath);
+    for (const fields of [
+      { effectiveAt: '2020-01-01T00:00:00Z' },
+      { acknowledgedAt: '2020-01-01T00:00:00Z' },
+      { decisionEffectiveAt: '2020-01-01T00:00:00Z' },
+      { decisionReceipt: operationFact.decisionReceipt },
+    ]) {
+      expect(Schema.is(ConsentSelfServiceRequestSchema)({ ...request, ...fields })).toBe(false);
+    }
+  });
+
+  it('uses only the exact server-owned decision receipt, rejecting future or mismatched receipts', () => {
+    const request = requestFor(operationPath);
+    const now = '2026-09-14T11:00:00Z';
+    const allowed = authorizeConsentSelfService({ fact: operationFact, now, request });
+    expect(allowed.decisionEffectiveAt).toBe('2026-09-14T10:00:00.000Z');
+    for (const receipt of [
+      { ...operationFact.decisionReceipt, requestRef: 'another-request' },
+      { ...operationFact.decisionReceipt, decision: 'GRANTED' as const },
+      { ...operationFact.decisionReceipt, acknowledgedAt: '2026-09-14T11:00:00.001Z' },
+      { ...operationFact.decisionReceipt, acknowledgedAt: 'not-a-timestamp' },
+    ]) {
+      const authorization = authorizeConsentSelfService({
+        fact: { ...operationFact, decisionReceipt: receipt },
+        now,
+        request,
+      });
+      expect(authorization).toMatchObject({ allowed: false, outcome: 'OPERATION_CONTEXT_CONFLICT' });
+      expect(authorization).not.toHaveProperty('decisionEffectiveAt');
+    }
+  });
   it('does not decode caller-supplied binding or permission booleans', () => {
     const decoded = Schema.decodeUnknownSync(ConsentSelfServicePathSchema)({
       ...portalPath,

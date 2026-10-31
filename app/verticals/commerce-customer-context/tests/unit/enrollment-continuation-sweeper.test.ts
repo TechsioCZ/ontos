@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { DateTime, Effect, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Logger, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -155,6 +155,32 @@ it.effect('seeds a tick from the durable journal when its registry has never see
     // sweeper is told no Tenant at all, so the listing is the only thing that could have named one.
     expect(sweep.swept).toBe(1);
     expect(yield* scripted.advanced).toStrictEqual([attempt.portalEnrollmentAttemptId]);
+  }),
+);
+
+it.effect('forwards the HTTP verification-yield policy without applying it to worker sweep advancement', () =>
+  Effect.gen(function* preservesRequestPolicyAcrossTracking() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const scripted = yield* scriptedContinuation(yield* journalOf(due(attempt)), 'HALTED');
+    const observed: unknown[] = [];
+    const recordOptions: CommerceEnrollmentContinuationService['advance'] = (input, options) =>
+      Effect.sync(() => {
+        observed.push(options);
+      }).pipe(Effect.andThen(scripted.service.advance(input, options)));
+    const pass = yield* scripted.service.openSweepPass;
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: {
+        advance: recordOptions,
+        openSweepPass: Effect.succeed({ ...pass, advance: recordOptions }),
+      },
+      staleAfterMillis: 0,
+    });
+    yield* sweeper.continuation.advance(attempt, { yieldAfterVerification: true });
+    expect((yield* sweeper.sweep).swept).toBe(1);
+    expect(observed).toStrictEqual([{ yieldAfterVerification: true }, undefined]);
   }),
 );
 
@@ -329,7 +355,7 @@ it.effect('leaves an Attempt another replica has claimed alone, and charges it n
   }),
 );
 
-it.effect('claims the exact composition and Attempt revisions listed by the durable journal', () =>
+it.effect('claims the captured current composition without changing the listed Attempt revision or budget', () =>
   Effect.gen(function* originalRevisionIsClaimed() {
     const attempt: ReadEnrollmentAttemptInput = {
       portalEnrollmentAttemptId: attemptId(randomUUID()),
@@ -342,7 +368,7 @@ it.effect('claims the exact composition and Attempt revisions listed by the dura
       advance: (input) =>
         Ref.update(advanced, (calls) => [...calls, input]).pipe(Effect.as({ outcome: 'COMPLETE' as const })),
       claimSweep: (input) => Ref.update(claims, (calls) => [...calls, input]).pipe(Effect.as(Option.some(1))),
-      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      compositionRevision: CHANGED_COMPOSITION_REVISION,
       listDue: () => Effect.succeed([listed]),
     };
     const service: CommerceEnrollmentContinuationService = {
@@ -356,13 +382,13 @@ it.effect('claims the exact composition and Attempt revisions listed by the dura
       {
         ...attempt,
         claimTtlMillis: 0,
-        compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+        compositionRevision: CHANGED_COMPOSITION_REVISION,
         maxSweeps: SWEEP_BUDGET,
         revision: 17,
       },
     ]);
-    // The continuation addresses the Attempt and recovers its original revision itself. The
-    // sweeper never supplies a replacement snapshot or asks for the current composition.
+    // The journal can name a parked Attempt from an older release. Native claim/re-admission
+    // uses this pass's approved current release, not the Attempt's immutable creation provenance.
     expect(yield* Ref.get(advanced)).toStrictEqual([attempt]);
   }),
 );
@@ -514,5 +540,49 @@ it.effect('keeps tracked Attempts and spends no budget when opening a compositio
     expect(yield* Ref.get(opened)).toBe(2);
     expect(yield* Ref.get(charged)).toBe(1);
     expect(yield* Ref.get(advanced)).toBe(1);
+  }),
+);
+
+it.effect('says why an advance failed, as the HTTP continuation does, rather than only its tag', () =>
+  Effect.gen(function* explainsFailedAdvance() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const driverFailure = new Error('permission denied for table user');
+    const pass: CommerceEnrollmentContinuationSweepPass = {
+      advance: () =>
+        Effect.fail(
+          attemptUnavailable(
+            'Current provider email verification is unavailable',
+            attempt.portalEnrollmentAttemptId,
+            driverFailure,
+          ),
+        ),
+      claimSweep: () => Effect.succeed(Option.some(1)),
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      listDue: () => Effect.succeed([due(attempt)]),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: { advance: pass.advance, openSweepPass: Effect.succeed(pass) },
+      staleAfterMillis: 0,
+    });
+    const logs: string[] = [];
+
+    yield* sweeper.sweep.pipe(
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            logs.push(JSON.stringify(Logger.formatStructured.log(options)));
+          }),
+        ]),
+      ),
+    );
+
+    // Every dependency an advance reaches fails with the same tag; only the reason and the cause
+    // say whether it was the provider database, Core or the owner transaction.
+    const warning = logs.find((line) => line.includes('could not advance this Attempt'));
+    expect(warning).toContain('Current provider email verification is unavailable');
+    expect(warning).toContain('permission denied for table user');
   }),
 );

@@ -1,8 +1,9 @@
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+import { renderToString } from 'react-dom/server';
 
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
@@ -11,20 +12,32 @@ import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.t
 import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
-const { browserRunPromiseMock, invalidateMock, languageState, localizedLinkCalls, navigateMock, signInMock } =
-  rstest.hoisted(() => {
-    const recordedLinkCalls: LocalizedLinkCall[] = [];
-    return {
-      browserRunPromiseMock: rstest.fn(),
-      invalidateMock: rstest.fn(),
-      languageState: { current: 'en' },
-      localizedLinkCalls: recordedLinkCalls,
-      navigateMock: rstest.fn(),
-      signInMock: rstest.fn(),
-    };
-  });
+const {
+  browserRunPromiseMock,
+  clearCacheMock,
+  invalidateMock,
+  languageState,
+  localizedLinkCalls,
+  navigateMock,
+  routerState,
+  signInMock,
+} = rstest.hoisted(() => {
+  const recordedLinkCalls: LocalizedLinkCall[] = [];
+  const matches: { loaderData?: unknown }[] = [];
+  return {
+    browserRunPromiseMock: rstest.fn(),
+    clearCacheMock: rstest.fn(),
+    invalidateMock: rstest.fn(),
+    languageState: { current: 'en' },
+    localizedLinkCalls: recordedLinkCalls,
+    navigateMock: rstest.fn(),
+    routerState: { matches },
+    signInMock: rstest.fn(),
+  };
+});
 
 beforeEach(() => {
+  routerState.matches.length = 0;
   invalidateMock.mockImplementation(() => Promise.resolve());
   navigateMock.mockImplementation(() => Promise.resolve());
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
@@ -74,8 +87,12 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 }));
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useNavigate: () => navigateMock,
-  useRouter: () => ({ invalidate: invalidateMock }),
+  useRouter: () => ({
+    clearCache: clearCacheMock,
+    invalidate: invalidateMock,
+    navigate: navigateMock,
+    state: routerState,
+  }),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -83,7 +100,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock },
+  browserRuntime: { runCallback: browserRuntime.runCallback, runPromise: browserRunPromiseMock },
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
@@ -92,14 +109,65 @@ const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 
 const renderLogin = () => render(<LoginPage />);
 
+it('renders a fixed POST action and a disabled submit button before hydration', () => {
+  const html = renderToString(<LoginPage />);
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const form = document.querySelector('form');
+  expect(form?.getAttribute('method')).toBe('post');
+  expect(form?.getAttribute('action')).toBe('/en/login');
+  expect(form?.querySelector('button[type="submit"]')?.hasAttribute('disabled')).toBe(true);
+  expect(form?.dataset['hydrated']).toBeUndefined();
+  renderLogin();
+  expect(getSubmit().hasAttribute('disabled')).toBe(false);
+});
+const oauthLoginPath =
+  '/en/login?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&prompt=login&state=preserved&sig=SIGNED';
+
 afterEach(() => {
+  // Toasts are removed while the Toaster is still mounted, so it drops them; removed after unmount, they return
+  // with the next test's Toaster.
+  toaster.remove();
   cleanup();
   languageState.current = 'en';
   localizedLinkCalls.length = 0;
-  toaster.remove();
+  window.history.replaceState(null, '', '/');
   rstest.unstubAllGlobals();
+  rstest.restoreAllMocks();
   rstest.clearAllMocks();
 });
+
+it.effect('reads the OAuth client public name with the original signed query', () =>
+  Effect.gen(function* preservesOAuthClientLookup() {
+    window.history.replaceState(null, '', oauthLoginPath);
+    const fetchMock = rstest
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response('{"client_name":" Trusted Client "}', { headers: { 'content-type': 'application/json' } }),
+      );
+    rstest.stubGlobal('fetch', fetchMock);
+    renderLogin();
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Trusted Client')).toBeDefined()));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toEqual(new URL('http://localhost:3000/shell-super-app-api/oauth/oauth2/public-client-prelogin'));
+    expect(init?.credentials).toBe('same-origin');
+    expect(init?.method).toBe('POST');
+    expect(new TextDecoder().decode(Schema.decodeUnknownSync(Schema.Uint8Array)(init?.body))).toBe(
+      '{"client_id":"https://claude.ai/client","oauth_query":"response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&prompt=login&state=preserved&sig=SIGNED"}',
+    );
+  }),
+);
+
+it.effect('keeps the OAuth host fallback when its public client lookup fails', () =>
+  Effect.gen(function* preservesOAuthClientFallback() {
+    window.history.replaceState(null, '', oauthLoginPath);
+    rstest.stubGlobal('fetch', rstest.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 503 })));
+    renderLogin();
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByTestId('oauth-login-banner')).toBeDefined()));
+    expect(screen.getByText('claude.ai')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+  }),
+);
 
 it('shows the required login controls through the UI kit', () => {
   render(<LoginPage />);
@@ -149,6 +217,27 @@ const submitLogin = (login: string, password: string) =>
     yield* Effect.promise(() => user.click(getSubmit()));
     return user;
   });
+
+it.effect('returns an OAuth sign-in to authorization without opening a Shell page', () =>
+  Effect.gen(function* preservesOAuthAuthorizationReturn() {
+    window.history.replaceState(null, '', oauthLoginPath);
+    rstest.stubGlobal('fetch', rstest.fn<typeof fetch>().mockResolvedValue(new Response('{}')));
+    const assignMock = rstest.spyOn(globalThis.location, 'assign');
+    assignMock.mockImplementation((href) => {
+      expect(href).toContain('/oauth2/authorize?');
+    });
+    yield* submitLogin('admin', 'secret');
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(assignMock).toHaveBeenCalledWith(
+          'http://localhost:3000/shell-super-app-api/oauth/oauth2/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&state=preserved',
+        ),
+      ),
+    );
+    expect(invalidateMock).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+  }),
+);
 
 interface LoginValidationCase {
   readonly focus: 'login' | 'password' | 'submit';
@@ -287,6 +376,94 @@ it.effect('submits valid values through the Shell authentication client and navi
   }),
 );
 
+it.effect('says the app is opening while the next page loads after a successful sign-in', () =>
+  Effect.gen(function* saysTheAppIsOpening() {
+    const navigation = Promise.withResolvers<null>();
+    navigateMock.mockReturnValueOnce(navigation.promise);
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        const submit = screen.getByRole('button', { name: /shell\.login\.opening/u });
+        expect(submit.hasAttribute('disabled')).toBe(true);
+        expect(screen.queryByText('shell.login.pending')).toBeNull();
+      }),
+    );
+
+    navigation.resolve(null);
+    yield* Effect.promise(() => waitFor(() => expect(getSubmit().hasAttribute('disabled')).toBe(false)));
+  }),
+);
+
+it.effect('returns to the protected page that sent the visitor to sign-in, with a fresh page cache', () =>
+  Effect.gen(function* returnsToProtectedPage() {
+    window.history.replaceState(null, '', '/en/login?returnTo=%2Fen%2Fprehledy%2Fstatistiky%3Fgroup%3Dmonth');
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(clearCacheMock).toHaveBeenCalledTimes(1);
+        expect(navigateMock).toHaveBeenCalledWith({ href: '/en/prehledy/statistiky?group=month' });
+        expect(navigateMock).toHaveBeenCalledTimes(1);
+      }),
+    );
+  }),
+);
+
+it.effect.each(['cs', 'en'])('opens Home when the saved return page no longer exists in %s', (language) =>
+  Effect.gen(function* returnsHomeFromMissingPage() {
+    languageState.current = language;
+    window.history.replaceState(null, '', `/${language}/login?returnTo=%2F${language}%2Fretired-dashboard`);
+    navigateMock.mockImplementationOnce(() => {
+      routerState.matches.push({}, { loaderData: { state: 'not_found' } });
+      return Promise.resolve();
+    });
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenNthCalledWith(1, { href: `/${language}/retired-dashboard` });
+        expect(navigateMock).toHaveBeenNthCalledWith(2, { replace: true, to: `/${language}/` });
+      }),
+    );
+  }),
+);
+
+it.effect.each(['resolved', 'forbidden', 'unavailable'])(
+  'keeps a %s return-page result instead of going Home',
+  (state) =>
+    Effect.gen(function* keepsExistingReturnPageResult() {
+      window.history.replaceState(null, '', '/en/login?returnTo=%2Fen%2Fprehledy%2Fstatistiky');
+      navigateMock.mockImplementationOnce(() => {
+        routerState.matches.push({}, { loaderData: { state } });
+        return Promise.resolve();
+      });
+      yield* submitLogin('admin', 'secret');
+
+      yield* Effect.promise(() =>
+        waitFor(() => {
+          expect(getSubmit().hasAttribute('disabled')).toBe(false);
+          expect(navigateMock).toHaveBeenCalledTimes(1);
+          expect(navigateMock).toHaveBeenCalledWith({ href: '/en/prehledy/statistiky' });
+        }),
+      );
+    }),
+);
+
+it.effect('ignores a return target outside the application and goes home', () =>
+  Effect.gen(function* ignoresForeignReturnTarget() {
+    window.history.replaceState(null, '', '/en/login?returnTo=%2F%2Fevil.example%2Fen%2F');
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+      }),
+    );
+  }),
+);
+
 it.effect('reports navigation failure and restores the login form after authentication', () =>
   Effect.gen(function* reportsNavigationFailure() {
     navigateMock.mockRejectedValueOnce('Navigation failed');
@@ -313,6 +490,49 @@ it.effect('keeps navigation on the login route when auth cache refresh fails', (
         expect(navigateMock).not.toHaveBeenCalled();
         expect(screen.getByText('shell.login.error.internal')).toBeDefined();
         expect(getSubmit().hasAttribute('disabled')).toBe(false);
+      }),
+    );
+  }),
+);
+
+it.effect('keeps an unavailable explanation in the form after toast notifications are dismissed', () =>
+  Effect.gen(function* retainsUnavailableFeedback() {
+    signInMock.mockReturnValueOnce(Effect.fail({ _tag: 'AuthenticationUnavailableProblem' }));
+    yield* submitLogin('admin', 'secret');
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain('shell.login.error.unavailable');
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+      }),
+    );
+    toaster.remove();
+    expect(screen.getByRole('alert').textContent).toContain('shell.login.error.unavailable');
+    expect(getLogin()).toHaveProperty('value', 'admin');
+    expect(getPassword()).toHaveProperty('value', '');
+    const user = userEvent.setup();
+    yield* Effect.promise(() => user.type(getPassword(), 'secret'));
+    yield* Effect.promise(() => user.click(getSubmit()));
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(screen.queryByText('shell.login.error.unavailable')).toBeNull();
+        expect(navigateMock).toHaveBeenCalled();
+      }),
+    );
+  }),
+);
+
+it.effect('keeps the login and clears only the password after rejected credentials', () =>
+  Effect.gen(function* keepsLoginAfterRejectedCredentials() {
+    signInMock.mockReturnValueOnce(Effect.fail({ _tag: 'InvalidCredentialsProblem' }));
+    yield* submitLogin('admin', 'wrong');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(screen.getByText('shell.login.error.invalid')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(getLogin()).toHaveProperty('value', 'admin');
+        expect(getPassword()).toHaveProperty('value', '');
+        expect(document.activeElement).toBe(getPassword());
       }),
     );
   }),

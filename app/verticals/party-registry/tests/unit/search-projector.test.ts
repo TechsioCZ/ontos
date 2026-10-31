@@ -18,6 +18,7 @@ import {
   makePartySearchProjector,
 } from '../../src/services/party-search-projection.service.ts';
 import type { PartySearchSourceSnapshot } from '../../src/services/party-search-projection.service.ts';
+import { partySearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const searchScope = {
@@ -207,7 +208,7 @@ it.effect(
         {
           load: () => Effect.succeed(current),
         },
-        makeCoreSearchIngestion(store),
+        makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
         store,
       );
       const deliver = () =>
@@ -457,7 +458,7 @@ it.effect('rebuild reconciles omitted documents and preserves tombstones against
       {
         load: () => Effect.succeed(current),
       },
-      makeCoreSearchIngestion(store),
+      makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
     );
     yield* projector.project(context, {
@@ -509,7 +510,7 @@ it.effect('source failure is sanitized and leaves previously searchable state in
               )
             : Effect.succeed(snapshot),
       },
-      makeCoreSearchIngestion(store),
+      makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
     );
     yield* projector.project(context, {
@@ -601,7 +602,7 @@ it.effect('projection generation is independent of an out-of-order business even
             projectionVersion: '1',
           }),
       },
-      makeCoreSearchIngestion(store),
+      makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
     );
     yield* projector.project(
@@ -640,7 +641,7 @@ it.effect('correction and identifier/contact changes replace obsolete evidence i
       {
         load: () => Effect.succeed(current),
       },
-      makeCoreSearchIngestion(store),
+      makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
     );
     yield* projector.project(context, {
@@ -698,7 +699,7 @@ it.effect('a complete empty rebuild also rejects delayed evidence for a never-be
       {
         load: () => Effect.succeed(current),
       },
-      makeCoreSearchIngestion(store),
+      makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
     );
     yield* projector.project(rebuildContext, {

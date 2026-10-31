@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 
 import {
@@ -40,7 +40,7 @@ const unavailable = (cause: unknown) =>
 
 const readGuestPartyResolution = (
   input: Parameters<typeof resolveGuestPartyEvidence>[1],
-  context: ReadHandlerContext<GuestPartyResolutionReadServices>,
+  context: ReadLoadContext<GuestPartyResolutionReadServices>,
 ): Effect.Effect<
   {
     readonly evidence: { readonly resultCount: number };
@@ -88,7 +88,7 @@ export const guestPartyResolutionRead = defineRead(
     resultSchema: GuestPartyResolutionResponseSchema,
     schemaVersion: '1',
   },
-  readGuestPartyResolution,
+  { load: readGuestPartyResolution },
   (transaction, _scope) =>
     Effect.succeed({
       resolve: (input: Parameters<typeof resolveGuestPartyEvidence>[1]) =>

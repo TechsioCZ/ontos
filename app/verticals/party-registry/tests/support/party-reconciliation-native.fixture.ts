@@ -5,10 +5,13 @@ import {
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
   makeActiveApplicationCompositionLayer,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime/modules/active-application-composition';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
@@ -101,7 +104,10 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
     )(row);
     const identityUrls: Record<string, string> = {};
     for (const databaseIdentity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-      const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: databaseIdentity });
+      const { runtime: canonical } = yield* loadDatabaseConnectionPair({
+        envPath: '/dev/null',
+        identity: databaseIdentity,
+      });
       const address = new URL(canonical.connectionString);
       assert.isOk(
         [
@@ -198,7 +204,7 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
 /** Register the exact signed token; only genuine verification attaches private scope provenance. */
 export const makePartyReconciliationGateway = Effect.fn('PartyReconciliation.makeGateway')(
   function* makePartyReconciliationGateway(
-    native: { readonly partyConfiguration: DatabaseConnectionPair['runtime']; readonly issuer: PgClient.PgClient },
+    native: { readonly partyConfiguration: DatabaseConfig['Service']; readonly issuer: PgClient.PgClient },
     composition: ActiveApplicationCompositionSnapshot,
   ) {
     const crypto = yield* Crypto.Crypto;
@@ -209,7 +215,7 @@ export const makePartyReconciliationGateway = Effect.fn('PartyReconciliation.mak
     const jwks = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
       keys: [{ ...publicJwk, alg: 'EdDSA', kid, use: 'sig' }],
     });
-    const registrar = makeGatewayScopeGrantRegistrar(native.issuer);
+    const registrar = makeGatewayScopeGrantRegistrar(native.issuer, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT);
     const redemptionContext = yield* Layer.build(
       GatewayAssertionRedemptionLive.pipe(
         Layer.provide(GatewayAssertionRedemptionDatabaseLive),

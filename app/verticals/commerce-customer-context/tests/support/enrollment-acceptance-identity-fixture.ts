@@ -16,6 +16,7 @@ import {
   TenantIdSchema,
 } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../../../packages/core-runtime/src/auth/external-identity/repository.ts';
+import { readPrincipalBinding } from '../../../../packages/core-runtime/src/auth/external-identity/read.ts';
 import type {
   ChangeExternalIdentityStatusInput,
   ExternalIdentityRepositoryService,
@@ -47,6 +48,7 @@ import {
   OperationalScopeResolverLive,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
 import type { OperationalScopeResolverService } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { ContextAccess } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { ActionPermission } from '../../../../packages/core-runtime/src/permissions/service.ts';
@@ -63,6 +65,10 @@ import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/depl
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
 import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 /** The Commerce portal namespace as Core knows it, owned here as this fixture's deployment input. */
 const AcceptanceNamespaceRegistryLive = Layer.effect(
@@ -173,12 +179,16 @@ const withRepository = <Value, Failure>(
   operation: (repository: ExternalIdentityRepositoryService) => Effect.Effect<Value, Failure>,
 ) =>
   database.executor.transaction((transaction) =>
-    installOperationalScope(transaction, {
-      authMethod: 'system',
-      correlationId: scope.correlationId,
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    }).pipe(
+    installOperationalScope(
+      transaction,
+      {
+        authMethod: 'system',
+        correlationId: scope.correlationId,
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      },
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    ).pipe(
       Effect.flatMap((scopedTransaction) =>
         operation(externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: scope.registry })),
       ),
@@ -190,8 +200,8 @@ const unsupportedIdentityCall = (operation: string) =>
 
 /**
  * The in-process Core-identity owner effect. The deployed Commerce port speaks HTTP to Shell, and
- * the far side of that transport is this exact Core repository read against
- * `core.principal_auth_bindings`; binding it directly keeps every identity answer a real row.
+ * the far side of that transport is Core's staged binding Read against
+ * `core.principal_auth_bindings`. Namespace checks stay outside the scoped database transaction.
  */
 const identityClientFor = (
   database: CoreDatabaseHandle,
@@ -201,9 +211,26 @@ const identityClientFor = (
   changePrincipalBindingStatus: () => unsupportedIdentityCall('changePrincipalBindingStatus'),
   issueExternalGatewayContext: () => unsupportedIdentityCall('issueExternalGatewayContext'),
   readPrincipalBinding: (payload, options) =>
-    withRepository(database, { ...scope, correlationId: options.requestCorrelation }, (repository) =>
-      repository.read({ ...payload, tenantId: scope.tenantId }),
-    ).pipe(Effect.orDie),
+    runReadOwnerSteps(readPrincipalBinding, payload, {
+      readKey: readPrincipalBinding.descriptor.readKey,
+      scope: {
+        authMethod: 'system',
+        correlationId: options.requestCorrelation,
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      },
+      services: {
+        loadForRead: (lookup) =>
+          withRepository(database, { ...scope, correlationId: options.requestCorrelation }, (repository) =>
+            repository.loadForRead(lookup),
+          ).pipe(Effect.orDie),
+      },
+    }).pipe(
+      Effect.map(({ result }) => result),
+      Effect.provideService(AuthenticationNamespaceRegistry, scope.registry),
+      Effect.provideService(ContextAccess, openContextAccess),
+      Effect.orDie,
+    ),
   reservePrincipalBinding: () => unsupportedIdentityCall('reservePrincipalBinding'),
   resolveExternalSubject: () => unsupportedIdentityCall('resolveExternalSubject'),
 });
@@ -254,11 +281,18 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       Layer.provide(runtimeDatabaseLive),
     );
     const scopeResolverLive = OperationalScopeResolverLive.pipe(
-      Layer.provide(Layer.mergeAll(runtimeDatabaseLive, AcceptanceContextAccessLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          runtimeDatabaseLive,
+          AcceptanceContextAccessLive,
+          Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        ),
+      ),
     );
     const actionRuntimeLive = makeActionRuntimeLive(compositionSnapshot.composition.shell.deployment).pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
           ActionRepositoryLive,
           AcceptanceActionPermissionLive,
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(compositionSnapshot) }),

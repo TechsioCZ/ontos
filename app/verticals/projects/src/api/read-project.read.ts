@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import { ReadProjectRequestSchema, ReadProjectResponseSchema } from '../../shared/apis/read-project.ts';
 import type { ProjectPersistenceUnavailable } from '../../shared/domain/project.ts';
@@ -62,11 +62,13 @@ export const readProjectRead = defineRead(
     resultSchema: ReadProjectResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    makeReadProjectHandler(
-      context.services,
-      context.scope.tenantId,
-    )(input.projectId).pipe(Effect.map((project) => ({ evidence: { resultCount: 1 }, result: project }))),
+  {
+    load: (input, context: ReadLoadContext<Services>) =>
+      makeReadProjectHandler(
+        context.services,
+        context.scope.tenantId,
+      )(input.projectId).pipe(Effect.map((project) => ({ evidence: { resultCount: 1 }, result: project }))),
+  },
   (transaction, scope) => {
     const persistence = makeProjectPersistenceService(transaction, {
       operationId: scope.principalId,

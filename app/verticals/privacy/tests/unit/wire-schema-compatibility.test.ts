@@ -10,7 +10,8 @@ import { CurrentConsentResponseSchema } from '../../shared/privacy-queries.ts';
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const subjectRef = {
   moduleId: 'privacy.core',
-  resourceId: 'subject:wire-proof',
+  // Privacy stores its own Subject identity as a UUID.
+  resourceId: '50000000-0000-4000-8000-0000000000a1',
   resourceType: 'privacy.core.privacy-subject',
   tenantId,
 };

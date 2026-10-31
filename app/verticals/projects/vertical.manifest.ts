@@ -108,6 +108,8 @@ export const projectsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           groupKey: 'shell.navigation.modules',
+          icon: 'icon-[mdi--folder-plus-outline]',
+          label: { cs: 'Vytvořit Project', en: 'Create Project' },
           order: 100,
           pageKey: createProjectPageKey,
         }),

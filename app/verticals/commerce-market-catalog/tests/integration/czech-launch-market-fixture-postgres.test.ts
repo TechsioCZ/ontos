@@ -22,6 +22,9 @@ import { CreateMarketPayloadSchema, createMarketAction } from '../../src/actions
 import { makeCurrentStorefrontApplicationAuthority } from '../../src/integrations/current-storefront-application.ts';
 import { marketCatalogReadPersistenceForScope } from '../../src/persistence/market-catalog-read-persistence.ts';
 import { CurrentMarketCatalogRequestSchema } from '../../shared/apis/current-market-catalog.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e346f000-0000-4000-8000-000000000001';
 const principalId = 'e346f000-0000-4000-8000-000000000002';
@@ -88,7 +91,11 @@ const scoped = <Value, Failure>(
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* scopedOperation() {
-      const scopedTransaction = yield* installOperationalScope(transaction, scope);
+      const scopedTransaction = yield* installOperationalScope(
+        transaction,
+        scope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       return yield* operation(scopedTransaction);
     }),
   );

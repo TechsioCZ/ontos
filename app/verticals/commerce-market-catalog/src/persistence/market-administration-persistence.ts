@@ -1,5 +1,5 @@
 /* oxlint-disable effect-native/no-string-timestamp-schema -- These owner-private command DTOs carry already-encoded UTC instants into JSONB routine parameters; the public schemas remain the temporal authority; expires: 2027-03-31. */
-import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import type {
@@ -165,8 +165,6 @@ export interface MarketAdministrationPersistence {
   ) => Effect.Effect<MarketLifecyclePersistenceOutcome, MarketAdministrationPersistenceUnavailable>;
 }
 
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
-
 const unavailable = (cause: unknown): MarketAdministrationPersistenceUnavailable => {
   const failure = new MarketAdministrationPersistenceUnavailable({
     code: 'market_administration_persistence_unavailable',
@@ -177,7 +175,7 @@ const unavailable = (cause: unknown): MarketAdministrationPersistenceUnavailable
 };
 
 const invoke = <A, I extends object>(
-  transaction: ScopedTransaction,
+  transaction: ScopedRoutineInvoker,
   routine: typeof associateStorefrontRoutine,
   input: I,
   schema: Schema.Decoder<A>,
@@ -192,15 +190,12 @@ const invoke = <A, I extends object>(
     }),
   );
 
-const scopeMatches = (
-  scope: OperationalScope & { readonly legalEntityId: string },
-  tenantId: string,
-  legalEntityId: string,
-): boolean => scope.tenantId === tenantId && scope.legalEntityId === legalEntityId;
+const scopeMatches = (scope: OperationalScope, tenantId: string, legalEntityId: string): boolean =>
+  scope.tenantId === tenantId && scope.legalEntityId === legalEntityId;
 
 const marketAdministrationPersistenceForTransaction = (
-  transaction: ScopedTransaction,
-  scope: OperationalScope & { readonly legalEntityId: string },
+  transaction: ScopedRoutineInvoker,
+  scope: OperationalScope,
 ): MarketAdministrationPersistence => ({
   associateStorefront: (input) =>
     scopeMatches(scope, input.marketRef.tenantId, input.sellingLegalEntityRef.resourceId)
@@ -228,10 +223,10 @@ const marketAdministrationPersistenceForTransaction = (
       : Effect.fail(unavailable({ reason: 'The Market lifecycle scope is inconsistent' })),
 });
 
-export const marketAdministrationPersistenceForScope: ReadServiceFactory<MarketAdministrationPersistence> = (
-  transaction,
-  scope,
-) => {
+export const marketAdministrationPersistenceForScope = (
+  transaction: ScopedRoutineInvoker,
+  scope: OperationalScope,
+): Effect.Effect<MarketAdministrationPersistence, OperationContextUnavailable> => {
   const { legalEntityId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(
@@ -240,5 +235,5 @@ export const marketAdministrationPersistenceForScope: ReadServiceFactory<MarketA
           reason: 'Market administration requires a trusted Legal Entity scope',
         }),
       )
-    : Effect.succeed(marketAdministrationPersistenceForTransaction(transaction, { ...scope, legalEntityId }));
+    : Effect.succeed(marketAdministrationPersistenceForTransaction(transaction, scope));
 };

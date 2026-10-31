@@ -13,6 +13,7 @@ const HyperdriveBindingSchema = Schema.Struct({ connectionString: Schema.Redacte
  * request, so its pool never outlives the request whose sockets it holds.
  */
 export const databaseRuntime: DatabaseRuntime = Object.freeze<DatabaseRuntime>({
+  connectionIdentity: 'hyperdrive',
   runtimeDatabaseProvider: (base, identity) => {
     const hyperdrive = identity.cloudflareHyperdrive;
     if (hyperdrive === null) {

@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 
 import {
@@ -47,31 +47,33 @@ export const partyContactPointDetailRead = defineRead(
     resultSchema: PartyContactPointDetailResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    context.services.find(input.contactPointRef.resourceId).pipe(
-      Effect.mapError((cause) =>
-        Object.assign(
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Party Contact Point persistence is temporarily unavailable',
-          }),
-          { cause },
+  {
+    load: (input, context: ReadLoadContext<Services>) =>
+      context.services.find(input.contactPointRef.resourceId).pipe(
+        Effect.mapError((cause) =>
+          Object.assign(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'Party Contact Point persistence is temporarily unavailable',
+            }),
+            { cause },
+          ),
+        ),
+        Effect.flatMap((contactPoint) =>
+          Option.isNone(contactPoint)
+            ? Effect.fail(
+                new ReadHandlerNotFound({
+                  code: 'read_handler_not_found',
+                  reason: 'The requested Party Contact Point does not exist',
+                }),
+              )
+            : Effect.succeed({
+                evidence: { resultCount: 1 },
+                result: contactPoint.value,
+              }),
         ),
       ),
-      Effect.flatMap((contactPoint) =>
-        Option.isNone(contactPoint)
-          ? Effect.fail(
-              new ReadHandlerNotFound({
-                code: 'read_handler_not_found',
-                reason: 'The requested Party Contact Point does not exist',
-              }),
-            )
-          : Effect.succeed({
-              evidence: { resultCount: 1 },
-              result: contactPoint.value,
-            }),
-      ),
-    ),
+  },
   (transaction, scope) =>
     Effect.succeed({
       find: (contactPointId: string) => findPartyContactPointRecord(transaction, scope, contactPointId),

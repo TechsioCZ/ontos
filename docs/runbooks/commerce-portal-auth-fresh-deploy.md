@@ -85,11 +85,11 @@ deployment migrator runs end to end:
    3. `verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts` — table
       catalog + runtime-role privilege proof
 12. `scripts/verify-application-db-schema.mts` — whole-deployment schema verification
-13. Serve the migrator's own `/ready` endpoint
+13. Serve the migrator's own `/ready` endpoint, unless `MIGRATOR_ONCE=true`
 
-`app/scripts/prove-zerops-migrator-artifact.sh` assembles the migrator from its `zerops.yaml`
-`deployFiles` and runs this entry point until `/ready`; the service-integration CI job runs it
-against a fresh database with the stage environment shape before anything merges.
+The stage app host runs this entry point once (`MIGRATOR_ONCE=true`) before it starts the owners;
+the service-integration CI job runs it the same way against a fresh database with the stage
+environment shape before anything merges.
 
 Locally, the same ordering (minus the standalone readiness server) is available as the composite
 root scripts:

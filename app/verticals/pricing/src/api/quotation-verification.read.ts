@@ -5,7 +5,12 @@ import {
   ReadHandlerUnavailable,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type {
+  ReadFinishContext,
+  ReadLoadContext,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
@@ -15,10 +20,15 @@ import {
   QuotationVerificationResponseSchema,
 } from '../../shared/apis/quotation-verification.ts';
 import type { QuotationVerificationRequest } from '../../shared/apis/quotation-verification.ts';
-import { preapprovalQuotationVerificationService } from '../services/preapproval-quotation-verification.service.ts';
+import {
+  finishPreapprovalQuotationVerification,
+  validatePreapprovalQuotationReader,
+} from '../services/preapproval-quotation-verification.service.ts';
 import { pricingCommitmentOwnerProof } from '../integrations/commitment-confirmation-owner-proof.ts';
 import { pricingFinalizationOwnerGateways } from '../integrations/order-finalization-owner-gateways.ts';
 import { currentPricingDecisionCustomerContextSubjectAuthorityForIssuer } from '../integrations/customer-context-subject-authority.ts';
+import type { QuotationPersistence } from '../services/quotation-persistence.service.ts';
+import { PricingQuotationIssuedSchema } from '@app/pricing-contracts/domain/quotation';
 import { quotationPersistenceForScope } from '../services/quotation-persistence.service.ts';
 import { CurrentPricingDecisionCustomerContextGatewayUnavailable } from '../services/current-pricing-decision-subject-authority.service.ts';
 
@@ -34,57 +44,63 @@ const unavailable = (cause: unknown) =>
 const MODULE_KEY = 'commerce.pricing' as const;
 const isInvocationRequest = Schema.is(QuotationVerificationRequestSchema.members[2]);
 const sameDecision = Schema.toEquivalence(PricingDecisionSchema);
-const servicesForScope = Effect.fn('PricingQuotationVerification.servicesForScope')(
-  function* servicesForScope(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    compositionRevision?: string,
-  ) {
-    if (compositionRevision === undefined) {
-      return yield* unavailable('The active composition revision is required');
-    }
-    const owners = () =>
-      pricingFinalizationOwnerGateways(scope, compositionRevision).pipe(Effect.mapError(unavailable));
-    const authority = currentPricingDecisionCustomerContextSubjectAuthorityForIssuer(
-      {
-        issue: () =>
-          owners().pipe(
-            Effect.flatMap((gateway) => gateway.credentialFor('commerce-customer-context')),
-            Effect.map((owner) => ({ baseUrl: owner.baseUrl, credential: Redacted.make(owner.credential) })),
-            Effect.mapError(
-              (cause) =>
-                new CurrentPricingDecisionCustomerContextGatewayUnavailable({
-                  cause,
-                  reason: 'GATEWAY_ISSUER_UNAVAILABLE',
-                }),
-            ),
+const verificationRemote = Effect.fn('PricingQuotationVerification.remote')(function* remote(
+  scope: OperationalScope,
+  compositionRevision: string,
+) {
+  const owners = () => pricingFinalizationOwnerGateways(scope, compositionRevision).pipe(Effect.mapError(unavailable));
+  const authority = currentPricingDecisionCustomerContextSubjectAuthorityForIssuer(
+    {
+      issue: () =>
+        owners().pipe(
+          Effect.flatMap((gateway) => gateway.credentialFor('commerce-customer-context')),
+          Effect.map((owner) => ({ baseUrl: owner.baseUrl, credential: Redacted.make(owner.credential) })),
+          Effect.mapError(
+            (cause) =>
+              new CurrentPricingDecisionCustomerContextGatewayUnavailable({
+                cause,
+                reason: 'GATEWAY_ISSUER_UNAVAILABLE',
+              }),
           ),
-      },
-      scope.correlationId,
-      compositionRevision,
-    );
-    const { preapproval, proof, quotations } = yield* Effect.all(
-      {
-        preapproval: preapprovalQuotationVerificationService(transaction, scope, compositionRevision),
-        proof: pricingCommitmentOwnerProof.pipe(Effect.mapError(unavailable)),
-        quotations: quotationPersistenceForScope(transaction, scope),
-      },
-      { concurrency: 3 },
-    );
-    return { authority, owners, preapproval, proof, quotations };
-  },
-  Effect.mapError((cause) =>
-    Object.defineProperty(
-      new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'The verified Pricing operation context is unavailable',
-      }),
-      'cause',
-      { value: cause },
-    ),
-  ),
-);
-type Services = Effect.Success<ReturnType<typeof servicesForScope>>;
+        ),
+    },
+    scope.correlationId,
+    compositionRevision,
+  );
+  const proof = yield* pricingCommitmentOwnerProof.pipe(Effect.mapError(unavailable));
+  return { authority, owners, proof };
+});
+const servicesForScope = Effect.fn('PricingQuotationVerification.servicesForScope')(function* services(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  compositionRevision?: string,
+) {
+  if (compositionRevision === undefined) {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'The verified composition revision is required',
+    });
+  }
+  return yield* quotationPersistenceForScope(transaction, scope);
+});
+const loadVerification = Effect.fn('PricingQuotationVerification.load')(function* load(
+  input: QuotationVerificationRequest,
+  services: QuotationPersistence,
+  scope: OperationalScope,
+) {
+  if (Schema.is(QuotationVerificationRequestSchema.members[0])(input)) {
+    yield* validatePreapprovalQuotationReader(scope);
+  }
+  const stored = yield* (
+    Schema.is(QuotationVerificationRequestSchema.members[0])(input) || isInvocationRequest(input)
+      ? services.lookupInvocation(input.issuanceInvocationId).pipe(Effect.map(Option.map(({ quotation }) => quotation)))
+      : services.read(input.quotationRef)
+  ).pipe(Effect.mapError(unavailable));
+  if (Option.isNone(stored)) {
+    return yield* unavailable('The original owner-issued Quotation is absent');
+  }
+  return stored.value;
+});
 interface FinalQuotationCandidate {
   readonly candidateRef: { readonly resourceId: string };
   readonly pricing: { readonly decision: typeof PricingDecisionSchema.Type };
@@ -117,28 +133,22 @@ export const finalQuotationStatus = (
 };
 const readVerification = Effect.fn('PricingQuotationVerification.read')(function* readVerification(
   input: QuotationVerificationRequest,
-  context: ReadHandlerContext<Services>,
+  context: ReadFinishContext<undefined, PricingQuotationIssued>,
 ) {
+  const { compositionRevision } = context;
+  if (compositionRevision === undefined) {
+    return yield* unavailable('The verified composition revision is required');
+  }
+  const quotation = context.loaded;
   if (Schema.is(QuotationVerificationRequestSchema.members[0])(input)) {
-    const result = yield* context.services.preapproval.read(input);
+    const result = yield* finishPreapprovalQuotationVerification(input, context.scope, compositionRevision, quotation);
     return { evidence: { resultCount: 1 }, result };
   }
-  const { authority, owners, proof, quotations } = context.services;
+  const { authority, owners, proof } = yield* verificationRemote(context.scope, compositionRevision);
   const finalOwners = yield* owners();
   const candidate = yield* finalOwners
     .readCandidate(input.candidateRef, input.candidateHash)
     .pipe(Effect.mapError(unavailable));
-  const stored = yield* (
-    isInvocationRequest(input)
-      ? quotations
-          .lookupInvocation(input.issuanceInvocationId)
-          .pipe(Effect.map(Option.map(({ quotation }) => quotation)))
-      : quotations.read(input.quotationRef)
-  ).pipe(Effect.mapError(unavailable));
-  if (Option.isNone(stored)) {
-    return yield* unavailable('The original owner-issued Quotation is absent');
-  }
-  const quotation = stored.value;
   const current = DateTime.formatIso(yield* DateTime.now);
   const status = finalQuotationStatus(quotation, candidate, current);
   if (status === 'EXPIRED') {
@@ -208,7 +218,25 @@ export const quotationVerificationRead = defineRead(
     resultSchema: QuotationVerificationResponseSchema,
     schemaVersion: '1',
   },
-  readVerification,
+  {
+    load: (input: QuotationVerificationRequest, context: ReadLoadContext<QuotationPersistence>) =>
+      loadVerification(input, context.services, context.scope),
+    finish: (input: QuotationVerificationRequest, context: ReadFinishContext<undefined, PricingQuotationIssued>) =>
+      readVerification(input, context).pipe(
+        Effect.flatMap((result) =>
+          context.transaction((transaction) =>
+            servicesForScope(transaction, context.scope, context.compositionRevision).pipe(
+              Effect.flatMap((services) => loadVerification(input, services, context.scope)),
+              Effect.flatMap((current) =>
+                Schema.toEquivalence(Schema.toType(PricingQuotationIssuedSchema))(context.loaded, current)
+                  ? Effect.succeed(result)
+                  : Effect.fail(unavailable('The retained Quotation changed during dependency verification')),
+              ),
+            ),
+          ),
+        ),
+      ),
+  },
   servicesForScope,
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

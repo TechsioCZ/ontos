@@ -1,11 +1,5 @@
 import { defineScopedRoutine } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ScopedRoutineDefinition,
-  ScopedRoutineInputValues,
-  ScopedRoutineInvocationError,
-  ScopedRoutineParameter,
-} from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 
 import {
@@ -33,17 +27,6 @@ import type {
 const MODULE_KEY = 'commerce.customer-context';
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Unknown);
 type JsonObject = typeof JsonObjectSchema.Type;
-
-/** Minimum owner-local capability accepted from Core's already-scoped transaction. */
-export interface CustomerGroupScopedRoutineInvoker {
-  readonly invoke: <
-    RowSchema extends Schema.ConstraintDecoder<object>,
-    const Parameters extends readonly ScopedRoutineParameter[],
-  >(
-    routine: ScopedRoutineDefinition<RowSchema, Parameters>,
-    values: ScopedRoutineInputValues<Parameters>,
-  ) => Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError>;
-}
 
 // SQL object rows reach Core before transformations. Keep their wire shape here;
 // decode exact public owner documents only after the raw scoped result is validated.
@@ -76,6 +59,17 @@ const MembershipPageRowSchema = Schema.Struct({
   items_json: Schema.Array(JsonObjectSchema),
   next_cursor: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
   outcome: Schema.String,
+});
+
+/** Party counterparty id as the owner stores it on a COUNTERPARTY purchasing profile. */
+const CounterpartyResourceIdSchema = Schema.String.pipe(Schema.brand('CounterpartyResourceId'));
+const CounterpartyMembershipRowSchema = Schema.Struct({
+  counterpartyResourceId: CounterpartyResourceIdSchema,
+  membership: JsonObjectSchema,
+});
+const CounterpartyMembershipsRowSchema = Schema.Struct({
+  groups_json: Schema.Array(JsonObjectSchema),
+  items_json: Schema.Array(CounterpartyMembershipRowSchema),
 });
 
 const detailRoutine = defineScopedRoutine({
@@ -253,6 +247,21 @@ const effectiveMembershipsRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+const counterpartyMembershipsRoutine = defineScopedRoutine({
+  name: 'read_counterparty_customer_group_memberships',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text[]' },
+    { source: 'input', type: 'text[]' },
+    { source: 'input', type: 'timestamptz' },
+  ],
+  resultSchema: CounterpartyMembershipsRowSchema,
+  routineKey: 'customer-group.read-counterparty-memberships',
+  schema: 'commerce_customer_context',
+});
+
 const unavailable = (failure: ScopedRoutineInvocationError | string): CustomerGroupPersistenceUnavailableError =>
   new CustomerGroupPersistenceUnavailable({
     code: 'customer_group_persistence_unavailable',
@@ -282,6 +291,12 @@ const decodeMembership = (
       return error;
     }),
   );
+
+const decodeCounterpartyMembership = ({
+  counterpartyResourceId,
+  membership,
+}: typeof CounterpartyMembershipRowSchema.Type) =>
+  decodeMembership(membership).pipe(Effect.map((decoded) => ({ counterpartyResourceId, membership: decoded })));
 
 const decodeMemberships = (
   values: readonly JsonObject[],
@@ -490,7 +505,7 @@ const mapUpdateRow = (
 };
 
 export const customerGroupPersistenceForTransaction = (
-  transaction: CustomerGroupScopedRoutineInvoker,
+  transaction: ScopedRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
 ): CustomerGroupPersistence => ({
   archive: (
@@ -539,6 +554,30 @@ export const customerGroupPersistenceForTransaction = (
         Effect.mapError(unavailable),
         Effect.flatMap((rows) => requireRow(rows, assignRoutine.routineKey)),
         Effect.flatMap(mapAssignRow),
+      );
+  },
+  counterpartyMemberships: (query) => {
+    if (!scopeMatches(scope, query)) {
+      return Effect.fail(unavailable('The counterparty Customer Group membership scope is inconsistent'));
+    }
+    return transaction
+      .invoke(counterpartyMembershipsRoutine, [
+        [...query.businessCodes],
+        [...query.counterpartyResourceIds],
+        query.effectiveAt,
+      ])
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap((rows) => requireRow(rows, counterpartyMembershipsRoutine.routineKey)),
+        Effect.flatMap((row) =>
+          Effect.all(
+            {
+              groups: Effect.forEach(row.groups_json, (group) => decodeGroup(group), { concurrency: 1 }),
+              items: Effect.forEach(row.items_json, (item) => decodeCounterpartyMembership(item), { concurrency: 1 }),
+            },
+            { concurrency: 1 },
+          ),
+        ),
       );
   },
   create: (command): Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
@@ -750,4 +789,5 @@ export const customerGroupRoutineAllowlist = Object.freeze([
   membersRoutine,
   historyRoutine,
   effectiveMembershipsRoutine,
+  counterpartyMembershipsRoutine,
 ]);

@@ -42,6 +42,7 @@ it.effect('identity administration and support starts declare independent tenant
         yield* Schema.decodeEffect(bindManagedApiKeyAction.descriptor.payloadSchema)({
           principalId,
           providerSubjectId: 'provider-key-id',
+          scope: 'tenant-managed',
         }),
       ),
       changePrincipalStatusAction.descriptor.tenantPermission?.(
@@ -64,6 +65,7 @@ it.effect('identity administration and support starts declare independent tenant
           expectedStatus: 'active',
           newStatus: 'disabled',
           principalId,
+          scope: 'tenant-managed',
         }),
       ),
     ];
@@ -94,6 +96,38 @@ it.effect('identity administration and support starts declare independent tenant
         }),
       ),
     ).toBe(undefined);
+  }),
+);
+
+it.effect('company agent keys use explicit Action execution without a tenant permission bypass', () =>
+  Effect.gen(function* companyAgentPermissions() {
+    const principalId = '00000000-0000-4000-8000-000000000001';
+    const bind = bindManagedApiKeyAction.descriptor;
+    const status = setManagedApiKeyBindingStatusAction.descriptor;
+    expect(
+      bind.tenantPermission?.(
+        yield* Schema.decodeEffect(bind.payloadSchema)({
+          principalId,
+          providerSubjectId: 'provider-key-id',
+          scope: 'company-agent',
+        }),
+      ),
+    ).toBe(undefined);
+    expect(
+      status.tenantPermission?.(
+        yield* Schema.decodeEffect(status.payloadSchema)({
+          authBindingId: '00000000-0000-4000-8000-000000000002',
+          expectedStatus: 'active',
+          newStatus: 'disabled',
+          principalId,
+          scope: 'company-agent',
+        }),
+      ),
+    ).toBe(undefined);
+    for (const descriptor of [bind, status]) {
+      expect(descriptor.legalEntityScope).toBe('optional');
+      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+    }
   }),
 );
 

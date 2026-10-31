@@ -40,6 +40,7 @@ import type {
 import {
   CommercePortalAuthMfaFreshnessReaderService,
   commercePortalAuthMfaFreshnessReaderFromApi,
+  portalAuthMfaApiLive,
   portalAuthMfaStandaloneApiLive,
 } from '../../api/portal-auth/provider/mfa/http.ts';
 import { makeCommercePortalAuthMfaProvider } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
@@ -52,6 +53,7 @@ import type {
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
 import type { CommercePortalAuthMfaSessionRollback } from '../../api/portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
+import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { encodeCommerceSessionReference } from '../../api/portal-auth/provider/session-reference.ts';
 import { makeCommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
@@ -555,6 +557,38 @@ const makeMfaHttpApp = (
       (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
     );
   });
+
+it.effect('builds the composed MFA group without capturing the request realm', () =>
+  Effect.gen(function* resolvesRequestRealm() {
+    const fixture = makeMfaHttpFixture();
+    const api = HttpApi.make('CommerceCustomerContextApi').addHttpApi(CommercePortalAuthMfaApi);
+    const apiLayer = HttpApiBuilder.layer(api).pipe(
+      Layer.provide(portalAuthMfaApiLive),
+      Layer.provide(HttpServer.layerServices),
+      Layer.provide(TestClock.layer()),
+    );
+    const app = yield* Effect.acquireRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(apiLayer, { disableLogger: true })),
+      (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
+    );
+    const realm = yield* Layer.build(commercePortalAuthRealmUnavailableLive([HTTP_ORIGIN]));
+    const services = realm.pipe(
+      Context.add(CommercePortalAuthConfig, HTTP_CONFIG),
+      Context.add(CommercePortalAuthMfaService, fixture.service),
+      Context.add(CommercePortalAuthRecoveryRateLimitService, fixture.budget),
+    );
+    const response = yield* Effect.promise(() =>
+      app.handler(mfaHttpRequest('/api/portal-auth/two-factor/enable', { password: 'P'.repeat(24) }), services),
+    );
+    expect(response.status).toBe(401);
+    expect(yield* Effect.promise(() => response.json())).toMatchObject({
+      code: 'mfa_authentication_not_fresh',
+      status: 401,
+    });
+    expect(fixture.state.enableInputs).toHaveLength(0);
+    expect(fixture.state.budgetKeys).toHaveLength(0);
+  }),
+);
 
 it.effect('gates enable behind the trusted origin, the freshness window, and the durable budget, in that order', () =>
   Effect.gen(function* gateOrdering() {

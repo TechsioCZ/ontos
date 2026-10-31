@@ -7,7 +7,9 @@ import {
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   TenantModuleStateServiceLive,
+  defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
+  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
 import {
@@ -99,6 +101,7 @@ const main = Effect.scoped(
         ),
       ),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
     );
     const context = yield* Layer.build(live);
     const line = yield* Effect.gen(function* invokeActualOwnerAction() {

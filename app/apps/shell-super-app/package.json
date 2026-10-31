@@ -7,15 +7,12 @@
     "./api/client": "./src/api/auth-client.ts",
     "./testing/api-key-gateway-native": "./tests/fixtures/api-key-gateway-native.ts",
     "./testing/tenant-party-shell-http": "./tests/support/tenant-party-shell-http.ts",
-    "./testing/api-key-gateway-native-child": "./tests/support/api-key-gateway-native-child.ts"
+    "./testing/api-key-gateway-native-child": "./tests/support/api-key-gateway-native-child.ts",
+    "./outbox-worker-host": "./src/entry.core-system-worker.ts"
   },
   "scripts": {
     "dev": "modern dev",
-    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target cloudflare-dist && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "node ../../scripts/immutable-shell-release.mts ingress-deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app shell-super-app",
+    "build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "db:generate": "drizzle-kit generate --config drizzle.auth.config.ts",
@@ -25,16 +22,16 @@
     "stage:bootstrap-accounts": "node scripts/bootstrap-stage-accounts.mts",
     "test:e2e": "playwright test",
     "test:integration": "rstest --project integration",
+    "test:operator": "rstest --project operator --pool.maxWorkers 1",
     "test:unit": "rstest --project unit"
   },
   "dependencies": {
     "@app/better-auth-effect-drizzle": "workspace:*",
-    "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
-    "@better-auth/api-key": "1.7.6",
+    "@better-auth/api-key": "1.7.12",
     "@effect/opentelemetry": "4.0.7",
     "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
@@ -52,14 +49,21 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@noble/hashes": "2.2.0",
     "@tanstack/react-router": "1.170.39",
-    "@techsio/ui-kit": "0.25.1",
-    "better-auth": "1.7.6",
+    "@techsio/ui-kit": "catalog:",
+    "better-auth": "1.7.12",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
     "i18next": "26.4.2",
     "jose": "6.2.5",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "@app/admin-ui": "workspace:*",
+    "@app/email-delivery": "workspace:*",
+    "@better-auth/cimd": "1.7.12",
+    "@better-auth/mcp": "1.7.12",
+    "@better-auth/oauth-provider": "1.7.12",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
@@ -84,9 +88,8 @@
     "happy-dom": "21.0.4",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
-    "zephyr-rspack-plugin": "1.2.4",
-    "pg": "8.22.0"
+    "pg": "8.22.0",
+    "@modelcontextprotocol/client": "2.3.1"
   },
   "modernjs": {
     "preset": "presetUltramodern",

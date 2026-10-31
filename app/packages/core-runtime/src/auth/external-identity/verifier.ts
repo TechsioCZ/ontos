@@ -260,6 +260,13 @@ const matchesAuthentication = (
   observation.principalId === expected.principalId &&
   observation.tenantId === expected.tenantId;
 
+/**
+ * The provider stamps `observedAt` with its own clock; the receiver checks it with another. Worker clocks advance
+ * only on I/O, so a receiver can read a time shortly before the provider's stamp. This tolerance only admits such
+ * an early receiver reading: expiry is still enforced against the receiver clock, so it never extends a proof.
+ */
+export const ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS = 1000;
+
 const isFresh = <Observation extends { readonly expiresAt: DateTime.Utc; readonly observedAt: DateTime.Utc }>(
   observation: Observation,
   now: DateTime.Utc,
@@ -273,7 +280,7 @@ const isFresh = <Observation extends { readonly expiresAt: DateTime.Utc; readonl
     !Number.isFinite(expiresAt) ||
     !Number.isFinite(current) ||
     expiresAt <= observedAt ||
-    current < observedAt ||
+    current < observedAt - ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS ||
     current >= expiresAt ||
     expiresAt - observedAt > maxAdmissionWindowMillis
   );

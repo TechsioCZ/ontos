@@ -29,6 +29,14 @@ export const moduleReleaseWorkerName = (appId: string, buildMarker: string) =>
     }),
   );
 
+/**
+ * The Worker service binding a caller's deployment declares for one exact Worker release. A binding
+ * call runs the release on the caller's machine instead of a public round trip to its workers.dev
+ * origin. Keyed by the release identity, so a binding can never stand in for another release.
+ */
+export const moduleReleaseServiceBinding = (workerName: string): string =>
+  `ONTOS_RELEASE_${workerName.slice('ontos-'.length)}`;
+
 /** A public assets-only Worker has the same exact release identity and no business executable. */
 export const moduleReleaseAssetWorkerName = (appId: string, buildMarker: string) =>
   moduleReleaseWorkerName(appId, buildMarker).pipe(Effect.map((name) => `assets-${name.slice('ontos-'.length)}`));

@@ -53,6 +53,16 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
       },
       { concurrency: 2 },
     ).pipe(Effect.mapError((cause) => invalid(cause)));
+    const attempt = yield* context.services.attempt.read({
+      portalEnrollmentAttemptId: payload.portalEnrollmentAttemptId,
+      tenantId,
+    });
+    if (context.scope.legalEntityId !== undefined && attempt.targetLegalEntityId !== context.scope.legalEntityId) {
+      return yield* attemptRejected(
+        'The enrollment target does not match the verified legal entity',
+        payload.portalEnrollmentAttemptId,
+      );
+    }
     yield* context.services.preparedOwner.take({
       actionInvocationId,
       actionKey: CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY,
@@ -68,10 +78,6 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
     // `required` gates the Attempt's derived completion, so it is read from the journey the
     // Attempt's own immutable intent selects rather than asserted by the caller. A transition the
     // journey never declares has no place in that derivation and is refused here.
-    const attempt = yield* context.services.attempt.read({
-      portalEnrollmentAttemptId: payload.portalEnrollmentAttemptId,
-      tenantId,
-    });
     const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt);
     const declared = journeyTransitionFor(definition, payload.ownerModuleKey, payload.transitionKey);
     if (declared === undefined) {
@@ -126,7 +132,7 @@ export const claimPortalEnrollmentTransitionAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
     payloadSchema: ClaimPortalEnrollmentTransitionPayloadSchema,
     policies: [],

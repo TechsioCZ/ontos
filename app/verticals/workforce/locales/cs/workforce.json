@@ -1,0 +1,203 @@
+{
+  "workforce": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "workforce",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Zaměstnanci",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "employees": {
+        "title": "Zaměstnanci",
+        "description": "Lidé v obchodním týmu, jejich role a oddělení.",
+        "create": "Nový zaměstnanec",
+        "discard": {
+          "confirm": "Zahodit změny",
+          "description": "Údaje, které jste ve formuláři zadali, se ztratí.",
+          "keep": "Pokračovat v úpravách",
+          "title": "Zahodit neuložené změny?"
+        },
+        "stats": {
+          "active": "Aktivní",
+          "departments": "Oddělení",
+          "sales": "Obchodníci",
+          "total": "Celkem"
+        },
+        "filters": {
+          "activeOnly": "Jen aktivní",
+          "allDepartments": "Všechna oddělení",
+          "allRoles": "Všechny role",
+          "clear": "Zrušit filtry",
+          "department": "Oddělení",
+          "role": "Role",
+          "search": "Hledat jméno nebo e-mail…",
+          "searchLabel": "Filtrovat zaměstnance",
+          "tag": "Štítek"
+        },
+        "columns": {
+          "account": "Účet",
+          "department": "Oddělení",
+          "email": "E-mail",
+          "name": "Jméno",
+          "role": "Role",
+          "status": "Stav",
+          "tags": "Štítky"
+        },
+        "status": {
+          "active": "Aktivní",
+          "inactive": "Neaktivní"
+        },
+        "account": {
+          "linked": "Propojeno",
+          "none": "Bez účtu"
+        },
+        "table": {
+          "actions": "Akce",
+          "filters": "Filtry sloupců",
+          "loading": "Načítání zaměstnanců",
+          "pageSize": "Řádků na stránku",
+          "range": "{{start}}–{{end}} z {{total}}",
+          "selectAll": "Vybrat všechny zaměstnance",
+          "selectRow": "Vybrat zaměstnance"
+        },
+        "form": {
+          "active": "Aktivní",
+          "cancel": "Zrušit",
+          "create": "Vytvořit zaměstnance",
+          "createTitle": "Nový zaměstnanec",
+          "department": "Oddělení",
+          "editTitle": "Upravit zaměstnance",
+          "email": "E-mail",
+          "fullName": "Jméno a příjmení",
+          "phone": "Telefon",
+          "principal": "Přihlašovací účet",
+          "principalHelp": "Nejprve pozvěte člověka ve správě lidí. Zaměstnání ani pracovní role nepřidělují oprávnění; pro přiřazení úkolů aktivujte členství a přidělte přístup k Úkolům.",
+          "managePeople": "Pozvat člověka a spravovat členství a oprávnění",
+          "role": "Pracovní role",
+          "save": "Uložit změny",
+          "saving": "Ukládám…"
+        },
+        "bulk": {
+          "activate": "Aktivovat",
+          "apply": "Uložit",
+          "deactivate": "Deaktivovat",
+          "department": "Změnit oddělení",
+          "departmentTitle": "Změnit oddělení",
+          "description": "Změna se použije u {{total}} vybraných zaměstnanců.",
+          "role": "Změnit roli",
+          "roleTitle": "Změnit roli",
+          "tags": "Štítky"
+        },
+        "errors": {
+          "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
+          "department": "Vyplňte oddělení.",
+          "email": "Zadejte e-mail ve tvaru jmeno@firma.cz.",
+          "emailTaken": "Tento e-mail už používá jiný zaměstnanec.",
+          "forbidden": "K této operaci nemáte oprávnění.",
+          "fullName": "Vyplňte jméno a příjmení.",
+          "fullNameTooLong": "Jméno a příjmení může mít nejvýše 200 znaků.",
+          "load": "Data se nepodařilo načíst.",
+          "loadDescription": "Zkontrolujte připojení a zkuste to znovu.",
+          "phone": "Zadejte telefon se 6 až 15 číslicemi, např. +420 777 123 456.",
+          "principal": "Vyberte přihlašovací účet zaměstnance.",
+          "retry": "Zkusit znovu",
+          "save": "Zaměstnance se nepodařilo uložit. Zkuste to znovu."
+        },
+        "empty": {
+          "first": "Zatím tu nejsou žádní zaměstnanci.",
+          "firstDescription": "Přidejte prvního zaměstnance obchodního týmu.",
+          "forbidden": "K této sekci nemáte oprávnění.",
+          "noResults": "Filtrům neodpovídá žádný zaměstnanec."
+        },
+        "toast": {
+          "bulkSaved": "Zaměstnanci uloženi",
+          "error": "Operaci se nepodařilo dokončit. Zkuste to znovu.",
+          "saved": "Zaměstnanec uložen"
+        },
+        "roles": {
+          "ACCOUNTANT": "Účetní",
+          "SALES_HEAD": "Vedoucí obchodu",
+          "SALES_REP": "Obchodník",
+          "SUPPORT": "Podpora",
+          "WAREHOUSE": "Skladník"
+        },
+        "permissions": {
+          "access": "Přístup",
+          "role": "Role",
+          "title": "Oprávnění"
+        },
+        "aiActivity": {
+          "title": "AI aktivita",
+          "description": "Co v této firmě dělali AI agenti a integrace: každý povolený i zamítnutý pokus o zápis z Core auditu. Úroveň A smí jen číst, úroveň B navíc zakládá úkoly a úroveň C navrhuje změny dat (např. klientů v CRM), které musí v aplikaci schválit člověk a které lze hromadně vrátit.",
+          "refresh": "Obnovit",
+          "executed_one": "Provedeno: {{count}}",
+          "executed_few": "Provedeno: {{count}}",
+          "executed_many": "Provedeno: {{count}}",
+          "executed_other": "Provedeno: {{count}}",
+          "denied_one": "Zamítnuto: {{count}}",
+          "denied_few": "Zamítnuto: {{count}}",
+          "denied_many": "Zamítnuto: {{count}}",
+          "denied_other": "Zamítnuto: {{count}}",
+          "level": "Úroveň {{level}}",
+          "write": "zápis",
+          "unavailable": "Záznamy auditu se nepodařilo načíst.",
+          "empty": "Zatím žádná aktivita AI agentů",
+          "emptyDescription": "Jakmile AI agent v této firmě něco změní nebo se o to pokusí, objeví se to tady.",
+          "columns": {
+            "time": "Čas",
+            "actor": "Agent",
+            "action": "Akce",
+            "result": "Výsledek",
+            "reason": "Důvod"
+          },
+          "modules": {
+            "work_tasks": "Úkoly",
+            "demo_sales-pipeline": "Příležitosti",
+            "demo_tagging": "Štítky",
+            "demo_merchandise": "Objednávky a produkty",
+            "demo_workforce": "Zaměstnanci",
+            "party_registry": "Zákazníci",
+            "finance_billing": "Faktury",
+            "demo_crm": "CRM",
+            "core_identity": "Účty a přihlášení"
+          },
+          "outcomes": {
+            "succeeded": "Provedeno",
+            "denied": "Zamítnuto",
+            "allowed": "Povoleno",
+            "failed": "Selhalo"
+          },
+          "codes": {
+            "action_permission_denied": "chybí oprávnění k zápisu",
+            "action_succeeded": "uloženo",
+            "succeeded": "uloženo",
+            "action_policy_denied": "zamítnuto pravidlem",
+            "action_revision_conflict": "souběžná změna",
+            "spicedb_permission_denied": "chybí oprávnění k zápisu",
+            "action_executed": "uloženo",
+            "policy_allowed": "Pravidla splněna",
+            "connector_exchange": "Připojení aplikace"
+          },
+          "otherModule": "Správa aplikace",
+          "otherOutcome": "Zpracováno",
+          "otherCode": "Záznam zpracování"
+        }
+      }
+    },
+    "selectPlaceholder": "Vyberte…",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
+  }
+}

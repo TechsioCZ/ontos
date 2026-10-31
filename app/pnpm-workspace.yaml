@@ -1,3 +1,7 @@
+catalog:
+  '@techsio/ui-kit': 0.57.0
+catalogMode: strict
+
 catalogs:
   ultramodern:
     '@modern-js/adapter-rstest': 'npm:@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.16'
@@ -24,6 +28,7 @@ packages:
   - apps/*
   - verticals/*
   - packages/*
+  - akros-storefront
 enableGlobalVirtualStore: false
 packageImportMethod: clone-or-copy
 minimumReleaseAge: 1440
@@ -93,6 +98,20 @@ minimumReleaseAgeExclude:
   - '@bleedingdev/modern-js-utils@3.9.3-ultramodern.16'
   # Framework-owned signed Redact sidecar required by the default React runtime.
   - '@bleedingdev/tanstack-redact@0.2.2'
+  # Demo features: the patched UI kit and the Better Auth MCP, CIMD and OAuth provider cohort.
+  - '@techsio/ui-kit@0.57.0'
+  - better-auth@1.7.12
+  - '@better-auth/api-key@1.7.12'
+  - '@better-auth/cimd@1.7.12'
+  - '@better-auth/core@1.7.12'
+  - '@better-auth/drizzle-adapter@1.7.12'
+  - '@better-auth/kysely-adapter@1.7.12'
+  - '@better-auth/mcp@1.7.12'
+  - '@better-auth/memory-adapter@1.7.12'
+  - '@better-auth/mongo-adapter@1.7.12'
+  - '@better-auth/oauth-provider@1.7.12'
+  - '@better-auth/prisma-adapter@1.7.12'
+  - '@better-auth/telemetry@1.7.12'
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade
@@ -127,6 +146,7 @@ overrides:
   'dompurify@>=3.0.0 <3.4.17': 3.4.17
   'seroval@<1.6.8': 1.6.9
   'seroval-plugins@<1.6.8': 1.6.9
+  '@techsio/ui-kit': 'catalog:'
 allowBuilds:
   '@parcel/watcher': true
   '@swc/core': true
@@ -137,6 +157,11 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils (ULTRAMODERN_SKIP_SERVER_TYPECHECK=1
+  # skips the BFF server declaration emit and TS-Go check in deploy builds; CI gates typecheck every unit)
+  '@bleedingdev/modern-js-server-utils@3.9.3-ultramodern.16': patches/@bleedingdev__modern-js-server-utils@3.9.3-ultramodern.16.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
+  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.16': patches/@bleedingdev__modern-js-ultramodern-create@3.9.3-ultramodern.16.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
   # upstream: https://github.com/ScriptedAlchemy/effect-rstest (latest build cbbf87e still imports effect/unstable/arbitrary; Effect 4.0.0 exports Arbitrary from the effect root)
@@ -145,3 +170,11 @@ patchedDependencies:
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6429 (Effect 4.0.0 SqlError path and Schema.isBetweenLength; merged on rc5, unreleased)
   # TS 7.1: https://github.com/microsoft/TypeScript/pull/64307; share the unchanged distributive returning conditional across base/derived declarations.
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
+  # upstream: https://github.com/authzed/authzed-node (typed leaf exports)
+  '@authzed/authzed-node@1.6.1': patches/@authzed__authzed-node@1.6.1.patch
+  # upstream: https://www.npmjs.com/package/@techsio/ui-kit/v/0.57.0 (label and translation accessibility props)
+  '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
+  # upstream: https://github.com/oxc-project/oxc (handle omitted optional AST children in the CFG traverser)
+  oxlint@1.81.0: patches/oxlint@1.81.0.patch
+  # upstream: https://github.com/millionco/react-doctor (require array evidence before suggesting Set membership)
+  oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch

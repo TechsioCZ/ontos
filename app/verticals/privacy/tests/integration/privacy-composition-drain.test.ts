@@ -1,9 +1,8 @@
 import type { DatabaseConnectionPair } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import {
-  loadDatabaseConfig,
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
@@ -217,9 +216,9 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
   );
   const urls: Record<string, string> = {};
   for (const identity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-    const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity }).pipe(
-      Effect.mapError(() => failure('Canonical fixture identity configuration was unavailable')),
-    );
+    const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity })
+      .pipe(Effect.map(({ runtime }) => runtime))
+      .pipe(Effect.mapError(() => failure('Canonical fixture identity configuration was unavailable')));
     const address = new URL(canonical.connectionString);
     if (
       canonical.database !== source.runtime.database ||
@@ -468,6 +467,12 @@ const fixtureRuntimeInventory = [
       'retention_evaluation_work',
       'temporary_dsr_exports',
     ],
+  },
+  {
+    operations: 'select, insert, delete',
+    rls: false,
+    schema: 'privacy',
+    tables: ['gateway_assertion_redemptions'],
   },
 ] as const;
 

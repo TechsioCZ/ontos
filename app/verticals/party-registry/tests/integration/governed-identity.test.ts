@@ -1,10 +1,14 @@
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { PgClient } from '@effect/sql-pg';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
+  DatabaseIdentityEnrollmentContext,
   ReadRuntime,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   resolveActionCommit,
@@ -105,12 +109,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* governedIdentityTestEffect() {
-          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
-          const partyRuntimeConnectionString = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString;
-          const issuerClient = yield* makeTestPgClient(
-            connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
-            { maxConnections: 1 },
-          );
+          const connections = yield* loadDatabaseIdentityConnections({
+            enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            envPath: '/dev/null',
+          });
+          const requestConnection = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+          const issuerConnection = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+          assert.isOk(requestConnection !== undefined);
+          assert.isOk(issuerConnection !== undefined);
+          const partyRuntimeConnectionString = requestConnection.connectionString;
+          const issuerClient = yield* makeTestPgClient(issuerConnection.connectionString, { maxConnections: 1 });
           const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
             [ultramodernApiMarker.appId],
             ultramodernApiMarker.buildMarker,
@@ -127,9 +135,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             archivePartyAction,
             unarchivePartyAction,
           ].map(({ descriptor }) => descriptor.actionKey);
+          const legalEntityOnlyActionKeys = [
+            counterpartyCreateAction,
+            counterpartyRoleAddAction,
+            counterpartyRoleEndAction,
+          ].map(({ descriptor }) => descriptor.actionKey);
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
+              databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               actionKeys,
+              legalEntityOnlyActionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
@@ -139,8 +154,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
+              databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               actionKeys,
-              adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
@@ -173,6 +188,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             const { assertion } = yield* registerTestGatewayScopeGrant(
               issuerClient,
               context.legalEntityId === undefined ? grant : { ...grant, legalEntityId: context.legalEntityId },
+              PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ).pipe(Effect.orDie);
             return trustVerifiedGatewayPrincipalContext(context, compositionSnapshot.composition.revision, {
               assertion,
@@ -443,7 +459,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             Layer.provide(CoreSearchQueryRuntimeLive),
             Layer.provide(CoreSearchProjectionStoreLive),
           );
-          const searchContext = yield* Layer.build(searchLayer).pipe(Effect.provideContext(fixtureContext));
+          const searchContext = yield* Layer.build(searchLayer).pipe(
+            Effect.provideContext(fixtureContext),
+            Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
+          );
           const deniedSearch = Effect.all([ReadRuntime, freshReadTransport]).pipe(
             Effect.flatMap(([runtime, readTransport]) =>
               runtime.runRead({

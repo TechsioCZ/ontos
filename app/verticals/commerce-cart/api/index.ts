@@ -10,6 +10,8 @@ import {
 } from '../shared/ultramodern-build.ts';
 
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
@@ -167,6 +169,8 @@ const commerceCartReadinessLayer = HttpApiBuilder.group(commerceCartApi, 'founda
   ),
 );
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 /** The native assembly installs handlers; the owner composes actual logging and span services here. */
 const runtimeObservabilityLive = GovernedReadLayer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -180,7 +184,9 @@ export const makeCommerceCartApiRuntime = () =>
     api: commerceCartApi,
     handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
+      GovernedReadLayer.provide(
+        GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, databaseIdentitiesLive, nodeCryptoLayer),
+      ),
       GovernedReadLayer.provide(GovernedReadLayer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
       GovernedReadLayer.orDie,
     ),

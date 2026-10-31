@@ -4,7 +4,7 @@
 // rebuilt on every invocation. Audit B4 makes `Effect.fn` the target vocabulary, so this shape
 // will become the dominant one.
 import { Effect } from 'effect';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 export const readiness = Effect.fn('readiness')(function* (baseUrl: string) {

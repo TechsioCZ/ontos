@@ -18,7 +18,10 @@ import {
   PrincipalIdSchema,
   TenantIdSchema,
 } from '../../src/auth/external-identity-contracts.ts';
-import type { AuthBindingStatusSchema } from '../../src/auth/external-identity-contracts.ts';
+import type {
+  AuthBindingStatusSchema,
+  ReadPrincipalBindingPayloadSchema,
+} from '../../src/auth/external-identity-contracts.ts';
 import { externalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type { ExternalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type {
@@ -37,6 +40,8 @@ import type {
   TrustedAdmissionObservationService,
 } from '../../src/auth/external-identity/verifier.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../src/auth/external-identity/repository.ts';
+import { readPrincipalBinding } from '../../src/auth/external-identity/read.ts';
+import { runReadOwnerSteps } from '../../src/reads/definition.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
@@ -60,6 +65,7 @@ import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const namespaceId = Schema.decodeSync(AuthenticationNamespaceRegistrationSchema.fields.authenticationNamespaceId)(
   'test.integration.provider',
@@ -156,7 +162,7 @@ const makeRunPrepare =
   ) =>
   (invocationId: string) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).prepare({
             invocationId,
@@ -353,50 +359,47 @@ const convergeNeutralReservationLifecycle = Effect.gen(function* externalIdentit
     yield* admin.select().from(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
   ).toHaveLength(1);
 
-  const deniedRead = yield* database.transaction((transaction) =>
-    installOperationalScope(transaction, scope).pipe(
-      Effect.flatMap((scopedTransaction) =>
-        externalIdentityRepositoryFromTransaction(scopedTransaction, {
-          authorizeReadNamespace: () =>
-            Effect.fail(externalIdentityFailure('identity_forbidden', 'integration namespace read denied')),
-          registry,
-        }).read({
-          authBindingId: preparedA.authBindingId,
-          lookup: 'binding',
-          tenantId,
-        }),
-      ),
-    ),
-  );
-  expect(deniedRead.outcome).toBe('NOT_FOUND');
-
-  const deniedSubjectRead = yield* database
-    .transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+  // The Read authorizes namespaces outside its transaction: the owner steps run against a context that
+  // denies every namespace and identity administration.
+  const namespaceDeniedAccess: ContextAccessService = {
+    ...actionContextAccess,
+    identityNamespaces: ({ authenticationNamespaceIds }) => deniedContextResults(authenticationNamespaceIds),
+    tenants: ({ tenantIds }) => deniedContextResults(tenantIds),
+  };
+  const runDeniedRead = (input: typeof ReadPrincipalBindingPayloadSchema.Type) =>
+    database.transaction((transaction) =>
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
-          externalIdentityRepositoryFromTransaction(scopedTransaction, {
-            authorizeReadNamespace: () =>
-              Effect.fail(externalIdentityFailure('identity_forbidden', 'integration namespace read denied')),
-            registry,
-          }).read({
-            authenticationNamespaceId: namespaceId,
-            lookup: 'subject',
-            providerSubjectId: subject.providerSubjectId,
-            subjectType: subject.subjectType,
-            tenantId,
+          runReadOwnerSteps(readPrincipalBinding, input, {
+            readKey: readPrincipalBinding.descriptor.readKey,
+            scope,
+            services: { loadForRead: externalIdentityRepositoryFromTransaction(scopedTransaction).loadForRead },
           }),
         ),
+        Effect.provideService(ContextAccess, namespaceDeniedAccess),
+        Effect.provideService(AuthenticationNamespaceRegistry, registry),
       ),
-    )
-    .pipe(Effect.flip);
-  expect(Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityFailure')).toBe(true);
-  if (Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityFailure')) {
+    );
+  const deniedRead = yield* runDeniedRead({
+    authBindingId: yield* Schema.decodeEffect(AuthBindingIdSchema)(preparedA.authBindingId),
+    lookup: 'binding',
+  });
+  expect(deniedRead.result.outcome).toBe('NOT_FOUND');
+
+  const deniedSubjectRead = yield* runDeniedRead({
+    authenticationNamespaceId: namespaceId,
+    lookup: 'subject',
+    providerSubjectId: subject.providerSubjectId,
+    subjectType: subject.subjectType,
+  }).pipe(Effect.flip);
+  expect(Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityError')).toBe(true);
+  if (Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityError')) {
     expect(deniedSubjectRead.code).toBe('identity_forbidden');
   }
 
   const runActivate = (expectedRevision: number, invocationId: string) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
             authBindingId: preparedA.authBindingId,
@@ -419,7 +422,7 @@ const convergeNeutralReservationLifecycle = Effect.gen(function* externalIdentit
     activated.bindingRevision,
   );
   const resolved = yield* database.transaction((transaction) =>
-    installOperationalScope(transaction, scope).pipe(
+    installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
       Effect.flatMap((scopedTransaction) =>
         externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).resolve({
           admission: boundAdmission,
@@ -448,7 +451,7 @@ const convergeNeutralReservationLifecycle = Effect.gen(function* externalIdentit
     }>,
   ) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) => {
           const baseStatusInput = {
             authBindingId: preparedA.authBindingId,
@@ -490,7 +493,7 @@ const convergeNeutralReservationLifecycle = Effect.gen(function* externalIdentit
   );
   const revokedResolution = yield* database
     .transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).resolve({
             admission: revokedAdmission,
@@ -534,7 +537,7 @@ const rollBackNeutralReservation = Effect.gen(function* externalIdentityRollback
 
   const failure = yield* database
     .transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry })
             .prepare({ invocationId, subject, tenantId })
@@ -736,7 +739,7 @@ const rejectRevokedStatusTransitions = Effect.gen(function* revokedStatusTransit
   const runPrepare = makeRunPrepare(database, scope, subject, tenantId);
   const runActivate = (authBindingId: string, expectedRevision: number, invocationId: string) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
             authBindingId,
@@ -758,7 +761,7 @@ const rejectRevokedStatusTransitions = Effect.gen(function* revokedStatusTransit
     }>,
   ) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) => {
           const baseStatusInput = {
             authBindingId,
@@ -867,7 +870,7 @@ const preventIdentifierReuseTransfer = Effect.gen(function* identifierReuseInteg
     displayName: string,
   ) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).prepare({
             displayName,
@@ -885,7 +888,7 @@ const preventIdentifierReuseTransfer = Effect.gen(function* identifierReuseInteg
     invocationId: string,
   ) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).activate({
             authBindingId,
@@ -904,7 +907,7 @@ const preventIdentifierReuseTransfer = Effect.gen(function* identifierReuseInteg
     invocationId: string,
   ) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).changeStatus({
             authBindingId,

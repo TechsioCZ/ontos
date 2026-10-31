@@ -5,7 +5,8 @@ import type { PlatformError } from 'effect';
 
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { makeCoreDatabase } from '../db/client.ts';
-import { DATABASE_IDENTITIES } from '../db/database-identities.ts';
+import { defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import type { DatabaseConnectionPair, DatabaseConfigValue } from '../db/config.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../modules/active-application-composition.ts';
@@ -178,6 +179,8 @@ type IsolatedNativeDatabaseInput = (
         | typeof exactDeadlinePurpose;
     }
 ) & {
+  /** Enrollment whose gateway audiences the isolated trust catalog mirrors; Core-only fixtures enroll none. */
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
   /** Explicit test-runner configuration; validated again and still restricted to local isolated databases. */
   readonly sourceConnections?: DatabaseConnectionPair;
 };
@@ -305,10 +308,12 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     );
     if (input.mode === schemaOnly) {
       const sourceDump = yield* postgresTool(source.admin, 'pg_dump', ['--schema-only', '--no-comments']);
+      // One transaction: committing each of the dump's thousands of DDL statements separately made the clone
+      // cost seconds per test, and a failed restore now leaves no partial schema behind.
       const restore = yield* postgresTool(
         connections.admin,
         'psql',
-        ['--set', 'ON_ERROR_STOP=1', '--quiet'],
+        ['--set', 'ON_ERROR_STOP=1', '--quiet', '--single-transaction'],
         sourceDump.stdout,
       );
       const [dumpExit, restoreExit] = yield* Effect.all(
@@ -424,11 +429,12 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
               'objects',
             );
             // Match runtime-role bootstrap's canonical enrollment, never source table contents.
-            const audienceRoles = DATABASE_IDENTITIES.filter(
-              ({ scopeAuthority }) => scopeAuthority === 'gateway_grant',
-            ).flatMap(({ gatewayScopeAudiences, role: audienceRole }) =>
-              gatewayScopeAudiences.map((audience) => ({ audience, audienceRole })),
-            );
+            const enrollment = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
+            const audienceRoles = enrollment.identities
+              .filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant')
+              .flatMap(({ gatewayScopeAudiences, role: audienceRole }) =>
+                gatewayScopeAudiences.map((audience) => ({ audience, audienceRole })),
+              );
             yield* Effect.forEach(
               audienceRoles,
               ({ audience, audienceRole }) =>
@@ -506,9 +512,11 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       if (input.mode !== 'empty') {
         return yield* unavailable('Core schema bootstrap requires the empty test database mode');
       }
+      // Core's own `db:migrate`: its main and demo migration lineages converge through the reviewed equivalence
+      // plan, which a plain `drizzle-kit migrate` would replay twice.
       const migration = yield* ChildProcess.make(
-        new URL('../../node_modules/.bin/drizzle-kit', import.meta.url).pathname,
-        ['migrate', '--config', 'drizzle.config.ts'],
+        process.execPath,
+        ['../../scripts/migration-convergence-cli.mts', 'core'],
         {
           cwd: new URL('../../', import.meta.url).pathname,
           env: {

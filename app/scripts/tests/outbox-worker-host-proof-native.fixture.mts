@@ -37,11 +37,14 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
     catch: () => new OutboxWorkerHostProofFixtureError({ reason: 'native source identity is unavailable' }),
     try: () => resolveUltramodernSourceRevision(workspaceRoot),
   });
+  // The Shell hosts the Core system worker beside every vertical worker owner.
+  const hostedOwnerIds = [host.coreOwner.ownerId, ...host.owners.map(({ ownerId }) => ownerId)];
   const ownerBuildIdentities = yield* Effect.try({
     catch: () => new OutboxWorkerHostProofFixtureError({ reason: 'native owner identity is unavailable' }),
     try: () =>
-      host.owners.map(({ ownerId }) => {
-        const owner = topology.verticals.find(({ id }) => id === ownerId);
+      hostedOwnerIds.map((ownerId) => {
+        const owner =
+          ownerId === topology.shell.id ? topology.shell : topology.verticals.find(({ id }) => id === ownerId);
         assert.ok(owner);
         return {
           appId: ownerId,
@@ -59,7 +62,7 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
     appId: 'outbox-worker-host',
     entry: 'worker.mjs',
     ownerBuildIdentities,
-    schemaVersion: 2,
+    schemaVersion: 4,
     serviceId: 'outbox-worker-host',
     sourceInputs: [host.entry],
     sourceRevision,
@@ -89,10 +92,13 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   const decoded = yield* decodeActiveApplicationCompositionSnapshot(encoded);
   const catalog = yield* buildApplicationCompositionCatalog(decoded.composition);
   assert.deepEqual(catalog.outboxSubscriptions, expected);
+  const [shellIdentity] = ownerBuildIdentities;
+  assert.ok(shellIdentity !== undefined);
   const base = {
     artifact,
     contracts,
-    hostedOwnerIds: host.owners.map(({ ownerId }) => ownerId),
+    hostedOwnerIds,
+    shellBuildMarker: shellIdentity.buildMarker,
     sourceRevision,
     topology,
   };

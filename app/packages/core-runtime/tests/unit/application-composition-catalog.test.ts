@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Schema, Struct } from 'effect';
 import { Hex } from 'effect/encoding';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 
 import { moduleReleaseWorkerName } from '../../src/http/module-release-identity.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
@@ -11,6 +11,7 @@ import {
   ApplicationCompositionSchema,
   ApplicationCompositionValidationError,
   canonicalizeApplicationComposition,
+  freezeApplicationCompositionArtifact,
   ONTOS_APPLICATION_COMPOSITION_MAX_CONTRACT_BYTES,
   ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
   ONTOS_SHELL_CONTRIBUTION_ABI,
@@ -158,6 +159,54 @@ it.effect('accepts an intentionally empty approved inventory', () =>
   }),
 );
 
+it.effect('checks the canonical byte length and digest with the same zero-revision encoding', () =>
+  Effect.gen(function* canonicalSizeAndDigest() {
+    const document = contract();
+    const input = composition([
+      moduleFromContract({
+        ...document,
+        manifest: {
+          ...document.manifest,
+          module: { ...document.manifest.module, description: 'Příliš žluťoučký kůň' },
+        },
+      }),
+    ]);
+    const bytes = new TextEncoder().encode(canonicalizeApplicationComposition(input));
+    const revisionBytes = new TextEncoder().encode(
+      canonicalizeApplicationComposition({ ...input, revision: '0'.repeat(64) }),
+    );
+    expect(revisionBytes.byteLength).toBe(bytes.byteLength);
+    expect(revisionBytes.byteLength).toBeGreaterThan(canonicalizeApplicationComposition(input).length);
+    const digestSpy = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digestSpy.mockRestore()));
+    yield* buildApplicationCompositionCatalog(input);
+    expect(digestSpy).toHaveBeenCalledTimes(2);
+    expect(digestSpy.mock.calls.at(-1)?.[1]).toEqual(revisionBytes);
+  }),
+);
+
+it.effect('reuses a catalog only for the same deeply frozen approved artifact', () =>
+  Effect.gen(function* reuseImmutableCatalog() {
+    const input = freezeApplicationCompositionArtifact(composition([moduleFromContract(contract())]));
+    const digestSpy = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digestSpy.mockRestore()));
+    const first = yield* buildApplicationCompositionCatalog(input);
+    const digestCalls = digestSpy.mock.calls.length;
+    expect(yield* buildApplicationCompositionCatalog(input)).toBe(first);
+    expect(digestSpy).toHaveBeenCalledTimes(digestCalls);
+  }),
+);
+
+it.effect('revalidates shallow-frozen and mutable inputs even when their claimed revision is unchanged', () =>
+  Effect.gen(function* rejectMutableCatalogCache() {
+    for (const input of [composition(), Object.freeze(composition())]) {
+      yield* buildApplicationCompositionCatalog(input);
+      expect(Reflect.set(input.shell.deployment, 'buildMarker', 'changed-after-admission')).toBe(true);
+      yield* assertInvalid(input, /revision does not match/u);
+    }
+  }),
+);
+
 it.effect('installs previously unknown module identities without a topology allowlist or remote fetch', () =>
   Effect.gen(function* newIdentities() {
     const catalog = yield* buildApplicationCompositionCatalog(
@@ -250,7 +299,12 @@ it.effect('rejects module, deployment, build marker, and public contract identit
       { ...module, publicContract: { ...module.publicContract, id: 'another.module' } },
       { ...module, publicContract: { ...module.publicContract, version: '3' } },
     ]) {
-      yield* assertInvalid(composition([modified]), /observed deployment contract/u);
+      yield* assertInvalid(
+        composition([modified]),
+        modified.deployment.appId === module.deployment.appId
+          ? /observed deployment contract/u
+          : /contract app ID does not match/u,
+      );
     }
   }),
 );
@@ -437,7 +491,7 @@ it.effect('rejects a page referencing an undeclared component even when its arti
           federation: original.federation,
         },
       ]),
-      /component expose/u,
+      /invalid Shell contribution references/u,
     );
   }),
 );

@@ -323,3 +323,39 @@ it('keeps authoritative revocation ahead of a stale fetched candidate', () => {
     { appId: 'property-registry', status: 'revoked' },
   ]);
 });
+
+it('rejects cookie realms shared between modules, including secure versus plain cookie variants', () => {
+  const withCookies = (appId: string, moduleId: string, cookieName: string) => {
+    const base = contract(appId, moduleId);
+    return {
+      ...base,
+      manifest: {
+        ...base.manifest,
+        publicSurface: {
+          ...base.manifest.publicSurface,
+          apiCookieTransport: [
+            {
+              cookieNames: [cookieName],
+              realmPrefix: 'example-portal',
+              routes: [{ method: 'GET', path: '/api/customer-account' }],
+            },
+          ],
+        },
+      },
+    };
+  };
+  const inputs = [
+    {
+      contract: withCookies('property-registry', 'property.registry', 'example-portal.session_token'),
+      expectedAppId: 'property-registry',
+    },
+    {
+      contract: withCookies('documents-center', 'documents.center', '__Secure-example-portal.session_token'),
+      expectedAppId: 'documents-center',
+    },
+  ];
+  expect(() => buildInstalledModuleCatalog(inputs)).toThrow();
+  const resolved = resolveInstalledModuleCatalog(inputs.map((input) => ({ ...input, outcome: 'fetched' as const })));
+  expect(resolved.contracts).toEqual([]);
+  expect(resolved.deploymentStatuses.map(({ status }) => status)).toEqual(['unavailable', 'unavailable']);
+});

@@ -11,7 +11,10 @@ import type { OperationalScopeTransactionService } from '../../../../packages/co
 import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
-import { marketResolutionPersistenceForScope } from '../../src/persistence/market-resolution-persistence.ts';
+import {
+  MarketResolutionPersistenceUnavailable,
+  marketResolutionPersistenceForScope,
+} from '../../src/persistence/market-resolution-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const scope: OperationalScope = {
@@ -73,9 +76,21 @@ it.effect('decodes raw nullable PostgreSQL snapshot boundaries before constructi
     const withBoundary = yield* loadSnapshot('2035-06-01T00:00:00.000Z');
 
     expect(withoutBoundary.nextApplicabilityBoundary).toBeUndefined();
+    expect(Object.hasOwn(withoutBoundary, 'nextApplicabilityBoundary')).toBe(false);
+    expect(Object.hasOwn(withoutBoundary.completenessEvidence, 'nextApplicabilityBoundary')).toBe(false);
     expect(withBoundary.nextApplicabilityBoundary).toBeDefined();
     if (withBoundary.nextApplicabilityBoundary !== undefined) {
       expect(DateTime.formatIso(withBoundary.nextApplicabilityBoundary)).toBe('2035-06-01T00:00:00.000Z');
     }
+    expect(withBoundary.completenessEvidence.nextApplicabilityBoundary).toEqual(withBoundary.nextApplicabilityBoundary);
   }),
 );
+
+for (const boundary of ['', ' 2035-06-01T00:00:00.000Z ', 'not-a-timestamp']) {
+  it.effect(`rejects the invalid PostgreSQL snapshot boundary "${boundary}"`, () =>
+    Effect.gen(function* rejectInvalidSnapshotBoundary() {
+      const failure = yield* Effect.flip(loadSnapshot(boundary));
+      expect(Schema.is(MarketResolutionPersistenceUnavailable)(failure)).toBe(true);
+    }),
+  );
+}

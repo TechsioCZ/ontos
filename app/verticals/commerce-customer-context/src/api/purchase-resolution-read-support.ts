@@ -1,5 +1,5 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied, defineReadConditionalPermission } from '@app/core-runtime';
-import type { ReadConditionalPermissionDeclaration, ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadConditionalPermissionDeclaration, ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect } from 'effect';
 import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
 import { profileTarget } from './address-read-support.ts';
@@ -83,7 +83,7 @@ export const makePurchaseResolutionReadHandler = <Input extends PurchaseResoluti
 ) =>
   Effect.fn(config.effectName)(function* purchaseResolutionReadHandler(
     input: Input,
-    context: ReadHandlerContext<Services>,
+    context: ReadLoadContext<Services>,
   ): Effect.fn.Return<
     ReadHandlerResult<{ readonly resolution: Resolution }>,
     ReadHandlerUnavailable | ReadPermissionDenied
