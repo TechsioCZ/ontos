@@ -118,6 +118,8 @@ const fixtureConfigurationFields = {
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
   /** Exact subset of actionKeys granted only to the Legal Entity-only actor in its company scope. */
   legalEntityOnlyActionKeys: Schema.optionalKey(Schema.Array(ActionKeySchema)),
+  /** Defaults to true; false lets tests require an explicit Counterparty resource read grant. */
+  legalEntityOnlyCounterpartyRead: Schema.optionalKey(Schema.Boolean),
   /**
    * Seeds Core tenancy rows. Defaults to the configured `DATABASE_ADMIN_URL`: dedicated runtime roles
    * cannot insert tenants, Legal Entities or principals.
@@ -408,6 +410,7 @@ const fixtureAuthorizationRelationships = (input: {
   readonly legalEntityId: string;
   readonly legalEntityOnly: FixtureActor;
   readonly legalEntityOnlyActionKeys: readonly string[];
+  readonly legalEntityOnlyCounterpartyRead: boolean;
   readonly manager: FixtureActor;
   readonly moduleKeys: readonly string[];
   readonly moduleObject: string;
@@ -433,9 +436,16 @@ const fixtureAuthorizationRelationships = (input: {
     relationship('tenant', input.tenantId, 'party_identity_reader', 'principal', input.reader.principalId),
     relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
     ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
-      ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
-        relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
-      ),
+      ['member', 'counterparty_manager', 'counterparty_reader']
+        .filter(
+          (relation) =>
+            relation !== 'counterparty_reader' ||
+            principal.principalId !== input.legalEntityOnly.principalId ||
+            input.legalEntityOnlyCounterpartyRead,
+        )
+        .map((relation) =>
+          relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
+        ),
     ),
     relationship('module_access', input.moduleObject, 'legal_entity', 'legal_entity', input.entityObject),
     ...[input.manager, input.legalEntityOnly].map((principal) =>
@@ -532,6 +542,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly legalEntityId: string;
     readonly legalEntityOnly: FixtureActor;
     readonly legalEntityOnlyActionKeys: readonly string[];
+    readonly legalEntityOnlyCounterpartyRead: boolean;
     readonly manager: FixtureActor;
     readonly managerIdentityAdmin: boolean | undefined;
     readonly managerProviderSubjectId: string | undefined;
@@ -620,6 +631,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       legalEntityId: input.legalEntityId,
       legalEntityOnly: input.legalEntityOnly,
       legalEntityOnlyActionKeys: input.legalEntityOnlyActionKeys,
+      legalEntityOnlyCounterpartyRead: input.legalEntityOnlyCounterpartyRead,
       manager: input.manager,
       moduleKeys: input.moduleKeys,
       moduleObject,
@@ -1350,6 +1362,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           legalEntityId,
           legalEntityOnly,
           legalEntityOnlyActionKeys,
+          legalEntityOnlyCounterpartyRead: configuration.legalEntityOnlyCounterpartyRead ?? true,
           manager,
           managerIdentityAdmin: configuration.managerIdentityAdmin,
           managerProviderSubjectId: configuration.managerProviderSubjectId,

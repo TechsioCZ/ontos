@@ -1123,6 +1123,58 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       }),
   );
 
+  suite.effect('keeps default Counterparty read grants and omits only the opted-out actor read grant', () =>
+    Effect.scoped(
+      Effect.gen(function* configureLegalEntityOnlyCounterpartyRead() {
+        transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+        for (const scenario of [
+          { options: {}, readerGranted: true },
+          { options: { legalEntityOnlyCounterpartyRead: true }, readerGranted: true },
+          { options: { legalEntityOnlyCounterpartyRead: false }, readerGranted: false },
+        ]) {
+          const beforeWrite = transport.writeRelationships.mock.calls.length;
+          const fixture = yield* Effect.acquireRelease(
+            makeLiveOperationFixture({ ...configuration, ...scenario.options }),
+            (resource) => resource.close().pipe(Effect.orDie),
+          );
+          const relations = transport.writeRelationships.mock.calls[beforeWrite]?.[0].updates.flatMap((update) =>
+            update.relationship === undefined ? [] : [update.relationship],
+          );
+          const entityObject = toLegalEntityAccessObjectId(fixture.tenantId, fixture.legalEntityId);
+          const moduleObject = toModuleAccessObjectId(fixture.tenantId, fixture.legalEntityId, 'party.registry');
+          assert(entityObject !== undefined);
+          assert(moduleObject !== undefined);
+          for (const principal of [fixture.manager, fixture.legalEntityOnly]) {
+            const entityGrants = relations
+              ?.filter(
+                ({ resource, subject }) =>
+                  resource?.objectType === 'legal_entity' &&
+                  resource.objectId === entityObject &&
+                  subject?.object?.objectId === principal.principalId,
+              )
+              .map(({ relation }) => relation)
+              .toSorted();
+            expect(entityGrants).toEqual(
+              principal === fixture.manager || scenario.readerGranted
+                ? ['counterparty_manager', 'counterparty_reader', 'member']
+                : ['counterparty_manager', 'member'],
+            );
+          }
+          expect(
+            relations?.some(
+              ({ relation, resource, subject }) =>
+                relation === 'accessor' &&
+                resource?.objectType === 'module_access' &&
+                resource.objectId === moduleObject &&
+                subject?.object?.objectId === fixture.legalEntityOnly.principalId,
+            ),
+          ).toBe(true);
+          expect(relations?.some(({ resource }) => resource?.objectType === 'resource')).toBe(false);
+        }
+      }),
+    ),
+  );
+
   suite.effect('grants the Legal Entity-only actor only its company Action subset', () =>
     Effect.gen(function* grantLegalEntityOnlySubset() {
       transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());

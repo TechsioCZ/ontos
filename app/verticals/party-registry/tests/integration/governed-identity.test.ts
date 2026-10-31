@@ -23,7 +23,7 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/sys
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
+import { Crypto, Effect, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
@@ -145,6 +145,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               actionKeys,
               legalEntityOnlyActionKeys,
+              legalEntityOnlyCounterpartyRead: false,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
@@ -533,9 +534,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 ),
               ),
             );
-          // Owning a business Counterparty does not itself grant resource permission.
-          const forbiddenCounterpartyRead = yield* Effect.exit(readCounterparty());
-          assert.isOk(Exit.isFailure(forbiddenCounterpartyRead));
+          // Without the Legal Entity read grant, Counterparty creation does not grant resource read permission.
+          const forbiddenCounterpartyRead = yield* Effect.flip(readCounterparty());
+          assert.isOk(Predicate.isTagged(forbiddenCounterpartyRead, 'ReadPermissionDenied'));
 
           yield* fixture.grantResourceAccess(counterpartyRef, legalEntityOnlyPrincipal.principalId);
           const projection = yield* readCounterparty();

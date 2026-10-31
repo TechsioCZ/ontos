@@ -4,6 +4,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
   findPostgresFailure,
+  ReadHandlerExecutionError,
   ReadHandlerUnavailable,
   ScopedRoutineInvocationError,
 } from '@app/core-runtime';
@@ -25,6 +26,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
 import { zeroFloorSetHeads } from '../../src/database/schema.ts';
 import { Clock, Context, Crypto, DateTime, Duration, Effect, Layer, Logger, Option, Schema } from 'effect';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import { makeCurrentPricingDecisionZeroFloorSetReader } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
@@ -996,14 +998,20 @@ it.live(
             })
             .pipe(Effect.provideContext(Context.merge(fixtureContext, loggerContext))),
         );
-        expect(failed).toMatchObject({ code: 'read_evidence_persistence_failed' });
-        expect(
-          findPostgresFailure(failed, ({ code }) => code === '25P02').pipe(
-            Option.map(({ code }) => code),
-            Option.getOrUndefined,
-          ),
-        ).toBe('25P02');
-        expect(logLevels).toEqual([]);
+        // Core settles the owner transaction before writing read evidence. The caught SQL error
+        // therefore fails the checked COMMIT, not an evidence INSERT with PostgreSQL code 25P02.
+        expect(Schema.is(ReadHandlerExecutionError)(failed)).toBe(true);
+        expect(failed).toMatchObject({
+          code: 'read_handler_execution_failed',
+          reason: 'The governed read transaction failed',
+        });
+        const settlement = yield* Schema.decodeUnknownEffect(Schema.Struct({ cause: Schema.toType(SqlError) }))(failed);
+        expect(Schema.is(UnknownError)(settlement.cause.reason)).toBe(true);
+        expect(settlement.cause.reason.message).toBe('PgClient: COMMIT rolled back an aborted transaction');
+        expect(settlement.cause.reason.operation).toBe('commit');
+        expect(settlement.cause.reason.cause).toBeInstanceOf(Error);
+        expect(settlement.cause.reason.cause).toHaveProperty('message', 'COMMIT rolled back an aborted transaction');
+        expect(logLevels).toEqual(['Error']);
         expect(yield* fixture.evidenceCount()).toBe(before + 1);
         const [rolledBack] = provisionalReads;
         if (rolledBack === undefined) {
