@@ -2,14 +2,24 @@ import type { OperationalScope } from '@app/core-runtime';
 import { paymentTermCatalogPort } from '../../src/integrations/payment-term-catalog.ts';
 import { ScopedRoutineInvocationError, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Effect, Option, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
+import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
+import { stableRevision } from '../../src/integrations/order-finalization-pricing-context.ts';
+import {
+  bindPreparedPaymentTermCatalog,
+  paymentTermsSnapshotUnchanged,
+} from '../../src/services/payment-terms-action-preflight.ts';
 import { ProfileReconciliationOwnerVerificationRequestSchema } from '../../shared/actions/resolve-profile-reconciliation.ts';
 import type { ChangeCustomerPaymentTermsServices } from '../../src/actions/change-customer-payment-terms.action.ts';
 import type { CustomerPaymentTermsScopedRoutineInvoker } from '../../src/persistence/payment-term-persistence.ts';
 import {
+  customerChangeDefinitionRequests,
+  loadCustomerChangeSnapshot,
+  loadRetailChangeSnapshot,
+  retailChangeDefinitionRequests,
   makeChangeCustomerPaymentTermsServices,
   makeCustomerPaymentTermEntitlementReadServices,
   makePaymentTermAffectedUseAssessmentServices,
@@ -813,5 +823,124 @@ it.effect('retains lookup unavailability as retryable and native CAS changes as 
       .remove.remove(legacyRemoval, { actionInvocationId, scope })
       .pipe(Effect.flip);
     expect(conflict).toMatchObject({ code: 'REVISION_CONFLICT', currentRevision: 3, retryable: false });
+  }),
+);
+
+it.effect('customer and retail unchanged preferences commit without a Catalog request', () =>
+  Effect.gen(function* unchangedPreferences() {
+    const existing: CustomerPaymentTermsState = {
+      entitlements: [
+        {
+          effectiveFrom: '2026-01-01T00:00:00.000Z',
+          entitlementRef,
+          paymentTermRef,
+          semanticRevisionId,
+          status: 'ACTIVE',
+        },
+      ],
+      preferences: [{ effectiveFrom: '2026-10-01T00:00:00.000Z', paymentTermRef }],
+      profileRef,
+      revision: 1,
+    };
+    const change = { _tag: 'SET_PREFERENCE', effectiveFrom: '2026-10-01T00:00:00.000Z', paymentTermRef } as const;
+    const customerPayload = {
+      changes: [change],
+      counterpartyRef,
+      expectedRevision: 1,
+      profileRef,
+      reason: 'Existing preference',
+    };
+    const noCatalog = { resolveDefinitions: () => Effect.die('Unchanged preference must not call Catalog') };
+    expect(customerChangeDefinitionRequests(existing, customerPayload)).toEqual([]);
+    const customer = makeChangeCustomerPaymentTermsServices(
+      persistenceContext(transactionReturning([row('PRESENT', existing, 1)], [row('UNCHANGED', existing, 1)])),
+      noCatalog,
+    );
+    expect(yield* customer.change(customerPayload, actionContextFor(customer))).toEqual({
+      changed: false,
+      state: existing,
+    });
+
+    const retailRef = { ...profileRef, resourceType: 'commerce.customer-context.retail-customer-profile' as const };
+    const retailState = { ...existing, profileRef: retailRef };
+    const retailPayload = { change, expectedRevision: 1, profileRef: retailRef };
+    expect(retailChangeDefinitionRequests(retailState, retailPayload)).toEqual([]);
+    const retail = paymentTermsPersistenceForTransaction(
+      persistenceContext(transactionReturning([row('PRESENT', retailState, 1)], [row('UNCHANGED', retailState, 1)])),
+      { catalog: noCatalog },
+    ).retailPreference;
+    expect(
+      yield* retail.changePreference(retailPayload, { actionInvocationId, legalEntityId, principalId, tenantId }),
+    ).toEqual({ changed: false, state: retailState });
+    expect(retailChangeDefinitionRequests(retailState, { ...retailPayload, expectedRevision: 2 })).toHaveLength(1);
+    expect(retailChangeDefinitionRequests({ ...retailState, preferences: [] }, retailPayload)).toHaveLength(1);
+  }),
+);
+
+it.effect('prepared Catalog evidence is restricted to the exact ordered selector and preserves failures', () =>
+  Effect.gen(function* preparedSelector() {
+    const request = [
+      { at: '2026-10-01T00:00:00.000Z', expectedSemanticRevisionId: semanticRevisionId, paymentTermRef },
+    ];
+    const definitions = [currentDefinition()];
+    const catalog = bindPreparedPaymentTermCatalog(request, Result.succeed(definitions));
+    expect(yield* catalog.resolveDefinitions(request)).toEqual(definitions);
+    const cause = new PaymentTermsDependencyUnavailable({
+      code: 'payment_terms_dependency_unavailable',
+      dependency: 'PAYMENT_TERM_CATALOG',
+      reason: 'Catalog unavailable',
+    });
+    const unavailable = bindPreparedPaymentTermCatalog(request, Result.fail(cause));
+    expect(yield* Effect.flip(unavailable.resolveDefinitions(request))).toBe(cause);
+    for (const candidate of [
+      [{ ...request[0], at: '2026-10-02T00:00:00.000Z' }],
+      [{ ...request[0], expectedSemanticRevisionId: entitlementId }],
+      [{ ...request[0], paymentTermRef: aliasPaymentTermRef }],
+    ]) {
+      const failure = yield* Effect.flip(catalog.resolveDefinitions(candidate));
+      expect(failure).toMatchObject({
+        code: 'payment_terms_dependency_unavailable',
+        dependency: 'PAYMENT_TERM_CATALOG',
+      });
+    }
+  }),
+);
+
+it.effect('snapshot loaders use the actual owner profile selectors and detect changed owner state', () =>
+  Effect.gen(function* snapshotSelectors() {
+    const observed: (readonly unknown[])[] = [];
+    const transaction: CustomerPaymentTermsScopedRoutineInvoker = {
+      invoke: (routine, values) => {
+        observed.push(values);
+        return Schema.decodeUnknownEffect(Schema.toType(routine.resultSchema))(row('PRESENT', state(), 1)).pipe(
+          Effect.map((value) => [value]),
+          Effect.orDie,
+        );
+      },
+    };
+    const customerPayload = {
+      changes: [{ _tag: 'CLEAR_PREFERENCE' as const, effectiveAt: '2026-10-01T00:00:00.000Z' }],
+      counterpartyRef,
+      expectedRevision: 1,
+      profileRef,
+      reason: 'Clear',
+    };
+    const snapshot = yield* loadCustomerChangeSnapshot(transaction, scope, customerPayload);
+    expect(observed[0]).toEqual([profileId, 'COUNTERPARTY', counterpartyId]);
+    expect(paymentTermsSnapshotUnchanged(stableRevision(snapshot), snapshot)).toBe(true);
+    expect(paymentTermsSnapshotUnchanged(stableRevision(snapshot), { ...snapshot, revision: 2 })).toBe(false);
+    expect(
+      paymentTermsSnapshotUnchanged(stableRevision(snapshot), {
+        ...snapshot,
+        preferences: [{ effectiveFrom: '2026-10-01T00:00:00.000Z', paymentTermRef }],
+      }),
+    ).toBe(false);
+    const retailRef = { ...profileRef, resourceType: 'commerce.customer-context.retail-customer-profile' as const };
+    yield* loadRetailChangeSnapshot(transaction, scope, {
+      change: customerPayload.changes[0],
+      expectedRevision: 1,
+      profileRef: retailRef,
+    });
+    expect(observed[1]).toEqual([profileId, 'RETAIL', null]);
   }),
 );

@@ -25,6 +25,7 @@ import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Config,
+  ConfigProvider,
   Context,
   Effect,
   FileSystem,
@@ -419,6 +420,7 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
   }
   const origin = new URL(`http://127.0.0.1:${server.address.port}`);
   let requests = 0;
+  let beforeCatalogResponse: Effect.Effect<void> = Effect.void;
   // Published dependency HTTP fixture: real CCC generated client/factory, not a canonical Payment owner implementation.
   yield* server.serve(
     Effect.gen(function* currentCatalogFixture() {
@@ -428,6 +430,7 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
       );
       expect(request.headers.authorization).toBe('Bearer bounded-native-catalog-credential');
       requests += 1;
+      yield* beforeCatalogResponse;
       const provenance = {
         actionInvocationId: randomUUID(),
         actorPrincipalId: fixture.manager.principalId,
@@ -601,7 +604,16 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
         idempotencyKey: randomUUID(),
         targetModuleKey: 'commerce.customer-context',
       },
-    }).pipe(Effect.provideContext(context));
+    }).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
+          ConfigProvider.fromEnv(),
+        ),
+      ),
+      Effect.provideContext(context),
+    );
   const executeRemoval = (input: RemoveCustomerPaymentTermPayload, idempotencyKey = randomUUID()) =>
     runAction({
       payload: input,
@@ -645,11 +657,31 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
       })
       .pipe(Effect.provideContext(context));
   const otherTerm = term();
-  yield* executeChange(
+  const otherInitial = yield* executeChange(
     [grant(entitlement(), at('01'), at('06'), otherTerm), preference(at('01'), at('06'), otherTerm)],
     1,
     { counterpartyRef: otherCounterpartyRef, profileRef: otherProfileRef },
   );
+  // Change the same owner's state while the first Action waits for Catalog HTTP.
+  // The first Action must re-read and reject its stale snapshot before any write.
+  const staleEntitlement = entitlement();
+  beforeCatalogResponse = Effect.gen(function* changeDuringCatalog() {
+    beforeCatalogResponse = Effect.void;
+    yield* executeChange([{ _tag: 'CLEAR_PREFERENCE', effectiveAt: at('03') }], otherInitial.state.revision, {
+      counterpartyRef: otherCounterpartyRef,
+      profileRef: otherProfileRef,
+    }).pipe(Effect.orDie);
+  });
+  const stale = yield* executeChange(
+    [grant(staleEntitlement, at('10'), undefined, term())],
+    otherInitial.state.revision,
+    { counterpartyRef: otherCounterpartyRef, profileRef: otherProfileRef },
+  ).pipe(Effect.result);
+  expect(Result.isFailure(stale)).toBe(true);
+  if (Result.isFailure(stale)) {
+    expect(stale.failure).toMatchObject({ code: 'operation_context_unavailable' });
+  }
+  expect(yield* observeEntitlement(staleEntitlement.resourceId)).toEqual([]);
   const otherBefore = yield* observePreferences(otherProfileId);
   // All intervals are produced through the original governed Change Action and real catalog client.
   const initial = yield* executeChange(

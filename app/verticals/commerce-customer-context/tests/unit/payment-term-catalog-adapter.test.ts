@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { CurrentPaymentTermsRequest } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { executeCurrentPaymentTerms } from '@app/payment-term-catalog-contracts/current-payment-terms/client';
 import { Effect, Layer, Redacted, Schema } from 'effect';
@@ -66,7 +67,7 @@ const definition = {
   updated: provenance,
 } as const;
 
-it('attaches production Payment Terms factories to persistence and the public catalog client', () => {
+it('wires Payment Terms reads as SQL snapshots followed by catalog resolution and revalidation', () => {
   const changeFactory = getActionServiceFactory(changeCustomerPaymentTermsAction).toString();
   const retailFactory = getActionServiceFactory(changeRetailPaymentTermPreferenceAction).toString();
   const resolutionFactory = getReadServiceFactory(paymentTermsResolutionRead).toString();
@@ -75,9 +76,24 @@ it('attaches production Payment Terms factories to persistence and the public ca
   expect(changeFactory).toContain('paymentTermCatalogPort');
   expect(retailFactory).toContain('paymentTermsPersistenceForTransaction');
   expect(retailFactory).toContain('paymentTermCatalogPort');
-  expect(resolutionFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(resolutionFactory).toContain('paymentTermCatalogPort');
+  expect(resolutionFactory).toContain('loadPaymentTermsSnapshot');
+  expect(resolutionFactory).not.toContain('paymentTermCatalogPort');
+  const readSource = readFileSync(new URL('../../src/api/payment-terms-resolution.read.ts', import.meta.url), 'utf-8');
+  const [, finish] = readSource.split("Effect.fn('PaymentTermsResolutionRead.finish')");
+  expect(finish).toContain('finishPaymentTermsResolution(');
+  expect(finish).toContain('paymentTermCatalogPortFromEnvironment(');
+  expect(finish).toContain('context.transaction((transaction) =>');
+  expect(finish).toContain('stableRevision(current) === stableRevision(loaded)');
   expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(makeGuestPaymentTermsResolutionServices);
+  const guestSource = readFileSync(
+    new URL('../../src/api/guest-payment-terms-resolution.read.ts', import.meta.url),
+    'utf-8',
+  );
+  const [, guestFinish] = guestSource.split("Effect.fn('GuestPaymentTermsResolutionRead.finish')");
+  expect(guestFinish).toContain('paymentTermCatalogPortFromEnvironment(');
+  expect(guestFinish).toContain('handleGuestPaymentTermsResolution(');
+  expect(guestFinish).toContain('context.transaction((transaction) =>');
+  expect(guestFinish).toContain('stableRevision(current) === stableRevision(loaded)');
 });
 
 it.effect('groups catalog requests by effective instant and keeps only USABLE definitions', () =>

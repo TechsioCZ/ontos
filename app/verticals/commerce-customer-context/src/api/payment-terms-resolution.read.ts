@@ -2,7 +2,8 @@
 import type {
   OperationalScope,
   ReadLoadContext,
-  ReadHandlerResult,
+  ReadFinishContext,
+  ScopedTransactionExecutor,
   ResolvedReadPermissionTarget,
 } from '@app/core-runtime';
 import {
@@ -19,26 +20,21 @@ import {
 } from '../../shared/apis/payment-terms-resolution.ts';
 import { customerCommercePaymentTermsPolicyResolver } from '../integrations/customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
-import { paymentTermsPersistenceForTransaction } from '../persistence/payment-term-persistence.ts';
-import { customerCommercePolicyAdministrationServiceFactory } from '../services/customer-commerce-policy-administration.service.ts';
-import type {
-  PaymentTermsResolutionRequest,
-  PaymentTermsResolutionResponse,
-} from '../../shared/apis/payment-terms-resolution.ts';
+import {
+  loadPaymentTermsResolutionState,
+  finishPaymentTermsResolution,
+} from '../persistence/payment-term-persistence.ts';
+import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
+import { currentPaymentTermPolicySet } from '../../shared/domain/customer-commerce-policy-administration.ts';
+import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
+import type { PaymentTermsResolutionRequest } from '../../shared/apis/payment-terms-resolution.ts';
 import { resolveCustomerProfileReadPermissionTarget } from './customer-profile-read.read.ts';
 
-export interface PaymentTermsResolutionServices {
-  /** Resolves eligibility/fallback from authoritative dependencies and verifies Counterparty profile association. */
-  readonly resolve: (
-    input: PaymentTermsResolutionRequest,
-  ) => Effect.Effect<PaymentTermsResolutionResponse, ReadHandlerUnavailable>;
-}
-
-const handlePaymentTermsResolution = (
+const validatePaymentTermsScope = (
   input: PaymentTermsResolutionRequest,
-  context: ReadLoadContext<PaymentTermsResolutionServices>,
-): Effect.Effect<ReadHandlerResult<PaymentTermsResolutionResponse>, ReadHandlerUnavailable | ReadPermissionDenied> => {
-  if (context.scope.trustedStorefrontId === undefined) {
+  scope: OperationalScope,
+): Effect.Effect<void, ReadHandlerUnavailable | ReadPermissionDenied> => {
+  if (scope.trustedStorefrontId === undefined) {
     return Effect.fail(
       new ReadHandlerUnavailable({
         code: 'read_handler_unavailable',
@@ -47,12 +43,12 @@ const handlePaymentTermsResolution = (
     );
   }
   if (
-    input.profileRef.tenantId !== context.scope.tenantId ||
+    input.profileRef.tenantId !== scope.tenantId ||
     (input.authorizationSubject.kind === 'COUNTERPARTY' &&
-      input.authorizationSubject.counterpartyRef.tenantId !== context.scope.tenantId) ||
-    (input.explicitChoice !== undefined && input.explicitChoice.tenantId !== context.scope.tenantId) ||
-    input.purchasingContext.sellingLegalEntityId !== context.scope.legalEntityId ||
-    input.purchasingContext.storefrontId !== context.scope.trustedStorefrontId
+      input.authorizationSubject.counterpartyRef.tenantId !== scope.tenantId) ||
+    (input.explicitChoice !== undefined && input.explicitChoice.tenantId !== scope.tenantId) ||
+    input.purchasingContext.sellingLegalEntityId !== scope.legalEntityId ||
+    input.purchasingContext.storefrontId !== scope.trustedStorefrontId
   ) {
     return Effect.fail(
       new ReadPermissionDenied({
@@ -61,7 +57,7 @@ const handlePaymentTermsResolution = (
       }),
     );
   }
-  return context.services.resolve(input).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result })));
+  return Effect.void;
 };
 
 const paymentTermsResolutionEntrypoint = defineTenantModuleEntrypoint({
@@ -76,6 +72,44 @@ export const paymentTermsResolutionPermissionTarget = (
   input: PaymentTermsResolutionRequest,
   scope: Pick<OperationalScope, 'legalEntityId' | 'tenantId'>,
 ): ResolvedReadPermissionTarget => resolveCustomerProfileReadPermissionTarget(input, scope);
+
+const loadPaymentTermsSnapshot = Effect.fn('PaymentTermsResolutionRead.loadSnapshot')(function* loadSnapshot(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  input: PaymentTermsResolutionRequest,
+  at?: string,
+) {
+  yield* validatePaymentTermsScope(input, scope);
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Payment Terms require a Legal Entity',
+    });
+  }
+  const operationTime = at ?? DateTime.formatIso(yield* DateTime.now);
+  const [state, policy] = yield* Effect.all(
+    [
+      loadPaymentTermsResolutionState({ invoker: transaction, scope: { ...scope, legalEntityId } }, input),
+      customerCommercePolicyRepositoryForScope(transaction, scope).pipe(
+        Effect.flatMap((repository) => repository.loadPaymentTermPolicyState),
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'Current Payment Term policy could not be loaded',
+            }),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      ),
+    ],
+    { concurrency: 1 },
+  );
+  return { operationTime, policy, state };
+});
+type PaymentSnapshot = Effect.Success<ReturnType<typeof loadPaymentTermsSnapshot>>;
 
 export const paymentTermsResolutionRead = defineRead(
   {
@@ -94,61 +128,73 @@ export const paymentTermsResolutionRead = defineRead(
     resultSchema: PaymentTermsResolutionResponseSchema,
     schemaVersion: '1',
   },
-  { load: handlePaymentTermsResolution },
-  (transaction, scope, compositionRevision) => {
-    if (compositionRevision === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
+  {
+    load: (
+      input: PaymentTermsResolutionRequest,
+      context: ReadLoadContext<{
+        readonly load: (input: PaymentTermsResolutionRequest) => ReturnType<typeof loadPaymentTermsSnapshot>;
+      }>,
+    ) => context.services.load(input),
+    finish: Effect.fn('PaymentTermsResolutionRead.finish')(function* finish(
+      input: PaymentTermsResolutionRequest,
+      context: ReadFinishContext<undefined, PaymentSnapshot>,
+    ) {
+      const { compositionRevision, loaded, scope } = context;
+      if (
+        compositionRevision === undefined ||
+        scope.legalEntityId === undefined ||
+        scope.trustedStorefrontId === undefined
+      ) {
+        return yield* new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason: 'Cross-owner Read credentials require a verified composition revision',
-        }),
-      );
-    }
-    const { legalEntityId, trustedStorefrontId } = scope;
-    if (legalEntityId === undefined || trustedStorefrontId === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Payment Term resolution requires trusted Legal Entity and Storefront scope',
-        }),
-      );
-    }
-    return Effect.gen(function* makePaymentTermResolutionServices() {
-      // Preserve catalog-first acquisition and failure order without starting governed reads.
-      const [catalog, policyService] = yield* Effect.all(
-        [
-          paymentTermCatalogPortFromEnvironment({
-            compositionRevision,
-            legalEntityId,
-            requestCorrelation: scope.correlationId,
-          }),
-          customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
-        ],
-        { concurrency: 1 },
-      );
+          reason: 'Payment Terms require a verified composition and Storefront scope',
+        });
+      }
+      const catalog = yield* paymentTermCatalogPortFromEnvironment({
+        compositionRevision,
+        legalEntityId: scope.legalEntityId,
+        requestCorrelation: scope.correlationId,
+      });
       const policy = customerCommercePaymentTermsPolicyResolver(
         'PROFILE',
+        { tenantId: scope.tenantId, trustedStorefrontId: scope.trustedStorefrontId },
         {
-          tenantId: scope.tenantId,
-          trustedStorefrontId,
+          readCurrentPaymentTermPolicy: (at) => Effect.succeed(currentPaymentTermPolicySet(loaded.policy, at)),
         },
-        policyService,
       );
-      const { resolution } = paymentTermsPersistenceForTransaction(
-        {
-          invoker: transaction,
-          scope: { ...scope, legalEntityId },
-        },
-        { catalog, policy },
+      const result = yield* finishPaymentTermsResolution(
+        { ...input, at: loaded.operationTime },
+        loaded.state,
+        policy,
+        catalog,
       );
-      return {
-        resolve: (input) =>
-          DateTime.now.pipe(
-            Effect.map(DateTime.formatIso),
-            Effect.flatMap((at) => resolution.resolve({ ...input, at })),
+      yield* context.transaction((transaction) =>
+        loadPaymentTermsSnapshot(transaction, scope, input, loaded.operationTime).pipe(
+          Effect.flatMap((current) =>
+            stableRevision(current) === stableRevision(loaded)
+              ? Effect.void
+              : Effect.fail(
+                  new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'Payment Terms owner state changed during dependency resolution',
+                  }),
+                ),
           ),
-      } satisfies PaymentTermsResolutionServices;
-    });
+        ),
+      );
+      return { evidence: { resultCount: 1 }, result };
+    }),
   },
+  (transaction, scope, compositionRevision) =>
+    compositionRevision === undefined
+      ? Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Cross-owner Read credentials require a verified composition revision',
+          }),
+        )
+      : Effect.succeed({
+          load: (input: PaymentTermsResolutionRequest) => loadPaymentTermsSnapshot(transaction, scope, input),
+        }),
   paymentTermsResolutionPermissionTarget,
 );
