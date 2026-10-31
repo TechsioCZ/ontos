@@ -17,6 +17,8 @@ const historicalPaths = [
   'shared/actions/privacy-operations.ts',
   'shared/domain/privacy-dsr.ts',
   'shared/privacy-queries.ts',
+  // Keep the historical repository's caller from importing the current prepared-subject constructor.
+  'src/actions/create-privacy-subject.action.ts',
   'src/actions/record-dsr-deadline.action.ts',
   'src/actions/dispatch-privacy-measure.action.ts',
   'src/persistence/privacy-operation-postgres-repository.ts',
@@ -82,7 +84,7 @@ const readSources = Effect.fn('DsrLegacyArtifact.readSources')(function* readSou
     new Set(manifest.files.map((entry) => entry.path)).size !== historicalPaths.length ||
     manifest.files.some((entry) => !historicalPaths.includes(entry.path))
   ) {
-    return yield* failure('Historical fixture manifest must name exactly the seven owner substitutions');
+    return yield* failure('Historical fixture manifest must name exactly the pinned owner substitutions');
   }
   const historyAvailable = (yield* git(['cat-file', '-e', `${historicalCommit}^{commit}`])).code === 0;
   const sources = new Map<string, Uint8Array>();
@@ -233,7 +235,7 @@ export const prepareDsrLegacyArtifacts = Effect.fn('DsrLegacyArtifact.prepare')(
       (generation === 'old' &&
         (substituted.size !== sources.size || [...sources.keys()].some((file) => !substituted.has(file))))
     ) {
-      return yield* failure('The old owner must substitute exactly all seven pinned files');
+      return yield* failure('The old owner must substitute exactly all pinned files');
     }
     const metafilePath = path.join(output, 'owner.meta.json');
     yield* filesystem.writeFileString(metafilePath, JSON.stringify(result.metafile), { flag: 'wx', mode: 0o600 });

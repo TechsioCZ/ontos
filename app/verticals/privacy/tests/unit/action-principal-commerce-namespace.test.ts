@@ -18,6 +18,7 @@ import { acknowledgePrivacyNoticeAction } from '../../src/actions/acknowledge-pr
 import { PrivacyNoticeAcknowledgementError } from '../../shared/resources/privacy-notice-acknowledgement.ts';
 import { PrivacyNoticePresentationUnavailableLive } from '../../src/services/privacy-notice-presentation.service.ts';
 import { CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive } from '../../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
+import { privacyNoticeInformationStepLive } from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
 import {
   ACTION_GATEWAY_AUDIENCE,
   PrivacyAuthenticationNamespaceRegistryLive,
@@ -219,9 +220,13 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
           })
           .pipe(
             Effect.provide(
-              Layer.mergeAll(
-                PrivacyNoticePresentationUnavailableLive,
-                CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+              privacyNoticeInformationStepLive.pipe(
+                Layer.provideMerge(
+                  Layer.mergeAll(
+                    PrivacyNoticePresentationUnavailableLive,
+                    CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+                  ),
+                ),
               ),
             ),
             Effect.flip,
