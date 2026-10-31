@@ -1,6 +1,13 @@
 import { getVerticalRuntimeActions } from '@app/core-runtime';
 import { PricingCommercialFeeProductTargetSnapshotSchema } from '@app/pricing-contracts/domain/commercial-fee';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema, Redacted } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
+import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import {
+  prepareCommercialFeeCatalogTargets,
+  assertPreparedPricingScope,
+} from '../../src/integrations/commercial-fee-catalog-target-evidence.ts';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -683,3 +690,45 @@ describe('Product Commercial Fee bulk management (#797)', () => {
     }),
   );
 });
+
+it.effect('prepares real Catalog HTTP outside SQL and refuses selectors and scopes it did not verify', () =>
+  Effect.gen(function* preparedCatalogEvidence() {
+    yield* TestClock.setTime(trusted.trustedOperationAt.getTime());
+    let requests = 0;
+    const context = {
+      actionInvocationId: trusted.actionInvocationId,
+      compositionRevision: trusted.compositionRevision,
+      scope: trusted.principalContext,
+      transaction: () => Effect.die('Immutable payload selectors must not create a SQL snapshot'),
+    };
+    const fetch: typeof globalThis.fetch = () => {
+      requests += 1;
+      return Promise.resolve(Response.json(snapshot));
+    };
+    const prepared = yield* prepareCommercialFeeCatalogTargets([firstIntent.catalogTargetEvidence], context).pipe(
+      Effect.provideService(CatalogSelectionGatewayCredentialService, {
+        issue: (input) =>
+          Effect.sync(() => {
+            expect(input.compositionRevision).toBe(trusted.compositionRevision);
+            expect(input.legalEntityId).toBe(legalEntityId);
+            return { baseUrl: new URL('https://catalog.test'), credential: Redacted.make('Bearer exact-preparation') };
+          }),
+      }),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+    expect(requests).toBe(1);
+    expect(yield* prepared.validate(firstIntent.catalogTargetEvidence)).toBe(true);
+    expect(yield* prepared.validate(secondIntent.catalogTargetEvidence).pipe(Effect.isFailure)).toBe(true);
+    expect(
+      yield* assertPreparedPricingScope(
+        context,
+        { ...context.scope, principalId: '90000000-0000-4000-8000-000000000001' },
+        context.compositionRevision,
+      ).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(
+      yield* assertPreparedPricingScope(context, context.scope, 'different-composition').pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(requests).toBe(1);
+  }),
+);

@@ -30,7 +30,7 @@ import {
   currentPricingDecisionExternalOwnerEvidencePortFromEnvironment,
 } from '../../src/integrations/current-pricing-decision-external-owner-evidence-live.ts';
 import {
-  currentPricingDecisionWholeEvaluationAdaptersForScope,
+  currentPricingDecisionWholeEvaluationAdaptersPerRead,
   makeCurrentPricingDecisionWholeComposition,
 } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
 import {
@@ -80,7 +80,12 @@ import {
   makeContextPermissionRelationshipMutationLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor, ReadHandlerContext } from '@app/core-runtime';
+import type {
+  OperationalScope,
+  ScopedTransactionExecutor,
+  ReadLoadContext,
+  ReadOwnerTransaction,
+} from '@app/core-runtime';
 import {
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
@@ -350,7 +355,7 @@ const makeNativePrice = Effect.fn('WholeCandidate.nativePrice')(function* makeNa
 // Only Fee/Discount/Market/purchase-context prerequisites are declared contracts.
 // Price, Tier, Currency and Catalog are real native/public production reads.
 const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(function* evaluateNativeWhole1225(
-  transaction: ScopedTransactionExecutor,
+  ownerTransaction: ReadOwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string | undefined,
   request: typeof CurrentPricingDecisionRequestSchema.Type,
@@ -369,8 +374,8 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
     return yield* unavailable('composition-mismatch');
   }
 
-  const adapters = yield* currentPricingDecisionWholeEvaluationAdaptersForScope(
-    transaction,
+  const adapters = yield* currentPricingDecisionWholeEvaluationAdaptersPerRead(
+    ownerTransaction,
     scope,
     actualRevision,
   ).pipe(
@@ -638,12 +643,9 @@ const ComponentReadInputSchema = Schema.Struct({
 const componentServicesForScope = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
-  compositionRevision: string | undefined,
+  _compositionRevision: string | undefined,
 ) =>
   Effect.all({
-    evaluateWhole: Effect.succeed((request: typeof CurrentPricingDecisionRequestSchema.Type) =>
-      evaluateNativeWhole1225(transaction, scope, compositionRevision, request).pipe(Effect.scoped),
-    ),
     prices: pricePersistenceForScope(transaction, scope),
     tiers: quantityTierPersistenceForScope(transaction, scope),
   });
@@ -668,66 +670,94 @@ const componentRead = defineRead(
     resultSchema: Schema.Union([QuantityTierSelectionResultSchema, PricingCommercialTotalReadySchema]),
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<ComponentServices>) =>
-    Effect.gen(function* readRealNativeTier() {
-      if (input.wholeRequest !== undefined) {
+  {
+    load: (input, context: ReadLoadContext<ComponentServices>) =>
+      Effect.gen(function* readRealNativeTier() {
+        if (input.wholeRequest !== undefined) {
+          return null;
+        }
+        const [schedule, tiers] = yield* Effect.all([
+          context.services.prices.readSchedule(
+            input.priceRef,
+            DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveAt)),
+          ),
+          context.services.tiers.readCurrentSet({ effectiveAt: input.effectiveAt, priceRef: input.priceRef }),
+        ]);
+        if (
+          schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' ||
+          schedule.schedule.current === undefined ||
+          tiers.outcome !== 'QUANTITY_TIER_SET_CURRENT'
+        ) {
+          return yield* unavailable('native-owner-schedule-or-tier-unavailable');
+        }
+        const exactPrice = {
+          path: {
+            priceGroupSelector: schedule.schedule.current.definition.identityKey.priceGroupSelector,
+            requiredAbsenceEvidence: [],
+          },
+          price: schedule.schedule.current,
+          scheduleRevision: schedule.schedule.scheduleRevision,
+        };
+        const result = yield* selectQuantityTier({
+          input: {
+            attempt: {
+              evaluatedAt: input.effectiveAt,
+              exactPrice,
+              normalizedQuantity: {
+                quantity: input.quantity,
+                quantityBasis: {
+                  catalogQuantityBasis: input.handoff.quantityBasis,
+                  priceUnitBasis: exactPrice.price.definition.identityKey.unitBasis,
+                },
+              },
+              tierSetPriceRef: input.priceRef,
+            },
+            tierSet: tiers.tierSet,
+          },
+          outcome: 'TIER_SET_CURRENT',
+        });
+        return { evidence: { resultCount: 1 }, result };
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
+                ? cause.stage
+                : 'Native whole-candidate component authority unavailable',
+            }),
+        ),
+      ),
+    finish: (input, context) =>
+      Effect.gen(function* finishRealNativeTier() {
+        if (input.wholeRequest === undefined) {
+          if (context.loaded === null) {
+            return yield* unavailable('native-component-load-absent');
+          }
+          return context.loaded;
+        }
         return {
           evidence: { resultCount: input.wholeRequest.decision.lines.length },
-          result: yield* context.services.evaluateWhole(input.wholeRequest),
+          result: yield* evaluateNativeWhole1225(
+            context.transaction,
+            context.scope,
+            context.compositionRevision,
+            input.wholeRequest,
+          ).pipe(
+            Effect.scoped,
+            Effect.mapError(
+              (cause) =>
+                new ReadHandlerUnavailable({
+                  code: 'read_handler_unavailable',
+                  reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
+                    ? cause.stage
+                    : 'Native whole-candidate authority unavailable',
+                }),
+            ),
+          ),
         };
-      }
-      const [schedule, tiers] = yield* Effect.all([
-        context.services.prices.readSchedule(
-          input.priceRef,
-          DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveAt)),
-        ),
-        context.services.tiers.readCurrentSet({ effectiveAt: input.effectiveAt, priceRef: input.priceRef }),
-      ]);
-      if (
-        schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' ||
-        schedule.schedule.current === undefined ||
-        tiers.outcome !== 'QUANTITY_TIER_SET_CURRENT'
-      ) {
-        return yield* unavailable('native-owner-schedule-or-tier-unavailable');
-      }
-      const exactPrice = {
-        path: {
-          priceGroupSelector: schedule.schedule.current.definition.identityKey.priceGroupSelector,
-          requiredAbsenceEvidence: [],
-        },
-        price: schedule.schedule.current,
-        scheduleRevision: schedule.schedule.scheduleRevision,
-      };
-      const result = yield* selectQuantityTier({
-        input: {
-          attempt: {
-            evaluatedAt: input.effectiveAt,
-            exactPrice,
-            normalizedQuantity: {
-              quantity: input.quantity,
-              quantityBasis: {
-                catalogQuantityBasis: input.handoff.quantityBasis,
-                priceUnitBasis: exactPrice.price.definition.identityKey.unitBasis,
-              },
-            },
-            tierSetPriceRef: input.priceRef,
-          },
-          tierSet: tiers.tierSet,
-        },
-        outcome: 'TIER_SET_CURRENT',
-      });
-      return { evidence: { resultCount: 1 }, result };
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
-              ? cause.stage
-              : 'Native whole-candidate component authority unavailable',
-          }),
-      ),
-    ),
+      }),
+  },
   componentServicesForScope,
   () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
