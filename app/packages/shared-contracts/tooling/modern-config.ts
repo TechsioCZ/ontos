@@ -5,12 +5,20 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import type { AppUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { isSuccess as isResultSuccess } from 'effect/Result';
 import { OptionFromUndefinedOr, Trim, check, decodeResult, isMinLength } from 'effect/Schema';
 
 type BuildEnvironmentReader = (name: string) => string | undefined;
+
+const BROWSER_TARGETS = ['Chrome >= 144', 'Safari >= 27', 'iOS >= 27'];
+
+const browserTargetTools: AppUserConfig['tools'] = {
+  // A function replaces the preset's ['defaults'] list instead of merging it into our targets.
+  autoprefixer: (config) => ({ ...config, overrideBrowserslist: BROWSER_TARGETS }),
+};
 
 const NonEmptyBuildStringSchema = OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1))));
 
@@ -71,6 +79,7 @@ export const createWorkspaceModernConfig = ({
     setupMiddlewares: appId === 'shell-super-app' ? [] : [createDevelopmentContractMiddleware(moduleUrl)],
   },
   output: {
+    overrideBrowserslist: BROWSER_TARGETS,
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
     // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
     // `pnpm typecheck` owns type diagnostics. A CI unit build that has already run its own TS-Go reference
@@ -89,4 +98,5 @@ export const createWorkspaceModernConfig = ({
       ULTRAMODERN_SHELL_ORIGIN: readBuildEnvironmentValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
     },
   },
+  tools: browserTargetTools,
 });
