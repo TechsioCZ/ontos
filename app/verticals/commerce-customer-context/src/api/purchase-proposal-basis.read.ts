@@ -8,7 +8,20 @@ import {
   ReadPolicyDenied,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import { purchaseProposalBasisService } from '../services/purchase-proposal-basis.service.ts';
+import type { PurchasingApprovalRejected } from '../../shared/domain/purchasing-approval.ts';
+import type {
+  OperationContextUnavailable,
+  ReadFinishContext,
+  ReadHandlerExecutionError,
+  ReadLoadContext,
+} from '@app/core-runtime';
+import type { PurchaseProposalBasisReadSnapshot } from '../services/purchase-proposal-basis.service.ts';
+import type { PurchaseProposalBasisRequestSchema as RequestSchema } from '../../shared/apis/purchase-proposal-basis.ts';
+import {
+  finishPurchaseProposalBasisRead,
+  purchaseProposalBasisReadSnapshotMatches,
+  purchaseProposalBasisService,
+} from '../services/purchase-proposal-basis.service.ts';
 import {
   PurchaseProposalBasisRequestSchema,
   PurchaseProposalBasisResponseSchema,
@@ -26,6 +39,52 @@ const purchaseProposalBasisEntrypoint = defineTenantModuleEntrypoint({
   moduleKey: MODULE_KEY,
   role: 'api',
 });
+
+type BasisReadFailure =
+  | PurchasingApprovalRejected
+  | OperationContextUnavailable
+  | ReadHandlerExecutionError
+  | ReadHandlerUnavailable;
+
+const mapBasisReadFailure = (failure: BasisReadFailure) =>
+  Match.value(failure).pipe(
+    Match.when(
+      { code: 'PERMISSION_DENIED' },
+      () =>
+        new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: 'The exact preproposal basis is not available to this reader',
+        }),
+    ),
+    Match.when(
+      { code: 'PROPOSAL_NOT_CURRENT' },
+      () =>
+        new ReadHandlerNotFound({
+          code: 'read_handler_not_found',
+          reason: 'The exact current preproposal basis is unavailable',
+        }),
+    ),
+    Match.when(
+      { code: 'IDEMPOTENCY_CONFLICT' },
+      () =>
+        new ReadPolicyDenied({
+          code: 'read_policy_denied',
+          httpStatus: 409,
+          policyReasonCode: 'preproposal_basis_conflict',
+          reason: 'The exact preproposal basis differs',
+        }),
+    ),
+    Match.orElse((cause) =>
+      Object.defineProperty(
+        new ReadHandlerUnavailable({
+          code: 'read_handler_unavailable',
+          reason: 'The exact current preproposal basis is unavailable',
+        }),
+        'cause',
+        { value: cause },
+      ),
+    ),
+  );
 
 export const purchaseProposalBasisRead = defineRead(
   {
@@ -45,53 +104,51 @@ export const purchaseProposalBasisRead = defineRead(
     resultSchema: PurchaseProposalBasisResponseSchema,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.read(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: 1 },
-        result,
-      })),
-      Effect.mapError((failure) =>
-        Match.value(failure).pipe(
-          Match.when(
-            { code: 'PERMISSION_DENIED' },
-            () =>
-              new ReadPermissionDenied({
-                code: 'read_permission_denied',
-                reason: 'The exact preproposal basis is not available to this reader',
-              }),
-          ),
-          Match.when(
-            { code: 'PROPOSAL_NOT_CURRENT' },
-            () =>
-              new ReadHandlerNotFound({
-                code: 'read_handler_not_found',
-                reason: 'The exact current preproposal basis is unavailable',
-              }),
-          ),
-          Match.when(
-            { code: 'IDEMPOTENCY_CONFLICT' },
-            () =>
-              new ReadPolicyDenied({
-                code: 'read_policy_denied',
-                httpStatus: 409,
-                policyReasonCode: 'preproposal_basis_conflict',
-                reason: 'The exact preproposal basis differs',
-              }),
-          ),
-          Match.orElse((cause) =>
-            Object.defineProperty(
-              new ReadHandlerUnavailable({
-                code: 'read_handler_unavailable',
-                reason: 'The exact current preproposal basis is unavailable',
-              }),
-              'cause',
-              { value: cause },
-            ),
+  {
+    load: (
+      input: typeof RequestSchema.Type,
+      context: ReadLoadContext<Effect.Success<ReturnType<typeof purchaseProposalBasisService>>>,
+    ) => context.services.loadRead(input).pipe(Effect.mapError(mapBasisReadFailure)),
+    finish: (
+      input: typeof RequestSchema.Type,
+      context: ReadFinishContext<undefined, PurchaseProposalBasisReadSnapshot>,
+    ) => {
+      const { compositionRevision } = context;
+      if (compositionRevision === undefined) {
+        return Effect.fail(
+          new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'The verified composition revision is required',
+          }),
+        );
+      }
+      const revalidate = context.transaction((transaction) =>
+        purchaseProposalBasisService(transaction, context.scope, compositionRevision).pipe(
+          Effect.flatMap((services) => services.loadRead(input, context.loaded.operationTime)),
+          Effect.flatMap((current) =>
+            purchaseProposalBasisReadSnapshotMatches(context.loaded, current)
+              ? Effect.void
+              : Effect.fail(
+                  new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'The preproposal owner state changed during dependency resolution',
+                  }),
+                ),
           ),
         ),
-      ),
-    ),
+      );
+      return finishPurchaseProposalBasisRead(
+        input,
+        context.scope,
+        compositionRevision,
+        context.loaded,
+        revalidate,
+      ).pipe(
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+        Effect.mapError(mapBasisReadFailure),
+      );
+    },
+  },
   purchaseProposalBasisService,
   () => ({
     kind: 'module',

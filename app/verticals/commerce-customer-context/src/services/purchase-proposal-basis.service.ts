@@ -53,6 +53,8 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
+  loadPurchasePricingContextSnapshot,
+  resolvePurchasePricingContextFromSnapshot,
   resolvePurchasePricingContextObservation,
   stableRevision,
 } from '../integrations/order-finalization-pricing-context.ts';
@@ -250,6 +252,119 @@ export const proposalMatchesPreapprovalCart = (
   );
 };
 
+const purchaseProposalBasisRemote = (scope: OperationalScope, compositionRevision: string) => {
+  const { legalEntityId } = scope;
+  const credential = Effect.fn('PurchaseProposalBasis.credential')(
+    (audience: 'commerce-cart' | 'catalog' | 'pricing') =>
+      Effect.gen(function* ownerCredential() {
+        if (legalEntityId === undefined) {
+          return yield* unavailable();
+        }
+        const config = yield* gatewayConfiguration.pipe(Effect.mapError(unavailable));
+        const issued = yield* issueApiKeyGatewayContext(
+          {
+            audience,
+            compositionRevision,
+            legalEntityId,
+          },
+          {
+            apiKey: config.apiKey,
+            baseUrl: config.shellBaseUrl,
+            requestCorrelation: scope.correlationId,
+          },
+        ).pipe(Effect.mapError(unavailable));
+        if (
+          issued.compositionRevision !== compositionRevision ||
+          issued.expiresAt * 1000 <= DateTime.toEpochMillis(yield* DateTime.now)
+        ) {
+          return yield* unavailable();
+        }
+        return {
+          authorization: Redacted.make(`Bearer ${issued.token}`),
+          options: {
+            baseUrl: new URL(issued.apiBaseUrl, config.shellBaseUrl),
+            compositionRevision,
+          },
+        };
+      }),
+  );
+  const cartObservation = Effect.fn('PurchaseProposalBasis.cartObservation')((proposal: PurchaseProposalRevision) =>
+    Effect.gen(function* observeCart() {
+      const owner = yield* credential('commerce-cart');
+      const cart = yield* executePreapprovalCartObservationWithAuthorization(
+        {
+          cartRef: {
+            moduleId: 'commerce.cart',
+            resourceId: proposal.sourceCart.cartRef.resourceId,
+            resourceType: 'commerce.cart.cart',
+            tenantId: proposal.sourceCart.cartRef.tenantId,
+          },
+          revision: Number(proposal.sourceCart.revision),
+        },
+        Redacted.value(owner.authorization),
+        scope.correlationId,
+        owner.options,
+      ).pipe(Effect.mapError(unavailable));
+      if (!proposalMatchesPreapprovalCart(proposal, cart)) {
+        return yield* missing();
+      }
+      return cart;
+    }),
+  );
+  const verifyQuote = Effect.fn('PurchaseProposalBasis.verifyQuote')(
+    (basis: PurchaseProposalBasis, invocation: string) =>
+      Effect.gen(function* verifyOriginalQuote() {
+        const owner = yield* credential('pricing');
+        const response = yield* executeQuotationVerificationWithAuthorization(
+          {
+            issuanceInvocationId: invocation,
+            purpose: 'PRE_APPROVAL',
+            sourceRef: basis.proposal.proposalRevisionRef.resourceId,
+            sourceRevision: '1',
+          },
+          Redacted.value(owner.authorization),
+          scope.correlationId,
+          owner.options,
+        ).pipe(Effect.mapError(unavailable));
+        if (response.outcome !== 'QUOTATION_VERIFIED') {
+          return yield* missing();
+        }
+        const quote = response.quotation;
+        const issuerPrincipalId = yield* Config.schema(
+          Schema.String.check(Schema.isUUID()),
+          'ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID',
+        ).pipe(Effect.mapError(unavailable));
+        const provenance = response.preapprovalProvenance;
+        if (
+          provenance === undefined ||
+          provenance.sourceRef !== basis.proposal.proposalRevisionRef.resourceId ||
+          provenance.sourceRevision !== '1' ||
+          provenance.issuanceInvocationId !== invocation ||
+          provenance.issuerPrincipalId !== issuerPrincipalId ||
+          (basis.pricingIssuerPrincipalId !== null && basis.pricingIssuerPrincipalId !== issuerPrincipalId)
+        ) {
+          return yield* missing();
+        }
+        if (
+          !pricingQuotationMatchesCurrentDecision(quote, basis.pricingInput) ||
+          quote.binding.subject.kind !== 'AUTHENTICATED' ||
+          !sameRef(quote.binding.subject.subjectRef, basis.proposal.identity.profileRef) ||
+          quote.binding.tenantId !== scope.tenantId ||
+          quote.binding.commercialScope.sellingLegalEntityId !== legalEntityId ||
+          quote.binding.subject.purchaseContext.contextRevision !==
+            basis.pricingInput.decision.purchasingContext.contextRevision
+        ) {
+          return yield* missing();
+        }
+        return {
+          issuerPrincipalId,
+          quote,
+        };
+      }),
+  );
+  return { cartObservation, credential, verifyQuote };
+};
+
 export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.purchaseProposalBasisService')(
   (transaction: ScopedTransactionExecutor, scope: OperationalScope, compositionRevision?: string) =>
     Effect.gen(function* makeBasisService() {
@@ -282,37 +397,7 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
             : Effect.fail(rejection('PERMISSION_DENIED', 'A configured preproposal owner service is required')),
         ),
       );
-      const credential = Effect.fn('PurchaseProposalBasis.credential')(
-        (audience: 'commerce-cart' | 'catalog' | 'pricing') =>
-          Effect.gen(function* ownerCredential() {
-            const config = yield* gatewayConfiguration.pipe(Effect.mapError(unavailable));
-            const issued = yield* issueApiKeyGatewayContext(
-              {
-                audience,
-                compositionRevision,
-                legalEntityId,
-              },
-              {
-                apiKey: config.apiKey,
-                baseUrl: config.shellBaseUrl,
-                requestCorrelation: scope.correlationId,
-              },
-            ).pipe(Effect.mapError(unavailable));
-            if (
-              issued.compositionRevision !== compositionRevision ||
-              issued.expiresAt * 1000 <= DateTime.toEpochMillis(yield* DateTime.now)
-            ) {
-              return yield* unavailable();
-            }
-            return {
-              authorization: Redacted.make(`Bearer ${issued.token}`),
-              options: {
-                baseUrl: new URL(issued.apiBaseUrl, config.shellBaseUrl),
-                compositionRevision,
-              },
-            };
-          }),
-      );
+      const { cartObservation, credential, verifyQuote } = purchaseProposalBasisRemote(scope, compositionRevision);
       const state = (payload: Readonly<Record<string, Schema.Json>>) =>
         transaction.invoke(basisRoutine, [payload]).pipe(
           Effect.mapError(unavailable),
@@ -346,29 +431,6 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
             yield* serviceAdmission;
           }
           return basis;
-        }),
-      );
-      const cartObservation = Effect.fn('PurchaseProposalBasis.cartObservation')((proposal: PurchaseProposalRevision) =>
-        Effect.gen(function* observeCart() {
-          const owner = yield* credential('commerce-cart');
-          const cart = yield* executePreapprovalCartObservationWithAuthorization(
-            {
-              cartRef: {
-                moduleId: 'commerce.cart',
-                resourceId: proposal.sourceCart.cartRef.resourceId,
-                resourceType: 'commerce.cart.cart',
-                tenantId: proposal.sourceCart.cartRef.tenantId,
-              },
-              revision: Number(proposal.sourceCart.revision),
-            },
-            Redacted.value(owner.authorization),
-            scope.correlationId,
-            owner.options,
-          ).pipe(Effect.mapError(unavailable));
-          if (!proposalMatchesPreapprovalCart(proposal, cart)) {
-            return yield* missing();
-          }
-          return cart;
         }),
       );
       const current = Effect.fn('PurchaseProposalBasis.current')((basis: PurchaseProposalBasis) =>
@@ -406,57 +468,6 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
             observed,
           };
         }),
-      );
-      const verifyQuote = Effect.fn('PurchaseProposalBasis.verifyQuote')(
-        (basis: PurchaseProposalBasis, invocation: string) =>
-          Effect.gen(function* verifyOriginalQuote() {
-            const owner = yield* credential('pricing');
-            const response = yield* executeQuotationVerificationWithAuthorization(
-              {
-                issuanceInvocationId: invocation,
-                purpose: 'PRE_APPROVAL',
-                sourceRef: basis.proposal.proposalRevisionRef.resourceId,
-                sourceRevision: '1',
-              },
-              Redacted.value(owner.authorization),
-              scope.correlationId,
-              owner.options,
-            ).pipe(Effect.mapError(unavailable));
-            if (response.outcome !== 'QUOTATION_VERIFIED') {
-              return yield* missing();
-            }
-            const quote = response.quotation;
-            const issuerPrincipalId = yield* Config.schema(
-              Schema.String.check(Schema.isUUID()),
-              'ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID',
-            ).pipe(Effect.mapError(unavailable));
-            const provenance = response.preapprovalProvenance;
-            if (
-              provenance === undefined ||
-              provenance.sourceRef !== basis.proposal.proposalRevisionRef.resourceId ||
-              provenance.sourceRevision !== '1' ||
-              provenance.issuanceInvocationId !== invocation ||
-              provenance.issuerPrincipalId !== issuerPrincipalId ||
-              (basis.pricingIssuerPrincipalId !== null && basis.pricingIssuerPrincipalId !== issuerPrincipalId)
-            ) {
-              return yield* missing();
-            }
-            if (
-              !pricingQuotationMatchesCurrentDecision(quote, basis.pricingInput) ||
-              quote.binding.subject.kind !== 'AUTHENTICATED' ||
-              !sameRef(quote.binding.subject.subjectRef, basis.proposal.identity.profileRef) ||
-              quote.binding.tenantId !== scope.tenantId ||
-              quote.binding.commercialScope.sellingLegalEntityId !== legalEntityId ||
-              quote.binding.subject.purchaseContext.contextRevision !==
-                basis.pricingInput.decision.purchasingContext.contextRevision
-            ) {
-              return yield* missing();
-            }
-            return {
-              issuerPrincipalId,
-              quote,
-            };
-          }),
       );
       const prepare = Effect.fn('PurchaseProposalBasis.prepare')(
         (payload: typeof PreparePurchaseProposalBasisPayloadSchema.Type, invocation: string) =>
@@ -651,6 +662,30 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
             return ready;
           }),
       );
+      const loadRead = Effect.fn('PurchaseProposalBasis.loadRead')(function* loadRead(
+        input: typeof PurchaseProposalBasisRequestSchema.Type,
+        at?: string,
+      ) {
+        const basis = yield* load(input.sourceRef, input.sourceRevision);
+        if (
+          input.operation === 'CURRENT' &&
+          (basis.status !== 'READY' || basis.quotation === null || basis.pricingIssuanceInvocationId === null)
+        ) {
+          return yield* missing();
+        }
+        const operationTime = at ?? DateTime.formatIso(yield* DateTime.now);
+        const snapshot = yield* loadPurchasePricingContextSnapshot(
+          transaction,
+          scope,
+          {
+            materialHash: basis.materialHash,
+            preproposal: true,
+            proposal: basis.proposal,
+          },
+          operationTime,
+        ).pipe(Effect.mapError(unavailable));
+        return { basis, operationTime, snapshot };
+      });
       const read = Effect.fn('PurchaseProposalBasis.read')((input: typeof PurchaseProposalBasisRequestSchema.Type) =>
         Effect.gen(function* readBasis() {
           const basis = yield* load(input.sourceRef, input.sourceRevision);
@@ -725,6 +760,8 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
       return {
         complete: (payload: typeof CompletePurchaseProposalBasisPayloadSchema.Type, invocation: string) =>
           complete(payload, invocation).pipe(Effect.provideContext(services)),
+        loadRead: (input: typeof PurchaseProposalBasisRequestSchema.Type, at?: string) =>
+          loadRead(input, at).pipe(Effect.provideContext(services)),
         prepare: (payload: typeof PreparePurchaseProposalBasisPayloadSchema.Type, invocation: string) =>
           prepare(payload, invocation).pipe(Effect.provideContext(services)),
         read: (input: typeof PurchaseProposalBasisRequestSchema.Type) =>
@@ -743,6 +780,120 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
       ),
     ),
 );
+
+export type PurchaseProposalBasisReadSnapshot = Effect.Success<
+  ReturnType<Effect.Success<ReturnType<typeof purchaseProposalBasisService>>['loadRead']>
+>;
+
+/** Remote dependencies are resolved only after the first owner transaction has committed. */
+export const finishPurchaseProposalBasisRead = Effect.fn('PurchaseProposalBasis.finishRead')(function* finishRead<
+  Failure,
+  Requirements,
+>(
+  input: typeof PurchaseProposalBasisRequestSchema.Type,
+  scope: OperationalScope,
+  compositionRevision: string,
+  loaded: PurchaseProposalBasisReadSnapshot,
+  revalidate: Effect.Effect<void, Failure, Requirements>,
+) {
+  const { basis } = loaded;
+  const { cartObservation, verifyQuote } = purchaseProposalBasisRemote(scope, compositionRevision);
+  if (input.operation === 'CURRENT') {
+    const { quote } = yield* verifyQuote(basis, basis.pricingIssuanceInvocationId ?? '');
+    if (
+      basis.quotation === null ||
+      !Schema.toEquivalence(Schema.toType(PricingQuotationIssuedSchema))(basis.quotation, quote)
+    ) {
+      return yield* missing();
+    }
+  }
+  const cart = yield* cartObservation(basis.proposal);
+  if (cart.materialHash !== basis.materialHash) {
+    return yield* missing();
+  }
+  const observed = yield* resolvePurchasePricingContextFromSnapshot(
+    scope,
+    {
+      materialHash: basis.materialHash,
+      preproposal: true,
+      proposal: basis.proposal,
+    },
+    compositionRevision,
+    loaded.operationTime,
+    loaded.snapshot,
+  ).pipe(Effect.mapError(unavailable));
+  const expectedSubject = yield* Schema.decodeUnknownEffect(PurchaseCurrencySubjectSchema)(
+    basis.pricingInput.subject,
+  ).pipe(Effect.mapError(unavailable));
+  if (
+    !Schema.toEquivalence(PurchaseCurrencySubjectSchema)(observed.context.subject, expectedSubject) ||
+    !Schema.toEquivalence(CurrentPricingDecisionRequestSchema.fields.decision.fields.purchasingContext)(
+      observed.context.purchasingContext,
+      basis.pricingInput.decision.purchasingContext,
+    )
+  ) {
+    return yield* missing();
+  }
+  yield* revalidate;
+  const now = yield* DateTime.now;
+  const validUntil = DateTime.makeUnsafe(
+    Math.min(
+      observed.validUntil,
+      basis.quotation === null
+        ? Infinity
+        : DateTime.toEpochMillis(DateTime.makeUnsafe(basis.quotation.validity.validUntil)),
+    ),
+  );
+  if (!DateTime.isGreaterThan(validUntil, now)) {
+    return yield* missing();
+  }
+  const facts =
+    input.operation === 'CURRENT'
+      ? yield* Schema.decodeUnknownEffect(Schema.toType(PurchaseLimitEvaluationCurrentFactsSchema))({
+          channelId: observed.context.commercialScope.channelId,
+          contextRevision: observed.context.purchasingContext.contextRevision,
+          currentSourceRevisions: [
+            {
+              revision: '1',
+              source: 'purchase-proposal',
+            },
+            {
+              revision: String(observed.profileRevision),
+              source: 'purchasing-profile',
+            },
+            {
+              revision: stableRevision({
+                currency: observed.context.purchasingContext.currencyResolution.resolutionRevision,
+                settings: observed.context.purchasingContext.commercialSettingsDecision.decisionRevision,
+              }),
+              source: 'customer-commerce-policy',
+            },
+            {
+              revision: stableRevision(observed.storefront),
+              source: 'storefront-context',
+            },
+          ],
+          marketId: observed.context.commercialScope.marketId,
+          purchaseValue: basis.proposal.purchaseValue,
+        }).pipe(Effect.mapError(unavailable))
+      : null;
+  return {
+    basis,
+    facts,
+    observedAt: now,
+    pricingCandidateRef: currentPricingDecisionCandidateRef(basis.pricingInput),
+    pricingInput: basis.pricingInput,
+    validUntil,
+  };
+});
+
+/** Compare retained owner state, excluding only the new wall-clock observation. */
+export const purchaseProposalBasisReadSnapshotMatches = <Basis, Snapshot>(
+  before: { readonly basis: Basis; readonly snapshot: Snapshot },
+  after: { readonly basis: Basis; readonly snapshot: Snapshot },
+) =>
+  stableRevision({ basis: before.basis, snapshot: before.snapshot }) ===
+  stableRevision({ basis: after.basis, snapshot: after.snapshot });
 
 const basisCurrentnessUnavailable = (cause?: unknown) =>
   Object.defineProperty(

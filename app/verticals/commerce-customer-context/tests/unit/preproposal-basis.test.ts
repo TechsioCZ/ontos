@@ -5,6 +5,7 @@ import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import {
   basisCurrentnessMatchesClaim,
   proposalMatchesPreapprovalCart,
+  purchaseProposalBasisReadSnapshotMatches,
   quotationPublicationRevision,
   recoverCompletedProposalBasis,
   samePreparedQuantity,
@@ -417,3 +418,38 @@ it('accepts a canonically formatted Catalog quantity equal in value to the Cart 
   expect(samePreparedQuantity('2', '2.01')).toBe(false);
   expect(samePreparedQuantity('2', 'two')).toBe(false);
 });
+
+it.effect('revalidates the full owner snapshot after released HTTP and ignores only the observation clock', () =>
+  Effect.sync(() => {
+    const assignments: readonly string[] = [];
+    const before = {
+      basis: resolved.basis,
+      operationTime: at,
+      snapshot: {
+        assignments,
+        currencyPolicy: { generation: 2 },
+        ownerAccess: 'ALLOWED',
+        paymentPolicy: { generation: 4 },
+        profile: { revision: 3, state: 'ACTIVE' },
+      },
+    };
+    const afterClock = { ...before, operationTime: 'later' };
+    expect(purchaseProposalBasisReadSnapshotMatches(before, afterClock)).toBe(true);
+    for (const snapshot of [
+      { ...before.snapshot, assignments: ['new-assignment'] },
+      { ...before.snapshot, currencyPolicy: { generation: 3 } },
+      { ...before.snapshot, ownerAccess: 'DENIED' },
+      { ...before.snapshot, paymentPolicy: { generation: 5 } },
+      { ...before.snapshot, profile: { revision: 4, state: 'ACTIVE' } },
+      { ...before.snapshot, profile: { revision: 3, state: 'ARCHIVED' } },
+    ]) {
+      expect(purchaseProposalBasisReadSnapshotMatches(before, { ...before, snapshot })).toBe(false);
+    }
+    expect(
+      purchaseProposalBasisReadSnapshotMatches(before, {
+        ...before,
+        basis: { ...before.basis, proposal: { ...proposal, canonicalHash: 'changed' } },
+      }),
+    ).toBe(false);
+  }),
+);

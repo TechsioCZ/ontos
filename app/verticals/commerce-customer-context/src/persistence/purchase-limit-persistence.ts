@@ -750,6 +750,76 @@ const comparableForPolicy = (
     Match.orElse(() => Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>())),
   );
 
+/** Pure owner snapshot plus released remote currentness/FX, with no database capability retained. */
+export const finishPurchaseLimitEvaluationSnapshot = Effect.fn('PurchaseLimitEvaluation.finishSnapshot')(
+  function* finishSnapshot(
+    query: Parameters<PurchaseLimitEvaluationSourceService['loadCurrent']>[0]['query'],
+    subject: {
+      readonly legalEntityId: string;
+      readonly principalId: string;
+      readonly storefrontId: string;
+      readonly tenantId: string;
+    },
+    policyState: Effect.Success<ReturnType<typeof readCurrentPurchaseLimitPolicyState>>,
+    facts: typeof PurchaseLimitEvaluationCurrentFactsSchema.Type,
+    decidedAt: DateTime.Utc,
+  ) {
+    const sellingLegalEntityId = yield* Schema.decodeEffect(PurchaseLimitSellingLegalEntityIdSchema)(
+      subject.legalEntityId,
+    ).pipe(
+      Effect.mapError((cause) =>
+        dependencyUnavailableFromCause(
+          PURCHASE_LIMIT_EVALUATION_SCOPE,
+          'The Selling Legal Entity scope is invalid',
+          cause,
+        ),
+      ),
+    );
+    const storefrontId = yield* Schema.decodeEffect(PurchaseLimitStorefrontIdSchema)(subject.storefrontId).pipe(
+      Effect.mapError((cause) =>
+        dependencyUnavailableFromCause(PURCHASE_LIMIT_EVALUATION_SCOPE, 'The Storefront scope is invalid', cause),
+      ),
+    );
+    if (
+      facts.purchaseValue.sourceRef !== query.purchaseValue.sourceRef ||
+      facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)?.revision !==
+        facts.purchaseValue.sourceRevision
+    ) {
+      return yield* Effect.fail(
+        dependencyUnavailableFromCause(
+          EVALUATION_CURRENTNESS_DEPENDENCY,
+          'The Current Purchase Value is not bound to the claimed proposal reference and revision',
+        ),
+      );
+    }
+
+    const fx = purchaseLimitFxForLaunch(DateTime.formatIso(decidedAt));
+    const comparableValue = yield* comparableForPolicy(policyState, facts.purchaseValue, fx);
+    const currentSourceRevisions = yield* combinedSourceRevisions(
+      facts.currentSourceRevisions,
+      policyState.sourceRevisions,
+      comparableValue,
+    );
+
+    const evaluationInput = {
+      counterpartyPolicies: policyState.counterpartyPolicies,
+      counterpartyRef: query.counterpartyRef,
+      currentSourceRevisions,
+      decidedAt,
+      expectedSourceRevisions: query.expectedSourceRevisions,
+      principalId: subject.principalId,
+      principalOverrides: policyState.principalOverrides,
+      purchaseValue: facts.purchaseValue,
+      sellingLegalEntityId,
+      storefrontId,
+    } satisfies PurchaseLimitEvaluationInput;
+    return Option.match(comparableValue, {
+      onNone: () => evaluationInput,
+      onSome: (value) => ({ ...evaluationInput, comparableValue: value }),
+    });
+  },
+);
+
 const purchaseLimitEvaluationSourceForBusinessSubject = (
   transaction: ScopedTransactionExecutor,
   subject: {
@@ -785,7 +855,7 @@ const purchaseLimitEvaluationSourceForBusinessSubject = (
 
       return Effect.gen(function* loadCurrentPurchaseLimitEvaluation() {
         const decidedAt = yield* DateTime.now;
-        const [facts, policyState, sellingLegalEntityId, storefrontId] = yield* Effect.all(
+        const [facts, policyState] = yield* Effect.all(
           [
             currentnessForTransaction
               .resolveCurrent({
@@ -825,43 +895,7 @@ const purchaseLimitEvaluationSourceForBusinessSubject = (
           ),
         );
 
-        if (
-          facts.purchaseValue.sourceRef !== query.purchaseValue.sourceRef ||
-          facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)?.revision !==
-            facts.purchaseValue.sourceRevision
-        ) {
-          return yield* Effect.fail(
-            dependencyUnavailableFromCause(
-              EVALUATION_CURRENTNESS_DEPENDENCY,
-              'The Current Purchase Value is not bound to the claimed proposal reference and revision',
-            ),
-          );
-        }
-
-        const fx = purchaseLimitFxForLaunch(DateTime.formatIso(decidedAt));
-        const comparableValue = yield* comparableForPolicy(policyState, facts.purchaseValue, fx);
-        const currentSourceRevisions = yield* combinedSourceRevisions(
-          facts.currentSourceRevisions,
-          policyState.sourceRevisions,
-          comparableValue,
-        );
-
-        const evaluationInput = {
-          counterpartyPolicies: policyState.counterpartyPolicies,
-          counterpartyRef: query.counterpartyRef,
-          currentSourceRevisions,
-          decidedAt,
-          expectedSourceRevisions: query.expectedSourceRevisions,
-          principalId: subject.principalId,
-          principalOverrides: policyState.principalOverrides,
-          purchaseValue: facts.purchaseValue,
-          sellingLegalEntityId,
-          storefrontId,
-        } satisfies PurchaseLimitEvaluationInput;
-        return Option.match(comparableValue, {
-          onNone: () => evaluationInput,
-          onSome: (value) => ({ ...evaluationInput, comparableValue: value }),
-        });
+        return yield* finishPurchaseLimitEvaluationSnapshot(query, subject, policyState, facts, decidedAt);
       });
     },
   };
