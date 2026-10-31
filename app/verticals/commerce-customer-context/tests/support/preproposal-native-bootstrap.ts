@@ -47,6 +47,10 @@ export const bootstrapPreproposalNativeSource = Effect.fn('PreproposalNative.boo
     });
     const inherited = yield* Config.all({
       HOME: Config.String('HOME'),
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+        Config.withDefault(true),
+        Config.map(String),
+      ),
       PATH: Config.String('PATH'),
       TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
     });
@@ -107,6 +111,10 @@ export const runStandalonePreproposalNativeTest = Effect.fn('PreproposalNative.s
     const environment = yield* bootstrapPreproposalNativeSource();
     const inherited = yield* Config.all({
       HOME: Config.String('HOME'),
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+        Config.withDefault(true),
+        Config.map(String),
+      ),
       PATH: Config.String('PATH'),
       TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
     });

@@ -610,7 +610,14 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
   readonly environment: Readonly<Record<string, string>>;
   readonly stage: string;
 }) {
-  const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const inherited = yield* Config.all({
+    HOME: Config.String('HOME'),
+    ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+      Config.withDefault(true),
+      Config.map(String),
+    ),
+    PATH: Config.String('PATH'),
+  });
   const commands = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const standardInput = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const publicLines = yield* Queue.unbounded<string, Cause.Done>();
@@ -1471,6 +1478,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       principalId: identities.cccReader.principalId,
       tenantId: core.tenantId,
     };
+    const actionTransactionGuard = yield* Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+      Config.withDefault(true),
+    );
     const environment = {
       ...baseEnvironment,
       ...permissionEnvironment,
@@ -1479,6 +1489,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_OWNER_ORIGIN`]:
         owners.find((owner) => owner.appId === cartAudience)?.origin ?? '',
       [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_SHELL_ORIGIN`]: shell.origin,
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: String(actionTransactionGuard),
       ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS: JSON.stringify([
         serviceGrant,
         { ...serviceGrant, principalId: identities.pricingIssuer.principalId },
