@@ -5,6 +5,7 @@ import { demoTenantId } from '../demo/fixture-ids.mts';
 import { demoCompanyMemberships, principalRelationships } from '../demo/permissions.mts';
 import { warmupAccounts } from '../demo/warmup-accounts.mts';
 import { stageWarmupRelationships } from '../demo/seed-stage-warmup.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 import { warmupRequestAllowed, WARMUP_BUDGET_MS } from '../ops/stage-warmup.mts';
 import { createOwnerWarmState } from '../zerops/owner-warm-state.mts';
 import { observeFirstSpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-client-observability.ts';
@@ -13,6 +14,11 @@ const taskOwner = 'work-tasks';
 it('seeds one clearly named external reader per demo company, without inherited administrators or write grants', () => {
   expect(warmupAccounts).toHaveLength(5);
   expect(new Set(warmupAccounts.map(({ legalEntityId }) => legalEntityId)).size).toBe(5);
+  const sales = warmupAccounts.find(({ company }) => company === 'obchod');
+  const rental = warmupAccounts.find(({ company }) => company === 'najempark');
+  expect(sales?.role.modules).toMatchObject({ 'property.leasing': 'read', 'property.portfolio': 'read' });
+  expect(Object.keys(rental?.role.modules ?? {})).not.toContain('crm.activities');
+  expect(Object.keys(rental?.role.modules ?? {})).not.toContain('demo.merchandise');
   for (const account of warmupAccounts) {
     expect(account.email).toBe(`warmup@${account.company}.demo`);
     expect(Object.values(account.role.modules).every((access) => access === 'read')).toBe(true);
@@ -122,4 +128,18 @@ it.effect('reports the first SpiceDB RPC exactly once, including a failing first
     yield* Effect.void.pipe(observeFirstSpiceDbRpc('readSchema'));
     expect(samples).toEqual(['checkPermission:failure']);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  'gives the standalone warm-up seed a scoped process pool registry and releases it on success or failure',
+  () =>
+    Effect.gen(function* operatorPoolLifecycle() {
+      expect(globalThis.ontosDatabasePoolRegistry).toBeUndefined();
+      yield* Effect.sync(() => {
+        expect(globalThis.ontosDatabasePoolRegistry).toBeDefined();
+      }).pipe(Effect.provide(ProcessDatabasePoolsLive));
+      expect(globalThis.ontosDatabasePoolRegistry).toBeUndefined();
+      yield* Effect.fail('operator stopped').pipe(Effect.provide(ProcessDatabasePoolsLive), Effect.exit);
+      expect(globalThis.ontosDatabasePoolRegistry).toBeUndefined();
+    }),
 );

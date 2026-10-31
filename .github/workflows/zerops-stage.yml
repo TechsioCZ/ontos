@@ -202,7 +202,7 @@ jobs:
       - name: Warm real login, declared reads and federation assets
         working-directory: app
         env:
-          ONTOS_STAGE_WARMUP_ENABLED: 'false'
+          ONTOS_STAGE_WARMUP_ENABLED: 'true'
         run: mise exec -- node scripts/ops/stage-warmup.mts
 
       - name: Time /cs, OAuth metadata and the storefront home

@@ -21,6 +21,7 @@ import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/
 import { demoTenantId } from './fixture-ids.mts';
 import { principalRelationships } from './permissions.mts';
 import { warmupAccounts } from './warmup-accounts.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 class WarmupSeedError extends Schema.TaggedError<WarmupSeedError>()('WarmupSeedError', {
   reason: Schema.String,
@@ -147,8 +148,11 @@ if (import.meta.main) {
           ),
         ),
       ),
+      Effect.provide(ProcessDatabasePoolsLive),
       Effect.provide(NodeServices.layer),
-      Effect.tapError(() => Console.error('Stage warm-up seed failed; no automatic retry and no credentials logged')),
+      Effect.tapError((error) =>
+        Console.error('Stage warm-up seed failed; no automatic retry and no credentials logged', { tag: error._tag }),
+      ),
     ),
   );
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;

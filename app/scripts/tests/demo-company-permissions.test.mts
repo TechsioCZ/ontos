@@ -739,7 +739,13 @@ it('keeps Activities writes and its installed Action exclusive to rental managem
           }),
       ),
   );
-  expect(warmupActivityGrants).toHaveLength(2);
+  expect(warmupActivityGrants).toHaveLength(1);
+  expect(warmupActivityGrants[0]?.resourceId).toBe(
+    toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, {
+      moduleId: activitiesModule,
+      permission: activitiesReadAll,
+    }),
+  );
   const [management] = siamparkRentalPersonas;
   expect(management.principalId).toBe('72000000-0000-4000-8000-000000000021');
   expect(rentalDemoLegalEntityId).toBe('71000000-0000-4000-8000-000000000021');

@@ -8,10 +8,8 @@ import {
 } from './fixture-ids.mts';
 import type { DemoRole } from './permissions.mts';
 
-const salesReads = {
+const sharedSalesReads = {
   'commerce.customer-context': 'read',
-  'crm.activities': 'read',
-  'demo.merchandise': 'read',
   'demo.sales-insights': 'read',
   'demo.sales-pipeline': 'read',
   'demo.tagging': 'read',
@@ -33,7 +31,16 @@ export const warmupProfiles = [
   {
     company: 'obchod',
     legalEntityId: demoLegalEntityId,
-    role: { label: 'Warm-up sales reader', modules: salesReads },
+    role: {
+      label: 'Warm-up sales reader',
+      modules: {
+        ...sharedSalesReads,
+        'crm.activities': 'read',
+        'demo.merchandise': 'read',
+        'property.leasing': 'read',
+        'property.portfolio': 'read',
+      },
+    },
   },
   {
     company: 'najempark',
@@ -42,7 +49,7 @@ export const warmupProfiles = [
       contextPermissions: { 'demo.crm': ['demo.crm.read_all'] },
       label: 'Warm-up rental reader',
       modules: {
-        ...salesReads,
+        ...sharedSalesReads,
         'demo.crm': 'read',
         'facility.operations': 'read',
         'property.leasing': 'read',

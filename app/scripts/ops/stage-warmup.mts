@@ -94,12 +94,16 @@ const preparePage = (context: BrowserContext) =>
       const page = await context.newPage();
       page.setDefaultTimeout(15_000);
       const counts = { assets: 0, blocked: 0, failures: 0, reads: 0 };
+      const rejected: { method: string; path: string; status: number | 'blocked' }[] = [];
       await context.route('**/*', async (route) => {
         const request = route.request();
         if (warmupRequestAllowed(request.method(), request.url())) {
           await route.continue();
         } else {
           counts.blocked += 1;
+          if (rejected.length < 20) {
+            rejected.push({ method: request.method(), path: new URL(request.url()).pathname, status: 'blocked' });
+          }
           await route.abort('blockedbyclient');
         }
       });
@@ -108,8 +112,11 @@ const preparePage = (context: BrowserContext) =>
         counts.reads += pathname.includes('/reads/') ? 1 : 0;
         counts.assets += pathname.startsWith('/_m/') ? 1 : 0;
         counts.failures += response.status() >= 400 ? 1 : 0;
+        if (response.status() >= 400 && rejected.length < 20) {
+          rejected.push({ method: response.request().method(), path: pathname, status: response.status() });
+        }
       });
-      return { counts, page };
+      return { counts, page, rejected };
     },
   });
 
@@ -156,7 +163,7 @@ const warmPersona = Effect.fn('Stage.warmPersona')(function* warmPersona(
 ) {
   const started = yield* Clock.currentTimeMillis;
   const context = yield* contextEffect(browser);
-  const { counts, page } = yield* preparePage(context);
+  const { counts, page, rejected } = yield* preparePage(context);
   const menu = yield* login(page, email, password);
   const prefetchMs = (yield* Clock.currentTimeMillis) - started;
   const destinations = yield* Effect.forEach(
@@ -165,7 +172,10 @@ const warmPersona = Effect.fn('Stage.warmPersona')(function* warmPersona(
     { concurrency: 1 },
   );
   const durationMs = (yield* Clock.currentTimeMillis) - started;
-  yield* Console.log('stage.warmup.persona', { ...counts, destinations, durationMs, email, prefetchMs });
+  yield* Console.log('stage.warmup.persona', { ...counts, destinations, durationMs, email, prefetchMs, rejected });
+  if (counts.failures > 0) {
+    yield* Console.warn(`::warning title=Stage warm-up::${email} observed ${counts.failures} failed responses`);
+  }
   return yield* Effect.void;
 });
 
