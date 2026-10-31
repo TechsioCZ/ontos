@@ -14,6 +14,10 @@
       "sha256": "27c4817da2a5295f75a74a2b3f5c760c0440608da0882aa2e242a5587e9392ed"
     },
     {
+      "path": "app/verticals/privacy/src/actions/create-privacy-subject.action.ts",
+      "sha256": "85e98e99b50779f2df7b1cc50b4374904b9c1ad78167b990afab855d6b69f546"
+    },
+    {
       "path": "app/verticals/privacy/src/actions/record-dsr-deadline.action.ts",
       "sha256": "5a86fd946efc33e03df40ba728cbbf183603d08b382784c566dae39032a3b85f"
     },
