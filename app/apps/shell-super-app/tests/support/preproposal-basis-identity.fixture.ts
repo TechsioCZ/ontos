@@ -328,6 +328,8 @@ export const serve = Effect.scoped(
               correlationId: `${suffix}:${name}:key`,
               idempotencyKey: `${suffix}:${name}:key`,
               managedPrincipalId: createdService.principalId,
+              // A service principal's key is tenant-managed; company-agent keys need an agent principal.
+              managedScope: 'tenant-managed',
               name,
               principal,
               requestHeaders: headers,

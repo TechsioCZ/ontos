@@ -19,7 +19,7 @@ import {
   runOutboxCycle,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import { DATABASE_IDENTITIES } from './database-identities.ts';
+import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../../shared/actions/change-counterparty-purchase-limit.ts';
 import { executeChangeCounterpartyPurchaseLimitWithAuthorization } from '../../src/api/change-counterparty-purchase-limit-action-client.ts';
 import { beginGrant, settleGrant } from './purchasing-approval-native.ts';
@@ -1314,6 +1314,8 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const compositionUrl = yield* makeCompositionSource(compositionDocument);
     const owned = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      // The cloned trust catalog maps the Party gateway audience to its request role only for enrolled identities.
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1257-approval-fresh-proof',
       sourceConnections,
