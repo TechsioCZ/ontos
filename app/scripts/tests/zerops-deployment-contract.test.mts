@@ -325,7 +325,7 @@ it('reserves the application working set and one dedicated CPU while preserving 
     services.items.find((service) => isMap(service) && service.get('hostname') === 'app'),
   );
 
-  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(3);
+  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(2.5);
   expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
   expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
   expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('DEDICATED');
