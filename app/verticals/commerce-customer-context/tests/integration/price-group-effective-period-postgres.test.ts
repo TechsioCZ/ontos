@@ -422,9 +422,10 @@ const services = NodeServices.layer.pipe(
   Layer.provideMerge(FetchHttpClient.layer),
 );
 class TemporalNativeFailure extends Schema.TaggedError<TemporalNativeFailure>()('TemporalNativeFailure', {
+  message: Schema.String,
   stage: Schema.String,
 }) {}
-const fail = (stage: string) => new TemporalNativeFailure({ stage });
+const fail = (stage: string) => new TemporalNativeFailure({ message: stage, stage });
 const requireCondition = (condition: boolean, stage: string) => (condition ? Effect.void : Effect.fail(fail(stage)));
 const MarkerSchema = Schema.Struct({
   appId: Schema.Literals(['commerce-customer-context', 'party-registry', 'price-group-catalog']),
@@ -1035,6 +1036,18 @@ const temporalCaseLayer = (
     }),
   );
 
+const observe = Effect.fn('TemporalNative.observeBoundary')(function* observeBoundary(instant: string) {
+  const boundary = DateTime.toEpochMillis(DateTime.makeUnsafe(instant));
+  const clock = yield* Clock.Clock;
+  while (true) {
+    const remaining = boundary - (yield* clock.currentTimeMillis);
+    if (remaining <= 0) {
+      return;
+    }
+    yield* clock.sleep(Duration.millis(remaining));
+  }
+});
+
 const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(function* provisionPublicSubjects(
   native: Effect.Success<ReturnType<typeof makeTemporalNative>>,
 ) {
@@ -1173,12 +1186,17 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   };
   yield* grant('counterparty.profile.read', counterpartyTarget);
   yield* grant('counterparty.settings.price_group.manage', counterpartyTarget);
+  // Isolate the missing owner grant only after Catalog can prove a current definition.
+  // Its returned future start is not a substitute for the actual operation instant.
+  for (const group of [first, second, incompatible]) {
+    yield* observe(group.initialDefinition.effectivePeriod.effectiveFrom);
+  }
   // Real Core business/executor permission alone cannot replace the owner-local grant.
   const ownerDenied = yield* Effect.flip(
     executeAssignCounterpartyPriceGroupWithAuthorization(
       {
         counterpartyRef: counterparty.counterpartyRef,
-        effectiveFrom: first.initialDefinition.effectivePeriod.effectiveFrom,
+        effectiveFrom: DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 5 })),
         expectedProfileRevision: counterpartyProfile.revision,
         priceGroupRef: first.identity.priceGroupRef,
         profile: { ...counterpartyProfile.profileRef, kind: 'COUNTERPARTY' },
@@ -1189,6 +1207,17 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
       yield* native.options(),
     ),
   );
+  const ownerDenialSummary = yield* Schema.decodeUnknownEffect(
+    Schema.Struct({
+      _tag: Schema.String,
+      code: Schema.optional(Schema.String),
+      status: Schema.optional(Schema.Number),
+    }),
+  )(ownerDenied);
+  expect(
+    Schema.is(AssignCounterpartyPriceGroupActionForbiddenProblemSchema)(ownerDenied),
+    JSON.stringify(ownerDenialSummary),
+  ).toBe(true);
   expect(
     yield* Schema.decodeUnknownEffect(AssignCounterpartyPriceGroupActionForbiddenProblemSchema)(ownerDenied),
   ).toMatchObject({ code: 'action_permission_denied', status: 403 });
@@ -1237,15 +1266,6 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   yield* grantCounterpartyOwner('counterparty.profile.read', counterparty.counterpartyRef);
   yield* grantCounterpartyOwner('counterparty.settings.price_group.manage', counterparty.counterpartyRef);
 
-  // Real Catalog Create enforces an effective start after its trusted operation time. Observe
-  // the actual returned starts instead of assuming a fixed historic definition is acceptable.
-  const starts = [first, second, incompatible].map((group) =>
-    DateTime.toEpochMillis(DateTime.makeUnsafe(group.initialDefinition.effectivePeriod.effectiveFrom)),
-  );
-  const wait = Math.max(...starts) - DateTime.toEpochMillis(yield* DateTime.now);
-  if (wait > 0) {
-    yield* Effect.sleep(wait + 1);
-  }
   return {
     counterparty,
     counterpartyProfile,
@@ -1273,17 +1293,6 @@ const publicResolution = Effect.fn('TemporalNative.publicResolution')(function* 
 });
 const atOffset = (instant: string, milliseconds: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.makeUnsafe(instant)) + milliseconds));
-const observe = Effect.fn('TemporalNative.observeBoundary')(function* observeBoundary(instant: string) {
-  const boundary = DateTime.toEpochMillis(DateTime.makeUnsafe(instant));
-  const clock = yield* Clock.Clock;
-  while (true) {
-    const remaining = boundary - (yield* clock.currentTimeMillis);
-    if (remaining <= 0) {
-      return;
-    }
-    yield* clock.sleep(Duration.millis(remaining));
-  }
-});
 
 it.effect('waits for the observed Price Group boundary after an early timer completion', () =>
   Effect.gen(function* observeEarlyTimerCompletion() {

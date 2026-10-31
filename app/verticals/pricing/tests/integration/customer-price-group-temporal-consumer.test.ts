@@ -53,9 +53,10 @@ import { commercePriceGroupResolutionPortFromEnvironment } from '../../src/integ
 import { makePriceGroupInterpretationService } from '../../src/services/price-group-interpretation.service.ts';
 
 class TemporalNativeFailure extends Schema.TaggedError<TemporalNativeFailure>()('TemporalNativeFailure', {
+  message: Schema.String,
   stage: Schema.String,
 }) {}
-const fail = (stage: string) => new TemporalNativeFailure({ stage });
+const fail = (stage: string) => new TemporalNativeFailure({ message: stage, stage });
 const requireCondition = (condition: boolean, stage: string) => (condition ? Effect.void : Effect.fail(fail(stage)));
 const priceGroupTemporalProtocol = 'ontos.customer-price-group-temporal.fixture.v1' as const;
 const priceGroupTemporalClosedEnvironment = (bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type) =>
