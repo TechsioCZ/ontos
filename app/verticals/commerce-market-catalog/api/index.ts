@@ -167,7 +167,25 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
     ),
   ),
 );
-const actionRuntimeDependenciesLive = Layer.mergeAll(
+type CommerceMarketCatalogActionRuntimeDependencyLayers =
+  | typeof CorePersistenceLive
+  | typeof ContextAccessLive
+  | typeof ActionRepositoryLive
+  | typeof ActionPermissionLive
+  | typeof ModuleStateGateLive
+  | typeof ModuleEntrypointGatewayLive
+  | typeof OperationalScopeResolverLive
+  | typeof ActiveApplicationCompositionConfigLive;
+
+export const commerceMarketCatalogActionRuntimeDependenciesLive: Layer.Layer<
+  Layer.Success<CommerceMarketCatalogActionRuntimeDependencyLayers>,
+  Layer.Error<
+    | CommerceMarketCatalogActionRuntimeDependencyLayers
+    | typeof TenantModuleStateServiceLive
+    | typeof ActiveApplicationCompositionSourceLive
+  >,
+  Layer.Services<typeof CorePersistenceLive> | Crypto.Crypto
+> = Layer.mergeAll(
   CorePersistenceLive,
   ContextAccessLive,
   ActionRepositoryLive,
@@ -176,7 +194,10 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
   ActiveApplicationCompositionConfigLive.pipe(Layer.provide(nativeCompositionSourceLive)),
-).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)));
+);
+const actionRuntimeDependenciesLive = commerceMarketCatalogActionRuntimeDependenciesLive.pipe(
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+);
 const baseProductionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(actionRuntimeDependenciesLive),
 );

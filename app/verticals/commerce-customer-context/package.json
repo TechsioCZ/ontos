@@ -153,6 +153,7 @@
     "./resources/retail-customer-profile": "./shared/resources/retail-customer-profile.ts",
     "./resources/retail-portal-profile-binding": "./shared/resources/retail-portal-profile-binding.ts",
     "./resources/saved-address": "./shared/resources/saved-address.ts",
+    "./testing/market-retirement-native": "./tests/support/market-retirement-native.fixture.ts",
     "./testing/price-group-current-receiver": "./tests/support/price-group-current-process.fixture.ts",
     "./testing/price-group-temporal-protocol": "./tests/support/price-group-temporal-protocol.ts",
     "./testing/privacy-consent-authority-owner": "./tests/support/privacy-consent-authority-owner.fixture.ts",

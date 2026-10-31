@@ -1002,6 +1002,13 @@ it.live(
         expect(contract).toContain(
           "import { ChangeRateOriginalProblemSchema, OtherProblemSchema } from '../domain-problems.ts';",
         );
+        expect(contract).not.toContain('export { ChangeRateOriginalProblemSchema');
+        expect(contract).not.toContain('export { OtherProblemSchema');
+        expect(contract).toContain("export { ChangeRatePayloadSchema } from '../actions/change-rate.ts';");
+        expect(contract).toContain('export const ChangeRateActionInvalidProblemSchema');
+        expect(contract).toContain('  OtherProblemSchema,');
+        expect(contract).toContain('  ChangeRateOriginalProblemSchema,');
+        expect(contract).toContain('typeof OtherProblemSchema.Type');
         expect(contract.lastIndexOf('\nimport ')).toBeLessThan(contract.indexOf('\nexport '));
         expect(problems).toContain(
           "import { mapChangeRateOriginalProblem, mapOtherProblem } from '../shared/domain-problems.ts';",

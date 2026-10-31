@@ -19,13 +19,13 @@ import {
   MarketRetirementEncodedPayloadSchema,
   MarketRetirementStoredBasisSchema,
   MarketRetirementSettlementPending,
+  RetireMarketActionSettlementPendingProblemSchema,
 } from '../../shared/market-retirement-admission.ts';
 import { MarketLifecycleResultSchema } from '../../shared/action-contracts.ts';
 import { ReservedMarketRetirementImpactAssessmentSchema } from '../../shared/domain/market-retirement-impact.ts';
 import { MarketRetirementImpactAssessmentUnavailable } from '../../src/actions/market-retirement-impact-assessment-unavailable.ts';
 import { makePreparedMarketRetirementImpact } from '../../src/services/market-retirement-admission.service.ts';
 import { mapRetireMarketActionProblem } from '../../api/retire-market-action-problems.ts';
-import { RetireMarketActionSettlementPendingProblemSchema } from '../../shared/apis/retire-market-action.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '22222222-2222-4222-8222-222222222222';

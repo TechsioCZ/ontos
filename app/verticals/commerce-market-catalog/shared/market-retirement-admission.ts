@@ -15,7 +15,6 @@ import { MarketRefSchema } from './resources/market.ts';
 export type MarketRetirementCommittedResult = typeof MarketLifecycleResultSchema.Type;
 
 const uuid = Schema.String.check(Schema.isUUID());
-export { MarketRetirementSourceInvocationIdSchema } from './domain/market-retirement-impact.ts';
 export const MarketRetirementAbortProofSchema = uuid.pipe(
   Schema.brand('MarketRetirementAbortProof'),
   Schema.decodeTo(uuid),

@@ -1,5 +1,5 @@
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocket } from '@effect/platform-node';
-import { Effect, Fiber, FileSystem, Layer, Result, Schema } from 'effect';
+import { Effect, Fiber, FileSystem, Layer, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,6 +11,9 @@ import {
   ShellNativeSessionGatewayResponseSchema,
   ShellNativeChildReadySchema,
   ShellNativeChildResponseSchema,
+  ShellNativeRelaySourceSchema,
+  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceBoundCommandSchema,
   makeApiKeyGatewayNativeFixture,
   openShellNativePrivateChannel,
 } from '../fixtures/api-key-gateway-native.ts';
@@ -163,4 +166,58 @@ it('keeps session assertion replies private and validates the published gateway 
   expect(
     Schema.is(ShellNativeSessionGatewayResponseSchema)({ ...response, gateway: { ...response.gateway, token: '' } }),
   ).toBe(false);
+});
+
+it('keeps source issuance closed to the independently authenticated actor and a separate bound acknowledgement', () => {
+  const command = {
+    _tag: 'relay-source-issue',
+    principalId: '11111111-1111-4111-8111-111111111111',
+    tenantId: '22222222-2222-4222-8222-222222222222',
+  };
+  const decode = Schema.decodeUnknownResult(ShellNativeRelaySourceIssueCommandSchema, { onExcessProperty: 'error' });
+  expect(Result.isSuccess(decode(command))).toBe(true);
+  for (const invalid of [
+    { ...command, principalId: 'invalid' },
+    { ...command, tenantId: 'invalid' },
+    { ...command, providerKeyId: 'caller-selected' },
+    { ...command, sourceBuildMarker: 'caller-selected' },
+    { ...command, compositionRevision: 'a'.repeat(64) },
+    { ...command, secret: 'caller-selected' },
+  ]) {
+    expect(Result.isFailure(decode(invalid))).toBe(true);
+  }
+  const bound = Schema.decodeUnknownResult(ShellNativeRelaySourceBoundCommandSchema, { onExcessProperty: 'error' });
+  expect(Result.isSuccess(bound({ _tag: 'relay-source-bound' }))).toBe(true);
+  expect(Result.isFailure(bound({ _tag: 'relay-source-bound', providerKeyId: 'caller-selected' }))).toBe(true);
+});
+
+it('restricts fixture source configuration to exact Market release metadata and keeps credentials off readiness', () => {
+  // Codec-only data; no authority or Current is produced by these checks.
+  const source = {
+    compositionRevision: 'a'.repeat(64),
+    sourceAppId: 'commerce-market-catalog',
+    sourceBuildMarker: 'codec-only-marker',
+  };
+  const decode = Schema.decodeUnknownResult(ShellNativeRelaySourceSchema, { onExcessProperty: 'error' });
+  expect(Result.isSuccess(decode(source))).toBe(true);
+  const optionalSource = Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema));
+  expect(Schema.encodeSync(optionalSource)(Option.none())).toBe('null');
+  expect(Option.isNone(Schema.decodeUnknownSync(optionalSource)('null'))).toBe(true);
+  const selected = Schema.decodeUnknownSync(ShellNativeRelaySourceSchema)(source);
+  const encoded = Schema.encodeSync(optionalSource)(Option.some(selected));
+  expect(Schema.decodeUnknownSync(optionalSource)(encoded)).toEqual(Option.some(selected));
+  for (const invalid of [
+    { ...source, sourceAppId: 'catalog' },
+    { ...source, sourceBuildMarker: '' },
+    { ...source, compositionRevision: 'invalid' },
+    { ...source, providerKeyId: 'caller-selected' },
+  ]) {
+    expect(Result.isFailure(decode(invalid))).toBe(true);
+  }
+  const ready = Schema.decodeUnknownResult(ShellNativeChildReadySchema, { onExcessProperty: 'error' });
+  const oldReady = { baseUrl: 'http://127.0.0.1:1234', providerUserId: 'personal-provider-user' };
+  expect(Result.isSuccess(ready(oldReady))).toBe(true);
+  const sourceReady = { ...oldReady, relaySourceProviderUserId: 'source-provider-user' };
+  expect(Result.isSuccess(ready(sourceReady))).toBe(true);
+  expect(Result.isFailure(ready({ ...sourceReady, secret: 'credential' }))).toBe(true);
 });

@@ -16,12 +16,6 @@ import {
 } from '../market-retirement-admission.ts';
 import { RetireMarketPayloadSchema, RetireMarketResultSchema } from '../actions/retire-market.ts';
 
-export {
-  MarketRetirementCommandRejectedProblemSchema,
-  MarketRetirementImpactRejectedProblemSchema,
-  MarketRetirementImpactStaleProblemSchema,
-  RetireMarketActionSettlementPendingProblemSchema,
-} from '../market-retirement-admission.ts';
 export { RetireMarketPayloadSchema } from '../actions/retire-market.ts';
 
 export const RetireMarketActionInvalidProblemSchema = makeProblemDetailsSchema('RetireMarketActionInvalidProblem', 400);

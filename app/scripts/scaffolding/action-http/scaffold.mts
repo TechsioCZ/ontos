@@ -398,9 +398,7 @@ ${groupCustomDomainProblems(customProblems)
   ${type}ResultSchema,
 } from '../actions/${action}.ts';
 
-${groupCustomDomainProblems(customProblems)
-  .map(({ module, schemas }) => `export { ${schemas.join(', ')} } from '../${module.slice('shared/'.length)}';\n`)
-  .join('')}export { ${type}PayloadSchema } from '../actions/${action}.ts';
+export { ${type}PayloadSchema } from '../actions/${action}.ts';
 
 export const ${type}ActionInvalidProblemSchema = makeProblemDetailsSchema('${type}ActionInvalidProblem', 400);
 export const ${type}ActionAuthenticationProblemSchema = makeProblemDetailsSchema('${type}ActionAuthenticationProblem', 401);

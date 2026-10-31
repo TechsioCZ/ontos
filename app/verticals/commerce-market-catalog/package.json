@@ -94,7 +94,8 @@
     "zephyr-rspack-plugin": "1.2.4",
     "@app/shell-super-app": "workspace:*",
     "@app/storefront-registry": "workspace:*",
-    "tsrs": "0.20.1-ts7.1.0-beta"
+    "tsrs": "0.20.1-ts7.1.0-beta",
+    "@app/commerce-customer-context": "workspace:*"
   },
   "modernjs": {
     "preset": "presetUltramodern",

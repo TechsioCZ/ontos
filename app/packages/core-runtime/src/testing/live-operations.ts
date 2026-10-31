@@ -57,16 +57,18 @@ import {
 } from '../install/action-authorization-provisioning.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
-import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
+import { makeTenantModuleStateService, TenantModuleStateSchema } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../operations/context.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import {
   makeContextAccessLive,
+  toContextPermissionAccessObjectId,
   toIdentityNamespaceAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from '../permissions/context-access.ts';
+import type { ContextPermissionAccessTarget } from '../permissions/context-access.ts';
 import { makeActionPermissionLive, toSpiceDbActionObjectId } from '../permissions/service.ts';
 import { fullyConsistent } from '../permissions/client.ts';
 import {
@@ -129,13 +131,35 @@ const fixtureConfigurationFields = {
   ),
   moduleAccess: Schema.optionalKey(Schema.Literal(configuredModuleAccess)),
   moduleKeys: Schema.optionalKey(Schema.Array(TargetModuleKeySchema).check(Schema.isMinLength(1))),
+  /** Exact additional reader executor grants; allowed only in manager-only fixture execution. */
+  readerActionKeys: Schema.optionalKey(
+    Schema.Array(
+      ActionKeySchema.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(200),
+        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+      ),
+    ),
+  ),
+  readerProviderSubjectId: Schema.optionalKey(ProviderSubjectIdSchema),
 } as const;
-const RuntimeFixtureConfigurationSchema = Schema.Struct(fixtureConfigurationFields);
+const validReaderActionSelection = Schema.makeFilter(
+  (configuration: {
+    readonly actionExecutor?: string | undefined;
+    readonly actionKeys?: readonly string[] | undefined;
+    readonly readerActionKeys?: readonly string[] | undefined;
+  }) =>
+    configuration.readerActionKeys === undefined ||
+    (configuration.actionExecutor === managerOnlyExecution &&
+      new Set(configuration.readerActionKeys).size === configuration.readerActionKeys.length &&
+      configuration.readerActionKeys.every((key) => configuration.actionKeys?.includes(key) === true)),
+);
+const RuntimeFixtureConfigurationSchema = Schema.Struct(fixtureConfigurationFields).check(validReaderActionSelection);
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   ...fixtureConfigurationFields,
   adminConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
-});
+}).check(validReaderActionSelection);
 
 export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
 
@@ -155,6 +179,10 @@ const ServiceFixtureKeySchema = Schema.String.check(
 const ServiceFixtureActionKeySchema = ServiceFixtureKeySchema.pipe(Schema.brand('ServiceFixtureActionKey'));
 const ServiceFixtureModuleKeySchema = ServiceFixtureKeySchema.pipe(Schema.brand('ServiceFixtureModuleKey'));
 const ServiceFixtureLegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
+const FixtureContextPermissionAccessTargetSchema = Schema.Struct({
+  moduleId: ServiceFixtureModuleKeySchema,
+  permission: ServiceFixtureKeySchema,
+});
 const ExistingServiceFixtureGrantSchema = Schema.Struct({
   actionKeys: Schema.Array(ServiceFixtureActionKeySchema),
   legalEntityId: ServiceFixtureLegalEntityIdSchema,
@@ -268,7 +296,7 @@ const FixtureActorSchema = Schema.Struct({
 });
 /** Non-secret test identity/configuration only; never a credential or authorization receipt. */
 export const LiveOperationFixtureRuntimeHandoffSchema = Schema.Struct({
-  configuration: Schema.Struct(fixtureConfigurationFields),
+  configuration: RuntimeFixtureConfigurationSchema,
   denied: FixtureActorSchema,
   legalEntityId: Schema.requiredKey(TrustedPrincipalContextSchema.fields.legalEntityId),
   legalEntityOnly: Schema.Struct({
@@ -301,20 +329,40 @@ const fixturePrincipalValues = (actors: readonly FixtureActor[], tenantId: strin
     tenantId,
   }));
 
+interface FixtureProviderSubjects {
+  readonly managerProviderSubjectId?: string | undefined;
+  readonly readerProviderSubjectId?: string | undefined;
+}
+
+const fixtureProviderSubjectId = (
+  actor: FixtureActor,
+  manager: FixtureActor,
+  reader: FixtureActor,
+  configuration: FixtureProviderSubjects,
+) => {
+  if (actor === manager) {
+    return configuration.managerProviderSubjectId ?? actor.authBindingId;
+  }
+  if (actor === reader) {
+    return configuration.readerProviderSubjectId ?? actor.authBindingId;
+  }
+  return actor.authBindingId;
+};
+
 const fixtureAuthBindingValues = (
   actors: readonly FixtureActor[],
   tenantId: string,
   authenticationNamespaceId: string,
   manager: FixtureActor,
-  managerProviderSubjectId: string | undefined,
+  reader: FixtureActor,
+  configuration: FixtureProviderSubjects,
 ) =>
   actors.map((principal) => ({
     authenticationNamespaceId,
     principalAuthBindingId: principal.authBindingId,
     principalId: principal.principalId,
     provider: 'better_auth' as const,
-    providerSubjectId:
-      principal === manager ? (managerProviderSubjectId ?? principal.authBindingId) : principal.authBindingId,
+    providerSubjectId: fixtureProviderSubjectId(principal, manager, reader, configuration),
     status: 'active' as const,
     subjectType: principal.authMethod === 'api_key' ? ('api_key' as const) : ('user' as const),
     tenantId,
@@ -354,6 +402,7 @@ const fixtureAuthorizationRelationships = (input: {
   readonly manager: FixtureActor;
   readonly moduleObject: string;
   readonly reader: FixtureActor;
+  readonly readerActionKeys: readonly string[];
   readonly tenantId: string;
 }) => [
   ...input.actors.map((principal) =>
@@ -380,6 +429,9 @@ const fixtureAuthorizationRelationships = (input: {
     : buildActionAuthorizationRelationships(input.actionKeys, [
         { principalId: input.manager.principalId, tenantId: input.tenantId },
       ])),
+  ...buildExplicitActionGrantRelationships(
+    input.readerActionKeys.map((actionKey) => ({ actionKey, principalIds: [input.reader.principalId] })),
+  ),
 ];
 
 const fixtureProvisioningNamespaces = (
@@ -457,6 +509,8 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly namespaceObjects: readonly string[];
     readonly namespaceRelationships: readonly ReturnType<typeof relationship>[];
     readonly reader: FixtureActor;
+    readonly readerActionKeys: readonly string[];
+    readonly readerProviderSubjectId: string | undefined;
     readonly secondaryLegalEntityId: string | undefined;
     readonly spice: FixtureSpiceClient;
     readonly tenantId: string;
@@ -520,7 +574,8 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
           input.tenantId,
           input.authenticationNamespaceId,
           input.manager,
-          input.managerProviderSubjectId,
+          input.reader,
+          input,
         ),
       )
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to bind the live fixture principals', cause)));
@@ -538,6 +593,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       manager: input.manager,
       moduleObject,
       reader: input.reader,
+      readerActionKeys: input.readerActionKeys,
       tenantId: input.tenantId,
     });
     relations.push(...configuredModuleRelations, ...input.namespaceRelationships);
@@ -624,7 +680,7 @@ const makeFaultActionRepository = (state: FixtureFaultState, crypto: Crypto.Cryp
  * when a row is updated, so unordered snapshots cannot be compared.
  */
 const loadFixtureEvidence = Effect.fn('LiveOperations.loadFixtureEvidence')(
-  (executor: FixtureExecutor, tenantId: string) =>
+  (executor: Pick<FixtureExecutor, 'select'>, tenantId: string) =>
     Effect.all(
       {
         accesses: executor
@@ -720,6 +776,132 @@ const grantFixtureResourceAccess = Effect.fn('LiveOperations.grantResourceAccess
     );
   },
 );
+
+const grantFixtureContextPermissionAccess = Effect.fn('LiveOperations.grantContextPermissionAccess')(
+  function* grantFixtureContextPermissionAccessEffect(
+    spice: FixtureSpiceClient,
+    fixture: {
+      readonly legalEntityId: string;
+      readonly moduleKeys: ReadonlySet<string>;
+      readonly principalIds: ReadonlySet<string>;
+      readonly tenantId: string;
+    },
+    target: ContextPermissionAccessTarget,
+    principalId: string,
+  ) {
+    const invalid = (cause?: unknown) => fixtureFailure('Invalid live fixture context permission grant', cause);
+    const decoded = yield* Schema.decodeUnknownEffect(FixtureContextPermissionAccessTargetSchema, {
+      onExcessProperty: 'error',
+    })(target).pipe(Effect.mapError(invalid));
+    const principal = yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(principalId).pipe(Effect.mapError(invalid));
+    if (!fixture.moduleKeys.has(decoded.moduleId) || !fixture.principalIds.has(principal)) {
+      return yield* invalid();
+    }
+    const objectId = toContextPermissionAccessObjectId(fixture.tenantId, fixture.legalEntityId, decoded);
+    if (objectId === undefined) {
+      return yield* invalid();
+    }
+    const request = v1.WriteRelationshipsRequest.create({
+      updates: [
+        relationship('context_permission', objectId, 'tenant', 'tenant', fixture.tenantId),
+        relationship('context_permission', objectId, 'grantee', 'principal', principal),
+      ].map((item) =>
+        v1.RelationshipUpdate.create({
+          operation: v1.RelationshipUpdate_Operation.TOUCH,
+          relationship: item,
+        }),
+      ),
+    });
+    yield* attemptFixturePromise(
+      'Unable to grant live fixture context permission access',
+      spice.promises.writeRelationships.bind(spice.promises, request),
+    );
+    return yield* verifyFixturePermission(spice, principal, 'context_permission', objectId, 'access', true);
+  },
+);
+
+interface FixtureConfiguredModuleState {
+  readonly moduleKey: string;
+  readonly state: 'active' | 'suspended';
+}
+type FixtureConfiguredModuleStateSetter = (
+  ...request: [moduleKey: string, state: 'active' | 'suspended']
+) => Effect.Effect<FixtureConfiguredModuleState, LiveOperationFixtureError>;
+
+const makeFixtureConfiguredModuleStateSetter = (
+  adminConfiguration: Effect.Success<ReturnType<typeof parseFixtureDatabaseConfig>>,
+  { moduleKeys, tenantId }: { readonly moduleKeys: ReadonlySet<string>; readonly tenantId: string },
+): FixtureConfiguredModuleStateSetter =>
+  Effect.fn('LiveOperations.setConfiguredModuleState')(function* setConfiguredModuleState(
+    ...request: Parameters<FixtureConfiguredModuleStateSetter>
+  ) {
+    const invalid = (cause?: unknown) => fixtureFailure('Invalid configured fixture module state mutation', cause);
+    const [moduleKey, state] = yield* Schema.decodeUnknownEffect(
+      Schema.Tuple([ServiceFixtureModuleKeySchema, TenantModuleStateSchema]),
+      { onExcessProperty: 'error' },
+    )(request).pipe(Effect.mapError(invalid));
+    if (!moduleKeys.has(moduleKey) || (state !== 'active' && state !== 'suspended')) {
+      return yield* invalid();
+    }
+    return yield* Effect.scoped(
+      Effect.gen(function* mutateFixtureModuleState() {
+        const admin = yield* makeCoreDatabase({ ...adminConfiguration, maxConnections: 2 }).pipe(
+          Effect.mapError((cause) =>
+            fixtureFailure('Unable to initialize the fixture module-state admin database', cause),
+          ),
+        );
+        return yield* admin.executor
+          .transaction(
+            Effect.fn('LiveOperations.persistConfiguredModuleState')(
+              function* persistConfiguredModuleState(transaction) {
+                const predicate = and(
+                  eq(tenantModuleStates.tenantId, tenantId),
+                  eq(tenantModuleStates.moduleKey, moduleKey),
+                );
+                const changed = yield* transaction
+                  .update(tenantModuleStates)
+                  .set({ state })
+                  .where(predicate)
+                  .returning({
+                    moduleKey: tenantModuleStates.moduleKey,
+                    tenantId: tenantModuleStates.tenantId,
+                  });
+                if (changed.length !== 1 || changed[0]?.tenantId !== tenantId || changed[0]?.moduleKey !== moduleKey) {
+                  return yield* fixtureFailure(
+                    'Configured fixture module state update did not match exactly one existing row',
+                  );
+                }
+                const rows = yield* transaction
+                  .select({
+                    moduleKey: tenantModuleStates.moduleKey,
+                    state: tenantModuleStates.state,
+                    tenantId: tenantModuleStates.tenantId,
+                  })
+                  .from(tenantModuleStates)
+                  .where(predicate);
+                const [row] = rows;
+                if (
+                  rows.length !== 1 ||
+                  row?.tenantId !== tenantId ||
+                  row.moduleKey !== moduleKey ||
+                  row.state !== state
+                ) {
+                  return yield* fixtureFailure('Configured fixture module state readback did not match the update');
+                }
+                return { moduleKey: row.moduleKey, state: row.state };
+              },
+            ),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              Predicate.isTagged(cause, 'LiveOperationFixtureError')
+                ? cause
+                : fixtureFailure('Unable to persist configured fixture module state', cause),
+            ),
+          );
+      }),
+    );
+  });
 
 const decodeDatabaseAddress = (connectionString: Redacted.Redacted) =>
   Schema.decodeEffect(Schema.URLFromString)(Redacted.value(connectionString)).pipe(
@@ -918,6 +1100,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   readonly closeResources: Effect.Effect<void, LiveOperationFixtureError>;
   readonly executor: FixtureExecutor;
   readonly runtimeHandoff: LiveOperationFixtureRuntimeHandoff;
+  readonly setConfiguredModuleState?: FixtureConfiguredModuleStateSetter;
   readonly spice: FixtureSpiceClient;
   readonly spiceDb: Effect.Success<ReturnType<typeof loadSpiceDbConfig>>;
 }) {
@@ -925,11 +1108,20 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
   const crypto = yield* Crypto.Crypto;
+  const setConfiguredModuleState: FixtureConfiguredModuleStateSetter =
+    input.setConfiguredModuleState ??
+    (() => Effect.fail(fixtureFailure('Configured module state mutation requires the fixture creator')));
   const serviceGrantScope = {
     actionExecutor: configuration.actionExecutor ?? tenantMembershipExecution,
     actionKeys: new Set<string>(configuration.actionKeys),
     legalEntityId,
     moduleKeys: new Set<string>(configuration.moduleKeys ?? [fixturePartyModule]),
+    tenantId,
+  };
+  const contextPermissionGrantScope = {
+    legalEntityId,
+    moduleKeys: serviceGrantScope.moduleKeys,
+    principalIds: new Set([manager, legalEntityOnly, denied, reader].map((actor) => actor.principalId)),
     tenantId,
   };
   const faultState: FixtureFaultState = {
@@ -1102,7 +1294,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
     ),
     denied,
     /** Pass the admin executor; the fixture's own runtime connection is not an evidence reader. */
-    evidence: (evidenceExecutor: FixtureExecutor) => loadFixtureEvidence(evidenceExecutor, tenantId),
+    evidence: (evidenceExecutor: Pick<FixtureExecutor, 'select'>) => loadFixtureEvidence(evidenceExecutor, tenantId),
     faultNextTransaction: (fault: FixtureFault) => {
       faultState.next = fault;
     },
@@ -1110,6 +1302,9 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
     // Requires explicit manager-only fixture execution so Tenant membership cannot imply extra Actions.
     grantExistingService: (grant: ExistingServiceFixtureGrant) =>
       grantExistingFixtureService(executor, spice, serviceGrantScope, grant),
+    /** Explicit named permission for one existing actor in this fixture's fixed Tenant/Legal Entity. */
+    grantContextPermissionAccess: (target: ContextPermissionAccessTarget, principalId: string) =>
+      grantFixtureContextPermissionAccess(spice, contextPermissionGrantScope, target, principalId),
     grantResourceAccess: (
       resource: {
         readonly moduleId: string;
@@ -1139,6 +1334,8 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       principalId: string,
       permission: 'reader' | 'writer' = 'reader',
     ) => revokeFixtureResourceAccess(spice, tenantId, legalEntityId, resource, principalId, permission),
+    // Administrative test setup only; runtime-only attachments have no creator capability.
+    setConfiguredModuleState,
     // This is the same persisted Principal/binding with a second genuine, explicitly granted LE selection.
     // Core context resolution must still validate this context for every real Action/Read.
     secondaryLegalEntity:
@@ -1252,6 +1449,8 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           namespaceObjects,
           namespaceRelationships,
           reader,
+          readerActionKeys: configuration.readerActionKeys ?? [],
+          readerProviderSubjectId: configuration.readerProviderSubjectId,
           secondaryLegalEntityId,
           spice,
           tenantId,
@@ -1278,7 +1477,17 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Object.assign(handoffInput, { secondaryLegalEntityId });
     }
     const runtimeHandoff = yield* Schema.decodeUnknownEffect(LiveOperationFixtureRuntimeHandoffSchema)(handoffInput);
-    return yield* makeLiveOperationRuntime({ closeResources, executor, runtimeHandoff, spice, spiceDb });
+    return yield* makeLiveOperationRuntime({
+      closeResources,
+      executor,
+      runtimeHandoff,
+      setConfiguredModuleState: makeFixtureConfiguredModuleStateSetter(adminDatabaseConfiguration, {
+        moduleKeys: new Set(configuration.moduleKeys ?? [fixturePartyModule]),
+        tenantId,
+      }),
+      spice,
+      spiceDb,
+    });
   },
 );
 
@@ -1360,9 +1569,7 @@ const verifyRuntimeFixtureState = Effect.fn('LiveOperations.verifyRuntimeState')
             binding.provider === 'better_auth' &&
             binding.subjectType === (actor.authMethod === 'api_key' ? 'api_key' : 'user') &&
             binding.providerSubjectId ===
-              (actor === manager
-                ? (runtimeHandoff.configuration.managerProviderSubjectId ?? actor.authBindingId)
-                : actor.authBindingId),
+              fixtureProviderSubjectId(actor, manager, reader, runtimeHandoff.configuration),
         ),
     ) ||
     (runtimeHandoff.configuration.moduleKeys ?? [fixturePartyModule]).some(
@@ -1387,10 +1594,10 @@ export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachR
     const runtimeHandoff = yield* Schema.decodeUnknownEffect(LiveOperationFixtureRuntimeHandoffSchema, {
       onExcessProperty: 'error',
     })(input.handoff).pipe(Effect.mapError((cause) => fixtureFailure(INVALID_FIXTURE_CONFIGURATION, cause)));
-    const expected = yield* Schema.decodeUnknownEffect(Schema.Struct(fixtureConfigurationFields))(
-      input.configuration,
-    ).pipe(Effect.mapError((cause) => fixtureFailure(INVALID_FIXTURE_CONFIGURATION, cause)));
-    const encodeConfiguration = Schema.encodeEffect(Schema.fromJsonString(Schema.Struct(fixtureConfigurationFields)));
+    const expected = yield* Schema.decodeUnknownEffect(RuntimeFixtureConfigurationSchema)(input.configuration).pipe(
+      Effect.mapError((cause) => fixtureFailure(INVALID_FIXTURE_CONFIGURATION, cause)),
+    );
+    const encodeConfiguration = Schema.encodeEffect(Schema.fromJsonString(RuntimeFixtureConfigurationSchema));
     if ((yield* encodeConfiguration(expected)) !== (yield* encodeConfiguration(runtimeHandoff.configuration))) {
       return yield* fixtureFailure('Runtime fixture configuration differs from its creator');
     }

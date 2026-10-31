@@ -49,7 +49,6 @@ import { MarketRetirementImpactAssessmentUnavailable } from './market-retirement
 export { RetireMarketPayloadSchema } from '../../shared/action-contracts.ts';
 export type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 
-export { MarketRetirementImpactAssessmentRejected } from './market-retirement-impact-assessment-rejected.ts';
 export { MarketRetirementImpactAssessmentUnavailable } from './market-retirement-impact-assessment-unavailable.ts';
 
 const ErrorSchema = Schema.Union([
