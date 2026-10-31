@@ -45,7 +45,7 @@ CORE_OUT = FONT_DIR / "InterVariable-core.woff2"
 EXT_OUT = FONT_DIR / "InterVariable-ext.woff2"
 CSS_OUT = FONT_DIR / "inter-extended.generated.css"
 LAYOUT = REPO / "app" / "akros-storefront" / "src" / "app" / "layout.tsx"
-DECLARATION_RE = re.compile(r'(declarations: \[\{ prop: "unicode-range", value: ")([^"]*)(" \}\],?)')
+DECLARATION_RE = re.compile(r'(prop: "unicode-range",\s*value:\s*")([^"]*)(")')
 MANIFEST_OUT = FONT_DIR / "inter-subsets.generated.json"
 
 # Axis limits: exactly what the CSS can reach.
@@ -86,12 +86,19 @@ CORE_EXTRA = [
     0x20AC,  # euro sign
 ]
 
+# Combining diacritical marks must live in the core, next to the letters they attach to: with the
+# marks in the extended file, decomposed (NFD) input such as "e" + U+0301 is shaped by two different
+# faces, so ccmp cannot compose it and GPOS cannot attach the mark - it renders as a floating accent
+# instead of "é". macOS input, clipboard and CSV imports do produce NFD text.
+COMBINING_MARKS = list(range(0x0300, 0x0370))
+
 
 def core_codepoints(available: set[int]) -> list[int]:
     wanted = list(range(0x20, 0x7F))  # printable ASCII
     wanted += list(range(0x00A1, 0x0100))  # Latin-1 supplement (letters + symbols)
     wanted += list(range(0x0100, 0x0180))  # Latin Extended-A
     wanted += [0x0192, 0x0218, 0x0219, 0x021A, 0x021B]  # ƒ Ș ș Ț ț
+    wanted += COMBINING_MARKS
     wanted += CORE_EXTRA
     return sorted({cp for cp in wanted if cp in available})
 
@@ -196,7 +203,7 @@ def sync_layout_range(core_range: str) -> None:
     if not match:
         raise SystemExit(
             f"could not find the core unicode-range declaration in {LAYOUT}; "
-            "expected `declarations: [{ prop: \"unicode-range\", value: \"...\" }]`"
+            'expected `prop: "unicode-range", value: "..."` inside localFont(declarations)'
         )
     if match.group(2) == core_range:
         return
