@@ -2,12 +2,12 @@ import { defineScopedRoutine } from '@app/core-runtime';
 import type { OperationalScope, ScopedRoutineInvocationError, ScopedTransactionExecutor } from '@app/core-runtime';
 import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
-import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../actions/trigger-purchase-approval.action.ts';
+import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../services/purchase-approval-trigger-evidence-source.ts';
 import type {
   PurchaseApprovalTriggerCurrentEvidence,
   PurchaseApprovalTriggerEvidenceSource,
   PurchaseApprovalTriggerEvidenceSourceFactoryContract,
-} from '../actions/trigger-purchase-approval.action.ts';
+} from '../services/purchase-approval-trigger-evidence-source.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-counterparty-role-eligibility.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 import type { ProfilePersistenceDependencies } from './profile-persistence.ts';

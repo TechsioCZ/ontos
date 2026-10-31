@@ -1,3 +1,4 @@
+import { unusedApprovalPreparationLayer } from '../support/unused-approval-preparation.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
@@ -22,10 +23,8 @@ import {
 } from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseLimitEvaluationInput } from '../../shared/domain/purchase-limit-evaluation.ts';
 import { PurchaseLimitPolicySnapshotSchema } from '../../shared/domain/purchase-limit-policy.ts';
-import {
-  PurchaseApprovalTriggerEvidenceSourceFactory,
-  triggerPurchaseApprovalAction,
-} from '../../src/actions/trigger-purchase-approval.action.ts';
+import { triggerPurchaseApprovalAction } from '../../src/actions/trigger-purchase-approval.action.ts';
+import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../../src/services/purchase-approval-trigger-evidence-source.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -232,6 +231,7 @@ it.effect('collects audit/read evidence and publishes the owner-returned approva
       Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
         make: () => Effect.die('Factory requirements are not used by the extracted handler'),
       }),
+      Effect.provide(unusedApprovalPreparationLayer),
     );
 
     expect(Schema.is(TriggerPurchaseApprovalResultSchema)(result)).toBe(true);
@@ -287,6 +287,7 @@ it.effect('fails closed when a source changes between evaluation and final evide
       Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
         make: () => Effect.die('Factory requirements are not used by the extracted handler'),
       }),
+      Effect.provide(unusedApprovalPreparationLayer),
     );
 
     expect(Schema.is(Schema.Struct({ _tag: Schema.Literal('APPROVAL_PRECONDITION_FAILED') }))(result)).toBe(true);
