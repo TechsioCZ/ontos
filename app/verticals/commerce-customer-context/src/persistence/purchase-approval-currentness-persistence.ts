@@ -1,5 +1,6 @@
-import { ContextAccess } from '@app/core-runtime';
+import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
 import type {
+  ActionServicePreparationContext,
   BusinessPermissionAccessTarget,
   ContextAccessService,
   OperationalScope,
@@ -53,21 +54,28 @@ import type { PurchaseValue } from '../../shared/domain/purchase-limit.ts';
 import { CommerceCustomerProfileRefSchema } from '../../shared/domain/profile-decisions.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-counterparty-role-eligibility.ts';
 import type { ProfilePersistenceDependencies } from './profile-persistence.ts';
-import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
+import {
+  ProfilePersistenceDependencyFailure,
+  profilePersistenceServicesForTransaction,
+} from './profile-persistence.ts';
 import { currentOwnerAccessForTransaction, lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
 import {
   purchaseLimitEvaluationSourceForVerifiedOrderSubject,
+  purchaseLimitEvaluationSourceForTransaction,
   readCurrentPurchaseLimitPolicyState,
   readCurrentPurchaseProposalRoutine,
 } from './purchase-limit-persistence.ts';
 import { readCurrentPurchaseApprovalRevalidationRoutine } from './purchasing-approval-persistence.ts';
 
 import type { RevalidatePurchaseApprovalPayload } from '../../shared/actions/revalidate-purchase-approval.ts';
+import { preparePurchaseProposalBasisCurrentness } from '../services/purchase-proposal-basis.service.ts';
+import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
 
 const PROFILE_SOURCE = 'purchasing-profile';
 const PROPOSAL_SOURCE = 'purchase-proposal';
 const INVALID_COUNTERPARTY_REFERENCE = 'The owner-current Counterparty reference is invalid';
 const OWNER_SOURCE_NAMES = new Set(['counterparty-policy', 'principal-override']);
+const BUYER_SUBMISSION_PERMISSION = 'counterparty.purchase.submit' as const;
 
 const SnapshotSchema = Schema.Struct({
   decision: ApprovalDecisionSchema,
@@ -315,7 +323,7 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
         snapshot.proposal.identity.counterpartyRef,
       ).pipe(Effect.mapError(mapCurrentnessError(INVALID_COUNTERPARTY_REFERENCE)));
       const target: BusinessPermissionAccessTarget = {
-        permission: 'counterparty.purchase.submit',
+        permission: BUYER_SUBMISSION_PERMISSION,
         target: {
           counterpartyId: counterparty.resourceId,
           kind: 'counterparty_storefront',
@@ -341,7 +349,7 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
       const owner = yield* readOwnerAccess({
         counterpartyRef: counterparty,
         legalEntityId: scope.legalEntityId,
-        permission: 'counterparty.purchase.submit',
+        permission: BUYER_SUBMISSION_PERMISSION,
         principal: snapshot.proposal.identity.buyer,
         scope: { kind: 'storefront', storefrontKey: scope.storefrontId },
       });
@@ -745,6 +753,152 @@ const purchaseApprovalCurrentnessForTransaction = (
   };
   return service;
 };
+
+const submissionPreparationUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Prepared submission owner evidence could not be revalidated',
+    }),
+    'cause',
+    { value: cause },
+  );
+
+/** Core permission is observed outside SQL; owner authorization remains locked and checked at commit. */
+export const preparePurchaseApprovalSubmissionCurrentness = Effect.fn('PurchaseApprovalCurrentness.prepareSubmission')(
+  function* prepareSubmission(claimed: SubmitPurchaseApprovalRequestInput, context: ActionServicePreparationContext) {
+    const { scope } = context;
+    const { legalEntityId, trustedStorefrontId } = scope;
+    if (
+      legalEntityId === undefined ||
+      trustedStorefrontId === undefined ||
+      claimed.counterpartyRef.tenantId !== scope.tenantId ||
+      claimed.proposalRevisionRef.tenantId !== scope.tenantId ||
+      claimed.storefrontId !== trustedStorefrontId
+    ) {
+      return yield* denied('Submission preparation requires the trusted Counterparty and Storefront');
+    }
+    const trustedScope = {
+      legalEntityId,
+      principalId: scope.principalId,
+      storefrontId: trustedStorefrontId,
+      tenantId: scope.tenantId,
+    };
+    const before = yield* context.transaction((transaction) =>
+      invokeCurrentProposal(transaction, claimed.proposalRevisionRef.resourceId),
+    );
+    yield* assertClaimedSubmissionTarget(claimed, before, trustedScope);
+    const contextAccess = yield* ContextAccess;
+    const check = contextAccess.businessPermissions;
+    if (check === undefined) {
+      return yield* currentnessRejected('Core buyer authorization is unavailable');
+    }
+    const permissionRequest = {
+      principal: before.proposal.identity.buyer,
+      targets: [
+        {
+          permission: BUYER_SUBMISSION_PERMISSION,
+          target: {
+            counterpartyId: before.proposal.identity.counterpartyRef.resourceId,
+            kind: 'counterparty_storefront' as const,
+            legalEntityId,
+            storefrontId: trustedStorefrontId,
+            tenantId: scope.tenantId,
+          },
+        },
+      ],
+      trustedStorefrontId,
+    };
+    const roleFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+    const [prepareBasis, permission, role] = yield* Effect.all(
+      [
+        preparePurchaseProposalBasisCurrentness(context, before.proposal.purchaseValue),
+        check(permissionRequest),
+        roleFactory.make({ legalEntityId, requestCorrelation: scope.correlationId, tenantId: scope.tenantId })({
+          counterpartyResourceId: before.proposal.identity.counterpartyRef.resourceId,
+          tenantId: scope.tenantId,
+        }),
+      ],
+      { concurrency: 3 },
+    ).pipe(Effect.mapError(mapCurrentnessError('Current submission owner evidence is unavailable')));
+    const sameProposal = Schema.toEquivalence(Schema.toType(ProposalFactsSchema));
+    const intentRevision = stableRevision(claimed);
+    const permissionRevision = stableRevision(permissionRequest);
+    return Effect.fn('PurchaseApprovalCurrentness.submissionCommitServices')(function* commitServices(
+      transaction: ScopedTransactionExecutor,
+      currentScope: OperationalScope,
+      revision: string,
+    ) {
+      const [prepared, current] = yield* Effect.all(
+        [
+          prepareBasis(transaction, currentScope, revision),
+          invokeCurrentProposal(transaction, claimed.proposalRevisionRef.resourceId).pipe(
+            Effect.mapError(submissionPreparationUnavailable),
+          ),
+        ],
+        { concurrency: 1 },
+      );
+      if (!sameProposal(before, current)) {
+        return yield* submissionPreparationUnavailable(
+          currentnessRejected('Submission proposal changed during preparation'),
+        );
+      }
+      const preparedAccess: ContextAccessService = {
+        ...contextAccess,
+        businessPermissions: (request) =>
+          Effect.succeed(stableRevision(request) === permissionRevision ? permission : []),
+      };
+      const ownerScope = { ...currentScope, legalEntityId, trustedStorefrontId };
+      const currentness = purchaseApprovalCurrentnessForTransaction(
+        transaction,
+        ownerScope,
+        preparedAccess,
+        prepared.currentness,
+        {
+          resolveCounterpartyRole: (request) =>
+            request.tenantId === scope.tenantId &&
+            request.counterpartyResourceId === before.proposal.identity.counterpartyRef.resourceId
+              ? Effect.succeed(role)
+              : Effect.fail(
+                  new ProfilePersistenceDependencyFailure({ reason: 'Prepared submission Counterparty differs' }),
+                ),
+        },
+        purchaseLimitEvaluationSourceForTransaction(transaction, ownerScope, prepared.currentness),
+      );
+      const { resolveSubmission } = currentness;
+      if (resolveSubmission === undefined) {
+        return yield* submissionPreparationUnavailable(currentnessRejected('Submission resolver is unavailable'));
+      }
+      const bound: PurchaseApprovalCurrentnessService = {
+        forTransaction: (candidate, candidateScope) =>
+          Object.is(candidate, transaction) &&
+          candidateScope.tenantId === scope.tenantId &&
+          candidateScope.legalEntityId === legalEntityId &&
+          candidateScope.principalId === scope.principalId &&
+          candidateScope.storefrontId === trustedStorefrontId
+            ? bound
+            : {
+                resolveRevalidation: () => Effect.fail(denied('Prepared submission transaction differs')),
+                resolveSubmission: () => Effect.fail(denied('Prepared submission transaction differs')),
+              },
+        resolveRevalidation: () =>
+          Effect.fail(currentnessRejected('Submission preparation cannot revalidate an approval')),
+        resolveSubmission: (request) =>
+          stableRevision(request.claimed) === intentRevision &&
+          request.scope.tenantId === scope.tenantId &&
+          request.scope.legalEntityId === legalEntityId &&
+          request.scope.principalId === scope.principalId &&
+          request.scope.storefrontId === trustedStorefrontId
+            ? resolveSubmission(request)
+            : Effect.fail(denied('Prepared submission intent or scope differs')),
+      };
+      return {
+        currentness: bound,
+        revalidate: prepared.revalidate,
+      };
+    });
+  },
+);
 
 const sameCurrentPurchaseValue = (left: PurchaseValue, right: PurchaseValue): boolean =>
   left.sourceRef === right.sourceRef &&

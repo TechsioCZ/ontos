@@ -5,6 +5,7 @@ import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import {
   basisCurrentnessMatchesClaim,
   proposalMatchesPreapprovalCart,
+  preparedBasisCurrentnessWindowOpen,
   purchaseProposalBasisReadSnapshotMatches,
   quotationPublicationRevision,
   recoverCompletedProposalBasis,
@@ -21,6 +22,16 @@ const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
 const id = '44444444-4444-4444-8444-444444444444';
 const at = '2026-10-23T00:00:00.000Z';
+
+it('keeps the owner preparation clock unchanged and rejects future, expired, and over-age observations', () => {
+  expect(preparedBasisCurrentnessWindowOpen(1000, 1001, 3000, 1002)).toBe(true);
+  expect(preparedBasisCurrentnessWindowOpen(1000, 1000, 3000, 1000)).toBe(true);
+  expect(preparedBasisCurrentnessWindowOpen(1000, 999, 3000, 1002)).toBe(false);
+  expect(preparedBasisCurrentnessWindowOpen(1000, 1003, 3000, 1002)).toBe(false);
+  expect(preparedBasisCurrentnessWindowOpen(1000, 1001, 3000, 3000)).toBe(false);
+  expect(preparedBasisCurrentnessWindowOpen(1000, 31_001, 40_000, 31_002)).toBe(false);
+  expect(preparedBasisCurrentnessWindowOpen(1000, 1001, Number.NaN, 1002)).toBe(false);
+});
 
 it.effect('rejects prepared basis evidence at its exclusive End and when validity is unknown', () =>
   Effect.gen(function* preparedBasisValidity() {
