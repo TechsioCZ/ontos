@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
+import { Cause, Config, Context, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 import { ConnectionError, UnknownError, isSqlError } from 'effect/sql/SqlError';
 
@@ -14,6 +14,7 @@ import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
@@ -1258,6 +1259,20 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       HandlerRequirements
     >,
   ) {
+    // Temporary test-first rollout. Remove the switch once the guarded integration inventory is clean.
+    const guardActionTransactions = yield* Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+      Config.withDefault(false),
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new ActionTransactionError({
+            code: 'action_transaction_failed',
+            reason: 'Action transaction protection configuration is invalid',
+          }),
+          'cause',
+          { value: cause },
+        ),
+      ),
+    );
     const prepareTrustedInputAndContext = Effect.fn('ActionRuntime.prepareTrustedInputAndContext')(
       function* prepareTrustedInputAndContextEffect() {
         const payload = yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload);
@@ -2097,8 +2112,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       return transactionValue;
     });
 
-    const observeTransactionBody = (transaction: CoreTransaction) =>
-      transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)));
+    const observeTransactionBody = (transaction: CoreTransaction) => {
+      const program = transactionProgram(transaction);
+      return (
+        guardActionTransactions
+          ? program.pipe(insideDatabaseTransaction(input.registration.descriptor.actionKey))
+          : program
+      ).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)));
+    };
 
     const classifyTransactionOutcome = Effect.fn('ActionRuntime.classifyTransactionOutcome')(
       function* classifyTransactionOutcome(

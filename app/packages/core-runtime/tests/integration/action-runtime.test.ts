@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import {
   Cause,
   Context,
+  ConfigProvider,
   Crypto,
   DateTime,
   Deferred,
@@ -29,6 +30,7 @@ import { createDomainEventReference } from '../../src/actions/events.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
+import { OpenDatabaseTransaction, refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import {
@@ -2136,6 +2138,61 @@ const testCompositionTransactionFence = () =>
     }),
   );
 
+const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemoteIo')(function* refuseRemoteIo() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+  const key = 'guarded-remote-io';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  let preflightSawNoTransaction = false;
+  let handlerSawTransaction = false;
+  const prepareRemoteWork = Effect.gen(function* prepareRemoteWorkEffect() {
+    preflightSawNoTransaction = Option.isNone(yield* OpenDatabaseTransaction);
+    return { outcome: 'not_applicable' } as const;
+  });
+  const forbiddenRemoteWork = Effect.gen(function* forbiddenRemoteWorkEffect() {
+    handlerSawTransaction = Option.isSome(yield* OpenDatabaseTransaction);
+    yield* refuseInsideDatabaseTransaction('outbound-fetch', 'https://owner.fixture.invalid/read');
+  });
+  yield* withDatabase((database) =>
+    Effect.gen(function* guardedAction() {
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        {
+          ...openActionRuntimeOptions,
+          authorizationPreflight: { prepare: () => prepareRemoteWork },
+        },
+      );
+      const action = makeRegistration({
+        actionKey: 'shell.test.guarded-remote-io',
+        moduleStateKey,
+        onExecuteEffect: forbiddenRemoteWork,
+      });
+      const exit = yield* runtime
+        .runAction({
+          payload: { value: 'must-not-commit' },
+          principal,
+          registration: action,
+          transport: transport(key, moduleStateKey),
+        })
+        .pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
+          ),
+          Effect.exit,
+        );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(preflightSawNoTransaction).toBe(true);
+      expect(handlerSawTransaction).toBe(true);
+      expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+      const [states] = yield* persistedActionEvidence(database, key, moduleStateKey);
+      expect(states).toHaveLength(0);
+    }),
+  );
+});
+
 it.layer(
   Layer.merge(
     Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))).pipe(
@@ -2148,6 +2205,10 @@ it.layer(
     excludeTestServices: true,
   },
 )('Action runtime', (suite) => {
+  suite.effect(
+    'marks the Action transaction, refuses remote I/O, and leaves preflight outside it',
+    testGuardedActionRemoteIo,
+  );
   suite.effect(
     'fences release draining behind committed owner writes and their Outbox evidence',
     testCompositionTransactionFence,

@@ -28,6 +28,10 @@ defaults:
   run:
     shell: bash
 
+# Guard all unit/integration Actions before production enablement; stage delivery is a separate workflow.
+env:
+  ONTOS_ACTION_TRANSACTION_IO_GUARD: 'true'
+
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
