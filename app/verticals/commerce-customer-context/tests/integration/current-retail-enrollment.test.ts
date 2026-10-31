@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Crypto, Effect, Option, Result, Schema } from 'effect';
@@ -41,13 +39,8 @@ it.live('recovers only the live subject’s exact durable Attempt, refusing cros
           Effect.gen(function* scopedLookup() {
             const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
               transaction.execute(statement, 'objects');
-            const migration = readFileSync(
-              new URL('../../drizzle/20261024003000_current-retail-enrollment/migration.sql', import.meta.url),
-              'utf-8',
-            );
-            for (const statement of migration.split('--> statement-breakpoint')) {
-              yield* execute(sql.raw(statement));
-            }
+            // Exercise the migrated database as deployed. Replaying this historical migration
+            // would collide with its installed function or replace a newer production body.
             yield* execute(
               sql`select set_config('ontos.tenant_id', ${tenant}, true), set_config('ontos.legal_entity_id', ${legalEntity}, true)`,
             );
