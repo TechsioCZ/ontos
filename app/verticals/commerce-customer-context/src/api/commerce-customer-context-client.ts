@@ -86,6 +86,7 @@ export * from './market-bootstrap-policy-current-client.ts';
 export * from './market-bootstrap-resolution-client.ts';
 export * from './market-subject-restrictions-current-client.ts';
 export * from './market-affected-use-assessment-client.ts';
+export * from './market-retirement-reservation-client.ts';
 export * from './payment-terms-resolution-client.ts';
 export * from './purchase-currency-resolution-client.ts';
 export * from './retail-purchasing-subject-current-v1-client.ts';

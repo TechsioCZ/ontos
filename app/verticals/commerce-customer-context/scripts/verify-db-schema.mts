@@ -110,6 +110,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_effective_customer_group_memberships',
   'read_enrollment_invitation_claim',
   'read_guest_attribution',
+  'read_market_retirement_reservation',
   'read_order_commitment_approval_evidence',
   'read_order_service_approval_proof',
   'read_portal_enrollment_attempt',
