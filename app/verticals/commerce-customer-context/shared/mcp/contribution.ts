@@ -543,6 +543,7 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
       },
     },
     'market-bootstrap-resolution': 'hidden',
+    'market-retirement-reservation': 'hidden',
     'market-subject-restrictions-current': {
       title: {
         cs: 'Aktuální omezení subjektů na trhu',

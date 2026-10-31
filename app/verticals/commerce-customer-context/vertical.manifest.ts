@@ -64,8 +64,8 @@ import { counterpartyApprovalRequestManagePermission } from './shared/permission
 import { CounterpartyCommerceAccessCheckApi } from './shared/apis/counterparty-commerce-access-check.ts';
 import { CounterpartyCommerceAccessDetailApi } from './shared/apis/counterparty-commerce-access-detail.ts';
 import { counterpartyCommerceAccessGrantResourceDescriptor } from './shared/resources/counterparty-commerce-access-grant.ts';
-import { CounterpartyCustomerGroupMembershipsApi } from './shared/apis/counterparty-customer-group-memberships.ts';
 import { CounterpartyCommerceAccessListApi } from './shared/apis/counterparty-commerce-access-list.ts';
+import { CounterpartyCustomerGroupMembershipsApi } from './shared/apis/counterparty-customer-group-memberships.ts';
 import { counterpartyHistoryReadAllPermission } from './shared/permissions/counterparty-history-read-all.ts';
 import { counterpartyHistoryReadOwnPermission } from './shared/permissions/counterparty-history-read-own.ts';
 import { CounterpartyOrderHistoryApi } from './shared/apis/counterparty-order-history.ts';
@@ -110,6 +110,7 @@ import { MarketAffectedUseAssessmentApi } from './shared/apis/market-affected-us
 import { MarketBootstrapPolicyCurrentApi } from './shared/apis/market-bootstrap-policy-current.ts';
 import { marketBootstrapPolicyResourceDescriptor } from './shared/resources/market-bootstrap-policy.ts';
 import { MarketBootstrapResolutionApi } from './shared/apis/market-bootstrap-resolution.ts';
+import { MarketRetirementReservationApi } from './shared/apis/market-retirement-reservation.ts';
 import { MarketSubjectRestrictionsCurrentApi } from './shared/apis/market-subject-restrictions-current.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
@@ -318,6 +319,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'market-affected-use-assessment': MarketAffectedUseAssessmentApi,
       'market-bootstrap-policy-current': MarketBootstrapPolicyCurrentApi,
       'market-bootstrap-resolution': MarketBootstrapResolutionApi,
+      'market-retirement-reservation': MarketRetirementReservationApi,
       'market-subject-restrictions-current': MarketSubjectRestrictionsCurrentApi,
       'order-commitment-approval-evidence': OrderCommitmentApprovalEvidenceApi,
       'order-service-approval-evidence': OrderServiceApprovalEvidenceApi,
