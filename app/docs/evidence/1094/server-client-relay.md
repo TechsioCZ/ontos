@@ -1,8 +1,9 @@
 # #1284 server client relay — implementation evidence
 
 Retained Steps 3–12 exercise the eight adapter paths below against real packaged Node owners on the
-UltraModern .16 cohort. Step 13 quality and security checks remain in progress; final independent
-#1284 acceptance is pending. This document records bounded results, not issue completion.
+UltraModern .16 cohort. At this recorded checkpoint, required validation is complete at the pinned
+sources below; whole-issue independent review, the source PR and #1284 closure remain pending. This document records evidence,
+not issue acceptance.
 
 ## Authority and identity
 
@@ -111,7 +112,8 @@ covers refusal before native scope/callback I/O.
 
 This helper executes a factory callback, not the owning business Read handler: it does not establish
 that handler's business authorization, Current result or evidence. The mounted postal 403s remain
-the public-path result. These processes use the shared runtime database identity; they do not prove
+the public-path result. Static default-assembly inspection shows unavailable Current purchase providers;
+the mounted 403s do not reach those sites. These processes use the shared runtime database identity; they do not prove
 per-owner database isolation.
 
 Market Bootstrap added only a typed owner-fixture `trustedStorefrontId` to an independently verified
@@ -122,7 +124,7 @@ were observed. Fingerprints bind audience, `R`, correlation, operation, Principa
 application/build. Target JTI values and private Market nonce rows were **not directly observed**;
 the separate replay suite does not imply that observation.
 
-## Current Step 13 gate
+## Security results and earlier gate
 
 At source `9bfcca2a8eea229f64bd1b9943a5eb917cea191e`, the initial official `pnpm check`
 failed after policy typecheck and **303 policy tests passed**. Core Action units recorded
@@ -136,7 +138,7 @@ package artifact hashes remained unchanged in the initial run.
 | Existing named security suites                                                                                                                                                                 | **348 passed / 26 files** against the current .16 cohort.                                                                                                                                                 |
 | New [issuer](../../../apps/shell-super-app/tests/unit/gateway-relay-issuer.test.ts) and [authentication](../../../apps/shell-super-app/tests/unit/gateway-relay-authentication.test.ts) matrix | **66 passed (42 + 24)**, executed and reviewed. Real cryptography, Drizzle and authentication functions; Current/module/ledger dependencies are controlled. **UNIT_ONLY**, not live outage/role evidence. |
 | Actual Manufacturer security native case                                                                                                                                                       | **1 passed**, approximately **23 seconds**; actual packaged HTTP owners, original actor and real Party-dependent outage.                                                                                  |
-| Remaining gates                                                                                                                                                                                | Isolated storage/role checks, final official `pnpm check`, final security-matrix consolidation and independent #1284 review **pending**. No full gate or issue-completion claim.                          |
+| Closure status                                                                                                                                                                                 | Required validation is complete as recorded below. Whole-issue independent review, the source PR and #1284 closure remain **pending**.                                                                    |
 
 The native case observed **11 exact denials**: four HTTP 401 crypto/audience cases and seven HTTP 403
 policy/scope/replay/revocation cases. Two legitimate independent exchanges from the same enrolled
@@ -149,6 +151,55 @@ record remained received and no executed result appeared. Restoring the same Par
 the public relation at revision 1. Original `P`'s key was revoked last, preserving the independence of
 earlier controls. Owned queue count and remaining process count were both zero. These native results
 do not turn controlled unit dependencies into live storage or database-role failure proof.
+
+## Completed validation and source scope
+
+Complete-equivalent unit/component coverage and the five affected integration files ran at
+`b0cc8a763cd87165203c08718e46e473c183593a` (B0). The validated candidate
+`0a671601a85332ca24a4d46de5b767578591692e` adds only the reviewed inventory-hash and baseline-source
+fields in [authorization rollout metadata](../../../topology/authorization-rollout.json). Its baseline
+points to B0: 648 inventory entries versus 647 previously, with 59 business permissions unchanged.
+Enforcement, compatibility settings and rollout decisions are unchanged.
+
+| Validation                    | Executed result and qualification                                                                                                                                                                                                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Unit coverage                 | **8,798 passed across 28 packages** at B0, serialized with one workspace task/worker. **Complete-equivalent coverage, not a literal root `pnpm test:unit` PASS.**                                                                                                                                            |
+| Shared-contract type projects | Both `tests/tsconfig.json` and `tests/client-runtime-types.tsconfig.json` passed through the unchanged `test:types` script.                                                                                                                                                                                  |
+| Components                    | All **3 tests / 2 files** passed in the sole component script, Party Registry.                                                                                                                                                                                                                               |
+| Affected integrations         | All **5 full files / 29 tests** passed: 21 PostgreSQL-related cases plus 8 accompanying PriceGroup controls. A separate one-case diagnostic is excluded.                                                                                                                                                     |
+| CI tooling triplet            | **1,550 tests passed**: `test:scripts` 1,283/88 files; compound `test:deployment-impact` 105/2; `test:generation` 162/10. Commands remained intact.                                                                                                                                                          |
+| Official full gate            | **`pnpm check` PASS, exit 0**, at exact candidate `0a671601a85332ca24a4d46de5b767578591692e` in the independent native checkout. Policy 303/26 files, Core Action 130/13, format 7,394 files, typed lint 7,155 files with no errors/warnings, reference typecheck and every remaining required phase passed. |
+
+The full affected files are
+[QuantityProfile admission](../../../verticals/commerce-customer-context/tests/integration/quantity-profile-admission-postgres.test.ts) (6),
+[customer policy persistence](../../../verticals/commerce-customer-context/tests/integration/customer-commerce-policy-persistence-postgres.test.ts) (1),
+[Guest evidence authority](../../../verticals/commerce-customer-context/tests/integration/guest-attribution-evidence-authority-postgres.test.ts) (6),
+[PriceGroup periods](../../../verticals/commerce-customer-context/tests/integration/price-group-effective-period-postgres.test.ts) (13: five database scenarios and eight controls),
+and [privacy self-service HTTP](../../../verticals/privacy/tests/integration/privacy-retained-purpose-self-service-http-postgres.test.ts) (3).
+Existing deadlines were unchanged. Earlier concurrent attempts failed; no CPU cause was proven.
+Accepted serial runs passed with normal deadlines, restored the database catalog and left no owned
+processes. Performance readiness is configuration proof, not a benchmark.
+
+Separate current .16 storage/role verification passed **19/19 tests across four files**:
+[Shell ledger](../../../apps/shell-super-app/tests/integration/gateway-relay-exchanges.test.ts) (3),
+[CCC durable redemption](../../../verticals/commerce-customer-context/tests/integration/gateway-assertion-redemption-postgres.test.ts) (6, including a real isolated process restart),
+[Market redemption](../../../verticals/commerce-market-catalog/tests/integration/gateway-assertion-redemption-postgres.test.ts) (3),
+and [Party role boundary](../../../verticals/party-registry/tests/integration/database-role-boundary.test.ts) (7).
+These comprise **16 PostgreSQL-related cases and 3 protocol controls**, separate from the 29 affected
+regressions above. Cleanup restored the database catalog, left no owned suite processes and preserved
+all 36 runtime artifacts unchanged.
+
+The independent native checkout verified all **10,834 tracked entries** against the original bytes,
+types, modes and raw links, with its own `.git`, no alternates and no remotes. Parent/closed-child
+identity probes agreed on source/build identity. A normal frozen offline install completed in about
+11 seconds with lifecycle scripts/hooks enabled; genuine jq/Python prerequisites were provided.
+No code, SDK, guard or timeout workaround was used. Final source checks were clean, all **36 original
+runtime artifacts remained unchanged**, and no owned validation processes remained.
+
+Latest-main review compared `ab3f7d9b2ca57a55452fc5be5ab4339a80ddf6a4` with
+`f978c84d0a7096b9e98798d9a1d006865cfa6238`: six commits/twelve files, without an affected server path
+or duplicate #1284/#1215 repair. It required no rebase, runtime rebuild or native-path rerun. These
+validation results do not imply deployment or final whole-issue acceptance.
 
 ## Reproduction
 
@@ -164,5 +215,29 @@ locki exec --match dr4npkf0 -- sh -lc 'cd app && APP_ENV_PATH=/dev/null mise exe
 locki exec --match dr4npkf0 -- sh -lc 'cd app && APP_ENV_PATH=/dev/null mise exec -- pnpm --filter @app/core-runtime test:unit tests/unit/native-read-test-context.test.ts --pool.maxWorkers 1'
 ```
 
-This documentation refresh did not rerun those checks. Frozen phase results above must be updated
-when Step 13 completes.
+For the complete-equivalent unit coverage, run these accepted serial commands from `app/` at B0,
+with the same secure fixture prerequisites. Shared-contract unit and type checks are separate so
+Rstest worker flags do not leak into the type-check script:
+
+```sh
+APP_ENV_PATH=/dev/null mise exec -- pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter '!.' --filter '!@app/shared-contracts' run test:unit --pool.maxWorkers=1
+APP_ENV_PATH=/dev/null mise exec -- pnpm --filter @app/shared-contracts exec rstest run --project unit --pool.maxWorkers=1
+APP_ENV_PATH=/dev/null mise exec -- pnpm --filter @app/shared-contracts test:types
+APP_ENV_PATH=/dev/null mise exec -- pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter '!.' run test:component --pool.maxWorkers=1
+```
+
+The successful full gate and CI tooling ran from `app/` in the independent exact-source native
+checkout at `0a671601a85332ca24a4d46de5b767578591692e`, after a normal frozen offline install and
+reference typecheck. Genuine Git, jq and Python must be available; retain normal hooks and diagnostics:
+
+```sh
+APP_ENV_PATH=/dev/null mise exec -- pnpm install --frozen-lockfile --offline
+APP_ENV_PATH=/dev/null mise exec -- pnpm typecheck
+APP_ENV_PATH=/dev/null mise exec -- pnpm test:scripts
+APP_ENV_PATH=/dev/null mise exec -- pnpm test:deployment-impact --pool.maxWorkers=1
+APP_ENV_PATH=/dev/null mise exec -- pnpm test:generation --pool.maxWorkers=1
+APP_ENV_PATH=/dev/null mise exec -- pnpm check
+```
+
+This documentation refresh did not rerun those commands. The full gate's source pin precedes this
+documentation-only update, which received targeted formatting and link verification.
