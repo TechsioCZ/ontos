@@ -2138,9 +2138,14 @@ const testCompositionTransactionFence = () =>
     }),
   );
 
-const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemoteIo')(function* refuseRemoteIo() {
+const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemoteIo')(function* refuseRemoteIo(
+  configuration: Readonly<Record<string, boolean>>,
+) {
   const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
-  const key = 'guarded-remote-io';
+  const key =
+    configuration['ONTOS_ACTION_TRANSACTION_IO_GUARD'] === false
+      ? 'guarded-remote-io-disabled'
+      : 'guarded-remote-io-default';
   const moduleStateKey = `test.${key}.${tenantId}`;
   let preflightSawNoTransaction = false;
   let handlerSawTransaction = false;
@@ -2177,10 +2182,7 @@ const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemo
           transport: transport(key, moduleStateKey),
         })
         .pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
-          ),
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(configuration)),
           Effect.exit,
         );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -2289,9 +2291,11 @@ it.layer(
     'prepares invocation-local remote facts between guarded owner transactions',
     testActionServicePreparation,
   );
-  suite.effect(
-    'marks the Action transaction, refuses remote I/O, and leaves preflight outside it',
-    testGuardedActionRemoteIo,
+  suite.effect('guards every Action transaction by default and leaves preflight outside it', () =>
+    testGuardedActionRemoteIo({}),
+  );
+  suite.effect('does not let the retired rollout flag disable Action transaction protection', () =>
+    testGuardedActionRemoteIo({ ONTOS_ACTION_TRANSACTION_IO_GUARD: false }),
   );
   suite.effect(
     'fences release draining behind committed owner writes and their Outbox evidence',
