@@ -4,10 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, ConfigProvider, Effect, Exit, Schema } from 'effect';
+import { Array as EffectArray, Cause, ConfigProvider, Effect, Exit, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
+import {
+  checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect,
+  validateGatewayIssuerEntrypoints,
+} from '../check-module-entrypoint-boundaries.mts';
+import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-contracts/src/gateway-context.ts';
 import {
   hasCompleteGeneratedModuleApiSeam,
   hasValidGovernedHttpCompositionRoot,
@@ -628,13 +632,15 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
     'apps/shell-super-app/shared/api.ts',
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
 export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup);
-export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context'];`,
+export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context', '/shell-super-app-api/auth/relay/gateway-context'];`,
   );
   yield* write(
     root,
     'apps/shell-super-app/api/index.ts',
-    `export const issueGatewayContext = true;
-export const issueApiKeyGatewayContext = true;`,
+    `export const gatewayContextLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
+  .handle('issueGatewayContext', () => Effect.void)
+  .handle('issueApiKeyGatewayContext', () => Effect.void)
+  .handle('issueRelayedGatewayContext', () => Effect.void));`,
   );
   yield* write(
     root,
@@ -656,8 +662,9 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
     GATEWAY_CONTRACT_FILE,
     `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
-  .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context' };`,
+  .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
+  .add(HttpApiEndpoint.post('issueRelayedGatewayContext', '/auth/relay/gateway-context', {}));
+export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueRelayedGatewayContextPath: '/shell-super-app-api/auth/relay/gateway-context' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
@@ -2925,11 +2932,16 @@ it.live(
   }),
 );
 
+const UNMOUNTED_ISSUER_ENDPOINT = "post('unusedNeighbor'";
+const UNRECOGNIZED_ISSUER_PATH = "'/auth/tampered'";
+
 for (const [before, after] of [
-  [/post\(\s*'issueGatewayContext'/u, "post('unusedNeighbor'"],
-  [/post\(\s*'issueApiKeyGatewayContext'/u, "post('unusedNeighbor'"],
-  ["'/auth/gateway-context'", "'/auth/tampered'"],
-  ["'/auth/api-key/gateway-context'", "'/auth/tampered'"],
+  [/post\(\s*'issueGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
+  [/post\(\s*'issueApiKeyGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
+  [/post\(\s*'issueRelayedGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
+  ["'/auth/gateway-context'", UNRECOGNIZED_ISSUER_PATH],
+  ["'/auth/api-key/gateway-context'", UNRECOGNIZED_ISSUER_PATH],
+  ["'/auth/relay/gateway-context'", UNRECOGNIZED_ISSUER_PATH],
   ["make('gatewayContext')", "make('unrelated')"],
   ['export const GatewayContextApiGroup =', 'export const UnmountedApiGroup ='],
 ] as const) {
@@ -2945,6 +2957,73 @@ for (const [before, after] of [
       yield* write(root, gatewayFile, gatewaySource.replace(before, after));
       yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
         onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/mounted gateway contract/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }),
+  );
+}
+
+it.effect('accepts exactly the three issuer classifications regardless of declaration order', () =>
+  validateGatewayIssuerEntrypoints(EffectArray.reverse(gatewayContextAuthorizationEntrypoints)),
+);
+
+for (const mutation of ['duplicate', 'unknown', 'credential', 'path', 'kind', 'missing'] as const) {
+  it.effect(`rejects an invalid relay issuer classification: ${mutation}`, () =>
+    Effect.gen(function* invalidRelayClassification() {
+      const sessionIssuer = gatewayContextAuthorizationEntrypoints.find(
+        (issuer) => issuer.entrypointKey === 'shell.gateway-context.issue.session',
+      );
+      if (sessionIssuer === undefined) {
+        throw new Error('The canonical session issuer is required by this fixture');
+      }
+      const issuers = gatewayContextAuthorizationEntrypoints.map((issuer) => {
+        if (issuer.entrypointKey !== 'shell.gateway-context.issue.relay') {
+          return issuer;
+        }
+        return Match.value(mutation).pipe(
+          Match.when('duplicate', () => sessionIssuer),
+          Match.when('unknown', () => ({ ...issuer, entrypointKey: 'shell.gateway-context.issue.unknown' })),
+          Match.when('credential', () => ({
+            ...issuer,
+            authorization: { credential: 'session', kind: 'capability_issuance' } as const,
+          })),
+          Match.when('path', () => ({ ...issuer, path: '/shell-super-app-api/auth/unrecognized/gateway-context' })),
+          Match.when('kind', () => ({ ...issuer, authorization: { kind: 'public' } as const })),
+          Match.when('missing', () => issuer),
+          Match.exhaustive,
+        );
+      });
+      const actual =
+        mutation === 'missing'
+          ? issuers.filter((issuer) => issuer.entrypointKey !== 'shell.gateway-context.issue.relay')
+          : issuers;
+      yield* Effect.matchCause(validateGatewayIssuerEntrypoints(actual), {
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/must classify exactly/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }),
+  );
+}
+
+for (const handler of ['issueGatewayContext', 'issueApiKeyGatewayContext', 'issueRelayedGatewayContext'] as const) {
+  it.live(`requires the mounted issuer handler rather than an identifier: ${handler}`, () =>
+    Effect.gen(function* missingIssuerHandler() {
+      const root = yield* makeFixture();
+      yield* checkModuleEntrypointBoundaries(root);
+      const runtimeFile = 'apps/shell-super-app/api/index.ts';
+      const runtime = yield* Effect.promise(() => readFile(path.join(root, runtimeFile), 'utf-8'));
+      const modifiedRuntime = runtime.replace(`.handle('${handler}'`, ".handle('unrelated'");
+      yield* write(
+        root,
+        runtimeFile,
+        `${modifiedRuntime}\nexport const ${handler} = true;\nexport const unusedText = ".handle('${handler}', unused)";\n// .handle('${handler}', unused)`,
+      );
+      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/all three classified capability issuers/u),
         onSuccess: () => {
           throw new Error(EXPECTED_EFFECT_FAILURE);
         },

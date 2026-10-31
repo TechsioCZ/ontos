@@ -1,15 +1,25 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Crypto, Effect, Layer, Redacted, Schema, Scope } from 'effect';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Crypto, Effect, Layer, Option, Redacted, Schema, Scope } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
+import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { transportIdentifier } from '../actions/string-schemas.ts';
+import {
+  isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayScopeAssertion,
+} from '../auth/system-principal-context-provenance.ts';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '../auth/staff-authentication-namespace.ts';
+import { AuthenticationNamespaceRegistry } from '../auth/external-identity/verifier.ts';
 import { makeCoreDatabase } from '../db/client.ts';
-import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
+import { loadDatabaseConfig, loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import {
   dataAccessEvents,
   legalEntities,
@@ -21,11 +31,16 @@ import {
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
+import type { ModuleStateGateError } from '../modules/module-state-gate-errors.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
+import { ModuleEntrypointSchema } from '../modules/module-entrypoint.ts';
+import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../operations/context.ts';
-import type { OperationalScope } from '../operations/context.ts';
+import type { OperationalScope, OperationalScopeRequest } from '../operations/context.ts';
 import type { OperationContextError } from '../operations/errors.ts';
 import {
   ContextAccess,
@@ -359,3 +374,142 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     );
   return { contextAccess, evidenceCount, grantResource, layer, prepareOwner, principal, revokeResource, runtime };
 });
+
+export interface VerifiedNativeReadScopeInput extends Pick<OperationalScopeRequest, 'correlationId'> {
+  readonly audience: string;
+  readonly entrypoint: ModuleEntrypointDescriptor;
+  /** Exact production verifier.verifyAndRedeem result; plain decoded/copied contexts are refused. */
+  readonly principal: TrustedPrincipalContext;
+}
+
+const verifiedNativeReadRevision = (input: VerifiedNativeReadScopeInput) => {
+  const { principal } = input;
+  const revision = readVerifiedGatewayCompositionRevision(principal);
+  const assertion = readVerifiedGatewayScopeAssertion(principal);
+  if (
+    !isVerifiedGatewayPrincipalContext(principal) ||
+    !Schema.is(TrustedPrincipalContextSchema)(principal) ||
+    principal.authenticationNamespaceId !== STAFF_AUTHENTICATION_NAMESPACE_ID ||
+    principal.legalEntityId === undefined ||
+    revision === undefined ||
+    assertion === undefined ||
+    assertion.audience !== input.audience ||
+    !Schema.is(transportIdentifier)(input.correlationId) ||
+    !Schema.is(ModuleEntrypointSchema)(input.entrypoint) ||
+    input.entrypoint.scope !== 'tenant' ||
+    input.entrypoint.access !== 'read' ||
+    input.entrypoint.authorization.kind !== 'context_permission' ||
+    input.entrypoint.authorization.permission !== 'module.access'
+  ) {
+    return Option.none();
+  }
+  return Option.some(revision);
+};
+
+/** Native owner-factory probe only; does not execute or authorize the owning business Read handler. */
+export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.withVerifiedScope')(
+  function* withVerifiedNativeReadScopeEffect<Value, Failure, Requirements>(
+    input: VerifiedNativeReadScopeInput,
+    observe: (
+      transaction: ScopedTransactionExecutor,
+      scope: OperationalScope,
+      compositionRevision: string,
+    ) => Effect.Effect<Value, Failure, Requirements>,
+  ): Effect.fn.Return<
+    Value,
+    | Failure
+    | EffectDrizzleQueryError
+    | NativeReadTestError
+    | SqlError
+    | OperationContextError
+    | ModuleStateGateError
+    | ApplicationCompositionAuthorityError,
+    Requirements | Crypto.Crypto | Scope.Scope | AuthenticationNamespaceRegistry
+  > {
+    const { principal } = input;
+    const admittedRevision = verifiedNativeReadRevision(input);
+    if (Option.isNone(admittedRevision)) {
+      return yield* unavailable(undefined, 'A genuine redeemed Staff gateway principal and Tenant Read are required');
+    }
+    const revision = admittedRevision.value;
+    const namespaceRegistry = yield* AuthenticationNamespaceRegistry;
+    const namespace = yield* namespaceRegistry
+      .lookup(STAFF_AUTHENTICATION_NAMESPACE_ID)
+      .pipe(Effect.mapError(unavailable));
+    if (Option.isNone(namespace) || namespace.value.provider !== 'better-auth') {
+      return yield* unavailable(undefined, 'The production Staff authentication namespace is required');
+    }
+    const configuration = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: SHARED_RUNTIME_IDENTITY }).pipe(
+      Effect.mapError((cause) => unavailable(cause, 'Native verified Read runtime configuration failed')),
+    );
+    const database = yield* makeCoreDatabase(configuration).pipe(Effect.mapError(unavailable));
+    const role = yield* database.executor.execute<{
+      readonly rolbypassrls: boolean;
+      readonly role_name: string;
+      readonly rolsuper: boolean;
+    }>(
+      sql`select current_user as role_name, rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
+      'objects',
+    );
+    if (
+      !Schema.is(
+        Schema.Tuple([
+          Schema.Struct({
+            rolbypassrls: Schema.Literal(false),
+            role_name: Schema.Literal('ontos_runtime'),
+            rolsuper: Schema.Literal(false),
+          }),
+        ]),
+      )(role)
+    ) {
+      return yield* unavailable(undefined, 'Native verified Read requires the restricted runtime database role');
+    }
+    const contextAccess = yield* makeContextAccessLive();
+    const resolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+    const scope = yield* resolver.resolve({
+      audience: input.audience,
+      correlationId: input.correlationId,
+      legalEntityScope: 'required',
+      principal,
+    });
+    if (
+      scope.legalEntityId === undefined ||
+      !isVerifiedGatewayPrincipalContext(scope) ||
+      readVerifiedGatewayCompositionRevision(scope) !== revision ||
+      readVerifiedGatewayScopeAssertion(scope)?.audience !== input.audience
+    ) {
+      return yield* unavailable(undefined, 'Native verified Read scope provenance was not preserved');
+    }
+    const gateway = makeModuleEntrypointGateway(makeModuleStateGate(makeTenantModuleStateService(database)));
+    const snapshot = yield* gateway.prepareSnapshot(scope, [input.entrypoint]);
+    yield* gateway.check(snapshot, input.entrypoint);
+    const moduleAccess = yield* contextAccess.modules({
+      legalEntityId: scope.legalEntityId,
+      moduleIds: [input.entrypoint.moduleKey],
+      principalId: scope.principalId,
+      tenantId: scope.tenantId,
+    });
+    if (
+      moduleAccess.length !== 1 ||
+      moduleAccess[0]?.key !== input.entrypoint.moduleKey ||
+      moduleAccess[0]?.decision !== 'allowed'
+    ) {
+      return yield* unavailable(undefined, 'Native verified Read module access was not allowed');
+    }
+    return yield* database.executor.transaction(
+      Effect.fn('NativeReadTestContext.withVerifiedScopeTransaction')(
+        function* verifiedScopeTransaction(
+          transaction,
+        ): Effect.fn.Return<
+          Value,
+          Failure | EffectDrizzleQueryError | OperationContextError | ApplicationCompositionAuthorityError | SqlError,
+          Requirements
+        > {
+          yield* lockApplicationCompositionAuthority(transaction, revision, 'read');
+          const scoped = yield* installOperationalScope(transaction, scope);
+          return yield* observe(scoped, scope, revision);
+        },
+      ),
+    );
+  },
+);

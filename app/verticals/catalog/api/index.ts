@@ -594,7 +594,7 @@ export const makeCatalogApiRuntime = (
     CatalogApiGroups,
     CatalogHandlerRequirements
   >['handlers'] = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

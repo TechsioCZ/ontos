@@ -1,3 +1,4 @@
+import { ActionPermissionDenied } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -49,14 +50,18 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import { CatalogSelectionSchema } from '../../../catalog/shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { EstablishCommitmentProtectionPayloadSchema } from '../../shared/actions/establish-commitment-protection.ts';
 import {
   CommitmentProtectionPendingResultSchema,
   establishCommitmentProtection,
 } from '../../shared/domain/commitment-protection.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
-import { CreateInventoryReservationPayloadSchema } from '../../shared/domain/inventory-reservation-create.ts';
+import {
+  CreateInventoryReservationPayloadSchema,
+  InventoryReservationCreateRejected,
+  InventoryReservationCreateUnavailable,
+} from '../../shared/domain/inventory-reservation-create.ts';
 import type { InventoryReservationCreateRequest } from '../../shared/domain/inventory-reservation-create.ts';
 import { CommitmentProtectionInventoryEffectLedgerIntentSchema } from '../../shared/domain/inventory-effect-ledger.ts';
 import { advanceReservationConfirmationHealth } from '../../shared/domain/reservation-confirmation.ts';
@@ -111,6 +116,7 @@ import {
 import { reservationCreateEffectPersistenceForWorkerScope } from '../../src/persistence/reservation-create-effect-repository.ts';
 import type { CommitmentProtectionAuthority } from '../../src/services/commitment-protection-authority.ts';
 import { makeCommitmentProtectionEstablishmentExecutionService } from '../../src/services/commitment-protection.service.ts';
+import type { InventoryReservationCommerceContextAuthority } from '../../src/services/inventory-reservation-commerce-context.ts';
 import { InventoryReservationCommerceContextAuthorityPort } from '../../src/services/inventory-reservation-commerce-context.ts';
 import {
   commitmentProtectionLedgerResolution,
@@ -546,7 +552,9 @@ const latestMessagePayload = <A>(database: CoreDatabase, topic: string, schema: 
       ),
     );
 
-const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(function* makeScenario() {
+const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenario')(function* makeActionScenario(
+  access: ContextAccessService = contextAccess,
+) {
   const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
   const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
   const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
@@ -607,7 +615,7 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     testOperationalScopeResolver,
     {
       ...openActionRuntimeOptions,
-      contextAccess,
+      contextAccess: access,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
     },
   );
@@ -639,6 +647,39 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   const protectionAuthorityCalls = yield* Ref.make(0);
   const proofValidFrom = yield* currentIso;
   const proofValidUntil = '9999-12-31T23:59:59.999Z';
+  return {
+    actionRuntime,
+    admin,
+    confirmationAuthorityCalls,
+    coreAdmin,
+    currentOwnerScope,
+    fanout,
+    outbox,
+    proofValidFrom,
+    proofValidUntil,
+    protectionAuthorityCalls,
+    readRuntime,
+    reservationBackendCalls,
+  };
+});
+
+type ActionScenario = Effect.Success<ReturnType<typeof makeActionScenario>>;
+
+const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(function* makeScenario() {
+  const {
+    actionRuntime,
+    admin,
+    confirmationAuthorityCalls,
+    coreAdmin,
+    currentOwnerScope,
+    fanout,
+    outbox,
+    proofValidFrom,
+    proofValidUntil,
+    protectionAuthorityCalls,
+    readRuntime,
+    reservationBackendCalls,
+  } = yield* makeActionScenario();
 
   const createResult = yield* actionRuntime
     .runAction({
@@ -1044,6 +1085,445 @@ it.live(
           expect(protectionHistory).toHaveLength(1);
           expect(protections[0]?.protectionId).toBe(protectionId);
           expect(yield* Ref.get(scenario.protectionAuthorityCalls)).toBe(1);
+        }),
+      ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.live(
+  'accepts a labeled owner-context fixture through the registered Inventory Action and actual service factory',
+  () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* ownerContextContractAcceptance() {
+          const scenario = yield* makeActionScenario();
+          const requests = yield* Ref.make<
+            Parameters<InventoryReservationCommerceContextAuthority['resolveCurrent']>[0][]
+          >([]);
+          // This is an Inventory owner-port provider fixture, not a production Commerce producer.
+          const result = yield* scenario.actionRuntime
+            .runAction({
+              payload: createPayload,
+              principal,
+              registration: createInventoryReservationAction,
+              transport: {
+                correlationId: 'inventory-context-fixture-positive',
+                idempotencyKey: 'inventory-context-fixture-positive',
+              },
+            })
+            .pipe(
+              Effect.provideService(InventoryReservationCommerceContextAuthorityPort, {
+                resolveCurrent: (request) =>
+                  Ref.update(requests, (previous) => [...previous, request]).pipe(Effect.as(commerceContext)),
+              }),
+            );
+          expect(yield* Ref.get(requests)).toEqual([
+            { customerConfigurationId, effectId: reservationCreateEffectId, legalEntityId, storefrontId, tenantId },
+          ]);
+          expect(result.outcome).toBe('PENDING');
+          expect(result.effect.request).toMatchObject({
+            authority,
+            commerceContext,
+            effectId: reservationCreateEffectId,
+            legalEntityId,
+            reservation: {
+              origin: { attemptId, kind: 'ORDER_COMMITMENT_ATTEMPT' },
+              ref: createPayload.reservationRef,
+              requirements: [{ quantity: '4', unitRef }],
+            },
+          });
+          const effects = yield* scenario.admin
+            .select()
+            .from(inventoryReservationCreateEffects)
+            .where(eq(inventoryReservationCreateEffects.tenantId, tenantId));
+          expect(effects).toHaveLength(1);
+          const messages = yield* scenario.coreAdmin
+            .select()
+            .from(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId));
+          expect(messages).toHaveLength(1);
+          expect(yield* Ref.get(scenario.reservationBackendCalls)).toBe(0);
+        }),
+      ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+const runContextAction = (
+  scenario: ActionScenario,
+  key: string,
+  options: {
+    readonly actor?: typeof principal;
+    readonly authority?: InventoryReservationCommerceContextAuthority;
+  } = {},
+) => {
+  const operation = scenario.actionRuntime.runAction({
+    payload: createPayload,
+    principal: options.actor ?? principal,
+    registration: createInventoryReservationAction,
+    transport: { correlationId: key, idempotencyKey: key },
+  });
+  return options.authority === undefined
+    ? operation
+    : operation.pipe(Effect.provideService(InventoryReservationCommerceContextAuthorityPort, options.authority));
+};
+
+const assertNoNewReservationIntent = Effect.fn('InventoryContextAcceptance.assertNoNewIntent')(
+  function* assertNoNewReservationIntent(scenario: ActionScenario) {
+    const persisted = yield* Effect.all([
+      scenario.admin
+        .select()
+        .from(inventoryReservationCreateEffects)
+        .where(eq(inventoryReservationCreateEffects.tenantId, tenantId)),
+      scenario.admin.select().from(inventoryEffectLedger).where(eq(inventoryEffectLedger.tenantId, tenantId)),
+      scenario.admin.select().from(inventoryObligations).where(eq(inventoryObligations.tenantId, tenantId)),
+      scenario.coreAdmin.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+    ]);
+    expect(persisted).toEqual([[], [], [], []]);
+  },
+);
+
+it.live('a shape-valid CURRENT_OWNER_VERIFIED payload cannot replace the unavailable default authority', () =>
+  Semaphore.withPermits(
+    scenarioSemaphore,
+    1,
+  )(
+    Effect.scoped(
+      Effect.gen(function* rejectCallerLiteralAsAuthority() {
+        const scenario = yield* makeActionScenario();
+        expect(Schema.is(CreateInventoryReservationPayloadSchema)(createPayload)).toBe(true);
+        const failure = yield* runContextAction(scenario, 'inventory-context-unconfigured').pipe(Effect.flip);
+        expect(Schema.is(InventoryReservationCreateUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({
+          code: 'inventory_reservation_create_unavailable',
+          effectId: reservationCreateEffectId,
+          retryable: true,
+        });
+        yield* assertNoNewReservationIntent(scenario);
+      }),
+    ),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+for (const reason of [
+  'OWNER_EVIDENCE_MISSING',
+  'OWNER_EVIDENCE_STALE',
+  'OWNER_EVIDENCE_UNAVAILABLE',
+  'OWNER_EVIDENCE_INDETERMINATE',
+] as const) {
+  it.live(`preserves the authority's ${reason} failure before a new Reservation or dispatch`, () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* rejectUnavailableOwnerEvidence() {
+          const scenario = yield* makeActionScenario();
+          const failure = yield* runContextAction(scenario, `inventory-context-${reason}`, {
+            authority: {
+              resolveCurrent: ({ effectId }) =>
+                Effect.fail(
+                  new InventoryReservationCreateUnavailable({
+                    code: 'inventory_reservation_create_unavailable',
+                    effectId,
+                    reason,
+                    retryable: true,
+                  }),
+                ),
+            },
+          }).pipe(Effect.flip);
+          expect(Schema.is(InventoryReservationCreateUnavailable)(failure)).toBe(true);
+          expect(failure).toMatchObject({
+            reason,
+            retryable: true,
+          });
+          yield* assertNoNewReservationIntent(scenario);
+        }),
+      ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+}
+
+const otherTenantId = 'd1000000-0000-4000-8000-000000000002';
+const contradictoryOwnerContexts = [
+  [
+    'Tenant',
+    {
+      ...commerceContext,
+      commerceMarketRef: { ...commerceContext.commerceMarketRef, tenantId: otherTenantId },
+      sellingLegalEntityRef: { ...commerceContext.sellingLegalEntityRef, tenantId: otherTenantId },
+      storefrontRef: { ...commerceContext.storefrontRef, tenantId: otherTenantId },
+      tenantId: otherTenantId,
+    },
+  ],
+  ['Customer Configuration', { ...commerceContext, customerConfigurationId: 'another-customer-configuration' }],
+  [
+    'Selling Legal Entity',
+    {
+      ...commerceContext,
+      sellingLegalEntityRef: {
+        ...commerceContext.sellingLegalEntityRef,
+        resourceId: 'd2000000-0000-4000-8000-000000000002',
+      },
+    },
+  ],
+  ['Channel', { ...commerceContext, channel: 'B2B' }],
+  [
+    'Commerce Market',
+    {
+      ...commerceContext,
+      commerceMarketRef: {
+        ...commerceContext.commerceMarketRef,
+        resourceId: 'another-market',
+      },
+    },
+  ],
+  [
+    'Storefront',
+    { ...commerceContext, storefrontRef: { ...commerceContext.storefrontRef, appId: 'another-storefront' } },
+  ],
+  ['owner evidence', { ...commerceContext, evidenceRef: 'another-owner-evidence' }],
+  ['owner observation', { ...commerceContext, observedAt: '2026-09-28T09:00:00.000Z' }],
+] as const;
+
+for (const [dimension, fixture] of contradictoryOwnerContexts) {
+  it.live(`rejects contradictory ${dimension} returned by the authority without repairing the caller intent`, () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* rejectContradictoryOwnerContext() {
+          const scenario = yield* makeActionScenario();
+          const qualified = Schema.decodeUnknownSync(TrustedCurrentCommercePurchasingContextSchema)(fixture);
+          const failure = yield* runContextAction(scenario, `inventory-context-mismatch-${dimension}`, {
+            authority: { resolveCurrent: () => Effect.succeed(qualified) },
+          }).pipe(Effect.flip);
+          expect(Schema.is(InventoryReservationCreateRejected)(failure)).toBe(true);
+          expect(failure).toMatchObject({
+            reason: 'COMMERCE_CONTEXT_NOT_ELIGIBLE',
+          });
+          yield* assertNoNewReservationIntent(scenario);
+        }),
+      ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+}
+
+it.live('authorizes two Principals independently when their Stock Sharing Eligibility context is identical', () =>
+  Semaphore.withPermits(
+    scenarioSemaphore,
+    1,
+  )(
+    Effect.scoped(
+      Effect.gen(function* separatePrincipalPermissionFromStockScope() {
+        const checked: { readonly actor: string; readonly permission: string }[] = [];
+        // This permission port is an explicit owner-level Core lifecycle fixture, not a live grant claim.
+        const scenario = yield* makeActionScenario({
+          ...contextAccess,
+          businessPermissions: (input) =>
+            Effect.sync(() =>
+              input.targets.map((target) => {
+                checked.push({ actor: input.principal.principalId, permission: target.permission });
+                return {
+                  decision: input.principal.principalId === principalId ? ('allowed' as const) : ('denied' as const),
+                  key: toBusinessPermissionAccessKey(target),
+                };
+              }),
+            ),
+        });
+        const secondPrincipalId = 'd3000000-0000-4000-8000-000000000002';
+        const secondBindingId = 'd4000000-0000-4000-8000-000000000002';
+        yield* scenario.coreAdmin.insert(principals).values({
+          displayName: 'Inventory context denied actor',
+          kind: 'human',
+          principalId: secondPrincipalId,
+          status: 'active',
+          tenantId,
+        });
+        yield* scenario.coreAdmin.insert(principalAuthBindings).values({
+          authenticationNamespaceId,
+          principalAuthBindingId: secondBindingId,
+          principalId: secondPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: `inventory-context-${secondPrincipalId}`,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        });
+        const second = trustVerifiedGatewayPrincipalContext(
+          {
+            ...principal,
+            authBindingId: secondBindingId,
+            authContextRef: `better-auth-session:${secondBindingId}`,
+            principalId: secondPrincipalId,
+          },
+          compositionRevision,
+        );
+        const resolutions = yield* Ref.make(0);
+        const fixtureAuthority = {
+          resolveCurrent: () => Ref.update(resolutions, (count) => count + 1).pipe(Effect.as(commerceContext)),
+        };
+        const allowed = yield* runContextAction(scenario, 'inventory-context-principal-allowed', {
+          authority: fixtureAuthority,
+        });
+        const denied = yield* runContextAction(scenario, 'inventory-context-principal-denied', {
+          actor: second,
+          authority: fixtureAuthority,
+        }).pipe(Effect.flip);
+        expect(allowed.outcome).toBe('PENDING');
+        expect(Schema.is(ActionPermissionDenied)(denied)).toBe(true);
+        expect(denied).toMatchObject({ code: 'action_permission_denied' });
+        expect(checked).toEqual([
+          { actor: principalId, permission: 'inventory.reservation.establish' },
+          { actor: secondPrincipalId, permission: 'inventory.reservation.establish' },
+        ]);
+        expect(yield* Ref.get(resolutions)).toBe(1);
+        const effects = yield* scenario.admin
+          .select()
+          .from(inventoryReservationCreateEffects)
+          .where(eq(inventoryReservationCreateEffects.tenantId, tenantId));
+        expect(effects).toHaveLength(1);
+        const rejected = yield* scenario.coreAdmin
+          .select()
+          .from(actionInvocations)
+          .where(and(eq(actionInvocations.tenantId, tenantId), eq(actionInvocations.status, 'rejected')));
+        expect(rejected).toHaveLength(1);
+      }),
+    ),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.live(
+  'reconciles an uncertain create through the registered Action and worker with the original Attempt and effect identity',
+  () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* recoverOriginalCreateThroughOwnerBoundary() {
+          const scenario = yield* makeActionScenario();
+          const contextResolutions = yield* Ref.make(0);
+          const observedRequests = yield* Ref.make<InventoryReservationCreateRequest[]>([]);
+          const staged = yield* runContextAction(scenario, 'inventory-context-original-create', {
+            authority: {
+              resolveCurrent: () =>
+                Ref.update(contextResolutions, (count) => count + 1).pipe(Effect.as(commerceContext)),
+            },
+          });
+          const original = staged.effect.request;
+          const selectedAuthority = reservationCreateBackend(scenario.reservationBackendCalls);
+          // Contract-conforming selected-backend fixture: uncertainty is followed by exact owner evidence.
+          const backend: InventoryReservationCreateBackend = {
+            create: (request) =>
+              Ref.updateAndGet(observedRequests, (requests) => [...requests, request]).pipe(
+                Effect.flatMap((requests) =>
+                  requests.length === 1
+                    ? Ref.update(scenario.reservationBackendCalls, (count) => count + 1).pipe(
+                        Effect.as({
+                          _tag: 'INDETERMINATE' as const,
+                          effectId: request.effectId,
+                          observedAt: request.requestedAt,
+                          reason: 'BACKEND_OUTCOME_UNKNOWN' as const,
+                        }),
+                      )
+                    : selectedAuthority.create(request),
+                ),
+              ),
+          };
+          const execution = {
+            execute: (
+              _scope: { readonly legalEntityId: string; readonly tenantId: string },
+              request: InventoryReservationCreateRequest,
+            ) =>
+              Ref.get(scenario.currentOwnerScope).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.die('The registered create worker must receive its owner scope'),
+                    onSome: (scope) =>
+                      makeInventoryReservationCreateExecutionService({
+                        backend,
+                        effects: reservationCreateEffectPersistenceForWorkerScope(scope),
+                        ledger: makeInventoryEffectLedgerService(
+                          inventoryEffectLedgerPersistenceForWorkerScope(scope),
+                          currentIso,
+                        ),
+                      }).execute(scope, request),
+                  }),
+                ),
+              ),
+          };
+          const firstMatch = yield* DateTime.nowAsDate;
+          yield* scenario.outbox.matchMessages({ compositionRevision, now: firstMatch });
+          const firstNow = new Date(firstMatch.getTime() + 1000);
+          const firstCycle = yield* scenario.outbox
+            .runCycle({
+              claimOwner: 'inventory-context-uncertain-create',
+              compositionRevision,
+              maxDeliveries: 1,
+              now: firstNow,
+              registrations: [executeInventoryReservationCreateWorker],
+              subscriptions: [executeInventoryReservationCreateWorker.descriptor],
+            })
+            .pipe(
+              Effect.provideService(InventoryReservationCreateExecution, execution),
+              Effect.provideService(OutboxWorkerLegalEntityScopeFanout, scenario.fanout),
+            );
+          expect(firstCycle).toMatchObject({ failed: 0, succeeded: 1 });
+          // No Current provider is installed for a historical retry; only the original effect is recovered.
+          const pendingRecovery = yield* runContextAction(scenario, 'inventory-context-original-retry');
+          expect(pendingRecovery.outcome).toBe('INDETERMINATE');
+          expect(pendingRecovery.effect.request).toEqual(original);
+          expect(yield* Ref.get(contextResolutions)).toBe(1);
+          const beforeRecovery = yield* scenario.admin
+            .select()
+            .from(inventoryObligations)
+            .where(eq(inventoryObligations.tenantId, tenantId));
+          expect(beforeRecovery).toHaveLength(0);
+
+          const secondNow = new Date(firstNow.getTime() + 2000);
+          yield* scenario.outbox.matchMessages({ compositionRevision, now: secondNow });
+          const secondCycle = yield* scenario.outbox
+            .runCycle({
+              claimOwner: 'inventory-context-reconcile-original',
+              compositionRevision,
+              maxDeliveries: 1,
+              now: secondNow,
+              registrations: [executeInventoryReservationCreateWorker],
+              subscriptions: [executeInventoryReservationCreateWorker.descriptor],
+            })
+            .pipe(
+              Effect.provideService(InventoryReservationCreateExecution, execution),
+              Effect.provideService(OutboxWorkerLegalEntityScopeFanout, scenario.fanout),
+            );
+          expect(secondCycle).toMatchObject({ failed: 0, succeeded: 1 });
+          const recovered = yield* runContextAction(scenario, 'inventory-context-original-terminal-replay');
+          expect(recovered.outcome).toBe('EXACT_REPLAY');
+          expect(recovered.effect.request).toEqual(original);
+          expect(yield* Ref.get(observedRequests)).toEqual([original, original]);
+          expect(yield* Ref.get(scenario.reservationBackendCalls)).toBe(2);
+          const [effects, ledger, obligations] = yield* Effect.all([
+            scenario.admin
+              .select()
+              .from(inventoryReservationCreateEffects)
+              .where(eq(inventoryReservationCreateEffects.tenantId, tenantId)),
+            scenario.admin.select().from(inventoryEffectLedger).where(eq(inventoryEffectLedger.tenantId, tenantId)),
+            scenario.admin.select().from(inventoryObligations).where(eq(inventoryObligations.tenantId, tenantId)),
+          ]);
+          expect(effects).toHaveLength(1);
+          expect(ledger).toHaveLength(1);
+          expect(obligations).toHaveLength(1);
+          expect(recovered.effect.request).toMatchObject({
+            authority,
+            reservation: {
+              origin: { attemptId, kind: 'ORDER_COMMITMENT_ATTEMPT' },
+              ref: createPayload.reservationRef,
+              requirements: [{ quantity: '4', unitRef }],
+            },
+          });
         }),
       ),
     ).pipe(Effect.provide(NodeCrypto.layer)),

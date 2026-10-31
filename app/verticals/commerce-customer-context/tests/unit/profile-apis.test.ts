@@ -18,6 +18,8 @@ import { RetailAccessDecisionRequestSchema } from '../../shared/apis/retail-acce
 import { RetailPortalProfileBindingReadRequestSchema } from '../../shared/apis/retail-portal-profile-binding-read.ts';
 import { RetailPrincipalResolutionRequestSchema } from '../../shared/apis/retail-principal-resolution.ts';
 import { ProfileReconciliationCaseRefSchema } from '../../shared/resources/profile-reconciliation-case.ts';
+import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
+import type { ProfileScopedRoutineInvoker } from '../../src/persistence/profile-persistence.ts';
 import {
   customerProfileReadPermissionTarget,
   readCustomerProfileFromServices,
@@ -472,5 +474,88 @@ it.effect('keeps every Retail binding-dependent production read unavailable with
     ]);
 
     expect(errors.every((error) => Predicate.isTagged(error, 'ReadHandlerUnavailable'))).toBe(true);
+  }),
+);
+
+it.effect('production Guest status mapping satisfies strict Core validation and nullable wire references', () =>
+  Effect.gen(function* strictProductionGuestStatus() {
+    const profileId = '77777777-7777-4777-8777-777777777777';
+    const observedAt = '2026-09-09T10:00:00.000Z';
+    const input = yield* Schema.decodeUnknownEffect(GuestAttributionStatusRequestSchema)({
+      attributionCorrelationId: 'checkout-production-mapping',
+      sellingLegalEntityRef,
+    });
+    // Only the routine port is scripted; the owner mapping and declared codec are real.
+    for (const profileAvailable of [true, false]) {
+      const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
+      const transaction: ProfileScopedRoutineInvoker = {
+        invoke: (routine, values) =>
+          Effect.sync(() => {
+            calls.push({ name: routine.name, values });
+            if (calls.length === 1) {
+              return [
+                {
+                  outcome: 'ATTRIBUTION_AVAILABLE',
+                  payload: {
+                    correlationRoot: input.attributionCorrelationId,
+                    observedAt,
+                    outcome: 'ATTRIBUTED',
+                    partyResourceId: partyRef.resourceId,
+                    profileId,
+                    reconciliationRef: null,
+                  },
+                },
+              ];
+            }
+            if (!profileAvailable) {
+              return [{ outcome: 'PROFILE_NOT_FOUND', payload: null }];
+            }
+            return [
+              {
+                outcome: 'PROFILE_AVAILABLE',
+                payload: {
+                  createdAt: observedAt,
+                  profileId,
+                  profileKind: 'RETAIL',
+                  revision: 1,
+                  scopeLegalEntityId: legalEntityId,
+                  state: 'ACTIVE',
+                  subject: {
+                    attributionKind: 'GUEST_ACCEPTANCE',
+                    kind: 'RETAIL',
+                    partyResourceId: partyRef.resourceId,
+                    partyResourceRevision: null,
+                  },
+                  updatedAt: observedAt,
+                },
+              },
+            ];
+          }),
+      };
+      const mapped = yield* profilePersistenceServicesForTransaction(transaction, {
+        legalEntityId,
+        principalId,
+        tenantId,
+      }).guestAttributionStatus.readStatus(input, tenantId);
+      const validated = yield* Schema.decodeUnknownEffect(Schema.toType(GuestAttributionStatusResponseSchema), {
+        onExcessProperty: 'error',
+      })(mapped);
+      const wire = yield* Schema.encodeEffect(GuestAttributionStatusResponseSchema)(validated);
+      expect(calls).toEqual([
+        { name: 'read_guest_attribution', values: [input.attributionCorrelationId] },
+        { name: 'read_profile_trading_gate', values: [profileId, 'RETAIL'] },
+      ]);
+      if (validated.outcome.outcome === 'ATTRIBUTION_COMPLETED') {
+        expect(profileAvailable).toBe(true);
+        expect(validated.outcome.profile.kind).toBe('RETAIL');
+        expect(wire.partyRef).toEqual(partyRef);
+        expect(wire.profileRef).toEqual({ ...retailProfileRef, resourceId: profileId });
+      } else {
+        expect(profileAvailable).toBe(false);
+        expect(validated.outcome.canAcceptOrder).toBe(false);
+        expect(wire.partyRef).toBeNull();
+        expect(wire.profileRef).toBeNull();
+      }
+    }
   }),
 );

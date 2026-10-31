@@ -182,7 +182,8 @@
         "tests/support/market-revision-native-child.ts",
         "tests/support/privacy-completion-worker.ts",
         "tests/support/official-identifier-correction-reuse.rstest.config.ts",
-        "tests/support/dsr-legacy-owner.fixture.ts"
+        "tests/support/dsr-legacy-owner.fixture.ts",
+        "tests/integration/registered-postal-factory-native-probe.mts"
       ],
       "drizzle": {
         "config": []

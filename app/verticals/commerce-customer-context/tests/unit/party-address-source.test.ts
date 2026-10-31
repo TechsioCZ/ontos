@@ -1,5 +1,7 @@
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
 import {
-  executePartyContactPointDetail,
   PartyContactPointDetailAuthenticationProblemSchema,
   PartyContactPointDetailForbiddenProblemSchema,
   PartyContactPointDetailInternalProblemSchema,
@@ -10,14 +12,16 @@ import {
   PartyContactPointDetailResponseSchema,
   PartyContactPointDetailUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { AddressBookUnavailable, SavedAddressInvalidSchema } from '../../shared/domain/address-errors.ts';
 import {
   PartyAddressSourceExecutor,
   partyBackedAddressSourceValidator,
+  partyBackedAddressSourceValidatorForScope,
   partyBackedPostalAddressResolver,
+  partyBackedPostalAddressResolverForScope,
 } from '../../src/integrations/party-address-source.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -380,9 +384,9 @@ it.effect('keeps COMMERCE_ONLY and omitted Update origins independent of Party a
   }),
 );
 
-it.effect('uses the exact published client by default and preserves validation with composed transport', () =>
+it.effect('requires explicit owner transport composition and preserves source validation', () =>
   Effect.gen(function* composedSourceTransport() {
-    expect(yield* PartyAddressSourceExecutor).toBe(executePartyContactPointDetail);
+    expect(yield* PartyAddressSourceExecutor).toBeUndefined();
     let calls = 0;
     const execute: typeof executePartyContactPointDetail = () => {
       calls += 1;
@@ -474,4 +478,47 @@ it.effect('rejects missing required postal fields without requiring optional fie
       yield* partyBackedAddressSourceValidator('complete-optional-fields-absent', execute)(payload);
     }
   }),
+);
+
+const unverifiedScope = {
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:postal-relay-unit',
+    authMethod: 'session',
+    principalId: '10000000-0000-4000-8000-000000000001',
+    tenantId,
+  }),
+  audience: 'commerce-customer-context',
+  correlationId: 'postal-relay-unit',
+};
+
+it.effect('keeps the actual COMMERCE_ONLY adapter independent of Party relay credentials', () =>
+  Effect.gen(function* localAddress() {
+    const crypto = yield* Crypto.Crypto;
+    const localOrigin = {
+      kind: 'COMMERCE_ONLY',
+      postalAddress: { addressLine1: '1 Main Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
+    } as const;
+    yield* partyBackedAddressSourceValidatorForScope(unverifiedScope, crypto)({ ...payload, origin: localOrigin });
+    const resolved = yield* partyBackedPostalAddressResolverForScope(
+      unverifiedScope,
+      crypto,
+    )({ ...savedPartyAddress, origin: localOrigin });
+    expect(resolved).toEqual({
+      kind: 'FOUND',
+      value: { kind: 'COMMERCE_ONLY', postalAddress: localOrigin.postalAddress },
+    });
+  }).pipe(Effect.provide(nodeCryptoLayer)),
+);
+
+it.effect('fails closed at the actual Party-backed adapter without trusted source admission', () =>
+  Effect.gen(function* unverifiedPartySource() {
+    const crypto = yield* Crypto.Crypto;
+    const failure = yield* Effect.flip(partyBackedAddressSourceValidatorForScope(unverifiedScope, crypto)(payload));
+    expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
+    const readFailure = yield* Effect.flip(
+      partyBackedPostalAddressResolverForScope(unverifiedScope, crypto)(savedPartyAddress),
+    );
+    expect(Schema.is(AddressBookUnavailable)(readFailure)).toBe(true);
+  }).pipe(Effect.provide(nodeCryptoLayer)),
 );

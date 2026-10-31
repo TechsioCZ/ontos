@@ -238,6 +238,7 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
   const configuration = yield* AuthConfig;
   const { adapter: databaseAdapter, executor: database } = yield* AuthDatabase;
   const auth = betterAuth({
+    advanced: { useSecureCookies: configuration.secureCookies },
     baseURL: configuration.baseUrl,
     database: databaseAdapter,
     logger: { disabled: true },
