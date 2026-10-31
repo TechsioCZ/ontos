@@ -35,6 +35,7 @@ import {
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
 import { marketHistoryReadApiLive } from './market-history-read-server.ts';
+import { marketRetirementStatusReadApiLive } from './market-retirement-status-read-server.ts';
 import { pricingCurrentMarketEvidenceReadApiLive } from './pricing-current-market-evidence-read-server.ts';
 import { resolveCommerceMarketReadApiLive } from './resolve-commerce-market-read-server.ts';
 import { verifyMarketEligibilityV1ReadApiLive } from './verify-market-eligibility-v1-read-server.ts';
@@ -126,6 +127,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
     currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketRetirementStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     pricingCurrentMarketEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     resolveCommerceMarketReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     verifyMarketEligibilityV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
