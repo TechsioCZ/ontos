@@ -44,7 +44,7 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemption() {
     const executor = yield* makeWithDefaults({ relations: crmRelations });
-    yield* startGatewayAssertionRedemptionCleanup('crm', (expiredBefore) =>
+    yield* startGatewayAssertionRedemptionCleanup('crm', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
       executor
         .delete(gatewayAssertionRedemptions)
         .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))

@@ -153,7 +153,7 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemptionWithCleanup() {
     const { executor } = yield* CatalogGatewayAssertionRedemptionDatabase;
-    yield* startGatewayAssertionRedemptionCleanup('catalog', (expiredBefore) =>
+    yield* startGatewayAssertionRedemptionCleanup('catalog', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
       pruneExpiredGatewayAssertionRedemptions(executor, expiredBefore),
     );
     return makeGatewayAssertionRedemption(executor);

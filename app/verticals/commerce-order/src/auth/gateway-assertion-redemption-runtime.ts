@@ -113,11 +113,14 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemptionWithCleanup() {
     const { executor } = yield* CommerceOrderGatewayAssertionRedemptionDatabase;
-    yield* startGatewayAssertionRedemptionCleanup('commerce-order', (expiredBefore) =>
-      executor
-        .delete(gatewayAssertionRedemptions)
-        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    yield* startGatewayAssertionRedemptionCleanup(
+      'commerce-order',
+      GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+      (expiredBefore) =>
+        executor
+          .delete(gatewayAssertionRedemptions)
+          .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+          .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
     );
     return makeGatewayAssertionRedemption(executor);
   }),

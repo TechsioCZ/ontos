@@ -77,12 +77,15 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemptionWithCleanup() {
     const { executor } = yield* PartyDatabase;
-    yield* startGatewayAssertionRedemptionCleanup('party-registry', (expiredBefore) =>
-      executor
-        .execute(
-          sql`select contacts.prune_expired_gateway_assertion_redemptions(${expiredBefore.toISOString()}::timestamptz)`,
-        )
-        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    yield* startGatewayAssertionRedemptionCleanup(
+      'party-registry',
+      GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+      (expiredBefore) =>
+        executor
+          .execute(
+            sql`select contacts.prune_expired_gateway_assertion_redemptions(${expiredBefore.toISOString()}::timestamptz)`,
+          )
+          .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
     );
     return makeGatewayAssertionRedemption(executor);
   }),

@@ -85,11 +85,14 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemptionWithCleanup() {
     const { executor } = yield* PriceGroupCatalogDatabase;
-    yield* startGatewayAssertionRedemptionCleanup('price-group-catalog', (expiredBefore) =>
-      executor
-        .delete(gatewayAssertionRedemptions)
-        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    yield* startGatewayAssertionRedemptionCleanup(
+      'price-group-catalog',
+      GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+      (expiredBefore) =>
+        executor
+          .delete(gatewayAssertionRedemptions)
+          .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+          .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
     );
     return makeGatewayAssertionRedemption(executor);
   }),

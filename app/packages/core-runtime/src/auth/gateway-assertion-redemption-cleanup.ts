@@ -1,4 +1,3 @@
-import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { Clock, DateTime, Duration, Effect, Option, Schedule } from 'effect';
 import type { Scope } from 'effect';
 
@@ -11,11 +10,12 @@ import type { GatewayAssertionRedemptionUnavailableError } from './gateway-asser
 export const startGatewayAssertionRedemptionCleanup = Effect.fn('GatewayAssertionRedemptionCleanup.start')(
   function* startGatewayAssertionRedemptionCleanupEffect(
     owner: string,
+    clockSkewSeconds: number,
     prune: (expiredBefore: Date) => Effect.Effect<void, GatewayAssertionRedemptionUnavailableError>,
   ): Effect.fn.Return<void, never, Scope.Scope> {
     const tick = Effect.gen(function* pruneExpiredGatewayAssertionEvidence() {
       const now = yield* Clock.currentTimeMillis;
-      yield* prune(DateTime.toDateUtc(DateTime.makeUnsafe(now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000)));
+      yield* prune(DateTime.toDateUtc(DateTime.makeUnsafe(now - clockSkewSeconds * 1000)));
     }).pipe(
       Effect.timeoutOption(Duration.seconds(5)),
       Effect.flatMap((result) =>

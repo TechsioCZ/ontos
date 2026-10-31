@@ -74,11 +74,14 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemptionWithCleanup() {
     const { executor } = yield* GatewayRedemptionDatabase;
-    yield* startGatewayAssertionRedemptionCleanup('property-leasing', (expiredBefore) =>
-      executor
-        .delete(gatewayAssertionRedemptions)
-        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-        .pipe(Effect.asVoid, Effect.mapError(unavailable)),
+    yield* startGatewayAssertionRedemptionCleanup(
+      'property-leasing',
+      GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+      (expiredBefore) =>
+        executor
+          .delete(gatewayAssertionRedemptions)
+          .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+          .pipe(Effect.asVoid, Effect.mapError(unavailable)),
     );
     return makeGatewayAssertionRedemption(executor);
   }),

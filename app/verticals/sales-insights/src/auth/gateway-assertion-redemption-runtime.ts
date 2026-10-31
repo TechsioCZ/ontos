@@ -43,11 +43,14 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemption() {
     const executor = yield* makeWithDefaults({ relations: salesInsightsRelations });
-    yield* startGatewayAssertionRedemptionCleanup('sales-insights', (expiredBefore) =>
-      executor
-        .delete(gatewayAssertionRedemptions)
-        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-        .pipe(Effect.asVoid, Effect.mapError(unavailable)),
+    yield* startGatewayAssertionRedemptionCleanup(
+      'sales-insights',
+      GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+      (expiredBefore) =>
+        executor
+          .delete(gatewayAssertionRedemptions)
+          .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+          .pipe(Effect.asVoid, Effect.mapError(unavailable)),
     );
     return {
       consume: Effect.fn('sales-insights.redeemAssertion')(function* consume(input: GatewayAssertionRedemptionInput) {

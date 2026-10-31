@@ -14,7 +14,7 @@ it.effect('prunes once per minute with the full skew window and stops with the o
     const cutoffs: number[] = [];
     yield* Effect.scoped(
       Effect.gen(function* runOwner() {
-        yield* startGatewayAssertionRedemptionCleanup('test-owner', (cutoff) =>
+        yield* startGatewayAssertionRedemptionCleanup('test-owner', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (cutoff) =>
           Effect.sync(() => {
             cutoffs.push(cutoff.getTime());
           }),
@@ -41,7 +41,7 @@ it.effect('retains evidence after cleanup failure and retries on the next interv
     Effect.gen(function* retryOwnerCleanup() {
       const clock = yield* TestClock.make();
       let attempts = 0;
-      yield* startGatewayAssertionRedemptionCleanup('test-owner', () =>
+      yield* startGatewayAssertionRedemptionCleanup('test-owner', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, () =>
         Effect.suspend(() => {
           attempts += 1;
           return attempts === 1
@@ -63,7 +63,7 @@ it.effect('bounds a stalled cleanup and never overlaps its next attempt', () =>
       const clock = yield* TestClock.make();
       let active = 0;
       let attempts = 0;
-      yield* startGatewayAssertionRedemptionCleanup('test-owner', () =>
+      yield* startGatewayAssertionRedemptionCleanup('test-owner', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, () =>
         Effect.gen(function* stalledPrune() {
           attempts += 1;
           active += 1;

@@ -144,7 +144,7 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makeRedemptionWithCleanup() {
     const { executor } = yield* TaxGatewayAssertionRedemptionDatabase;
-    yield* startGatewayAssertionRedemptionCleanup('tax', (expiredBefore) =>
+    yield* startGatewayAssertionRedemptionCleanup('tax', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
       executor
         .delete(gatewayAssertionRedemptions)
         .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
