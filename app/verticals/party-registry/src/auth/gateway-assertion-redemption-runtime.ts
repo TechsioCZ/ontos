@@ -1,4 +1,5 @@
 import {
+  startGatewayAssertionRedemptionCleanup,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
@@ -7,7 +8,7 @@ import {
 import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { sql } from 'drizzle-orm';
-import { Clock, DateTime, Duration, Effect, Layer, Schema } from 'effect';
+import { Clock, DateTime, Duration, Effect, Layer } from 'effect';
 
 import { PartyDatabase } from '../db/client.ts';
 import { gatewayAssertionRedemptions } from '../db/engagement-schema.ts';
@@ -34,32 +35,18 @@ const unavailableError = (cause?: unknown) => {
 };
 
 const REDEMPTION_TIMEOUT = Duration.seconds(5);
-const encodeTimestamp = Schema.encodeEffect(Schema.DateTimeUtcFromString);
 
-const redeemAssertion = (
-  executor: PartyDatabaseExecutor,
-  input: GatewayAssertionRedemptionInput,
-  expiredBefore: string,
-  expiresAt: Date,
-) =>
-  executor.transaction(
-    Effect.fn('GatewayAssertionRedemptionRuntime.redeemAssertion')(function* redeemAssertionEffect(transaction) {
-      // The request role holds no DELETE on the table; the routine deletes only expired evidence.
-      yield* transaction.execute(
-        sql`select contacts.prune_expired_gateway_assertion_redemptions(${expiredBefore}::timestamptz)`,
-      );
-      return yield* transaction
-        .insert(gatewayAssertionRedemptions)
-        .values({
-          audience: input.audience,
-          expiresAt,
-          issuer: input.issuer,
-          jti: input.jti,
-        })
-        .onConflictDoNothing()
-        .returning({ jti: gatewayAssertionRedemptions.jti });
-    }),
-  );
+const redeemAssertion = (executor: PartyDatabaseExecutor, input: GatewayAssertionRedemptionInput, expiresAt: Date) =>
+  executor
+    .insert(gatewayAssertionRedemptions)
+    .values({
+      audience: input.audience,
+      expiresAt,
+      issuer: input.issuer,
+      jti: input.jti,
+    })
+    .onConflictDoNothing()
+    .returning({ jti: gatewayAssertionRedemptions.jti });
 
 export const makeGatewayAssertionRedemption = (executor: PartyDatabaseExecutor): GatewayAssertionRedemption => ({
   consume: Effect.fn('PartyRegistryGatewayAssertionRedemption.consume')(function* consumeGatewayAssertionEffect(
@@ -67,15 +54,12 @@ export const makeGatewayAssertionRedemption = (executor: PartyDatabaseExecutor):
   ) {
     const nowEpochMs = yield* Clock.currentTimeMillis;
     // Verification can finish after its captured clock passes the assertion's skew window.
-    // Reject before cleanup can delete this assertion's existing replay evidence.
+    // Reject without modifying the durable replay evidence.
     if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
       return yield* replayError();
     }
-    const expiredBefore = yield* encodeTimestamp(
-      DateTime.makeUnsafe(nowEpochMs - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000),
-    ).pipe(Effect.mapError(unavailableError));
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-    const inserted = yield* redeemAssertion(executor, input, expiredBefore, expiresAt).pipe(
+    const inserted = yield* redeemAssertion(executor, input, expiresAt).pipe(
       recoverSqlTransactionError,
       Effect.mapError(unavailableError),
       Effect.timeoutOrElse({
@@ -91,5 +75,15 @@ export const makeGatewayAssertionRedemption = (executor: PartyDatabaseExecutor):
 
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
-  PartyDatabase.pipe(Effect.map(({ executor }) => makeGatewayAssertionRedemption(executor))),
+  Effect.gen(function* makeRedemptionWithCleanup() {
+    const { executor } = yield* PartyDatabase;
+    yield* startGatewayAssertionRedemptionCleanup('party-registry', (expiredBefore) =>
+      executor
+        .execute(
+          sql`select contacts.prune_expired_gateway_assertion_redemptions(${expiredBefore.toISOString()}::timestamptz)`,
+        )
+        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    );
+    return makeGatewayAssertionRedemption(executor);
+  }),
 );

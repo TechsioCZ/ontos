@@ -22,7 +22,7 @@ const assertion = {
 const expiryWithSkewMs = (assertion.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) * 1000;
 const redemptionInsertPrefix = 'insert into "contacts"."gateway_assertion_redemptions"';
 
-// Native Drizzle and SqlClient run the production redemption transaction; only the wire connection is replaced.
+// Native Drizzle and SqlClient run the production redemption statement; only the wire connection is replaced.
 const makeRedemptionFixture = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
@@ -68,12 +68,8 @@ it.effect('rejects assertions crossing expiry before redemption without deleting
       statements.some((statement) => statement.startsWith(redemptionInsertPrefix)),
       'the last millisecond of skew remains usable',
     ).toBe(true);
-    const cleanupIndex = statements.findIndex((statement) =>
-      statement.startsWith('select contacts.prune_expired_gateway_assertion_redemptions('),
-    );
-    const insertIndex = statements.findIndex((statement) => statement.startsWith(redemptionInsertPrefix));
-    expect(cleanupIndex, 'usable assertions prune expired evidence').toBeGreaterThanOrEqual(0);
-    expect(insertIndex).toBeGreaterThan(cleanupIndex);
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.startsWith(redemptionInsertPrefix)).toBe(true);
     statements.length = 0;
     for (const now of [expiryWithSkewMs, expiryWithSkewMs + 1]) {
       yield* fixture.clock.setTime(now);

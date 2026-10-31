@@ -28,6 +28,7 @@ export {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
 } from './auth/gateway-assertion-redemption.ts';
+export { startGatewayAssertionRedemptionCleanup } from './auth/gateway-assertion-redemption-cleanup.ts';
 export type {
   GatewayAssertionRedemption,
   GatewayAssertionRedemptionError,

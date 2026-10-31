@@ -14,6 +14,9 @@ import { ActionPrincipalScopeErrorSchema, bindGatewayPrincipalVerifier } from '@
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
+import { defineRelations } from 'drizzle-orm';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { gatewayAssertionRedemptions } from '../../src/database/schema.ts';
 import { Context, DateTime, Effect, Layer, Redacted, Result, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
@@ -23,6 +26,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
+  pruneExpiredGatewayAssertionRedemptions,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 
 class RedemptionNativeSetupFailed extends Schema.TaggedError<RedemptionNativeSetupFailed>()(
@@ -71,7 +75,16 @@ const fixture = Effect.fn('catalog.RedemptionNative.fixture')(function* fixture(
     );
     return Context.get(services, GatewayAssertionRedemptionService);
   });
-  return { admin, migrate, redemption, runtime };
+  const executor = yield* makeWithDefaults({ relations: defineRelations({ gatewayAssertionRedemptions }) }).pipe(
+    Effect.provideService(PgClient.PgClient, runtime),
+  );
+  return {
+    admin,
+    migrate,
+    prune: (cutoff: Date) => pruneExpiredGatewayAssertionRedemptions(executor, cutoff),
+    redemption,
+    runtime,
+  };
 });
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -201,6 +214,11 @@ it.layer(services, { excludeTestServices: true })('Catalog durable gateway redem
           }
           expect(yield* test.runtime.unsafe('select jti from catalog.gateway_assertion_redemptions')).toHaveLength(1);
           yield* redemption.consume(assertion('33333333-3333-4333-8333-333333333333', now + 300));
+          // Consumption only inserts. Owner cleanup runs independently once a minute.
+          expect(yield* test.runtime.unsafe('select jti from catalog.gateway_assertion_redemptions')).toHaveLength(2);
+          yield* test.prune(
+            DateTime.toDateUtc(DateTime.makeUnsafe((now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) * 1000)),
+          );
           expect(yield* test.runtime.unsafe('select jti::text from catalog.gateway_assertion_redemptions')).toEqual([
             { jti: '33333333-3333-4333-8333-333333333333' },
           ]);
