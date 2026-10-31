@@ -214,6 +214,7 @@ export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejec
     'market_code_conflict',
     'overlapping_association',
     'replacement_impact_unresolved',
+    'retirement_in_progress',
     'revision_conflict',
     'seller_identity_immutable',
   ]),

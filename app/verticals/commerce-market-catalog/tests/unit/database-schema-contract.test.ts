@@ -10,6 +10,7 @@ import {
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
+  marketRetirementIntents,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,
@@ -30,11 +31,12 @@ describe('Commerce Market Catalog database contract', () => {
     );
   });
 
-  it('preserves Tenant-scoped RLS on all six business tables so eligible sellers remain discoverable before seller selection', () => {
+  it('preserves Tenant-scoped RLS on all seven business tables so eligible sellers remain discoverable before seller selection', () => {
     const businessTables = [
       marketCatalogCompletenessGenerations,
       marketDefinitionRevisions,
       marketLifecyclePeriods,
+      marketRetirementIntents,
       markets,
       storefrontAssociationRevisions,
       storefrontAssociations,
@@ -43,6 +45,7 @@ describe('Commerce Market Catalog database contract', () => {
       'market_catalog_completeness_generations',
       'market_definition_revisions',
       'market_lifecycle_periods',
+      'market_retirement_intents',
       'markets',
       'storefront_association_revisions',
       'storefront_associations',
@@ -220,5 +223,37 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain("v_retirement_impact#>'{reservation,version}'");
     expect(migration).toContain('then v_retirement_impact else null end');
     expect(migration).not.toContain("v_retirement_impact->>'reservationToken'");
+  });
+
+  it('persists one open durable retirement intent per Market behind compare-and-set owner routines', () => {
+    const intents = getTableConfig(marketRetirementIntents);
+    expect(intents.indexes.map((index) => index.config.name)).toContain(
+      'commerce_market_catalog_retirement_intents_open_market_uk',
+    );
+    expect(intents.checks.map(({ name }) => name)).toEqual(
+      expect.arrayContaining([
+        'commerce_market_catalog_retirement_intents_stage_ck',
+        'commerce_market_catalog_retirement_intents_failure_ck',
+        'commerce_market_catalog_retirement_intents_reservation_ck',
+      ]),
+    );
+    const migration = readFileSync(
+      new URL('../../drizzle/20261031091616_market-retirement-intents/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    for (const routine of [
+      'request_market_retirement',
+      'read_market_retirement_intent',
+      'advance_market_retirement_intent',
+    ]) {
+      expect(migration).toContain(`grant execute on function commerce_market_catalog.${routine}(uuid, uuid, jsonb)`);
+      expect(migration).toContain(
+        `revoke all on function commerce_market_catalog.${routine}(uuid, uuid, jsonb) from public`,
+      );
+    }
+    expect(migration).toContain('FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain("if v_intent.stage is distinct from p_payload->>'expectedStage' then");
+    expect(migration).toContain('commerce_market_catalog.transition_market_lifecycle(p_tenant_id, p_legal_entity_id');
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
 });

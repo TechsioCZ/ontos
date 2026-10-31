@@ -4,294 +4,82 @@
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
-import {
-  MarketCommandRejected,
-  MarketLifecycleResultSchema as RetireMarketResultSchema,
-  RetireMarketPayloadSchema,
-} from '../../shared/action-contracts.ts';
+import { MarketCommandRejected, RetireMarketPayloadSchema } from '../../shared/action-contracts.ts';
 import type { RetireMarketPayload } from '../../shared/action-contracts.ts';
-import type {
-  MarketRetirementImpactAssessment,
-  MarketRetirementProviderAssessment,
-} from '../../shared/domain/market-retirement-impact.ts';
-import { OutboxPayloadSchema as MarketRetiredOutboxPayloadSchema } from '../../shared/outbox/commerce-market-catalog-market-retired-v1.ts';
-import type { MarketAdministrationService } from '../services/market-administration.service.ts';
 import {
-  MarketAdministrationPersistenceUnavailable,
-  marketAdministrationService,
-} from '../services/market-administration.service.ts';
-import type { MarketRetirementImpactAuthority } from '../services/market-retirement-impact-authority.ts';
-import { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
-import { createRetireMarketCommerceMarketCatalogMarketRetiredV1OutboxMessage as createOutboxMessage } from './retire-market-commerce-market-catalog-market-retired-v1.outbox-message.ts';
+  MarketRetirementIntentIdSchema,
+  MarketRetirementOutcomeSchema as RetireMarketResultSchema,
+} from '../../shared/domain/market-retirement-intent.ts';
+import type { MarketRetirementOutcome } from '../../shared/domain/market-retirement-intent.ts';
+import { OutboxPayloadSchema as MarketRetirementRequestedPayloadSchema } from '../../shared/outbox/commerce-market-catalog-market-retirement-requested-v1.ts';
+import { marketRetirementOutcome } from '../domain/market-retirement-workflow.ts';
+import { MarketAdministrationPersistenceUnavailable } from '../persistence/market-administration-persistence.ts';
+import type {
+  MarketRetirementIntentPersistence,
+  MarketRetirementIntentSnapshot,
+} from '../persistence/market-retirement-intent-persistence.ts';
+import { marketRetirementIntentPersistenceForScope } from '../persistence/market-retirement-intent-persistence.ts';
+import { createRetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxMessage as createOutboxMessage } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
 import {
   MODULE_KEY,
-  MarketAdministrationAuditEvidenceSchema,
   definitionRevisionRef,
   marketDataAccessEvidence,
-  marketRecordedAt,
   rejectMarketCommand,
 } from './market-action-support.ts';
-import { MarketRetirementImpactAssessmentRejected } from './market-retirement-impact-assessment-rejected.ts';
-import { MarketRetirementImpactAssessmentStale } from './market-retirement-impact-assessment-stale.ts';
-import { MarketRetirementImpactAssessmentUnavailable } from './market-retirement-impact-assessment-unavailable.ts';
 
 export { RetireMarketPayloadSchema } from '../../shared/action-contracts.ts';
 export type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 
-export { MarketRetirementImpactAssessmentRejected } from './market-retirement-impact-assessment-rejected.ts';
-export { MarketRetirementImpactAssessmentUnavailable } from './market-retirement-impact-assessment-unavailable.ts';
+const ErrorSchema = Schema.Union([MarketCommandRejected, MarketAdministrationPersistenceUnavailable]);
+const domainEvents = {
+  'commerce.market-catalog.market-retirement-requested.v1': MarketRetirementRequestedPayloadSchema,
+} as const;
 
-const ErrorSchema = Schema.Union([
-  MarketCommandRejected,
-  MarketAdministrationPersistenceUnavailable,
-  MarketRetirementImpactAssessmentRejected,
-  MarketRetirementImpactAssessmentStale,
-  MarketRetirementImpactAssessmentUnavailable,
-]);
-const domainEvents = { 'commerce.market-catalog.market-retired.v1': MarketRetiredOutboxPayloadSchema } as const;
-
-export type RetireMarketServices = MarketAdministrationService &
-  MarketRetirementImpactAuthority<MarketRetirementImpactAuthorityService>;
-
-const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices> = Effect.fn(
-  'RetireMarketAction.makeServices',
-)(function* makeServices(transaction, scope) {
-  const catalog = yield* marketAdministrationService(transaction, scope);
-  const retirementImpact: MarketRetirementImpactAuthority<MarketRetirementImpactAuthorityService> = {
-    assessRetirementImpact: (input) =>
-      MarketRetirementImpactAuthorityService.pipe(
-        Effect.flatMap((authority) => authority.assessRetirementImpact(input)),
-      ),
-    commitRetirementImpact: (input) =>
-      MarketRetirementImpactAuthorityService.pipe(
-        Effect.flatMap((authority) => authority.commitRetirementImpact(input)),
-      ),
-    releaseRetirementImpact: (input) =>
-      MarketRetirementImpactAuthorityService.pipe(
-        Effect.flatMap((authority) => authority.releaseRetirementImpact(input)),
-      ),
-    reserveRetirementImpact: (input) =>
-      MarketRetirementImpactAuthorityService.pipe(
-        Effect.flatMap((authority) => authority.reserveRetirementImpact(input)),
-      ),
-  };
-  return {
-    ...catalog,
-    ...retirementImpact,
-  } satisfies RetireMarketServices;
+const RetireMarketAuditEvidenceSchema = Schema.Struct({
+  operation: Schema.Literal('REQUEST_RETIREMENT'),
+  outcome: Schema.Literals(['completed', 'pending']),
+  reason: Schema.String,
+  retirementIntentId: Schema.optionalKey(MarketRetirementIntentIdSchema),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 });
 
-const refsMatch = (left: RetireMarketPayload['marketRef'], right: RetireMarketPayload['marketRef']) =>
-  left.moduleId === right.moduleId &&
-  left.resourceId === right.resourceId &&
-  left.resourceType === right.resourceType &&
-  left.tenantId === right.tenantId;
+export type RetireMarketServices = MarketRetirementIntentPersistence;
 
-const unavailableAssessment = (reason: string) =>
-  new MarketRetirementImpactAssessmentUnavailable({
-    code: 'market_retirement_impact_assessment_unavailable',
-    reason,
-  });
-
-const staleAssessment = (reason: string) =>
-  new MarketRetirementImpactAssessmentStale({
-    code: 'market_retirement_impact_assessment_stale',
-    reason,
-  });
-
-const validateProviderSet = (
-  assessment: MarketRetirementImpactAssessment,
-): Effect.Effect<void, MarketRetirementImpactAssessmentUnavailable> => {
-  const requiredOwners = new Set(assessment.requiredProviderModuleKeys);
-  const assessedOwners = new Set(assessment.providers.map(({ ownerModuleKey }) => ownerModuleKey));
-  return requiredOwners.size !== assessment.requiredProviderModuleKeys.length ||
-    assessedOwners.size !== assessment.providers.length ||
-    requiredOwners.size !== assessedOwners.size ||
-    [...requiredOwners].some((owner) => !assessedOwners.has(owner))
-    ? Effect.fail(unavailableAssessment('The authoritative Market retirement inventory is missing a required owner'))
-    : Effect.void;
-};
-
-const validateProviderCurrentness = (
-  provider: MarketRetirementProviderAssessment,
-  effectiveAt: string,
-): Effect.Effect<void, MarketRetirementImpactAssessmentStale | MarketRetirementImpactAssessmentUnavailable> => {
-  if (provider.effectiveAt !== effectiveAt) {
-    return Effect.fail(staleAssessment('A provider assessed Market retirement for a different effective instant'));
-  }
-  if (provider.nextBoundaryAt !== undefined && provider.nextBoundaryAt <= effectiveAt) {
-    return Effect.fail(staleAssessment('A provider retirement-impact assessment crossed its next material boundary'));
-  }
-  if (
-    provider.completenessEvidenceReference.length === 0 ||
-    provider.currentnessEvidenceReference.length === 0 ||
-    provider.ownerRevision.length === 0 ||
-    provider.versionToken.length === 0
-  ) {
-    return Effect.fail(
-      unavailableAssessment('A provider did not supply complete owner-verifiable retirement evidence'),
-    );
-  }
-  return Effect.void;
-};
-
-const validateAssessment = Effect.fn('RetireMarketAction.validateAssessment')(function* validateAssessment(
-  payload: RetireMarketPayload,
-  assessment: MarketRetirementImpactAssessment,
-) {
-  const effectiveAt = DateTime.formatIso(payload.effectiveAt);
-  if (!refsMatch(assessment.assessedMarketRef, payload.marketRef)) {
-    return yield* new MarketRetirementImpactAssessmentRejected({
-      code: 'market_retirement_impact_assessment_rejected',
-      reason: 'The Market retirement assessment belongs to another Market',
-    });
-  }
-  if (assessment.assessedMarketRevision !== payload.expectedRevision) {
-    return yield* staleAssessment('The Market changed after owner impact evidence was reserved');
-  }
-  if (assessment.effectiveAt !== effectiveAt) {
-    return yield* staleAssessment('The retirement effective instant changed after owner impact evidence was reserved');
-  }
-  yield* validateProviderSet(assessment);
-  yield* Effect.forEach(assessment.providers, (provider) => validateProviderCurrentness(provider, effectiveAt), {
-    concurrency: 1,
-    discard: true,
-  });
-  return assessment;
-});
+/**
+ * Owner-local services only: this Action performs no remote I/O. Customer Context reservation, the Market
+ * transition and COMMIT/RELEASE are completed by the owner Outbox Worker from the durable intent.
+ */
+const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices> = (transaction, scope) =>
+  marketRetirementIntentPersistenceForScope(transaction, scope);
 
 const handleRetireMarket = Effect.fn('RetireMarketAction.handle')(function* retireMarket(
   payload: RetireMarketPayload,
   context: ActionHandlerContext<typeof domainEvents, RetireMarketServices>,
 ) {
-  if (context.scope.legalEntityId === undefined) {
-    return yield* unavailableAssessment('The trusted Legal Entity is required for Market retirement impact');
-  }
   const { legalEntityId } = context.scope;
-  const changedAt = DateTime.formatIso(payload.effectiveAt);
-  const authoritativeImpact = yield* context.services.assessRetirementImpact({
-    actionInvocationId: context.actionInvocationId,
-    compositionRevision: context.compositionRevision,
-    effectiveAt: changedAt,
-    expectedMarketRevision: payload.expectedRevision,
-    legalEntityId,
-    marketRef: payload.marketRef,
-  });
-  yield* validateAssessment(payload, authoritativeImpact);
-  const verifiedImpact = authoritativeImpact;
-  if (verifiedImpact.providers.some(({ liveBlockingReferences }) => liveBlockingReferences.count > 0)) {
-    return yield* rejectMarketCommand(
-      'replacement_impact_unresolved',
-      'Retirement is blocked while a material live owner reference still depends on this Market',
-    );
+  if (legalEntityId === undefined) {
+    return yield* rejectMarketCommand('cross_tenant_reference', 'The trusted Legal Entity is required');
   }
-  const reservedImpact = yield* context.services.reserveRetirementImpact({
+  const outcome = yield* context.services.request({
     actionInvocationId: context.actionInvocationId,
-    compositionRevision: context.compositionRevision,
-    effectiveAt: changedAt,
-    expectedMarketRevision: payload.expectedRevision,
-    legalEntityId,
-    marketRef: payload.marketRef,
+    effectiveAt: payload.effectiveAt,
+    expectedCurrentDefinitionRevisionId: payload.expectedCurrentDefinitionRevisionRef.resourceId,
+    expectedRevision: payload.expectedRevision,
+    marketId: payload.marketRef.resourceId,
+    principalId: context.scope.principalId,
     reason: payload.reason,
+    recordedAt: yield* DateTime.now,
   });
-  const releaseReservation = () =>
-    context.services
-      .releaseRetirementImpact({
-        actionInvocationId: context.actionInvocationId,
-        assessment: reservedImpact,
-        compositionRevision: context.compositionRevision,
-        legalEntityId,
-        reason: payload.reason,
-      })
-      .pipe(Effect.ignore);
-  yield* validateAssessment(payload, reservedImpact).pipe(Effect.tapError(releaseReservation));
-  const transitionImpact = reservedImpact;
-  if (transitionImpact.providers.some(({ liveBlockingReferences }) => liveBlockingReferences.count > 0)) {
-    yield* releaseReservation();
-    return yield* rejectMarketCommand(
-      'replacement_impact_unresolved',
-      'Retirement is blocked because authoritative affected use changed during transition revalidation',
-    );
-  }
-  const success = yield* Effect.gen(function* transitionReservedMarket() {
-    const recordedAt = yield* marketRecordedAt;
-    const outcome = yield* context.services.transitionLifecycle({
-      actionInvocationId: context.actionInvocationId,
-      effectiveAt: changedAt,
-      expectedCurrentDefinitionRevisionId: payload.expectedCurrentDefinitionRevisionRef.resourceId,
-      expectedRevision: payload.expectedRevision,
-      lifecycle: 'RETIRED',
-      marketId: payload.marketRef.resourceId,
-      principalId: context.scope.principalId,
-      reason: payload.reason,
-      recordedAt,
-      retirementImpactAssessment: transitionImpact,
-      tenantId: context.scope.tenantId,
-    });
-    return yield* Match.value(outcome).pipe(
-      Match.tag('transitioned', (value) => Effect.succeed(value)),
-      Match.tag('revision_conflict', () =>
-        rejectMarketCommand('revision_conflict', 'The observed Market revision is stale'),
-      ),
-      Match.tag('invalid_lifecycle_transition', () =>
-        rejectMarketCommand('invalid_lifecycle_transition', 'The requested Market retirement is invalid'),
-      ),
-      Match.orElse(() => rejectMarketCommand('cross_tenant_reference', 'The Market lifecycle scope is inconsistent')),
-    );
-  }).pipe(Effect.tapError(releaseReservation));
-  yield* context.services.commitRetirementImpact({
-    actionInvocationId: context.actionInvocationId,
-    assessment: transitionImpact,
-    compositionRevision: context.compositionRevision,
-    legalEntityId,
-    reason: payload.reason,
-  });
-  const result = {
-    changed: success.changed,
-    definitionRevisionRef: definitionRevisionRef(context.scope.tenantId, success.definitionRevisionId),
-    lifecycle: 'RETIRED' as const,
-    marketRef: payload.marketRef,
-    revision: success.revision,
-  };
-  yield* context.recordAuditEvidence({
-    changed: success.changed,
-    completenessGeneration: success.generation,
-    operation: 'RETIRE',
-    reason: payload.reason,
-    retirementImpactAssessment: transitionImpact,
-    revision: success.revision,
-  });
-  yield* context.recordDataAccess(
-    marketDataAccessEvidence({
-      operation: 'retire',
-      resourceId: payload.marketRef.resourceId,
-      resourceType: payload.marketRef.resourceType,
-    }),
-  );
-  yield* Effect.forEach(
-    transitionImpact.providers,
-    (provider) =>
-      context.recordDataAccess({
-        accessKind: 'read',
-        queryHash: `market-retirement-impact:${payload.marketRef.resourceId}:${provider.ownerModuleKey}:${provider.ownerRevision}:${provider.versionToken}`,
-        resultCount: provider.liveBlockingReferences.count + provider.retainedHistoryEvidence.count,
-        servingModuleKey: provider.ownerModuleKey,
-        targetModuleKey: MODULE_KEY,
-        targetResourceId: payload.marketRef.resourceId,
-        targetResourceType: payload.marketRef.resourceType,
-      }),
-    { concurrency: 1, discard: true },
-  );
-  if (success.changed) {
+  const requestRetirement = Effect.fn('RetireMarketAction.requestRetirement')(function* requestRetirement(
+    intent: MarketRetirementIntentSnapshot,
+  ) {
     const eventPayload = {
-      changedAt,
-      definitionRevisionRef: result.definitionRevisionRef,
-      lifecycle: 'RETIRED' as const,
+      legalEntityId,
       marketRef: payload.marketRef,
-      revision: success.revision,
+      retirementIntentId: intent.intentId,
     };
     const event = yield* context.addDomainEvent({
-      eventType: 'commerce.market-catalog.market-retired.v1',
+      eventType: 'commerce.market-catalog.market-retirement-requested.v1',
       payloadJson: eventPayload,
       producerModuleKey: MODULE_KEY,
       subjectModuleKey: MODULE_KEY,
@@ -299,7 +87,57 @@ const handleRetireMarket = Effect.fn('RetireMarketAction.handle')(function* reti
       subjectResourceType: payload.marketRef.resourceType,
     });
     yield* context.addOutboxMessage(event, createOutboxMessage(eventPayload));
-  }
+    return marketRetirementOutcome(intent, payload.marketRef);
+  });
+  const result: MarketRetirementOutcome = yield* Match.value(outcome).pipe(
+    Match.tag('requested', ({ intent }) => requestRetirement(intent)),
+    Match.tag('already_retired', ({ definitionRevisionId, revision }) =>
+      Effect.succeed({
+        changed: false,
+        definitionRevisionRef: definitionRevisionRef(context.scope.tenantId, definitionRevisionId),
+        lifecycle: 'RETIRED' as const,
+        marketRef: payload.marketRef,
+        outcome: 'completed' as const,
+        revision,
+      }),
+    ),
+    Match.tag('retirement_in_progress', () =>
+      rejectMarketCommand(
+        'retirement_in_progress',
+        'Vyřazení tohoto obchodního trhu už probíhá. Jeho stav ukáže čtení market-retirement-status.',
+      ),
+    ),
+    Match.tag('revision_conflict', () =>
+      rejectMarketCommand('revision_conflict', 'The observed Market revision is stale'),
+    ),
+    Match.tag('invalid_lifecycle_transition', () =>
+      rejectMarketCommand('invalid_lifecycle_transition', 'The requested Market retirement is invalid'),
+    ),
+    Match.orElse(() => rejectMarketCommand('cross_tenant_reference', 'The Market lifecycle scope is inconsistent')),
+  );
+  yield* context.recordAuditEvidence(
+    result.outcome === 'pending'
+      ? {
+          operation: 'REQUEST_RETIREMENT',
+          outcome: 'pending',
+          reason: payload.reason,
+          retirementIntentId: result.retirementIntentId,
+          revision: payload.expectedRevision,
+        }
+      : {
+          operation: 'REQUEST_RETIREMENT',
+          outcome: 'completed',
+          reason: payload.reason,
+          revision: payload.expectedRevision,
+        },
+  );
+  yield* context.recordDataAccess(
+    marketDataAccessEvidence({
+      operation: 'retire',
+      resourceId: payload.marketRef.resourceId,
+      resourceType: payload.marketRef.resourceType,
+    }),
+  );
   return result;
 });
 
@@ -310,7 +148,7 @@ export const retireMarketAction = defineAction(
       policyKey: 'commerce.market-catalog.retire-market.access.v1',
     },
     actionKey: 'commerce.market-catalog.retire-market',
-    auditEvidenceSchema: MarketAdministrationAuditEvidenceSchema,
+    auditEvidenceSchema: RetireMarketAuditEvidenceSchema,
     auditProfile: 'standard',
     domainErrorSchema: ErrorSchema,
     domainEvents,
@@ -336,3 +174,11 @@ export const retireMarketAction = defineAction(
   handleRetireMarket,
   makeRetireMarketServices,
 );
+
+// <generated-outbox-message-exports>
+export { createRetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxMessage } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
+export { RetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxPayloadSchema } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
+export { RetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxProducerModuleKey } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
+export { RetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxTopic } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
+export type { RetireMarketCommerceMarketCatalogMarketRetirementRequestedV1OutboxPayload } from './retire-market-commerce-market-catalog-market-retirement-requested-v1.outbox-message.ts';
+// </generated-outbox-message-exports>
