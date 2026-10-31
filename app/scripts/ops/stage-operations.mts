@@ -1,45 +1,27 @@
-import { Console, Context, Effect, Redacted } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 import { ZeropsPublicApi } from '../zerops-public-api.mts';
 import { runCommand } from './ops-shell.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 
 /**
- * Shared vocabulary of the stage operations scripts: the Zerops service listing, service variable
- * reads, and the dry-run gate every mutation passes through. Zerops is driven through the locally
+ * Stage service variable reads for the operations scripts. Zerops is driven through the locally
  * authenticated `zcli` behind the `OpsShell` seam.
  */
 const ZCLI = 'zcli';
 const PROJECT_ID_FLAG = '--project-id';
 
-export interface OpsModeSettings {
-  /** Reads always run, so a dry run reports the real plan; mutations are only reported. */
-  readonly dryRun: boolean;
-}
-
-export const OpsMode = Context.Service<OpsModeSettings>('@app/scripts/ops/stage-operations/OpsMode');
-
-/** Runs `effect` unless this is a dry run, in which case it only reports the mutation. */
-export const perform = <A, E, R>(description: string, effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* performEffect() {
-    const { dryRun } = yield* OpsMode;
-    yield* Console.log(dryRun ? `[dry-run] would ${description}` : description);
-    if (!dryRun) {
-      yield* effect;
-    }
-  });
-
 // ---------------------------------------------------------------------------------------------
 // Zerops through zcli
 
-export interface ZeropsService {
+interface ZeropsService {
   readonly hostname: string;
   readonly id: string;
   readonly status: string;
 }
 
 /** Parses the table `zcli service list` prints: `│ ID │ NAME │ STATUS │` rows under a header row. */
-export const parseZeropsServiceList = (output: string): readonly ZeropsService[] =>
+const parseZeropsServiceList = (output: string): readonly ZeropsService[] =>
   output.split('\n').flatMap((line) => {
     const cells = line
       .split('│')
@@ -51,7 +33,7 @@ export const parseZeropsServiceList = (output: string): readonly ZeropsService[]
       : [];
   });
 
-export const listZeropsServices = (projectId: string) =>
+const listZeropsServices = (projectId: string) =>
   runCommand({ args: ['service', 'list', PROJECT_ID_FLAG, projectId], command: ZCLI }).pipe(
     Effect.map(parseZeropsServiceList),
   );
