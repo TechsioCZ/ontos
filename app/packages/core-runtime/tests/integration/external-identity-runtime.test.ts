@@ -59,7 +59,9 @@ import {
 import type { OperationalScope } from '../../src/operations/context.ts';
 import type { ContextAccessService } from '../../src/permissions/context-access.ts';
 import { ContextAccess } from '../../src/permissions/context-access.ts';
+import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { reservePrincipalBindingAction } from '../../src/modules/actions/reserve-principal-binding.action.ts';
+import { activatePrincipalBindingAction } from '../../src/modules/actions/activate-principal-binding.action.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -179,7 +181,10 @@ const deniedContextResults = (keys: readonly string[]) =>
   Effect.succeed(keys.map((key) => ({ decision: 'denied' as const, key })));
 
 const actionContextAccess: ContextAccessService = {
-  identityNamespaces: ({ authenticationNamespaceIds }) => allowedContextResults(authenticationNamespaceIds),
+  identityNamespaces: ({ authenticationNamespaceIds }) =>
+    refuseInsideDatabaseTransaction('spicedb', 'TEST identity namespace authorization').pipe(
+      Effect.andThen(allowedContextResults(authenticationNamespaceIds)),
+    ),
   legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
   modules: ({ moduleIds }) => allowedContextResults(moduleIds),
   resources: ({ resources }) =>
@@ -728,6 +733,75 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
         .from(auditEvents)
         .where(eq(auditEvents.actionInvocationId, rollbackInvocation?.actionInvocationId ?? '')),
     ).toHaveLength(0);
+
+    // Both lifecycle Actions must observe namespace authorization with SQL released.
+    // The ContextAccess port above refuses every call from an open transaction.
+    const activated = yield* allowedRuntime
+      .runAction({
+        payload: { authBindingId: reserved.authBindingId, expectedRevision: reserved.bindingRevision },
+        principal: actor,
+        registration: activatePrincipalBindingAction,
+        transport: {
+          correlationId: 'external-identity-action-activate',
+          idempotencyKey: 'external-identity-action-activate',
+          targetModuleKey: 'core.identity',
+          targetResourceId: reserved.authBindingId,
+          targetResourceType: 'principal-auth-binding',
+        },
+      })
+      .pipe(
+        Effect.provideService(AuthenticationNamespaceRegistry, registry),
+        Effect.provideService(ContextAccess, actionContextAccess),
+      );
+    expect(activated).toMatchObject({
+      authBindingId: reserved.authBindingId,
+      bindingStatus: 'active',
+      outcome: 'ACTIVATED',
+      principalId: reserved.principalId,
+    });
+    expect(
+      yield* database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+    ).toHaveLength(2);
+    const [activationInvocation] = yield* database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, 'external-identity-action-activate'));
+    expect(
+      yield* database.executor
+        .select()
+        .from(dataAccessEvents)
+        .where(eq(dataAccessEvents.actionInvocationId, activationInvocation?.actionInvocationId ?? '')),
+    ).toHaveLength(2);
+
+    const expiredSubject = yield* makeSubject();
+    const timeline = makeAdmissionClock(admissionNow);
+    const expiresAt = DateTime.add(admissionNow, { seconds: 30 });
+    let expiredDuringWrite = false;
+    const expired = yield* runReserve(allowedRuntime, expiredSubject, 'external-identity-namespace-expired').pipe(
+      Effect.provideService(Clock.Clock, timeline.clock),
+      injectStatementFaults((statement) =>
+        Effect.sync(() => {
+          if (statement.startsWith('insert into "core"."principals"')) {
+            timeline.set(expiresAt);
+            expiredDuringWrite = true;
+          }
+        }),
+      ),
+      Effect.flip,
+    );
+    expect(expiredDuringWrite).toBe(true);
+    expect(Predicate.isTagged(expired, 'ExternalIdentityError')).toBe(true);
+    expect(
+      yield* database.executor
+        .select()
+        .from(principalAuthBindings)
+        .where(eq(principalAuthBindings.providerSubjectId, expiredSubject.providerSubjectId)),
+    ).toHaveLength(0);
+    // The write really ran before expiry was consumed. PostgreSQL must roll back its new Principal too.
+    expect(yield* database.executor.select().from(principals).where(eq(principals.tenantId, tenantId))).toHaveLength(2);
+    expect(
+      yield* database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+    ).toHaveLength(2);
   }),
 );
 

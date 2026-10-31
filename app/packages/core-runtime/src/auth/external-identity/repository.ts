@@ -9,6 +9,7 @@ import { Hex } from 'effect/encoding';
 import {
   AuthBindingStatusSchema,
   AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
   ExternalAuthenticationSubjectSchema,
   ReadPrincipalBindingResultSchema,
   ResolveExternalSubjectResultSchema,
@@ -86,6 +87,8 @@ export interface ExternalIdentityBindingRecord {
 export interface ExternalIdentityRepositoryDependencies {
   /** Action-level exact Tenant/namespace provisioning check. */
   readonly authorizeNamespace?: (authenticationNamespaceId: string) => Effect.Effect<void, ExternalIdentityFailure>;
+  /** Invocation-local deployment data observed before SQL, bound by the Action's preparation. */
+  readonly preparedRegistration?: AuthenticationNamespaceRegistration;
   /** Trusted deployment registration. It is never read from request payloads. */
   readonly registry?: AuthenticationNamespaceRegistryService;
 }
@@ -281,6 +284,17 @@ const registrationFrom = (
   dependencies: ExternalIdentityRepositoryDependencies,
   authenticationNamespaceId: string,
 ): Effect.Effect<AuthenticationNamespaceRegistration, ExternalIdentityFailure> => {
+  if (dependencies.preparedRegistration !== undefined) {
+    return dependencies.preparedRegistration.authenticationNamespaceId === authenticationNamespaceId
+      ? Schema.decodeEffect(Schema.toType(AuthenticationNamespaceRegistrationSchema))(
+          dependencies.preparedRegistration,
+        ).pipe(
+          Effect.mapError((cause) =>
+            persistenceFailure('The prepared authentication namespace registration is malformed', cause),
+          ),
+        )
+      : Effect.fail(invalid('The prepared authentication namespace does not match the binding'));
+  }
   const lookup = (
     registry: AuthenticationNamespaceRegistryService,
     decodedNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>,
