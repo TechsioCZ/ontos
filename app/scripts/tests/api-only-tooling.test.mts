@@ -631,7 +631,7 @@ it.live(
           ? require(modulePath)
           : yield* Effect.promise(() => import(pathToFileURL(modulePath).href));
       const generator = yield* Schema.decodeUnknownEffect(PackageGeneratorModuleSchema)(source);
-      const packageSource = { modernPackageVersion: '3.9.3-ultramodern.16', strategy: 'install' } as const;
+      const packageSource = { modernPackageVersion: '3.9.3-ultramodern.17', strategy: 'install' } as const;
       const root = yield* Schema.decodeUnknownEffect(GeneratedRootPackageSchema)(
         generator.createRootPackageJson('fixture', packageSource),
       );

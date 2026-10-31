@@ -180,7 +180,9 @@ mise exec -- pnpm check:local --dry-run
 
 Scopes run existing package scripts; they do not infer impacted packages or replace the full gate.
 No scope means `full`, which runs `pnpm check`; an unknown scope fails rather than silently skipping
-validation. `pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact
+validation. `pnpm check` runs its steps in four parallel lanes and prints each step's output when it
+finishes; every lane runs to completion and the summary names each failed step. On a machine with less
+than 32 GB of memory, run `mise exec -- pnpm check --concurrency 2`. `pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact
 commands (`test:scripts`, `test:deployment-impact`, `test:generation`). Use existing package-filtered
 tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
 the full scope leaves out without running anything; it is not validation.
