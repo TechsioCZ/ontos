@@ -148,3 +148,31 @@ export const moduleDependencyDeclarationsIssue = (input: {
   }
   return undefined;
 };
+
+interface DerivedModuleIntrinsicRequirements {
+  readonly dependencies: readonly string[];
+  readonly requiredCoreCapabilities: readonly OntosCoreCapabilityRequirement[];
+}
+
+/** Derive installation requirements only from the observed owner declaration. */
+export const deriveModuleIntrinsicRequirements = (
+  requirements?: OntosModuleRequirements,
+): DerivedModuleIntrinsicRequirements => ({
+  dependencies: (requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId).toSorted(),
+  requiredCoreCapabilities: (requirements?.coreCapabilities ?? [])
+    .map(({ id, version }) => ({ id, version }))
+    .toSorted((left, right) => left.id.localeCompare(right.id)),
+});
+
+/** Exact public operation versions are independent from deployment format and build identity. */
+export const providesRequiredOperationContracts = (
+  provided: readonly OntosOperationContract[] | undefined,
+  required: readonly OntosRequiredOperationContract[],
+): boolean =>
+  required.every(
+    (operation) =>
+      provided?.some(
+        ({ entrypoint, schemaVersion }) =>
+          entrypoint.entrypointKey === operation.entrypointKey && schemaVersion === operation.schemaVersion,
+      ) === true,
+  );

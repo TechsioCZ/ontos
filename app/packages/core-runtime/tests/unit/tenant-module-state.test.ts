@@ -13,6 +13,7 @@ import {
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnsupportedStateError,
+  TenantModuleStateUnsatisfiedDependencyError,
   TenantModuleStateValidationUnavailableError,
 } from '../../src/modules/tenant-module-state-errors.ts';
 import {
@@ -21,6 +22,8 @@ import {
   rejectUnchangedTenantModuleState,
   resolveTenantModuleStateChangeSource,
   validateTenantModuleStateTransition,
+  tenantModuleIntrinsicDependencyClosure,
+  validateTenantModuleIntrinsicDependencyStates,
 } from '../../src/modules/tenant-module-state-service.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
@@ -107,6 +110,10 @@ it('keeps Core module-state errors stable and sanitized', () => {
       code: 'tenant_module_state_unsupported',
       reason: 'The requested state is not supported by the installed module',
     }),
+    new TenantModuleStateUnsatisfiedDependencyError({
+      code: 'tenant_module_state_dependency_unsatisfied',
+      reason: 'An intrinsic module dependency is absent, incompatible, or not active',
+    }),
     new TenantModuleStateValidationUnavailableError({
       code: 'tenant_module_state_validation_unavailable',
       reason: 'Tenant module transition validation is temporarily unavailable',
@@ -145,7 +152,7 @@ it.effect('declares the generated Core Action contract and bounded business payl
     expect(descriptor.idempotency).toBe('required');
     expect(descriptor.policies).toEqual([]);
     expect(Object.isFrozen(descriptor)).toBe(true);
-    expect(JSON.stringify(descriptor.domainErrorSchema.ast)).not.toMatch(/dependency/iu);
+    expect(JSON.stringify(descriptor.domainErrorSchema.ast)).toMatch(/tenant_module_state_dependency_unsatisfied/iu);
 
     expect(
       yield* Schema.decodeEffect(descriptor.payloadSchema)({
@@ -178,5 +185,74 @@ it.effect('declares the generated Core Action contract and bounded business payl
         }),
       ),
     ).toBeDefined();
+  }),
+);
+
+it.effect('resolves the complete intrinsic activation closure and rejects missing providers or cycles', () =>
+  Effect.gen(function* intrinsicActivationClosure() {
+    const intrinsic = (moduleId: string, dependencies: readonly string[]): OntosModuleDeploymentContract => {
+      const base = contract(moduleId, ['inactive', 'active']);
+      return {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          requirements: {
+            coreCapabilities: [],
+            intrinsic: dependencies.map((dependency) => ({ moduleId: dependency, requiredOperations: [] })),
+            operations: [],
+            schemaVersion: '1',
+          },
+        },
+      };
+    };
+    const a = intrinsic('consumer.alpha', ['provider.beta']);
+    const b = intrinsic('provider.beta', ['provider.gamma']);
+    const c = intrinsic('provider.gamma', []);
+    expect(yield* tenantModuleIntrinsicDependencyClosure(catalog(a, b, c), 'consumer.alpha')).toEqual([
+      'provider.beta',
+      'provider.gamma',
+    ]);
+    expect(
+      Schema.is(TenantModuleStateUnsatisfiedDependencyError)(
+        yield* Effect.flip(tenantModuleIntrinsicDependencyClosure(catalog(a, b), 'consumer.alpha')),
+      ),
+    ).toBe(true);
+    const cyclic = intrinsic('provider.beta', ['consumer.alpha']);
+    expect(
+      Schema.is(TenantModuleStateUnsatisfiedDependencyError)(
+        yield* Effect.flip(tenantModuleIntrinsicDependencyClosure(catalog(a, cyclic), 'consumer.alpha')),
+      ),
+    ).toBe(true);
+    expect(yield* tenantModuleIntrinsicDependencyClosure(catalog(c), 'provider.gamma')).toEqual([]);
+  }),
+);
+
+it.effect('distinguishes malformed dependency state from definite inactive or missing state', () =>
+  Effect.gen(function* intrinsicStateEvidence() {
+    const dependency = 'provider.required';
+    yield* validateTenantModuleIntrinsicDependencyStates([dependency], [{ moduleKey: dependency, state: 'active' }]);
+    yield* Effect.forEach(
+      [[], [{ moduleKey: dependency, state: 'suspended' }]],
+      Effect.fnUntraced(function* definiteDependencyState(rows) {
+        const rejected = yield* Effect.flip(validateTenantModuleIntrinsicDependencyStates([dependency], rows));
+        expect(Schema.is(TenantModuleStateUnsatisfiedDependencyError)(rejected)).toBe(true);
+      }),
+      { concurrency: 1, discard: true },
+    );
+    yield* Effect.forEach(
+      [
+        [{ moduleKey: dependency, state: 'invalid-storage-value' }],
+        [
+          { moduleKey: dependency, state: 'active' },
+          { moduleKey: dependency, state: 'suspended' },
+        ],
+        [{ moduleKey: 'unexpected.provider', state: 'active' }],
+      ],
+      Effect.fnUntraced(function* indeterminateDependencyEvidence(rows) {
+        const failure = yield* Effect.flip(validateTenantModuleIntrinsicDependencyStates([dependency], rows));
+        expect(Schema.is(TenantModuleStateValidationUnavailableError)(failure)).toBe(true);
+      }),
+      { concurrency: 1, discard: true },
+    );
   }),
 );

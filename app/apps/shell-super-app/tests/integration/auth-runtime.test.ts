@@ -2773,7 +2773,9 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         },
       }).pipe(
         Effect.provideContext(runtimeContext),
-        Effect.provideService(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+        Effect.provideService(InstalledModuleCatalogService, {
+          loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+        }),
       );
     });
     yield* changeState('inactive');

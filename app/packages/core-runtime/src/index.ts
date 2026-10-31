@@ -640,6 +640,7 @@ export {
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedStateError,
+  TenantModuleStateUnsatisfiedDependencyError,
   TenantModuleStateValidationUnavailableError,
 } from './modules/tenant-module-state-errors.ts';
 export type { TenantModuleStateTransitionError } from './modules/tenant-module-state-errors.ts';
@@ -684,6 +685,7 @@ export type {
 } from './modules/application-composition.ts';
 export {
   ActiveApplicationCompositionConfigLive,
+  InstalledModuleCatalogServiceLive,
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   makeActiveApplicationCompositionLayer,

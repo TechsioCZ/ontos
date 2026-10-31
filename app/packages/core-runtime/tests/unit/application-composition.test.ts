@@ -1,6 +1,7 @@
 import { Effect, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { OntosModuleRequirementsSchema } from '../../src/modules/module-dependency-contracts.ts';
 import { moduleReleaseWorkerName } from '../../src/http/module-release-identity.ts';
 import {
   ApplicationCompositionCloudflareWorkerBackendSchema,
@@ -105,6 +106,12 @@ const evidence = () => ({
         sha256: sha256('c'),
         version: '2',
       },
+      requirements: Schema.decodeUnknownSync(OntosModuleRequirementsSchema)({
+        coreCapabilities: candidate().shell.coreCapabilities,
+        intrinsic: [],
+        operations: [],
+        schemaVersion: '1',
+      }),
       sha256: sha256('a'),
     },
   },
@@ -305,7 +312,16 @@ it.effect(
         /observed runtime contract/u,
       ],
       [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
-      [(input) => onlyModule(input).dependencies.push('contacts.core'), /dependency cycle/u],
+      [
+        (input, observations) => {
+          observations.contracts.contacts.requirements = {
+            ...observations.contracts.contacts.requirements,
+            intrinsic: [{ moduleId: 'contacts.core', requiredOperations: [] }],
+          };
+          return onlyModule(input).dependencies.push('contacts.core');
+        },
+        /dependency cycle/u,
+      ],
       [(input) => (onlyModule(input).deployment.appId = 'shell-super-app'), /duplicate deployment app ID/u],
       [(input) => onlyModule(input).dependencies.push('contacts.core', 'contacts.core'), /duplicate dependency/u],
       [(input) => addModuleCopy(input, { moduleId: 'inventory.stock' }), /duplicate Shell contribution/u],
@@ -436,6 +452,12 @@ const serverOnlyEvidence = () => ({
   federationExposes: [],
   moduleId: 'commerce.customer-context',
   publicContract: { id: 'commerce.customer-context', sha256: sha256('e'), version: '2' },
+  requirements: Schema.decodeUnknownSync(OntosModuleRequirementsSchema)({
+    coreCapabilities: candidate().shell.coreCapabilities,
+    intrinsic: [],
+    operations: [],
+    schemaVersion: '1',
+  }),
   sha256: sha256('e'),
 });
 

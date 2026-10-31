@@ -7,6 +7,7 @@ import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/sch
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
+import { providesRequiredOperationContracts } from './module-dependency-contracts.ts';
 import type { OntosModuleId } from './manifest.ts';
 import { OntosModuleIdSchema } from './manifest.ts';
 import type { TenantModuleStateTransitionError } from './tenant-module-state-errors.ts';
@@ -19,6 +20,8 @@ import {
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnsupportedStateError,
+  TenantModuleStateUnsatisfiedDependencyError,
+  TenantModuleStateValidationUnavailableError,
 } from './tenant-module-state-errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -84,6 +87,90 @@ export const validateTenantModuleStateTransition = (
   }
   return Effect.void;
 };
+
+const unsatisfiedDependency = () =>
+  new TenantModuleStateUnsatisfiedDependencyError({
+    code: 'tenant_module_state_dependency_unsatisfied',
+    reason: 'An intrinsic module dependency is absent, incompatible, or not active',
+  });
+
+const transitionValidationUnavailable = (cause: unknown) => {
+  const error = new TenantModuleStateValidationUnavailableError({
+    code: 'tenant_module_state_validation_unavailable',
+    reason: 'Tenant module transition validation is temporarily unavailable',
+  });
+  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+  return error;
+};
+
+/** Decode the single locked batch before distinguishing definite absence from indeterminate data. */
+export const validateTenantModuleIntrinsicDependencyStates = Effect.fn(
+  'TenantModuleState.validateIntrinsicDependencyStates',
+)(function* validateIntrinsicDependencyStates(
+  dependencies: readonly string[],
+  rows: readonly { readonly moduleKey: string; readonly state: unknown }[],
+) {
+  const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(TenantModuleStateRecordSchema))(rows).pipe(
+    Effect.mapError(transitionValidationUnavailable),
+  );
+  const states = new Map(decoded.map(({ moduleKey, state }) => [moduleKey, state]));
+  const expected = new Set(dependencies);
+  if (states.size !== decoded.length || decoded.some(({ moduleKey }) => !expected.has(moduleKey))) {
+    return yield* transitionValidationUnavailable('Contradictory dependency state evidence');
+  }
+  if (dependencies.some((dependency) => states.get(dependency) !== 'active')) {
+    return yield* unsatisfiedDependency();
+  }
+  return yield* Effect.void;
+});
+
+/** Resolve only intrinsic declarations; conditional operation relationships never enter this closure. */
+export const tenantModuleIntrinsicDependencyClosure = Effect.fn('TenantModuleState.intrinsicDependencyClosure')(
+  function* intrinsicDependencyClosure(catalog: InstalledModuleCatalog, moduleKey: string) {
+    const required = new Set<string>();
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = Effect.fnUntraced(function* visitIntrinsicDependency(
+      key: string,
+    ): Effect.fn.Return<void, TenantModuleStateUnsatisfiedDependencyError> {
+      if (visiting.has(key)) {
+        return yield* unsatisfiedDependency();
+      }
+      if (visited.has(key)) {
+        return yield* Effect.void;
+      }
+      const contract = catalog.getByModuleId(key);
+      if (contract === undefined) {
+        return yield* unsatisfiedDependency();
+      }
+      visiting.add(key);
+      yield* Effect.forEach(
+        contract.manifest.requirements?.intrinsic ?? [],
+        Effect.fnUntraced(function* visitRequirement(requirement) {
+          const provider = catalog.getByModuleId(requirement.moduleId);
+          if (
+            provider === undefined ||
+            !providesRequiredOperationContracts(
+              provider.manifest.publicSurface.operationContracts,
+              requirement.requiredOperations,
+            )
+          ) {
+            return yield* unsatisfiedDependency();
+          }
+          required.add(requirement.moduleId);
+          yield* visit(requirement.moduleId);
+          return yield* Effect.void;
+        }),
+        { concurrency: 1, discard: true },
+      );
+      visiting.delete(key);
+      visited.add(key);
+      return yield* Effect.void;
+    });
+    yield* visit(moduleKey);
+    return [...required].toSorted();
+  },
+);
 
 export const resolveTenantModuleStateChangeSource = (
   authMethod: ActionAuthMethod,
@@ -202,6 +289,7 @@ export const TenantModuleStateServiceLive = Layer.effect(
 export interface PersistTenantModuleStateChangeInput {
   readonly actionInvocationId: string;
   readonly authMethod: ActionAuthMethod;
+  readonly catalog: InstalledModuleCatalog;
   readonly expectedState?: TenantModuleState;
   readonly moduleKey: string;
   readonly newState: TenantModuleState;
@@ -254,6 +342,23 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
         code: 'tenant_module_state_tenant_missing',
         reason: 'The tenant required for this state change does not exist',
       });
+    }
+
+    // The tenant row lock serializes every state mutation, including provider deactivation.
+    // Resolve the trusted revision's closure and read its states inside this same transaction.
+    yield* validateTenantModuleStateTransition(input.catalog, input.moduleKey, input.newState);
+    if (input.newState === 'active' || input.newState === 'read_only') {
+      const dependencies = yield* tenantModuleIntrinsicDependencyClosure(input.catalog, input.moduleKey);
+      if (dependencies.length > 0) {
+        const dependencyRows = yield* transaction
+          .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+          .from(tenantModuleStates)
+          .where(
+            and(eq(tenantModuleStates.tenantId, input.tenantId), inArray(tenantModuleStates.moduleKey, dependencies)),
+          )
+          .pipe(Effect.mapError(persistenceUnavailable));
+        yield* validateTenantModuleIntrinsicDependencyStates(dependencies, dependencyRows);
+      }
     }
 
     const currentRows = yield* transaction

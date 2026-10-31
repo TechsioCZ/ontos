@@ -10,7 +10,10 @@ import {
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayRelayExchangeLedgerLive } from './auth/gateway-relay-exchanges.service.ts';
 import { issueRelayedGatewayContextAssertion } from './auth/gateway-relay-issuer.ts';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionConfigLive,
+  InstalledModuleCatalogServiceLive,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
@@ -1938,6 +1941,7 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.mergeAll(
         sharedOperationLayers,
         activeApplicationCompositionLive,
+        InstalledModuleCatalogServiceLive.pipe(Layer.provide(activeApplicationCompositionLive)),
         ActionRepositoryLive,
         ActionPermissionLive,
       ),
