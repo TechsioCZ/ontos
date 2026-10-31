@@ -33,6 +33,7 @@ import {
   assortmentPolicyPersistenceForScope,
 } from '../../src/services/policy-administration.service.ts';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { grantRuntimeOwnerTableAccess } from '../support/runtime-owner-access.ts';
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
@@ -131,12 +132,12 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* policyAdministrationPersistenceAcceptance() {
-        const { admin: adminClient } = yield* testDatabaseClients;
+        const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
         const admin = yield* makeTestDatabaseFromClient(adminClient, assortmentRelations);
-        // The owner service is exercised through an administrative test connection because
-        // this lane verifies the owner transaction's persistence semantics. Runtime-role
-        // capabilities remain covered by the owner database-security verifier.
-        const ownerDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        // The owner service runs as the enrolled runtime role, under its row-level security; only an
+        // enrolled session-setting identity may install operational scope.
+        const ownerDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+        yield* grantRuntimeOwnerTableAccess(admin);
 
         const cleanup = () =>
           admin.transaction((transaction) =>

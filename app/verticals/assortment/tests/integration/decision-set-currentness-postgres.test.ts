@@ -44,6 +44,8 @@ import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/poli
 import { assortmentDecisionEvidenceRepositoryForScope } from '../../src/services/decision-evidence.repository.ts';
 import { assortmentDecisionExplanationReadService } from '../../src/services/decision-explanation-read.service.ts';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { assortmentRelations } from '../../src/database/schema.ts';
+import { grantRuntimeOwnerTableAccess } from '../support/runtime-owner-access.ts';
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
@@ -112,8 +114,10 @@ const query = Schema.decodeUnknownSync(AssortmentOrdinaryCandidateQueryV1Schema)
 it.live('invalidates empty Assortment Candidate and Boundary sets when matching facts are added', () =>
   Effect.scoped(
     Effect.gen(function* decisionSetCurrentnessPostgres() {
-      const { admin: adminClient } = yield* testDatabaseClients;
-      const ownerDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      // Owner operations run as the enrolled runtime role, under its row-level security.
+      const ownerDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      yield* grantRuntimeOwnerTableAccess(yield* makeTestDatabaseFromClient(adminClient, assortmentRelations));
       const runScoped = <Value, Failure>(
         operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
       ) =>
@@ -324,8 +328,9 @@ for (const audienceKind of ['SHARED', 'COMMERCE_CUSTOMER_GROUP', 'SUBJECT'] as c
   it.live(`preserves ${audienceKind} Product DENY after Rule retirement until explicit Binding End`, () =>
     Effect.scoped(
       Effect.gen(function* retirementPreservesApplicability() {
-        const { admin } = yield* testDatabaseClients;
-        const database = yield* makeTestDatabaseFromClient(admin, coreRelations);
+        const { admin, runtime } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
+        yield* grantRuntimeOwnerTableAccess(yield* makeTestDatabaseFromClient(admin, assortmentRelations));
         const scenarioTenantId = randomUUID();
         const scenarioLegalEntityId = randomUUID();
         const scenarioPrincipalId = randomUUID();
