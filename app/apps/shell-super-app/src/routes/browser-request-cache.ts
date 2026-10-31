@@ -9,6 +9,7 @@ import type { PageDataWork } from '@app/shared-contracts/page-data';
 import { Clock, Deferred, Effect, Exit, Fiber, Match, MutableRef, Option, Predicate, Schema } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { staffRoutePreloads } from './route-preload-scheduler.ts';
 import {
   documentGatewayAssertion,
   noteDocumentGatewayAudience,
@@ -107,6 +108,7 @@ interface ModuleRead {
   readonly compositionRevision: string;
   readonly contentType: string;
   readonly init: RequestInit;
+  readonly preparationKey?: string;
   readonly url: string;
 }
 
@@ -191,22 +193,72 @@ const retainPageDataWork = (work: PageDataWork): void => {
   });
 };
 
+/** Cold foreground preparation owns priority even before its remote code can issue any reads. */
+const primaryPreparations = MutableRef.make(new Map<string, Set<Deferred.Deferred<boolean>>>());
+
+/** Explicit route identity, never the recorder-exclusion counter, determines foreground ownership. */
+const holdPrimaryModulePreparation = (pathname: string | undefined) => {
+  if (pathname === undefined || pathname !== globalThis.location.pathname) {
+    return () => {
+      // This work belongs to another destination.
+    };
+  }
+  const settled = Deferred.makeUnsafe<boolean>();
+  const preparing = MutableRef.get(primaryPreparations);
+  const active = preparing.get(pathname) ?? new Set<Deferred.Deferred<boolean>>();
+  active.add(settled);
+  preparing.set(pathname, active);
+  return () => {
+    active.delete(settled);
+    if (active.size === 0 && preparing.get(pathname) === active) {
+      preparing.delete(pathname);
+    }
+    Deferred.doneUnsafe(settled, Effect.succeed(true));
+  };
+};
+
+const retainRoutePreparation = (dataKey: string | undefined) => {
+  const release = dataKey === undefined ? Effect.void : browserRuntime.runSync(staffRoutePreloads.retain(dataKey));
+  const releasePrimary = holdPrimaryModulePreparation(dataKey?.split('?')[0]);
+  return () => {
+    releasePrimary();
+    browserRuntime.runFork(release);
+  };
+};
+
 /** Keep exclusion for the owner's Promise and all its detached loads, even if its caller stops waiting. */
-export const withoutRecordedPageReads = <A>(start: () => Promise<A>) =>
+export const withoutRecordedPageReads = <A>(start: () => Promise<A>, dataKey?: string) =>
   Effect.tryPromise(async () => {
+    const release = retainRoutePreparation(dataKey);
+    const observe = (event: WindowEventMap[typeof pageDataWorkEvent]) => {
+      if (dataKey !== undefined) {
+        event.detail.onSettled(retainRoutePreparation(dataKey));
+      }
+    };
+    if (dataKey !== undefined) {
+      globalThis.addEventListener(pageDataWorkEvent, observe);
+    }
     MutableRef.update(preparations, (count) => count + 1);
     try {
       return await start();
     } finally {
       MutableRef.update(preparations, (count) => count - 1);
+      globalThis.removeEventListener(pageDataWorkEvent, observe);
+      release();
     }
   }).pipe(Effect.timeout(BACKGROUND_WAIT_LIMIT));
 
 // The shared request runs detached from any one caller, so it must not carry that caller's abort signal.
-const bufferedFetch = (state: CacheState, url: string, { signal: _callerSignal, ...init }: RequestInit) =>
+const bufferedFetch = (
+  state: CacheState,
+  url: string,
+  { signal: _callerSignal, ...init }: RequestInit,
+  preparationKey?: string,
+) =>
   Effect.tryPromise({
     catch: (cause) => new ModuleRequestFailed({ cause }),
     try: async () => {
+      const release = retainRoutePreparation(preparationKey);
       // Interrupting a superseded dataset stops its continuation, not a shared transport. Retain exclusion
       // until the real response body settles, even if every caller has stopped waiting (or timed out).
       const excluded = MutableRef.get(preparations) > 0;
@@ -225,6 +277,7 @@ const bufferedFetch = (state: CacheState, url: string, { signal: _callerSignal, 
         if (excluded) {
           MutableRef.update(preparations, (count) => count - 1);
         }
+        release();
       }
     },
   }).pipe(
@@ -282,7 +335,7 @@ const startRead = Effect.fn('BrowserRequestCache.startRead')(function* startRead
   const key = readKey(read);
   const { generation } = state;
   const keep = now >= state.quietUntil;
-  const fiber = yield* Effect.forkDetach(bufferedFetch(state, read.url, read.init));
+  const fiber = yield* Effect.forkDetach(bufferedFetch(state, read.url, read.init, read.preparationKey));
   const entry: ReadEntry = { fiber, primary: MutableRef.get(preparations) === 0, startedAt: now };
   if (state.reads.size >= READ_ENTRY_LIMIT) {
     state.reads.clear();
@@ -452,41 +505,29 @@ const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestIn
 /** The Shell installs the cache once per document; prefetches read the same state. */
 const installed = MutableRef.make(Option.none<CacheState>());
 
-/** Cold foreground preparation owns priority even before its remote code can issue any reads. */
-const primaryPreparations = MutableRef.make(new Map<string, Set<Deferred.Deferred<boolean>>>());
-
 export const withPrimaryModulePreparation = <A, E, R>(pathname: string, work: Effect.Effect<A, E, R>) =>
   Effect.suspend(() =>
     pathname === globalThis.location.pathname
       ? Effect.acquireUseRelease(
-          Deferred.make<boolean>().pipe(
-            Effect.tap((settled) =>
-              Effect.sync(() => {
-                const preparing = MutableRef.get(primaryPreparations);
-                const active = preparing.get(pathname) ?? new Set<Deferred.Deferred<boolean>>();
-                active.add(settled);
-                preparing.set(pathname, active);
-              }),
-            ),
-          ),
+          Effect.sync(() => holdPrimaryModulePreparation(pathname)),
           () => work,
-          (settled) =>
-            Effect.sync(() => {
-              const preparing = MutableRef.get(primaryPreparations);
-              const active = preparing.get(pathname);
-              active?.delete(settled);
-              if (active?.size === 0) {
-                preparing.delete(pathname);
-              }
-            }).pipe(Effect.andThen(Deferred.succeed(settled, true))),
+          (release) => Effect.sync(release),
         )
       : work,
   );
 
+const awaitPrimaryPreparations: Effect.Effect<void> = Effect.suspend(() => {
+  const preparing = [...(MutableRef.get(primaryPreparations).get(globalThis.location.pathname) ?? [])];
+  return preparing.length === 0
+    ? Effect.void
+    : Effect.forEach(preparing, Deferred.await, { concurrency: READ_ENTRY_LIMIT, discard: true }).pipe(
+        Effect.andThen(awaitPrimaryPreparations),
+      );
+});
+
 /** Wait for foreground preparation first; an empty request cache alone does not mean the page is ready. */
 export const awaitPrimaryModuleReads = Effect.gen(function* awaitCurrentPagePrimaryReads() {
-  const preparing = [...(MutableRef.get(primaryPreparations).get(globalThis.location.pathname) ?? [])];
-  yield* Effect.forEach(preparing, Deferred.await, { concurrency: READ_ENTRY_LIMIT, discard: true });
+  yield* awaitPrimaryPreparations;
   const current = MutableRef.get(installed);
   if (Option.isSome(current)) {
     // Snapshot only foreground reads. Later speculative destinations never extend this gate.
@@ -567,7 +608,7 @@ const readManifest = (pathname: string) =>
     Effect.orElseSucceed((): readonly RecordedRead[] => []),
   );
 
-const prefetchRead = (state: CacheState, read: RecordedRead) =>
+const prefetchRead = (state: CacheState, read: RecordedRead, pathname: string) =>
   makeOperationGateway(read.audience)
     .invoke((authorization, { compositionRevision }) =>
       serveRead(
@@ -587,6 +628,7 @@ const prefetchRead = (state: CacheState, read: RecordedRead) =>
             },
             method: 'POST',
           },
+          preparationKey: pathname,
           url: read.url,
         },
         false,
@@ -615,7 +657,7 @@ export const prefetchRecordedReads = Effect.fn('BrowserRequestCache.prefetchReco
     yield* Effect.forEach(
       // A read recorded without a revision header still names its module release in the URL.
       reads.filter((read) => read.compositionRevision === '' || read.compositionRevision === revision.value),
-      (read) => prefetchRead(state, read),
+      (read) => prefetchRead(state, read, pathname),
       { concurrency: PREFETCH_CONCURRENCY, discard: true },
     );
   },

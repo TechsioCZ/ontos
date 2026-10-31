@@ -14,6 +14,7 @@ import {
   installBrowserRequestCache,
   withoutRecordedPageReads,
 } from '../../../src/routes/browser-request-cache.ts';
+import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
 import { seedDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
 import { prepareModulePage, RemotePagePreparation } from '../../../src/routes/remote-page-loader.ts';
 
@@ -78,6 +79,76 @@ beforeEach(async () => {
   );
   await gatewayRequest();
 });
+
+it.live('keeps the shared background slot until both the real owner and its detached dataset settle', () =>
+  Effect.gen(function* retainedPreparationSlot() {
+    const ownerRelease = yield* Deferred.make<boolean>();
+    const datasetRelease = yield* Deferred.make<boolean>();
+    const blockersRelease = yield* Deferred.make<boolean>();
+    const ownerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+    let revalidating = false;
+    const data = definePageData({
+      key: (key: string) => key,
+      load: () => Effect.suspend(() => (revalidating ? Deferred.await(datasetRelease) : Effect.succeed(true))),
+      runtime: browserRuntime,
+    });
+    yield* data.preload('prepared');
+    revalidating = true;
+    const dataset = yield* data.refresh('prepared').pipe(Effect.forkChild({ startImmediately: true }));
+    const ownerWork = withoutRecordedPageReads(
+      () => browserRuntime.runPromise(data.preload('prepared').pipe(Effect.andThen(Deferred.await(ownerRelease)))),
+      '/en/prepared',
+    );
+    yield* staffRoutePreloads.invalidate;
+    yield* staffRoutePreloads.resume;
+    yield* Effect.gen(function* checkDetachedDatasetSlot() {
+      const first = yield* staffRoutePreloads
+        .schedule(
+          '/en/prepared',
+          'background',
+          Effect.forkDetach(ownerWork, { startImmediately: true }).pipe(
+            Effect.flatMap((owner) => Deferred.succeed(ownerStarted, owner)),
+            Effect.asVoid,
+          ),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const owner = yield* Deferred.await(ownerStarted);
+      const blockers = yield* Effect.forEach(
+        ['one', 'two', 'three'],
+        (key) =>
+          staffRoutePreloads
+            .schedule(`/en/${key}`, 'background', Deferred.await(blockersRelease).pipe(Effect.asVoid))
+            .pipe(Effect.forkDetach({ startImmediately: true })),
+        { concurrency: 3 },
+      );
+      const fifth = yield* staffRoutePreloads
+        .schedule('/en/fifth', 'background', Effect.void)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(ownerRelease, true);
+      yield* Fiber.join(owner);
+      expect(fifth.pollUnsafe()).toBeUndefined();
+      expect(first.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(datasetRelease, true);
+      yield* Fiber.join(dataset);
+      yield* Fiber.join(fifth);
+      yield* Fiber.join(first);
+      yield* Deferred.succeed(blockersRelease, true);
+      yield* Effect.all(
+        blockers.map((fiber) => Fiber.join(fiber)),
+        { concurrency: 3, discard: true },
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.gen(function* releaseOwnedWork() {
+          yield* Deferred.succeed(ownerRelease, true);
+          yield* Deferred.succeed(datasetRelease, true);
+          yield* Deferred.succeed(blockersRelease, true);
+          yield* staffRoutePreloads.invalidate;
+        }),
+      ),
+    );
+  }),
+);
 
 it.live('excludes several concurrent destinations without polluting the current visit replay', () =>
   Effect.gen(function* concurrentRecorderIsolation() {

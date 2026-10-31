@@ -22,6 +22,8 @@ import { Effect } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
+import { staffRoutePreloads } from './route-preload-scheduler.ts';
+import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
 import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
@@ -163,7 +165,7 @@ export interface ShellNavigationModel {
 
 type Translate = (key: string) => string;
 
-/** Staff links prepare on render and immediately on intent, using native joinable router flights. */
+/** Staff links share the idle queue; intent promotes a queued destination without duplicating its router flight. */
 export const ShellRouteLink = ({
   href: _unusedHref,
   ...props
@@ -171,7 +173,7 @@ export const ShellRouteLink = ({
   const router = useRouter();
   const { language } = useModernI18n();
   const { enabled } = useContext(StaffRoutePreloadContext);
-  const prepare = (element: HTMLAnchorElement) => {
+  const prepare = (element: HTMLAnchorElement, priority: RoutePreloadPriority) => {
     const url = new URL(element.href);
     if (
       !enabled ||
@@ -184,13 +186,19 @@ export const ShellRouteLink = ({
       return;
     }
     browserRuntime.runFork(
-      withoutRecordedPageReads(() =>
-        router.preloadRoute({
-          hash: url.hash.slice(1),
-          search: router.options.parseSearch(url.search),
-          to: url.pathname,
-        }),
-      ).pipe(Effect.ignore),
+      staffRoutePreloads
+        .schedule(
+          `${url.pathname}${url.search}${url.hash}`,
+          priority,
+          withoutRecordedPageReads(() =>
+            router.preloadRoute({
+              hash: url.hash.slice(1),
+              search: router.options.parseSearch(url.search),
+              to: url.pathname,
+            }),
+          ).pipe(Effect.ignore),
+        )
+        .pipe(Effect.ignore),
     );
   };
   return (
@@ -200,26 +208,26 @@ export const ShellRouteLink = ({
       onFocus={(event) => {
         props.onFocus?.(event);
         if (!event.defaultPrevented) {
-          prepare(event.currentTarget);
+          prepare(event.currentTarget, 'intent');
         }
       }}
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
         if (!event.defaultPrevented) {
-          prepare(event.currentTarget);
+          prepare(event.currentTarget, 'intent');
         }
       }}
       onTouchStart={(event) => {
         props.onTouchStart?.(event);
         if (!event.defaultPrevented) {
-          prepare(event.currentTarget);
+          prepare(event.currentTarget, 'intent');
         }
       }}
       prefetch="none"
       preload={false}
       ref={(element: HTMLAnchorElement | null) => {
         if (element !== null) {
-          prepare(element);
+          prepare(element, 'background');
         }
       }}
     />
