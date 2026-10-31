@@ -1,8 +1,16 @@
+import type {
+  MarketRetirementStoredBasis,
+  ManageMarketRetirementAdmissionPayload,
+  MarketRetirementCommittedResult,
+} from '../../shared/market-retirement-admission.ts';
 /* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical database contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
-import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
+import type {
+  MarketRetirementImpactAssessment,
+  ReservedMarketRetirementImpactAssessment,
+} from '../../shared/domain/market-retirement-impact.ts';
 
 export const COMMERCE_MARKET_CATALOG_SCHEMA_NAME = 'commerce_market_catalog';
 
@@ -11,6 +19,7 @@ export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
   'market_catalog_completeness_generations',
   'market_definition_revisions',
   'market_lifecycle_periods',
+  'market_retirement_admissions',
   'markets',
   'storefront_association_revisions',
   'storefront_associations',
@@ -261,11 +270,50 @@ export const marketCatalogCompletenessGenerations = commerceMarketCatalogSchema.
   ],
 );
 
+export const marketRetirementAdmissions = commerceMarketCatalogSchema.table.withRLS(
+  'market_retirement_admissions',
+  {
+    sourceActionInvocationId: uuid('source_action_invocation_id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    marketId: uuid('market_id').notNull(),
+    sellingLegalEntityId: uuid('selling_legal_entity_id').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    compositionRevision: text('composition_revision').notNull(),
+    retirementPayload: jsonb('retirement_payload')
+      .$type<ManageMarketRetirementAdmissionPayload['retirement']>()
+      .notNull(),
+    releaseGuardHash: text('release_guard_hash').notNull(),
+    abortProof: uuid('abort_proof').notNull(),
+    basis: jsonb('original_reserve_basis').$type<MarketRetirementStoredBasis>().notNull(),
+    status: text('status').notNull(),
+    committedResult: jsonb('committed_result').$type<MarketRetirementCommittedResult>(),
+    retirementAssessment: jsonb('retirement_assessment').$type<ReservedMarketRetirementImpactAssessment>(),
+    createdAt: recordedAt(),
+  },
+  (table) => [
+    unique('market_retirement_admissions_tenant_source_uk').on(table.tenantId, table.sourceActionInvocationId),
+    foreignKey({
+      columns: [table.tenantId, table.marketId],
+      foreignColumns: [markets.tenantId, markets.marketId],
+      name: 'market_retirement_admissions_market_fk',
+    }).onDelete('restrict'),
+    check('market_retirement_admissions_status_ck', sql`${table.status} in ('PENDING', 'COMMITTED', 'ABORTED')`),
+    check('market_retirement_admissions_guard_ck', sql`${table.releaseGuardHash} ~ '^[a-f0-9]{64}$'`),
+    check('market_retirement_admissions_revision_ck', sql`${table.compositionRevision} ~ '^[a-f0-9]{64}$'`),
+    check(
+      'market_retirement_admissions_receipt_ck',
+      sql`(${table.status} = 'COMMITTED' and ${table.committedResult} is not null and ${table.retirementAssessment} is not null) or (${table.status} in ('PENDING','ABORTED') and ${table.committedResult} is null and ${table.retirementAssessment} is null)`,
+    ),
+    ...tenantRlsPolicies('market_retirement_admissions_tenant', table.tenantId),
+  ],
+);
+
 export const COMMERCE_MARKET_CATALOG_TABLES = [
   gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
+  marketRetirementAdmissions,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,
@@ -275,6 +323,7 @@ const commerceMarketCatalogDatabaseSchema = {
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
+  marketRetirementAdmissions,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,

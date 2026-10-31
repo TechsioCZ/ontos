@@ -4,7 +4,7 @@
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
 import {
   AssociateStorefrontPayloadSchema,
   MarketCommandRejected,
@@ -51,13 +51,14 @@ const domainEvents = {
 
 export type AssociateStorefrontServices = MarketAdministrationService & CurrentStorefrontApplicationAuthority;
 
-const makeAssociateStorefrontServices: ActionServiceFactory<AssociateStorefrontServices> = Effect.fn(
+const makeAssociateStorefrontServices: ActionServiceFactory<AssociateStorefrontServices, Crypto.Crypto> = Effect.fn(
   'AssociateStorefrontAction.makeServices',
 )(function* makeServices(transaction, scope, compositionRevision) {
+  const crypto = yield* Crypto.Crypto;
   const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
   return {
     ...catalog,
-    ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, legalEntityId: scope.legalEntityId }),
+    ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope }),
   } satisfies AssociateStorefrontServices;
 });
 

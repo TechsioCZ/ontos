@@ -1,10 +1,12 @@
 import { Config, Effect, Schema } from 'effect';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
+const customerContextApp = 'commerce-customer-context';
+const marketCatalogApp = 'commerce-market-catalog';
 export const GatewayRelaySourceBindingSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   providerKeyId: nonEmpty.pipe(Schema.brand('GatewayRelaySourceCredentialId')),
-  sourceAppId: Schema.Literals(['catalog', 'commerce-customer-context']),
+  sourceAppId: Schema.Literals(['catalog', customerContextApp, marketCatalogApp]),
   sourceBuildMarker: nonEmpty,
 });
 const bindingsSchema = Schema.Array(GatewayRelaySourceBindingSchema).check(
@@ -47,7 +49,20 @@ export const permitsGatewayRelay = (
   if (source.aud === 'catalog') {
     return target.audience === 'party-registry' && target.operationKey === 'party.registry.api.party-detail';
   }
-  if (source.aud !== 'commerce-customer-context') {
+  if (source.aud === marketCatalogApp) {
+    if (target.audience === 'storefront-registry') {
+      return target.operationKey === 'commerce.storefront-registry.api.current-storefront-application';
+    }
+    return (
+      target.audience === customerContextApp &&
+      [
+        'commerce.customer-context.api.market-affected-use-assessment',
+        'commerce.customer-context.reserve-market-retirement',
+        'commerce.customer-context.api.market-retirement-reservation-recovery',
+      ].includes(target.operationKey)
+    );
+  }
+  if (source.aud !== customerContextApp) {
     return false;
   }
   if (target.audience === 'party-registry') {
@@ -58,7 +73,7 @@ export const permitsGatewayRelay = (
     ].includes(target.operationKey);
   }
   return (
-    target.audience === 'commerce-market-catalog' &&
+    target.audience === marketCatalogApp &&
     [
       'commerce.market-catalog.api.eligible-market-tuples',
       'commerce.market-catalog.api.resolve-commerce-market',

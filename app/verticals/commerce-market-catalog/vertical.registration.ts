@@ -7,6 +7,7 @@ import { commerceMarketCatalogManifest } from './vertical.manifest.ts';
 import { activateMarketAction } from './src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
 import { createMarketAction } from './src/actions/create-market.action.ts';
+import { manageMarketRetirementAdmissionAction } from './src/actions/manage-market-retirement-admission.action.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
 import { retireMarketAction } from './src/actions/retire-market.action.ts';
 import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
@@ -20,6 +21,7 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     activateMarketAction,
     associateStorefrontAction,
     createMarketAction,
+    manageMarketRetirementAdmissionAction,
     removeStorefrontAssociationAction,
     retireMarketAction,
     reviseMarketDefinitionAction,
@@ -33,6 +35,7 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
       'current-market-catalog': () => import('./src/api/current-market-catalog-client.ts'),
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
       'market-history': () => import('./src/api/market-history-client.ts'),
+      'market-retirement-effect-recovery': () => import('./src/api/market-retirement-effect-recovery-client.ts'),
       'pricing-current-market-evidence': () => import('./src/api/pricing-current-market-evidence-client.ts'),
       'resolve-commerce-market': () => import('./src/api/resolve-commerce-market-client.ts'),
       'verify-market-eligibility-v1': () => import('./src/api/verify-market-eligibility-v1-client.ts'),

@@ -81,6 +81,9 @@ const scaffoldCommandValues = [
   'search-provider',
 ] as const;
 
+const DOMAIN_PROBLEM_FLAG = 'domain-problem';
+const SCHEMA_MODULE_FLAG = 'schema-module';
+const RESULT_SCHEMA_FLAG = 'result-schema';
 const ACCESS_FILTERING_FLAG = 'access-filtering';
 const LEGAL_ENTITY_SCOPE_FLAG = 'legal-entity-scope';
 const REQUEST_FILTERS_FLAG = 'request-filters';
@@ -155,6 +158,7 @@ interface ParsedScaffoldFlags {
   readonly action: string | undefined;
   readonly authorizationMode: string | undefined;
   readonly core: boolean;
+  readonly domainProblem: string | undefined;
   readonly kind: string | undefined;
   readonly legalEntityScope: string | undefined;
   readonly module: string | undefined;
@@ -168,6 +172,8 @@ interface ParsedScaffoldFlags {
   readonly provisioning: string | undefined;
   readonly requestFilters: string | undefined;
   readonly resource: string | undefined;
+  readonly resultSchema: string | undefined;
+  readonly schemaModule: string | undefined;
   readonly scope: string | undefined;
   readonly service: string | undefined;
   readonly tenantPermission: string | undefined;
@@ -408,7 +414,7 @@ Options:
       }),
   }),
   'action-http': defineCommand({
-    flags: ['action', 'vertical'],
+    flags: ['action', 'vertical', SCHEMA_MODULE_FLAG, RESULT_SCHEMA_FLAG, DOMAIN_PROBLEM_FLAG],
     generator: actionHttpGenerator,
     help: `Usage: pnpm scaffold:action-http -- --vertical <vertical> --action <action>
 
@@ -419,13 +425,25 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
 
 Options:
+  --domain-problem <Tag=shared/module.ts#Schema#Mapper> Preserve a typed domain Problem (repeatable)
+  --schema-module <path> Adopt canonical schema exports from an owner shared/ module
+  --result-schema <name> Result schema export (requires --schema-module)
   --help                 Show this help without writing
 `,
     requiredFlags: ['action', 'vertical'],
     toConfig: (flags) =>
-      Effect.succeed({
-        action: flags.action ?? '',
-        vertical: flags.vertical ?? '',
+      Effect.sync(() => {
+        const config = { action: flags.action ?? '', vertical: flags.vertical ?? '' };
+        if (flags.domainProblem !== undefined) {
+          Object.assign(config, { domainProblems: flags.domainProblem.split(',') });
+        }
+        if (flags.schemaModule !== undefined) {
+          Object.assign(config, { schemaModule: flags.schemaModule });
+        }
+        if (flags.resultSchema !== undefined) {
+          Object.assign(config, { resultSchema: flags.resultSchema });
+        }
+        return config;
       }),
   }),
   'action-service': defineCommand({
@@ -952,13 +970,14 @@ const parseFlagPair = (
     if (!allowed.has(name)) {
       return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
     }
-    if (parsed.has(name)) {
+    if (parsed.has(name) && !(command === 'action-http' && name === DOMAIN_PROBLEM_FLAG)) {
       return yield* failScaffolding(`flag --${name} may be supplied only once`);
     }
     if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
       return yield* failScaffolding(`flag --${name} requires one non-empty value`);
     }
-    parsed.set(name, value);
+    const previous = parsed.get(name);
+    parsed.set(name, name === DOMAIN_PROBLEM_FLAG && previous !== undefined ? `${previous},${value}` : value);
     return yield* Effect.void;
   });
 
@@ -998,6 +1017,7 @@ const parseFlags = (
       action: parsed.get('action'),
       authorizationMode: parsed.get('authorization'),
       core,
+      domainProblem: parsed.get(DOMAIN_PROBLEM_FLAG),
       kind: parsed.get('kind'),
       legalEntityScope: parsed.get(LEGAL_ENTITY_SCOPE_FLAG),
       module: parsed.get('module'),
@@ -1011,6 +1031,8 @@ const parseFlags = (
       provisioning: parsed.get('provisioning'),
       requestFilters: parsed.get(REQUEST_FILTERS_FLAG),
       resource: parsed.get('resource'),
+      resultSchema: parsed.get(RESULT_SCHEMA_FLAG),
+      schemaModule: parsed.get(SCHEMA_MODULE_FLAG),
       scope: parsed.get('scope'),
       service: parsed.get('service'),
       tenantPermission: parsed.get(TENANT_PERMISSION_FLAG),
@@ -1047,6 +1069,10 @@ const cliFlags = {
   action: optionalTextFlag('action'),
   authorization: optionalTextFlag('authorization'),
   core: Flag.Boolean('core').pipe(Flag.withDefault(false)),
+  domainProblem: Flag.String(DOMAIN_PROBLEM_FLAG).pipe(
+    Flag.atLeast(0),
+    Flag.map((values) => (values.length === 0 ? Option.none<string>() : Option.some(values.join(',')))),
+  ),
   kind: optionalTextFlag('kind'),
   legalEntityScope: optionalTextFlag(LEGAL_ENTITY_SCOPE_FLAG),
   module: optionalTextFlag('module'),
@@ -1060,6 +1086,8 @@ const cliFlags = {
   provisioning: optionalTextFlag('provisioning'),
   requestFilters: optionalTextFlag(REQUEST_FILTERS_FLAG),
   resource: optionalTextFlag('resource'),
+  resultSchema: optionalTextFlag(RESULT_SCHEMA_FLAG),
+  schemaModule: optionalTextFlag(SCHEMA_MODULE_FLAG),
   scope: optionalTextFlag('scope'),
   service: optionalTextFlag('service'),
   tenantPermission: optionalTextFlag(TENANT_PERMISSION_FLAG),

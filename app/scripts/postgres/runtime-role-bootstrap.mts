@@ -222,6 +222,28 @@ export const grantSharedRuntimeRole = (
         'grant select, insert, delete on table catalog.gateway_assertion_redemptions to ontos_runtime',
       );
     }
+    // Durable owner fences retain their exact migration grants after any shared-schema grants.
+    yield* Effect.forEach(
+      entry.tableGrantExceptions ?? [],
+      ({ columns, privileges, table }) =>
+        Effect.gen(function* grantSharedTableExceptionEffect() {
+          const schema = table.slice(0, table.indexOf('.'));
+          if (
+            entry.revokedSchemas.includes(schema) ||
+            !(yield* exists(client, schemaExistsQuery, schema)) ||
+            !(yield* exists(client, tableExistsQuery, table))
+          ) {
+            return;
+          }
+          const role = quoteIdentifier(entry.identity.role);
+          yield* query(client, `revoke all on table ${qualifiedRelation(table)} from public, ${role}`);
+          yield* Effect.forEach(privileges, grantTablePrivilege(client, table, columns, role), {
+            concurrency: 1,
+            discard: true,
+          });
+        }),
+      { concurrency: 1, discard: true },
+    );
     // Privacy's immutable ledgers must retain the restrictions installed by their owner migrations.
     const privacyLedgers = yield* query<{ table_name: string }>(
       client,

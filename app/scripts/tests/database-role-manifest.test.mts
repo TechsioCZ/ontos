@@ -14,6 +14,26 @@ import {
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
 
+it('restricts the shared Market retirement fence to read, insert and lifecycle update privileges', () => {
+  const entry = manifestEntryForRole('ontos_runtime');
+  expect(entry?.kind).toBe('legacy_shared');
+  if (entry?.kind !== 'legacy_shared') {
+    return;
+  }
+  expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
+    {
+      privileges: ['select', 'insert', 'update'],
+      table: 'commerce_market_catalog.market_retirement_admissions',
+    },
+  ]);
+  for (const exception of entry.tableGrantExceptions ?? []) {
+    expect(exception.reason.trim()).not.toBe('');
+  }
+  for (const explicit of explicitEntries) {
+    expect('tableGrantExceptions' in explicit).toBe(false);
+  }
+});
+
 it('gives every database identity exactly one grant manifest entry', () => {
   expect(DATABASE_ROLE_GRANT_MANIFEST).toHaveLength(DATABASE_IDENTITIES.length);
   for (const identity of DATABASE_IDENTITIES) {

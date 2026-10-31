@@ -133,6 +133,9 @@ it.effect('proves absent Cart and Order as UNIMPLEMENTED against the active comp
       'application-composition:commerce.cart:UNIMPLEMENTED',
       'application-composition:commerce.order:UNIMPLEMENTED',
     ]);
+    expect(result.sourceEvidence.map(({ digest: sourceDigest }) => sourceDigest)).toEqual(
+      ['commerce.cart', 'commerce.order'].map((moduleId) => sha256(`${revision}\0${moduleId}\0UNIMPLEMENTED`)),
+    );
     for (const evidence of result.sourceEvidence) {
       expect(evidence.ownerRevision).toBe(revision);
       expect(evidence.generation).toBe(revision);
@@ -141,6 +144,15 @@ it.effect('proves absent Cart and Order as UNIMPLEMENTED against the active comp
       if (evidence.completenessEvidence.scope.kind === 'SAFELY_BROADER_SCOPE') {
         expect(evidence.completenessEvidence.scope.declaredScopeRef).toBe(`application-composition:${revision}`);
       }
+    }
+    const assessment = yield* makeMarketAffectedUseAssessmentServices(
+      () => Effect.succeed(localAssessment),
+      authority.proveReferenceOwnerStates,
+    ).assess(request);
+
+    expect(assessment.outcome).toBe('VERIFIED');
+    if (assessment.outcome === 'VERIFIED') {
+      expect(assessment.sourceEvidence).toEqual(result.sourceEvidence);
     }
   }),
 );

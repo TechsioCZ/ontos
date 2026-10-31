@@ -96,7 +96,7 @@ const assessmentIdentity = {
   tenantId,
 } as const;
 
-const MarketAffectedUseVerifiedSchema = Schema.Struct({
+export const MarketAffectedUseVerifiedSchema = Schema.Struct({
   ...assessmentIdentity,
   assessmentDigest: sha256Digest,
   liveBlockingReferences: Schema.Struct({
