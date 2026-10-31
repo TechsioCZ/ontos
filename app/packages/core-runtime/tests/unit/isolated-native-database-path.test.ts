@@ -171,6 +171,7 @@ if (program === 'pg_dump') {
             '--set',
             'ON_ERROR_STOP=1',
             '--quiet',
+            '--single-transaction',
           ]);
           expect(restore.input).toBe('TEST_DUMP');
         }).pipe(Effect.provide(services)),

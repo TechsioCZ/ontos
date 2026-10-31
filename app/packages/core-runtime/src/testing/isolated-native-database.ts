@@ -308,10 +308,12 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     );
     if (input.mode === schemaOnly) {
       const sourceDump = yield* postgresTool(source.admin, 'pg_dump', ['--schema-only', '--no-comments']);
+      // One transaction: committing each of the dump's thousands of DDL statements separately made the clone
+      // cost seconds per test, and a failed restore now leaves no partial schema behind.
       const restore = yield* postgresTool(
         connections.admin,
         'psql',
-        ['--set', 'ON_ERROR_STOP=1', '--quiet'],
+        ['--set', 'ON_ERROR_STOP=1', '--quiet', '--single-transaction'],
         sourceDump.stdout,
       );
       const [dumpExit, restoreExit] = yield* Effect.all(
