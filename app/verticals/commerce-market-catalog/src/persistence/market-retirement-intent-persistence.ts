@@ -1,5 +1,4 @@
-import type { OperationalScope, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
-import { OperationContextUnavailable } from '@app/core-runtime';
+import type { ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { ReserveMarketRetirementPayloadSchema } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import type { ReserveMarketRetirementPayload } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import { DateTime, Effect, Schema } from 'effect';
@@ -20,7 +19,7 @@ import type {
   MarketRetirementImpactAssessment,
   ReservedMarketRetirementImpactAssessment,
 } from '../../shared/domain/market-retirement-impact.ts';
-import { MarketAdministrationPersistenceUnavailable } from './market-administration-persistence.ts';
+import { MarketAdministrationPersistenceUnavailable } from './market-administration-persistence-unavailable.ts';
 import {
   advanceMarketRetirementIntentRoutine,
   readMarketRetirementIntentRoutine,
@@ -224,16 +223,3 @@ export const marketRetirementIntentPersistenceForInvoker = (
         ),
       ),
 });
-
-export const marketRetirementIntentPersistenceForScope = (
-  invoker: ScopedRoutineInvoker,
-  scope: OperationalScope,
-): Effect.Effect<MarketRetirementIntentPersistence, OperationContextUnavailable> =>
-  scope.legalEntityId === undefined
-    ? Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Market retirement requires a trusted Legal Entity scope',
-        }),
-      )
-    : Effect.succeed(marketRetirementIntentPersistenceForInvoker(invoker));
