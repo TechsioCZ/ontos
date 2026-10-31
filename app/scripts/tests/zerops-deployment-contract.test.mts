@@ -307,7 +307,7 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   }
 });
 
-it('reserves the application working set without changing CPU, free-memory scaling or replica limits', () => {
+it('reserves the application working set and one dedicated CPU while preserving free-memory and replica limits', () => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
     parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
   );
@@ -318,9 +318,9 @@ it('reserves the application working set without changing CPU, free-memory scali
   expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(3);
   expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
   expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
-  expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
+  expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('DEDICATED');
   expect(app.getIn(['verticalAutoscaling', 'minCpu'])).toBe(1);
-  expect(app.getIn(['verticalAutoscaling', 'maxCpu'])).toBe(2);
+  expect(app.getIn(['verticalAutoscaling', 'maxCpu'])).toBe(1);
   expect(app.get('minContainers')).toBe(1);
   expect(app.get('maxContainers')).toBe(1);
 });
