@@ -41,8 +41,11 @@ import {
   purchaseApprovalTriggerEvidenceSourceForTransaction,
   purchaseLimitEvaluationSourceForTransaction,
 } from '../persistence/purchase-limit-persistence.ts';
-import { preparePurchaseProposalBasisCurrentness } from '../services/purchase-proposal-basis.service.ts';
-import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-counterparty-role-eligibility.ts';
+import { preparePurchaseLimitCurrentness } from '../services/purchase-currentness-preparation.ts';
+import {
+  ProfileCounterpartyRoleEligibilityResolverFactory,
+  withPreparedCounterpartyRoleCurrent,
+} from '../profile-counterparty-role-eligibility.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import type {
   PurchaseLimitEvaluationContext,
@@ -299,6 +302,9 @@ const preparedTriggerUnavailable = (cause: unknown) =>
     cause,
   );
 
+const preparedTriggerRoleUnavailable = (cause: ProfilePersistenceDependencyFailure) =>
+  Effect.fail(preparedTriggerUnavailable(cause));
+
 const prepareTriggerServices = Effect.fn('TriggerPurchaseApproval.prepareServices')(function* prepareServices(
   payload: TriggerPurchaseApprovalPayload,
   context: ActionServicePreparationContext,
@@ -307,7 +313,7 @@ const prepareTriggerServices = Effect.fn('TriggerPurchaseApproval.prepareService
   const roleFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
   const [prepareCurrentness, role] = yield* Effect.all(
     [
-      preparePurchaseProposalBasisCurrentness(context, payload.purchaseValue),
+      preparePurchaseLimitCurrentness(context, payload.purchaseValue),
       roleFactory.make({
         legalEntityId: trusted.sellingLegalEntityId,
         requestCorrelation: context.scope.correlationId,
@@ -352,9 +358,12 @@ const prepareTriggerServices = Effect.fn('TriggerPurchaseApproval.prepareService
         forActionInvocation: (invocation) => ({
           submit: (input) =>
             invocation === context.actionInvocationId
-              ? bindSubmission(invocation)
-                  .submit(input)
-                  .pipe(Effect.tap(prepared.revalidate), Effect.mapError(preparedTriggerUnavailable))
+              ? withPreparedCounterpartyRoleCurrent(
+                  role,
+                  bindSubmission(invocation)
+                    .submit(input)
+                    .pipe(Effect.tap(prepared.revalidate().pipe(Effect.mapError(preparedTriggerUnavailable)))),
+                ).pipe(Effect.catchTag('ProfilePersistenceDependencyFailure', preparedTriggerRoleUnavailable))
               : Effect.fail(preparedTriggerUnavailable('The trigger invocation differs')),
         }),
         submit: () => Effect.fail(preparedTriggerUnavailable('Trigger persistence requires its exact invocation')),

@@ -10,6 +10,7 @@ import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-port.ts';
+import { bindPreparedInvitationPermission } from '../../src/actions/claim-counterparty-access-invitation.action.ts';
 import type { CounterpartyAccessDomainError } from '../../shared/domain/access-port.ts';
 import type { VerifiedInvitationClaimAttestation } from '../../shared/domain/invitation-contract.ts';
 import {
@@ -1510,3 +1511,29 @@ for (const control of [
     }),
   );
 }
+
+it.effect('prepared invitation authority is reusable only for the exact inviter and scope', () =>
+  Effect.gen(function* exactPreparedAuthority() {
+    const request = {
+      principal: actor,
+      targets: [
+        {
+          permission: 'counterparty.access.manage' as const,
+          target: { counterpartyId, kind: 'counterparty' as const, legalEntityId, tenantId },
+        },
+      ],
+    };
+    const decisions = [{ decision: 'allowed' as const, key: 'owner-check' }];
+    const prepared = bindPreparedInvitationPermission(request, decisions);
+    expect(yield* prepared(request)).toEqual(decisions);
+    expect(yield* prepared(request)).toEqual(decisions);
+    expect(yield* prepared({ ...request, principal: recipient })).toEqual([]);
+    expect(
+      yield* prepared({
+        ...request,
+        targets: [{ ...request.targets[0], target: { ...request.targets[0].target, counterpartyId: 'other' } }],
+      }),
+    ).toEqual([]);
+    expect(yield* prepared({ ...request, trustedStorefrontId: 'other' })).toEqual([]);
+  }),
+);

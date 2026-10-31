@@ -566,6 +566,15 @@ const readProfileRoutine = routine('read_customer_profile', 'profile.read', [
   { source: 'input', type: 'uuid' },
   { source: 'input', type: 'text' },
 ] as const);
+/** Read the owner profile through its existing scoped routine for address preparation. */
+export const readAddressProfileSnapshot = (
+  transaction: ProfileScopedRoutineInvoker,
+  profileId: string,
+  kind: 'RETAIL' | 'COUNTERPARTY',
+) =>
+  transaction
+    .invoke(readProfileRoutine, [profileId, kind])
+    .pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(RoutineRowSchema)))));
 const readTradingGateRoutine = routine('read_profile_trading_gate', 'profile.read-trading-gate', [
   ...scopeParameters,
   { source: 'input', type: 'uuid' },
@@ -1263,6 +1272,8 @@ export type CounterpartyRoleEligibility =
       readonly outcome: 'ELIGIBLE';
       readonly roleResourceId: string;
       readonly roleResourceRevision: string;
+      /** Exact Party role end; undefined is unknown and must not authorize a prepared write. */
+      readonly validUntil?: string | null;
     }
   | { readonly outcome: 'INELIGIBLE' }
   | { readonly outcome: 'UNAVAILABLE' | 'INDETERMINATE' };
@@ -1285,6 +1296,7 @@ export interface ProfilePersistenceDependencies {
     readonly legalEntityId: string;
     readonly principalId: string;
     readonly profileId: string;
+    readonly requestedPermissions?: readonly RetailPortalPermissionCode[];
     readonly tenantId: string;
   }) => Effect.Effect<
     {
@@ -2273,6 +2285,7 @@ const readServices = (
     profileId: string,
     principalId: string,
     observedAt: string,
+    requestedPermissions?: readonly RetailPortalPermissionCode[],
   ): Effect.Effect<RetailPermissionProjection> => {
     const readPermissions = dependencies.readRetailPermissions;
     if (readPermissions === undefined) {
@@ -2285,12 +2298,13 @@ const readServices = (
         permissions: [],
       });
     }
-    return readPermissions({
+    const request = {
       legalEntityId: scope.legalEntityId,
       principalId,
       profileId,
       tenantId: scope.tenantId,
-    }).pipe(
+    };
+    return readPermissions(requestedPermissions === undefined ? request : { ...request, requestedPermissions }).pipe(
       Effect.map(({ observedAt: permissionObservedAt, permissions, revision }) => {
         const freshness =
           revision === undefined
@@ -2897,7 +2911,9 @@ const readServices = (
                                   ? ('CURRENT' as const)
                                   : ('INDETERMINATE' as const),
                             };
-                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt).pipe(
+                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt, [
+                              input.requiredPermission,
+                            ]).pipe(
                               Effect.map(({ freshness, permissions }) => {
                                 const decision = decideRetailPortalAccess({
                                   authorizationOperation,

@@ -8,7 +8,7 @@ import { AddSavedAddressPayloadSchema, AddSavedAddressResultSchema } from '../..
 import type { AddSavedAddressPayload } from '../../shared/actions/add-saved-address.ts';
 import { AddressBookDomainErrorSchema } from '../../shared/domain/address-errors.ts';
 import { manageAddressPermissionTarget } from './address-action-support.ts';
-import { partyBackedAddressSourceValidator } from '../integrations/party-address-source.ts';
+import { prepareAddressPartyServices } from './address-party-preflight.ts';
 import { addressActionPersistenceForTransaction } from '../persistence/address-persistence.ts';
 import {
   AddSavedAddressCommerceCustomerContextSavedAddressAddedV1OutboxPayloadSchema,
@@ -113,14 +113,8 @@ export const addSavedAddressAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction, scope) =>
-    Effect.succeed<Services>(
-      addressActionPersistenceForTransaction(
-        transaction,
-        scope,
-        partyBackedAddressSourceValidator(scope.correlationId),
-      ),
-    ),
+  (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
+  { prepareServices: prepareAddressPartyServices },
 );
 
 export type { AddSavedAddressPayload } from '../../shared/actions/add-saved-address.ts';

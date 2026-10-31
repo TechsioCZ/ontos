@@ -233,7 +233,15 @@ const prepareRetailPermissions = (
     return Effect.succeed(unreadRetailPermissions);
   }
   const readerScope = { legalEntityId, principalId, tenantId };
-  return prefetchRetailPermissions(readerFactory.make(readerScope), readerScope, profileIds);
+  const requestedPermissions = request.targets.flatMap((target) =>
+    target.kind === 'business_permission' &&
+    target.target.kind === 'retail_profile' &&
+    isRetailTargetInScope(target, request.scope) &&
+    Schema.is(RetailPortalPermissionCodeSchema)(target.permission)
+      ? [target.permission]
+      : [],
+  );
+  return prefetchRetailPermissions(readerFactory.make(readerScope), readerScope, profileIds, requestedPermissions);
 };
 
 /** Inside the transaction: every business target decided from owner state and the prefetched snapshots. */

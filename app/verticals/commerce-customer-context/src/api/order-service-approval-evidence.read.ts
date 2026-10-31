@@ -7,8 +7,14 @@ import {
   ReadPolicyDenied,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import type { ReadHandlerContext } from '@app/core-runtime';
-import { orderApprovalFinalizationService } from '../services/order-approval-finalization.service.ts';
+import type { ReadLoadContext, ReadPrepareContext, ReadFinishContext } from '@app/core-runtime';
+import type { loadOrderFinalizationReadSnapshot } from '../services/order-approval-finalization.service.ts';
+import {
+  orderApprovalFinalizationService,
+  prepareOrderFinalizationRead,
+  finishOrderFinalizationRead,
+} from '../services/order-approval-finalization.service.ts';
+import type { OrderServiceApprovalEvidenceRequest } from '../../shared/apis/order-service-approval-evidence.ts';
 import {
   OrderServiceApprovalEvidenceRequestSchema,
   OrderServiceApprovalEvidenceResponseSchema,
@@ -23,6 +29,35 @@ const orderServiceApprovalEvidenceEntrypoint = defineTenantModuleEntrypoint({
   moduleKey: MODULE_KEY,
   role: 'api',
 });
+
+const mapOrderReadFailure = (failure: { readonly code: string }) =>
+  Match.value(failure).pipe(
+    Match.when(
+      { code: 'PERMISSION_DENIED' },
+      () =>
+        new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: 'The configured owner service is required',
+        }),
+    ),
+    Match.when(
+      { code: 'IDEMPOTENCY_CONFLICT' },
+      () =>
+        new ReadPolicyDenied({
+          code: 'read_policy_denied',
+          httpStatus: 409,
+          policyReasonCode: 'order_approval_recovery_conflict',
+          reason: 'The original approval proof intent does not match this purchase',
+        }),
+    ),
+    Match.orElse(
+      () =>
+        new ReadHandlerUnavailable({
+          code: 'read_handler_unavailable',
+          reason: 'Persisted approved identity is unavailable',
+        }),
+    ),
+  );
 
 export const orderServiceApprovalEvidenceRead = defineRead(
   {
@@ -41,39 +76,28 @@ export const orderServiceApprovalEvidenceRead = defineRead(
     resultSchema: OrderServiceApprovalEvidenceResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Effect.Success<ReturnType<typeof orderApprovalFinalizationService>>>) =>
-    context.services.read(input).pipe(
-      Effect.mapError((failure) =>
-        Match.value(failure).pipe(
-          Match.when(
-            { code: 'PERMISSION_DENIED' },
-            () =>
-              new ReadPermissionDenied({
-                code: 'read_permission_denied',
-                reason: 'The configured owner service is required',
-              }),
-          ),
-          Match.when(
-            { code: 'IDEMPOTENCY_CONFLICT' },
-            () =>
-              new ReadPolicyDenied({
-                code: 'read_policy_denied',
-                httpStatus: 409,
-                policyReasonCode: 'order_approval_recovery_conflict',
-                reason: 'The original approval proof intent does not match this purchase',
-              }),
-          ),
-          Match.orElse(
-            () =>
-              new ReadHandlerUnavailable({
-                code: 'read_handler_unavailable',
-                reason: 'Persisted approved identity is unavailable',
-              }),
-          ),
-        ),
+  {
+    prepare: (input: OrderServiceApprovalEvidenceRequest, context: ReadPrepareContext) =>
+      prepareOrderFinalizationRead(input, context).pipe(Effect.mapError(mapOrderReadFailure)),
+    load: (
+      input: OrderServiceApprovalEvidenceRequest,
+      context: ReadLoadContext<
+        Effect.Success<ReturnType<typeof orderApprovalFinalizationService>>,
+        Effect.Success<ReturnType<typeof prepareOrderFinalizationRead>>
+      >,
+    ) => context.services.load(input).pipe(Effect.mapError(mapOrderReadFailure)),
+    finish: (
+      input: OrderServiceApprovalEvidenceRequest,
+      context: ReadFinishContext<
+        Effect.Success<ReturnType<typeof prepareOrderFinalizationRead>>,
+        Effect.Success<ReturnType<typeof loadOrderFinalizationReadSnapshot>>
+      >,
+    ) =>
+      finishOrderFinalizationRead(input, context).pipe(
+        Effect.mapError(mapOrderReadFailure),
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
       ),
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  },
   orderApprovalFinalizationService,
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

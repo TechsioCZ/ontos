@@ -16,7 +16,10 @@ import type {
   CustomerProfileTradingGateRequest,
   CustomerProfileTradingGateResponse,
 } from '../../shared/apis/customer-profile-trading-gate.ts';
-import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../profile-counterparty-role-eligibility.ts';
+import {
+  ProfileCounterpartyRoleEligibilityResolverFactory,
+  withPreparedCounterpartyRoleCurrent,
+} from '../profile-counterparty-role-eligibility.ts';
 import {
   profilePersistenceServicesForTransaction,
   ProfilePersistenceDependencyFailure,
@@ -150,14 +153,37 @@ export const customerProfileTradingGateRead = defineRead(
         );
       return Option.some({ counterpartyResourceId, eligibility });
     }),
-    load: (input, context: ReadLoadContext<CustomerProfileTradingGateServices, Option.Option<PreparedTradingRole>>) =>
-      evaluateCustomerProfileTradingGateFromServices(
+    load: Effect.fn('CustomerProfileTradingGate.load')(function* loadPreparedTradingGate(
+      input: CustomerProfileTradingGateRequest,
+      context: ReadLoadContext<CustomerProfileTradingGateServices, Option.Option<PreparedTradingRole>>,
+    ) {
+      const prepared = Option.getOrUndefined(context.prepared);
+      const load = evaluateCustomerProfileTradingGateFromServices(
         input,
         context.scope.tenantId,
         context.scope.legalEntityId,
         context.services,
-        Option.getOrUndefined(context.prepared),
-      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+        prepared,
+      );
+      const result =
+        prepared === undefined
+          ? yield* load
+          : yield* withPreparedCounterpartyRoleCurrent(prepared.eligibility, load).pipe(
+              Effect.catchTag('ProfilePersistenceDependencyFailure', (cause) =>
+                Effect.fail(
+                  Object.defineProperty(
+                    new ReadHandlerUnavailable({
+                      code: 'read_handler_unavailable',
+                      reason: 'Prepared Counterparty Role evidence expired or is unavailable',
+                    }),
+                    'cause',
+                    { value: cause },
+                  ),
+                ),
+              ),
+            );
+      return { evidence: { resultCount: 1 }, result };
+    }),
   },
   (transaction, scope) =>
     Effect.succeed({

@@ -12,7 +12,15 @@ import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
+import {
+  prefetchRetailPermissions,
+  ProfileRetailPermissionReaderFactory,
+  profileRetailPermissionReaderFactoryLive,
+} from '../../src/integrations/retail-permission-reader.ts';
+import {
+  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
+  RETAIL_PORTAL_PERMISSION_CATALOG,
+} from '../../shared/domain/profile-contracts.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -57,6 +65,48 @@ const contextPermissions: NonNullable<ContextAccessService['contextPermissions']
   );
 
 it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suite) => {
+  suite.effect('checks an explicitly requested optional permission without provisioning or widening the snapshot', () =>
+    Effect.gen(function* optionalPermissionSnapshot() {
+      const targets: string[] = [];
+      let allowOptional = true;
+      const optional = 'retail.settings.payment_term_preference.manage' as const;
+      const readerScope = { legalEntityId, principalId: principal.principalId, tenantId };
+      const harness = yield* makeReadTestHarness({
+        businessPermissionDecision: (target) => {
+          targets.push(target.permission);
+          return target.permission === optional && allowOptional ? 'allowed' : 'denied';
+        },
+        compositionRevision,
+        executeOwnerQuery: () => Effect.die('No SQL is used by this permission snapshot'),
+        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-22T10:00:00.000Z')),
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const context = yield* Layer.build(profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(harness.layer)));
+      const reader = Context.get(context, ProfileRetailPermissionReaderFactory).make(readerScope);
+      const prepared = yield* prefetchRetailPermissions(reader, readerScope, [profileId], [optional]);
+      const snapshot = yield* prepared({ ...readerScope, profileId, requestedPermissions: [optional] });
+      expect(snapshot.permissions).toEqual([optional]);
+      expect(targets).toContain(optional);
+      expect(RETAIL_PORTAL_SELF_SERVICE_BASELINE).not.toContain(optional);
+      expect(RETAIL_PORTAL_PERMISSION_CATALOG.find(({ code }) => code === optional)?.launchBaseline).toBe(false);
+      const firstCallCount = targets.length;
+      yield* reader({ ...readerScope, profileId });
+      expect(targets.slice(firstCallCount)).not.toContain(optional);
+      allowOptional = false;
+      const denied = yield* prefetchRetailPermissions(reader, readerScope, [profileId], [optional]);
+      expect((yield* denied({ ...readerScope, profileId, requestedPermissions: [optional] })).permissions).toEqual([]);
+      const unchecked = yield* Effect.flip(
+        prepared({ ...readerScope, profileId, requestedPermissions: ['retail.notifications.manage'] }),
+      );
+      expect(unchecked.reason).toContain('snapshot was not read');
+      const foreign = yield* Effect.flip(
+        prepared({ ...readerScope, profileId: 'foreign-profile', requestedPermissions: [optional] }),
+      );
+      expect(foreign.reason).toContain('snapshot was not read');
+    }),
+  );
   for (const contextMode of ['absent', 'denied'] as const) {
     suite.effect(
       `exact business permission reaches the original owner when unrelated context permission is ${contextMode}`,

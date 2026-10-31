@@ -137,7 +137,8 @@ export const retailAccessDecisionRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (input, context) => prepareRetailPermissions(context.scope, input.profileRef.resourceId),
+    prepare: (input, context) =>
+      prepareRetailPermissions(context.scope, input.profileRef.resourceId, [input.requiredPermission]),
     load: (input, context: ReadLoadContext<RetailAccessDecisionServicesFor, RetailPermissionReader>) =>
       decideRetailAccessFromServices(
         input,

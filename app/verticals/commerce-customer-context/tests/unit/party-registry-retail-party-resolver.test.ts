@@ -19,6 +19,13 @@ import {
   preparedRetailPartyResolution,
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
+import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  bindPreparedRetailParty,
+  ensureRetailCustomerProfileAction,
+  prepareRetailProfileServices,
+} from '../../src/actions/ensure-retail-customer-profile.action.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const otherTenantId = '20000000-0000-4000-8000-000000000002';
@@ -389,4 +396,67 @@ it.effect('production fallback never performs owner HTTP inside persistence with
     const failure = yield* Effect.flip(factory.make(scope)(request));
     expect(failure.reason).toBe('No matching invocation-scoped Retail Party resolution is prepared');
   }).pipe(Effect.provide(partyRegistryRetailPartyResolverFactoryLive)),
+);
+
+it.effect('prepares the exact Retail Party before SQL and rejects a changed selector', () =>
+  Effect.gen(function* retailActionPreflight() {
+    expect(getActionServicePreflight(ensureRetailCustomerProfileAction)).toBe(prepareRetailProfileServices);
+    let calls = 0;
+    let transactions = 0;
+    const payload = {
+      effectiveAt: '2026-09-09T10:00:00.000Z',
+      subject: {
+        kind: 'RETAIL' as const,
+        partyRef: partyRef(partyId),
+        sellingLegalEntityRef: {
+          moduleId: 'core.identity' as const,
+          resourceId: scope.legalEntityId,
+          resourceType: 'core.identity.legal-entity' as const,
+          tenantId,
+        },
+      },
+      trigger: 'ENSURE_BEFORE_ORDER_ACCEPTANCE' as const,
+    };
+    const context = {
+      actionInvocationId: request.actionInvocationId,
+      compositionRevision: request.compositionRevision,
+      scope: {
+        authMethod: 'session' as const,
+        correlationId: scope.requestCorrelation,
+        legalEntityId: scope.legalEntityId,
+        principalId: scope.principalId,
+        tenantId,
+      },
+      transaction: () => {
+        transactions += 1;
+        return Effect.die('Unexpected SQL snapshot');
+      },
+    };
+    const executor = {
+      execute: () => {
+        calls += 1;
+        return Effect.succeed(response());
+      },
+    };
+    yield* prepareRetailProfileServices(payload, context).pipe(
+      Effect.provideService(RetailPartyDetailExecutor, executor),
+    );
+    expect(calls).toBe(1);
+    expect(transactions).toBe(0);
+    const prepared = bindPreparedRetailParty(request, {
+      outcome: 'CURRENT_PARTY_RESOLVED',
+      partyResourceId: partyId,
+      partyResourceRevision: '7',
+    });
+    expect(yield* prepared(request)).toMatchObject({ partyResourceRevision: '7' });
+    for (const changed of [
+      { ...request, tenantId: otherTenantId },
+      { ...request, partyResourceId: 'other-party' },
+      { ...request, actionInvocationId: randomUUID() },
+      { ...request, compositionRevision: 'b'.repeat(64) },
+    ]) {
+      expect(yield* Effect.flip(prepared(changed))).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    }
+    expect(calls).toBe(1);
+  }),
 );

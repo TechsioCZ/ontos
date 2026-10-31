@@ -37,10 +37,10 @@ export interface PurchaseApprovalTriggerEvidenceSourceFactoryContract {
   ) => Effect.Effect<PurchaseApprovalTriggerEvidenceSource, PurchaseApprovalTriggerError>;
 }
 
-/** The stable Context identity is unchanged; persistence no longer imports an Action registration. */
+/** Persistence and Actions share the owner port without importing each other's implementation. */
 export class PurchaseApprovalTriggerEvidenceSourceFactory extends Context.Service<
   PurchaseApprovalTriggerEvidenceSourceFactory,
   PurchaseApprovalTriggerEvidenceSourceFactoryContract
 >()(
-  '@app/commerce-customer-context/actions/trigger-purchase-approval.action/PurchaseApprovalTriggerEvidenceSourceFactory',
+  '@app/commerce-customer-context/services/purchase-approval-trigger-evidence-source/PurchaseApprovalTriggerEvidenceSourceFactory',
 ) {}

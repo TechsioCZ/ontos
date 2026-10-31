@@ -644,6 +644,7 @@ const currentProfileFixture = (
           outcome: 'ELIGIBLE' as const,
           roleResourceId: 'role-1',
           roleResourceRevision: atText,
+          validUntil: null,
         });
       };
     },

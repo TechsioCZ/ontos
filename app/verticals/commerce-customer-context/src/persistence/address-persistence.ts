@@ -54,7 +54,7 @@ import type {
 } from '../profile-reconciliation-owner-verifier.ts';
 import { ProfileReconciliationOwnerVerificationFailure } from '../profile-reconciliation-owner-verifier-error.ts';
 
-const AddressRowSchema = Schema.Struct({
+export const AddressRowSchema = Schema.Struct({
   address_line_1: Schema.OptionFromNullOr(Schema.String),
   address_line_2: Schema.OptionFromNullOr(Schema.String),
   administrative_area: Schema.OptionFromNullOr(Schema.String),
@@ -90,7 +90,7 @@ const AddressRowSchema = Schema.Struct({
 });
 type AddressRow = typeof AddressRowSchema.Type;
 
-const AddressDefaultsRowSchema = Schema.Struct({
+export const AddressDefaultsRowSchema = Schema.Struct({
   billing_saved_address_id: Schema.OptionFromNullOr(Schema.String),
   cleared_saved_address_id: Schema.OptionFromNullOr(Schema.String),
   delivery_saved_address_id: Schema.OptionFromNullOr(Schema.String),
@@ -939,6 +939,33 @@ const invokeDefaults = (
   }
   return transaction.invoke(readAddressDefaultsRoutine, profileValues(profile)).pipe(Effect.mapError(unavailable));
 };
+
+/** Read-only owner facts used to detect changes while Party evidence is acquired. */
+export const AddressPreparationSnapshotSchema = Schema.Struct({
+  defaults: Schema.Array(AddressDefaultsRowSchema),
+  detail: Schema.Array(AddressRowSchema),
+  list: Schema.Array(AddressRowSchema),
+});
+export const addressPreparationSnapshot = Effect.fn('AddressPersistence.addressPreparationSnapshot')(
+  function* loadAddressPreparationSnapshot(
+    transaction: CustomerContextAddressRoutineInvoker,
+    scope: OperationalScope,
+    payload: AddSavedAddressPayload | UpdateSavedAddressPayload,
+    savedAddressId: string | undefined,
+  ) {
+    const [list, defaults, detail] = yield* Effect.all(
+      [
+        invokeList(transaction, scope, payload.profile),
+        invokeDefaults(transaction, scope, payload.profile),
+        savedAddressId === undefined
+          ? Effect.succeed([])
+          : invokeDetail(transaction, scope, payload.profile, savedAddressId),
+      ],
+      { concurrency: 1 },
+    );
+    return { defaults, detail, list };
+  },
+);
 
 const readUnavailable = (dependency: string, cause?: unknown) => {
   const failure = new ReadHandlerUnavailable({

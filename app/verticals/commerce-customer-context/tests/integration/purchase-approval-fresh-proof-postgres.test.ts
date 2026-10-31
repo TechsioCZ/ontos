@@ -1,3 +1,9 @@
+import { consumeOrderPurchaseApprovalAction } from '../../src/actions/consume-order-purchase-approval.action.ts';
+import { ConsumeOrderPurchaseApprovalPayloadSchema } from '../../shared/actions/consume-order-purchase-approval.ts';
+import { CommittedOrderApprovalEvidenceResponseSchema } from '@app/commerce-order-contracts/committed-order-approval-evidence';
+import { FetchHttpClient } from 'effect/http';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
 import { orderCommitmentApprovalEvidenceRead } from '../../src/api/order-commitment-approval-evidence.read.ts';
 import { OrderCommitmentApprovalEvidenceRequestSchema } from '../../shared/apis/order-commitment-approval-evidence.ts';
@@ -13,6 +19,7 @@ import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purcha
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PurchaseApprovalFinalBindingAuthorityService } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import {
+  ApprovalRevalidationSchema,
   ConsumePurchaseApprovalInputSchema,
   PurchaseApprovalFinalBindingSchema,
   PurchaseProposalRevisionSchema,
@@ -36,6 +43,9 @@ import {
   ActionPermissionCheckError,
   ActionRuntime,
   ContextAccess,
+  isVerifiedGatewayPrincipalContext,
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionSnapshotSchema,
   ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadPolicyDenied,
@@ -48,6 +58,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Config,
+  ConfigProvider,
   Context,
   DateTime,
   Deferred,
@@ -460,6 +471,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   requestTtlMilliseconds = 60_000,
   apiKeyManager = false,
   hierarchyTtlMilliseconds?: number,
+  orderBinding = false,
 ) {
   const snapshot = yield* enrollmentApplicationCompositionSnapshot;
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -474,6 +486,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, state);
   const owner = yield* makePurchasingApprovalNativeFixture({
     apiKeyManager,
+    configuredModuleAccess: orderBinding,
     connections: isolated.connections,
     finalProofTest: true,
     snapshot,
@@ -483,27 +496,36 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   expect(approved.request.status).toBe('APPROVED');
   const binding = yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)({
     attemptRef: {
-      moduleId: 'test.approval-final-owner',
+      moduleId: orderBinding === true ? 'commerce.order' : 'test.approval-final-owner',
       resourceId: randomUUID(),
-      resourceType: 'test.approval-final-owner.attempt',
+      resourceType: orderBinding === true ? 'commerce.order.commitment-attempt' : 'test.approval-final-owner.attempt',
       tenantId: owner.tenantId,
     },
     bundleHash: 'd'.repeat(64),
     bundleRef: {
-      moduleId: 'test.approval-final-owner',
+      moduleId: orderBinding === true ? 'commerce.order' : 'test.approval-final-owner',
       resourceId: randomUUID(),
-      resourceType: 'test.approval-final-owner.bundle',
+      resourceType: orderBinding === true ? 'commerce.order.acceptance-bundle' : 'test.approval-final-owner.bundle',
       tenantId: owner.tenantId,
     },
-    bundleVersion: 'TEST_APPROVAL_FINAL_BUNDLE.v1',
+    bundleVersion: orderBinding === true ? 'order-acceptance-bundle.v1' : 'TEST_APPROVAL_FINAL_BUNDLE.v1',
   });
   const correlation = randomUUID();
   let eligible = true;
   let observationSeconds: typeof initialObservationSeconds | typeof extendedObservationSeconds =
     initialObservationSeconds;
   let authorityEntries = 0;
-  let pause: { readonly entered: Deferred.Deferred<boolean>; readonly release: Deferred.Deferred<boolean> } | null =
-    null;
+  const authorityPauses: {
+    readonly entered: Deferred.Deferred<boolean>;
+    readonly release: Deferred.Deferred<boolean>;
+  }[] = [];
+  const awaitAuthorityPause = Effect.fn('ApprovalFreshProofTests.awaitAuthorityPause')(function* awaitAuthorityPause() {
+    const pause = authorityPauses.shift();
+    if (pause !== undefined) {
+      yield* Deferred.succeed(pause.entered, true);
+      yield* Deferred.await(pause.release);
+    }
+  });
   const authority: PurchaseApprovalFinalBindingAuthorityService = {
     verifyConsumption: () =>
       Effect.fail(
@@ -536,10 +558,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
           );
         }
         authorityEntries += 1;
-        if (pause !== null) {
-          yield* Deferred.succeed(pause.entered, true);
-          yield* Deferred.await(pause.release);
-        }
+        yield* awaitAuthorityPause();
         // This TEST authority is consumed on the Effect clock, independently of the SQL eligibility clock.
         const at = yield* owner.observationNow();
         return {
@@ -641,10 +660,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
                 });
               }
               authorityEntries += 1;
-              if (pause !== null) {
-                yield* Deferred.succeed(pause.entered, true);
-                yield* Deferred.await(pause.release);
-              }
+              yield* awaitAuthorityPause();
               const { at } = yield* owner.nativeNow();
               return {
                 bindingEvidence: {
@@ -706,6 +722,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     componentConsumptionClaim,
     consumeComponent,
     context,
+    correlation,
     directReplay,
     expire,
     owner,
@@ -713,7 +730,9 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
       Effect.gen(function* installTestAuthorityBarrier() {
         const entered = yield* Deferred.make<boolean>();
         const release = yield* Deferred.make<boolean>();
-        pause = { entered, release };
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, true).pipe(Effect.asVoid));
+        const pause = { entered, release };
+        authorityPauses.push(pause);
         return pause;
       }),
     prepareReplayFrame,
@@ -725,6 +744,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     setObservationWindow: (seconds: typeof initialObservationSeconds | typeof extendedObservationSeconds) => {
       observationSeconds = seconds;
     },
+    snapshot,
     submitAgain: () =>
       Effect.gen(function* registeredDifferentIntentSubmission() {
         return yield* Context.get(context, ActionRuntime)
@@ -1048,6 +1068,191 @@ it.live('serializes distinct and same fresh intents without changing request rev
   ).pipe(Effect.provide(services)),
 );
 
+/** Order and Shell replies are transport fixtures; all clients, Action gates and SQL are real. */
+it.live('consumes an approved proof through the registered Order Action and rejects conflicting evidence', () =>
+  Effect.scoped(
+    Effect.gen(function* realOrderConsumptionAction() {
+      const test = yield* scenario('CURRENT', 120_000, true, undefined, true);
+      test.setObservationWindow(extendedObservationSeconds);
+      const proof = yield* test.check(randomUUID());
+      const clock = yield* test.owner.nativeNow();
+      const payload = yield* Schema.decodeUnknownEffect(ConsumeOrderPurchaseApprovalPayloadSchema)({
+        finalBinding: test.binding,
+        idempotencyKey: randomUUID(),
+        orderRef: {
+          moduleId: 'commerce.order',
+          resourceId: randomUUID(),
+          resourceType: 'commerce.order.order',
+          tenantId: test.owner.tenantId,
+        },
+        revalidationRef: proof.revalidation.revalidationRef,
+      });
+      const evidence = yield* Schema.decodeUnknownEffect(CommittedOrderApprovalEvidenceResponseSchema)({
+        ...payload,
+        buyerPrincipalId: test.owner.principal.principalId,
+        commitmentCorrelationId: test.correlation,
+        committedAt: DateTime.formatIso(clock.at),
+        consumptionIntent: payload.idempotencyKey,
+        counterpartyRef: test.chain.counterpartyRef,
+        decisionBundleHash: test.approved.decision.decisionBundleHash,
+        decisionBundleVersion: test.approved.decision.decisionBundleVersion,
+        legalEntityId: test.owner.legalEntityId,
+        observedAt: DateTime.formatIso(clock.at),
+        proposalHash: test.chain.proposal.canonicalHash,
+        proposalRevisionRef: test.chain.proposal.proposalRevisionRef,
+        provenance: 'commerce.order.committed-approval-evidence.v1',
+        requestRef: test.approved.request.requestRef,
+        storefrontId: test.owner.storefrontId,
+        tenantId: test.owner.tenantId,
+        validUntil: DateTime.formatIso(DateTime.add(clock.at, { seconds: 25 })),
+      });
+      const sourceUrl = 'https://composition.order-consumption.test/active';
+      const shellUrl = 'https://shell.order-consumption.test';
+      const orderUrl = 'https://order.order-consumption.test';
+      const environment = ConfigProvider.orElse(
+        ConfigProvider.fromUnknown({
+          ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
+          ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: test.owner.legalEntityId,
+          ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: test.owner.fixture.manager.principalId,
+          ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: test.owner.tenantId,
+          ONTOS_CCC_ORDER_GATEWAY_API_KEY: 'test-owned-order-api-key',
+          ONTOS_COMMERCE_ORDER_API_BASE_URL: `${orderUrl}/commerce-order-api`,
+          ONTOS_SHELL_GATEWAY_BASE_URL: `${shellUrl}/shell-super-app-api`,
+        }),
+        ConfigProvider.fromEnv(),
+      );
+      const sourceDocument = yield* Schema.encodeEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(test.snapshot);
+      const compositionLayer = ActiveApplicationCompositionConfigLive.pipe(
+        Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
+        Layer.provide(ConfigProvider.layer(environment)),
+      );
+      const requests: Request[] = [];
+      const consume = (candidate: typeof payload, returnedEvidence: typeof evidence) =>
+        Effect.gen(function* executeRealConsumption() {
+          const body = yield* Schema.encodeEffect(CommittedOrderApprovalEvidenceResponseSchema)(returnedEvidence);
+          const fetch: typeof globalThis.fetch = async (target, init) => {
+            const request = new Request(target, init);
+            requests.push(request.clone());
+            if (request.url === sourceUrl) {
+              return new Response(sourceDocument, { headers: { 'content-type': 'application/json' } });
+            }
+            if (request.url === `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`) {
+              expect(request.headers.get('x-api-key')).toBe('test-owned-order-api-key');
+              return Response.json({
+                apiBaseUrl: '/commerce-order-api',
+                compositionRevision: test.snapshot.composition.revision,
+                expiresAt: clock.epoch + 30,
+                token: 'test-order-gateway-assertion',
+              });
+            }
+            expect(request.url).toBe(`${orderUrl}/commerce-order-api/reads/committed-order-approval-evidence`);
+            expect(request.headers.get('authorization')).toBe('Bearer test-order-gateway-assertion');
+            expect(await request.json()).toEqual({
+              finalBinding: candidate.finalBinding,
+              orderRef: candidate.orderRef,
+              revalidationRef: candidate.revalidationRef,
+            });
+            return Response.json(body);
+          };
+          const principal = yield* test.owner.authenticatedPrincipal();
+          expect(isVerifiedGatewayPrincipalContext(principal)).toBe(true);
+          expect(principal).toMatchObject({
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'api_key',
+            legalEntityId: test.owner.legalEntityId,
+            principalId: test.owner.fixture.manager.principalId,
+            tenantId: test.owner.tenantId,
+          });
+          const moduleDecisions = yield* Context.get(test.context, ContextAccess).modules({
+            legalEntityId: test.owner.legalEntityId,
+            moduleIds: ['commerce.customer-context'],
+            principalId: principal.principalId,
+            tenantId: test.owner.tenantId,
+          });
+          expect(moduleDecisions).toEqual([{ decision: 'allowed', key: 'commerce.customer-context' }]);
+          return yield* Context.get(test.context, ActionRuntime)
+            .runAction({
+              payload: yield* Schema.encodeEffect(ConsumeOrderPurchaseApprovalPayloadSchema)(candidate),
+              principal,
+              registration: consumeOrderPurchaseApprovalAction,
+              transport: {
+                correlationId: randomUUID(),
+                idempotencyKey: randomUUID(),
+                targetModuleKey: 'commerce.customer-context',
+              },
+            })
+            .pipe(
+              Effect.provideService(FetchHttpClient.Fetch, fetch),
+              Effect.provide(compositionLayer),
+              Effect.provide(FetchHttpClient.layer),
+              Effect.provideService(ConfigProvider.ConfigProvider, environment),
+              Effect.provideContext(test.context),
+            );
+        });
+      const beforeRequest = yield* test.readRequest();
+      const beforeProofs = yield* test.readProofs();
+      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+      const wrongEvidence = yield* Effect.result(consume(payload, { ...evidence, proposalHash: 'a'.repeat(64) }));
+      assert.isOk(Result.isFailure(wrongEvidence));
+      const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongEvidence.failure);
+      expect(
+        failure.code,
+        `Order consumption rejection: ${failure.reason}; transport paths: ${requests.map(({ url }) => new URL(url).pathname).join(', ')}`,
+      ).toBe('COMMIT_CONFLICT');
+      expect(yield* test.readRequest()).toEqual(beforeRequest);
+      expect(yield* test.readProofs()).toEqual(beforeProofs);
+      const foreignProof = { ...payload, revalidationRef: { ...payload.revalidationRef, resourceId: randomUUID() } };
+      const wrongProof = yield* Effect.result(
+        consume(foreignProof, { ...evidence, revalidationRef: foreignProof.revalidationRef }),
+      );
+      assert.isOk(Result.isFailure(wrongProof));
+      // The unchanged native consumption routine hides unknown proofs with its canonical permission denial.
+      expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongProof.failure)).toMatchObject({
+        code: 'PERMISSION_DENIED',
+      });
+      expect(yield* test.readRequest()).toEqual(beforeRequest);
+      expect(yield* test.readProofs()).toEqual(beforeProofs);
+      const afterRefusal = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+      expect(afterRefusal.events).toEqual(before.events);
+      expect(afterRefusal.outbox).toEqual(before.outbox);
+      const consumed = yield* consume(payload, evidence);
+      expect(consumed.outcome).toBe('CONSUMED');
+      expect(consumed.request.consumptionProofRef).toEqual(payload.revalidationRef);
+      const persisted = yield* test.readRequest();
+      const afterConsumption = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+      expect(afterConsumption.events).toHaveLength(before.events.length + 1);
+      expect(afterConsumption.outbox).toHaveLength(before.outbox.length + 1);
+      expect((yield* consume(payload, evidence)).outcome).toBe('ALREADY_CONSUMED');
+      expect(yield* test.readRequest()).toEqual(persisted);
+      expect(yield* test.readProofs()).toEqual(beforeProofs);
+      const afterReplay = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+      expect(afterReplay.events).toEqual(afterConsumption.events);
+      expect(afterReplay.outbox).toEqual(afterConsumption.outbox);
+      const otherOrder = { ...payload, orderRef: { ...payload.orderRef, resourceId: randomUUID() } };
+      const conflict = yield* Effect.result(consume(otherOrder, { ...evidence, orderRef: otherOrder.orderRef }));
+      assert.isOk(Result.isFailure(conflict));
+      expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(conflict.failure)).toMatchObject({
+        code: 'COMMIT_CONFLICT',
+      });
+      expect(yield* test.readRequest()).toEqual(persisted);
+      expect(yield* test.readProofs()).toEqual(beforeProofs);
+      const afterConflict = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+      expect(afterConflict.events).toEqual(afterConsumption.events);
+      expect(afterConflict.outbox).toEqual(afterConsumption.outbox);
+      expect(requests.some(({ url }) => url === `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`)).toBe(
+        true,
+      );
+      expect(
+        requests.some(({ url }) => url === `${orderUrl}/commerce-order-api/reads/committed-order-approval-evidence`),
+      ).toBe(true);
+    }),
+  ).pipe(Effect.provide(services)),
+);
+
 type FreshProofScenario = Effect.Success<ReturnType<typeof scenario>>;
 const holdGenuineRequest = (test: FreshProofScenario) =>
   Effect.gen(function* holdOnlyOwnedRequest() {
@@ -1113,69 +1318,160 @@ const waitForExactBlock = (
     return yield* Effect.die('The expected actual Tenant/request/direct-replay lock wait was not observed');
   });
 
-const pausedRegisteredBackend = (test: FreshProofScenario) =>
-  Effect.gen(function* exactPausedRegisteredBackend() {
-    const rows = yield* test.owner.admin.execute<{ pid: number }>(
-      sql`select pid from pg_stat_activity where datname=current_database() and state='idle in transaction' and pid<>pg_backend_pid()`,
+/** Each scenario owns an isolated database; with all Actions at authority barriers, no client transaction remains. */
+const assertNoOpenActionTransaction = (test: FreshProofScenario) =>
+  Effect.gen(function* noActionSqlDuringAuthorityRead() {
+    const rows = yield* test.owner.admin.execute<{ pid: number; query: string; state: string }>(
+      sql`select pid, query, state from pg_stat_activity
+        where datname=current_database() and backend_type='client backend'
+          and (xact_start is not null or state in ('idle in transaction', 'idle in transaction (aborted)'))
+          and pid<>pg_backend_pid()`,
       'objects',
     );
-    expect(rows).toHaveLength(1);
-    const [row] = rows;
-    assert.isOk(row !== undefined);
-    return row.pid;
+    expect(rows).toEqual([]);
   });
 
-it.live('serializes actual registered revalidations at the Core Tenant gate before the second authority entry', () =>
-  Effect.scoped(
-    Effect.gen(function* tenantGateSerialization() {
-      const test = yield* scenario();
-      const first = yield* test.check(randomUUID());
-      const original = yield* test.readProofs();
-      yield* test.expire(first.revalidation.validUntil);
-      const pause = yield* test.pauseAuthority();
-      const entries = test.authorityEntries();
-      const actionA = yield* test.check(randomUUID()).pipe(Effect.forkScoped);
-      yield* Deferred.await(pause.entered);
-      const blocker = yield* pausedRegisteredBackend(test);
-      const actionB = yield* test.check(randomUUID()).pipe(Effect.forkScoped);
-      yield* waitForExactBlock(test, blocker, 'TENANT');
-      expect(test.authorityEntries()).toBe(entries + 1);
-      yield* Deferred.succeed(pause.release, true);
-      const a = yield* Fiber.join(actionA);
-      const b = yield* Fiber.join(actionB);
-      expect(a.revalidation.revalidationRef.resourceId).not.toBe(b.revalidation.revalidationRef.resourceId);
-      expect(test.authorityEntries()).toBe(entries + 2);
-      const records = yield* test.readProofs();
-      expect(records).toHaveLength(3);
-      expect(records.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
-        original[0],
-      );
-    }),
-  ).pipe(Effect.provide(services)),
+const awaitPausedAuthority = <Value, Failure>(
+  pause: { readonly entered: Deferred.Deferred<boolean> },
+  action: Fiber.Fiber<Value, Failure>,
+) =>
+  Effect.raceFirst(
+    Deferred.await(pause.entered),
+    Fiber.join(action).pipe(
+      Effect.flatMap((result) =>
+        Effect.die({ reason: 'The Action completed before reaching its authority barrier', result }),
+      ),
+    ),
+  );
+
+/** Test-owned lock acquired only after both Actions have released SQL and entered remote preparation. */
+const holdGenuineTenant = (test: FreshProofScenario) =>
+  Effect.gen(function* holdOnlyOwnedTenant() {
+    const held = yield* Deferred.make<number>();
+    const release = yield* Deferred.make<boolean>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, true).pipe(Effect.asVoid));
+    const holder = yield* test.owner.admin
+      .transaction((transaction) =>
+        Effect.gen(function* independentTenantHolder() {
+          const rows = yield* transaction.execute<{ pid: number; tenantId: string }>(
+            sql`select pg_backend_pid() as pid, tenant_id as "tenantId" from core.tenants
+          where tenant_id=${test.owner.tenantId}::uuid for update`,
+            'objects',
+          );
+          expect(rows).toHaveLength(1);
+          const [row] = rows;
+          assert.isOk(row !== undefined);
+          expect(row.tenantId).toBe(test.owner.tenantId);
+          yield* Deferred.succeed(held, row.pid);
+          yield* Deferred.await(release);
+        }),
+      )
+      .pipe(Effect.forkScoped);
+    const blocker = yield* Effect.raceFirst(
+      Deferred.await(held),
+      Fiber.join(holder).pipe(Effect.andThen(Effect.die('The test Tenant holder exited before acquiring its row'))),
+    );
+    return { blocker, holder, release };
+  });
+
+it.live(
+  'prepares registered revalidations concurrently without SQL and gates their final commits on the Core Tenant',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* tenantGateSerialization() {
+        const test = yield* scenario();
+        const first = yield* test.check(randomUUID());
+        const original = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        yield* test.expire(first.revalidation.validUntil);
+        const pauseA = yield* test.pauseAuthority();
+        const entries = test.authorityEntries();
+        const actionA = yield* test.check(randomUUID()).pipe(Effect.forkScoped);
+        yield* awaitPausedAuthority(pauseA, actionA);
+        yield* assertNoOpenActionTransaction(test);
+        const pauseB = yield* test.pauseAuthority();
+        const actionB = yield* test.check(randomUUID()).pipe(Effect.forkScoped);
+        yield* awaitPausedAuthority(pauseB, actionB);
+        expect(test.authorityEntries()).toBe(entries + 2);
+        yield* assertNoOpenActionTransaction(test);
+
+        const held = yield* holdGenuineTenant(test);
+        yield* Deferred.succeed(pauseA.release, true);
+        yield* waitForExactBlock(test, held.blocker, 'TENANT');
+        expect(yield* test.readProofs()).toEqual(original);
+        expect(yield* test.readRequest()).toEqual(request);
+        yield* Deferred.succeed(held.release, true);
+        yield* Fiber.join(held.holder);
+        const a = yield* Fiber.join(actionA);
+        yield* assertNoOpenActionTransaction(test);
+        yield* Deferred.succeed(pauseB.release, true);
+        const b = yield* Fiber.join(actionB);
+        expect(a.revalidation.revalidationRef.resourceId).not.toBe(b.revalidation.revalidationRef.resourceId);
+        expect(test.authorityEntries()).toBe(entries + 2);
+        const records = yield* test.readProofs();
+        expect(records).toHaveLength(3);
+        expect(records.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
+          original[0],
+        );
+        for (const issued of [a, b]) {
+          const encodedEvidence = yield* Schema.encodeEffect(ApprovalRevalidationSchema.fields.evidence)(
+            issued.revalidation.evidence,
+          );
+          expect(
+            records.find((row) => row.revalidationResourceId === issued.revalidation.revalidationRef.resourceId)
+              ?.evidence,
+          ).toEqual(encodedEvidence);
+        }
+        expect(yield* test.readRequest()).toEqual(request);
+        const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(after.events).toHaveLength(before.events.length + 2);
+        expect(after.outbox).toHaveLength(before.outbox.length + 2);
+        expect(after.events).toEqual(expect.arrayContaining(before.events));
+        expect(after.outbox).toEqual(expect.arrayContaining(before.outbox));
+      }),
+    ).pipe(Effect.provide(services)),
 );
 
 it.live(
-  'keeps actual different-intent Submit behind the same Tenant gate and preserves its existing typed conflict',
+  'preserves different-intent Submit conflict while registered revalidation authority is paused without SQL',
   () =>
     Effect.scoped(
       Effect.gen(function* actualSubmissionCompetition() {
         const test = yield* scenario();
+        const request = yield* test.readRequest();
+        const proofs = yield* test.readProofs();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
         const pause = yield* test.pauseAuthority();
+        const entries = test.authorityEntries();
         const check = yield* test.check(randomUUID()).pipe(Effect.forkScoped);
-        yield* Deferred.await(pause.entered);
-        const blocker = yield* pausedRegisteredBackend(test);
+        yield* awaitPausedAuthority(pause, check);
+        yield* assertNoOpenActionTransaction(test);
         const submit = yield* test.submitAgain().pipe(Effect.result, Effect.forkScoped);
-        yield* waitForExactBlock(test, blocker, 'TENANT');
-        expect(test.authorityEntries()).toBe(1);
-        yield* Deferred.succeed(pause.release, true);
-        yield* Fiber.join(check);
         const result = yield* Fiber.join(submit);
         expect(Result.isFailure(result)).toBe(true);
         if (Result.isFailure(result)) {
           const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(result.failure);
           expect(failure.code).toBe('IDEMPOTENCY_CONFLICT');
         }
-        expect(yield* test.readProofs()).toHaveLength(1);
+        expect(test.authorityEntries()).toBe(entries + 1);
+        yield* assertNoOpenActionTransaction(test);
+        expect(yield* test.readProofs()).toEqual(proofs);
+        expect(yield* test.readRequest()).toEqual(request);
+        const rejected = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(rejected.events).toEqual(before.events);
+        expect(rejected.outbox).toEqual(before.outbox);
+        yield* Deferred.succeed(pause.release, true);
+        const issued = yield* Fiber.join(check);
+        const records = yield* test.readProofs();
+        expect(records).toHaveLength(1);
+        expect(records[0]?.revalidationResourceId).toBe(issued.revalidation.revalidationRef.resourceId);
+        expect(yield* test.readRequest()).toEqual(request);
+        const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(after.events).toHaveLength(before.events.length + 1);
+        expect(after.outbox).toHaveLength(before.outbox.length + 1);
+        expect(after.events).toEqual(expect.arrayContaining(before.events));
+        expect(after.outbox).toEqual(expect.arrayContaining(before.outbox));
       }),
     ).pipe(Effect.provide(services)),
 );
@@ -1295,7 +1591,8 @@ it.live('rejects fresh proof after actual buyer revocation and retains committed
         yield* Effect.flip(test.check(randomUUID())),
       );
       expect(failure.code).toBe('BUYER_PERMISSION_DENIED');
-      expect(test.authorityEntries()).toBe(entries + 1);
+      // Released preparation rejects the now-denied local buyer before asking the final owner.
+      expect(test.authorityEntries()).toBe(entries);
       expect(yield* test.readProofs()).toEqual(original);
       expect(yield* test.readRequest()).toEqual(request);
     }),
@@ -1915,7 +2212,7 @@ it.live('component consumption rejects mismatched evidence without effects and s
         const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
           yield* Effect.flip(test.consumeComponent({ ...claim, ...control.patch })),
         );
-        expect(failure.code, control.label).toBe(control.code);
+        expect(failure.code, `${control.label}: ${failure.reason}`).toBe(control.code);
         expect(yield* test.readRequest(), control.label).toEqual(request);
         expect(yield* test.readProofs(), control.label).toEqual(proofs);
         const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
@@ -2012,18 +2309,30 @@ it.live('component competing proofs and Order claims consume once under concurre
       ];
       const proofs = yield* test.readProofs();
       const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const pause = yield* test.pauseAuthority();
+      const request = yield* test.readRequest();
+      const pauseA = yield* test.pauseAuthority();
       const entries = test.authorityEntries();
       const actionA = yield* test.consumeComponent(first).pipe(Effect.result, Effect.forkScoped);
-      yield* Deferred.await(pause.entered);
-      const blocker = yield* pausedRegisteredBackend(test);
+      yield* awaitPausedAuthority(pauseA, actionA);
+      yield* assertNoOpenActionTransaction(test);
       const [, competingClaim] = claims;
       assert.isOk(competingClaim !== undefined);
+      const pauseB = yield* test.pauseAuthority();
       const actionB = yield* test.consumeComponent(competingClaim).pipe(Effect.result, Effect.forkScoped);
-      yield* waitForExactBlock(test, blocker, 'TENANT');
-      expect(test.authorityEntries()).toBe(entries + 1);
-      yield* Deferred.succeed(pause.release, true);
-      const results = yield* Effect.all([Fiber.join(actionA), Fiber.join(actionB)], { concurrency: 2 });
+      yield* awaitPausedAuthority(pauseB, actionB);
+      expect(test.authorityEntries()).toBe(entries + 2);
+      yield* assertNoOpenActionTransaction(test);
+      const held = yield* holdGenuineTenant(test);
+      yield* Deferred.succeed(pauseA.release, true);
+      yield* waitForExactBlock(test, held.blocker, 'TENANT');
+      expect(yield* test.readProofs()).toEqual(proofs);
+      expect(yield* test.readRequest()).toEqual(request);
+      yield* Deferred.succeed(held.release, true);
+      yield* Fiber.join(held.holder);
+      const resultA = yield* Fiber.join(actionA);
+      yield* assertNoOpenActionTransaction(test);
+      yield* Deferred.succeed(pauseB.release, true);
+      const results = [resultA, yield* Fiber.join(actionB)];
       expect(test.authorityEntries()).toBe(entries + 2);
       const winners = results.filter(Result.isSuccess);
       const losers = results.filter(Result.isFailure);

@@ -718,6 +718,35 @@ export const currentOwnerAccessForTransaction =
     );
   };
 
+/** Read the exact grant projection used by invitation preflight, including its decision. */
+export const snapshotCurrentOwnerAccess = (
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  scope: Pick<OperationalScope, 'tenantId'> & { readonly legalEntityId: string },
+  input: CurrentOwnerAccessDecisionInput,
+) => {
+  if (
+    input.counterpartyRef.tenantId !== scope.tenantId ||
+    input.principal.tenantId !== scope.tenantId ||
+    input.legalEntityId !== scope.legalEntityId
+  ) {
+    return Effect.succeed({ decision: 'UNAVAILABLE' as const, rows: [] });
+  }
+  return readOwnerGrantRows(transaction, input, false).pipe(
+    Effect.flatMap((result) =>
+      Result.isFailure(result)
+        ? Effect.fail(accessUnavailable(result.failure))
+        : Effect.succeed({
+            decision: ownerAccessDecisionFromRows(result.success, input),
+            rows: result.success.map((row) => ({
+              ...row,
+              granted_at: instant(row.granted_at),
+              revoked_at: row.revoked_at === null ? null : instant(row.revoked_at),
+            })),
+          }),
+    ),
+  );
+};
+
 export const lockingCurrentOwnerAccessForTransaction = (
   transaction: CounterpartyAccessScopedRoutineInvoker,
   scope: Pick<OperationalScope, 'tenantId'> & { readonly legalEntityId: string },
@@ -1737,10 +1766,16 @@ export const counterpartyAccessPortForScopedTransaction = Effect.fn(
 )(function* bindCounterpartyAccessPort(
   transaction: CounterpartyAccessScopedRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
+  prepared?: {
+    readonly contextAccess: Pick<ContextAccessService, 'businessPermissions'>;
+    readonly eligibility: PrincipalEligibilityService;
+  },
 ) {
-  const contextAccess = yield* ContextAccess;
+  const liveContextAccess = yield* ContextAccess;
   const crypto = yield* Crypto.Crypto;
-  const eligibility = yield* PrincipalEligibility;
+  const liveEligibility = yield* PrincipalEligibility;
+  const contextAccess = prepared?.contextAccess ?? liveContextAccess;
+  const eligibility = prepared?.eligibility ?? liveEligibility;
   const proofDelivery = yield* CounterpartyInvitationProofDelivery;
   const currentOwnerAccess = lockingCurrentOwnerAccessForTransaction(transaction, scope);
   const { claimAuthority, proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(

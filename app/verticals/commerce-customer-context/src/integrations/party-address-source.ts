@@ -6,7 +6,7 @@ import {
   PartyContactPointDetailPolicyProblemSchema,
   executePartyContactPointDetail,
 } from '@app/party-registry/api/client';
-import { Context, Effect, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Schema } from 'effect';
 
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
@@ -156,18 +156,56 @@ const validateCurrentPostalSource = (
   return failure === undefined ? Effect.void : Effect.fail(failure);
 };
 
+/** Owner evidence is retained only for this invocation and expires at the first known End. */
+export const preparePartyAddressSource = (
+  payload: PartyBackedAddressPayload,
+  requestCorrelation: string,
+  execute?: PartyContactPointDetailExecutor,
+): Effect.Effect<{ readonly validFrom: number; readonly validUntil: number | null }, AddressBookDomainError> => {
+  const { origin } = payload;
+  if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
+    return Effect.fail(invalid('A Party-backed address source is required'));
+  }
+  return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
+    Effect.flatMap((client) => client({ contactPointRef: origin.contactPointRef }, requestCorrelation)),
+    Effect.mapError(validatorFailure),
+    Effect.flatMap((contactPoint) =>
+      validateCurrentPostalSource(payload, contactPoint).pipe(
+        Effect.as({
+          validFrom: DateTime.toEpochMillis(contactPoint.validFrom),
+          validUntil: Math.min(
+            contactPoint.validTo === null ? Infinity : DateTime.toEpochMillis(contactPoint.validTo),
+            contactPoint.end === null ? Infinity : DateTime.toEpochMillis(contactPoint.end.effectiveEnd),
+          ),
+        }),
+      ),
+    ),
+    Effect.map(({ validFrom, validUntil }) => ({
+      validFrom,
+      validUntil: Number.isFinite(validUntil) ? validUntil : null,
+    })),
+  );
+};
+
+export const assertPreparedPartyAddressCurrent = (evidence: {
+  readonly validFrom: number;
+  readonly validUntil: number | null;
+}) =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((now) =>
+      now >= evidence.validFrom && (evidence.validUntil === null || now < evidence.validUntil)
+        ? Effect.void
+        : Effect.fail(invalid('The Party-backed address source is no longer Current')),
+    ),
+  );
+
 export const partyBackedAddressSourceValidator =
   (requestCorrelation: string, execute?: PartyContactPointDetailExecutor) =>
   (payload: PartyBackedAddressPayload): Effect.Effect<void, AddressBookDomainError> => {
     const { origin } = payload;
-    if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
-      return Effect.void;
-    }
-    return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
-      Effect.flatMap((client) => client({ contactPointRef: origin.contactPointRef }, requestCorrelation)),
-      Effect.mapError(validatorFailure),
-      Effect.flatMap((contactPoint) => validateCurrentPostalSource(payload, contactPoint)),
-    );
+    return origin === undefined || origin.kind !== 'PARTY_BACKED'
+      ? Effect.void
+      : preparePartyAddressSource(payload, requestCorrelation, execute).pipe(Effect.asVoid);
   };
 
 const hasResolvablePartyIdentity = (
