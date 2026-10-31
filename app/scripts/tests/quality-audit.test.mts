@@ -435,7 +435,7 @@ const recordedRun = (report: { readonly runDirectory: string }) => {
 };
 
 it.live(
-  'finished audits delete superseded runs but keep in-progress runs and the last good run after a failure',
+  'finished audits delete superseded runs but keep unrecorded runs and the last good run after a failure',
   Effect.fn(function* testRunRetention() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
@@ -443,38 +443,35 @@ it.live(
     const validJscpdConfig = readFileSync(jscpdConfig, 'utf-8');
     yield* runFixture(root, output, 'jscpd');
     const superseded = yield* summary(output);
-    // Another audit in this checkout is still writing one run; another stopped without a record over a day ago.
-    const inProgressRun = 'run-in-progress';
-    const inProgress = path.join(output, inProgressRun);
-    mkdirSync(inProgress);
-    writeFileSync(path.join(inProgress, RUN_INVENTORY), '{}');
-    const abandoned = path.join(output, 'run-abandoned');
-    mkdirSync(abandoned);
-    writeFileSync(path.join(abandoned, RUN_INVENTORY), '{}');
-    const stoppedAt = new Date((yield* Clock.currentTimeMillis) - Duration.toMillis(Duration.hours(25)));
-    utimesSync(path.join(abandoned, RUN_INVENTORY), stoppedAt, stoppedAt);
-    utimesSync(abandoned, stoppedAt, stoppedAt);
+    // A directory without a completion record may be another audit's live run or caller-owned data, however old.
+    const unrecordedRun = 'run-unrecorded';
+    const unrecorded = path.join(output, unrecordedRun);
+    mkdirSync(unrecorded);
+    writeFileSync(path.join(unrecorded, RUN_INVENTORY), '{}');
+    const lastWrite = new Date((yield* Clock.currentTimeMillis) - Duration.toMillis(Duration.days(30)));
+    utimesSync(path.join(unrecorded, RUN_INVENTORY), lastWrite, lastWrite);
+    utimesSync(unrecorded, lastWrite, lastWrite);
 
     yield* runFixture(root, output, 'jscpd');
     const good = yield* summary(output);
     expect(good.status).toBe('reported');
     expect(existsSync(superseded.runDirectory)).toBe(false);
-    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), inProgressRun]));
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), unrecordedRun]));
 
     writeFileSync(jscpdConfig, '{invalid');
     const failure = yield* Effect.flip(runFixture(root, output, 'jscpd'));
     expect(failure.message).toMatch(/analysis failed/u);
     const failed = yield* summary(output);
     expect(failed.status).toBe('error');
-    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), ...recordedRun(failed), inProgressRun]));
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), ...recordedRun(failed), unrecordedRun]));
     expect(readFileSync(path.join(good.runDirectory, 'jscpd/report.json'), 'utf-8').length > 0).toBe(true);
 
     writeFileSync(jscpdConfig, validJscpdConfig);
     yield* runFixture(root, output, 'jscpd');
     const latest = yield* summary(output);
     expect(latest.status).toBe('reported');
-    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(latest), inProgressRun]));
-    expect(readFileSync(path.join(inProgress, RUN_INVENTORY), 'utf-8')).toBe('{}');
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(latest), unrecordedRun]));
+    expect(readFileSync(path.join(unrecorded, RUN_INVENTORY), 'utf-8')).toBe('{}');
   }),
 );
 
