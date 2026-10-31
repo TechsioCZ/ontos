@@ -129,6 +129,23 @@ it('starts the storefront from its standalone bundle and keeps the Shell URL in-
   expect(storefront).toContain('ONTOS_SHELL_URL: http://app:3000');
 });
 
+it('ships checksum-pinned Bun beside Node with the Shell pilot off and no runtime download', () => {
+  const app = serviceNode(readZeropsDeploymentYaml(), 'app');
+  expect(serviceStrings(app, ['build', 'prepareCommands'])).toContain(
+    'sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4',
+  );
+  expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
+    `mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'`,
+  );
+  expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBe('node');
+  expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([]);
+  const installer = readFileSync(new URL('../install-zerops-bun.sh', import.meta.url), 'utf-8');
+  expect(installer).toContain('bun-linux-x64-musl-baseline');
+  expect(installer).toContain('6e9c37098b293920aed28bfb51ab240e26d23bfdd9bbfecb3ad428ac166549bc');
+  expect(installer).toContain('sha256sum -c -');
+  expect(installer.indexOf('sha256sum -c -')).toBeLessThan(installer.indexOf('unzip -q'));
+});
+
 it('fails the application build whose Zephyr upload fails', () => {
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 

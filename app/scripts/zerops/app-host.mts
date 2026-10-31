@@ -110,6 +110,7 @@ const SUPERVISOR_ONLY_KEYS: readonly string[] = [
   'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL',
   'DATABASE_ADMIN_URL',
   'ONTOS_OWNER_SECRETS_JSON',
+  'ONTOS_SHELL_RUNTIME',
   'PARTY_REGISTRY_DB_PASSWORD',
   'PARTY_REGISTRY_WORKER_DB_PASSWORD',
   'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
@@ -258,6 +259,11 @@ export const routeRequest = (
 
 type ChildEnvironment = NonNullable<ChildProcess.CommandOptions['env']>;
 
+/** Invalid values fail before any child starts; changing this setting never changes owner or worker runtimes. */
+export const shellRuntime = Config.schema(Schema.Literals(['node', 'bun']), 'ONTOS_SHELL_RUNTIME').pipe(
+  Config.withDefault('node'),
+);
+
 /** Starts one long-running child in the current Scope. Its exit, for any reason, fails the returned effect. */
 const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   name: string,
@@ -280,6 +286,18 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
     }),
   );
 });
+
+/** Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. */
+export const startUnitProcess = (ids: readonly string[], runtime: 'node' | 'bun', env: ChildEnvironment) =>
+  startChild(
+    ids.length === 1 ? (ids[0] ?? 'owners') : 'owners',
+    runtime === 'bun' && ids.length === 1 && ids[0] === SHELL_ID
+      ? path.join(workspaceRoot, '.zerops/bun/bin/bun')
+      : process.execPath,
+    [path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
+    workspaceRoot,
+    env,
+  );
 
 /** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
 export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
@@ -568,6 +586,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const ports = new Map(units.map(({ id, port }) => [id, port]));
   const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports);
   const node = process.execPath;
+  const runtime = yield* shellRuntime;
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
   const pointer = yield* makeCompositionPointer(
@@ -598,11 +617,11 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   if (ownersEnvironment.conflicts.length > 0) {
     return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
   }
-  const serveUnits = path.join(workspaceRoot, 'scripts/zerops/serve-units.mts');
   const exits = [
-    yield* startChild(SHELL_ID, node, [serveUnits, SHELL_ID], workspaceRoot, shellEnvironment.environment),
-    yield* startChild('owners', node, [serveUnits, ...ownerIds], workspaceRoot, ownersEnvironment.environment),
+    yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment),
+    yield* startUnitProcess(ownerIds, runtime, ownersEnvironment.environment),
   ];
+  yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
   const publish = Effect.gen(function* publishObservedComposition() {

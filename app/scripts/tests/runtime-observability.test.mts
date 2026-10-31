@@ -1,7 +1,7 @@
 import { Effect, Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { startProcessObservability } from '../zerops/process-observability.mts';
+import { runtimeObservabilityCapabilities, startProcessObservability } from '../zerops/process-observability.mts';
 import { createRuntimeSummary, isRuntimeStall, isSlowRuntimeJob } from '../zerops/runtime-observability-model.mts';
 
 const job = (durationMs: number, thresholdMs = 200) => ({
@@ -11,6 +11,24 @@ const job = (durationMs: number, thresholdMs = 200) => ({
   owner: 'fixture-owner',
   startedAt: 1000,
   thresholdMs,
+});
+
+it('does not report Bun performance stubs or missing GC events as real measurements', () => {
+  expect(runtimeObservabilityCapabilities('bun', ['mark', 'measure'])).toEqual({
+    eventLoopUtilization: false,
+    gc: false,
+    heapLimit: false,
+  });
+  expect(runtimeObservabilityCapabilities('node', ['gc', 'mark', 'measure'])).toEqual({
+    eventLoopUtilization: true,
+    gc: true,
+    heapLimit: true,
+  });
+  expect(runtimeObservabilityCapabilities('node', ['mark'])).toEqual({
+    eventLoopUtilization: true,
+    gc: false,
+    heapLimit: true,
+  });
 });
 
 it('uses strict stall and job thresholds and ignores invalid measurements', () => {

@@ -21,6 +21,13 @@ const RuntimeLog = Schema.fromJsonString(
 );
 const encodeLog = Schema.encodeResult(RuntimeLog);
 
+/** Bun 1.4.4 exposes ELU and V8 heap-limit stubs, and does not publish GC performance entries. */
+export const runtimeObservabilityCapabilities = (runtime: 'node' | 'bun', entryTypes: readonly string[]) => ({
+  eventLoopUtilization: runtime === 'node',
+  gc: entryTypes.includes('gc'),
+  heapLimit: runtime === 'node',
+});
+
 /** Driver callbacks only. No request data, stacks, secrets or per-sample allocations on the normal loop path. */
 export const startProcessObservability = (role: ProcessRole) =>
   Effect.acquireRelease(
@@ -30,6 +37,8 @@ export const startProcessObservability = (role: ProcessRole) =>
       );
       return yield* Effect.sync(() => {
         const summary = createRuntimeSummary();
+        const runtime = process.versions.bun === undefined ? 'node' : 'bun';
+        const capabilities = runtimeObservabilityCapabilities(runtime, PerformanceObserver.supportedEntryTypes);
         const emit = (
           event: (typeof RuntimeLog.Type)['event'],
           at: number,
@@ -40,13 +49,20 @@ export const startProcessObservability = (role: ProcessRole) =>
             write(encoded.success);
           }
         };
+        emit('runtime.capabilities', performance.timeOrigin + performance.now(), {
+          eventLoopUtilization: capabilities.eventLoopUtilization ? 'available' : 'unavailable',
+          gc: capabilities.gc ? 'available' : 'unavailable',
+          heapLimit: capabilities.heapLimit ? 'available' : 'unavailable',
+          runtime,
+          version: process.versions.bun ?? process.versions.node,
+        });
         const histogram = monitorEventLoopDelay({ resolution: 20 });
         const alerts = monitorEventLoopDelay({ resolution: 20 });
         histogram.enable();
         alerts.enable();
         let cpu = process.cpuUsage();
         let windowStartedAt = performance.now();
-        let utilization = performance.eventLoopUtilization();
+        let utilization = capabilities.eventLoopUtilization ? performance.eventLoopUtilization() : undefined;
         const onJob = (sample: RuntimeJobSample) => {
           summary.job(sample);
           if (isSlowRuntimeJob(sample)) {
@@ -68,7 +84,9 @@ export const startProcessObservability = (role: ProcessRole) =>
             onGc(entry);
           }
         });
-        observer.observe({ entryTypes: ['gc'] });
+        if (capabilities.gc) {
+          observer.observe({ entryTypes: ['gc'] });
+        }
         const alertTimer = setInterval(() => {
           const durationMs = alerts.count > 0 ? alerts.max / 1_000_000 : 0;
           alerts.reset();
@@ -88,16 +106,24 @@ export const startProcessObservability = (role: ProcessRole) =>
           }
           const now = performance.now();
           const nextCpu = process.cpuUsage();
-          const nextUtilization = performance.eventLoopUtilization();
+          const nextUtilization = capabilities.eventLoopUtilization ? performance.eventLoopUtilization() : undefined;
+          const windowSummary = summary.take();
           emit('runtime.summary', performance.timeOrigin + now, {
-            ...summary.take(),
+            ...windowSummary,
             cpuMs: roundMillis((nextCpu.user + nextCpu.system - cpu.user - cpu.system) / 1000),
             eventLoopMaxMs: histogram.count > 0 ? roundMillis(histogram.max / 1_000_000) : 0,
             eventLoopP50Ms: histogram.count > 0 ? roundMillis(histogram.percentile(50) / 1_000_000) : 0,
             eventLoopP99Ms: histogram.count > 0 ? roundMillis(histogram.percentile(99) / 1_000_000) : 0,
-            eventLoopUtilization: performance.eventLoopUtilization(nextUtilization, utilization).utilization,
-            heapLimitBytes: getHeapStatistics().heap_size_limit,
+            eventLoopUtilization:
+              nextUtilization === undefined || utilization === undefined
+                ? undefined
+                : performance.eventLoopUtilization(nextUtilization, utilization).utilization,
+            gcCount: capabilities.gc ? windowSummary.gcCount : undefined,
+            gcMaxMs: capabilities.gc ? windowSummary.gcMaxMs : undefined,
+            gcTotalMs: capabilities.gc ? windowSummary.gcTotalMs : undefined,
+            heapLimitBytes: capabilities.heapLimit ? getHeapStatistics().heap_size_limit : undefined,
             heapUsedBytes: process.memoryUsage().heapUsed,
+            rssBytes: process.memoryUsage().rss,
             windowMs: roundMillis(now - windowStartedAt),
           });
           histogram.reset();
