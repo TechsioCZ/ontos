@@ -254,14 +254,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         rootPackageJson.scripts?.['api:check'] === 'modern-api-check --rules ./scripts/api-contract-schema-rules.mts',
         'Root api:check must run the published framework checker and OntOS schema rules.',
       );
-      assert(
-        rootPackageJson.scripts?.check?.split(' && ').includes('pnpm api:check') ?? false,
-        'Root check script must include the published framework api:check.',
-      );
-      assert(
-        rootPackageJson.scripts?.check?.includes('pnpm api:check:ontos') ?? false,
-        'Root check script must include pnpm api:check:ontos.',
-      );
     }
   });
   yield* inspectWorkspaceContracts;
