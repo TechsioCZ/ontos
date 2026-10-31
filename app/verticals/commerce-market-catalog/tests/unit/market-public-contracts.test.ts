@@ -349,6 +349,7 @@ describe('Commerce Market public contracts', () => {
       'current-market-catalog',
       'eligible-market-tuples',
       'market-history',
+      'market-retirement-status',
       'pricing-current-market-evidence',
       'resolve-commerce-market',
       'verify-market-eligibility-v1',

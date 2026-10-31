@@ -43,6 +43,10 @@ export const MarketRetirementImpactAssessmentSchema = Schema.Struct({
   reservation: Schema.optionalKey(MarketRetirementReservationSchema),
 });
 export type MarketRetirementImpactAssessment = typeof MarketRetirementImpactAssessmentSchema.Type;
-export type ReservedMarketRetirementImpactAssessment = MarketRetirementImpactAssessment & {
-  readonly reservation: typeof MarketRetirementReservationSchema.Type;
-};
+
+/** Impact evidence bound to the owner-issued reservation token and version it was reserved under. */
+export const ReservedMarketRetirementImpactAssessmentSchema = Schema.Struct({
+  ...MarketRetirementImpactAssessmentSchema.fields,
+  reservation: MarketRetirementReservationSchema,
+});
+export type ReservedMarketRetirementImpactAssessment = typeof ReservedMarketRetirementImpactAssessmentSchema.Type;

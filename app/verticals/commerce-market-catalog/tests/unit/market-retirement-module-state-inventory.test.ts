@@ -24,12 +24,13 @@ const request: MarketAffectedUseAssessmentRequest = {
   tenantId,
 };
 const input = {
-  actionInvocationId: '33333333-3333-4333-8333-333333333333',
   compositionRevision: 'a'.repeat(64),
-  effectiveAt,
+  effectiveAt: DateTime.makeUnsafe(effectiveAt),
   expectedMarketRevision: 3,
   legalEntityId: '44444444-4444-4444-8444-444444444444',
   marketRef,
+  reason: 'Retire replaced Market.',
+  requestCorrelation: '33333333-3333-4333-8333-333333333333',
 } as const;
 
 const compositionEvidence: MarketAffectedUseSourceEvidence = {
@@ -71,14 +72,14 @@ it.effect('delegates installed-owner completeness to the Customer Context author
       return Effect.succeed(verified);
     });
 
-    const result = yield* authority.assessRetirementImpact(input);
+    const { assessment: result } = yield* authority.prepareRetirementReservation(input);
 
     expect(calls).toEqual([
       {
         context: {
           compositionRevision: input.compositionRevision,
           legalEntityId: input.legalEntityId,
-          requestCorrelation: input.actionInvocationId,
+          requestCorrelation: input.requestCorrelation,
         },
         payload: request,
       },
@@ -90,9 +91,9 @@ it.effect('delegates installed-owner completeness to the Customer Context author
 
 it.effect('does not require magic UNIMPLEMENTED source IDs from authoritative composition evidence', () =>
   Effect.gen(function* acceptsContractEvidence() {
-    const result = yield* makeMarketRetirementImpactAuthority(() => Effect.succeed(verified)).assessRetirementImpact(
-      input,
-    );
+    const { assessment: result } = yield* makeMarketRetirementImpactAuthority(() =>
+      Effect.succeed(verified),
+    ).prepareRetirementReservation(input);
 
     expect(result.providers).toHaveLength(1);
     expect(result.providers[0]?.ownerRevision).toBe(verified.assessmentDigest);
@@ -110,7 +111,7 @@ it.effect('fails closed when Customer Context reports installed-owner evidence u
         retryable: true,
       }),
     )
-      .assessRetirementImpact(input)
+      .prepareRetirementReservation(input)
       .pipe(Effect.flip);
 
     expect(Predicate.isTagged(failure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);

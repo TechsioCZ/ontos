@@ -4,12 +4,21 @@ import type {
 } from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import { executeMarketAffectedUseAssessmentWithAuthorization } from '@app/customer-market-retirement-contracts/market-affected-use-assessment/client';
 import type {
+  MarketRetirementReservationRequest,
+  MarketRetirementReservationResponse,
+} from '@app/customer-market-retirement-contracts/market-retirement-reservation';
+import { executeMarketRetirementReservationWithAuthorization } from '@app/customer-market-retirement-contracts/market-retirement-reservation/client';
+import { ReserveMarketRetirementAlreadyCommittedProblemSchema } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
+import type {
   ReserveMarketRetirementPayload,
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import { executeReserveMarketRetirementWithAuthorization } from '@app/customer-market-retirement-contracts/reserve-market-retirement/client';
+import type { GatewayContextResponse } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { Config, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+
+import { MarketCommandRejected } from '../../shared/action-contracts.ts';
 
 import type {
   MarketRetirementImpactAssessment,
@@ -18,7 +27,12 @@ import type {
 import { MarketRetirementImpactAssessmentRejected } from '../actions/market-retirement-impact-assessment-rejected.ts';
 import { MarketRetirementImpactAssessmentStale } from '../actions/market-retirement-impact-assessment-stale.ts';
 import { MarketRetirementImpactAssessmentUnavailable } from '../actions/market-retirement-impact-assessment-unavailable.ts';
-import type { MarketRetirementImpactAuthority } from '../services/market-retirement-impact-authority.ts';
+import type { MarketRetirementImpactFailure } from '../domain/market-retirement-workflow.ts';
+import type {
+  MarketRetirementImpactAuthority,
+  MarketRetirementOwnerCallContext,
+  MarketRetirementReserveRequest,
+} from '../services/market-retirement-impact-authority.ts';
 import { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
 
 type ExecuteMarketAffectedUseAssessment<Failure> = (
@@ -32,13 +46,13 @@ type ExecuteMarketAffectedUseAssessment<Failure> = (
 
 type ExecuteMarketRetirementReservation<Failure> = (
   payload: ReserveMarketRetirementPayload,
-  context: {
-    readonly compositionRevision: string;
-    readonly idempotencyKey: string;
-    readonly legalEntityId: string;
-    readonly requestCorrelation: string;
-  },
+  context: MarketRetirementOwnerCallContext & { readonly idempotencyKey: string },
 ) => Effect.Effect<ReserveMarketRetirementResult, Failure>;
+
+type ReadMarketRetirementReservation<Failure> = (
+  payload: MarketRetirementReservationRequest,
+  context: MarketRetirementOwnerCallContext,
+) => Effect.Effect<MarketRetirementReservationResponse, Failure>;
 
 const CUSTOMER_CONTEXT_MODULE_KEY = 'commerce.customer-context' as const;
 const httpUrl = Schema.URLFromString.check(
@@ -97,13 +111,30 @@ const errorText = (cause: unknown): string => {
   return 'The Customer Context Market retirement reservation gateway is unavailable';
 };
 
-const mapReservationFailure = (
-  cause: unknown,
-): MarketRetirementImpactAssessmentRejected | MarketRetirementImpactAssessmentUnavailable => {
+const definiteRejectionCodes: ReadonlySet<string> = new Set([
+  'INVALID_REQUEST',
+  'RESERVATION_STATE_CONFLICT',
+  'RETIREMENT_RESERVATION_CONFLICT',
+  'RETIREMENT_RESERVATION_NOT_FOUND',
+  'action_request_hash_conflict',
+]);
+
+/**
+ * Only owner-declared definite outcomes become typed rejections. Transport, permission, availability and
+ * unknown failures stay `Unavailable`, so the caller retries with the same idempotency key.
+ */
+const mapReservationFailure = (cause: unknown): MarketRetirementImpactFailure => {
   const code = Schema.is(GatewayFailureSchema)(cause) ? cause.code : undefined;
-  return code === 'RETIREMENT_RESERVATION_CONFLICT' ||
-    code === 'RESERVATION_STATE_CONFLICT' ||
-    code === 'action_request_hash_conflict'
+  if (code === 'LIVE_REFERENCE_CONFLICT') {
+    return new MarketCommandRejected({
+      code: 'replacement_impact_unresolved',
+      reason: 'Retirement is blocked while a material live owner reference still depends on this Market',
+    });
+  }
+  if (code === 'ASSESSMENT_STALE') {
+    return stale(errorText(cause));
+  }
+  return code !== undefined && definiteRejectionCodes.has(code)
     ? rejected(errorText(cause))
     : unavailable(errorText(cause), cause);
 };
@@ -232,11 +263,11 @@ const toVerifiedAssessment = (
 };
 
 const requestFor = (input: {
-  readonly effectiveAt: string;
+  readonly effectiveAt: DateTime.Utc;
   readonly expectedMarketRevision: number;
   readonly marketRef: MarketAffectedUseAssessmentRequest['marketRef'];
 }): MarketAffectedUseAssessmentRequest => ({
-  evaluatedAt: input.effectiveAt,
+  evaluatedAt: DateTime.formatIso(input.effectiveAt),
   marketRef: input.marketRef,
   marketRevision: input.expectedMarketRevision,
   tenantId: input.marketRef.tenantId,
@@ -264,42 +295,36 @@ const finishedReservationMatches = (
   result.reservationToken === assessment.reservation.token &&
   result.reservationVersion === assessment.reservation.version + 1;
 
-export const makeMarketRetirementImpactAuthority = <AssessmentFailure, ReservationFailure = never>(
+const isAlreadyCommitted = Schema.is(ReserveMarketRetirementAlreadyCommittedProblemSchema);
+
+const ownerCall = (input: MarketRetirementOwnerCallContext): MarketRetirementOwnerCallContext => ({
+  compositionRevision: input.compositionRevision,
+  legalEntityId: input.legalEntityId,
+  requestCorrelation: input.requestCorrelation,
+});
+
+export const makeMarketRetirementImpactAuthority = <
+  AssessmentFailure,
+  ReservationFailure = never,
+  ReservationReadFailure = never,
+>(
   executeAssessment: ExecuteMarketAffectedUseAssessment<AssessmentFailure>,
-  executeReservation?: ExecuteMarketRetirementReservation<ReservationFailure>,
+  reservations: {
+    readonly execute?: ExecuteMarketRetirementReservation<ReservationFailure>;
+    readonly read?: ReadMarketRetirementReservation<ReservationReadFailure>;
+  } = {},
 ): MarketRetirementImpactAuthority => {
-  const load = (input: {
-    readonly actionInvocationId: string;
-    readonly compositionRevision: string;
-    readonly effectiveAt: string;
-    readonly expectedMarketRevision: number;
-    readonly legalEntityId: string;
-    readonly marketRef: MarketAffectedUseAssessmentRequest['marketRef'];
-  }) => {
-    const request = requestFor(input);
-    return executeAssessment(request, {
-      compositionRevision: input.compositionRevision,
-      legalEntityId: input.legalEntityId,
-      requestCorrelation: input.actionInvocationId,
-    }).pipe(
-      Effect.mapError((cause) =>
-        unavailable('The Customer Context Market retirement-impact authority is unavailable', cause),
-      ),
-      Effect.flatMap((response) => toVerifiedAssessment(request, response)),
-    );
-  };
+  const { execute: executeReservation, read: readReservation } = reservations;
   const unavailableReservation = () =>
     Effect.fail(unavailable('The Customer Context Market retirement reservation authority is unavailable'));
   const finishReservation = (
     operation: 'COMMIT' | 'RELEASE',
-    input: {
-      readonly actionInvocationId: string;
+    input: MarketRetirementOwnerCallContext & {
       readonly assessment: ReservedMarketRetirementImpactAssessment;
-      readonly compositionRevision: string;
-      readonly legalEntityId: string;
+      readonly idempotencyKey: string;
       readonly reason: string;
     },
-  ) => {
+  ): Effect.Effect<void, MarketRetirementImpactFailure> => {
     if (executeReservation === undefined) {
       return unavailableReservation();
     }
@@ -312,110 +337,161 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
       reservationVersion: input.assessment.reservation.version,
       tenantId: input.assessment.assessedMarketRef.tenantId,
     };
-    return executeReservation(payload, {
-      compositionRevision: input.compositionRevision,
-      idempotencyKey: `${input.actionInvocationId}:${operation.toLowerCase()}`,
-      legalEntityId: input.legalEntityId,
-      requestCorrelation: input.actionInvocationId,
-    }).pipe(
+    return executeReservation(payload, { ...ownerCall(input), idempotencyKey: input.idempotencyKey }).pipe(
+      Effect.asSome,
+      // The same key already committed this exact finish: the owner state is already final.
+      Effect.catchIf(isAlreadyCommitted, () => Effect.succeedNone),
       Effect.mapError(mapReservationFailure),
-      Effect.flatMap((result) =>
-        finishedReservationMatches(result, input.assessment, operation === 'COMMIT' ? 'COMMITTED' : 'RELEASED')
+      Effect.flatMap((finished) =>
+        Option.isNone(finished) ||
+        finishedReservationMatches(finished.value, input.assessment, operation === 'COMMIT' ? 'COMMITTED' : 'RELEASED')
           ? Effect.void
           : Effect.fail(stale(`Customer Context returned mismatched ${operation} reservation evidence`)),
       ),
     );
   };
+  const recoverReservation = (
+    reserve: MarketRetirementReserveRequest,
+    invocationId: string,
+    input: MarketRetirementOwnerCallContext,
+  ): Effect.Effect<ReserveMarketRetirementResult, MarketRetirementImpactFailure> =>
+    readReservation === undefined
+      ? unavailableReservation()
+      : readReservation(
+          { marketRef: reserve.marketRef, reservationInvocationId: invocationId, tenantId: reserve.tenantId },
+          ownerCall(input),
+        ).pipe(
+          Effect.mapError((cause) =>
+            unavailable('The committed Market retirement reservation could not be recovered', cause),
+          ),
+        );
   return {
-    assessRetirementImpact: (input) =>
-      load(input).pipe(
-        Effect.map(({ assessment }) => assessment),
-        Effect.withSpan('MarketRetirementImpactAuthority.assessRetirementImpact'),
-      ),
-    commitRetirementImpact: (input) => finishReservation('COMMIT', input),
-    releaseRetirementImpact: (input) => finishReservation('RELEASE', input),
-    reserveRetirementImpact: (input) => {
-      if (executeReservation === undefined) {
-        return unavailableReservation();
-      }
-      return load(input).pipe(
-        Effect.flatMap(({ assessment, response }) => {
-          const payload: ReserveMarketRetirementPayload = {
+    commitRetirementImpact: (input) =>
+      finishReservation('COMMIT', input).pipe(Effect.withSpan('MarketRetirementImpactAuthority.commit')),
+    prepareRetirementReservation: (input) => {
+      const request = requestFor(input);
+      return executeAssessment(request, ownerCall(input)).pipe(
+        Effect.mapError((cause) =>
+          unavailable('The Customer Context Market retirement-impact authority is unavailable', cause),
+        ),
+        Effect.flatMap((response) => toVerifiedAssessment(request, response)),
+        Effect.map(({ assessment, response }) => ({
+          assessment,
+          reservationRequest: {
             assessmentDigest: response.assessmentDigest,
             evaluatedAt: response.evaluatedAt,
             marketRef: response.marketRef,
             marketRevision: response.marketRevision,
-            operation: 'RESERVE',
+            operation: 'RESERVE' as const,
             reason: input.reason,
             sourceEvidence: response.sourceEvidence,
             tenantId: response.tenantId,
-          };
-          return executeReservation(payload, {
-            compositionRevision: input.compositionRevision,
-            idempotencyKey: `${input.actionInvocationId}:reserve`,
-            legalEntityId: input.legalEntityId,
-            requestCorrelation: input.actionInvocationId,
-          }).pipe(
-            Effect.mapError(mapReservationFailure),
-            Effect.flatMap((result) =>
-              result.lifecycle === 'RESERVED' && reservationResultMatches(result, assessment)
-                ? Effect.succeed({
-                    ...assessment,
-                    reservation: { token: result.reservationToken, version: result.reservationVersion },
-                  })
-                : Effect.fail(stale('Customer Context returned mismatched RESERVED reservation evidence')),
-            ),
-          );
-        }),
-        Effect.withSpan('MarketRetirementImpactAuthority.reserveRetirementImpact'),
+          },
+        })),
+        Effect.withSpan('MarketRetirementImpactAuthority.prepareReservation'),
+      );
+    },
+    releaseRetirementImpact: (input) =>
+      finishReservation('RELEASE', input).pipe(Effect.withSpan('MarketRetirementImpactAuthority.release')),
+    reserveRetirementImpact: (input) => {
+      if (executeReservation === undefined) {
+        return unavailableReservation();
+      }
+      const reserve = input.reservationRequest;
+      return (
+        reserve.assessmentDigest === input.assessment.assessmentDigest
+          ? executeReservation(reserve, { ...ownerCall(input), idempotencyKey: input.idempotencyKey }).pipe(
+              Effect.catchIf(isAlreadyCommitted, (committed) =>
+                recoverReservation(reserve, committed.invocationId, input),
+              ),
+              Effect.mapError((failure) =>
+                Schema.is(MarketRetirementImpactAssessmentUnavailable)(failure)
+                  ? failure
+                  : mapReservationFailure(failure),
+              ),
+            )
+          : Effect.fail(stale('The persisted RESERVE request belongs to different affected-use evidence'))
+      ).pipe(
+        Effect.flatMap((result) =>
+          result.lifecycle === 'RESERVED' && reservationResultMatches(result, input.assessment)
+            ? Effect.succeed({
+                ...input.assessment,
+                reservation: { token: result.reservationToken, version: result.reservationVersion },
+              })
+            : Effect.fail(
+                unavailable('Customer Context returned reservation evidence that does not match the RESERVE request'),
+              ),
+        ),
+        Effect.withSpan('MarketRetirementImpactAuthority.reserve'),
       );
     },
   };
 };
 
+const withCustomerContextCredential = <A, E, R>(
+  context: MarketRetirementOwnerCallContext,
+  call: (issued: GatewayContextResponse, baseUrl: URL) => Effect.Effect<A, E, R>,
+) =>
+  productionClientConfiguration.pipe(
+    Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
+      issueApiKeyGatewayContext(
+        {
+          audience: 'commerce-customer-context',
+          compositionRevision: context.compositionRevision,
+          legalEntityId: context.legalEntityId,
+        },
+        { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation: context.requestCorrelation },
+      ).pipe(
+        Effect.filterOrFail(
+          (response) => response.compositionRevision === context.compositionRevision,
+          () => unavailable('Customer Context gateway returned a different composition revision'),
+        ),
+        Effect.flatMap((issued) => call(issued, new URL(issued.apiBaseUrl, shellGatewayBaseUrl))),
+      ),
+    ),
+  );
+
 export const makeMarketRetirementImpactAuthorityFromPublishedClient = () =>
   makeMarketRetirementImpactAuthority(
-    (payload, { compositionRevision, legalEntityId, requestCorrelation }) =>
-      productionClientConfiguration.pipe(
-        Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
-          issueApiKeyGatewayContext(
-            { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
-            { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation },
-          ).pipe(
-            Effect.filterOrFail(
-              (response) => response.compositionRevision === compositionRevision,
-              () => unavailable('Customer Context gateway returned a different composition revision'),
-            ),
-            Effect.flatMap(({ apiBaseUrl, token }) =>
-              executeMarketAffectedUseAssessmentWithAuthorization(payload, `Bearer ${token}`, requestCorrelation, {
-                baseUrl: new URL(apiBaseUrl, shellGatewayBaseUrl),
-                compositionRevision,
-              }),
-            ),
-          ),
+    (payload, context) =>
+      withCustomerContextCredential(context, (issued, baseUrl) =>
+        executeMarketAffectedUseAssessmentWithAuthorization(
+          payload,
+          `Bearer ${issued.token}`,
+          context.requestCorrelation,
+          {
+            baseUrl,
+            compositionRevision: context.compositionRevision,
+          },
         ),
       ),
-    (payload, { compositionRevision, idempotencyKey, legalEntityId, requestCorrelation }) =>
-      productionClientConfiguration.pipe(
-        Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
-          issueApiKeyGatewayContext(
-            { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
-            { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation },
-          ).pipe(
-            Effect.filterOrFail(
-              (response) => response.compositionRevision === compositionRevision,
-              () => unavailable('Customer Context gateway returned a different composition revision'),
-            ),
-            Effect.flatMap(({ apiBaseUrl, token }) =>
-              executeReserveMarketRetirementWithAuthorization(payload, `Bearer ${token}`, requestCorrelation, {
-                baseUrl: new URL(apiBaseUrl, shellGatewayBaseUrl),
-                compositionRevision,
-                idempotencyKey,
-              }),
-            ),
+    {
+      execute: (payload, context) =>
+        withCustomerContextCredential(context, (issued, baseUrl) =>
+          executeReserveMarketRetirementWithAuthorization(
+            payload,
+            `Bearer ${issued.token}`,
+            context.requestCorrelation,
+            {
+              baseUrl,
+              compositionRevision: context.compositionRevision,
+              idempotencyKey: context.idempotencyKey,
+            },
           ),
         ),
-      ),
+      read: (payload, context) =>
+        withCustomerContextCredential(context, (issued, baseUrl) =>
+          executeMarketRetirementReservationWithAuthorization(
+            payload,
+            `Bearer ${issued.token}`,
+            context.requestCorrelation,
+            {
+              baseUrl,
+              compositionRevision: context.compositionRevision,
+            },
+          ),
+        ),
+    },
   );
 
 export const MarketRetirementImpactAuthorityLive = Layer.succeed(

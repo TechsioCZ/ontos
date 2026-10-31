@@ -27,6 +27,10 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
       },
     },
     'retire-market': {
+      description: {
+        cs: 'Požádá o vyřazení trhu. Výsledek je obvykle „pending“: vyřazení dokončí OntOS na pozadí po potvrzení dopadu v zákaznickém kontextu. Konečný stav (completed nebo failed s důvodem) ukáže čtení „Stav vyřazení obchodního trhu“ s vráceným retirementIntentId.',
+        en: 'Requests Market retirement. The result is usually "pending": OntOS completes it in the background after Customer Context confirms the impact. Read "Commerce market retirement status" with the returned retirementIntentId for the final completed or failed (with reason) outcome.',
+      },
       destructive: true,
       title: {
         cs: 'Vyřadit obchodní trh',
@@ -79,6 +83,16 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
       title: {
         cs: 'Historie obchodního trhu',
         en: 'Commerce market history',
+      },
+    },
+    'market-retirement-status': {
+      description: {
+        cs: 'Stav jednoho požadavku na vyřazení trhu: pending (probíhá, s fází), completed (trh je vyřazen) nebo failed (nevyřazen, s typovaným důvodem, např. replacement_impact_unresolved, když na trh stále odkazují živé záznamy).',
+        en: 'State of one retirement request: pending (with stage), completed (the Market is retired) or failed (not retired, with a typed reason such as replacement_impact_unresolved while live records still reference the Market).',
+      },
+      title: {
+        cs: 'Stav vyřazení obchodního trhu',
+        en: 'Commerce market retirement status',
       },
     },
     'pricing-current-market-evidence': 'hidden',

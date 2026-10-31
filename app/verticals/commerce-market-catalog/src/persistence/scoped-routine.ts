@@ -42,3 +42,15 @@ export const removeStorefrontAssociationRoutine = mutationRoutine(
   'remove_storefront_association',
   'market-administration.remove-storefront-association',
 );
+export const requestMarketRetirementRoutine = mutationRoutine(
+  'request_market_retirement',
+  'market-retirement-intent.request',
+);
+export const readMarketRetirementIntentRoutine = mutationRoutine(
+  'read_market_retirement_intent',
+  'market-retirement-intent.read',
+);
+export const advanceMarketRetirementIntentRoutine = mutationRoutine(
+  'advance_market_retirement_intent',
+  'market-retirement-intent.advance',
+);

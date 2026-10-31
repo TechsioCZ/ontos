@@ -264,6 +264,9 @@ importers:
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:verticals/commerce-customer-context
+      '@app/commerce-market-catalog':
+        specifier: workspace:*
+        version: link:verticals/commerce-market-catalog
       '@app/commerce-order':
         specifier: workspace:*
         version: link:verticals/commerce-order
