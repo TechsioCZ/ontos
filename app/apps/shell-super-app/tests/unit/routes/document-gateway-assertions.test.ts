@@ -138,6 +138,34 @@ it.live('claims a seeded token once under concurrency and cannot resurrect it by
   }),
 );
 
+it.live('gives a pending batch token to only one concurrent consumer of the same audience', () =>
+  Effect.gen(function* pendingClaimOnce() {
+    yield* resetDocumentGatewayAssertions;
+    const batchAssertion = assertion('pending-single-use');
+    const release = yield* Deferred.make<boolean>();
+    issueDocumentGatewayContextsMock.mockReturnValue(
+      Deferred.await(release).pipe(Effect.as({ assertions: [batchAssertion] })),
+    );
+    let issued = 0;
+    platformFetch.mockImplementation(async () => {
+      issued += 1;
+      return Response.json({ ...withoutAudience(batchAssertion), token: `pending-fresh-${issued}` });
+    });
+    yield* warmDocumentGatewayAssertions(revision, [batchAssertion.audience]);
+    const pending = yield* Effect.forEach(
+      [1, 2, 3],
+      () => askAssertion({ audience: batchAssertion.audience, compositionRevision: revision }),
+      { concurrency: 'unbounded' },
+    ).pipe(Effect.forkChild);
+    yield* Deferred.succeed(release, true);
+    const answers = yield* Fiber.join(pending);
+    expect(new Set(answers.map(({ body }) => body.token)).size).toBe(3);
+    expect(answers.filter(({ body }) => body.token === batchAssertion.token)).toHaveLength(1);
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
+    expect(gatewayRequests()).toHaveLength(2);
+  }),
+);
+
 it.live('renews the document assertions in one batch once they near expiry, never handing out an expiring one', () =>
   Effect.gen(function* renewed() {
     yield* resetDocumentGatewayAssertions;
