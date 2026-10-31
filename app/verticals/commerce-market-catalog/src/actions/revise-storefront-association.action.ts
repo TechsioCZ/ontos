@@ -3,6 +3,7 @@
 // @ontos-action-slug revise-storefront-association
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { prepareStorefrontAssociationServices } from '../services/storefront-association-preflight.ts';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
@@ -195,4 +196,5 @@ export const reviseStorefrontAssociationAction = defineAction(
   },
   handleReviseStorefrontAssociation,
   makeReviseStorefrontAssociationServices,
+  { prepareServices: prepareStorefrontAssociationServices },
 );

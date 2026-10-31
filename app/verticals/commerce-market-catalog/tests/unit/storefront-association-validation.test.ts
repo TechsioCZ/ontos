@@ -1,11 +1,17 @@
+import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
+import { preparedStorefrontApplicationAuthority } from '../../src/services/storefront-association-preflight.ts';
 import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
 } from '@app/storefront-registry-contracts';
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Predicate, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  getActionHandler,
+  getActionServicePreflight,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   AssociateStorefrontPayloadSchema,
   associateStorefrontAction,
@@ -296,4 +302,96 @@ describe('Storefront association Current application validation', () => {
       }
     }),
   );
+});
+
+describe('Storefront invocation-local prepared authority', () => {
+  it.effect('serves the exact selector only and expires at the next boundary or preparation deadline', () =>
+    Effect.gen(function* exactPreparedAuthority() {
+      const now = yield* DateTime.now;
+      const preparedEvidence = {
+        nextApplicabilityBoundary: DateTime.formatIso(DateTime.add(now, { seconds: 10 })),
+        observedAt: DateTime.formatIso(now),
+        ownerRevision: 'owner:r7',
+      };
+      const authority = preparedStorefrontApplicationAuthority(
+        currentRequest,
+        scope.correlationId,
+        preparedEvidence,
+        now,
+      );
+      expect(yield* authority.validateCurrent(currentRequest, scope.correlationId)).toEqual(preparedEvidence);
+      const mismatches = [
+        { ...currentRequest, effectiveAt: '2026-10-02T00:00:00.000Z' },
+        { ...currentRequest, requestedChannel: 'B2B' as const },
+        { ...currentRequest, tenantId: '99999999-9999-4999-8999-999999999999' },
+      ];
+      for (const request of mismatches) {
+        expect(yield* authority.validateCurrent(request, scope.correlationId).pipe(Effect.flip)).toBeInstanceOf(
+          StorefrontApplicationEvidenceStale,
+        );
+      }
+      expect(yield* authority.validateCurrent(currentRequest, 'other-request').pipe(Effect.flip)).toBeInstanceOf(
+        StorefrontApplicationEvidenceStale,
+      );
+      yield* TestClock.adjust('10 seconds');
+      expect(yield* authority.validateCurrent(currentRequest, scope.correlationId).pipe(Effect.flip)).toBeInstanceOf(
+        StorefrontApplicationEvidenceStale,
+      );
+      const withoutBoundary = preparedStorefrontApplicationAuthority(
+        currentRequest,
+        scope.correlationId,
+        { observedAt: preparedEvidence.observedAt, ownerRevision: 'owner:r8' },
+        now,
+      );
+      yield* TestClock.adjust('20 seconds');
+      expect(
+        yield* withoutBoundary.validateCurrent(currentRequest, scope.correlationId).pipe(Effect.flip),
+      ).toBeInstanceOf(StorefrontApplicationEvidenceStale);
+    }),
+  );
+
+  it.effect('performs Shell and Storefront HTTP during preflight without acquiring an owner transaction', () =>
+    Effect.gen(function* remotePreparation() {
+      const requests: Request[] = [];
+      const preparation = yield* Effect.fromNullishOr(getActionServicePreflight(associateStorefrontAction));
+      const fakeFetch: typeof fetch = (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Promise.resolve(
+          Response.json(
+            new URL(request.url).pathname.endsWith('/auth/api-key/gateway-context')
+              ? {
+                  apiBaseUrl: '/module-api/commerce.storefront-registry',
+                  compositionRevision: 'a'.repeat(64),
+                  expiresAt: 1_700_000_300,
+                  token: 'owner-assertion',
+                }
+              : Schema.encodeSync(CurrentStorefrontApplicationResponseSchema)(currentResponse),
+          ),
+        );
+      };
+      yield* preparation(associatePayload, {
+        actionInvocationId,
+        compositionRevision: 'a'.repeat(64),
+        scope,
+        transaction: () => Effect.die('Payload-derived Storefront selector must not open SQL'),
+      }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: 'market-preflight-key',
+              ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+            }),
+          ),
+        ),
+      );
+      expect(requests).toHaveLength(2);
+    }),
+  );
+
+  it('registers remote preparation for both association mutations', () => {
+    expect(getActionServicePreflight(associateStorefrontAction)).toBeDefined();
+    expect(getActionServicePreflight(reviseStorefrontAssociationAction)).toBeDefined();
+  });
 });
