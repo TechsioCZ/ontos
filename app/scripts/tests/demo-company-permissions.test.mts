@@ -48,6 +48,7 @@ import {
   crmIntakeRelationships,
 } from '../demo/permissions.mts';
 import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from '../demo/permissions.mts';
+import { warmupAccounts } from '../demo/warmup-accounts.mts';
 
 import {
   bootstrapDemoPermissionContexts,
@@ -62,6 +63,7 @@ import {
   commercePortalVerificationWorkloadGrants,
 } from '../demo/commerce-portal.mts';
 
+const activitiesReadAll = 'crm.activities.read_all';
 const operationsModule = 'facility.operations';
 const workforceModule = 'demo.workforce';
 const workforceWriteAll = 'demo.workforce.write_all';
@@ -707,7 +709,7 @@ it('gives the second Provoz login the same Nájempark module and permission righ
   );
 });
 
-it('grants Activities reads, writes and its installed Action only to rental management, not other personas or companies', () => {
+it('keeps Activities writes and its installed Action exclusive to rental management alongside dedicated warm-up readers', () => {
   const activitiesAction = actionDescriptor(rentalActivitiesActionKey, activitiesModule);
   const activityInstallation = {
     ...installation,
@@ -717,7 +719,27 @@ it('grants Activities reads, writes and its installed Action only to rental mana
     ],
     publishedModuleKeys: [...installation.publishedModuleKeys, activitiesModule],
   };
-  const rows = demoPermissionRelationships([...descriptors, activitiesAction], activityInstallation);
+  const allRows = demoPermissionRelationships([...descriptors, activitiesAction], activityInstallation);
+  const warmupRoleIds = new Set(
+    warmupAccounts.map(({ legalEntityId, roleKey }) =>
+      toScopedRoleObjectId({ legalEntityId, roleKey, tenantId: demoTenantId }),
+    ),
+  );
+  const rows = allRows.filter(({ subjectId }) => !warmupRoleIds.has(subjectId));
+  const warmupActivityGrants = allRows.filter(
+    ({ resourceId, resourceType, subjectId }) =>
+      resourceType === 'context_permission' &&
+      warmupRoleIds.has(subjectId) &&
+      [demoLegalEntityId, rentalDemoLegalEntityId].some(
+        (legalEntityId) =>
+          resourceId ===
+          toContextPermissionAccessObjectId(demoTenantId, legalEntityId, {
+            moduleId: activitiesModule,
+            permission: activitiesReadAll,
+          }),
+      ),
+  );
+  expect(warmupActivityGrants).toHaveLength(2);
   const [management] = siamparkRentalPersonas;
   expect(management.principalId).toBe('72000000-0000-4000-8000-000000000021');
   expect(rentalDemoLegalEntityId).toBe('71000000-0000-4000-8000-000000000021');
@@ -729,7 +751,7 @@ it('grants Activities reads, writes and its installed Action only to rental mana
   );
   const permissionIds = new Set(
     installation.companies.flatMap(({ legalEntityId }) =>
-      ['crm.activities.read_all', 'crm.activities.write_all'].map((permission) =>
+      [activitiesReadAll, 'crm.activities.write_all'].map((permission) =>
         toContextPermissionAccessObjectId(demoTenantId, legalEntityId, { moduleId: activitiesModule, permission }),
       ),
     ),
@@ -761,7 +783,7 @@ it('grants Activities reads, writes and its installed Action only to rental mana
         permissionIds.has(row.resourceId),
     ),
   ).toEqual(
-    ['crm.activities.read_all', 'crm.activities.write_all'].map((permission) => ({
+    [activitiesReadAll, 'crm.activities.write_all'].map((permission) => ({
       ...roleGrant,
       relation: 'role_grantee',
       resourceId: toContextPermissionAccessObjectId(demoTenantId, rentalDemoLegalEntityId, {
@@ -801,7 +823,7 @@ it('grants Activities reads, writes and its installed Action only to rental mana
     ),
   ]);
   expect(rows.filter((row) => !activityResourceIds.has(row.resourceId))).toEqual(
-    relationships.filter((row) => !activityResourceIds.has(row.resourceId)),
+    relationships.filter((row) => !activityResourceIds.has(row.resourceId) && !warmupRoleIds.has(row.subjectId)),
   );
 });
 

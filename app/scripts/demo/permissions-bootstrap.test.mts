@@ -48,6 +48,7 @@ import {
   siamparkRentalPersonas,
 } from './permissions.mts';
 import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from './permissions.mts';
+import { warmupAccounts } from './warmup-accounts.mts';
 
 const coreActions = coreActionCatalog.map((descriptor): DemoAction => {
   const { authorization } = descriptor.entrypoint;
@@ -85,6 +86,9 @@ const coreInstallation: DemoPermissionInstallation = {
 const existingRolePolicy = (actions: readonly DemoAction[]) =>
   companyMembershipAdmissionRelationships(
     [
+      ...warmupAccounts.flatMap(({ legalEntityId, principalId, role, roleKey }) =>
+        principalRelationships(principalId, role, [], legalEntityId, demoTenantId, roleKey),
+      ),
       ...demoHumanAccounts.flatMap((account) =>
         principalRelationships(account.principalId, demoRoles[account.role], actions),
       ),

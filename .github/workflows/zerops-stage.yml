@@ -197,6 +197,14 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
 
+      # The operator seed creates independent company-scoped read-only accounts, never administrator copies.
+      # Timeouts/permission gaps warn here; the existing verification below remains the broken-app gate.
+      - name: Warm real login, declared reads and federation assets
+        working-directory: app
+        env:
+          ONTOS_STAGE_WARMUP_ENABLED: 'false'
+        run: mise exec -- node scripts/ops/stage-warmup.mts
+
       - name: Time /cs, OAuth metadata and the storefront home
         working-directory: app
         run: mise exec -- node scripts/ops/stage-demo-verify.mjs

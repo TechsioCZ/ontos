@@ -73,6 +73,7 @@ import {
   storefrontPrincipal,
 } from './permissions.mts';
 import type { DemoAction, DemoPermissionInstallation } from './permissions.mts';
+import { warmupAccounts } from './warmup-accounts.mts';
 
 class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('DemoPermissionsError', {
   reason: Schema.String,
@@ -86,7 +87,7 @@ const BOT_KEY_AUDIENCE = 'work-tasks';
 /** The storefront BFF exchanges its key for merchandise gateway assertions in the e-shop company. */
 const STOREFRONT_KEY_AUDIENCE = 'merchandise';
 /** Every human account: the Obchodní firma / Nájempark accounts plus the CRM and e-shop company personas. */
-const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
+const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts, ...warmupAccounts] as const;
 /** Membership targets must exist before bootstrap; the audited company Action runs only after its grants exist. */
 export const demoBootstrapCompanyRows = [
   { ...rentalDemoCompany, registrationNumber: 'DEMO-NAJEMPARK-RENTAL' },

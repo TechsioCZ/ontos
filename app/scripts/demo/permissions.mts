@@ -24,6 +24,7 @@ import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actio
 import { deriveActionAuthorizationInstalledModuleScopes } from '../provision-current-action-authorization.mts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
+import { warmupAccounts } from './warmup-accounts.mts';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -850,6 +851,11 @@ export const companyPermissionRelationships = (actions: readonly DemoAction[]): 
 
 /** Deliberate human affiliations only; role assignment never creates an SQL membership. */
 export const demoCompanyMemberships = [
+  ...warmupAccounts.map(({ legalEntityId, principalId }) => ({
+    affiliation: 'external' as const,
+    legalEntityId,
+    principalId,
+  })),
   ...demoHumanAccounts.map(({ principalId }) => ({
     affiliation: 'employee' as const,
     legalEntityId: demoLegalEntityId,
@@ -1150,6 +1156,9 @@ export const demoPermissionRelationships = (
   installation: DemoPermissionInstallation,
 ): readonly DemoRelationship[] => {
   const policy = [
+    ...warmupAccounts.flatMap(({ legalEntityId, principalId, role, roleKey }) =>
+      principalRelationships(principalId, role, [], legalEntityId, demoTenantId, roleKey),
+    ),
     ...demoHumanAccounts.flatMap((account) =>
       principalRelationships(account.principalId, demoRoles[account.role], actions),
     ),

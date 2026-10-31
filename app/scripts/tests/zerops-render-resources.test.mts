@@ -23,6 +23,8 @@ const { injectResourcePlugin } =
     ? fromServer('@modern-js/server-core/node')
     : await import(pathToFileURL(path.join(root, 'dist', format, 'adapters/node/plugins/resource.mjs')).href);
 const directory = await mkdtemp(path.join(tmpdir(), 'ontos-render-resources-'));
+const bundleSamples = [];
+globalThis.ontosRenderBundleObserver = sample => bundleSamples.push(sample);
 try {
   await mkdir(path.join(directory, 'bundles'));
   await writeFile(path.join(directory, 'index.html'), '<html>owner template</html>');
@@ -51,7 +53,7 @@ try {
   if (mode === 'lazy') {
     assert.equal(globalThis.ontosRenderLoads, undefined);
     assert.equal(globalThis.ontosLoaderLoads, undefined);
-    assert.equal(context.middlewares.length, 0);
+    assert.equal(context.middlewares.length, 1);
     assert.equal(context.renderMiddlewares.length, 2);
     // The production render plugin mounts these after the BFF and static responders.
     const { Hono } = fromTools('hono');
@@ -64,6 +66,7 @@ try {
     assert.equal(await (await app.request('/static/client.js')).text(), 'client');
     assert.equal(globalThis.ontosRenderLoads, undefined);
     assert.equal(globalThis.ontosLoaderLoads, undefined);
+    assert.equal(bundleSamples.length, 0);
     await writeFile(path.join(directory, 'bundles/other.js'), 'globalThis.ontosOtherRenderLoads = 1; exports.owner = "other";');
     const other = { ...context, middlewares: [], renderMiddlewares: [],
       routes: [{ ...context.routes[0], bundle: 'bundles/other.js', entryName: 'other' }] };
@@ -74,10 +77,12 @@ try {
     });
     await prepareOther();
     assert.deepEqual(await (await app.request('/document')).json(), { owner: 'fixture' });
+    assert.equal(bundleSamples.length, 2);
+    assert.ok(bundleSamples.every(sample => sample.triggerPath === '/document' && sample.outcome === 'loaded' && sample.durationMs >= 0));
     assert.equal(globalThis.ontosOtherRenderLoads, undefined);
   } else {
     assert.equal(context.renderMiddlewares.length, 0);
-    assert.equal(context.middlewares.length, 2);
+    assert.equal(context.middlewares.length, 3);
   }
   const requests = Array.from({ length: 3 }, () => {
     const values = new Map();
@@ -102,7 +107,7 @@ try {
     await reader.fileReader.reset();
     const values = new Map();
     const freshRequest = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
-    await handlers[1].handler(freshRequest, async () => {});
+    await handlers.find(middleware => middleware.name === 'inject-html').handler(freshRequest, async () => {});
     assert.equal(Object.values(freshRequest.get('templates'))[0], '<html>updated template</html>');
   } else {
     assert.equal(requests[0].get('serverManifest'), requests[1].get('serverManifest'));

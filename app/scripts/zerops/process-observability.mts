@@ -3,10 +3,12 @@ import { monitorEventLoopDelay, performance, PerformanceObserver } from 'node:pe
 import type { PerformanceEntry } from 'node:perf_hooks';
 import { getHeapStatistics } from 'node:v8';
 
-import { Console, Effect, Result, Schema } from 'effect';
+import { Console, Effect, Ref, Result, Schema } from 'effect';
 
 import type { RuntimeJobSample } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { isRuntimeStall, isSlowRuntimeJob, createRuntimeSummary, roundMillis } from './runtime-observability-model.mts';
+import { ownerWarmState, OwnerWarmStateSchema } from './owner-warm-state.mts';
+import type { SpiceDbClientSample } from '../../packages/core-runtime/src/permissions/spicedb-client-observability.ts';
 
 const ProcessRoleSchema = Schema.Literals(['shell', 'owners', 'outbox', 'supervisor']);
 export type ProcessRole = typeof ProcessRoleSchema.Type;
@@ -14,7 +16,10 @@ const RuntimeLog = Schema.fromJsonString(
   Schema.Struct({
     at: Schema.Number,
     event: Schema.String,
-    fields: Schema.Record(Schema.String, Schema.Union([Schema.Number, Schema.String, Schema.Undefined])),
+    fields: Schema.Record(
+      Schema.String,
+      Schema.Union([Schema.Number, Schema.String, Schema.Undefined, OwnerWarmStateSchema]),
+    ),
     pid: Schema.Number,
     role: ProcessRoleSchema,
   }),
@@ -27,6 +32,15 @@ export const runtimeObservabilityCapabilities = (runtime: 'node' | 'bun', entryT
   gc: entryTypes.includes('gc'),
   heapLimit: runtime === 'node',
 });
+const createRequestObserver = () => (directory: string, pathname: string) => {
+  const owner = /\/(?:verticals|apps)\/(?<owner>[^/]+)\/dist$/u.exec(directory)?.groups?.owner;
+  const finish =
+    owner === undefined
+      ? undefined
+      : ownerWarmState.request(owner, pathname, performance.timeOrigin + performance.now());
+  const start = performance.now();
+  return finish === undefined ? undefined : () => finish(performance.now() - start);
+};
 
 /** Driver callbacks only. No request data, stacks, secrets or per-sample allocations on the normal loop path. */
 export const startProcessObservability = (role: ProcessRole) =>
@@ -123,6 +137,7 @@ export const startProcessObservability = (role: ProcessRole) =>
             gcTotalMs: capabilities.gc ? windowSummary.gcTotalMs : undefined,
             heapLimitBytes: capabilities.heapLimit ? getHeapStatistics().heap_size_limit : undefined,
             heapUsedBytes: process.memoryUsage().heapUsed,
+            ownerWarmState: ownerWarmState.snapshot(),
             rssBytes: process.memoryUsage().rss,
             windowMs: roundMillis(now - windowStartedAt),
           });
@@ -134,6 +149,31 @@ export const startProcessObservability = (role: ProcessRole) =>
         alertTimer.unref();
         summaryTimer.unref();
         globalThis.ontosRuntimeJobObserver = onJob;
+        const onBundle: NonNullable<typeof globalThis.ontosRenderBundleObserver> = (sample) => {
+          const owner = /\/(?:verticals|apps)\/(?<owner>[^/]+)\/dist\//u.exec(sample.filepath)?.groups?.owner;
+          if (owner === undefined) {
+            return;
+          }
+          ownerWarmState.bundle(owner, sample);
+          emit('owner.ssr-bundle-load', performance.timeOrigin + performance.now(), {
+            durationMs: roundMillis(sample.durationMs),
+            outcome: sample.outcome,
+            owner,
+            triggerPath: sample.triggerPath.split('?')[0],
+          });
+        };
+        globalThis.ontosRenderBundleObserver = onBundle;
+        const onRequest = createRequestObserver();
+        globalThis.ontosOwnerRequestObserver = onRequest;
+        const onSpiceDb = (sample: SpiceDbClientSample) => {
+          emit(sample.event, performance.timeOrigin + performance.now(), {
+            durationMs: roundMillis(sample.durationMs),
+            method: sample.method,
+            outcome: sample.outcome,
+          });
+        };
+        globalThis.ontosSpiceDbClientObserver = onSpiceDb;
+        globalThis.ontosSpiceDbFirstRpcStarted = Ref.makeUnsafe(false);
         return () => {
           clearInterval(alertTimer);
           clearInterval(summaryTimer);
@@ -142,6 +182,16 @@ export const startProcessObservability = (role: ProcessRole) =>
           alerts.disable();
           if (globalThis.ontosRuntimeJobObserver === onJob) {
             Reflect.deleteProperty(globalThis, 'ontosRuntimeJobObserver');
+          }
+          if (globalThis.ontosRenderBundleObserver === onBundle) {
+            Reflect.deleteProperty(globalThis, 'ontosRenderBundleObserver');
+          }
+          if (globalThis.ontosOwnerRequestObserver === onRequest) {
+            Reflect.deleteProperty(globalThis, 'ontosOwnerRequestObserver');
+          }
+          if (globalThis.ontosSpiceDbClientObserver === onSpiceDb) {
+            Reflect.deleteProperty(globalThis, 'ontosSpiceDbClientObserver');
+            Reflect.deleteProperty(globalThis, 'ontosSpiceDbFirstRpcStarted');
           }
         };
       });

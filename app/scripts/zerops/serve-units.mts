@@ -18,6 +18,7 @@ import { Argument, Command } from 'effect/cli';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
+import { ownerWarmState } from './owner-warm-state.mts';
 
 export class ServeUnitsError extends Schema.TaggedError<ServeUnitsError>()('ServeUnitsError', {
   reason: Schema.String,
@@ -53,6 +54,7 @@ const startUnitServer = (unit: HostedUnit, start: (typeof UnitModuleSchema.Type)
 
 const serveUnit = (unit: HostedUnit) =>
   Effect.gen(function* startUnit() {
+    ownerWarmState.register(unit.id);
     const { start } = yield* loadUnitModule(unit);
     yield* startUnitServer(unit, start);
     return yield* Console.log(`[serve-units] ${unit.id} on 127.0.0.1:${String(unit.port)}`);

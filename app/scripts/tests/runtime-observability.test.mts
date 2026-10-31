@@ -67,7 +67,15 @@ it.effect('registers one process hook and releases it with the host scope', () =
     const scope = yield* Scope.make();
     yield* startProcessObservability('owners').pipe(Scope.provide(scope));
     expect(globalThis.ontosRuntimeJobObserver).toBeDefined();
+    expect(globalThis.ontosRenderBundleObserver).toBeDefined();
+    expect(globalThis.ontosOwnerRequestObserver).toBeDefined();
+    expect(globalThis.ontosSpiceDbClientObserver).toBeDefined();
+    expect(globalThis.ontosSpiceDbFirstRpcStarted).toBeDefined();
     yield* Scope.close(scope, yield* Effect.exit(Effect.void));
     expect(globalThis.ontosRuntimeJobObserver).toBeUndefined();
+    expect(globalThis.ontosRenderBundleObserver).toBeUndefined();
+    expect(globalThis.ontosOwnerRequestObserver).toBeUndefined();
+    expect(globalThis.ontosSpiceDbClientObserver).toBeUndefined();
+    expect(globalThis.ontosSpiceDbFirstRpcStarted).toBeUndefined();
   }),
 );
