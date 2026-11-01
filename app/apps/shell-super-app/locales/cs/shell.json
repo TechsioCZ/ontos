@@ -332,6 +332,7 @@
       "placeholder": "Hledat zákazníky a kontakty…"
     },
     "resource": {
+      "open_in_agenda": "Otevřít v agendě",
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
       "media": {
         "absent": "Tento zdroj nepodporuje mediální přílohy.",

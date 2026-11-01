@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import {
   ShellReloadRequiredProblemSchema,
   ShellResourceResponseSchema,
+  ShellNavigationItemSchema,
   ShellTargetForbiddenProblemSchema,
 } from '../../../../shared/api.ts';
 import type { MediaAttachmentResponse, ShellResourceResponse } from '../../../../shared/api.ts';
@@ -60,6 +61,7 @@ const translations = new Map(
     'shell.resource.media.title': 'Media',
     'shell.resource.media.unavailable': 'Media attachment is unavailable',
     'shell.resource.not_found': 'This resource does not exist',
+    'shell.resource.open_in_agenda': 'Open in its agenda',
     'shell.resource.selection_required': 'Select a legal entity first',
     'shell.resource.timeline.empty': 'No timeline entries yet',
     'shell.resource.timeline.lagging': 'The timeline is catching up',
@@ -80,6 +82,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useLoaderData: useLoaderDataMock,
   useNavigate: () => navigateMock,
+  useParams: () => ({ moduleId: 'billing.invoices' }),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -104,6 +107,27 @@ rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
       </main>
     );
   },
+  // One group per call holding each admitted destination as an enabled link, labelled in English.
+  buildShellNavigation: ({
+    navigation,
+  }: {
+    readonly navigation: readonly { readonly href?: string; readonly label: { readonly en: string } }[];
+  }) => ({
+    groups: [
+      {
+        links: navigation.map((item) => ({
+          enabled: true,
+          href: item.href ?? null,
+          icon: 'icon-[mdi--file-outline]',
+          key: item.label.en,
+          label: item.label.en,
+        })),
+      },
+    ],
+  }),
+  ShellRouteLink: ({ children, to }: { readonly children: ReactNode; readonly to: string }) => (
+    <a href={to}>{children}</a>
+  ),
 }));
 
 const shell: ReadyModel['shell'] = authenticatedShellFixture();
@@ -278,6 +302,46 @@ it.each(closedStates)(
     expect(browserRunPromiseMock).not.toHaveBeenCalled();
   },
 );
+
+const navigationItem = (moduleId: string, label: string, href: string) => ({
+  appId: 'billing-app',
+  enabled: true,
+  entrypointKey: `${moduleId}.page`,
+  groupKey: 'shell.navigation.finance',
+  href,
+  icon: 'icon-[mdi--file-outline]',
+  label: { cs: label, en: label },
+  moduleId,
+  order: 1,
+  state: 'active',
+  unavailable: false,
+  writable: true,
+});
+
+it('offers the owning module agendas when the Shell cannot show the record itself', () => {
+  const withAgendas = Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))([
+    navigationItem('billing.invoices', 'Invoices', '/en/finance/invoices'),
+    navigationItem('crm.records', 'Customers', '/en/crm'),
+  ]);
+  renderResourcePage({
+    shell: {
+      ...authenticatedShellFixture(),
+      navigation: {
+        deniedAppIds: [],
+        items: withAgendas,
+        moduleIds: [],
+        state: 'available',
+        unavailableDeployments: [],
+      },
+    },
+    state: 'not_found',
+  });
+
+  const agendas = screen.getByRole('navigation', { name: 'Open in its agenda' });
+  expect([...agendas.querySelectorAll('a')].map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+    ['Invoices', '/en/finance/invoices'],
+  ]);
+});
 
 it('titles the dashboard from the resource and scopes it to the owning module', () => {
   renderResourcePage(readyModel());

@@ -332,6 +332,7 @@
       "placeholder": "Search customers and contacts…"
     },
     "resource": {
+      "open_in_agenda": "Open in its agenda",
       "forbidden": "You do not have permission to view this resource.",
       "media": {
         "absent": "This resource does not support media attachments.",

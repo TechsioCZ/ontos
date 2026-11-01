@@ -1,7 +1,8 @@
 /* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData, useParams } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
@@ -9,7 +10,9 @@ import { useState } from 'react';
 import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/api.ts';
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
+import type { ShellNavigationItem } from '../../../../../../../shared/api.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
+import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
 import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
@@ -94,11 +97,59 @@ const ResourceDetails = ({
   );
 };
 
+/** When the Shell cannot show a record itself, its owning module's own agendas stay one click away. */
+const OwningAgendaLinks = ({
+  moduleId,
+  navigation,
+}: {
+  readonly moduleId: string;
+  readonly navigation: readonly ShellNavigationItem[];
+}) => {
+  const { language, t } = useModernI18n();
+  const links = buildShellNavigation(
+    {
+      language: language ?? '',
+      navigation: navigation.filter((item) => item.moduleId === moduleId),
+      unavailableDeployments: [],
+    },
+    t,
+  ).groups.flatMap((group) => group.links.filter(({ enabled, href }) => enabled && href !== null));
+  if (links.length === 0) {
+    return null;
+  }
+  return (
+    <nav aria-labelledby="resource-agendas" className="grid w-full max-w-2xl gap-150">
+      <h2 className="font-semibold text-base" id="resource-agendas">
+        {t('shell.resource.open_in_agenda')}
+      </h2>
+      <ul className="grid gap-150 md:grid-cols-2">
+        {links.map((link) => (
+          <li key={link.key}>
+            <LinkButton
+              as={ShellRouteLink}
+              block
+              className="justify-start hover:bg-overlay"
+              icon={link.icon}
+              size="sm"
+              theme="unstyled"
+              to={link.href ?? '/'}
+              variant="secondary"
+            >
+              {link.label}
+            </LinkButton>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+};
+
 const ResourcePage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
   });
+  const { moduleId } = useParams({ from: '/$lang/resources/$moduleId/$resourceType/$resourceId' });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
   const [attachmentReloadRequired, setAttachmentReloadRequired] = useState(false);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
@@ -156,7 +207,12 @@ const ResourcePage = () => {
   const content =
     model.state !== 'ready' ? (
       // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
-      <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
+      <>
+        <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
+        {model.state === 'forbidden' ? null : (
+          <OwningAgendaLinks moduleId={moduleId} navigation={model.shell.navigation.items} />
+        )}
+      </>
     ) : (
       <ResourceDetails
         mediaState={mediaState}
