@@ -1502,6 +1502,12 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       audience: 'commerce-market-catalog' as const,
       buildMarker: input.market.compiled.buildMarker,
     };
+    yield* core.grantExistingService({
+      actionKeys: [],
+      legalEntityId: core.legalEntityId,
+      moduleKeys: ['commerce.customer-context'],
+      principalId: input.service.principalId,
+    });
     // These exact grants belong to this fresh native profile. Preserve shared Tenant/LE/module structure.
     yield* core.grantResourceAccess(input.profile, input.service.principalId, 'reader');
     yield* core.revokeResourceAccess(input.profile, input.service.principalId, 'reader');
@@ -1517,6 +1523,20 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
     );
     const assertProfileAccess = Effect.fn('ServerOwnerRelayNative.assertSubjectProfileAccess')(
       function* assertSubjectProfileAccess(principalId: string, expected: 'allowed' | 'denied') {
+        const tenants = yield* access.tenants({
+          permission: 'access',
+          principalId,
+          tenantIds: [core.tenantId],
+        });
+        expect(tenants).toHaveLength(1);
+        expect(tenants[0]?.decision).toBe('allowed');
+        const legalEntities = yield* access.legalEntities({
+          legalEntityIds: [core.legalEntityId],
+          principalId,
+          tenantId: core.tenantId,
+        });
+        expect(legalEntities).toHaveLength(1);
+        expect(legalEntities[0]?.decision).toBe('allowed');
         const modules = yield* access.modules({
           legalEntityId: core.legalEntityId,
           moduleIds: ['commerce.customer-context'],
