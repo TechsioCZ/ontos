@@ -1,4 +1,9 @@
-import type { ContextAccessDecision, ContextAccessService, TenantModuleState } from '@app/core-runtime';
+import type {
+  ApplicationCompositionModule,
+  ContextAccessDecision,
+  ContextAccessService,
+  TenantModuleState,
+} from '@app/core-runtime';
 import { DateTime, Duration, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -14,6 +19,7 @@ import {
   ShellTimelineEntrySchema,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellProviderAssertionIssuer } from '../../api/modules/shell-resources.ts';
+import { makeModuleSearchProviderGateway } from '../../api/modules/shell-search-provider-gateway.ts';
 
 const moduleId = 'property.registry';
 const resourceType = 'property.registry.unit';
@@ -905,5 +911,69 @@ it.effect('search issues assertions for the release captured by its single catal
     expect(assertions).toEqual([
       { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
     ]);
+  }),
+);
+
+const providerRequest = Effect.gen(function* providerRequestFixture() {
+  const approved = yield* catalog();
+  const [module] = approved.composition.modules;
+  if (module === undefined) {
+    return yield* Effect.die('The fixture composition admits the property registry');
+  }
+  return {
+    appId: 'property-registry',
+    authorization: 'Bearer owner-assertion',
+    correlationId: 'unit-correlation',
+    includeArchived: false,
+    module,
+    query: 'dvořák',
+    searchKey: 'property.registry.unit-search',
+  } as const;
+});
+
+it.effect("the search gateway posts to the provider's own BFF route on the approved release", () =>
+  Effect.gen(function* searchGatewayPostsToOwnerRoute() {
+    const request = yield* providerRequest;
+    const sent: { readonly body: unknown; readonly headers: Headers; readonly method: string; readonly url: string }[] =
+      [];
+    const gateway = makeModuleSearchProviderGateway((outgoing: Request, module: ApplicationCompositionModule) =>
+      Effect.promise(async () => {
+        sent.push({
+          body: await outgoing.json(),
+          headers: outgoing.headers,
+          method: outgoing.method,
+          url: `${module.deployment.appId} ${new URL(outgoing.url).pathname}`,
+        });
+        return Response.json([{ ref, title: 'Unit 1' }]);
+      }),
+    );
+    expect(yield* gateway.search(request)).toEqual([{ ref, title: 'Unit 1' }]);
+    expect(sent.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
+      {
+        body: { includeArchived: false, query: 'dvořák' },
+        method: 'POST',
+        url: 'property-registry /property-registry-api/property.registry/search/unit-search',
+      },
+    ]);
+    expect(sent[0]?.headers.get('authorization')).toBe('Bearer owner-assertion');
+    expect(sent[0]?.headers.get('x-correlation-id')).toBe('unit-correlation');
+  }),
+);
+
+it.effect('the search gateway reports a refused provider or a foreign search key as unavailable', () =>
+  Effect.gen(function* searchGatewayFailsClosed() {
+    const request = yield* providerRequest;
+    let calls = 0;
+    const gateway = makeModuleSearchProviderGateway(() =>
+      Effect.sync(() => {
+        calls += 1;
+        return Response.json({ _tag: 'UnitSearchProviderForbiddenProblem' }, { status: 403 });
+      }),
+    );
+    const refused = yield* Effect.flip(gateway.search(request));
+    expect(Schema.is(ShellProviderUnavailableError)(refused)).toBe(true);
+    const foreign = yield* Effect.flip(gateway.search({ ...request, searchKey: 'party.registry.parties' }));
+    expect(Schema.is(ShellProviderUnavailableError)(foreign)).toBe(true);
+    expect(calls).toBe(1);
   }),
 );

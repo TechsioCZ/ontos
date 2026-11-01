@@ -1,4 +1,5 @@
 import type {
+  ApplicationCompositionModule,
   ContextAccessResult,
   ContextAccessService,
   InstalledModuleCatalog,
@@ -113,17 +114,19 @@ export interface ShellProviderAssertionIssuer {
   }) => Effect.Effect<string, ShellProviderUnavailableError>;
 }
 
-interface ShellSearchProviderRequest<Authorization extends string = string> {
+export interface ShellSearchProviderRequest<Authorization extends string = string> {
   readonly appId: string;
   readonly authorization: Authorization;
   readonly correlationId: string;
   readonly includeArchived?: boolean;
+  /** The approved release of the provider's owner under the captured composition revision. */
+  readonly module: ApplicationCompositionModule;
   readonly query: string;
   readonly role?: PartyRole;
   readonly searchKey: string;
 }
 
-interface ShellSearchProviderHandler {
+export interface ShellSearchProviderHandler {
   readonly search: (
     input: ShellSearchProviderRequest,
   ) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError>;
@@ -448,7 +451,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
             })),
           );
       },
-      { concurrency: 1 },
+      { concurrency: 4 },
     );
     if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
       return yield* unavailable();
@@ -459,8 +462,12 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
     }
     const attempts = yield* Effect.forEach(
       eligible,
-      (provider) =>
-        dependencies
+      (provider) => {
+        const module = catalog.composition.modules.find(({ deployment }) => deployment.appId === provider.appId);
+        if (module === undefined) {
+          return capture(Effect.fail(unavailable())).pipe(Effect.map((result) => ({ provider, result })));
+        }
+        return dependencies
           .issueAssertion({ appId: provider.appId, compositionRevision: catalog.composition.revision, context })
           .pipe(
             Effect.flatMap((authorization) => {
@@ -469,6 +476,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
                 appId: provider.appId,
                 authorization,
                 correlationId: context.correlationId,
+                module,
                 query: normalizedQuery,
                 searchKey: provider.contribution.searchKey,
               };
@@ -488,8 +496,9 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
             Effect.flatMap(decodeProviderResults),
             capture,
             Effect.map((result) => ({ provider, result })),
-          ),
-      { concurrency: 1 },
+          );
+      },
+      { concurrency: 4 },
     );
     const succeeded = attempts.filter(({ result }) => result.ok);
     if (succeeded.length === 0) {

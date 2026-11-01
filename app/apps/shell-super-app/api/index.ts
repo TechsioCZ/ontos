@@ -279,6 +279,7 @@ import type {
   ShellResourceContext,
   ShellResourceGateways,
 } from './modules/shell-resources.ts';
+import { moduleSearchProviderGateway } from './modules/shell-search-provider-gateway.ts';
 
 const RequestHeadersSchema = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Undefined]));
 type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
@@ -3338,7 +3339,8 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
   undefined,
   true,
   ExternalIdentityProviderContextAccessLive.pipe(Layer.provide(approvedModuleCatalogLive)),
-  unavailableResourceGateways,
+  // Search reaches each provider's approved owner release; resource detail providers are not served yet.
+  { resource: unavailableResourceGateways.resource, search: moduleSearchProviderGateway },
   defaultScopedModuleStateFactory,
   ExternalIdentityProviderDeploymentLive.pipe(Layer.provide(approvedModuleCatalogLive)),
 );
