@@ -45,6 +45,8 @@ import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirt
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
 import { ProductImageGallery } from './product-image-gallery.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
+import { MarketsPanel } from './product-markets.tsx';
+import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
@@ -53,6 +55,8 @@ export interface ProductDetailViewProps {
   /** The product's tree category with its path label; null when it has none. */
   readonly category?: CategoryTrail | null;
   readonly hasCategoryTree?: boolean;
+  /** The product's offer and price in every configured market of the company. */
+  readonly markets?: readonly ProductMarket[];
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
@@ -69,6 +73,7 @@ type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
  * The page header submits this form by id. Tab contents stay mounted so unsaved fields survive tab switches.
  */
 const DETAIL_FORM_ID = 'product-detail-form';
+const NO_MARKETS: readonly ProductMarket[] = [];
 const REQUIRED_MESSAGE_KEY = 'validation.required';
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
@@ -639,6 +644,7 @@ export const ProductDetailView = ({
   canMoveStock = canWrite,
   category = null,
   hasCategoryTree = false,
+  markets = NO_MARKETS,
   movements,
   onBack,
   onCommitted,
@@ -745,6 +751,9 @@ export const ProductDetailView = ({
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="content">
                 Obsah e-shopu
               </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="markets">
+                {k('markets.tab')}
+              </Tabs.Trigger>
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="prices">
                 {k('prices.tab')}
               </Tabs.Trigger>
@@ -806,6 +815,16 @@ export const ProductDetailView = ({
               category={category}
               hasCategoryTree={hasCategoryTree}
               key={`content-${DateTime.formatIso(product.updatedAt)}`}
+              onCommitted={onCommitted}
+              onReload={onReload}
+              product={product}
+              revision={revision}
+            />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="markets">
+            <MarketsPanel
+              canManage={canWrite}
+              markets={markets}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}

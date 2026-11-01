@@ -16,9 +16,11 @@ import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import {
   grossUnitPriceMinor,
+  orderCurrency,
   shippingMethodFor,
   shippingMethods,
 } from '../../../../../shared/domain/merchandise-model.ts';
+import { convertGrossMinor } from '../../../../../shared/domain/market-offers.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/domain/order-quantity.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -61,7 +63,12 @@ interface Draft {
   readonly street: string;
 }
 
-const parseCzk = (text: string): number | null => {
+/** A catalog CZK amount in the order's currency: market orders keep their own price list (as the server reprices). */
+const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number =>
+  order.market === undefined ? czkMinor : convertGrossMinor(czkMinor, order.market);
+
+/** A typed amount in the order currency, in minor units; null when it is not a non-negative number. */
+const parseAmount = (text: string): number | null => {
   const normalized = text.replaceAll(/\s/gu, '').replace(',', '.');
   if (normalized === '') {
     return null;
@@ -323,6 +330,7 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const gross = order.pricesIncludeVat === true;
+  const currencyUnit = t(`merchandise.ui.currencyUnit.${orderCurrency(order)}`);
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
@@ -343,11 +351,11 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
     );
     const rules = rulesFor(line);
     const valid = quantity !== null && (quantity === original?.quantity || isOrderQuantityValid(quantity, rules));
-    return { line, price: parseCzk(line.priceText), quantity: valid ? quantity : null, rules };
+    return { line, price: parseAmount(line.priceText), quantity: valid ? quantity : null, rules };
   });
   const linesInvalid =
     draft.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
-  const shippingPrice = parseCzk(draft.shippingPriceText);
+  const shippingPrice = parseAmount(draft.shippingPriceText);
   const shippingInvalid = draft.shippingMethod !== null && shippingPrice === null;
   const addressTouched = !sameAddress(order, draft);
   const addressInvalid =
@@ -418,7 +426,7 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
         ? pickedProduct
         : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
     );
-    const unitPrice = gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor;
+    const unitPrice = inOrderCurrency(order, gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor);
     const line: Mutable<DraftLine> = {
       key: `new-${sequence.current}`,
       name: unit.name,
@@ -441,7 +449,10 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
 
   const akros = products.some((product) => product.sourceGroupId !== undefined);
   const methodItems = shippingOptions.map((option) =>
-    selectItem(option.method, `${shippingMethodFor(option.method, akros).label} · ${formatMoney(option.priceMinor)}`),
+    selectItem(
+      option.method,
+      `${shippingMethodFor(option.method, akros).label} · ${formatMoney(inOrderCurrency(order, option.priceMinor), orderCurrency(order))}`,
+    ),
   );
 
   return {
@@ -449,6 +460,7 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
     addressInvalid,
     busy,
     contactInvalid,
+    currencyUnit,
     draft,
     gross,
     linesInvalid,
@@ -475,8 +487,10 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
 };
 
 const renderOrderShipping = ({
+  currencyUnit,
   draft,
   methodItems,
+  order,
   patch,
   shippingInvalid,
   submitted,
@@ -494,7 +508,9 @@ const renderOrderShipping = ({
           if (method !== undefined) {
             patch({
               shippingMethod: method.method,
-              shippingPriceText: moneyInputText(shippingMethods[method.method].grossPriceMinor / 100),
+              shippingPriceText: moneyInputText(
+                inOrderCurrency(order, shippingMethods[method.method].grossPriceMinor) / 100,
+              ),
             });
           }
         }}
@@ -505,7 +521,7 @@ const renderOrderShipping = ({
       <FormNumericInput
         formatOptions={MONEY_FORMAT}
         id="edit-shipping-price"
-        label={t('merchandise.ui.shippingPriceInclVat')}
+        label={t('merchandise.ui.shippingPriceInclVat', { currency: currencyUnit })}
         locale="cs-CZ"
         min={0}
         name="shippingPrice"
@@ -601,6 +617,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
   const {
     addLine,
     busy,
+    currencyUnit,
     draft,
     gross,
     linesInvalid,
@@ -647,7 +664,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 <Table.ColumnHeader>Položka</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">
-                  {gross ? 'Cena/j s DPH (Kč)' : 'Cena/j bez DPH (Kč)'}
+                  {`${gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'} (${currencyUnit})`}
                 </Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">
@@ -723,6 +740,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                             { quantity, unitPriceMinor: price, vatRate: line.vatRate },
                             order.pricesIncludeVat,
                           ),
+                          orderCurrency(order),
                         )}
                   </Table.Cell>
                   <Table.Cell align="end">
@@ -817,7 +835,9 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
         <div className="flex flex-col">
           <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
           <span className="font-semibold text-lg tabular-nums">
-            {linesInvalid ? 'Zkontrolujte množství a ceny položek' : formatMoney(preview.totalMinor)}
+            {linesInvalid
+              ? 'Zkontrolujte množství a ceny položek'
+              : formatMoney(preview.totalMinor, orderCurrency(order))}
           </span>
         </div>
         <div className="flex gap-150">

@@ -118,6 +118,7 @@ const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailP
           category={state.response.categoryTrails?.find((trail) => trail.id === state.product.categoryId) ?? null}
           hasCategoryTree={state.response.hasCategoryTree === true}
           key={state.product.id}
+          markets={state.response.productMarkets ?? []}
           movements={state.response.movements.filter((movement) => movement.productId === state.product.id)}
           onBack={back}
           onCommitted={committed}

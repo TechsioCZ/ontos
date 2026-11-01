@@ -21,6 +21,7 @@ import { removeDemoOrder } from './orders-records.ts';
 import type { OrderDetailState } from './orders-records.ts';
 import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
+import { orderCurrency } from '../../../../../shared/domain/merchandise-model.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import { lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
@@ -347,7 +348,22 @@ const renderOrderFields = ({
         : [
             {
               label: 'Doprava',
-              value: `${akros ? order.shipping.label.replace('Kavárna Doma, Brno', 'AKROS') : order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}`,
+              value: `${akros ? order.shipping.label.replace('Kavárna Doma, Brno', 'AKROS') : order.shipping.label} · ${formatMoney(order.shipping.priceMinor, orderCurrency(order))}`,
+            },
+          ]),
+      ...(order.market === undefined
+        ? []
+        : [
+            {
+              label: t('merchandise.pages.orders.detail.market'),
+              value: (
+                <span className="flex flex-wrap items-center gap-100">
+                  <Badge size="sm" variant="outline">
+                    {order.market.marketCode}
+                  </Badge>
+                  <span>{order.market.currency}</span>
+                </span>
+              ),
             },
           ]),
       ...(storefront ? [{ label: 'Platba', value: 'Nic neplatíte (DEMO)' }] : []),
@@ -593,13 +609,13 @@ export const OrderDetailDialog = ({
                       {line.quantity}
                     </Table.Cell>
                     <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
-                      {formatMoney(line.unitPriceMinor)}
+                      {formatMoney(line.unitPriceMinor, orderCurrency(order))}
                     </Table.Cell>
                     <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
                       {`${line.vatRate} %`}
                     </Table.Cell>
                     <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
-                      {formatMoney(lineGrossMinor(line, order.pricesIncludeVat))}
+                      {formatMoney(lineGrossMinor(line, order.pricesIncludeVat), orderCurrency(order))}
                     </Table.Cell>
                   </Table.Row>
                 ))}
@@ -611,23 +627,38 @@ export const OrderDetailDialog = ({
               ...(order.shipping === undefined
                 ? []
                 : [
-                    { label: 'Zboží s DPH', value: <span className="tabular-nums">{formatMoney(linesGross)}</span> },
+                    {
+                      label: 'Zboží s DPH',
+                      value: <span className="tabular-nums">{formatMoney(linesGross, orderCurrency(order))}</span>,
+                    },
                     {
                       label: 'Doprava s DPH',
-                      value: <span className="tabular-nums">{formatMoney(order.shipping.priceMinor)}</span>,
+                      value: (
+                        <span className="tabular-nums">
+                          {formatMoney(order.shipping.priceMinor, orderCurrency(order))}
+                        </span>
+                      ),
                     },
                   ]),
               {
                 label: t('merchandise.pages.orders.detail.netTotal'),
-                value: <span className="tabular-nums">{formatMoney(order.totalMinor - order.totalVatMinor)}</span>,
+                value: (
+                  <span className="tabular-nums">
+                    {formatMoney(order.totalMinor - order.totalVatMinor, orderCurrency(order))}
+                  </span>
+                ),
               },
               {
                 label: t('merchandise.pages.orders.detail.vatTotal'),
-                value: <span className="tabular-nums">{formatMoney(order.totalVatMinor)}</span>,
+                value: <span className="tabular-nums">{formatMoney(order.totalVatMinor, orderCurrency(order))}</span>,
               },
               {
                 label: t('merchandise.pages.orders.detail.grossTotal'),
-                value: <span className="font-semibold tabular-nums">{formatMoney(order.totalMinor)}</span>,
+                value: (
+                  <span className="font-semibold tabular-nums">
+                    {formatMoney(order.totalMinor, orderCurrency(order))}
+                  </span>
+                ),
               },
             ]}
           />

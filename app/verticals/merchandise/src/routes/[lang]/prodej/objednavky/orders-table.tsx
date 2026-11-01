@@ -4,7 +4,8 @@ import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms
 import { formatDateTime, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
-import { TagsCell, formatKc } from '../../../../list-cells.tsx';
+import { TagsCell, formatOrderTotal } from '../../../../list-cells.tsx';
+import { orderCurrency } from '../../../../../shared/domain/merchandise-model.ts';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
 import { orderCustomerName } from './order-eshop.ts';
@@ -41,6 +42,11 @@ export const ordersColumns = (t: Translate, customers: CustomerDirectory, tagsOf
               E-shop DEMO
             </Badge>
           )}
+          {info.row.original.market !== undefined && (
+            <Badge size="sm" variant="outline">
+              {info.row.original.market.marketCode}
+            </Badge>
+          )}
         </span>
       );
     },
@@ -64,7 +70,11 @@ export const ordersColumns = (t: Translate, customers: CustomerDirectory, tagsOf
   },
   {
     accessorKey: 'totalMinor',
-    cell: (info) => <span className="tabular-nums">{formatKc(info.getValue<number>())}</span>,
+    cell: (info) => (
+      <span className="whitespace-nowrap tabular-nums">
+        {formatOrderTotal(info.getValue<number>(), orderCurrency(info.row.original))}
+      </span>
+    ),
     header: t(key('columns.total')),
     meta: { align: 'end', type: 'number', width: 140 },
   },
