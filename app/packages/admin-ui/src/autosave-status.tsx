@@ -50,7 +50,7 @@ const AutosaveStatusContent = ({ onReloadLatest, onRetry, status }: AutosaveStat
 
 /** Inline autosave state of an edit form. Quiet while nothing is pending; offers a button only on error or conflict. */
 export const AutosaveStatus = (props: AutosaveStatusProps) => (
-  <div aria-live="polite" className="flex flex-wrap items-center gap-100">
+  <div aria-live="polite" className="flex flex-wrap items-center gap-100" data-autosave-state={props.status}>
     <AutosaveStatusContent {...props} />
   </div>
 );

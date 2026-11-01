@@ -1,7 +1,9 @@
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Schema } from 'effect';
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
 import { sidePanelSurfaceClassName } from './ui-kit-classes.ts';
@@ -20,7 +22,12 @@ export interface SidePanelProps {
   readonly description?: ReactNode;
   readonly finalFocusEl?: () => HTMLElement | null;
   readonly initialFocusEl?: () => HTMLElement | null;
-  /** Receives `false` for every dismissal. Draft owners confirm discard here; the parent owns `open`. */
+  /** Localized notice shown when a click outside leaves an edited form open. */
+  readonly keptDraftLabels?: KeptDraftLabels;
+  /**
+   * Receives `false` for Escape, the close button and a click outside a form nobody has edited. A click outside an
+   * edited form keeps the panel and its draft open instead. Draft owners confirm discard here; the parent owns `open`.
+   */
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   /** Localized accessible name and keyboard instructions for the resize handle. */
@@ -28,6 +35,83 @@ export interface SidePanelProps {
   readonly size?: SidePanelSize;
   readonly title: ReactNode;
 }
+
+export interface KeptDraftLabels {
+  readonly close: string;
+  readonly message: string;
+}
+
+const defaultKeptDraftLabels: KeptDraftLabels = {
+  close: 'Zavřít bez uložení',
+  message: 'Neuložené změny zůstaly zachované.',
+};
+
+/** Autosave states in which nothing typed is waiting to be saved; `AutosaveStatus` publishes them. */
+const settledAutosaveStates = new Set(['idle', 'saved']);
+
+/** Form fields whose input the panel tracks; search boxes only filter and hold no draft. */
+const draftFieldSelector =
+  'input:not([type="search"]), textarea, select, [contenteditable="true"], [role="spinbutton"]';
+
+/**
+ * Remembers which fields inside the open panel the user changed. A click outside an edited form must not drop the
+ * draft, so the panel only treats such a click as a dismissal when no changed field is still on screen (a saved edit
+ * form usually unmounts) or every autosave status in the panel is settled. Escape keeps closing as before.
+ */
+const useEditedDraft = (open: boolean, contentId: string) => {
+  const edited = useRef(new Set<EventTarget>());
+  const lastIntent = useRef<'escape' | 'other'>('other');
+  useEffect(() => {
+    edited.current.clear();
+    const doc = globalThis.document;
+    const onEdit = (event: Event) => {
+      const content = doc.querySelector(`[id="${contentId}"]`);
+      const { target } = event;
+      if (content !== null && target !== null && event.composedPath().includes(content)) {
+        edited.current.add(target);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      lastIntent.current = event.key === 'Escape' ? 'escape' : 'other';
+    };
+    const onPointerDown = () => {
+      lastIntent.current = 'other';
+    };
+    // A closed panel listens to nothing; removing listeners that were never added is harmless.
+    if (open) {
+      doc.addEventListener('input', onEdit, true);
+      doc.addEventListener('change', onEdit, true);
+      globalThis.addEventListener('keydown', onKeyDown, { capture: true });
+      globalThis.addEventListener('pointerdown', onPointerDown, { capture: true });
+    }
+    return () => {
+      doc.removeEventListener('input', onEdit, true);
+      doc.removeEventListener('change', onEdit, true);
+      globalThis.removeEventListener('keydown', onKeyDown, { capture: true });
+      globalThis.removeEventListener('pointerdown', onPointerDown, { capture: true });
+    };
+  }, [contentId, open]);
+
+  /** True when a ui-kit dismissal is a click or focus move outside an edited form, not an Escape. */
+  const keepsDraft = (): boolean => {
+    if (lastIntent.current === 'escape') {
+      return false;
+    }
+    const content = globalThis.document.querySelector(`[id="${contentId}"]`);
+    if (content === null) {
+      return false;
+    }
+    const autosave = [...content.querySelectorAll<HTMLElement>('[data-autosave-state]')];
+    if (
+      autosave.length > 0 &&
+      autosave.every((status) => settledAutosaveStates.has(status.dataset['autosaveState'] ?? ''))
+    ) {
+      return false;
+    }
+    return [...content.querySelectorAll(draftFieldSelector)].some((field) => edited.current.has(field));
+  };
+  return keepsDraft;
+};
 
 /**
  * Closes the panel on an Escape that no layer above it owns, even when zag's own layer stack
@@ -85,6 +169,7 @@ export const SidePanel = ({
   description,
   finalFocusEl,
   initialFocusEl,
+  keptDraftLabels = defaultKeptDraftLabels,
   onOpenChange,
   open,
   resizeLabel,
@@ -94,6 +179,14 @@ export const SidePanel = ({
   const id = useId();
   const resize = useSidePanelResize();
   useEscapeFallback(open, panelContentId(id), onOpenChange);
+  const keepsDraft = useEditedDraft(open, panelContentId(id));
+  const [draftKept, setDraftKept] = useState(false);
+  const [shownOpen, setShownOpen] = useState(open);
+  if (shownOpen !== open) {
+    // A reopened panel starts without the previous session's notice.
+    setShownOpen(open);
+    setDraftKept(false);
+  }
 
   return (
     <Dialog
@@ -109,6 +202,10 @@ export const SidePanel = ({
       hideCloseButton
       id={id}
       onOpenChange={(details) => {
+        if (!details.open && keepsDraft()) {
+          setDraftKept(true);
+          return;
+        }
         onOpenChange(details.open);
       }}
       open={open}
@@ -138,7 +235,19 @@ export const SidePanel = ({
       />
       {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The
           inline padding pair keeps focus rings from being clipped by the scroll edge. */}
-      <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">{children}</div>
+      <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">
+        {draftKept && (
+          <div className="flex flex-wrap items-center gap-100">
+            <StatusText showIcon size="sm" status="warning">
+              {keptDraftLabels.message}
+            </StatusText>
+            <Button onClick={() => onOpenChange(false)} size="sm" theme="borderless" variant="secondary">
+              {keptDraftLabels.close}
+            </Button>
+          </div>
+        )}
+        {children}
+      </div>
     </Dialog>
   );
 };

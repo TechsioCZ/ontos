@@ -8,7 +8,13 @@ import { SidePanel } from '../../src/side-panel.tsx';
 const copy = { confirmation: 'Confirm discard', title: 'Panel details' };
 
 /** A panel owner like the demo's draft forms: a guarded owner asks before an edited draft is dropped. */
-const PanelExample = ({ guarded = false }: { readonly guarded?: boolean }) => {
+const PanelExample = ({
+  autosaved = false,
+  guarded = false,
+}: {
+  readonly autosaved?: boolean;
+  readonly guarded?: boolean;
+}) => {
   const [open, setOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -33,6 +39,7 @@ const PanelExample = ({ guarded = false }: { readonly guarded?: boolean }) => {
           Draft
           <input onChange={() => setDirty(true)} />
         </label>
+        {autosaved && <div data-autosave-state={dirty ? 'saved' : 'idle'} />}
       </SidePanel>
       <Dialog
         customTrigger
@@ -47,8 +54,8 @@ const PanelExample = ({ guarded = false }: { readonly guarded?: boolean }) => {
 
 afterEach(cleanup);
 
-const openPanel = Effect.fn('openPanel')(function* openPanel(guarded = false) {
-  render(<PanelExample guarded={guarded} />);
+const openPanel = Effect.fn('openPanel')(function* openPanel(guarded = false, autosaved = false) {
+  render(<PanelExample autosaved={autosaved} guarded={guarded} />);
   const trigger = screen.getByRole('button', { name: 'Open panel' });
   trigger.focus();
   fireEvent.click(trigger);
@@ -108,14 +115,56 @@ it.effect('does not close for interactions inside the panel', () =>
   }),
 );
 
-it.effect('routes backdrop dismissal through the draft owner without discarding input', () =>
+const editDraft = () => {
+  const input = screen.getByRole('textbox', { name: 'Draft' });
+  fireEvent.input(input, { target: { value: 'Unsaved draft' } });
+  fireEvent.change(input, { target: { value: 'Unsaved draft' } });
+  return input;
+};
+
+it.effect('keeps an edited draft open on the backdrop and closes it only on request', () =>
+  Effect.gen(function* keptDraft() {
+    const { dialog, trigger } = yield* openPanel();
+    const input = editDraft();
+    clickBackdrop(dialog);
+    const notice = yield* Effect.promise(() => screen.findByRole('status'));
+    expect(notice.textContent).toContain('Neuložené změny zůstaly zachované.');
+    expect(dialog.isConnected).toBe(true);
+    expect(dialog.dataset['state']).toBe('open');
+    expect(input).toHaveProperty('value', 'Unsaved draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Zavřít bez uložení' }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    yield* Effect.promise(() => waitFor(() => expect(document.activeElement).toBe(trigger)));
+  }),
+);
+
+it.effect('still closes an edited draft on Escape', () =>
+  Effect.gen(function* escapeEdited() {
+    const { dialog } = yield* openPanel();
+    editDraft();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+  }),
+);
+
+it.effect('lets a settled autosave form close from the backdrop', () =>
+  Effect.gen(function* autosavedClose() {
+    const { dialog } = yield* openPanel(false, true);
+    editDraft();
+    clickBackdrop(dialog);
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+  }),
+);
+
+it.effect('asks the draft owner once when the kept draft is closed on request', () =>
   Effect.gen(function* guardedClose() {
     const { dialog } = yield* openPanel(true);
-    const input = screen.getByRole('textbox', { name: 'Draft' });
-    fireEvent.change(input, { target: { value: 'Unsaved draft' } });
+    const input = editDraft();
     clickBackdrop(dialog);
+    yield* Effect.promise(() => screen.findByRole('status'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Zavřít bez uložení' }));
     const confirmation = yield* Effect.promise(() => screen.findByRole('alertdialog', { name: copy.confirmation }));
-    expect(dialog.isConnected).toBe(true);
     expect(dialog.dataset['state']).toBe('open');
     expect(input).toHaveProperty('value', 'Unsaved draft');
     yield* Effect.promise(() => waitFor(() => expect(confirmation.contains(document.activeElement)).toBe(true)));
