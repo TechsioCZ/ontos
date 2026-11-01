@@ -8,12 +8,20 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
+import { ActivateMarketActionApi } from './apis/activate-market-action.ts';
+import { AssociateStorefrontActionApi } from './apis/associate-storefront-action.ts';
+import { CreateMarketActionApi } from './apis/create-market-action.ts';
 import { CurrentMarketCatalogApi } from './apis/current-market-catalog.ts';
 import { EligibleMarketTuplesApi } from './apis/eligible-market-tuples.ts';
 import { MarketHistoryApi } from './apis/market-history.ts';
 import { MarketRetirementStatusApi } from './apis/market-retirement-status.ts';
 import { PricingCurrentMarketEvidenceApi } from './apis/pricing-current-market-evidence.ts';
+import { RemoveStorefrontAssociationActionApi } from './apis/remove-storefront-association-action.ts';
 import { ResolveCommerceMarketApi } from './apis/resolve-commerce-market.ts';
+import { RetireMarketActionApi } from './apis/retire-market-action.ts';
+import { ReviseMarketDefinitionActionApi } from './apis/revise-market-definition-action.ts';
+import { ReviseStorefrontAssociationActionApi } from './apis/revise-storefront-association-action.ts';
+import { SuspendMarketActionApi } from './apis/suspend-market-action.ts';
 import { VerifyMarketEligibilityV1Api } from './apis/verify-market-eligibility-v1.ts';
 // </generated-governed-http-api-imports>
 
@@ -43,12 +51,20 @@ export const commerceMarketCatalogFoundationApi = HttpApi.make('CommerceMarketCa
 export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(commerceMarketCatalogFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(ActivateMarketActionApi)
+  .addHttpApi(AssociateStorefrontActionApi)
+  .addHttpApi(CreateMarketActionApi)
   .addHttpApi(CurrentMarketCatalogApi)
   .addHttpApi(EligibleMarketTuplesApi)
   .addHttpApi(MarketHistoryApi)
   .addHttpApi(MarketRetirementStatusApi)
   .addHttpApi(PricingCurrentMarketEvidenceApi)
+  .addHttpApi(RemoveStorefrontAssociationActionApi)
   .addHttpApi(ResolveCommerceMarketApi)
+  .addHttpApi(RetireMarketActionApi)
+  .addHttpApi(ReviseMarketDefinitionActionApi)
+  .addHttpApi(ReviseStorefrontAssociationActionApi)
+  .addHttpApi(SuspendMarketActionApi)
   .addHttpApi(VerifyMarketEligibilityV1Api)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })

@@ -1,4 +1,5 @@
 import {
+  ActionRuntime,
   DatabaseConfig,
   parseDatabaseConfig,
   OwnerAuthorizationOverlay,
@@ -503,6 +504,7 @@ export const marketRevisionNativeBackend = Effect.gen(function* makeMarketRevisi
   );
   const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
     Effect.provideService(ReadRuntime, Context.get(scenario.context, ReadRuntime)),
+    Effect.provideService(ActionRuntime, Context.get(scenario.context, ActionRuntime)),
     Effect.provideContext(redemptionContext),
   );
   const configured = defineEffectBff({
