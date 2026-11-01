@@ -204,6 +204,7 @@ export const customerPriceGroupResolutionServicesForTransaction = (
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
       compositionRevision,
       requestCorrelation: scope.correlationId,
+      scope,
     });
     const requiredCatalog: PriceGroupCatalogPort = {
       resolveCurrent: (...args) =>

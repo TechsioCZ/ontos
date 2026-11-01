@@ -8,12 +8,22 @@ import {
   executeUpdateSavedAddressWithAuthorization,
   executeEnsureRetailCustomerProfileWithAuthorization,
   executeMarketBootstrapResolutionWithAuthorization,
+  executeAssignCustomerPriceGroupWithAuthorization,
+  executeMarketSubjectRestrictionsCurrentWithAuthorization,
 } from '@app/commerce-customer-context/api/client';
 import {
   issueApiKeyGatewayContext,
   issueRelayedGatewayContext,
 } from '@app/shared-contracts/server/gateway-context-api-key';
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';
+import { executeEligibleMarketTuplesWithAuthorization } from '@app/commerce-market-catalog/api/client';
+import { migratePriceGroupCatalogNativeBaseline } from '@app/price-group-catalog/testing/server-owner-native';
+import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
+import {
+  executeCreatePriceGroupWithAuthorization,
+  executePriceGroupDefinitionWithAuthorization,
+  executeValidatePriceGroupCompatibilityWithAuthorization,
+} from '@app/price-group-catalog/api/client';
 import { SignJWT, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   ActiveApplicationCompositionSnapshotSchema,
@@ -34,6 +44,7 @@ import {
   makePrincipalResolver,
   makeContextAccessLive,
   makeContextPermissionRelationshipMutationLive,
+  makeBusinessPermissionRelationshipMutationLive,
   PrincipalResolver,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ONTOS_MODULE_CONTRACT_PATH,
@@ -421,7 +432,12 @@ const grantNativeCatalogModuleAccess = Effect.fn('ServerOwnerRelayNative.grantCa
 const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.issueApiKeyGatewayAuthorization')(
   function* issueNativeApiKeyGatewayAuthorization(input: {
     readonly apiKey: Redacted.Redacted;
-    readonly audience: 'catalog' | 'party-registry' | 'commerce-customer-context';
+    readonly audience:
+      | 'catalog'
+      | 'party-registry'
+      | 'commerce-customer-context'
+      | 'price-group-catalog'
+      | 'commerce-market-catalog';
     readonly authBindingId: string;
     readonly authContextRef: Redacted.Redacted;
     readonly buildMarker: string;
@@ -479,6 +495,7 @@ const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.
       apiUrl: new URL(issued.apiBaseUrl, input.origin),
       authorization: Redacted.make(`Bearer ${Redacted.value(token)}`),
       compositionRevision: issued.compositionRevision,
+      expiresAt: claims.exp,
       sourceAssertion: token,
       sourceJti: claims.jti,
       trustedStorefrontAbsent: claims.principal.trustedStorefrontId === undefined,
@@ -1438,6 +1455,687 @@ const assertNativeManufacturerMutationAudit = Effect.fn('ServerOwnerRelayNative.
 );
 
 type NativeShellUserFixture = Effect.Success<ReturnType<typeof makePackagedShellUserFixture>>;
+/** Actual Market default subject reader; empty eligibility is not a Market/Storefront producer proof. */
+const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerciseMarketSubjectRelay')(
+  function* exerciseMarketSubjectRelay(input: {
+    readonly customerContext: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+    readonly market: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly personal: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0];
+    readonly privateKey: CryptoKey;
+    readonly profile: Effect.Success<
+      ReturnType<typeof executeEnsureRetailCustomerProfileWithAuthorization>
+    >['profileRef'];
+    readonly service: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0];
+    readonly signingKid: string;
+    readonly workloadKey: Redacted.Redacted;
+  }) {
+    const { core } = input.fixture;
+    const crypto = yield* Crypto.Crypto;
+    const access = yield* makeContextAccessLive();
+    const checkBusinessPermissions = access.businessPermissions;
+    if (checkBusinessPermissions === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Actual subject profile permission reader unavailable' });
+    }
+    const profileTarget = {
+      permission: 'retail.profile.read' as const,
+      target: {
+        kind: 'retail_profile' as const,
+        legalEntityId: core.legalEntityId,
+        profileId: input.profile.resourceId,
+        tenantId: core.tenantId,
+      },
+    };
+    const providerPolicy = 'commerce.customer-context.api.market-subject-restrictions-current.evidence.v1';
+    const cccOptions = {
+      baseUrl: `${input.customerContext.origin}${input.customerContext.apiPrefix}`,
+      compositionRevision: input.personal.revision,
+    };
+    const marketOptions = {
+      baseUrl: `${input.market.origin}${input.market.apiPrefix}`,
+      compositionRevision: input.personal.revision,
+    };
+    const subject = { kind: 'RETAIL_PROFILE' as const, profileRef: input.profile };
+    const marketPersonal = {
+      ...input.personal,
+      audience: 'commerce-market-catalog' as const,
+      buildMarker: input.market.compiled.buildMarker,
+    };
+    // These exact grants belong to this fresh native profile. Preserve shared Tenant/LE/module structure.
+    yield* core.grantResourceAccess(input.profile, input.service.principalId, 'reader');
+    yield* core.revokeResourceAccess(input.profile, input.service.principalId, 'reader');
+    yield* core.grantResourceAccess(input.profile, core.manager.principalId, 'reader');
+    yield* Effect.addFinalizer(() =>
+      Effect.all(
+        [
+          core.grantResourceAccess(input.profile, core.manager.principalId, 'reader'),
+          core.revokeResourceAccess(input.profile, input.service.principalId, 'reader'),
+        ],
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid, Effect.orDie),
+    );
+    const assertProfileAccess = Effect.fn('ServerOwnerRelayNative.assertSubjectProfileAccess')(
+      function* assertSubjectProfileAccess(principalId: string, expected: 'allowed' | 'denied') {
+        const modules = yield* access.modules({
+          legalEntityId: core.legalEntityId,
+          moduleIds: ['commerce.customer-context'],
+          principalId,
+          tenantId: core.tenantId,
+        });
+        expect(modules).toHaveLength(1);
+        expect(modules[0]?.decision).toBe('allowed');
+        const profile = yield* checkBusinessPermissions({
+          principal: { principalId, tenantId: core.tenantId },
+          targets: [profileTarget],
+        });
+        expect(profile).toHaveLength(1);
+        expect(profile[0]?.decision).toBe(expected);
+      },
+    );
+    const stateBefore = yield* input.database.query.tenantModuleStates.findMany({
+      columns: { moduleKey: true, state: true },
+      orderBy: { moduleKey: 'asc' },
+      where: { tenantId: core.tenantId },
+    });
+    const originalJtis = new Set<string>();
+    const eligible = Effect.fn('ServerOwnerRelayNative.readSubjectQualifiedEligibility')(
+      function* readSubjectQualifiedEligibility(
+        selected?: Parameters<typeof executeEligibleMarketTuplesWithAuthorization>[0]['subject'],
+      ) {
+        const proof = yield* issueNativeApiKeyGatewayAuthorization(marketPersonal);
+        expect(originalJtis.has(proof.sourceJti)).toBe(false);
+        originalJtis.add(proof.sourceJti);
+        const correlationId = yield* crypto.randomUUIDv4();
+        const request = {
+          channel: 'B2C' as const,
+          effectiveAt: yield* DateTime.now,
+          storefrontRef: { appId: 'native-subject-no-market-producer', tenantId: core.tenantId },
+        };
+        const result = yield* executeEligibleMarketTuplesWithAuthorization(
+          selected === undefined ? request : { ...request, subject: selected },
+          Redacted.value(proof.authorization),
+          correlationId,
+          marketOptions,
+        );
+        return { correlationId, proof, result };
+      },
+    );
+    yield* assertProfileAccess(core.manager.principalId, 'allowed');
+    yield* assertProfileAccess(input.service.principalId, 'denied');
+    const before = yield* core.evidence(input.database);
+    const previous = new Set(before.accesses.map((row) => row.dataAccessEventId));
+    const allowed = yield* eligible(subject);
+    expect(allowed.result).toMatchObject({ outcome: 'ELIGIBLE_MARKET_TUPLES', tuples: [] });
+    const evidence = yield* core.evidence(input.database);
+    const actualProvider = evidence.accesses.filter(
+      (row) =>
+        !previous.has(row.dataAccessEventId) &&
+        row.evidencePolicyKey === providerPolicy &&
+        row.outcomeCode === 'read_allowed',
+    );
+    expect(actualProvider).toHaveLength(1);
+    for (const row of actualProvider) {
+      expect(row.principalId).toBe(core.manager.principalId);
+      expect(row.authBindingId).toBe(input.personal.authBindingId);
+      expect(row.authMethod).toBe('api_key');
+      expect(row.authContextRef === Redacted.value(input.personal.authContextRef)).toBe(true);
+      expect(row.tenantId).toBe(core.tenantId);
+      expect(row.legalEntityId).toBe(core.legalEntityId);
+    }
+    expect(
+      yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+        where: { sourceJti: allowed.proof.sourceJti },
+      }),
+    ).toBeDefined();
+    // Flip only exact resource permissions, then prove S can read while P's real default Market path cannot.
+    yield* core.revokeResourceAccess(input.profile, core.manager.principalId, 'reader');
+    yield* core.grantResourceAccess(input.profile, input.service.principalId, 'reader');
+    yield* assertProfileAccess(core.manager.principalId, 'denied');
+    yield* assertProfileAccess(input.service.principalId, 'allowed');
+    const serviceProof = yield* issueNativeApiKeyGatewayAuthorization(input.service);
+    const serviceRead = yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
+      { subject },
+      Redacted.value(serviceProof.authorization),
+      yield* crypto.randomUUIDv4(),
+      cccOptions,
+    );
+    expect(serviceRead).toMatchObject({ decision: 'ALLOWED', outcome: 'SUBJECT_RESTRICTIONS_CURRENT', subject });
+    const deniedBefore = yield* core.evidence(input.database);
+    const deniedPrevious = new Set(deniedBefore.accesses.map((row) => row.dataAccessEventId));
+    const denied = yield* eligible(subject);
+    expect(denied.result).toMatchObject({ outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE', retryable: true });
+    const deniedEvidence = yield* core.evidence(input.database);
+    expect(
+      deniedEvidence.accesses.filter(
+        (row) =>
+          !deniedPrevious.has(row.dataAccessEventId) &&
+          row.evidencePolicyKey === providerPolicy &&
+          row.outcomeCode === 'read_allowed',
+      ),
+    ).toHaveLength(0);
+    expect(
+      yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+        where: { sourceJti: denied.proof.sourceJti },
+      }),
+    ).toBeDefined();
+    // Current S authority does not become a guest dependency, and later fixtures regain P's original grant.
+    for (const guestSubject of [undefined, { kind: 'GUEST' as const, subjectRef: 'native-subject-guest' }]) {
+      const guestBefore = yield* core.evidence(input.database);
+      const guestPrevious = new Set(guestBefore.accesses.map((row) => row.dataAccessEventId));
+      const guest = yield* eligible(guestSubject);
+      expect(guest.result).toMatchObject({ outcome: 'ELIGIBLE_MARKET_TUPLES', tuples: [] });
+      expect(
+        yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+          where: { sourceJti: guest.proof.sourceJti },
+        }),
+      ).toBeUndefined();
+      const guestEvidence = yield* core.evidence(input.database);
+      expect(
+        guestEvidence.accesses.filter(
+          (row) => !guestPrevious.has(row.dataAccessEventId) && row.evidencePolicyKey === providerPolicy,
+        ),
+      ).toHaveLength(0);
+    }
+    yield* core.grantResourceAccess(input.profile, core.manager.principalId, 'reader');
+    yield* core.revokeResourceAccess(input.profile, input.service.principalId, 'reader');
+    yield* assertProfileAccess(core.manager.principalId, 'allowed');
+    yield* assertProfileAccess(input.service.principalId, 'denied');
+    const relay = Effect.fn('ServerOwnerRelayNative.issueMarketSubjectRelay')(function* issueMarketSubjectRelay() {
+      const source = yield* issueNativeApiKeyGatewayAuthorization(marketPersonal);
+      const issued = yield* issueRelayedGatewayContext(
+        {
+          audience: 'commerce-customer-context',
+          compositionRevision: input.personal.revision,
+          exchangeId: yield* crypto.randomUUIDv4(),
+          operationKey: 'commerce.customer-context.api.market-subject-restrictions-current',
+          sourceAssertion: Redacted.value(source.sourceAssertion),
+        },
+        {
+          apiKey: input.workloadKey,
+          baseUrl: `${input.fixture.origin}/shell-super-app-api`,
+          requestCorrelation: yield* crypto.randomUUIDv4(),
+        },
+      );
+      const verified = yield* Effect.tryPromise({
+        catch: (cause) =>
+          Object.defineProperty(
+            new PackagedOwnerStartupError({ reason: 'Actual Market subject relay signature verification failed' }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        try: () =>
+          jwtVerify(issued.token, input.personal.publicKey, {
+            audience: 'commerce-customer-context',
+            issuer: input.fixture.origin,
+          }),
+      });
+      const claims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)(verified.payload);
+      expect(claims.sub).toBe(core.manager.principalId);
+      expect(claims.principal.authBindingId).toBe(input.personal.authBindingId);
+      expect(claims.principal.tenantId).toBe(core.tenantId);
+      expect(claims.principal.legalEntityId).toBe(core.legalEntityId);
+      expect(claims.compositionRevision).toBe(input.personal.revision);
+      expect(claims.targetBuildMarker).toBe(input.customerContext.compiled.buildMarker);
+      expect(claims.exp).toBeLessThanOrEqual(source.expiresAt);
+      return { authorization: Redacted.make(`Bearer ${issued.token}`), claims };
+    });
+    const freshTarget = yield* relay();
+    expect(
+      yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
+        { subject },
+        Redacted.value(freshTarget.authorization),
+        yield* crypto.randomUUIDv4(),
+        cccOptions,
+      ),
+    ).toMatchObject({ outcome: 'SUBJECT_RESTRICTIONS_CURRENT', subject });
+    const replay = yield* Effect.flip(
+      executeMarketSubjectRestrictionsCurrentWithAuthorization(
+        { subject },
+        Redacted.value(freshTarget.authorization),
+        yield* crypto.randomUUIDv4(),
+        cccOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(replay)).toBe(true);
+    // Existing audience-wide first redemption: this independently authorized CCC Read may consume it first.
+    const alternate = yield* relay();
+    const zero = yield* executeCustomerPriceGroupResolutionWithAuthorization(
+      {
+        authorizationSubject: { kind: 'RETAIL' },
+        effectiveAt: DateTime.formatIso(yield* DateTime.now),
+        profile: { ...input.profile, kind: 'RETAIL' },
+      },
+      Redacted.value(alternate.authorization),
+      yield* crypto.randomUUIDv4(),
+      cccOptions,
+    );
+    expect(Schema.is(Schema.Struct({ _tag: Schema.Literal('NONE') }))(zero.resolution)).toBe(true);
+    expect(zero.completenessEvidence.ownerRevision).toBe(zero.currentnessEvidence.ownerRevision);
+    const alternateReplay = yield* Effect.flip(
+      executeMarketSubjectRestrictionsCurrentWithAuthorization(
+        { subject },
+        Redacted.value(alternate.authorization),
+        yield* crypto.randomUUIDv4(),
+        cccOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(alternateReplay)).toBe(true);
+    // Signature-valid deliberately expired negative derived from a fresh actual issued target; never accepted as authority.
+    const expiryTarget = yield* relay();
+    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+    const expired = yield* Effect.tryPromise({
+      catch: (cause) =>
+        Object.defineProperty(
+          new PackagedOwnerStartupError({ reason: 'Expired Market subject negative could not be signed' }),
+          'cause',
+          { configurable: true, value: cause },
+        ),
+      try: () =>
+        new SignJWT({ ...expiryTarget.claims, exp: now - 1, iat: now - 61 })
+          .setProtectedHeader({ alg: 'EdDSA', kid: input.signingKid })
+          .sign(input.privateKey),
+    });
+    const expiredResult = yield* Effect.flip(
+      executeMarketSubjectRestrictionsCurrentWithAuthorization(
+        { subject },
+        `Bearer ${expired}`,
+        yield* crypto.randomUUIDv4(),
+        cccOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(expiredResult)).toBe(true);
+    expect(
+      yield* input.database.query.tenantModuleStates.findMany({
+        columns: { moduleKey: true, state: true },
+        orderBy: { moduleKey: 'asc' },
+        where: { tenantId: core.tenantId },
+      }),
+    ).toEqual(stateBefore);
+    return yield* Effect.logInfo('Actual Market subject relay native matrix', {
+      actualCccCurrentReadAsOriginalP: true,
+      audienceWideFirstRedemption: true,
+      consumerEligibility: 'OWNER_EMPTY_SET_NO_MARKET_OR_STOREFRONT_PRODUCER_CLAIM',
+      guestAndOmittedSubjectNoProviderOrExchange: true,
+      independentProfilePermissionsPversusS: true,
+      targetReplayAndExpiredNegativeRejected: true,
+      tenantLegalEntityRevisionAndOriginalBindingPreserved: true,
+      unrelatedModuleStatesUnchanged: true,
+    });
+  },
+);
+
+const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercisePriceGroupRelay')(
+  function* exercisePriceGroupRelay(input: {
+    readonly customerContext: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+    readonly personal: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0];
+    readonly priceGroupCatalog: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly privateKey: CryptoKey;
+    readonly profile: Extract<
+      Parameters<typeof executeCustomerPriceGroupResolutionWithAuthorization>[0]['profile'],
+      { readonly kind: 'RETAIL' }
+    >;
+    readonly profileRevision: number;
+    readonly serviceId: string;
+    readonly shell: ChildProcessHandle;
+    readonly signingKid: string;
+    readonly workloadKey: Redacted.Redacted;
+  }) {
+    const { core } = input.fixture;
+    const crypto = yield* Crypto.Crypto;
+    const business = yield* makeBusinessPermissionRelationshipMutationLive();
+    const access = yield* makeContextAccessLive();
+    const checkBusinessPermissions = access.businessPermissions;
+    if (checkBusinessPermissions === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Actual PGC target permission reader unavailable' });
+    }
+    const moduleMutation = yield* makeContextPermissionRelationshipMutationLive();
+    for (const principalId of [core.manager.principalId, input.serviceId]) {
+      const binding = {
+        principal: { principalId, tenantId: core.tenantId },
+        target: { moduleId: 'pricing.price-group-catalog', permission: 'module.access' },
+        tenantId: core.tenantId,
+      };
+      yield* Effect.addFinalizer(() => moduleMutation.mutate({ operation: 'revoke', ...binding }).pipe(Effect.orDie));
+      yield* moduleMutation.mutate({ operation: 'grant', ...binding });
+    }
+    const createTarget = { kind: 'pricing_catalog' as const, pricingCatalogId: core.tenantId, tenantId: core.tenantId };
+    const createBinding = {
+      permission: 'pricing.price_group.create' as const,
+      principal: { principalId: core.manager.principalId, tenantId: core.tenantId },
+      target: createTarget,
+    };
+    yield* Effect.addFinalizer(() => business.mutate({ operation: 'revoke', ...createBinding }).pipe(Effect.orDie));
+    yield* business.mutate({ operation: 'grant', ...createBinding });
+    const pgcOptions = {
+      baseUrl: `${input.priceGroupCatalog.origin}${input.priceGroupCatalog.apiPrefix}`,
+      compositionRevision: input.personal.revision,
+    };
+    const cccOptions = {
+      baseUrl: `${input.customerContext.origin}${input.customerContext.apiPrefix}`,
+      compositionRevision: input.personal.revision,
+    };
+    const createGroup = Effect.fn('ServerOwnerRelayNative.createActualPriceGroup')(function* createActualPriceGroup(
+      code: string,
+      expectedCatalogRevision: number,
+    ) {
+      const { legalEntityId, ...tenantFields } = input.personal;
+      void legalEntityId;
+      const tenantOnly = {
+        ...tenantFields,
+        audience: 'price-group-catalog' as const,
+        buildMarker: input.priceGroupCatalog.compiled.buildMarker,
+      };
+      const proof = yield* issueNativeApiKeyGatewayAuthorization(tenantOnly);
+      return yield* executeCreatePriceGroupWithAuthorization(
+        {
+          businessCode: code,
+          classificationPurpose: 'Native original-actor relay proof',
+          compatibilityContracts: [{ contractId: 'commerce.customer-price-group-assignment.v1', version: 1 }],
+          description: 'Actual native PriceGroup producer',
+          displayName: code,
+          effectiveFrom: DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 2 })),
+          effectiveTo: null,
+          expectedCatalogRevision,
+          reason: 'Create authoritative native relay target',
+        },
+        Redacted.value(proof.authorization),
+        yield* crypto.randomUUIDv4(),
+        { ...pgcOptions, idempotencyKey: yield* crypto.randomUUIDv4() },
+      ).pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Struct({
+              acceptance: Schema.Struct({ acceptedCatalogRevision: Schema.Int }),
+              identity: Schema.Struct({ priceGroupRef: PriceGroupRefSchema }),
+            }),
+          ),
+        ),
+      );
+    });
+    const first = yield* createGroup('NATIVE_1287_PGC_FIRST', 0);
+    const second = yield* createGroup('NATIVE_1287_PGC_SECOND', first.acceptance.acceptedCatalogRevision);
+    yield* Effect.sleep(Duration.seconds(3));
+    const firstRef = first.identity.priceGroupRef;
+    const secondRef = second.identity.priceGroupRef;
+    const firstTarget = {
+      kind: 'price_group' as const,
+      priceGroupId: firstRef.resourceId,
+      pricingCatalogId: core.tenantId,
+      tenantId: core.tenantId,
+    };
+    const secondTarget = { ...firstTarget, priceGroupId: secondRef.resourceId };
+    const setRead = Effect.fn('ServerOwnerRelayNative.setActualPriceGroupPermission')(
+      function* setActualPriceGroupPermission(
+        principalId: string,
+        target: typeof firstTarget,
+        operation: 'grant' | 'revoke',
+      ) {
+        const binding = {
+          permission: 'pricing.price_group.read' as const,
+          principal: { principalId, tenantId: core.tenantId },
+          target,
+        };
+        if (operation === 'grant') {
+          yield* Effect.addFinalizer(() => business.mutate({ operation: 'revoke', ...binding }).pipe(Effect.orDie));
+        }
+        yield* business.mutate({ operation, ...binding });
+        const decisions = yield* checkBusinessPermissions({
+          principal: binding.principal,
+          targets: [{ permission: binding.permission, target }],
+        });
+        expect(decisions).toHaveLength(1);
+        expect(decisions[0]?.decision).toBe(operation === 'grant' ? 'allowed' : 'denied');
+      },
+    );
+    yield* setRead(core.manager.principalId, firstTarget, 'grant');
+    yield* setRead(input.serviceId, firstTarget, 'revoke');
+    yield* setRead(core.manager.principalId, secondTarget, 'revoke');
+    yield* setRead(input.serviceId, secondTarget, 'grant');
+    yield* core.grantResourceAccess(input.profile, core.manager.principalId, 'writer');
+    const assignProof = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
+    const effectiveFrom = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 2 }));
+    const assignment = yield* executeAssignCustomerPriceGroupWithAuthorization(
+      {
+        effectiveFrom,
+        expectedProfileRevision: input.profileRevision,
+        priceGroupRef: firstRef,
+        profile: input.profile,
+        reason: 'Persist actual native Current assignment',
+      },
+      Redacted.value(assignProof.authorization),
+      yield* crypto.randomUUIDv4(),
+      { ...cccOptions, idempotencyKey: yield* crypto.randomUUIDv4() },
+    );
+    const assigned = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({ assignment: Schema.Struct({ priceGroupRef: PriceGroupRefSchema }) }),
+    )(assignment);
+    expect(assigned.assignment.priceGroupRef).toEqual(firstRef);
+    yield* Effect.sleep(Duration.seconds(3));
+    const resolve = Effect.fn('ServerOwnerRelayNative.resolveActualAssignedPriceGroup')(
+      function* resolveActualAssignedPriceGroup() {
+        const proof = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
+        const result = yield* executeCustomerPriceGroupResolutionWithAuthorization(
+          {
+            authorizationSubject: { kind: 'RETAIL' },
+            effectiveAt: DateTime.formatIso(yield* DateTime.now),
+            profile: input.profile,
+          },
+          Redacted.value(proof.authorization),
+          yield* crypto.randomUUIDv4(),
+          cccOptions,
+        );
+        return { proof, result };
+      },
+    );
+    const before = yield* core.evidence(input.database);
+    const previous = new Set(before.accesses.map((row) => row.dataAccessEventId));
+    const allowed = yield* resolve();
+    expect(
+      Schema.is(Schema.Struct({ _tag: Schema.Literal('ASSIGNED'), priceGroupRef: PriceGroupRefSchema }))(
+        allowed.result.resolution,
+      ),
+    ).toBe(true);
+    expect(allowed.result.resolution).toMatchObject({ priceGroupRef: firstRef });
+    const received = (yield* core.evidence(input.database)).accesses.filter(
+      (row) =>
+        !previous.has(row.dataAccessEventId) &&
+        row.evidencePolicyKey === 'pricing.price-group-catalog.api.validate-price-group-compatibility.evidence.v1' &&
+        row.outcome === 'allowed',
+    );
+    expect(received.length).toBeGreaterThan(0);
+    for (const row of received) {
+      expect(row.principalId).toBe(core.manager.principalId);
+      expect(row.authBindingId).toBe(input.personal.authBindingId);
+      expect(row.legalEntityId).toBeNull();
+      expect(row.targetResourceId).toBe(firstRef.resourceId);
+    }
+    yield* setRead(core.manager.principalId, firstTarget, 'revoke');
+    yield* setRead(input.serviceId, firstTarget, 'grant');
+    const beforeDenied = new Set((yield* core.evidence(input.database)).accesses.map((row) => row.dataAccessEventId));
+    expect(Exit.isFailure(yield* Effect.exit(resolve()))).toBe(true);
+    const actualDenied = (yield* core.evidence(input.database)).accesses.filter(
+      (row) =>
+        !beforeDenied.has(row.dataAccessEventId) &&
+        row.servingModuleKey === 'pricing.price-group-catalog' &&
+        row.outcome === 'denied',
+    );
+    expect(actualDenied.length).toBeGreaterThan(0);
+    for (const row of actualDenied) {
+      expect(row.principalId).toBe(core.manager.principalId);
+      expect(row.legalEntityId).toBeNull();
+    }
+    yield* setRead(core.manager.principalId, firstTarget, 'grant');
+    yield* setRead(input.serviceId, firstTarget, 'revoke');
+    const recovered = (yield* resolve()).result.resolution;
+    expect(
+      Schema.is(Schema.Struct({ _tag: Schema.Literal('ASSIGNED'), priceGroupRef: PriceGroupRefSchema }))(recovered),
+    ).toBe(true);
+    expect(recovered).toMatchObject({ priceGroupRef: firstRef });
+    const relay = Effect.fn('ServerOwnerRelayNative.issueActualPriceGroupRelay')(
+      function* issueActualPriceGroupRelay() {
+        const source = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
+        const credential = yield* issueRelayedGatewayContext(
+          {
+            audience: 'price-group-catalog',
+            compositionRevision: input.personal.revision,
+            exchangeId: yield* crypto.randomUUIDv4(),
+            operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+            sourceAssertion: Redacted.value(source.sourceAssertion),
+          },
+          {
+            apiKey: input.workloadKey,
+            baseUrl: `${input.fixture.origin}/shell-super-app-api`,
+            requestCorrelation: yield* crypto.randomUUIDv4(),
+          },
+        );
+        const verified = yield* Effect.tryPromise(() =>
+          jwtVerify(credential.token, input.personal.publicKey, {
+            audience: 'price-group-catalog',
+            issuer: input.fixture.origin,
+          }),
+        );
+        const claims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)(verified.payload);
+        expect(claims.sub).toBe(core.manager.principalId);
+        expect(claims.principal.legalEntityId).toBeUndefined();
+        expect(claims.compositionRevision).toBe(input.personal.revision);
+        expect(claims.exp).toBeLessThanOrEqual(source.expiresAt);
+        return { authorization: `Bearer ${credential.token}`, source };
+      },
+    );
+    const deniedFirst = yield* relay();
+    const deniedAlternate = yield* Effect.flip(
+      executePriceGroupDefinitionWithAuthorization(
+        { priceGroupRef: secondRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
+        deniedFirst.authorization,
+        yield* crypto.randomUUIDv4(),
+        pgcOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(deniedAlternate)).toBe(true);
+    const permittedFirst = yield* relay();
+    yield* executePriceGroupDefinitionWithAuthorization(
+      { priceGroupRef: firstRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
+      permittedFirst.authorization,
+      yield* crypto.randomUUIDv4(),
+      pgcOptions,
+    );
+    const replay = yield* Effect.flip(
+      executeValidatePriceGroupCompatibilityWithAuthorization(
+        {
+          priceGroupRef: firstRef,
+          requiredContract: { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
+          trustedOperationAt: DateTime.formatIso(yield* DateTime.now),
+        },
+        permittedFirst.authorization,
+        yield* crypto.randomUUIDv4(),
+        pgcOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(replay)).toBe(true);
+    const missingLeInput = { ...input.personal };
+    delete missingLeInput.legalEntityId;
+    const missingLe = yield* issueNativeApiKeyGatewayAuthorization(missingLeInput);
+    yield* assertNativeRelayHttpRejected({
+      apiKey: input.workloadKey,
+      category: 'price-group-missing-source-legal-entity',
+      database: input.database,
+      expectedStatus: 403,
+      fixture: input.fixture,
+      request: {
+        audience: 'price-group-catalog',
+        compositionRevision: input.personal.revision,
+        exchangeId: yield* crypto.randomUUIDv4(),
+        operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+        sourceAssertion: Redacted.value(missingLe.sourceAssertion),
+      },
+      requestCorrelation: yield* crypto.randomUUIDv4(),
+    });
+    const expirySource = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
+    const verifiedExpirySource = yield* Effect.tryPromise(() =>
+      jwtVerify(Redacted.value(expirySource.sourceAssertion), input.personal.publicKey, {
+        audience: 'commerce-customer-context',
+        issuer: input.fixture.origin,
+      }),
+    );
+    const expiredClaims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)({
+      ...verifiedExpirySource.payload,
+      exp: Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1,
+      iat: Math.floor((yield* Clock.currentTimeMillis) / 1000) - 30,
+      jti: yield* crypto.randomUUIDv4(),
+    });
+    // Negative-only signed fixture: this expired assertion is never accepted as authority.
+    const expiredSource = yield* Effect.tryPromise(() =>
+      new SignJWT(expiredClaims).setProtectedHeader({ alg: 'EdDSA', kid: input.signingKid }).sign(input.privateKey),
+    );
+    yield* assertNativeRelayHttpRejected({
+      apiKey: input.workloadKey,
+      category: 'price-group-expired-original-source',
+      database: input.database,
+      expectedStatus: 401,
+      fixture: input.fixture,
+      request: {
+        audience: 'price-group-catalog',
+        compositionRevision: input.personal.revision,
+        exchangeId: yield* crypto.randomUUIDv4(),
+        operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+        sourceAssertion: expiredSource,
+      },
+      requestCorrelation: yield* crypto.randomUUIDv4(),
+    });
+    const expiredRead = yield* Effect.flip(
+      executeCustomerPriceGroupResolutionWithAuthorization(
+        {
+          authorizationSubject: { kind: 'RETAIL' },
+          effectiveAt: DateTime.formatIso(yield* DateTime.now),
+          profile: input.profile,
+        },
+        `Bearer ${expiredSource}`,
+        yield* crypto.randomUUIDv4(),
+        cccOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(expiredRead)).toBe(true);
+    yield* input.priceGroupCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+    expect(Exit.isFailure(yield* Effect.exit(resolve()))).toBe(true);
+    const issuerDownProof = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
+    yield* input.shell.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+    expect(
+      Exit.isFailure(
+        yield* Effect.exit(
+          executeCustomerPriceGroupResolutionWithAuthorization(
+            {
+              authorizationSubject: { kind: 'RETAIL' },
+              effectiveAt: DateTime.formatIso(yield* DateTime.now),
+              profile: input.profile,
+            },
+            Redacted.value(issuerDownProof.authorization),
+            yield* crypto.randomUUIDv4(),
+            cccOptions,
+          ),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+        where: { sourceJti: issuerDownProof.sourceJti },
+      }),
+    ).toBeUndefined();
+    yield* Effect.logInfo('Actual CCC PriceGroup relay native matrix', {
+      actorPreserved: true,
+      audienceWideFirstRedemption: true,
+      compositionRevision: input.personal.revision,
+      independentTargetPermissions: true,
+      issuerAndProviderUnavailableNeverNone: true,
+      sameActualAssignmentAndTarget: true,
+      sourceRequiredLegalEntityTargetTenantOnly: true,
+    });
+    return yield* Effect.void;
+  },
+);
+
 const grantNativeManufacturerReadPermissions = Effect.fn('ServerOwnerRelayNative.grantManufacturerReadPermissions')(
   function* grantNativeManufacturerReadPermissions(fixture: NativeShellUserFixture, servicePrincipalId: string) {
     const { spice } = fixture.authentication;
@@ -4572,13 +5270,19 @@ it.live(
                 'commerce.customer-context.add-saved-address',
                 'commerce.customer-context.update-saved-address',
                 'party.registry.add-contact-point',
+                'pricing.price-group-catalog.create-price-group',
+                'commerce.customer-context.assign-customer-price-group',
               ],
               gatewayMaterial,
-              ['party.registry', 'commerce.customer-context', 'commerce.market-catalog'],
+              ['party.registry', 'commerce.customer-context', 'commerce.market-catalog', 'pricing.price-group-catalog'],
             );
             yield* Effect.logInfo('Native Retail setup phase', { phase: 'initial-shell-fixture-returned' });
             const cleanupConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
             yield* Effect.logInfo('Native Retail setup phase', { phase: 'cleanup-config-loaded' });
+            yield* migratePriceGroupCatalogNativeBaseline({
+              adminConnectionString: Redacted.make(cleanupConnections.admin.connectionString),
+              runtimeConnectionString: Redacted.make(cleanupConnections.runtime.connectionString),
+            });
             const releaseDisposableRetailQueue = Effect.fn('ServerOwnerRelayNative.releaseDisposableRetailQueue')(
               function* releaseDisposableRetailQueue() {
                 yield* Effect.logInfo('Disposable Retail queue release started', {
@@ -4623,6 +5327,13 @@ it.live(
               relativeDirectory: '../../verticals/commerce-customer-context',
             });
             children.push(customerContext.child);
+            const priceGroupCatalog = yield* startPackagedApplication({
+              appId: 'price-group-catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/price-group-catalog',
+            });
+            children.push(priceGroupCatalog.child);
             const market = yield* startPackagedApplication({
               appId: 'commerce-market-catalog',
               compositionUrl,
@@ -4669,6 +5380,11 @@ it.live(
                   appId: 'commerce-customer-context',
                   backend: { baseUrl: `${customerContext.origin}/`, transport: 'node-http' },
                   contract: yield* observe(`${customerContext.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                },
+                {
+                  appId: 'price-group-catalog',
+                  backend: { baseUrl: `${priceGroupCatalog.origin}/`, transport: 'node-http' },
+                  contract: yield* observe(`${priceGroupCatalog.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
                 },
                 {
                   appId: 'commerce-market-catalog',
@@ -4756,23 +5472,31 @@ it.live(
               appId: 'shell-super-app',
               buildMarker: shell.compiled.buildMarker,
             });
-            expect(current.composition.modules).toHaveLength(3);
+            expect(current.composition.modules).toHaveLength(4);
             expect(current.composition.modules).toEqual(
               expect.arrayContaining([
                 expect.objectContaining({
                   backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
                   deployment: { appId: 'party-registry', buildMarker: party.compiled.buildMarker },
                   federation: expect.objectContaining({ execution: 'browser' }),
+                  moduleId: 'party.registry',
                 }),
                 expect.objectContaining({
                   backend: { baseUrl: `${customerContext.origin}/`, transport: 'node-http' },
                   deployment: { appId: 'commerce-customer-context', buildMarker: customerContext.compiled.buildMarker },
                   federation: expect.objectContaining({ execution: 'server' }),
+                  moduleId: 'commerce.customer-context',
+                }),
+                expect.objectContaining({
+                  backend: { baseUrl: `${priceGroupCatalog.origin}/`, transport: 'node-http' },
+                  deployment: { appId: 'price-group-catalog', buildMarker: priceGroupCatalog.compiled.buildMarker },
+                  moduleId: 'pricing.price-group-catalog',
                 }),
                 expect.objectContaining({
                   backend: { baseUrl: `${market.origin}/`, transport: 'node-http' },
                   deployment: { appId: 'commerce-market-catalog', buildMarker: market.compiled.buildMarker },
                   federation: expect.objectContaining({ execution: 'browser' }),
+                  moduleId: 'commerce.market-catalog',
                 }),
               ]),
             );
@@ -4870,6 +5594,28 @@ it.live(
               Effect.provideService(AuthDatabase, fixture.persistence),
             );
             const provider = yield* keys.verify(Redacted.value(issued.secret));
+            const issueMarketKey = yield* client.post(
+              `${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`,
+              {
+                body: yield* HttpBody.json({ name: 'Native Market source relay', principalId: serviceId }),
+                headers: {
+                  cookie: Redacted.value(cookie),
+                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  origin: fixture.origin,
+                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                },
+              },
+            );
+            expect(issueMarketKey.status).toBe(200);
+            const marketIssued = yield* issueMarketKey.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
+            );
+            const marketProvider = yield* keys.verify(Redacted.value(marketIssued.secret));
+            expect(marketProvider.providerKeyId === provider.providerKeyId).toBe(false);
+            const marketService = yield* fixture.resolver.resolveBetterAuthApiKey(marketProvider.providerKeyId);
+            expect(marketService.principalId).toBe(serviceId);
+            expect(marketService.authBindingId).toBe(marketIssued.authBindingId);
+            const marketServiceAuthContextRef = Redacted.make(`better-auth-api-key:${marketProvider.providerKeyId}`);
             const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
             expect(service.principalId).toBe(serviceId);
             expect(service.authBindingId).toBe(issued.authBindingId);
@@ -4943,6 +5689,12 @@ it.live(
                     sourceAppId: 'commerce-customer-context',
                     sourceBuildMarker: customerContext.compiled.buildMarker,
                   },
+                  {
+                    compositionRevision: approved.composition.revision,
+                    providerKeyId: marketProvider.providerKeyId,
+                    sourceAppId: 'commerce-market-catalog',
+                    sourceBuildMarker: market.compiled.buildMarker,
+                  },
                 ]),
               ),
             });
@@ -4963,6 +5715,19 @@ it.live(
             children.push(enrolledCustomerContext.child);
             expect(enrolledCustomerContext.origin).toBe(customerContext.origin);
             expect(enrolledCustomerContext.compiled).toEqual(customerContext.compiled);
+            yield* market.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            expect(yield* market.child.isRunning).toBe(false);
+            const enrolledMarket = yield* startPackagedApplication({
+              appId: 'commerce-market-catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              port: Number(new URL(market.origin).port),
+              relativeDirectory: '../../verticals/commerce-market-catalog',
+              relaySource: { apiKey: marketIssued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
+            });
+            children.push(enrolledMarket.child);
+            expect(enrolledMarket.origin).toBe(market.origin);
+            expect(enrolledMarket.compiled).toEqual(market.compiled);
 
             yield* grantNativeCatalogModuleAccess(fixture.core, 'commerce.customer-context');
             const retailEvidenceRef = `native/retail/${yield* crypto.randomUUIDv4()}`;
@@ -5503,13 +6268,12 @@ it.live(
             );
             yield* activateBinding();
             // #1287: use the actual mounted Read and its default factory with owner-complete
-            // zero assignments. This R has no PGC member: it proves not-present independence,
-            // not an installed-provider outage or a working single-assignment integration.
+            // zero assignments with installed PGC; the branch must not acquire its issuer or call it.
             const exerciseCompleteZeroPriceGroup = Effect.fn('ServerOwnerRelayNative.completeZeroPriceGroup')(
               function* completeZeroPriceGroup() {
                 expect(
                   approved.composition.modules.some((member) => member.deployment.appId === 'price-group-catalog'),
-                ).toBe(false);
+                ).toBe(true);
                 yield* fixture.core.grantResourceAccess(
                   created.result.profileRef,
                   fixture.core.manager.principalId,
@@ -5596,7 +6360,7 @@ it.live(
                   compositionRevision: approved.composition.revision,
                   noneFromOwnerCompleteCurrentSet: true,
                   originalActorPreserved: true,
-                  pgcCompositionMembership: 'NOT_PRESENT_IN_THIS_COMPOSITION',
+                  pgcCompositionMembership: 'INSTALLED_NO_TARGET_CALL_REQUIRED',
                   sourceRelayExchangeAbsent: true,
                 });
               },
@@ -5975,6 +6739,67 @@ it.live(
                 revision: approved.composition.revision,
               }),
               serviceId,
+            });
+
+            yield* exerciseNativeMarketSubjectRelay({
+              customerContext: enrolledCustomerContext,
+              database,
+              fixture,
+              market: enrolledMarket,
+              personal: {
+                apiKey: personalKey.secret,
+                audience: 'commerce-market-catalog',
+                authBindingId: personalKey.authBindingId,
+                authContextRef: personalAuthContextRef,
+                buildMarker: enrolledMarket.compiled.buildMarker,
+                legalEntityId: fixture.core.legalEntityId,
+                origin: fixture.origin,
+                principalId: fixture.core.manager.principalId,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              },
+              privateKey: signingKeyPair.privateKey,
+              profile: created.result.profileRef,
+              service: {
+                apiKey: marketIssued.secret,
+                audience: 'commerce-customer-context',
+                authBindingId: marketIssued.authBindingId,
+                authContextRef: marketServiceAuthContextRef,
+                buildMarker: enrolledCustomerContext.compiled.buildMarker,
+                legalEntityId: fixture.core.legalEntityId,
+                origin: fixture.origin,
+                principalId: serviceId,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              },
+              signingKid,
+              workloadKey: marketIssued.secret,
+            });
+
+            yield* exerciseNativePriceGroupRelay({
+              customerContext: enrolledCustomerContext,
+              database,
+              fixture,
+              personal: {
+                apiKey: personalKey.secret,
+                audience: 'commerce-customer-context',
+                authBindingId: personalKey.authBindingId,
+                authContextRef: personalAuthContextRef,
+                buildMarker: enrolledCustomerContext.compiled.buildMarker,
+                legalEntityId: fixture.core.legalEntityId,
+                origin: fixture.origin,
+                principalId: fixture.core.manager.principalId,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              },
+              priceGroupCatalog,
+              privateKey: signingKeyPair.privateKey,
+              profile: { ...created.result.profileRef, kind: 'RETAIL' },
+              profileRevision: created.result.revision,
+              serviceId,
+              shell: enrolledShell.child,
+              signingKid,
+              workloadKey: issued.secret,
             });
 
             return yield* Effect.void;

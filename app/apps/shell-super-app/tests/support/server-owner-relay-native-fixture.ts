@@ -18,6 +18,7 @@ import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
 const MARKET_APP_ID = 'commerce-market-catalog';
+const PRICE_GROUP_APP_ID = 'price-group-catalog';
 
 export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerStartupError>()(
   'PackagedOwnerStartupError',
@@ -27,7 +28,14 @@ export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerS
 ) {}
 
 const IdentitySchema = Schema.Struct({
-  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog', CUSTOMER_CONTEXT_APP_ID, MARKET_APP_ID]),
+  appId: Schema.Literals([
+    SHELL_APP_ID,
+    'party-registry',
+    'catalog',
+    CUSTOMER_CONTEXT_APP_ID,
+    MARKET_APP_ID,
+    PRICE_GROUP_APP_ID,
+  ]),
   build: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   buildMarker: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   sourceRevision: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u)),
@@ -37,6 +45,7 @@ const IdentitySchema = Schema.Struct({
     'app/catalog',
     'app/commerce-customer-context',
     'app/commerce-market-catalog',
+    'app/price-group-catalog',
   ]),
   version: Schema.String.check(Schema.isMinLength(1)),
 });
@@ -61,7 +70,8 @@ interface PackagedApplicationInput {
     | 'party-registry'
     | 'catalog'
     | typeof CUSTOMER_CONTEXT_APP_ID
-    | typeof MARKET_APP_ID;
+    | typeof MARKET_APP_ID
+    | typeof PRICE_GROUP_APP_ID;
   readonly authentication?: {
     readonly baseUrl: string;
     readonly connectionString: Redacted.Redacted;
@@ -142,6 +152,11 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       Object.assign(environment, {
         ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(input.relaySource.apiKey),
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
+      });
+    }
+    if (input.appId === CUSTOMER_CONTEXT_APP_ID && input.relaySource !== undefined) {
+      Object.assign(environment, {
+        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(input.relaySource.apiKey),
       });
     }
     if (input.sourceBindings !== undefined) {

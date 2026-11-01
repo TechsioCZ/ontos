@@ -864,6 +864,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
 );
 export const commerceCustomerContextInvitationClaimPreflightLive = invitationClaimPreflightWithOwnerServicesLive.pipe(
   Layer.provide(configuredProductionExternalPortsLive),

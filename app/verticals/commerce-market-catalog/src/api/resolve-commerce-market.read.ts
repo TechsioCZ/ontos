@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
   requireModuleOperation,
 } from '@app/core-runtime';
-import { Effect, Option } from 'effect';
+import { Crypto, Effect, Option } from 'effect';
 import {
   ResolveCommerceMarketRequestSchema,
   ResolveCommerceMarketResponseSchema,
@@ -159,11 +159,18 @@ export const resolveCommerceMarketRead = defineRead(
   },
   handleResolveCommerceMarket,
   (transaction, scope, compositionRevision) =>
-    marketResolutionPersistenceForScope(transaction, scope, compositionRevision).pipe(
-      Effect.map((persistence) => {
+    Effect.all(
+      {
+        crypto: Crypto.Crypto,
+        persistence: marketResolutionPersistenceForScope(transaction, scope, compositionRevision),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ crypto, persistence }) => {
         const reader = makeServerMarketSubjectRestrictionsReader({
           compositionRevision,
-          legalEntityId: scope.legalEntityId,
+          crypto,
+          scope,
         });
         return {
           ...persistence,

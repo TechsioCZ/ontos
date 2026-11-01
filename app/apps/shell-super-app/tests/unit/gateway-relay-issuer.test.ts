@@ -48,6 +48,37 @@ import {
 import type { RelayUnitRows } from '../support/gateway-relay-test.ts';
 
 const issuer = 'https://relay-unit.example.test';
+const relayRoutes = {
+  catalogParty: {
+    operationKey: 'party.registry.api.party-detail',
+    sourceAppId: 'catalog',
+    sourceModuleId: 'commerce.catalog',
+    targetAppId: 'party-registry',
+    targetModuleId: 'party.registry',
+  },
+  customerParty: {
+    operationKey: 'party.registry.api.party-detail',
+    sourceAppId: 'commerce-customer-context',
+    sourceModuleId: 'commerce.customer-context',
+    targetAppId: 'party-registry',
+    targetModuleId: 'party.registry',
+  },
+  customerPriceGroup: {
+    operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+    sourceAppId: 'commerce-customer-context',
+    sourceModuleId: 'commerce.customer-context',
+    targetAppId: 'price-group-catalog',
+    targetModuleId: 'pricing.price-group-catalog',
+  },
+  marketSubject: {
+    operationKey: 'commerce.customer-context.api.market-subject-restrictions-current',
+    sourceAppId: 'commerce-market-catalog',
+    sourceModuleId: 'commerce.market-catalog',
+    targetAppId: 'commerce-customer-context',
+    targetModuleId: 'commerce.customer-context',
+  },
+};
+
 interface RelayCase {
   readonly authRows?: RelayUnitRows;
   readonly authUnavailable?: boolean;
@@ -57,11 +88,12 @@ interface RelayCase {
   readonly header?: Partial<Parameters<SignJWT['setProtectedHeader']>[0]>;
   readonly ledgerFailure?: 'replay' | 'unavailable';
   readonly malformed?: boolean;
-  readonly missingDeployment?: 'catalog' | 'party-registry';
+  readonly missingDeployment?: 'catalog' | 'party-registry' | 'commerce-customer-context' | 'price-group-catalog';
   readonly moduleState?: 'suspended' | 'quarantined' | 'missing' | 'unavailable';
   readonly originalBindingRevoked?: boolean;
   readonly principal?: Partial<typeof GatewayTrustedPrincipalContextSchema.Type>;
   readonly providerKeyId?: string;
+  readonly route?: keyof typeof relayRoutes;
   readonly signerUnavailable?: boolean;
   readonly source?: Partial<typeof GatewayContextV2ClaimsSchema.Encoded>;
   readonly tamper?: boolean;
@@ -73,9 +105,10 @@ interface RelayCase {
 /** Controlled authority collaborators are unit fixtures; native tests establish actual Current admission. */
 const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: RelayCase = {}) {
   yield* TestClock.setTime(relayUnitNow * 1000);
+  const route = relayRoutes[input.route ?? 'catalogParty'];
   const snapshot = yield* makeCompositionSnapshot([
-    makeModuleContractFixture({ appId: 'catalog', moduleId: 'commerce.catalog' }),
-    makeModuleContractFixture({ appId: 'party-registry', moduleId: 'party.registry' }),
+    makeModuleContractFixture({ appId: route.sourceAppId, moduleId: route.sourceModuleId }),
+    makeModuleContractFixture({ appId: route.targetAppId, moduleId: route.targetModuleId }),
   ]);
   const { revision } = snapshot.composition;
   const { privateKey, publicKey } = yield* Effect.promise(() =>
@@ -85,7 +118,7 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
   const publicJwk = yield* Effect.promise(() => exportJWK(publicKey));
   const publicJwks = JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'relay-unit', use: 'sig' }] });
   const source = {
-    aud: 'catalog',
+    aud: route.sourceAppId,
     compositionRevision: revision,
     exp: relayUnitNow + 280,
     iat: relayUnitNow - 20,
@@ -93,7 +126,7 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
     jti: '80000000-0000-4000-8000-000000000001',
     principal: { ...relayUnitPrincipal, ...input.principal },
     sub: input.principal?.principalId ?? relayUnitPrincipal.principalId,
-    targetBuildMarker: 'catalog-build',
+    targetBuildMarker: `${route.sourceAppId}-build`,
     ver: 2,
     ...input.source,
   };
@@ -112,10 +145,10 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
     token = 'not-a-jwt';
   }
   const payload = yield* Schema.decodeUnknownEffect(GatewayRelayRequestSchema)({
-    audience: 'party-registry',
+    audience: route.targetAppId,
     compositionRevision: revision,
     exchangeId: '90000000-0000-4000-8000-000000000001',
-    operationKey: 'party.registry.api.party-detail',
+    operationKey: route.operationKey,
     sourceAssertion: token,
     ...input.target,
   });
@@ -133,6 +166,13 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
   let ledgerAttempts = 0;
   let ledgerClaims = 0;
   let signingAttempts = 0;
+  const ledgerFingerprints: string[] = [];
+  const resolvedSourceScopes: {
+    legalEntityId: string | undefined;
+    legalEntityScope: string;
+    principalId: string;
+    tenantId: string;
+  }[] = [];
   const registrar = capturingScopeGrantRegistrar();
   const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
   const selectedCatalog = {
@@ -150,7 +190,10 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
       signingAttempts += 1;
       return 'a0000000-0000-4000-8000-000000000001';
     }),
-    loadAdmission: Effect.succeed({ audiences: new Map([['party-registry', 'party-registry-build']]), revision }),
+    loadAdmission: Effect.succeed({
+      audiences: new Map([[route.targetAppId, `${route.targetAppId}-build`]]),
+      revision,
+    }),
     loadConfig: input.signerUnavailable === true ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration),
   }).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar.registrar)));
   const moduleStates = snapshot.composition.modules.map((module) =>
@@ -169,8 +212,8 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
       {
         compositionRevision: revision,
         providerKeyId: 'source-workload-key',
-        sourceAppId: 'catalog',
-        sourceBuildMarker: 'catalog-build',
+        sourceAppId: route.sourceAppId,
+        sourceBuildMarker: `${route.sourceAppId}-build`,
       },
     ]),
   });
@@ -203,6 +246,12 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
       ),
       Effect.provideService(OperationalScopeResolver, {
         resolve: (request) => {
+          resolvedSourceScopes.push({
+            legalEntityId: request.principal.legalEntityId,
+            legalEntityScope: request.legalEntityScope,
+            principalId: request.principal.principalId,
+            tenantId: request.principal.tenantId,
+          });
           if (input.contextFailure === 'unavailable') {
             return Effect.fail(
               new OperationContextUnavailable({
@@ -236,8 +285,9 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
         }),
       ),
       Effect.provideService(GatewayRelayExchangeLedger, {
-        reserve: () => {
+        reserve: (request) => {
           ledgerAttempts += 1;
+          ledgerFingerprints.push(request.requestFingerprint);
           if (input.ledgerFailure === 'replay') {
             return Effect.fail(new GatewayRelayExchangeReplay({ reason: 'Controlled replay' }));
           }
@@ -258,8 +308,10 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
   return {
     ledgerAttempts,
     ledgerClaims,
+    ledgerFingerprints,
     publicKey,
     registrarInputs: registrar.inputs,
+    resolvedSourceScopes,
     result,
     revision,
     signingAttempts,
@@ -385,5 +437,137 @@ it.effect('fails closed in the real destination issuer configuration after reser
     expect(result.ledgerClaims).toBe(1);
     expect(result.signingAttempts).toBe(0);
     expect(result.registrarInputs).toHaveLength(0);
+  }),
+);
+
+it.effect('validates original CCC Legal Entity and projects only its compatibility assertion to tenant scope', () =>
+  Effect.gen(function* tenantOnlyPriceGroupAssertion() {
+    const result = yield* relayCase({ route: 'customerPriceGroup' });
+    expect(Exit.isSuccess(result.result)).toBe(true);
+    if (!Exit.isSuccess(result.result)) {
+      return;
+    }
+    const issued = result.result.value;
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(issued.token, result.publicKey, {
+        audience: 'price-group-catalog',
+        currentDate: new Date(relayUnitNow * 1000),
+        issuer,
+      }),
+    );
+    const { legalEntityId, ...tenantPrincipal } = relayUnitPrincipal;
+    expect(verified.payload['principal']).toEqual(tenantPrincipal);
+    expect(verified.payload['compositionRevision']).toBe(result.revision);
+    expect(verified.payload.exp).toBe(relayUnitNow + 280);
+    expect(verified.payload.iat).toBe(relayUnitNow - 20);
+    expect(result.resolvedSourceScopes).toEqual([
+      {
+        legalEntityId,
+        legalEntityScope: 'required',
+        principalId: relayUnitPrincipal.principalId,
+        tenantId: relayUnitPrincipal.tenantId,
+      },
+    ]);
+    expect(result.ledgerClaims).toBe(1);
+  }),
+);
+
+it.effect('rejects a tenant-only CCC source before context resolution, exchange reservation or target signing', () =>
+  Effect.gen(function* requiredSourceLegalEntityCannotBeOmitted() {
+    const { legalEntityId, ...tenantPrincipal } = relayUnitPrincipal;
+    expect(legalEntityId).toBeDefined();
+    const result = yield* relayCase({ route: 'customerPriceGroup', source: { principal: tenantPrincipal } });
+    assertDenied(result, 'forbidden');
+    expect(result.resolvedSourceScopes).toEqual([]);
+  }),
+);
+
+it.effect('fingerprints the full CCC source Legal Entity even though both target assertions omit it', () =>
+  Effect.gen(function* sourceLegalEntityFingerprintRemainsDistinct() {
+    const first = yield* relayCase({ route: 'customerPriceGroup' });
+    const second = yield* relayCase({
+      principal: { legalEntityId: '30000000-0000-4000-8000-000000000002' },
+      route: 'customerPriceGroup',
+    });
+    expect(Exit.isSuccess(first.result)).toBe(true);
+    expect(Exit.isSuccess(second.result)).toBe(true);
+    expect(first.ledgerFingerprints).toHaveLength(1);
+    expect(second.ledgerFingerprints).toHaveLength(1);
+    expect(first.ledgerFingerprints[0]).not.toBe(second.ledgerFingerprints[0]);
+    for (const result of [first, second]) {
+      if (!Exit.isSuccess(result.result)) {
+        return;
+      }
+      const issued = result.result.value;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(issued.token, result.publicKey, {
+          audience: 'price-group-catalog',
+          currentDate: new Date(relayUnitNow * 1000),
+          issuer,
+        }),
+      );
+      expect(verified.payload['principal']).not.toHaveProperty('legalEntityId');
+    }
+  }),
+);
+
+it.effect('adds Market subject restrictions with the complete original Principal and no scope projection', () =>
+  Effect.gen(function* marketSubjectRetainsOriginalScope() {
+    const result = yield* relayCase({ route: 'marketSubject' });
+    expect(Exit.isSuccess(result.result)).toBe(true);
+    if (!Exit.isSuccess(result.result)) {
+      return;
+    }
+    const issued = result.result.value;
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(issued.token, result.publicKey, {
+        audience: 'commerce-customer-context',
+        currentDate: new Date(relayUnitNow * 1000),
+        issuer,
+      }),
+    );
+    expect(verified.payload['principal']).toEqual(relayUnitPrincipal);
+    expect(verified.payload.exp).toBe(relayUnitNow + 280);
+    expect(result.resolvedSourceScopes[0]?.legalEntityScope).toBe('required');
+  }),
+);
+
+for (const [label, input, code] of [
+  ['source-current-denied', { contextFailure: 'denied' }, 'forbidden'],
+  ['source-current-unavailable', { contextFailure: 'unavailable' }, 'unavailable'],
+  ['source-binding-revoked', { originalBindingRevoked: true }, 'forbidden'],
+  ['provider-missing', { missingDeployment: 'price-group-catalog' }, 'forbidden'],
+  ['source-build-mismatch', { source: { targetBuildMarker: 'other-build' } }, 'forbidden'],
+  ['source-revision-mismatch', { source: { compositionRevision: 'b'.repeat(64) } }, 'forbidden'],
+  [
+    'wrong-target-operation',
+    { target: { operationKey: 'pricing.price-group-catalog.api.price-group-current' } },
+    'forbidden',
+  ],
+  ['source-expired', { source: { exp: relayUnitNow } }, 'authentication_required'],
+] satisfies readonly (readonly [string, RelayCase, GatewayRelayError['code']])[]) {
+  it.effect(`keeps CCC projection closed for ${label}`, () =>
+    Effect.gen(function* projectedRelayFailure() {
+      assertDenied(yield* relayCase({ ...input, route: 'customerPriceGroup' }), code);
+    }),
+  );
+}
+
+it.effect('retains CCC Legal Entity on its previously approved Party relationship', () =>
+  Effect.gen(function* customerPartyScopeIsUnchanged() {
+    const result = yield* relayCase({ route: 'customerParty' });
+    expect(Exit.isSuccess(result.result)).toBe(true);
+    if (!Exit.isSuccess(result.result)) {
+      return;
+    }
+    const issued = result.result.value;
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(issued.token, result.publicKey, {
+        audience: 'party-registry',
+        currentDate: new Date(relayUnitNow * 1000),
+        issuer,
+      }),
+    );
+    expect(verified.payload['principal']).toEqual(relayUnitPrincipal);
   }),
 );

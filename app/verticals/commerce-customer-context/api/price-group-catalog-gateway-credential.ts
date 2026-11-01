@@ -1,7 +1,7 @@
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import type { ApiKeyGatewayContextClientOptions } from '@app/shared-contracts/server/gateway-context-api-key';
-import type { GatewayContextClientError, GatewayContextResponse } from '@app/shared-contracts';
-import { Config, Effect, Layer, Redacted, Schema } from 'effect';
+import { issueRelayedGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { readVerifiedGatewayCompositionRevision, readVerifiedGatewayScopeAssertion } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
+import { Config, Crypto, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { CustomerPriceGroupCatalogUnavailable } from '../shared/domain/price-group-errors.ts';
 import { PriceGroupCatalogGatewayCredentialService } from '../shared/domain/price-group-catalog-gateway-credential.ts';
@@ -22,16 +22,6 @@ const configuration = Config.all({
   apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   baseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
-
-type GatewayContextIssue = (
-  payload: {
-    readonly audience: 'price-group-catalog';
-    readonly compositionRevision: string;
-  },
-  options: ApiKeyGatewayContextClientOptions,
-) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
-
-const issueGatewayContextOverFetch: GatewayContextIssue = issueApiKeyGatewayContext;
 
 const unavailable = (cause: unknown): CustomerPriceGroupCatalogUnavailable => {
   const failure = new CustomerPriceGroupCatalogUnavailable({
@@ -59,7 +49,7 @@ export const makePriceGroupCatalogGatewayCredentialIssuer = (
     readonly apiKey: Redacted.Redacted;
     readonly baseUrl: URL;
   },
-  issue: GatewayContextIssue = issueGatewayContextOverFetch,
+  crypto: Crypto.Crypto,
 ): PriceGroupCatalogGatewayCredentialIssuer =>
   Object.freeze({
     issue: Effect.fn('PriceGroupCatalogGatewayCredentialIssuer.issue')(
@@ -67,11 +57,27 @@ export const makePriceGroupCatalogGatewayCredentialIssuer = (
         readonly audience: 'price-group-catalog';
         readonly compositionRevision: string;
         readonly requestCorrelation: string;
+        readonly scope: OperationalScope;
       }) {
-        const response = yield* issue(
+        const assertion = readVerifiedGatewayScopeAssertion(input.scope);
+        const compositionRevision = readVerifiedGatewayCompositionRevision(input.scope);
+        if (
+          assertion === undefined ||
+          assertion.audience !== 'commerce-customer-context' ||
+          compositionRevision !== input.compositionRevision ||
+          input.scope.legalEntityId === undefined ||
+          input.scope.correlationId !== input.requestCorrelation
+        ) {
+          return yield* unavailable('Verified CCC receiving scope and source Legal Entity are required');
+        }
+        const exchangeId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+        const response = yield* issueRelayedGatewayContext(
           {
-            audience: input.audience,
-            compositionRevision: input.compositionRevision,
+            audience: 'price-group-catalog',
+            compositionRevision,
+            exchangeId,
+            operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+            sourceAssertion: Redacted.value(assertion.assertion),
           },
           {
             apiKey: configured.apiKey,
@@ -94,15 +100,14 @@ export const makePriceGroupCatalogGatewayCredentialIssuer = (
  * Success-capable production credential Layer. Configuration is deployment-owned and server-only;
  * missing or malformed configuration installs the explicit fail-closed issuer.
  */
-export const makePriceGroupCatalogGatewayCredentialLayer = (
-  issue: GatewayContextIssue = issueGatewayContextOverFetch,
-) =>
+export const makePriceGroupCatalogGatewayCredentialLayer = () =>
   Layer.effect(
     PriceGroupCatalogGatewayCredentialService,
     configuration.pipe(
-      Effect.match({
-        onFailure: unavailableConfigurationIssuer,
-        onSuccess: (configured) => makePriceGroupCatalogGatewayCredentialIssuer(configured, issue),
+      Effect.matchEffect({
+        onFailure: (cause) => Effect.succeed(unavailableConfigurationIssuer(cause)),
+        onSuccess: (configured) =>
+          Crypto.Crypto.pipe(Effect.map((crypto) => makePriceGroupCatalogGatewayCredentialIssuer(configured, crypto))),
       }),
     ),
   );
