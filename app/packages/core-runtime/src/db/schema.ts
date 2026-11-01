@@ -2,6 +2,7 @@ import { defineRelations, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  bytea,
   check,
   foreignKey,
   index,
@@ -912,6 +913,40 @@ export const mediaAssets = coreSchema.table(
 
 const mediaAssetId = () => uuid('media_asset_id').notNull();
 
+/**
+ * Stored bytes of one Media Asset, per rendition, for the `database` storage provider (the stage has no object
+ * storage). `full` is the asset content itself; `thumbnail` is an optional smaller rendition of the same image.
+ * Rows are immutable content: a changed image is a new Media Asset.
+ */
+export const mediaAssetRenditions = coreSchema.table(
+  'media_asset_renditions',
+  {
+    tenantId: tenantId(),
+    mediaAssetId: mediaAssetId(),
+    rendition: text('rendition').notNull(),
+    mimeType: text('mime_type').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    contentSha256: text('content_sha256').notNull(),
+    bytes: bytea('bytes').notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.mediaAssetId, table.rendition],
+      name: 'core_media_asset_renditions_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.mediaAssetId],
+      foreignColumns: [mediaAssets.tenantId, mediaAssets.mediaAssetId],
+      name: 'core_media_asset_renditions_tenant_asset_fk',
+    }).onDelete('restrict'),
+    check('core_media_asset_renditions_rendition_ck', sql`${table.rendition} in ('full', 'thumbnail')`),
+    check('core_media_asset_renditions_size_ck', sql`${table.byteSize} > 0`),
+  ],
+);
+
 export const mediaLinks = coreSchema.table(
   'media_links',
   {
@@ -1318,6 +1353,7 @@ export const coreDatabaseSchema = {
   evidenceReferences,
   legalEntities,
   legalEntityNavigationExclusions,
+  mediaAssetRenditions,
   mediaAssets,
   mediaLinks,
   oauthConnectionGrants,
@@ -1358,6 +1394,7 @@ export const CORE_TABLES = [
   outboxAttempts,
   outboxDeliveryResolutions,
   mediaAssets,
+  mediaAssetRenditions,
   mediaLinks,
   evidenceReferences,
   searchIndexEntries,

@@ -1189,3 +1189,24 @@ export type {
   RetainedOwnerHistoryRequest,
   RetainedOwnerHistorySelector,
 } from './actions/retained-owner-history.ts';
+export {
+  MEDIA_IMAGE_LIMITS,
+  MEDIA_IMAGE_MIME_TYPES,
+  MediaImageUploadSchema,
+  MediaRenditionSchema,
+  detectImageMimeType,
+  readLinkedMediaRendition,
+  relinkMediaToResource,
+  storeLinkedMediaImage,
+  unlinkMediaFromResource,
+} from './media/media-image-store.ts';
+export type {
+  MediaImageMimeType,
+  MediaImageUpload,
+  MediaLinkTarget,
+  MediaRendition,
+  MediaRenditionContent,
+  StoredMediaImage,
+} from './media/media-image-store.ts';
+export { MediaStoreUnavailable } from './media/media-store-unavailable.ts';
+export { MediaUploadRejected } from './media/media-upload-rejected.ts';
