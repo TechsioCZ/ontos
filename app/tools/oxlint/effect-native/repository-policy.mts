@@ -12,7 +12,6 @@ import { appRoot, pluginDirectory, runOxlint } from './tests/oxlint.mts';
  */
 const skillsLockPath = '.agents/skills-lock.json';
 export const managedAssetSha256 = '0285a3668bea1d370f839bdc3b2a8d42795e330e6c897cfb3e5c50c878d10b7d';
-export const policyConfig = nodePath.join(pluginDirectory, 'repository-policy.config.ts');
 export const ignorePatternFlag = '--ignore-pattern';
 
 const SkillSourceLock = Schema.Struct({
@@ -70,10 +69,13 @@ export const managedSkillAssetPaths = (root: string): string[] => {
   return [asset];
 };
 
+/** Run Oxlint with the repository policy configuration over `inputs`, resolved from `cwd`. */
+export const runRepositoryPolicy = (inputs: readonly string[], cwd = appRoot) =>
+  runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), inputs, cwd);
+
 /** Lint the repository; diagnostics, a crashed loader, or an empty run fail the command. */
 export const lintRepositoryPolicy = (root = appRoot) =>
-  runOxlint(
-    policyConfig,
+  runRepositoryPolicy(
     [
       '.',
       ignorePatternFlag,
