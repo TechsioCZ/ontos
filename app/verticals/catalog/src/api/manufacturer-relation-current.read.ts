@@ -134,7 +134,12 @@ export const manufacturerRelationCurrentRead = defineRead(
     const readRuntime = yield* ReadRuntime;
     const crypto = yield* Crypto.Crypto;
     return manufacturerCurrentReadsForScope(transaction, scope, {
-      targetResolver: manufacturerTargetResolverForCoreRead(readRuntime, scope, crypto),
+      targetResolver: manufacturerTargetResolverForCoreRead(
+        readRuntime,
+        scope,
+        crypto,
+        'commerce.catalog.requirement.manufacturer-current-party',
+      ),
     });
   }),
   () => ({ kind: 'module', moduleId: moduleKey }),

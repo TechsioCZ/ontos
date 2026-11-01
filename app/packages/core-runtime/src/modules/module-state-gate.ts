@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { Clock, Context, Effect, Layer, Schema } from 'effect';
 
 import { tenantModuleStates, tenants } from '../db/schema.ts';
@@ -15,7 +15,7 @@ import { ModuleStateSnapshotValue } from './module-state-snapshot.ts';
 import type { TenantModuleState, TenantModuleStateServiceContract } from './tenant-module-state-service.ts';
 import {
   TENANT_MODULE_STATES,
-  TenantModuleStateSchema,
+  TenantModuleStateRecordSchema,
   TenantModuleStateService,
 } from './tenant-module-state-service.ts';
 
@@ -69,13 +69,14 @@ const denied = () =>
   });
 
 export const makeModuleStateSnapshot = (
-  ...[tenantId, entrypoints, records]: [
+  ...[tenantId, entrypoints, records, intrinsicDependencies = new Map()]: [
     tenantId: string,
     entrypoints: readonly ModuleEntrypointDescriptor[],
     records: readonly {
       readonly moduleKey: string;
       readonly state: TenantModuleState;
     }[],
+    intrinsicDependencies?: ReadonlyMap<string, readonly string[]>,
   ]
 ): ModuleStateSnapshot => {
   const entrypointKeys = Object.freeze(
@@ -83,7 +84,10 @@ export const makeModuleStateSnapshot = (
   );
   const declaredEntrypoints = new Set(entrypoints.map(entrypointFingerprint));
   const moduleKeys = entrypoints.flatMap((entrypoint) => (entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : []));
-  const declaredKeys = Object.freeze([...new Set(moduleKeys)].toSorted());
+  const intrinsic = new Map(
+    [...new Set(moduleKeys)].map((key) => [key, Object.freeze([...(intrinsicDependencies.get(key) ?? [])])]),
+  );
+  const declaredKeys = Object.freeze([...new Set([...moduleKeys, ...[...intrinsic.values()].flat()])].toSorted());
   const declaredSet = new Set(declaredKeys);
   const states = new Map<string, TenantModuleState>();
   for (const record of records) {
@@ -97,6 +101,7 @@ export const makeModuleStateSnapshot = (
   return new ModuleStateSnapshotValue(tenantId, entrypointKeys, declaredKeys, {
     declaredEntrypoints,
     evaluatedEntrypoints: new Set(),
+    intrinsicDependencies: intrinsic,
     states,
   });
 };
@@ -137,15 +142,17 @@ export const prepareModuleStateSnapshot = Effect.fn('ModuleStateGate.prepareModu
     stateService: TenantModuleStateServiceContract,
     tenantId: string,
     entrypoints: readonly ModuleEntrypointDescriptor[],
+    intrinsicDependencies: ReadonlyMap<string, readonly string[]> = new Map(),
   ): Effect.fn.Return<ModuleStateSnapshot, ModuleStateCheckUnavailableError> {
     const moduleKeys = entrypoints.flatMap((entrypoint) =>
       entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : [],
     );
-    const distinctKeys = [...new Set(moduleKeys)].toSorted();
+    const dependencyKeys = moduleKeys.flatMap((moduleKey) => intrinsicDependencies.get(moduleKey) ?? []);
+    const distinctKeys = [...new Set([...moduleKeys, ...dependencyKeys])].toSorted();
     const startedAt = yield* Clock.currentTimeMillis;
     let acquisition: Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError>;
     if (distinctKeys.length === 0) {
-      acquisition = Effect.succeed(makeModuleStateSnapshot(tenantId, entrypoints, []));
+      acquisition = Effect.succeed(makeModuleStateSnapshot(tenantId, entrypoints, [], intrinsicDependencies));
     } else if (tenantId.length === 0) {
       acquisition = Effect.fail(unavailable());
     } else {
@@ -154,7 +161,7 @@ export const prepareModuleStateSnapshot = Effect.fn('ModuleStateGate.prepareModu
         Effect.flatMap((records) =>
           Effect.try({
             catch: unavailable,
-            try: () => makeModuleStateSnapshot(tenantId, entrypoints, records),
+            try: () => makeModuleStateSnapshot(tenantId, entrypoints, records, intrinsicDependencies),
           }),
         ),
       );
@@ -221,7 +228,14 @@ export const checkModuleEntrypoint = (
       }),
     );
   }
-  const outcome = decideModuleStateAccess(data.states.get(entrypoint.moduleKey) ?? null, entrypoint.access);
+  const intrinsicActive = (data.intrinsicDependencies.get(entrypoint.moduleKey) ?? []).every(
+    (dependency) => data.states.get(dependency) === 'active',
+  );
+  const outcome =
+    decideModuleStateAccess(data.states.get(entrypoint.moduleKey) ?? null, entrypoint.access) === 'allow' &&
+    intrinsicActive
+      ? 'allow'
+      : 'deny';
   return (outcome === 'allow' ? Effect.void : Effect.fail(denied())).pipe(
     Effect.withSpan('ModuleStateGate.evaluate', {
       attributes: {
@@ -242,11 +256,13 @@ export interface ModuleStateGateService {
   readonly prepareSnapshot: (
     tenantId: string,
     entrypoints: readonly ModuleEntrypointDescriptor[],
+    intrinsicDependencies?: ReadonlyMap<string, readonly string[]>,
   ) => Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError>;
   readonly recheckWrite: (
     transaction: CoreTransaction,
     tenantId: string,
     entrypoint: TenantModuleEntrypoint<ModuleEntrypointDescriptor['role'], 'write'>,
+    intrinsicDependencies?: readonly string[],
   ) => Effect.Effect<void, ModuleStateGateError>;
 }
 
@@ -254,8 +270,9 @@ const isModuleStateDenied = Schema.is(ModuleStateDeniedError);
 
 export const makeModuleStateGate = (stateService: TenantModuleStateServiceContract): ModuleStateGateService => ({
   check: checkModuleEntrypoint,
-  prepareSnapshot: (tenantId, entrypoints) => prepareModuleStateSnapshot(stateService, tenantId, entrypoints),
-  recheckWrite: (transaction, tenantId, entrypoint) => {
+  prepareSnapshot: (tenantId, entrypoints, intrinsicDependencies) =>
+    prepareModuleStateSnapshot(stateService, tenantId, entrypoints, intrinsicDependencies),
+  recheckWrite: (transaction, tenantId, entrypoint, intrinsicDependencies = []) => {
     const recheck = Effect.gen(function* recheckWriteEffect() {
       const tenantRows = yield* transaction
         .select({ tenantId: tenants.tenantId })
@@ -266,18 +283,24 @@ export const makeModuleStateGate = (stateService: TenantModuleStateServiceContra
       if (tenantRows[0] === undefined) {
         return yield* unavailable();
       }
-      const rows = yield* transaction
-        .select({ state: tenantModuleStates.state })
+      const keys = [...new Set([entrypoint.moduleKey, ...intrinsicDependencies])];
+      const rawRows = yield* transaction
+        .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
         .from(tenantModuleStates)
-        .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, entrypoint.moduleKey)))
+        .where(and(eq(tenantModuleStates.tenantId, tenantId), inArray(tenantModuleStates.moduleKey, keys)))
         .pipe(Effect.mapError(unavailable));
-      const state =
-        rows[0] === undefined
-          ? null
-          : yield* Schema.decodeUnknownEffect(TenantModuleStateSchema)(rows[0].state).pipe(
-              Effect.mapError(unavailable),
-            );
-      if (decideModuleStateAccess(state, 'write') === 'deny') {
+      const rows = yield* Schema.decodeUnknownEffect(Schema.Array(TenantModuleStateRecordSchema))(rawRows).pipe(
+        Effect.mapError(unavailable),
+      );
+      const states = new Map(rows.map(({ moduleKey, state }) => [moduleKey, state]));
+      const requestedKeys = new Set(keys);
+      if (states.size !== rows.length || rows.some(({ moduleKey }) => !requestedKeys.has(moduleKey))) {
+        return yield* unavailable();
+      }
+      if (
+        decideModuleStateAccess(states.get(entrypoint.moduleKey) ?? null, 'write') === 'deny' ||
+        intrinsicDependencies.some((dependency) => states.get(dependency) !== 'active')
+      ) {
         return yield* denied();
       }
     });

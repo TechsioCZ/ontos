@@ -328,6 +328,76 @@ it('proves closed DTO construction across imports and rejects executable reachab
   }, testsDirectory);
 });
 
+it('follows actual named type re-exports and rejects broken or executable declarations', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    const definition = nodePath.join(directory, 'definition.ts');
+    const barrel = nodePath.join(directory, 'barrel.ts');
+    const bridge = nodePath.join(directory, 'bridge.ts');
+    writeFileSync(consumer, dataFactoryConsumer);
+    writeFileSync(barrel, "export type { Input as Renamed } from './definition.ts';");
+    writeFileSync(bridge, "import type { Renamed as Local } from './barrel.ts'; export type { Local as Input };");
+    writeFileSync(
+      factory,
+      "import type { Input } from './bridge.ts'; export const makeData = ({ id }: Input) => ({ id });",
+    );
+    writeFileSync(definition, 'export interface Input { readonly id: string; }');
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    writeFileSync(
+      factory,
+      "import type { Input } from './bridge.ts'; export const makeData = ({ id }: Pick<Input, 'id'>) => ({ id });",
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    writeFileSync(
+      factory,
+      "import type { Input } from './bridge.ts'; export const makeData = ({ id }: Input) => ({ id });",
+    );
+    const controls = [
+      'export interface Input { readonly id: string; readonly read: () => string; }',
+      'export class Input { read() { return "service"; } }',
+      "export type { Input } from './bridge.ts';",
+      'interface Input { readonly id: string; } export interface Other { readonly id: string; }',
+      'export interface Other { readonly id: string; }',
+    ];
+    for (const declaration of controls) {
+      writeFileSync(definition, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  }, testsDirectory);
+});
+
+it('keeps nullable DTO input records open until projection or decoding', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const projections = [
+      'export const makeData = (value: { readonly id: string } | null) => ({ id: value === null ? "" : value.id });',
+      'export const makeData = (value: { readonly id: string } | undefined) => ({ id: value === undefined ? "" : value.id });',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String })); export const makeData = (value: { readonly id: string } | undefined) => ({ value: value === undefined ? { id: "" } : decode(value) });',
+    ];
+    for (const declaration of projections) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    const controls = [
+      'export const makeData = (value: { readonly id: string; readonly read: () => string } | null) => ({ id: value === null ? "" : value.id });',
+      'export const makeData = (value: { readonly id: string; readonly read: () => string } | undefined) => ({ id: value === undefined ? "" : value.id });',
+      'export const makeData = (value: { readonly id: string } | null) => value;',
+      'export const makeData = (value: { readonly id: string } | undefined) => ({ ...value });',
+      'export const makeData = (value: { readonly id: string } | null) => ({ value });',
+      'export const makeData = (value: { readonly id: string } | undefined) => ({ extra: value.authority });',
+      'export const makeData = (value: { readonly id: string } | null) => Object.values(value);',
+      'export const makeData = (value: { readonly id: string } | unknown) => ({ id: value.id });',
+    ];
+    for (const declaration of controls) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  }, testsDirectory);
+});
+
 it('proves native array predicates in DTO codecs without admitting executable callbacks', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
@@ -474,6 +544,10 @@ it('rejects typed effectful schema helpers and shadowed native assignments', () 
 
 it('proves the concrete Outbox fixture imports without an ownership or name exemption', () => {
   const support = nodePath.join(appRoot, 'packages/core-runtime/tests/support/outbox-worker-composition.ts');
+  const nativeComposition = nodePath.join(
+    appRoot,
+    'packages/core-runtime/tests/support/outbox-worker-native-composition.ts',
+  );
   const processFixture = nodePath.join(
     appRoot,
     'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
@@ -484,6 +558,43 @@ it('proves the concrete Outbox fixture imports without an ownership or name exem
   expect(
     provesDataFactoryImport(processFixture, '../support/outbox-worker-composition.ts', 'makeOutboxWorkerComposition'),
   ).toBe(true);
+  expect(runOxlint(lintConfig, [support], appRoot).diagnostics.filter(({ code }) => code === ruleCode)).toEqual([]);
+  expect(
+    provesDataFactoryImport(nativeComposition, '../../src/testing/module-contract.ts', 'makeModuleContractFixture'),
+  ).toBe(true);
+  expect(
+    runOxlint(lintConfig, [nativeComposition], appRoot).diagnostics.filter(({ code }) => code === ruleCode),
+  ).toEqual([]);
+});
+
+it('proves fresh invocation-local array accumulation without admitting caller or service state', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const valid = [
+      'export const makeData = (values: readonly string[]) => { const entries: string[] = []; for (const value of values) { entries.push(value); } return { entries }; };',
+      'export const makeData = () => { const entries: string[] = []; const alias = entries; const size = alias.push("first"); entries.push("second"); return { entries, size }; };',
+    ];
+    for (const declaration of valid) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    const invalid = [
+      'export const makeData = (entries: string[]) => { entries.push("changed"); return { entries }; };',
+      'const entries: string[] = []; export const makeData = () => { entries.push("changed"); return { entries }; };',
+      'export const makeData = () => { const entries: string[] = []; const append = () => entries.push("changed"); append(); return { entries }; };',
+      'const seed = () => ["first"]; export const makeData = () => { const entries = seed(); entries.push("changed"); return { entries }; };',
+      'const append = (entries: string[]) => entries.push("changed"); export const makeData = () => { const entries: string[] = []; append(entries); return { entries }; };',
+      'export const makeData = () => { const entries = []; entries.push({ read: () => fetch("service") }); return { entries }; };',
+      'export const makeData = (value: unknown) => { const entries = []; entries.push(value); return { entries }; };',
+      'export const makeData = () => { const entries = []; entries.push(fetch("service")); return { entries }; };',
+    ];
+    for (const declaration of invalid) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  }, testsDirectory);
 });
 
 it('allows service constructor calls only within proven native service factory callbacks', () => {

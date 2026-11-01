@@ -34,7 +34,11 @@ const serve = Effect.scoped(
         Effect.flatMap((line) => writer.write(`${line}\n`)),
         Effect.mapError(unavailable),
       );
-    const owner = yield* marketRevisionNativeBackend;
+    const managementExecutor = yield* Config.String('ONTOS_NATIVE_MARKET_MANAGEMENT_EXECUTOR').pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Literals(['allowed', 'denied']))),
+      Effect.mapError(unavailable),
+    );
+    const owner = yield* marketRevisionNativeBackend(managementExecutor);
     let original: typeof CreateMarketResultSchema.Type | undefined;
     let revised = false;
     const ready = yield* Schema.decodeUnknownEffect(Schema.toType(MarketRevisionNativeResponseSchema))({

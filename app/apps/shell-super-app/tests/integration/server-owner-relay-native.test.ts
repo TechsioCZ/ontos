@@ -13,6 +13,7 @@ import {
   issueApiKeyGatewayContext,
   issueRelayedGatewayContext,
 } from '@app/shared-contracts/server/gateway-context-api-key';
+import { executeCustomerPriceGroupResolutionWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';
 import { SignJWT, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   ActiveApplicationCompositionSnapshotSchema,
@@ -956,9 +957,9 @@ type NativeCoreDatabase = Effect.Success<typeof testCoreDatabase>;
 
 type NativeSavedAddress = Effect.Success<ReturnType<typeof executeUpdateSavedAddressWithAuthorization>>['address'];
 
-/** Native factory-port proof and separate honest mounted admission proof; no final Current facts. */
-const exerciseRegisteredPostalReads = Effect.fn('ServerOwnerRelayNative.exerciseRegisteredPostalReads')(
-  function* exerciseRegisteredPostalReads(input: {
+/** A redeemed scope alone cannot authorize factory-only access; final Current resolution remains unavailable. */
+const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exerciseFactoryOnlyPostalRejection')(
+  function* exerciseFactoryOnlyPostalRejection(input: {
     readonly compositionRevision: string;
     readonly compositionUrl: string;
     readonly customerContext: Effect.Success<ReturnType<typeof startPackagedApplication>>;
@@ -1053,36 +1054,18 @@ const exerciseRegisteredPostalReads = Effect.fn('ServerOwnerRelayNative.exercise
       if (input.savedAddress.origin.kind !== 'PARTY_BACKED') {
         return yield* new PackagedOwnerStartupError({ reason: 'Real Party-backed saved source required' });
       }
-      expect(result.postal.currentPartyRef).toEqual(input.savedAddress.origin.partyRef);
-      expect(result.postal.currentContactPointRef).toEqual(input.savedAddress.origin.contactPointRef);
-      expect(result.postal.currentSourceRevision).toBe(input.savedAddress.origin.sourceRevision);
-      expect(result.postal.postalAddress).toMatchObject({
-        addressLine1: 'Native postal fixture 1',
-        city: 'Praha',
-        countryCode: 'CZ',
-        postalCode: '11000',
-      });
+      expect(result.outcome).toBe('FACTORY_ONLY_EXECUTION_REJECTED');
+      expect(result.requirementCode).toBe('module_operation_requirement_unavailable');
       const exchange = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
         where: { sourceJti: proof.sourceJti },
       });
-      expect(exchange !== undefined).toBe(true);
+      expect(exchange).toBeUndefined();
     }
     const afterFactories = yield* core.evidence(input.database);
     const providers = afterFactories.accesses.filter(
-      (row) =>
-        row.servingModuleKey === PARTY_MODULE_KEY &&
-        !previous.has(row.dataAccessEventId) &&
-        row.outcomeCode === 'read_allowed',
+      (row) => row.servingModuleKey === PARTY_MODULE_KEY && !previous.has(row.dataAccessEventId),
     );
-    expect(providers).toHaveLength(2);
-    for (const provider of providers) {
-      expect(provider.principalId).toBe(principalId);
-      expect(provider.principalId === input.serviceId).toBe(false);
-      expect(provider.authBindingId).toBe(input.personalAuthBindingId);
-      expect(provider.authMethod).toBe('api_key');
-      expect(provider.authContextRef === Redacted.value(input.personalAuthContextRef)).toBe(true);
-      expect(provider.legalEntityId).toBe(core.legalEntityId);
-    }
+    expect(providers).toHaveLength(0);
     // These are unresolved request selectors/expectations, never accepted Storefront or Current authority.
     const request = {
       explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef: input.savedAddress.savedAddressRef },
@@ -1131,12 +1114,13 @@ const exerciseRegisteredPostalReads = Effect.fn('ServerOwnerRelayNative.exercise
       });
       expect(exchange).toBeUndefined();
     }
-    yield* Effect.logInfo('Actual registered postal factory ports verified separately from mounted admission', {
+    yield* Effect.logInfo('Factory-only postal access rejected before provider use', {
       currentRevision: input.compositionRevision,
-      defaultFactories: 2,
+      defaultFactoriesRejected: 2,
       finalResolutionProven: false,
+      missingExecutionRequirementCode: 'module_operation_requirement_unavailable',
       mountedMissingTrustedStorefront: 2,
-      originalProviderActorPreserved: true,
+      newPartyReadEvidence: 0,
     });
     return yield* Effect.void;
   },
@@ -5518,6 +5502,106 @@ it.live(
               },
             );
             yield* activateBinding();
+            // #1287: use the actual mounted Read and its default factory with owner-complete
+            // zero assignments. This R has no PGC member: it proves not-present independence,
+            // not an installed-provider outage or a working single-assignment integration.
+            const exerciseCompleteZeroPriceGroup = Effect.fn('ServerOwnerRelayNative.completeZeroPriceGroup')(
+              function* completeZeroPriceGroup() {
+                expect(
+                  approved.composition.modules.some((member) => member.deployment.appId === 'price-group-catalog'),
+                ).toBe(false);
+                yield* fixture.core.grantResourceAccess(
+                  created.result.profileRef,
+                  fixture.core.manager.principalId,
+                  'reader',
+                );
+                const access = yield* makeContextAccessLive();
+                if (access.businessPermissions === undefined) {
+                  return yield* new PackagedOwnerStartupError({
+                    reason: 'Exact native PriceGroup profile permission reader unavailable',
+                  });
+                }
+                const profilePermission = yield* access.businessPermissions({
+                  principal: { principalId: fixture.core.manager.principalId, tenantId: fixture.core.tenantId },
+                  targets: [
+                    {
+                      permission: 'retail.profile.read',
+                      target: {
+                        kind: 'retail_profile',
+                        legalEntityId: fixture.core.legalEntityId,
+                        profileId: created.result.profileRef.resourceId,
+                        tenantId: fixture.core.tenantId,
+                      },
+                    },
+                  ],
+                });
+                expect(profilePermission).toHaveLength(1);
+                expect(profilePermission.every((decision) => decision.decision === 'allowed')).toBe(true);
+                const proof = yield* issueNativeApiKeyGatewayAuthorization({
+                  apiKey: personalKey.secret,
+                  audience: 'commerce-customer-context',
+                  authBindingId: personalKey.authBindingId,
+                  authContextRef: personalAuthContextRef,
+                  buildMarker: customerContext.compiled.buildMarker,
+                  legalEntityId: fixture.core.legalEntityId,
+                  origin: fixture.origin,
+                  principalId: fixture.core.manager.principalId,
+                  publicKey: signingKeyPair.publicKey,
+                  revision: approved.composition.revision,
+                });
+                const requestCorrelation = yield* crypto.randomUUIDv4();
+                const beforePriceGroupRead = yield* fixture.core.evidence(database);
+                const previousAccesses = new Set(beforePriceGroupRead.accesses.map((row) => row.dataAccessEventId));
+                const resolved = yield* executeCustomerPriceGroupResolutionWithAuthorization(
+                  {
+                    authorizationSubject: { kind: 'RETAIL' },
+                    effectiveAt: DateTime.formatIso(yield* DateTime.now),
+                    profile: { ...created.result.profileRef, kind: 'RETAIL' },
+                  },
+                  Redacted.value(proof.authorization),
+                  requestCorrelation,
+                  {
+                    baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
+                    compositionRevision: approved.composition.revision,
+                  },
+                );
+                expect(Schema.is(Schema.Struct({ _tag: Schema.Literal('NONE') }))(resolved.resolution)).toBe(true);
+                expect(resolved.profile).toEqual({ ...created.result.profileRef, kind: 'RETAIL' });
+                expect(resolved.currentnessEvidence.verificationMode).toBe('OWNER_CURRENT_SET_REVALIDATED');
+                expect(resolved.completenessEvidence.scope).toEqual({
+                  kind: 'EXACT_PREDICATE',
+                  predicateRef: resolved.currentnessEvidence.predicateRef,
+                });
+                expect(resolved.completenessEvidence.ownerRevision).toBe(resolved.currentnessEvidence.ownerRevision);
+                expect(resolved.verificationReceipt.ownerModuleId).toBe('commerce.customer-context');
+                expect(resolved.verificationReceipt.generation).toBe(resolved.currentnessEvidence.generation);
+                const exchange = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+                  where: { sourceJti: proof.sourceJti },
+                });
+                expect(exchange).toBeUndefined();
+                const readEvidence = yield* fixture.core.evidence(database);
+                const allowed = readEvidence.accesses.filter(
+                  (row) =>
+                    !previousAccesses.has(row.dataAccessEventId) &&
+                    row.evidencePolicyKey ===
+                      'commerce.customer-context.api.customer-price-group-resolution.evidence.v1' &&
+                    row.outcomeCode === 'read_allowed',
+                );
+                expect(allowed).toHaveLength(1);
+                expect(allowed[0]?.principalId).toBe(fixture.core.manager.principalId);
+                expect(allowed[0]?.authBindingId).toBe(personalKey.authBindingId);
+                expect(allowed[0]?.servingModuleKey).toBe('commerce.customer-context');
+                expect(allowed[0]?.legalEntityId).toBe(fixture.core.legalEntityId);
+                return yield* Effect.logInfo('Native CCC complete-zero PriceGroup Read', {
+                  compositionRevision: approved.composition.revision,
+                  noneFromOwnerCompleteCurrentSet: true,
+                  originalActorPreserved: true,
+                  pgcCompositionMembership: 'NOT_PRESENT_IN_THIS_COMPOSITION',
+                  sourceRelayExchangeAbsent: true,
+                });
+              },
+            );
+            yield* exerciseCompleteZeroPriceGroup();
             const exerciseSavedAddresses = Effect.fn('ServerOwnerRelayNative.exerciseActualSavedAddresses')(
               function* exerciseActualSavedAddresses() {
                 const issuePostalProof = Effect.fn('ServerOwnerRelayNative.issuePostalProof')(
@@ -5748,7 +5832,7 @@ it.live(
                   });
                   expect(claimed !== undefined).toBe(true);
                 }
-                yield* exerciseRegisteredPostalReads({
+                yield* exerciseFactoryOnlyPostalRejection({
                   compositionRevision: approved.composition.revision,
                   compositionUrl,
                   customerContext: enrolledCustomerContext,

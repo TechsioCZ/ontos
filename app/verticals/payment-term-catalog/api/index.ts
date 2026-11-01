@@ -1,10 +1,11 @@
+import { paymentTermCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ReadRuntime, GatewayAssertionRedemptionService, ActionRuntime } from '@app/core-runtime';
@@ -98,6 +99,10 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = Layer.provide(
@@ -105,11 +110,22 @@ const operationalScopeResolverLive = Layer.provide(
   Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, paymentTermCatalogRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
 /** Deployment composition seam. Trusted Customer Context issuance remains a requirement. */
-const paymentTermCatalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const paymentTermCatalogActionRuntime = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  paymentTermCatalogRegistration,
+).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -123,12 +139,6 @@ const paymentTermCatalogActionRuntime = makeActionRuntimeLive(ultramodernDeliver
 );
 const productionActionRuntimeLive = paymentTermCatalogActionRuntime.pipe(
   Layer.provideMerge(unavailableCustomerContextGatewayCredentialLive),
-);
-const productionReadRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
-  ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(

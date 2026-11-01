@@ -35,6 +35,11 @@ import {
 } from '../integrations/order-finalization-owner-gateways.ts';
 import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope } from '../integrations/current-pricing-decision-owner-final-fence.ts';
 import { currentPricingDecisionWholeEvaluationForScope } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
+import {
+  manageQuotationRequirements,
+  verifyPricingSubjectForRequirement,
+} from '../integrations/pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from '../integrations/pricing-operation-requirements.ts';
 import type { PricingOwnerMaterialEvidenceFenceGateway } from '../integrations/material-evidence-owner-final-fence.ts';
 import {
   QuotationIdentityConflict,
@@ -202,6 +207,7 @@ interface FreshCurrentResolverDependencies {
   readonly compositionRevision: string;
   readonly evaluationFactory: CurrentPricingDecisionEvaluationFactoryService;
   readonly pricingOwnerFinalFence: PricingOwnerMaterialEvidenceFenceGateway;
+  readonly requirements?: PricingWholeEvaluationRequirements;
   readonly scope: OperationalScope & { readonly legalEntityId: string };
   readonly source: CurrentPricingDecisionWholeSource;
   readonly subjectAuthority: CurrentPricingDecisionSubjectAuthorityService;
@@ -223,7 +229,12 @@ export const makeFreshCurrentResolver = (
   dependencies: FreshCurrentResolverDependencies,
 ): ManageQuotationFreshCurrentResolver => {
   const { evaluationFactory, pricingOwnerFinalFence, scope, source, subjectAuthority } = dependencies;
-  const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, dependencies.compositionRevision);
+  const evaluation = evaluationFactory.make(
+    source,
+    pricingOwnerFinalFence,
+    dependencies.compositionRevision,
+    dependencies.requirements,
+  );
   return Effect.fn('ManageQuotationFreshCurrentAuthority.resolveFresh')(function* resolveFresh(input) {
     const operationTime = DateTime.formatIso(DateTime.makeUnsafe(input.trusted.trustedOperationAt));
     if (!freshRequestMatchesTrustedScope(input, scope, operationTime)) {
@@ -379,7 +390,12 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
               verifiedScope,
               compositionRevision,
             ),
-            source: currentPricingDecisionWholeEvaluationForScope(transaction, verifiedScope, compositionRevision),
+            source: currentPricingDecisionWholeEvaluationForScope(
+              transaction,
+              verifiedScope,
+              compositionRevision,
+              manageQuotationRequirements,
+            ),
           },
           { concurrency: 3 },
         ).pipe(
@@ -388,9 +404,15 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
               compositionRevision,
               evaluationFactory,
               pricingOwnerFinalFence,
+              requirements: manageQuotationRequirements,
               scope: verifiedScope,
               source,
-              subjectAuthority,
+              subjectAuthority: {
+                verify: (input) =>
+                  verifyPricingSubjectForRequirement(manageQuotationRequirements.purchaseContext, input).pipe(
+                    Effect.provideService(CurrentPricingDecisionSubjectAuthority, subjectAuthority),
+                  ),
+              },
             }),
           ),
         );

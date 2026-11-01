@@ -499,10 +499,15 @@ it.effect('keeps the actual COMMERCE_ONLY adapter independent of Party relay cre
       kind: 'COMMERCE_ONLY',
       postalAddress: { addressLine1: '1 Main Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
     } as const;
-    yield* partyBackedAddressSourceValidatorForScope(unverifiedScope, crypto)({ ...payload, origin: localOrigin });
+    yield* partyBackedAddressSourceValidatorForScope(
+      unverifiedScope,
+      crypto,
+      'commerce.customer-context.requirement.add-saved-address-party',
+    )({ ...payload, origin: localOrigin });
     const resolved = yield* partyBackedPostalAddressResolverForScope(
       unverifiedScope,
       crypto,
+      'commerce.customer-context.requirement.delivery-destination-resolution-party',
     )({ ...savedPartyAddress, origin: localOrigin });
     expect(resolved).toEqual({
       kind: 'FOUND',
@@ -520,5 +525,33 @@ it.effect('fails closed at the actual Party-backed adapter without trusted sourc
       partyBackedPostalAddressResolverForScope(unverifiedScope, crypto)(savedPartyAddress),
     );
     expect(Schema.is(AddressBookUnavailable)(readFailure)).toBe(true);
+  }).pipe(Effect.provide(nodeCryptoLayer)),
+);
+
+it.effect('does not invoke a configured Party transport without a genuine operation lease', () =>
+  Effect.gen(function* missingOperationLease() {
+    const crypto = yield* Crypto.Crypto;
+    let calls = 0;
+    const execute: typeof executePartyContactPointDetail = () => {
+      calls += 1;
+      return Effect.succeed(currentPostalContactPoint);
+    };
+    const validation = yield* Effect.flip(
+      partyBackedAddressSourceValidatorForScope(
+        unverifiedScope,
+        crypto,
+        'commerce.customer-context.requirement.add-saved-address-party',
+      )(payload).pipe(Effect.provideService(PartyAddressSourceExecutor, execute)),
+    );
+    expect(Schema.is(AddressBookUnavailable)(validation)).toBe(true);
+    const resolution = yield* Effect.flip(
+      partyBackedPostalAddressResolverForScope(
+        unverifiedScope,
+        crypto,
+        'commerce.customer-context.requirement.delivery-destination-resolution-party',
+      )(savedPartyAddress).pipe(Effect.provideService(PartyAddressSourceExecutor, execute)),
+    );
+    expect(Schema.is(AddressBookUnavailable)(resolution)).toBe(true);
+    expect(calls).toBe(0);
   }).pipe(Effect.provide(nodeCryptoLayer)),
 );

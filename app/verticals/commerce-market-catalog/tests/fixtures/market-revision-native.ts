@@ -182,12 +182,17 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
 
 /** Published launcher only: producer, database, runtime and HTTP verifier remain in the Market owner process. */
 export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLauncher.make')(
-  function* makeMarketRevisionNativeFixture() {
+  function* makeMarketRevisionNativeFixture(
+    options: { readonly retirementManagementExecutor?: 'allowed' | 'denied' } = {},
+  ) {
     const { artifact, directory } = yield* bundleMarketRevisionNativeChild();
     const channel = yield* openMarketRevisionNativeChannel();
     const child = yield* ChildProcess.make(process.execPath, [artifact], {
       cwd: directory,
-      env: { [marketRevisionNativeSocketEnvironment]: channel.socketPath },
+      env: {
+        [marketRevisionNativeSocketEnvironment]: channel.socketPath,
+        ONTOS_NATIVE_MARKET_MANAGEMENT_EXECUTOR: options.retirementManagementExecutor ?? 'allowed',
+      },
       extendEnv: true,
       stderr: 'pipe',
       stdin: 'ignore',

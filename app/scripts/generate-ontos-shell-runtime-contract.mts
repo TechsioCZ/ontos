@@ -5,6 +5,7 @@ import { Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import {
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
@@ -18,7 +19,7 @@ import type { OntosShellRuntimeContract } from '../packages/core-runtime/src/ind
 export const createShellRuntimeContract = (buildMarker: string): OntosShellRuntimeContract =>
   Object.freeze<OntosShellRuntimeContract>({
     contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-    coreCapabilities: [],
+    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     deployment: { appId: 'shell-super-app', buildMarker },
     schemaVersion: '2',
   });

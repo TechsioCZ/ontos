@@ -1,4 +1,7 @@
-import { Schema } from 'effect';
+import type { InstalledModuleCatalog } from './catalog.ts';
+import type { TenantModuleStateUnsatisfiedDependencyError } from './tenant-module-state-unsatisfied-dependency-error.ts';
+import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './tenant-module-state-unsatisfied-dependency-error.ts';
+import { Effect, Schema } from 'effect';
 
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
@@ -176,3 +179,51 @@ export const providesRequiredOperationContracts = (
           entrypoint.entrypointKey === operation.entrypointKey && schemaVersion === operation.schemaVersion,
       ) === true,
   );
+
+/** Resolve only intrinsic declarations; conditional operation relationships never enter this closure. */
+export const tenantModuleIntrinsicDependencyClosure = Effect.fn('TenantModuleState.intrinsicDependencyClosure')(
+  function* intrinsicDependencyClosure(catalog: InstalledModuleCatalog, moduleKey: string) {
+    const required = new Set<string>();
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = Effect.fnUntraced(function* visitIntrinsicDependency(
+      key: string,
+    ): Effect.fn.Return<void, TenantModuleStateUnsatisfiedDependencyError> {
+      if (visiting.has(key)) {
+        return yield* unsatisfiedDependency();
+      }
+      if (visited.has(key)) {
+        return yield* Effect.void;
+      }
+      const contract = catalog.getByModuleId(key);
+      if (contract === undefined) {
+        return yield* unsatisfiedDependency();
+      }
+      visiting.add(key);
+      yield* Effect.forEach(
+        contract.manifest.requirements?.intrinsic ?? [],
+        Effect.fnUntraced(function* visitRequirement(requirement) {
+          const provider = catalog.getByModuleId(requirement.moduleId);
+          if (
+            provider === undefined ||
+            !providesRequiredOperationContracts(
+              provider.manifest.publicSurface.operationContracts,
+              requirement.requiredOperations,
+            )
+          ) {
+            return yield* unsatisfiedDependency();
+          }
+          required.add(requirement.moduleId);
+          yield* visit(requirement.moduleId);
+          return yield* Effect.void;
+        }),
+        { concurrency: 1, discard: true },
+      );
+      visiting.delete(key);
+      visited.add(key);
+      return yield* Effect.void;
+    });
+    yield* visit(moduleKey);
+    return [...required].toSorted();
+  },
+);

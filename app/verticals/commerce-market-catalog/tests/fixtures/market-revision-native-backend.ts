@@ -7,6 +7,7 @@ import {
   ActionRuntime,
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
+  OntosModuleDeploymentContractSchema,
   makeActionRuntimeLive,
   OperationalScopeResolver,
   ReadRuntimeLive,
@@ -14,7 +15,6 @@ import {
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeHttpServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
@@ -128,7 +128,10 @@ const MarketRevisionNativeUnavailable = Schema.TaggedError<{
 const unavailable = () =>
   new MarketRevisionNativeUnavailable({ reason: 'The owned Market revision fixture is unavailable' });
 
-const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* makeScenario(marketBaseUrl: string) {
+const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* makeScenario(
+  marketBaseUrl: string,
+  retirementManagementExecutor: 'allowed' | 'denied',
+) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1250-market-revision',
@@ -238,15 +241,46 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   const registryScope = yield* Effect.acquireRelease(Scope.make(), (scope, exit) => Scope.close(scope, exit));
   const registry = yield* makeCurrentStorefrontNativeReceiver().pipe(Scope.provide(registryScope));
   const customerContext = yield* makeMarketRetirementNativeReceiver();
+  const readOwnerContract = Effect.fn('MarketRevisionNative.readOwnerContract')(function* readOwnerContract(input: {
+    readonly appId: string;
+    readonly buildMarker: string;
+    readonly directory: string;
+    readonly moduleId: string;
+  }) {
+    const document = yield* filesystem
+      .readFileString(path.join(input.directory, '.output/public/.well-known/ontos-module-manifest.json'))
+      .pipe(Effect.mapError((cause) => Object.defineProperty(unavailable(), 'cause', { value: cause })));
+    const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+      document,
+    ).pipe(Effect.mapError((cause) => Object.defineProperty(unavailable(), 'cause', { value: cause })));
+    if (
+      contract.deployment.appId !== input.appId ||
+      contract.deployment.buildMarker !== input.buildMarker ||
+      contract.manifest.module.id !== input.moduleId
+    ) {
+      return yield* unavailable();
+    }
+    return contract;
+  });
+  // Intact owner-emitted public documents, never locally reconstructed owner claims.
   const baseSnapshot = yield* makeApiKeyGatewayNativeComposition(
     [
-      makeModuleContractFixture({
+      yield* readOwnerContract({
         appId: marketAppId,
         buildMarker: ultramodernApiMarker.buildMarker,
+        directory: process.cwd(),
         moduleId: moduleKey,
       }),
-      makeModuleContractFixture({ ...registry.deployment, moduleId: registryModuleId }),
-      makeModuleContractFixture({ ...customerContext.deployment, moduleId: customerContextModuleId }),
+      yield* readOwnerContract({
+        ...registry.deployment,
+        directory: path.resolve(process.cwd(), '../storefront-registry'),
+        moduleId: registryModuleId,
+      }),
+      yield* readOwnerContract({
+        ...customerContext.deployment,
+        directory: path.resolve(process.cwd(), '../commerce-customer-context'),
+        moduleId: customerContextModuleId,
+      }),
     ],
     3_600_000,
   );
@@ -285,7 +319,11 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   const baseConfiguration = {
     actionExecutor: 'manager-only' as const,
     actionKeys: [
-      ...actionKeys,
+      ...actionKeys.filter(
+        (key) =>
+          retirementManagementExecutor !== 'denied' ||
+          key !== manageMarketRetirementAdmissionAction.descriptor.actionKey,
+      ),
       bindSelfApiKeyAction.descriptor.actionKey,
       'commerce.storefront-registry.register-storefront-application',
       'commerce.customer-context.reserve-market-retirement',
@@ -294,6 +332,8 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     allowedAudiences: [marketAppId, 'storefront-registry', 'commerce-customer-context'],
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     compositionRevision: snapshot.composition.revision,
+    executorProbeActionKeys:
+      retirementManagementExecutor === 'denied' ? [manageMarketRetirementAdmissionAction.descriptor.actionKey] : [],
     moduleAccess: 'configured-modules' as const,
     moduleKeys: [moduleKey, registryModuleId, customerContextModuleId],
     runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
@@ -439,6 +479,21 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
   const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
+  if (retirementManagementExecutor === 'denied') {
+    // Read-only, fully consistent checks for the same real P whose personal key is bound above.
+    // Probe-universe membership permits this query only; it never grants Manage execution.
+    yield* fixture.verifyActionExecutor({
+      actionKey: retireMarketAction.descriptor.actionKey,
+      expected: 'allowed',
+      principalId: principal.principalId,
+    });
+    yield* fixture.verifyActionExecutor({
+      actionKey: manageMarketRetirementAdmissionAction.descriptor.actionKey,
+      expected: 'denied',
+      principalId: principal.principalId,
+    });
+  }
+
   const context = Context.add(
     baseContext,
     ConfigProvider.ConfigProvider,
@@ -523,218 +578,220 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
  * generated HTTP reads verify real Shell assertions against the retained native owner runtime.
  * The existing owner runtime redeems assertions against this disposable native owner database.
  */
-export const marketRevisionNativeBackend = Effect.gen(function* makeMarketRevisionNativeFixture() {
-  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
-  const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(server.address);
-  const baseUrl = new URL(`http://127.0.0.1:${address.port}`);
-  const scenario = yield* makeScenario(baseUrl.href);
-  const { binding, relayBinding, shell } = scenario;
-  if (shell === undefined || binding === undefined || relayBinding === undefined) {
-    return yield* unavailable();
-  }
-  const redemptionContext = yield* Layer.build(
-    GatewayAssertionRedemptionLive.pipe(
-      Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-      Layer.provide(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration)),
-    ),
-  );
-  const configuration = Context.get(scenario.context, ConfigProvider.ConfigProvider);
-  const dependencies = yield* Layer.build(
-    commerceMarketCatalogActionRuntimeDependenciesLive.pipe(
-      Layer.provide(Layer.mergeAll(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration), NodeCrypto.layer)),
-    ),
-  ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configuration));
-  const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-    Layer.provide(Layer.succeedContext(dependencies)),
-  );
-  const base = Context.get(yield* Layer.build(coreFactory), ActionRuntime);
-  const readRuntime = Context.get(
-    yield* Layer.build(ReadRuntimeLive.pipe(Layer.provide(Layer.succeedContext(dependencies)))),
-    ReadRuntime,
-  );
-  const crypto = yield* Crypto.Crypto;
-  const actionContext = yield* Layer.build(
-    MarketRetirementActionRuntimeLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(MarketRetirementRuntimeBindings, {
-            base,
-            coreFactory,
-            crypto,
-            readRuntime,
-            scopeResolver: Context.get(dependencies, OperationalScopeResolver),
-          }),
-          MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer)),
+export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backend')(
+  function* makeMarketRevisionNativeFixture(retirementManagementExecutor: 'allowed' | 'denied' = 'allowed') {
+    const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+    const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(server.address);
+    const baseUrl = new URL(`http://127.0.0.1:${address.port}`);
+    const scenario = yield* makeScenario(baseUrl.href, retirementManagementExecutor);
+    const { binding, relayBinding, shell } = scenario;
+    if (shell === undefined || binding === undefined || relayBinding === undefined) {
+      return yield* unavailable();
+    }
+    const redemptionContext = yield* Layer.build(
+      GatewayAssertionRedemptionLive.pipe(
+        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+        Layer.provide(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration)),
+      ),
+    );
+    const configuration = Context.get(scenario.context, ConfigProvider.ConfigProvider);
+    const dependencies = yield* Layer.build(
+      commerceMarketCatalogActionRuntimeDependenciesLive.pipe(
+        Layer.provide(Layer.mergeAll(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration), NodeCrypto.layer)),
+      ),
+    ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configuration));
+    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+      Layer.provide(Layer.succeedContext(dependencies)),
+    );
+    const base = Context.get(yield* Layer.build(coreFactory), ActionRuntime);
+    const readRuntime = Context.get(
+      yield* Layer.build(ReadRuntimeLive.pipe(Layer.provide(Layer.succeedContext(dependencies)))),
+      ReadRuntime,
+    );
+    const crypto = yield* Crypto.Crypto;
+    const actionContext = yield* Layer.build(
+      MarketRetirementActionRuntimeLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(MarketRetirementRuntimeBindings, {
+              base,
+              coreFactory,
+              crypto,
+              readRuntime,
+              scopeResolver: Context.get(dependencies, OperationalScopeResolver),
+            }),
+            MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer)),
+          ),
         ),
       ),
-    ),
-  );
-  const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
-    Effect.provideService(ReadRuntime, readRuntime),
-    Effect.provideService(ActionRuntime, Context.get(actionContext, ActionRuntime)),
-    Effect.provideContext(redemptionContext),
-  );
-  const configured = defineEffectBff({
-    api: runtime.api,
-    layer: runtime.layer.pipe(Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, configuration))),
-  });
-  const handler = yield* Effect.acquireRelease(
-    Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: configured }, {})).pipe(
-      Effect.flatMap((value) => (value === null ? Effect.fail(unavailable()) : Effect.succeed(value))),
-    ),
-    (value) => (value.dispose === undefined ? Effect.void : Effect.promise(value.dispose).pipe(Effect.orDie)),
-  );
-  yield* server.serve(
-    Effect.gen(function* receivePublicMarketRequest() {
-      const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
-      const response = yield* Effect.tryPromise({
-        catch: unavailable,
-        try: dispatchEffectBffRequest.bind(undefined, handler.handler, request, {
-          prefix: commerceMarketCatalogApiContract.apiPrefix,
-        }),
+    );
+    const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(ActionRuntime, Context.get(actionContext, ActionRuntime)),
+      Effect.provideContext(redemptionContext),
+    );
+    const configured = defineEffectBff({
+      api: runtime.api,
+      layer: runtime.layer.pipe(Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, configuration))),
+    });
+    const handler = yield* Effect.acquireRelease(
+      Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: configured }, {})).pipe(
+        Effect.flatMap((value) => (value === null ? Effect.fail(unavailable()) : Effect.succeed(value))),
+      ),
+      (value) => (value.dispose === undefined ? Effect.void : Effect.promise(value.dispose).pipe(Effect.orDie)),
+    );
+    yield* server.serve(
+      Effect.gen(function* receivePublicMarketRequest() {
+        const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
+        const response = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: dispatchEffectBffRequest.bind(undefined, handler.handler, request, {
+            prefix: commerceMarketCatalogApiContract.apiPrefix,
+          }),
+        });
+        return HttpServerResponse.fromWeb(response);
+      }),
+    );
+    const issue = Effect.fn('MarketRevisionPublicNative.issue')(function* issue(input: {
+      readonly audience: typeof marketAppId;
+      readonly compositionRevision: string;
+      readonly legalEntityId: string;
+      readonly requestCorrelation: string;
+    }) {
+      if (
+        input.audience !== marketAppId ||
+        input.compositionRevision !== scenario.snapshot.composition.revision ||
+        input.legalEntityId !== scenario.principal.legalEntityId
+      ) {
+        return yield* new MarketRevisionNativeIssueUnavailable({ stage: 'INPUT_SCOPE_INVALID' });
+      }
+      const admitted = yield* issueApiKeyGatewayContext(input, {
+        apiKey: binding.secret,
+        baseUrl: shell.baseUrl,
+        requestCorrelation: input.requestCorrelation,
+      }).pipe(Effect.mapError(() => new MarketRevisionNativeIssueUnavailable({ stage: 'SHELL_GATEWAY_UNAVAILABLE' })));
+      const expectedIngress = `/shell-super-app-api/module-api/${encodeURIComponent(marketAppId)}/${encodeURIComponent(ultramodernApiMarker.buildMarker)}${commerceMarketCatalogApiContract.apiPrefix}`;
+      const shellOrigin = new URL(shell.baseUrl);
+      const admittedBaseUrl = yield* Effect.try({
+        catch: () => new MarketRevisionNativeIssueUnavailable({ stage: 'ADMISSION_MISMATCH' }),
+        try: () => new URL(admitted.apiBaseUrl, shellOrigin),
       });
-      return HttpServerResponse.fromWeb(response);
-    }),
-  );
-  const issue = Effect.fn('MarketRevisionPublicNative.issue')(function* issue(input: {
-    readonly audience: typeof marketAppId;
-    readonly compositionRevision: string;
-    readonly legalEntityId: string;
-    readonly requestCorrelation: string;
-  }) {
-    if (
-      input.audience !== marketAppId ||
-      input.compositionRevision !== scenario.snapshot.composition.revision ||
-      input.legalEntityId !== scenario.principal.legalEntityId
-    ) {
-      return yield* new MarketRevisionNativeIssueUnavailable({ stage: 'INPUT_SCOPE_INVALID' });
-    }
-    const admitted = yield* issueApiKeyGatewayContext(input, {
-      apiKey: binding.secret,
-      baseUrl: shell.baseUrl,
-      requestCorrelation: input.requestCorrelation,
-    }).pipe(Effect.mapError(() => new MarketRevisionNativeIssueUnavailable({ stage: 'SHELL_GATEWAY_UNAVAILABLE' })));
-    const expectedIngress = `/shell-super-app-api/module-api/${encodeURIComponent(marketAppId)}/${encodeURIComponent(ultramodernApiMarker.buildMarker)}${commerceMarketCatalogApiContract.apiPrefix}`;
-    const shellOrigin = new URL(shell.baseUrl);
-    const admittedBaseUrl = yield* Effect.try({
-      catch: () => new MarketRevisionNativeIssueUnavailable({ stage: 'ADMISSION_MISMATCH' }),
-      try: () => new URL(admitted.apiBaseUrl, shellOrigin),
+      if (
+        admitted.compositionRevision !== scenario.snapshot.composition.revision ||
+        admitted.apiBaseUrl !== expectedIngress ||
+        admittedBaseUrl.origin !== shellOrigin.origin ||
+        admittedBaseUrl.pathname !== expectedIngress ||
+        admittedBaseUrl.search !== '' ||
+        admittedBaseUrl.hash !== '' ||
+        admittedBaseUrl.username !== '' ||
+        admittedBaseUrl.password !== ''
+      ) {
+        return yield* new MarketRevisionNativeIssueUnavailable({ stage: 'ADMISSION_MISMATCH' });
+      }
+      return { baseUrl: admittedBaseUrl, credential: Redacted.make(`Bearer ${admitted.token}`) };
     });
-    if (
-      admitted.compositionRevision !== scenario.snapshot.composition.revision ||
-      admitted.apiBaseUrl !== expectedIngress ||
-      admittedBaseUrl.origin !== shellOrigin.origin ||
-      admittedBaseUrl.pathname !== expectedIngress ||
-      admittedBaseUrl.search !== '' ||
-      admittedBaseUrl.hash !== '' ||
-      admittedBaseUrl.username !== '' ||
-      admittedBaseUrl.password !== ''
-    ) {
-      return yield* new MarketRevisionNativeIssueUnavailable({ stage: 'ADMISSION_MISMATCH' });
-    }
-    return { baseUrl: admittedBaseUrl, credential: Redacted.make(`Bearer ${admitted.token}`) };
-  });
-  const issueForCommand = (requestCorrelation: string) =>
-    issue({
-      audience: marketAppId,
+    const issueForCommand = (requestCorrelation: string) =>
+      issue({
+        audience: marketAppId,
+        compositionRevision: scenario.snapshot.composition.revision,
+        legalEntityId: scenario.sellerRef.resourceId,
+        requestCorrelation,
+      });
+    const createR1 = Effect.fn('MarketRevisionPublicNative.createR1')(function* createR1() {
+      const admitted = yield* issueForCommand(createCorrelation);
+      const startsAt = shift(scenario.now, -3_600_000);
+      const result = yield* executeCreateMarketWithAuthorization(
+        {
+          channels: ['B2C'],
+          effectivePeriod: { startsAt },
+          jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
+          lifecycle: 'ACTIVE',
+          marketCode: 'CZ_PRIMARY',
+          marketId: scenario.marketRef.resourceId,
+          purpose: 'Original commercial meaning',
+          reason: 'Native revision regression',
+          sellingLegalEntityRef: scenario.sellerRef,
+          supportedLocales: ['cs-CZ'],
+        },
+        Redacted.value(admitted.credential),
+        createCorrelation,
+        {
+          baseUrl: admitted.baseUrl,
+          compositionRevision: scenario.snapshot.composition.revision,
+          idempotencyKey: 'create',
+        },
+      );
+      const associationAdmission = yield* issueForCommand(associateCorrelation);
+      yield* executeAssociateStorefrontWithAuthorization(
+        {
+          associationId: scenario.associationId,
+          channel: 'B2C',
+          effectivePeriod: { startsAt },
+          expectedMarketDefinitionRevisionRef: result.definitionRevisionRef,
+          marketRef: scenario.marketRef,
+          provenance: { kind: 'CONFIGURATION_ACTION', reference: 'native-revision' },
+          reason: 'Native eligibility basis',
+          sellingLegalEntityRef: scenario.sellerRef,
+          storefrontRef: { appId: storefrontAppId, tenantId: scenario.principal.tenantId },
+        },
+        Redacted.value(associationAdmission.credential),
+        associateCorrelation,
+        {
+          baseUrl: associationAdmission.baseUrl,
+          compositionRevision: scenario.snapshot.composition.revision,
+          idempotencyKey: 'associate',
+        },
+      );
+      return result;
+    });
+    const reviseR2 = Effect.fn('MarketRevisionPublicNative.reviseR2')(function* reviseR2(basis: {
+      readonly definitionRevisionRef: MarketDefinitionRevisionRef;
+      readonly revision: number;
+    }) {
+      const admitted = yield* issueForCommand('market-revise');
+      return yield* executeReviseMarketDefinitionWithAuthorization(
+        {
+          channels: ['B2C'],
+          effectivePeriod: { startsAt: scenario.revisedAt },
+          expectedCurrentDefinitionRevisionRef: basis.definitionRevisionRef,
+          expectedRevision: basis.revision,
+          jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
+          marketRef: scenario.marketRef,
+          purpose: 'Cosmetic presentation wording',
+          reason: 'Cosmetic revision only',
+          supportedLocales: ['cs-CZ'],
+        },
+        Redacted.value(admitted.credential),
+        'market-revise',
+        {
+          baseUrl: admitted.baseUrl,
+          compositionRevision: scenario.snapshot.composition.revision,
+          idempotencyKey: 'revise',
+        },
+      );
+    });
+    return Object.freeze({
+      after: scenario.after,
+      associationRef: scenario.associationRef,
+      baseUrl,
+      before: scenario.before,
+      closeStorefront: () => scenario.closeStorefront,
       compositionRevision: scenario.snapshot.composition.revision,
+      createR1,
+      evidence: scenario.evidence,
+      issue,
       legalEntityId: scenario.sellerRef.resourceId,
-      requestCorrelation,
+      marketRef: scenario.marketRef,
+      now: scenario.now,
+      principal: scenario.principal,
+      relaySourcePrincipalId: relayBinding.principalId,
+      revisedAt: scenario.revisedAt,
+      reviseR2,
+      sellerRef: scenario.sellerRef,
+      setCustomerContextState: scenario.setCustomerContextState,
+      snapshot: scenario.snapshot,
+      storefrontRef: { appId: storefrontAppId, tenantId: scenario.principal.tenantId },
+      tenantId: scenario.principal.tenantId,
     });
-  const createR1 = Effect.fn('MarketRevisionPublicNative.createR1')(function* createR1() {
-    const admitted = yield* issueForCommand(createCorrelation);
-    const startsAt = shift(scenario.now, -3_600_000);
-    const result = yield* executeCreateMarketWithAuthorization(
-      {
-        channels: ['B2C'],
-        effectivePeriod: { startsAt },
-        jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
-        lifecycle: 'ACTIVE',
-        marketCode: 'CZ_PRIMARY',
-        marketId: scenario.marketRef.resourceId,
-        purpose: 'Original commercial meaning',
-        reason: 'Native revision regression',
-        sellingLegalEntityRef: scenario.sellerRef,
-        supportedLocales: ['cs-CZ'],
-      },
-      Redacted.value(admitted.credential),
-      createCorrelation,
-      {
-        baseUrl: admitted.baseUrl,
-        compositionRevision: scenario.snapshot.composition.revision,
-        idempotencyKey: 'create',
-      },
-    );
-    const associationAdmission = yield* issueForCommand(associateCorrelation);
-    yield* executeAssociateStorefrontWithAuthorization(
-      {
-        associationId: scenario.associationId,
-        channel: 'B2C',
-        effectivePeriod: { startsAt },
-        expectedMarketDefinitionRevisionRef: result.definitionRevisionRef,
-        marketRef: scenario.marketRef,
-        provenance: { kind: 'CONFIGURATION_ACTION', reference: 'native-revision' },
-        reason: 'Native eligibility basis',
-        sellingLegalEntityRef: scenario.sellerRef,
-        storefrontRef: { appId: storefrontAppId, tenantId: scenario.principal.tenantId },
-      },
-      Redacted.value(associationAdmission.credential),
-      associateCorrelation,
-      {
-        baseUrl: associationAdmission.baseUrl,
-        compositionRevision: scenario.snapshot.composition.revision,
-        idempotencyKey: 'associate',
-      },
-    );
-    return result;
-  });
-  const reviseR2 = Effect.fn('MarketRevisionPublicNative.reviseR2')(function* reviseR2(basis: {
-    readonly definitionRevisionRef: MarketDefinitionRevisionRef;
-    readonly revision: number;
-  }) {
-    const admitted = yield* issueForCommand('market-revise');
-    return yield* executeReviseMarketDefinitionWithAuthorization(
-      {
-        channels: ['B2C'],
-        effectivePeriod: { startsAt: scenario.revisedAt },
-        expectedCurrentDefinitionRevisionRef: basis.definitionRevisionRef,
-        expectedRevision: basis.revision,
-        jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
-        marketRef: scenario.marketRef,
-        purpose: 'Cosmetic presentation wording',
-        reason: 'Cosmetic revision only',
-        supportedLocales: ['cs-CZ'],
-      },
-      Redacted.value(admitted.credential),
-      'market-revise',
-      {
-        baseUrl: admitted.baseUrl,
-        compositionRevision: scenario.snapshot.composition.revision,
-        idempotencyKey: 'revise',
-      },
-    );
-  });
-  return Object.freeze({
-    after: scenario.after,
-    associationRef: scenario.associationRef,
-    baseUrl,
-    before: scenario.before,
-    closeStorefront: () => scenario.closeStorefront,
-    compositionRevision: scenario.snapshot.composition.revision,
-    createR1,
-    evidence: scenario.evidence,
-    issue,
-    legalEntityId: scenario.sellerRef.resourceId,
-    marketRef: scenario.marketRef,
-    now: scenario.now,
-    principal: scenario.principal,
-    relaySourcePrincipalId: relayBinding.principalId,
-    revisedAt: scenario.revisedAt,
-    reviseR2,
-    sellerRef: scenario.sellerRef,
-    setCustomerContextState: scenario.setCustomerContextState,
-    snapshot: scenario.snapshot,
-    storefrontRef: { appId: storefrontAppId, tenantId: scenario.principal.tenantId },
-    tenantId: scenario.principal.tenantId,
-  });
-});
+  },
+);

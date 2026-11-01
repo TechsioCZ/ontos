@@ -24,7 +24,7 @@ import type {
   PrepareActionInvocationInput,
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
-import type { ActionRuntimeStage } from '../actions/runtime.ts';
+import type { ActionRuntimeOptions, ActionRuntimeStage } from '../actions/runtime.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
@@ -112,7 +112,10 @@ export const bindActionTestServices = <
   services: NoInfer<Services>,
 ): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
 
-export interface ActionTestHarnessOptions {
+export interface ActionTestHarnessOptions extends Pick<
+  ActionRuntimeOptions,
+  'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
+> {
   readonly actionPermission?: ContextAccessDecision;
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
@@ -484,6 +487,30 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       }
       return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
     };
+    let runtimeOptions: ActionRuntimeOptions = {
+      contextAccess,
+      // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+      lockCompositionAuthority: () => Effect.succeed([]),
+      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+      moduleStateGate,
+      onStage: (stage) => {
+        stages.push(stage);
+      },
+      resolveServiceFactory,
+    };
+    if (options.applicationComposition !== undefined) {
+      runtimeOptions = { ...runtimeOptions, applicationComposition: options.applicationComposition };
+    }
+    if (options.expectedDeployment !== undefined) {
+      runtimeOptions = { ...runtimeOptions, expectedDeployment: options.expectedDeployment };
+    }
+    if (options.ownerRegistration !== undefined) {
+      runtimeOptions = { ...runtimeOptions, ownerRegistration: options.ownerRegistration };
+    }
+    // Bound owners use the genuine runtime resolver; retain the historical synthetic R only when unbound.
+    if (options.applicationComposition === undefined || options.expectedDeployment === undefined) {
+      runtimeOptions = { ...runtimeOptions, resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)) };
+    }
     const runtime = makeActionRuntime(
       database,
       repository,
@@ -499,18 +526,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
             : Effect.succeed(options.actionPermission ?? 'denied'),
       },
       scopeResolver,
-      {
-        contextAccess,
-        // This scripted harness rejects owner SQL and tests the Action lifecycle only.
-        lockCompositionAuthority: () => Effect.succeed([]),
-        moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-        moduleStateGate,
-        onStage: (stage) => {
-          stages.push(stage);
-        },
-        resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)),
-        resolveServiceFactory,
-      },
+      runtimeOptions,
     );
     return Object.freeze({
       layer: Layer.succeed(ActionRuntime, runtime),

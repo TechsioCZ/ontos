@@ -45,6 +45,8 @@ import {
   publishOrdinaryCurrentPricingForCustomer,
 } from './ordinary-current-pricing-publication.service.ts';
 import type { CurrentPricingDecisionSubjectAuthorityEvidence } from './current-pricing-decision-subject-authority.service.ts';
+import { requirePricingMarketFenceOperation } from '../integrations/pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from '../integrations/pricing-operation-requirements.ts';
 
 export type CurrentPricingDecisionRequiredOwnerRefs = readonly [string, ...string[]];
 
@@ -135,6 +137,7 @@ export interface CurrentPricingDecisionEvaluationFactoryService {
     source: CurrentPricingDecisionWholeEvaluationPort,
     scopedPricingGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined,
     compositionRevision: string,
+    requirements?: PricingWholeEvaluationRequirements,
   ) => CurrentPricingDecisionEvaluationService;
 }
 
@@ -469,14 +472,15 @@ export const makeCurrentPricingDecisionEvaluationFactory = (
   publishWithScopedPricingGateway?: (
     gateway: PricingOwnerMaterialEvidenceFenceGateway,
     compositionRevision: string,
+    requirements?: PricingWholeEvaluationRequirements,
   ) => PublishResolvedDecision,
 ): CurrentPricingDecisionEvaluationFactoryService => ({
-  make: (source, scopedPricingGateway, compositionRevision) =>
+  make: (source, scopedPricingGateway, compositionRevision, requirements) =>
     makeCurrentPricingDecisionEvaluationService(
       source,
       scopedPricingGateway === undefined || publishWithScopedPricingGateway === undefined
         ? publishResolved
-        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision),
+        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision, requirements),
     ),
 });
 
@@ -504,14 +508,26 @@ export const currentPricingDecisionEvaluationFactoryLive = Layer.effect(
     // A governed transaction supplies its Pricing gateway after the owner-local ports are scoped.
     return makeCurrentPricingDecisionEvaluationFactory(
       publishResolvedWithOwners(externalOwnerValidation, defaultOwnerFinalFence),
-      (pricing, compositionRevision) =>
+      (pricing, compositionRevision, requirements) =>
         publishResolvedWithOwners(
           externalOwnerValidation,
           makePricingMaterialEvidenceOwnerFinalFenceFromGateways(
             {
               'commerce.catalog': catalog,
               'commerce.customer-context': customerContext,
-              'commerce.market-catalog': market,
+              'commerce.market-catalog':
+                requirements === undefined
+                  ? market
+                  : {
+                      confirmObservedGenerationsThrough: (input) =>
+                        requirePricingMarketFenceOperation(requirements.marketFinalFence).pipe(
+                          Effect.andThen(() => market.confirmObservedGenerationsThrough(input)),
+                        ),
+                      verifyOpaqueProofsAgainstCurrentState: (input) =>
+                        requirePricingMarketFenceOperation(requirements.marketFinalFence).pipe(
+                          Effect.andThen(() => market.verifyOpaqueProofsAgainstCurrentState(input)),
+                        ),
+                    },
               'commerce.pricing': pricing,
               'commerce.promotion': promotion,
             },

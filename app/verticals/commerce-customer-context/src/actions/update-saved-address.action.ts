@@ -123,7 +123,11 @@ export const updateSavedAddressAction = defineAction(
       return addressActionPersistenceForTransaction(
         transaction,
         scope,
-        partyBackedAddressSourceValidatorForScope(scope, crypto),
+        partyBackedAddressSourceValidatorForScope(
+          scope,
+          crypto,
+          'commerce.customer-context.requirement.update-saved-address-party',
+        ),
       );
     },
   ),

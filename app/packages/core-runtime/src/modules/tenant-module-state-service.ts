@@ -7,7 +7,9 @@ import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/sch
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
-import { providesRequiredOperationContracts } from './module-dependency-contracts.ts';
+import { tenantModuleIntrinsicDependencyClosure } from './module-dependency-contracts.ts';
+
+import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './tenant-module-state-unsatisfied-dependency-error.ts';
 import type { OntosModuleId } from './manifest.ts';
 import { OntosModuleIdSchema } from './manifest.ts';
 import type { TenantModuleStateTransitionError } from './tenant-module-state-errors.ts';
@@ -20,7 +22,6 @@ import {
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnsupportedStateError,
-  TenantModuleStateUnsatisfiedDependencyError,
   TenantModuleStateValidationUnavailableError,
 } from './tenant-module-state-errors.ts';
 
@@ -88,12 +89,6 @@ export const validateTenantModuleStateTransition = (
   return Effect.void;
 };
 
-const unsatisfiedDependency = () =>
-  new TenantModuleStateUnsatisfiedDependencyError({
-    code: 'tenant_module_state_dependency_unsatisfied',
-    reason: 'An intrinsic module dependency is absent, incompatible, or not active',
-  });
-
 const transitionValidationUnavailable = (cause: unknown) => {
   const error = new TenantModuleStateValidationUnavailableError({
     code: 'tenant_module_state_validation_unavailable',
@@ -123,54 +118,6 @@ export const validateTenantModuleIntrinsicDependencyStates = Effect.fn(
   }
   return yield* Effect.void;
 });
-
-/** Resolve only intrinsic declarations; conditional operation relationships never enter this closure. */
-export const tenantModuleIntrinsicDependencyClosure = Effect.fn('TenantModuleState.intrinsicDependencyClosure')(
-  function* intrinsicDependencyClosure(catalog: InstalledModuleCatalog, moduleKey: string) {
-    const required = new Set<string>();
-    const visiting = new Set<string>();
-    const visited = new Set<string>();
-    const visit = Effect.fnUntraced(function* visitIntrinsicDependency(
-      key: string,
-    ): Effect.fn.Return<void, TenantModuleStateUnsatisfiedDependencyError> {
-      if (visiting.has(key)) {
-        return yield* unsatisfiedDependency();
-      }
-      if (visited.has(key)) {
-        return yield* Effect.void;
-      }
-      const contract = catalog.getByModuleId(key);
-      if (contract === undefined) {
-        return yield* unsatisfiedDependency();
-      }
-      visiting.add(key);
-      yield* Effect.forEach(
-        contract.manifest.requirements?.intrinsic ?? [],
-        Effect.fnUntraced(function* visitRequirement(requirement) {
-          const provider = catalog.getByModuleId(requirement.moduleId);
-          if (
-            provider === undefined ||
-            !providesRequiredOperationContracts(
-              provider.manifest.publicSurface.operationContracts,
-              requirement.requiredOperations,
-            )
-          ) {
-            return yield* unsatisfiedDependency();
-          }
-          required.add(requirement.moduleId);
-          yield* visit(requirement.moduleId);
-          return yield* Effect.void;
-        }),
-        { concurrency: 1, discard: true },
-      );
-      visiting.delete(key);
-      visited.add(key);
-      return yield* Effect.void;
-    });
-    yield* visit(moduleKey);
-    return [...required].toSorted();
-  },
-);
 
 export const resolveTenantModuleStateChangeSource = (
   authMethod: ActionAuthMethod,
@@ -460,3 +407,5 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
     };
   },
 );
+
+export { tenantModuleIntrinsicDependencyClosure } from './module-dependency-contracts.ts';

@@ -164,6 +164,10 @@ export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;
 const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMetadata): string => {
   for (const reserved of [
     'GovernedReadRuntime',
+    'GovernedMakeReadRuntimeLive',
+    'governedOwnerRegistration',
+    'governedActiveApplicationCompositionLive',
+    'governedActionDeliveryUnit',
     'GovernedReadLayer',
     'governedReadRuntimeLive',
     'governedReadApiHandlersLive',
@@ -210,11 +214,13 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
   if (!assemblerMode && runtimeLayerStart === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
-  const generatedRoot = `import {
+  const generatedRoot = `import { ${toCamelCase(vertical.slug)}Registration as governedOwnerRegistration } from '../vertical.registration.ts';
+import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';
+import {
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
-  ReadRuntimeLive as GovernedReadRuntimeLive,
+  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
@@ -222,6 +228,7 @@ import {
   ModuleStateGateLive as GovernedModuleStateGateLive,
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer as GovernedReadLayer } from 'effect';
@@ -248,9 +255,6 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
     ),
   ),
 );
-const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(
-  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
-);
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
     GovernedFetchHttpClient.layer.pipe(
@@ -259,6 +263,14 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
       ),
     ),
   ),
+);
+
+const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+);
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(

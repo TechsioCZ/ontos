@@ -1,3 +1,4 @@
+import { pricingRegistration } from '../vertical.registration.ts';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
@@ -6,7 +7,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
@@ -111,13 +112,14 @@ const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(compositionSourceLive),
 );
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
-const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -158,10 +160,12 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const readRuntimeLive = ReadRuntimeLive.pipe(
+const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
 );
+
 const governedReadRuntimeLive = readRuntimeLive;
 const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(
   Layer.provide(DatabaseConfigLive),

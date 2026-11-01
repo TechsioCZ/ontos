@@ -1,3 +1,5 @@
+import { withWorkerRuntimeBinding } from './worker-runtime-binding.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import {
   Array as Arr,
   Cause,
@@ -55,6 +57,7 @@ export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWork
     OutboxRuntime | ActiveApplicationCompositionService | OutboxWorkerRequirements<Registration>,
     LayerError
   >;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
@@ -162,7 +165,10 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
         };
         // The compiled owner and ABI stay fixed. Each new cycle captures one approved revision;
         // existing claimed handler contexts retain their original revision in owner transactions.
-        return yield* runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health });
+        return yield* withWorkerRuntimeBinding(
+          { authority, expectedDeployment, ownerRegistration: input.ownerRegistration, registrations },
+          runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health }),
+        );
       });
       return Effect.acquireUseRelease(
         Effect.sync(() => ManagedRuntime.make(input.layer)),

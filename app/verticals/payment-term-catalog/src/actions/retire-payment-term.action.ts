@@ -2,7 +2,12 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug retire-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  defineAction,
+  defineActionResourcePermission,
+  defineTenantModuleEntrypoint,
+  requireModuleOperation,
+} from '@app/core-runtime';
 import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
 import {
   RetirePaymentTermPayloadSchema,
@@ -127,6 +132,34 @@ const makeRetirePaymentTermServices = Effect.fn('RetirePaymentTermAction.makeRet
       ...catalog,
       ...authority,
       ...retirementAuthority,
+      reserveRetirement: (input) =>
+        requireModuleOperation('payment.term-catalog.requirement.retirement-reservation').pipe(
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new PaymentTermRetirementReservationUnavailable({
+                code: 'payment_term_retirement_reservation_unavailable',
+                reason: 'The Payment Term retirement reservation requirement is unavailable',
+              }),
+              'cause',
+              { enumerable: false, value: cause },
+            ),
+          ),
+          Effect.flatMap(() => retirementAuthority.reserveRetirement(input)),
+        ),
+      verifyRetirementGovernance: (input) =>
+        requireModuleOperation('payment.term-catalog.requirement.retirement-affected-use').pipe(
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new PaymentTermAffectedUseAssessmentUnavailable({
+                code: 'payment_term_affected_use_assessment_unavailable',
+                reason: 'The Payment Term affected-use assessment requirement is unavailable',
+              }),
+              'cause',
+              { enumerable: false, value: cause },
+            ),
+          ),
+          Effect.flatMap(() => authority.verifyRetirementGovernance(input)),
+        ),
     };
     return services;
   },

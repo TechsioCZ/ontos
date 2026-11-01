@@ -880,6 +880,50 @@ export default defineEffectBff({ api: fixtureApi, layer });
         expect(generated).toMatch(/GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
         expect(generated).toMatch(/GovernedReadLayer\.orDie/u);
         expect(generated).not.toMatch(/\bLayer\./u);
+        expect(generated).toMatch(
+          /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+        );
+        expect(generated).toContain('GovernedReadLayer.provide(governedActiveApplicationCompositionLive)');
+        expect(generated.match(/const governedApplicationCompositionSourceLive =/gu)).toHaveLength(1);
+        expect(generated.match(/const governedActiveApplicationCompositionLive =/gu)).toHaveLength(1);
+        expect(generated.indexOf('const governedApplicationCompositionSourceLive =')).toBeLessThan(
+          generated.indexOf('const governedReadRuntimeLive ='),
+        );
+        expect(generated).toContain(
+          "propertyRegistryRegistration as governedOwnerRegistration } from '../vertical.registration.ts'",
+        );
+        const shared = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(true);
+        for (const counterfeit of [
+          generated.replace("from '../vertical.registration.ts'", "from '../foreign/vertical.registration.ts'"),
+          generated.replace(
+            "from '@app/core-runtime/modules/active-application-composition'",
+            "from './foreign-composition.ts'",
+          ),
+          generated.replace(
+            'GovernedReadLayer.provide(governedApplicationCompositionSourceLive)',
+            'GovernedReadLayer.provide(foreignCompositionSourceLive)',
+          ),
+          generated.replace('  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),', ''),
+          generated.replace(
+            /governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u,
+            'governedActionDeliveryUnit).pipe(',
+          ),
+          generated.replace(
+            /governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u,
+            'governedOwnerRegistration, governedActionDeliveryUnit).pipe(',
+          ),
+          generated.replace(
+            'const governedReadRuntimeLive =',
+            'const governedOwnerRegistration = {};\nconst governedReadRuntimeLive =',
+          ),
+          generated.replace(
+            'makeReadRuntimeLive as GovernedMakeReadRuntimeLive',
+            'ReadRuntimeLive as GovernedMakeReadRuntimeLive',
+          ),
+        ]) {
+          expect(hasValidGovernedHttpCompositionRoot(shared, counterfeit)).toBe(false);
+        }
       }),
     );
   }),

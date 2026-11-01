@@ -40,6 +40,8 @@ An Outbox Message is an immutable broadcast source linked to one committed Domai
 
 Each Worker declares a structured tenant `worker`/`background` entrypoint governed by [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md). Claim eligibility uses the central matrix inside the existing atomic claim query. Only `active` consumers are eligible; every other or missing state leaves work unattempted and retryable. The producer's current module state never authorizes the consumer entrypoint, and handler resolution occurs only after an eligible claim.
 
+Intrinsic provider eligibility is derived from the same admitted Composition as the hosted owner registration and folded into the existing claim SQL. Handler-side operation requirements use Core's attestation of the actual native returned claim and its revision, not a caller's cycle metadata or a copied claim object. A worker's conditional port call may use the key-only requirement facade only inside this genuine claimed execution. Persisted originating actor IDs are audit context; they do not mint a fresh delegated end-user Principal. Owner-outcome reporting retains its independently authorized service/owner authority and retained-outcome checks.
+
 ## Claims and Attempts
 
 Core claims an eligible delivery transactionally with a unique claim identity and expiry, changes it to `processing`, increments its attempt count, and creates one unfinished attempt before handler execution. Concurrent dispatchers use lock-safe selection so only one live claim executes. A later dispatcher may reclaim only an expired lease; reclaiming finishes the abandoned open attempt with a safe error before starting the next attempt. A stale claimant can never finalize a newer claim.

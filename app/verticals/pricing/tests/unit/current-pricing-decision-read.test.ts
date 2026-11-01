@@ -26,6 +26,7 @@ import {
   CurrentPricingDecisionEvaluationFactory,
   CurrentPricingDecisionScopeViolation,
 } from '../../src/services/current-pricing-decision-evaluation.service.ts';
+import { currentPricingDecisionRequirements } from '../../src/integrations/pricing-operation-requirements.ts';
 import type { CurrentPricingDecisionWholeEvaluationPort } from '../../src/services/current-pricing-decision-evaluation.service.ts';
 import {
   CurrentPricingDecisionSubjectAuthority,
@@ -513,6 +514,39 @@ describe('Current Pricing Decision governed read', () => {
         legalEntityId: scope.legalEntityId,
         principal: yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(scope),
       });
+
+      // Supplying owner facts alone cannot turn direct factory use into a genuine Core execution.
+      let gatedSubjectCalls = 0;
+      const gatedFactory = makeCurrentPricingDecisionReadServiceFactory(() => Effect.succeed(source), {
+        requirements: currentPricingDecisionRequirements,
+      });
+      const gatedServices = yield* gatedFactory(transaction, scope, 'a'.repeat(64)).pipe(
+        Effect.provideService(CurrentPricingDecisionSubjectAuthority, {
+          verify: (candidate) => {
+            gatedSubjectCalls += 1;
+            return verifyExactSubjectAuthority(candidate);
+          },
+        }),
+        Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
+          make: () => ({ evaluate: () => Effect.succeed(nonResolvedEvaluationFor(input)) }),
+        }),
+      );
+      const missingExecution = yield* gatedServices
+        .verifySubjectAuthority({
+          request: input,
+          scope: {
+            principal: yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(scope),
+            sellingLegalEntityId: legalEntityId,
+          },
+        })
+        .pipe(Effect.flip);
+      expect(
+        Match.value(missingExecution).pipe(
+          Match.tag('CurrentPricingDecisionSubjectAuthorityUnavailable', () => true),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(gatedSubjectCalls).toBe(0);
 
       const productionServices = yield* serviceFactory(transaction, scope, 'a'.repeat(64)).pipe(
         Effect.provideService(CurrentPricingDecisionEvaluationFactory, {

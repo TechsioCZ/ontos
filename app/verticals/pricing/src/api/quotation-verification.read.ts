@@ -19,6 +19,7 @@ import { preapprovalQuotationVerificationService } from '../services/preapproval
 import { pricingCommitmentOwnerProof } from '../integrations/commitment-confirmation-owner-proof.ts';
 import { pricingFinalizationOwnerGateways } from '../integrations/order-finalization-owner-gateways.ts';
 import { currentPricingDecisionCustomerContextSubjectAuthorityForIssuer } from '../integrations/customer-context-subject-authority.ts';
+import { requirePricingSubjectOperation } from '../integrations/pricing-operation-requirements.ts';
 import { quotationPersistenceForScope } from '../services/quotation-persistence.service.ts';
 import { CurrentPricingDecisionCustomerContextGatewayUnavailable } from '../services/current-pricing-decision-subject-authority.service.ts';
 
@@ -71,7 +72,18 @@ const servicesForScope = Effect.fn('PricingQuotationVerification.servicesForScop
       },
       { concurrency: 3 },
     );
-    return { authority, owners, preapproval, proof, quotations };
+    return {
+      authority: {
+        verify: (input: Parameters<typeof authority.verify>[0]) =>
+          requirePricingSubjectOperation('commerce.pricing.requirement.quotation-verify-purchase-context').pipe(
+            Effect.andThen(() => authority.verify(input)),
+          ),
+      },
+      owners,
+      preapproval,
+      proof,
+      quotations,
+    };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(

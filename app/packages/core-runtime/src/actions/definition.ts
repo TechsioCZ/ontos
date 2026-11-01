@@ -267,6 +267,46 @@ export type ActionDecodedSuccessHook<Result, Services, DomainError, Requirements
   }>,
 ) => Effect.Effect<void, ActionCoreError | DomainError, Requirements>;
 
+const actionPostAttemptOutcomeSchema = <
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+>(
+  result: ResultSchema,
+  rejection: DomainErrorSchema,
+) =>
+  Schema.Union([
+    Schema.TaggedStruct('Committed', { result }),
+    Schema.TaggedStruct('CommittedRejection', { rejection }),
+    Schema.TaggedStruct('AlreadyCommitted', {}),
+    Schema.TaggedStruct('DefinitelyUncommitted', { rejection: Schema.optionalKey(rejection) }),
+    Schema.TaggedStruct('Indeterminate', {}),
+    Schema.TaggedStruct('Interrupted', {}),
+  ]);
+const actionPostAttemptResultSchema = <ResultSchema extends Schema.ConstraintDecoder<unknown>>(result: ResultSchema) =>
+  Schema.Union([Schema.TaggedStruct('Settled', {}), Schema.TaggedStruct('Recovered', { result })]);
+export type ActionPostAttemptOutcome<Result, DomainError extends { readonly _tag: string }> = ReturnType<
+  typeof actionPostAttemptOutcomeSchema<Schema.ConstraintDecoder<Result>, Schema.ConstraintDecoder<DomainError>>
+>['Type'];
+export type ActionPostAttemptResult<Result> = ReturnType<
+  typeof actionPostAttemptResultSchema<Schema.ConstraintDecoder<Result>>
+>['Type'];
+
+/** Owner-local continuation after transaction settlement; carries no handler services or raw failure. */
+export type ActionPostAttemptHook<
+  Payload,
+  Result,
+  DomainError extends { readonly _tag: string },
+  Requirements = never,
+> = (
+  context: Readonly<{
+    readonly actionInvocationId: string;
+    readonly compositionRevision: string;
+    readonly outcome: ActionPostAttemptOutcome<Result, DomainError>;
+    readonly payload: Payload;
+    readonly scope: OperationalScope;
+  }>,
+) => Effect.Effect<ActionPostAttemptResult<Result>, ActionCoreError | DomainError, Requirements>;
+
 type EmptyActionServices = Readonly<Record<string, never>>;
 const emptyActionServices: EmptyActionServices = Object.freeze({});
 const emptyActionServiceFactory: ActionServiceFactory<EmptyActionServices> = () => Effect.succeed(emptyActionServices);
@@ -281,9 +321,12 @@ type ActionRegistrationPrivateValue<
 > = readonly [
   handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
   serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
-  onDecodedSuccess?: ActionDecodedSuccessHook<
+  onDecodedSuccess?:
+    | ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+    | undefined,
+  onPostAttempt?: ActionPostAttemptHook<
+    PayloadSchema['Type'],
     ResultSchema['Type'],
-    Services,
     DomainErrorSchema['Type'],
     HandlerRequirements
   >,
@@ -434,6 +477,39 @@ export function defineAction<
   const Owner extends string,
   Services,
   HandlerRequirements,
+  PostAttemptRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+    onDecodedSuccess:
+      | ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+      | undefined,
+    onPostAttempt: ActionPostAttemptHook<
+      PayloadSchema['Type'],
+      ResultSchema['Type'],
+      DomainErrorSchema['Type'],
+      PostAttemptRequirements
+    >,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements | PostAttemptRequirements
+>;
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition: readonly [
@@ -512,6 +588,7 @@ export function defineAction<
   const Owner extends string,
   Services,
   HandlerRequirements,
+  PostAttemptRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition:
@@ -532,7 +609,21 @@ export function defineAction<
     | readonly [
         ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
         ActionServiceFactory<Services, HandlerRequirements>,
-        ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>,
+        ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], PostAttemptRequirements>,
+      ]
+    | readonly [
+        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionServiceFactory<Services, HandlerRequirements>,
+        (
+          | ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+          | undefined
+        ),
+        ActionPostAttemptHook<
+          PayloadSchema['Type'],
+          ResultSchema['Type'],
+          DomainErrorSchema['Type'],
+          HandlerRequirements
+        >,
       ]
 ):
   | ActionRegistration<
@@ -542,7 +633,7 @@ export function defineAction<
       DomainEvents,
       Owner,
       EmptyActionServices,
-      HandlerRequirements
+      HandlerRequirements | PostAttemptRequirements
     >
   | ActionRegistration<
       PayloadSchema,
@@ -551,7 +642,7 @@ export function defineAction<
       DomainEvents,
       Owner,
       Services,
-      HandlerRequirements
+      HandlerRequirements | PostAttemptRequirements
     > {
   validateActionDescriptorInput(descriptor);
 
@@ -569,9 +660,21 @@ export function defineAction<
       descriptor: frozenDescriptor,
     });
   }
-  const [handler, serviceFactory, onDecodedSuccess] = definition;
+  const [handler, serviceFactory, onDecodedSuccess, onPostAttempt] = definition;
   if (definition.length === 3 && !Predicate.isFunction(onDecodedSuccess)) {
     return failActionDefinition('Action decoded-success hook must be a function');
+  }
+  if (definition.length === 4) {
+    if (
+      !Predicate.isFunction(onPostAttempt) ||
+      (onDecodedSuccess !== undefined && !Predicate.isFunction(onDecodedSuccess))
+    ) {
+      return failActionDefinition('Action post-attempt hook must be a function');
+    }
+    return ActionPrivateStorage.create([handler, serviceFactory, onDecodedSuccess, onPostAttempt] as const, {
+      [actionRegistration]: true as const,
+      descriptor: frozenDescriptor,
+    });
   }
   if (onDecodedSuccess === undefined) {
     return ActionPrivateStorage.create([handler, serviceFactory] as const, {
@@ -659,6 +762,26 @@ export const getActionDecodedSuccessHook = <
     HandlerRequirements
   >,
 ) => ActionPrivateStorage.getValue(registration)[2];
+
+export const getActionPostAttemptHook = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+) => ActionPrivateStorage.getValue(registration)[3];
 
 export const getActionResourcePermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -781,3 +904,15 @@ export const decodeActionResult = <ResultSchema extends Schema.ConstraintDecoder
       ),
     ),
   );
+
+export const decodeActionPostAttemptResult = <ResultSchema extends Schema.ConstraintDecoder<unknown>>(
+  schema: ResultSchema,
+  value: ActionPostAttemptResult<ResultSchema['Type']>,
+) => {
+  const contract = actionPostAttemptResultSchema(
+    Schema.make<Schema.ConstraintDecoder<ResultSchema['Type']>>(schema.ast),
+  );
+  return Schema.encodeUnknownEffect(Schema.make<Schema.ConstraintEncoder<unknown>>(contract.ast))(value).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(contract)),
+  );
+};

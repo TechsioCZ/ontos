@@ -521,7 +521,7 @@ export type {
   ResolvedReadConditionalPermissionRequirement,
 } from './reads/definition.ts';
 export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from './reads/context.ts';
-export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
+export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
@@ -985,3 +985,8 @@ export type {
   RetainedOwnerHistoryRequest,
   RetainedOwnerHistorySelector,
 } from './actions/retained-owner-history.ts';
+
+export { ModuleOperationRequirementError } from './modules/module-operation-requirement-error.ts';
+export { requireModuleOperation } from './modules/module-operation-requirement.ts';
+
+export type { ActionPostAttemptHook, ActionPostAttemptOutcome, ActionPostAttemptResult } from './actions/definition.ts';

@@ -1,3 +1,15 @@
+import {
+  loadModuleOperationAdmission,
+  operationCatalogLoader,
+  prepareOperationIntrinsicState,
+  validateBoundOperationOwner,
+  withModuleOperationExecution,
+  withoutModuleOperationExecution,
+} from '../modules/module-operation-execution.ts';
+import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
@@ -119,8 +131,11 @@ export const READ_RUNTIME_STAGES = [
 export type ReadRuntimeStage = (typeof READ_RUNTIME_STAGES)[number];
 
 export interface ReadRuntimeOptions {
+  readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
+  readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
 }
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
@@ -1174,6 +1189,27 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
+const unavailableReadComposition = (cause?: unknown) =>
+  preserveFailureCause(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The receiving owner release is not approved by the active Application Composition',
+    }),
+    cause,
+  );
+
+const fenceReadRevision = Effect.fn('ReadRuntime.fenceNativeRevision')(function* fenceNativeRevision(
+  transaction: CoreTransaction,
+  inboundRevision: string | undefined,
+  admittedRevision: string | undefined,
+) {
+  if (inboundRevision === undefined && admittedRevision !== undefined) {
+    yield* lockApplicationCompositionAuthority(transaction, admittedRevision, 'read').pipe(
+      Effect.mapError(unavailableReadComposition),
+    );
+  }
+});
+
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1187,10 +1223,11 @@ const readRuntimeFromDependencies = <
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- Runtime construction keeps the optional owner seam injectable for Core unit and integration harnesses.
   options: ReadRuntimeOptions = {},
 ) => {
+  const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
 
-  const runRead = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
+  const runReadBoundary = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
     InputSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     Owner extends string,
@@ -1316,7 +1353,16 @@ const readRuntimeFromDependencies = <
             ]),
       ]);
       const permissionTargetMetadata = targetMetadata(permissionTarget, scope);
-      const snapshot = yield* gateway.prepareSnapshot(scope, [input.registration.descriptor.entrypoint]);
+      const { earlyCompositionRevision, intrinsicDependencies } = yield* prepareOperationIntrinsicState(
+        input.registration,
+        principal,
+        options,
+      ).pipe(Effect.mapError(unavailableReadComposition));
+      const snapshot = yield* gateway.prepareSnapshot(
+        scope,
+        [input.registration.descriptor.entrypoint],
+        intrinsicDependencies,
+      );
       yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
       stage('module_state_checked');
 
@@ -1392,78 +1438,107 @@ const readRuntimeFromDependencies = <
         });
       }
 
+      const admission =
+        options.applicationComposition !== undefined && options.expectedDeployment !== undefined
+          ? yield* loadModuleOperationAdmission(
+              options.applicationComposition,
+              options.expectedDeployment,
+              input.registration,
+              principal,
+            ).pipe(Effect.mapError(unavailableReadComposition))
+          : undefined;
+      const admittedCompositionRevision = admission?.revision ?? compositionRevision;
+      if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== admittedCompositionRevision) {
+        return yield* unavailableReadComposition();
+      }
+      if (admission?.catalog !== undefined) {
+        yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
+          Effect.mapError(unavailableReadComposition),
+        );
+      }
+      const executionRevision = admittedCompositionRevision ?? '';
       const policies = getReadPolicyImplementations(input.registration);
-      yield* Effect.forEach(
-        input.registration.descriptor.policies.entries(),
-        ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
-          const policy = policies[index];
-          if (policy === undefined) {
-            return Effect.fail(
-              new ReadPolicyEvaluationError({
-                code: 'read_policy_evaluation_failed',
-                reason: 'A required read Policy is unavailable',
-              }),
-            );
-          }
-          const { descriptor } = input.registration;
-          return policy
-            .evaluate({
-              action: {
-                actionKey: descriptor.readKey,
-                owningModuleKey: descriptor.owningModuleKey,
-                schemaVersion: descriptor.schemaVersion,
-              },
-              payload: decodedInput,
-              principal: scope,
-              target: permissionTargetMetadata,
-              transport: withOptionalProperty(
-                { correlationId: transport.correlationId },
-                transport.traceId !== undefined,
-                'traceId',
-                transport.traceId,
-                {},
-              ),
-            })
-            .pipe(
-              Effect.catchTag('PolicyDenied', (failure) =>
-                persistScopedReadEvidence(
-                  executor,
-                  withOptionalProperty(
-                    {
-                      accessKind: descriptor.accessKind,
-                      captureMode: descriptor.evidencePolicy.captureMode,
-                      outcome: 'denied',
-                      outcomeCode: failure.reasonCode,
-                      outcomeStage: 'policy',
-                      policyKey: descriptor.evidencePolicy.policyKey,
-                    },
-                    queryHash !== undefined,
-                    'queryHash',
-                    queryHash,
-                    {
-                      readKey: descriptor.readKey,
-                      resultCount: 0,
-                      scope,
-                      servingModuleKey: descriptor.owningModuleKey,
-                      ...permissionTargetMetadata,
-                    },
-                  ),
-                ).pipe(
-                  Effect.andThen(
-                    Effect.fail(
-                      new ReadPolicyDenied({
-                        code: 'read_policy_denied',
-                        httpStatus: policyDescriptor.denialStatus,
-                        policyReasonCode: failure.reasonCode,
-                        reason: failure.reason,
-                      }),
+      yield* withModuleOperationExecution(
+        {
+          loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
+          ownerRegistration: options.ownerRegistration,
+          phase: 'execution',
+          registration: input.registration,
+          revision: executionRevision,
+          scope,
+        },
+        Effect.forEach(
+          input.registration.descriptor.policies.entries(),
+          ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
+            const policy = policies[index];
+            if (policy === undefined) {
+              return Effect.fail(
+                new ReadPolicyEvaluationError({
+                  code: 'read_policy_evaluation_failed',
+                  reason: 'A required read Policy is unavailable',
+                }),
+              );
+            }
+            const { descriptor } = input.registration;
+            return policy
+              .evaluate({
+                action: {
+                  actionKey: descriptor.readKey,
+                  owningModuleKey: descriptor.owningModuleKey,
+                  schemaVersion: descriptor.schemaVersion,
+                },
+                payload: decodedInput,
+                principal: scope,
+                target: permissionTargetMetadata,
+                transport: withOptionalProperty(
+                  { correlationId: transport.correlationId },
+                  transport.traceId !== undefined,
+                  'traceId',
+                  transport.traceId,
+                  {},
+                ),
+              })
+              .pipe(
+                Effect.catchTag('PolicyDenied', (failure) =>
+                  persistScopedReadEvidence(
+                    executor,
+                    withOptionalProperty(
+                      {
+                        accessKind: descriptor.accessKind,
+                        captureMode: descriptor.evidencePolicy.captureMode,
+                        outcome: 'denied',
+                        outcomeCode: failure.reasonCode,
+                        outcomeStage: 'policy',
+                        policyKey: descriptor.evidencePolicy.policyKey,
+                      },
+                      queryHash !== undefined,
+                      'queryHash',
+                      queryHash,
+                      {
+                        readKey: descriptor.readKey,
+                        resultCount: 0,
+                        scope,
+                        servingModuleKey: descriptor.owningModuleKey,
+                        ...permissionTargetMetadata,
+                      },
+                    ),
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ReadPolicyDenied({
+                          code: 'read_policy_denied',
+                          httpStatus: policyDescriptor.denialStatus,
+                          policyReasonCode: failure.reasonCode,
+                          reason: failure.reason,
+                        }),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            );
-        },
-        { concurrency: 1, discard: true },
+              );
+          },
+          { concurrency: 1, discard: true },
+        ),
       );
       stage('policies_checked');
 
@@ -1471,6 +1546,7 @@ const readRuntimeFromDependencies = <
       const transactionResult = executor
         .transaction(
           Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
+            yield* fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision);
             const scoped = yield* installOperationalScope(transaction, scope);
             stage('scope_installed');
             const operationAt = yield* trustedTransactionTime(transaction);
@@ -1497,7 +1573,11 @@ const readRuntimeFromDependencies = <
                 reason: 'Owner-local Read authorization is temporarily unavailable',
               });
             }
-            const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
+            const services = yield* getReadServiceFactory(input.registration)(
+              scoped,
+              scope,
+              admittedCompositionRevision,
+            );
             const handlerResult = yield* Effect.suspend(() =>
               getReadHandler(input.registration)(
                 decodedInput,
@@ -1591,7 +1671,19 @@ const readRuntimeFromDependencies = <
               : transactionFailure,
           ),
         );
-      const transactionExit = yield* Effect.exit(transactionResult);
+      const transactionExit = yield* Effect.exit(
+        withModuleOperationExecution(
+          {
+            loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
+            ownerRegistration: options.ownerRegistration,
+            phase: 'execution',
+            registration: input.registration,
+            revision: executionRevision,
+            scope,
+          },
+          transactionResult,
+        ),
+      );
       if (Exit.isSuccess(transactionExit)) {
         return transactionExit.value;
       }
@@ -1682,6 +1774,7 @@ const readRuntimeFromDependencies = <
     return yield* Effect.failCause(governedExit.cause);
   });
 
+  const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
   return Object.freeze({ runRead });
 };
 
@@ -1693,18 +1786,48 @@ export class ReadRuntime extends Context.Service<ReadRuntime, ReadRuntimeService
   '@app/core-runtime/reads/runtime/ReadRuntime',
 ) {}
 
+const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
+  const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+  const database = yield* CoreDatabase;
+  const gateway = yield* ModuleEntrypointGateway;
+  const scopeResolver = yield* OperationalScopeResolver;
+  const contextAccess = yield* ContextAccess;
+  return {
+    contextAccess,
+    database,
+    gateway,
+    ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+      ? ownerAuthorizationOverlay.value
+      : failClosedOwnerAuthorizationOverlay,
+    scopeResolver,
+  };
+});
+
+/** The legacy Core boundary retains its existing dependency graph and startup behavior. */
 export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
-  Effect.gen(function* makeReadRuntimeService() {
-    const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
-    const database = yield* CoreDatabase;
-    const gateway = yield* ModuleEntrypointGateway;
-    const scopeResolver = yield* OperationalScopeResolver;
-    const contextAccess = yield* ContextAccess;
-    return readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
-      ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
-        ? ownerAuthorizationOverlay.value
-        : failClosedOwnerAuthorizationOverlay,
-    });
-  }),
+  readRuntimeDependencies.pipe(
+    Effect.map(({ contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver }) =>
+      readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, { ownerAuthorizationOverlay }),
+    ),
+  ),
 );
+
+/** Bind the actual receiving artifact and existing authority without reading the source at startup. */
+export const makeReadRuntimeLive = (
+  expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
+  ownerRegistration?: VerticalRuntimeRegistration,
+) =>
+  Layer.effect(
+    ReadRuntime,
+    Effect.gen(function* makeOwnedReadRuntimeService() {
+      const applicationComposition = yield* ActiveApplicationCompositionService;
+      const { contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver } =
+        yield* readRuntimeDependencies;
+      const options: ReadRuntimeOptions =
+        ownerRegistration === undefined
+          ? { applicationComposition, expectedDeployment, ownerAuthorizationOverlay }
+          : { applicationComposition, expectedDeployment, ownerAuthorizationOverlay, ownerRegistration };
+      return readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, options);
+    }),
+  );

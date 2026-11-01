@@ -2,6 +2,7 @@ import { ReserveMarketRetirementConflictProblemSchema } from '@app/customer-mark
 import type { MarketRetirementStoredBasis } from '../../shared/market-retirement-admission.ts';
 import { MarketRetirementReserveBasisSchema } from '../../shared/market-retirement-admission.ts';
 import type { OperationalScope } from '@app/core-runtime';
+import { requireModuleOperation } from '@app/core-runtime';
 import type {
   MarketAffectedUseAssessmentRequest,
   MarketAffectedUseAssessmentResponse,
@@ -12,7 +13,7 @@ import type {
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import { executeReserveMarketRetirementWithAuthorization } from '@app/customer-market-retirement-contracts/reserve-market-retirement/client';
-import { Crypto, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Function as EffectFunction, Layer, Match, Option, Redacted, Schema } from 'effect';
 
 import type {
   MarketRetirementImpactAssessment,
@@ -420,6 +421,7 @@ const expectedLifecycle = (operation: ReserveMarketRetirementPayload['operation'
 
 export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
   basis,
+  beforeGateway,
   compositionRevision,
   crypto,
   originalCompositionRevision,
@@ -429,6 +431,7 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
   sourceActionInvocationId,
 }: {
   readonly basis?: MarketRetirementStoredBasis;
+  readonly beforeGateway?: (operationKey: string) => Effect.Effect<void, MarketRetirementImpactAssessmentUnavailable>;
   readonly compositionRevision: string;
   readonly crypto: Crypto.Crypto;
   readonly originalCompositionRevision: string;
@@ -438,11 +441,15 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
   readonly sourceActionInvocationId: string;
 }) => {
   const gateway = (operationKey: string) =>
-    acquireOwnerGatewayContext(
-      scope,
-      crypto,
-      { audience: 'commerce-customer-context', operationKey },
-      compositionRevision,
+    (beforeGateway?.(operationKey) ?? Effect.void).pipe(
+      Effect.andThen(
+        acquireOwnerGatewayContext(
+          scope,
+          crypto,
+          { audience: 'commerce-customer-context', operationKey },
+          compositionRevision,
+        ),
+      ),
     );
   const recover = () =>
     Effect.gen(function* recoverOriginalReservation() {
@@ -674,7 +681,32 @@ export const MarketRetirementImpactAuthorityLive = Layer.effect(
   Effect.gen(function* retirementAuthorityFactory() {
     const crypto = yield* Crypto.Crypto;
     return {
-      forAdmission: (attempt) => makeMarketRetirementImpactAuthorityFromPublishedClient({ ...attempt, crypto }),
+      forAdmission: (attempt) =>
+        makeMarketRetirementImpactAuthorityFromPublishedClient({
+          ...attempt,
+          beforeGateway: (operationKey) => {
+            const requirementKey = Match.value(operationKey).pipe(
+              Match.when(
+                'commerce.customer-context.api.market-retirement-reservation-recovery',
+                () => 'commerce.market-catalog.requirement.retirement-recover',
+              ),
+              Match.when(
+                'commerce.customer-context.reserve-market-retirement',
+                () => 'commerce.market-catalog.requirement.retirement-reserve',
+              ),
+              Match.orElse(EffectFunction.constUndefined),
+            );
+            if (requirementKey === undefined) {
+              return unavailable('The retirement gateway operation has no declared execution requirement');
+            }
+            return requireModuleOperation(requirementKey).pipe(
+              Effect.mapError((cause) =>
+                unavailable('The required original retirement owner operation is unavailable', cause),
+              ),
+            );
+          },
+          crypto,
+        }),
       prepareBasis: Effect.fn('MarketRetirementImpact.prepareBasis')(function* prepareBasis(attempt) {
         const { compositionRevision, retirement, scope } = attempt;
         if (scope.legalEntityId === undefined || retirement.marketRef.tenantId !== scope.tenantId) {

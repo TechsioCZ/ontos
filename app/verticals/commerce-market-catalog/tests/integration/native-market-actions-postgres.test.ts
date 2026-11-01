@@ -487,3 +487,99 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
     }).pipe(Effect.scoped),
   ),
 );
+
+it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
+  suite.effect('denies private retirement management for the real actor while retaining public Retire rights', () =>
+    Effect.gen(function* deniedRetirementManagement() {
+      const owner = yield* makeMarketRevisionNativeFixture({ retirementManagementExecutor: 'denied' });
+      expect(owner.relaySourcePrincipalId).not.toBe(owner.principal.principalId);
+      const admit = Effect.fn('NativeManageDenial.admit')(function* admit(suffix: string) {
+        const requestCorrelation = `native-manage-denied-${suffix}`;
+        const proof = yield* owner.issue({
+          audience: 'commerce-market-catalog',
+          compositionRevision: owner.compositionRevision,
+          legalEntityId: owner.legalEntityId,
+          requestCorrelation,
+        });
+        return {
+          authorization: Redacted.value(proof.credential),
+          options: {
+            baseUrl: proof.baseUrl,
+            compositionRevision: owner.compositionRevision,
+            idempotencyKey: requestCorrelation,
+          },
+          requestCorrelation,
+        };
+      });
+      const create = yield* admit('create');
+      const created = yield* executeCreateMarketWithAuthorization(
+        {
+          channels: ['B2C'],
+          effectivePeriod: { startsAt: owner.now },
+          jurisdictions: [{ code: 'CZ', kind: 'COUNTRY' }],
+          lifecycle: 'ACTIVE',
+          marketCode: 'MANAGE_DENIED',
+          marketId: owner.marketRef.resourceId,
+          purpose: 'Verify the independent management executor boundary',
+          reason: 'Create the same real actor-owned Market before denying management',
+          sellingLegalEntityRef: owner.sellerRef,
+          supportedLocales: ['cs-CZ'],
+        },
+        create.authorization,
+        create.requestCorrelation,
+        create.options,
+      );
+      const before = yield* owner.evidence();
+      const historyBeforeProof = yield* admit('history-before');
+      const historyBefore = yield* executeMarketHistoryWithAuthorization(
+        { marketRef: owner.marketRef },
+        historyBeforeProof.authorization,
+        historyBeforeProof.requestCorrelation,
+        historyBeforeProof.options,
+      );
+      const retire = yield* admit('retire');
+      const denial = yield* executeRetireMarketWithAuthorization(
+        {
+          effectiveAt: DateTime.makeUnsafe(DateTime.toEpochMillis(owner.now) + 1),
+          expectedCurrentDefinitionRevisionRef: created.definitionRevisionRef,
+          expectedRevision: created.revision,
+          marketRef: owner.marketRef,
+          reason: 'Retire is granted but the independent private Manage executor is absent',
+        },
+        retire.authorization,
+        retire.requestCorrelation,
+        retire.options,
+      ).pipe(Effect.result);
+      expect(denial).toMatchObject({ failure: { code: 'action_permission_denied', status: 403 } });
+      const after = yield* owner.evidence();
+      expect(after.admissions).toEqual(before.admissions);
+      expect(after.outboxCount).toBe(before.outboxCount);
+      expect(
+        after.invocations.filter(
+          (invocation) => invocation.actionKey === 'commerce.customer-context.reserve-market-retirement',
+        ),
+      ).toEqual(
+        before.invocations.filter(
+          (invocation) => invocation.actionKey === 'commerce.customer-context.reserve-market-retirement',
+        ),
+      );
+      expect(after.accesses.filter((access) => access.servingModuleKey === 'commerce.customer-context')).toEqual(
+        before.accesses.filter((access) => access.servingModuleKey === 'commerce.customer-context'),
+      );
+      expect(
+        after.invocations.filter(
+          (invocation) =>
+            invocation.actionKey === 'commerce.market-catalog.retire-market' && invocation.status === 'succeeded',
+        ),
+      ).toEqual([]);
+      const historyAfterProof = yield* admit('history-after');
+      const historyAfter = yield* executeMarketHistoryWithAuthorization(
+        { marketRef: owner.marketRef },
+        historyAfterProof.authorization,
+        historyAfterProof.requestCorrelation,
+        historyAfterProof.options,
+      );
+      expect(historyAfter).toEqual(historyBefore);
+    }).pipe(Effect.scoped),
+  ),
+);

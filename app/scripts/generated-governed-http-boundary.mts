@@ -1306,7 +1306,141 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
 const wholeCall = (expression: string | undefined, callee: RegExp): boolean =>
   expression !== undefined && isWholeCallExpression(expression, callee);
 
+/** New owner constructors retain exact public Core and own-registration import provenance. */
+const hasCanonicalGeneratedReadAuthority = (source: string): boolean => {
+  if (source.includes('const governedActiveApplicationCompositionLive =')) {
+    const config = namedSourceImport(source, 'GovernedApplicationCompositionConfigLive');
+    const nativeSource = namedSourceImport(source, 'GovernedApplicationCompositionSourceLive');
+    const authority = assignedExpression(source, /const governedActiveApplicationCompositionLive\s*=\s*/u);
+    if (
+      config?.imported !== 'ActiveApplicationCompositionConfigLive' ||
+      config.modulePath !== '@app/core-runtime/modules/active-application-composition' ||
+      nativeSource?.imported !== 'ActiveApplicationCompositionSourceLive' ||
+      nativeSource.modulePath !== '@app/core-runtime/modules/active-application-composition-source' ||
+      authority === undefined ||
+      !/^GovernedApplicationCompositionConfigLive\.pipe\(\s*GovernedReadLayer\.provide\(governedApplicationCompositionSourceLive\),?\s*\)$/u.test(
+        authority,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const hasConstructorOwnerPair = (
+  source: string,
+  argumentsSource: string,
+  factory: string,
+  importedFactory: NamedSourceImport,
+): boolean => {
+  const pair = /^(?<deployment>[A-Za-z][A-Za-z0-9]*),\s*(?<registration>[A-Za-z][A-Za-z0-9]*),?$/u.exec(
+    argumentsSource,
+  )?.groups;
+  if (pair === undefined) {
+    return false;
+  }
+  const deployment = namedSourceImport(source, pair.deployment ?? '');
+  const registration = namedSourceImport(source, pair.registration ?? '');
+  if (
+    deployment?.modulePath !== '../shared/ultramodern-build.ts' ||
+    deployment.imported !== 'ultramodernDeliveryUnit' ||
+    registration?.modulePath !== '../vertical.registration.ts' ||
+    !/^[a-z][A-Za-z0-9]*Registration$/u.test(registration.imported)
+  ) {
+    return false;
+  }
+  for (const [local, imported] of [
+    [factory, importedFactory],
+    [pair.deployment, deployment],
+    [pair.registration, registration],
+  ] as const) {
+    if (
+      local === undefined ||
+      imported === undefined ||
+      !hasExactValueImport(
+        source,
+        imported.imported === local ? local : `${imported.imported} as ${local}`,
+        imported.modulePath,
+        true,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const hasBoundOwnerRuntimeConstructor = (source: string, runtimeCall: RegExpMatchArray): boolean => {
+  const factory = runtimeCall.groups?.factory;
+  if (factory === undefined || runtimeCall.index === undefined || source[runtimeCall.index - 1] === '.') {
+    return false;
+  }
+  const opening = runtimeCall.index + runtimeCall[0].lastIndexOf('(');
+  const closing = matchingDelimiterEnd(source, opening, '(', ')');
+  if (closing === undefined) {
+    return false;
+  }
+  const argumentsSource = source.slice(opening + 1, closing).trim();
+  const importedFactory = namedSourceImport(source, factory);
+  const isRead = factory === 'makeReadRuntimeLive' || factory === 'GovernedMakeReadRuntimeLive';
+  if (
+    importedFactory?.modulePath !== CORE_RUNTIME_MODULE ||
+    importedFactory.imported !== (isRead ? 'makeReadRuntimeLive' : 'makeActionRuntimeLive')
+  ) {
+    return false;
+  }
+  // Existing Core Action construction remains supported; new owner-bound calls are closed pairs.
+  if (!isRead && /^[A-Za-z][A-Za-z0-9]*$/u.test(argumentsSource)) {
+    return true;
+  }
+  return hasConstructorOwnerPair(source, argumentsSource, factory, importedFactory);
+};
+
+const hasBoundOwnerRuntimeConstructors = (source: string): boolean => {
+  if (!hasCanonicalGeneratedReadAuthority(source)) {
+    return false;
+  }
+  const runtimeCalls = [
+    ...maskNonCode(source).matchAll(
+      /\b(?<factory>makeReadRuntimeLive|GovernedMakeReadRuntimeLive|makeActionRuntimeLive|GovernedMakeActionRuntimeLive)\s*\(/gu,
+    ),
+  ];
+  return runtimeCalls.every((runtimeCall) => hasBoundOwnerRuntimeConstructor(source, runtimeCall));
+};
+
+const GOVERNED_READ_DEPENDENCY_PROVISION = 'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)';
+
+const hasOwnerBoundReadPipe = (expression: string | undefined, provider: string): boolean => {
+  const pipeline = expression === undefined ? undefined : outputPipeExpression(expression);
+  if (
+    pipeline === undefined ||
+    !/^(?:makeReadRuntimeLive|GovernedMakeReadRuntimeLive)\(\s*[A-Za-z][A-Za-z0-9]*,\s*[A-Za-z][A-Za-z0-9]*,?\s*\)$/u.test(
+      pipeline.base,
+    )
+  ) {
+    return false;
+  }
+  const generatedOwner =
+    /^GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)$/u.test(
+      pipeline.base,
+    );
+  return (
+    pipeline.transforms[0] === provider &&
+    (!generatedOwner ||
+      pipeline.transforms[1] === 'GovernedReadLayer.provide(governedActiveApplicationCompositionLive)')
+  );
+};
+
+const hasLegacyReadRuntimePipe = (expression: string | undefined): boolean =>
+  wholeCall(expression, /^ReadRuntimeLive\.pipe\(/u) &&
+  callArgument(expression, /^ReadRuntimeLive\.pipe\(/u) === 'Layer.provide(readRuntimeDependenciesLive)';
+
 const hasGovernedHandlerRoot = (source: string): boolean => {
+  if (!hasBoundOwnerRuntimeConstructors(source)) {
+    return false;
+  }
   const factory = exportedRuntimeFactory(source);
   const factoryCode = factory === undefined ? '' : maskNonCode(factory.value);
   const typedRest = /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)/u.test(factoryCode);
@@ -1326,22 +1460,25 @@ const hasGovernedHandlerRoot = (source: string): boolean => {
   const runtime = assignedExpression(source, /const governedReadRuntimeLive\s*=\s*/u);
   if (
     runtime === undefined ||
-    (!/^readRuntimeLive$/u.test(runtime) && !runtime.startsWith('GovernedReadRuntimeLive.pipe('))
+    (!/^readRuntimeLive$/u.test(runtime) &&
+      !runtime.startsWith('GovernedReadRuntimeLive.pipe(') &&
+      !hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION))
   ) {
     return false;
   }
   if (runtime === 'readRuntimeLive') {
     const ownerRuntime = assignedExpression(source, /const readRuntimeLive\s*=\s*/u);
     if (
-      !wholeCall(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) ||
-      callArgument(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) !== 'Layer.provide(readRuntimeDependenciesLive)'
+      !hasOwnerBoundReadPipe(ownerRuntime, 'Layer.provide(readRuntimeDependenciesLive)') &&
+      !hasLegacyReadRuntimePipe(ownerRuntime)
     ) {
       return false;
     }
+  } else if (hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION)) {
+    // Constructor and both argument imports were checked above; retain the exact dependency pipe.
   } else if (
     !isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
-    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !==
-      'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)'
+    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !== GOVERNED_READ_DEPENDENCY_PROVISION
   ) {
     return false;
   }

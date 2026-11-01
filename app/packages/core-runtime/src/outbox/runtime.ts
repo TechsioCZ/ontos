@@ -1,3 +1,5 @@
+import { withoutModuleOperationExecution } from '../modules/module-operation-execution.ts';
+import { nativeOutboxClaimRevision, withNativeOutboxClaimExecution } from './worker-runtime-binding.ts';
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. expires: 2026-12-31. */
 // @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
@@ -341,10 +343,18 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
 
     const handler = getOutboxWorkerHandler(registration);
     const handlerExit = yield* Effect.exit(
-      Effect.suspend(() =>
-        handler(
-          decoded.value,
-          handlerContext(claim, registration.descriptor.legalEntityScope ?? 'required', execution.compositionRevision),
+      withNativeOutboxClaimExecution(
+        claim,
+        registration,
+        Effect.suspend(() =>
+          handler(
+            decoded.value,
+            handlerContext(
+              claim,
+              registration.descriptor.legalEntityScope ?? 'required',
+              nativeOutboxClaimRevision(claim, registration) ?? execution.compositionRevision,
+            ),
+          ),
         ),
       ).pipe(
         Effect.match({
@@ -435,7 +445,7 @@ export const makeOutboxRuntime = (repository: OutboxRepositoryPort): OutboxRunti
   const matchMessages: OutboxRuntimeService['matchMessages'] = (input) =>
     matchMessagesWithRepository(repository, input).pipe(Effect.withSpan('OutboxMatcher.matchMessages'));
   const runCycle: OutboxRuntimeService['runCycle'] = (input) =>
-    runCycleWithRepository(repository, input).pipe(
+    withoutModuleOperationExecution(runCycleWithRepository(repository, input)).pipe(
       Effect.withSpan('OutboxWorker.runCycle', {
         attributes: { claimOwner: input.claimOwner },
       }),

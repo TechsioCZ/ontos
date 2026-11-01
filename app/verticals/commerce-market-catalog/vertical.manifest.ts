@@ -270,8 +270,8 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
         },
       },
       {
-        condition: 'commerce.market-catalog.condition.retirement-new-or-pending-original-effect',
-        entrypointKey: retireMarketAction.descriptor.entrypoint.entrypointKey,
+        condition: 'commerce.market-catalog.condition.retirement-new-original-basis',
+        entrypointKey: manageMarketRetirementAdmissionAction.descriptor.entrypoint.entrypointKey,
         evidence: [
           'commerce.market-catalog.evidence.retirement.affected-use-current',
           'commerce.market-catalog.evidence.retirement.exact-original-basis',

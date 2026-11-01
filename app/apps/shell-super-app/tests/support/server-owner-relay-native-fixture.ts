@@ -3,7 +3,6 @@ import {
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
-  CoreSearchResourceRefSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
@@ -526,23 +525,18 @@ export const startPackagedRetailWorker = Effect.fn('ServerOwnerRelayNative.start
 const PostalFactoryResultSchema = Schema.Struct({
   compositionRevision: Schema.String,
   factory: Schema.Literals(['delivery', 'invoice']),
-  postal: Schema.Struct({
-    currentContactPointRef: CoreSearchResourceRefSchema,
-    currentPartyRef: CoreSearchResourceRefSchema,
-    currentSourceRevision: Schema.Number,
-    kind: Schema.Literal('PARTY_BACKED'),
-    postalAddress: Schema.Record(Schema.String, Schema.String),
-  }),
+  outcome: Schema.Literal('FACTORY_ONLY_EXECUTION_REJECTED'),
+  requirementCode: Schema.Literal('module_operation_requirement_unavailable'),
 });
 
-/** Test-only owner process: actual verifier/native scope/default factory, no HTTP or Current substitute. */
+/** Real verifier/scope/default factory; success means specific missing-execution rejection, never postal facts. */
 const PostalFactoryPhaseSchema = Schema.Literals([
   'redemption_started',
   'redemption_completed',
   'scope_admission_started',
   'scope_admitted',
   'factory_ready',
-  'postal_resolved',
+  'requirement_rejected',
   'scope_completed',
 ]);
 

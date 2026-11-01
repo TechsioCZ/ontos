@@ -198,6 +198,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
+import { ${toCamelCase(consumer.slug)}Registration } from '../../vertical.registration.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
@@ -209,6 +210,7 @@ import {
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: '${consumer.moduleId}-outbox-worker',
   expectedDeployment: ultramodernApiMarker,
+  ownerRegistration: ${toCamelCase(consumer.slug)}Registration,
   layer: Layer.merge(
     ActiveApplicationCompositionConfigLive.pipe(
       Layer.provide(

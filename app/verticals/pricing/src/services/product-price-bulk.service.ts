@@ -28,6 +28,10 @@ import type {
   RevisePriceSourceInvalid,
 } from '../actions/revise-price.action.ts';
 import { catalogSelectionAssessmentPortFromEnvironment } from '../integrations/catalog-selection-evidence.ts';
+import {
+  requirePricingCatalogOperation,
+  requirePricingCommercialContextOperation,
+} from '../integrations/pricing-operation-requirements.ts';
 import { commercialContextAssessmentPortFromEnvironment } from '../integrations/commercial-context-evidence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import { externalPriceSourceAuthorityForScope } from '../persistence/external-price-source-authority-persistence.ts';
@@ -529,8 +533,14 @@ export const productPriceBulkServiceForScope: ActionServiceFactory<
     const externalPriceInputBoundary = externalPriceInputBoundaryFactory.make(authority);
     const options: ProductPriceBulkCommandOptions = {
       defineServices: {
-        assessCatalogSelection: catalog.assess,
-        assessCommercialContext: commercialContext.assess,
+        assessCatalogSelection: (input) =>
+          requirePricingCatalogOperation('commerce.pricing.requirement.manage-product-prices-bulk-catalog').pipe(
+            Effect.andThen(() => catalog.assess(input)),
+          ),
+        assessCommercialContext: (input) =>
+          requirePricingCommercialContextOperation(
+            'commerce.pricing.requirement.manage-product-prices-bulk-market',
+          ).pipe(Effect.andThen(() => commercialContext.assess(input))),
         assessExternalPriceInput: externalPriceInputBoundary.assess,
         define: persistence.define,
         loadCurrencySupport: currencySupport.loadCurrent,

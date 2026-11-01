@@ -28,6 +28,7 @@ interface PrivateVerticalRuntime {
   readonly entrypoints: VerticalRuntimeEntrypointBindings;
   readonly operationContracts: readonly OntosOperationContract[];
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
+  readonly reads: readonly AnyReadRegistration[];
   readonly requirements?: OntosModuleRequirements;
   readonly shellContributions: OntosShellContributions;
 }
@@ -187,6 +188,7 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
     }),
     operationContracts,
     outboxWorkers: workers,
+    reads: Object.freeze([...(input.reads ?? [])]),
     shellContributions: input.manifest.publicSurface.shellContributions,
   };
   if (input.manifest.requirements !== undefined) {
@@ -212,6 +214,10 @@ export const getVerticalRuntimeActions = (
 export const getVerticalRuntimeOutboxWorkers = (
   registration: VerticalRuntimeRegistration,
 ): readonly AnyOutboxWorkerRegistration[] => requirePrivateRuntime(registration).outboxWorkers;
+
+/** Core-private runtime membership check; never published through the package index. */
+export const getVerticalRuntimeReads = (registration: VerticalRuntimeRegistration): readonly AnyReadRegistration[] =>
+  requirePrivateRuntime(registration).reads;
 
 /** Owner-local runtime seam; lazy executable values never appear on the registration object. */
 export const getVerticalRuntimeEntrypoints = (
