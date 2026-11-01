@@ -245,50 +245,119 @@ export interface UseAutosaveOptions<V, R> extends AutosaveOptions<V, R> {
   readonly value: V;
 }
 
+/** The revision a draft generation is based on; a successful save moves it to the revision the server returns. */
+interface BaseRevision {
+  /** Moves the base to a newer revision; an older one is ignored. */
+  readonly advance: (revision: number) => void;
+  readonly current: () => number;
+}
+
+const baseRevision = (initial: number): BaseRevision => {
+  let revision = initial;
+  return {
+    advance: (next) => {
+      revision = Math.max(revision, next);
+    },
+    current: () => revision,
+  };
+};
+
 interface Generation<V, R> {
+  readonly base: BaseRevision;
   readonly controller: AutosaveController<V, R>;
 }
 
+/**
+ * Result of a save that knows revisions: the new revision of the record when it was saved, otherwise `conflict` or
+ * `failed` (`saved` when the save returns no revision).
+ */
+export type RevisionedSaveResult = AutosaveOutcome | number;
+
+interface GenerationOptions<V, R> extends Omit<AutosaveOptions<V, R>, 'save'> {
+  readonly revision: number;
+  readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
+  readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
+  readonly value: V;
+}
+
+const isOutcome = Schema.is(AutosaveOutcomeSchema);
+
+const boundTo = <V, R>(options: GenerationOptions<V, R>, base: BaseRevision): AutosaveOptions<V, R> => ({
+  ...options,
+  save: (value) =>
+    options.save(value, base.current()).pipe(
+      Effect.map((result): AutosaveOutcome => {
+        if (isOutcome(result)) {
+          return result;
+        }
+        base.advance(result);
+        return 'saved';
+      }),
+    ),
+});
+
 /** The controller of the current draft generation. A new generation starts from a server version (`adopt`). */
-const useGeneration = <V, R>(options: UseAutosaveOptions<V, R>) => {
+const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
   const { runtime } = options;
-  const begin = (from: V): Generation<V, R> => ({ controller: runtime.runSync(startAutosave(from, options)) });
-  const [generation, setGeneration] = useState(() => begin(options.value));
-  const { controller } = generation;
+  const begin = (from: V, revision: number): Generation<V, R> => {
+    const base = baseRevision(revision);
+    return { base, controller: runtime.runSync(startAutosave(from, boundTo(options, base))) };
+  };
+  const [generation, setGeneration] = useState(() => begin(options.value, options.revision));
+  const { base, controller } = generation;
   useEffect(() => {
-    controller.configure(options);
-  }, [controller, options]);
+    controller.configure(boundTo(options, base));
+  }, [base, controller, options]);
   useEffect(() => {
     controller.change(options.value);
   }, [controller, options.value]);
   // Unmount (or a newer generation): send what is still pending. Nothing is pending when a generation is replaced.
   useEffect(() => controller.flush, [controller]);
   const status = useSyncExternalStore(controller.subscribe, controller.status, controller.status);
-  const adopt = (value: V) => {
+  const restart = (value: V, revision: number) => {
     controller.dispose();
-    setGeneration(begin(value));
+    setGeneration(begin(value, revision));
   };
-  const autosave: Autosave<V> = {
-    adopt,
-    flush: controller.flush,
-    pending: autosavePending(status),
-    retry: controller.retry,
-    status,
-  };
-  return { autosave, begin, controller, setGeneration, status };
+  return { base, begin, controller, restart, setGeneration, status };
 };
+
+const autosaveOf = <V, R>(
+  controller: AutosaveController<V, R>,
+  status: AutosaveState,
+  adopt: (value: V) => void,
+): Autosave<V> => ({
+  adopt,
+  flush: controller.flush,
+  pending: autosavePending(status),
+  retry: controller.retry,
+  status,
+});
 
 /**
  * Autosave for an edit form of an existing record. The draft is sent `delayMs` after the last change, on `flush()`,
  * and once more when the form unmounts.
  */
-export const useAutosave = <V, R>(options: UseAutosaveOptions<V, R>): Autosave<V> => useGeneration(options).autosave;
+export const useAutosave = <V, R>(options: UseAutosaveOptions<V, R>): Autosave<V> => {
+  const { controller, restart, status } = useGeneration({ ...options, revision: 0, save: options.save });
+  return autosaveOf(controller, status, (value) => restart(value, 0));
+};
 
-export interface UseAutosaveDraftOptions<V, R> extends AutosaveOptions<V, R> {
+export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R>, 'save'> {
   /** Re-reads the record (e.g. a page-data refresh); `reloadLatest` runs it after dropping the draft. */
   readonly refresh?: Effect.Effect<void, never, R>;
+  /**
+   * Revision of `server` (often the owner's snapshot revision). A save gets the revision its draft is based on as
+   * `expectedRevision`; while the server still has the last confirmed version of this record, the base follows newer
+   * revisions, so unrelated changes elsewhere cause no conflict.
+   */
+  readonly revision?: number;
   /** The host's browser runtime; saves and timers run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
+  /**
+   * Sends one draft. Return the record's new revision (or `saved`), `conflict` for the action's revision conflict
+   * and `failed` otherwise; a defect or interruption counts as `failed`.
+   */
+  readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
   /** The record as the server has it now, in the draft's shape (recomputed on every render is fine). */
   readonly server: V;
 }
@@ -307,24 +376,38 @@ export interface AutosaveDraft<V> extends Autosave<V> {
  */
 export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): AutosaveDraft<V> => {
   const { refresh, runtime, server } = options;
+  const revision = options.revision ?? 0;
   const same = options.equals ?? Equal.equals;
   const [draft, setDraft] = useState(server);
   const [seen, setSeen] = useState(server);
-  const { autosave, begin, controller, setGeneration, status } = useGeneration({ ...options, value: draft });
+  const { base, begin, controller, restart, setGeneration, status } = useGeneration({
+    ...options,
+    revision,
+    value: draft,
+  });
   if (!same(seen, server)) {
     setSeen(server);
     const settled = !autosavePending(status) && same(draft, controller.confirmed());
     if (settled && !same(server, draft)) {
       setDraft(server);
-      setGeneration(begin(server));
+      setGeneration(begin(server, revision));
     }
   }
+  useEffect(() => {
+    // The server still has the version this draft builds on: newer revisions changed something else.
+    if (same(server, controller.confirmed())) {
+      base.advance(revision);
+    }
+  }, [base, controller, revision, same, server]);
+  const adopt = (value: V) => {
+    setDraft(value);
+    restart(value, revision);
+  };
   return {
-    ...autosave,
+    ...autosaveOf(controller, status, adopt),
     draft,
     reloadLatest: () => {
-      setDraft(seen);
-      autosave.adopt(seen);
+      adopt(seen);
       if (refresh !== undefined) {
         runtime.runFork(refresh);
       }

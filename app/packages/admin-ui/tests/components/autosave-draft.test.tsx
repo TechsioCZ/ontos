@@ -3,26 +3,35 @@ import { Deferred, Effect, Layer, ManagedRuntime } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { AutosaveStatus } from '../../src/autosave-status.tsx';
 import { useAutosaveDraft } from '../../src/autosave.ts';
-import type { AutosaveOutcome } from '../../src/autosave.ts';
+import type { RevisionedSaveResult } from '../../src/autosave.ts';
 
 const runtime = ManagedRuntime.make(Layer.empty);
 
 interface Harness {
-  readonly replies: Deferred.Deferred<AutosaveOutcome>[];
+  readonly expected: number[];
+  readonly replies: Deferred.Deferred<RevisionedSaveResult>[];
   readonly sent: string[];
 }
 
-const harness = (): Harness => ({ replies: [], sent: [] });
+const harness = (): Harness => ({ expected: [], replies: [], sent: [] });
 
-const NameForm = ({ server, test }: { readonly server: string; readonly test: Harness }) => {
+interface NameFormProps {
+  readonly revision?: number;
+  readonly server: string;
+  readonly test: Harness;
+}
+
+const NameForm = ({ revision = 1, server, test }: NameFormProps) => {
   const autosave = useAutosaveDraft({
     delayMs: 10,
     isValid: (value: string) => value.trim() !== '',
+    revision,
     runtime,
-    save: (value: string) =>
+    save: (value: string, expectedRevision: number) =>
       Effect.suspend(() => {
         test.sent.push(value);
-        const reply = Deferred.makeUnsafe<AutosaveOutcome>();
+        test.expected.push(expectedRevision);
+        const reply = Deferred.makeUnsafe<RevisionedSaveResult>();
         test.replies.push(reply);
         return Deferred.await(reply);
       }),
@@ -42,7 +51,7 @@ const NameForm = ({ server, test }: { readonly server: string; readonly test: Ha
   );
 };
 
-const answer = (test: Harness, index: number, outcome: AutosaveOutcome) => {
+const answer = (test: Harness, index: number, outcome: RevisionedSaveResult) => {
   const reply = test.replies[index];
   expect(reply).toBeDefined();
   if (reply !== undefined) {
@@ -102,6 +111,29 @@ describe('useAutosaveDraft', () => {
       expect(input().value).toBe('Jejich změna');
       yield* eventually(() => expect(screen.queryByText('Záznam mezitím změnil někdo jiný.')).toBeNull());
       expect(test.sent).toEqual(['Moje změna']);
+    }),
+  );
+
+  it.effect('sends the revision the draft is based on and follows revisions that changed something else', () =>
+    Effect.gen(function* revisions() {
+      const test = harness();
+      const view = render(<NameForm revision={4} server="Akros" test={test} />);
+      fireEvent.change(input(), { target: { value: 'Akros CZ' } });
+      fireEvent.focusOut(input());
+      answer(test, 0, 5);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+      // Someone else changed another record: this one is still what we saved.
+      view.rerender(<NameForm revision={6} server="Akros CZ" test={test} />);
+      fireEvent.change(input(), { target: { value: 'Akros Praha' } });
+      fireEvent.focusOut(input());
+      yield* eventually(() => expect(test.expected).toEqual([4, 6]));
+      answer(test, 1, 7);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+      // Someone else changed this record while a draft is pending: the save keeps the old base and conflicts.
+      fireEvent.change(input(), { target: { value: 'Akros Brno' } });
+      view.rerender(<NameForm revision={8} server="Jejich název" test={test} />);
+      fireEvent.focusOut(input());
+      yield* eventually(() => expect(test.expected).toEqual([4, 6, 7]));
     }),
   );
 });
