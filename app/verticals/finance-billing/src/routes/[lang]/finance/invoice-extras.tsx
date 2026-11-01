@@ -60,8 +60,7 @@ const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 
 const remainingOf = (invoice: Invoice) => Math.max(0, invoice.totalMinor - invoice.paidMinor);
 
-const actorText = (label: string | undefined, principal: string | undefined) =>
-  label ?? (principal === undefined ? 'neznámý uživatel' : `uživatel ${principal.slice(0, 8)}…`);
+const actorText = (label: string | undefined) => label ?? 'neznámý uživatel';
 
 /** Uploaded documents of one invoice: download, inline preview, and upload of another file. */
 const invoiceDocumentsLoadProgram = Effect.fn('Finance.load')(function* invoiceDocumentsLoadProgram(
@@ -166,9 +165,7 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate font-medium text-sm">{document.fileName}</span>
                   <span className="truncate text-fg-secondary text-xs">
-                    {formatBytes(document.sizeBytes)} · {at(document.uploadedAt)} ·{' '}
-                    {actorText(document.actorLabel, document.actorPrincipalId)} · SHA-256 {document.sha256.slice(0, 12)}
-                    …
+                    {formatBytes(document.sizeBytes)} · {at(document.uploadedAt)} · {actorText(document.actorLabel)}
                   </span>
                 </span>
                 <Button
@@ -464,7 +461,7 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
                   <PaymentSourceBadge event={event} invoice={invoice} />
                   {payment !== undefined && (
                     <span className="text-fg-secondary text-xs">
-                      {actorText(payment.actorLabel, payment.actorPrincipalId)} · {at(payment.recordedAt)}
+                      {actorText(payment.actorLabel)} · {at(payment.recordedAt)}
                       {payment.note === undefined ? '' : ` · ${payment.note}`}
                     </span>
                   )}
@@ -910,9 +907,7 @@ export const InvoiceReminders = (props: {
                   </Badge>
                 )}
                 <ReminderEmailStatus receipts={receipts} reminderId={reminder.id} />
-                <span className="text-fg-secondary text-xs">
-                  {actorText(reminder.actorLabel, reminder.actorPrincipalId)}
-                </span>
+                <span className="text-fg-secondary text-xs">{actorText(reminder.actorLabel)}</span>
               </li>
             ))}
           </ul>
@@ -958,8 +953,7 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
             </span>
           )}
           <span className="text-fg-secondary">
-            Balíček {latest.batchNumber} ({latest.format === 'POHODA_XML' ? 'POHODA XML' : latest.format}, verze{' '}
-            {latest.version}) · {at(latest.createdAt)} · {actorText(latest.actorLabel, latest.actorPrincipalId)}
+            Balíček {latest.batchNumber} (POHODA XML) · {at(latest.createdAt)} · {actorText(latest.actorLabel)}
           </span>
           <span className="text-fg-secondary text-xs">
             OntOS nevede účetnictví – stav „zaúčtováno“ eviduje až účetní systém.

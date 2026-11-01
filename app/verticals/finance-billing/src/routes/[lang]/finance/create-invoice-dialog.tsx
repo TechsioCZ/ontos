@@ -272,7 +272,7 @@ const useCreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogP
       : t(`${ns}.form.${issueProblem === 'missing' ? 'errorIssueDate' : 'errorIssueDateYear'}`);
 
   const customerLabel = (item: (typeof customers)[number]) => {
-    const name = item.displayName ?? item.partyId;
+    const name = item.displayName ?? t('finance-billing.faktury.unknownCustomer');
     if (item.companyId === null) {
       return name;
     }

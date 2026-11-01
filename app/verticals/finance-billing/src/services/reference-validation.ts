@@ -1,4 +1,4 @@
-import { ReadRuntime, legalEntityDetailRead } from '@app/core-runtime';
+import { ReadRuntime, agentActivityActorsRead, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import {
@@ -97,7 +97,18 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
       partners.set(customer.counterpartyId, partner);
       partners.set(customer.partyId, partner);
     }
-    return { issuerName: issuer.legalName, partners };
+    // The file names its author by the display name Core holds for the authenticated principal, never by its id.
+    const actors = yield* readRuntime.runRead({
+      input: {},
+      principal: scope,
+      registration: agentActivityActorsRead,
+      transport: { correlationId: scope.correlationId },
+    });
+    const author = actors.names.find((entry) => entry.principalId === scope.principalId);
+    if (author === undefined) {
+      return { issuerName: issuer.legalName, partners };
+    }
+    return { authorName: author.displayName, issuerName: issuer.legalName, partners };
   }).pipe(Effect.mapError(unavailable), Effect.withSpan('Finance.exportReferences'));
   const validateCounterparty = Effect.fn('Finance.validateCounterparty')(function* validateCounterparty(
     invoice: Invoice,
