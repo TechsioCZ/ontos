@@ -255,7 +255,7 @@ export const PeopleToolbar = ({
           variant="secondary"
         />
       </Tooltip>
-      <div className="ms-auto flex items-end gap-100">{actions}</div>
+      {actions}
     </div>
   );
 };

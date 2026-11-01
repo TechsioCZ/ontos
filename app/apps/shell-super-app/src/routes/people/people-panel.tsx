@@ -4,7 +4,8 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect, Fiber, Match } from 'effect';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
+import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 
 import type {
@@ -383,26 +384,36 @@ const peopleReadError = (current: PeopleOutcome<PeopleList> | undefined, linkedP
   return error;
 };
 
-/** Live list: reload on return to the tab and on a short timer, faster while a change awaits confirmation. */
-const IDLE_RELOAD_MS = 30_000;
-const PENDING_RELOAD_MS = 3000;
-const useAutoReload = (reload: () => void, pending: boolean) => {
-  const onTick = useEffectEvent(reload);
+/** Core-owned people data changes arrive as live changes for the pseudo app `shell`; `all` after a reconnect. */
+const LiveChangeDetailSchema = Schema.Struct({
+  apps: Schema.Union([Schema.Literal('all'), Schema.Array(Schema.String)]),
+});
+const changesPeople = (event: Event): boolean =>
+  Schema.decodeUnknownOption(LiveChangeDetailSchema)('detail' in event ? event.detail : null).pipe(
+    Option.exists(({ apps }) => apps === 'all' || apps.includes('shell')),
+  );
+
+/** Push-based list: reload on a committed people change and on return to the tab, never on a timer. */
+const useLiveReload = (reload: () => void) => {
+  const onChange = useEffectEvent(reload);
   useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState !== 'hidden') {
-        onTick();
+    const follow = (event: Event) => {
+      if (changesPeople(event)) {
+        onChange();
       }
     };
-    const timer = browserRuntime.runFork(
-      Effect.sync(tick).pipe(Effect.delay(pending ? PENDING_RELOAD_MS : IDLE_RELOAD_MS), Effect.forever),
-    );
-    document.addEventListener('visibilitychange', tick);
-    return () => {
-      browserRuntime.runFork(Fiber.interrupt(timer));
-      document.removeEventListener('visibilitychange', tick);
+    const returned = () => {
+      if (document.visibilityState !== 'hidden') {
+        onChange();
+      }
     };
-  }, [pending]);
+    globalThis.addEventListener(moduleChangeEvent, follow);
+    document.addEventListener('visibilitychange', returned);
+    return () => {
+      globalThis.removeEventListener(moduleChangeEvent, follow);
+      document.removeEventListener('visibilitychange', returned);
+    };
+  }, []);
 };
 
 interface Loaded<Value> {
@@ -463,7 +474,7 @@ export const PeoplePanel = ({
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
   }, [viewKey, scope, reload]);
-  useAutoReload(() => setReload((value) => value + 1), pending.length > 0);
+  useLiveReload(() => setReload((value) => value + 1));
   const commit = (change: PendingPeopleChange) => {
     setPending((changes) => [...changes, change]);
     setReload((value) => value + 1);

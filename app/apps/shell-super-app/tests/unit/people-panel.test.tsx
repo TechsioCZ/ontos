@@ -3,6 +3,7 @@ import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
 import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect } from 'effect';
 import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 import type { PropsWithChildren, ReactElement } from 'react';
@@ -357,4 +358,22 @@ it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', 
       }),
     { concurrency: 1, discard: true },
   ),
+);
+
+it.live('reloads on a live change of Core-owned people data, not on other modules or a timer', () =>
+  Effect.gen(function* followLiveChanges() {
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.promise(() => screen.findByText(person.displayName));
+    const reads = () => commands.list.mock.calls.length;
+    const before = reads();
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['crm'] } }));
+    yield* Effect.sleep('50 millis');
+    expect(reads()).toBe(before);
+    commands.list.mockReturnValue(
+      Effect.succeed({ status: 'ok', value: { ...list, items: [{ ...person, displayName: 'Jana Svobodová' }] } }),
+    );
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['shell'] } }));
+    yield* Effect.promise(() => screen.findByText('Jana Svobodová'));
+    expect(reads()).toBe(before + 1);
+  }),
 );
