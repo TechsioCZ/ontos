@@ -101,26 +101,26 @@ it.effect('sends one reset after missed notifications and a heartbeat while idle
   }).pipe(Effect.provide(layer));
 });
 
-it.effect('shares one change tail and evicts the oldest connection beyond four per principal', () => {
+it.effect('shares one change tail and evicts the oldest connection beyond 32 per principal', () => {
   const { layer, starts } = recordingHub();
   return Effect.gen(function* limits() {
     const connections = yield* Effect.forEach(
-      [1, 2, 3, 4, 5],
+      Array.from({ length: 33 }, (_, index) => index),
       () => open(scope()).pipe(Effect.flatMap((frames) => Stream.runDrain(frames).pipe(Effect.forkChild))),
       { concurrency: 1 },
     );
     yield* advance(1);
     const hub = yield* LiveChangeHub;
     expect(starts.count).toBe(1);
-    expect(yield* hub.connections).toBe(4);
+    expect(yield* hub.connections).toBe(32);
     expect(connections.at(0)?.pollUnsafe()).toBeDefined();
-    expect(connections.at(4)?.pollUnsafe()).toBeUndefined();
+    expect(connections.at(32)?.pollUnsafe()).toBeUndefined();
     // Another principal is not affected by that limit.
     yield* open(scope({ principalId: 'principal-b' })).pipe(
       Effect.flatMap((frames) => Stream.runDrain(frames).pipe(Effect.forkChild)),
     );
     yield* advance(1);
-    expect(yield* hub.connections).toBe(5);
+    expect(yield* hub.connections).toBe(33);
   }).pipe(Effect.provide(layer));
 });
 

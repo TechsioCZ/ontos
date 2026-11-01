@@ -18,7 +18,9 @@ const COALESCE = Duration.millis(250);
 const HEARTBEAT = Duration.seconds(25);
 const MAX_AGE = Duration.minutes(10);
 const TAIL_IDLE = Duration.minutes(1);
-const MAX_PER_PRINCIPAL = 4;
+// Demo and team accounts are shared by many people at once; a tight limit would make their tabs evict each other
+// and reconnect in a loop. The per-process limit still bounds the total.
+const MAX_PER_PRINCIPAL = 32;
 const MAX_CONNECTIONS = 500;
 const RETRY_MIN_MILLIS = 3000;
 const RETRY_SPREAD_MILLIS = 5000;
