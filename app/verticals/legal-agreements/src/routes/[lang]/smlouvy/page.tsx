@@ -490,7 +490,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
     busy,
     expiringOnly,
     feedback,
-    refresh,
+    retry,
     setExpiringOnly,
 
     snapshot,
@@ -560,9 +560,11 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                   {t('legal-agreements.demo.expiring')}
                 </Button>
               </div>
-              <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-                {t('legal-agreements.demo.refresh')}
-              </Button>
+              {(feedback === 'unavailable' || feedback === 'forbidden') && (
+                <Button disabled={busy} onClick={retry} size="sm" theme="outlined" variant="secondary">
+                  {t('legal-agreements.demo.retry')}
+                </Button>
+              )}
             </div>
             {snapshot !== undefined && visible.length === 0 && (
               <p

@@ -164,6 +164,10 @@ export const useRecordsPage = (input: AgreementsInput) => {
       clearSensitiveState();
     }
     setActionFeedback(nextFeedback);
+    if (nextFeedback === 'conflict') {
+      // Someone changed the agreements meanwhile: show their version before the person tries again.
+      run(agreements.refresh(input));
+    }
   };
   const selectContractKind = (kind: Contract['kind']) => {
     setChosenContractKind(kind);
@@ -182,8 +186,8 @@ export const useRecordsPage = (input: AgreementsInput) => {
       );
     }
   };
-  /** Reloads in place: the current list stays visible until the owners answered. */
-  const refresh = () => {
+  /** Retries after a failure in place: the current list stays visible until the owners answered. */
+  const retry = () => {
     setActionFeedback('loading');
     setSensitiveHidden(false);
     run(agreements.refresh(input).pipe(Effect.andThen(Effect.sync(() => setActionFeedback(undefined)))));
@@ -515,10 +519,10 @@ export const useRecordsPage = (input: AgreementsInput) => {
     openTerms,
     properties,
     recordSignature,
-    refresh,
     renew,
     rentalFeedback,
     resetDraftForm,
+    retry,
     runCommand,
     saveDraft,
     saveTerms,
