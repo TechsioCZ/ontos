@@ -1,3 +1,4 @@
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
@@ -117,6 +118,25 @@ export { makeCompositionSnapshot as makeApiKeyGatewayNativeComposition } from '.
 const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bundleChild() {
   const filesystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const generated = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        deliveryUnit: Schema.Struct({
+          buildMarker: Schema.String,
+          unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+        }),
+      }),
+    ),
+  )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
+  const identity = yield* Effect.try({
+    catch: unavailable,
+    try: () =>
+      resolveUltramodernReleaseIdentity({
+        generationBuildMarker: generated.deliveryUnit.buildMarker,
+        unitId: generated.deliveryUnit.unitId,
+        workspaceRoot: appRoot,
+      }),
+  });
   const cache = new URL('../../node_modules/.cache/ontos-1250/', import.meta.url).pathname;
   yield* filesystem.makeDirectory(cache, { recursive: true });
   const temporary = yield* filesystem.makeTempDirectoryScoped({ directory: cache, prefix: 'shell-' });
@@ -134,6 +154,8 @@ const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bun
       '--platform=node',
       '--format=esm',
       '--packages=external',
+      `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
+      `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
       `--outfile=${artifact}`,
     ],
     { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
