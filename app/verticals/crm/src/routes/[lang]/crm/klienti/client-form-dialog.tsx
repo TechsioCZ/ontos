@@ -5,7 +5,15 @@ import { assignableSalespeople } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 // Create / edit a client (company or person). On create, contact persons can be entered right away (C01-01) and
 // someone with demo.crm.assign may pick the salesperson; a salesperson always creates the client for themself.
-import { SidePanel, dialogCloseLabel, foldSearchText, surfaceTileClassName } from '@app/admin-ui';
+import {
+  AutosaveStatus,
+  SidePanel,
+  dialogCloseLabel,
+  foldSearchText,
+  surfaceTileClassName,
+  useAutosaveDraft,
+} from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -21,24 +29,10 @@ import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
 
 import { clientSegments, segmentLabels } from './clients-model.ts';
-
-type Kind = Client['kind'];
+import { EMAIL, NONE, draftOf, patchOf, sameClientDraft, validClientDraft } from './client-draft.ts';
+import type { Draft } from './client-draft.ts';
 
 type InputHelp = Pick<ComponentProps<typeof FormInput>, 'helpText'>;
-
-interface Draft {
-  readonly address: string;
-  readonly email: string;
-  readonly kind: Kind;
-  readonly name: string;
-  readonly note: string;
-  readonly owner: string;
-  readonly phone: string;
-  readonly regNo: string;
-  readonly segment: string;
-  readonly vatNo: string;
-  readonly website: string;
-}
 
 interface ContactDraft {
   readonly email: string;
@@ -48,64 +42,7 @@ interface ContactDraft {
   readonly role: string;
 }
 
-const NONE = 'none';
 const emptyContact = (key: number): ContactDraft => ({ email: '', key, name: '', phone: '', role: '' });
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
-
-const draftOf = (client: Client | undefined, defaultOwner: string): Draft => {
-  if (client === undefined) {
-    return {
-      address: '',
-      email: '',
-      kind: 'organization',
-      name: '',
-      note: '',
-      owner: defaultOwner,
-      phone: '',
-      regNo: '',
-      segment: NONE,
-      vatNo: '',
-      website: '',
-    };
-  }
-  return {
-    address: client.address ?? '',
-    email: client.email ?? '',
-    kind: client.kind,
-    name: client.name,
-    note: client.note ?? '',
-    owner: client.ownerSalespersonId ?? defaultOwner,
-    phone: client.phone ?? '',
-    regNo: client.regNo ?? '',
-    segment: client.segment ?? NONE,
-    vatNo: client.vatNo ?? '',
-    website: client.website ?? '',
-  };
-};
-
-/** Only the fields that differ; `''` clears a field on the server. */
-const patchOf = (draft: Draft, client: Client) => {
-  type Patch = Extract<CrmCommandInput, { readonly _tag: 'UpdateClient' }>['patch'];
-  const patch: Patch = {};
-  const compare = (key: Exclude<keyof Patch, 'kind'>, value: string) => {
-    if (value.trim() !== (client[key] ?? '')) {
-      Object.assign(patch, { [key]: value.trim() });
-    }
-  };
-  compare('name', draft.name);
-  compare('address', draft.address);
-  compare('email', draft.email);
-  compare('phone', draft.phone);
-  compare('website', draft.website);
-  compare('note', draft.note);
-  compare('regNo', draft.kind === 'organization' ? draft.regNo : '');
-  compare('vatNo', draft.kind === 'organization' ? draft.vatNo : '');
-  compare('segment', draft.segment === NONE ? '' : draft.segment);
-  if (draft.kind !== client.kind) {
-    Object.assign(patch, { kind: draft.kind });
-  }
-  return patch;
-};
 
 const optionalField = <K extends string>(key: K, value: string) => {
   const field: Partial<Record<K, string>> = {};
@@ -208,10 +145,32 @@ const useClientForm = ({
   const toaster = useToast();
   const { viewer } = records;
   const defaultOwner = viewer.salespersonId ?? NONE;
-  const [draft, setDraft] = useState<Draft>(() => draftOf(client, defaultOwner));
-  const [contacts, setContacts] = useState<readonly ContactDraft[]>(() => (mode === 'create' ? [emptyContact(0)] : []));
-  const [touched, setTouched] = useState(false);
+  const editing = mode === 'edit' && client !== undefined;
   const [failure, setFailure] = useState<string | undefined>();
+  // Edit mode autosaves the changed fields (UpdateClient is a patch; the CRM submit retries it on the latest
+  // revision). Create mode keeps its explicit "Založit klienta" and never autosaves.
+  const autosave = useAutosaveDraft<Draft, never>({
+    equals: sameClientDraft,
+    isValid: (value) => editing && validClientDraft(value),
+    runtime: browserRuntime,
+    save: (value): Effect.Effect<AutosaveOutcome> => {
+      if (client === undefined) {
+        return Effect.succeed('failed');
+      }
+      const changes = patchOf(value, client);
+      if (Object.keys(changes).length === 0) {
+        return Effect.succeed('saved');
+      }
+      return submit({ _tag: 'UpdateClient', id: client.id, patch: changes }).pipe(
+        Effect.tap((outcome) => Effect.sync(() => setFailure(outcome.ok ? undefined : outcome.message))),
+        Effect.map((outcome) => (outcome.ok ? 'saved' : 'failed')),
+      );
+    },
+    server: draftOf(client, defaultOwner),
+  });
+  const { draft, setDraft } = autosave;
+  const [contacts, setContacts] = useState<readonly ContactDraft[]>(() => (mode === 'create' ? [emptyContact(0)] : []));
+  const [touched, setTouched] = useState(editing);
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const patchContact = (key: number, next: Partial<ContactDraft>) =>
     setContacts((current) => current.map((entry) => (entry.key === key ? { ...entry, ...next } : entry)));
@@ -250,17 +209,12 @@ const useClientForm = ({
               toaster.create({ description: message, title: 'Klienta se nepodařilo uložit', type: 'error' });
               return;
             }
-            const toast: Parameters<typeof toaster.create>[0] = {
-              title: mode === 'create' ? `Klient ${draft.name.trim()} založen` : 'Změny klienta uloženy',
+            toaster.create({
+              description: 'Identitu firmy v evidenci zákazníků zapsal systém; najdete ji na kartě klienta.',
+              title: `Klient ${draft.name.trim()} založen`,
               type: 'success',
-            };
-            if (mode === 'create') {
-              Object.assign(toast, {
-                description: 'Identitu firmy v evidenci zákazníků zapsal systém; najdete ji na kartě klienta.',
-              });
-            }
-            toaster.create(toast);
-            onSaved(mode === 'create' ? (outcome.entityIds[0] ?? '') : (client?.id ?? ''));
+            });
+            onSaved(outcome.entityIds[0] ?? '');
           }),
         ),
       ),
@@ -268,6 +222,10 @@ const useClientForm = ({
   };
 
   const save = () => {
+    if (editing) {
+      autosave.flush();
+      return;
+    }
     setTouched(true);
     setFailure(undefined);
     if (
@@ -280,48 +238,37 @@ const useClientForm = ({
       return;
     }
     const segment = draft.segment === NONE ? '' : draft.segment;
-    let command: CrmCommandInput;
-    if (mode === 'create' || client === undefined) {
-      command = {
-        _tag: 'CreateClient',
-        kind: draft.kind,
-        name: draft.name.trim(),
-        ...optionalField('address', draft.address),
-        ...optionalField('email', draft.email),
-        ...optionalField('note', draft.note),
-        ...optionalField('phone', draft.phone),
-        ...optionalField('website', draft.website),
-        ...optionalField('segment', segment),
-      };
-      if (organization) {
-        Object.assign(command, optionalField('regNo', draft.regNo), optionalField('vatNo', draft.vatNo));
-      }
-      if (viewer.assign && draft.owner !== NONE) {
-        Object.assign(command, { ownerSalespersonId: draft.owner });
-      }
-      if (filledContacts.length > 0) {
-        const proposedContacts = filledContacts.map((entry, index) => {
-          const contact: NonNullable<Extract<CrmCommandInput, { readonly _tag: 'CreateClient' }>['contacts']>[number] =
-            {
-              name: entry.name.trim(),
-              ...optionalField('role', entry.role),
-              ...optionalField('phone', entry.phone),
-              ...optionalField('email', entry.email),
-            };
-          if (index === 0) {
-            Object.assign(contact, { primary: true });
-          }
-          return contact;
-        });
-        Object.assign(command, { contacts: proposedContacts });
-      }
-    } else {
-      const changes = patchOf(draft, client);
-      if (Object.keys(changes).length === 0) {
-        onClose();
-        return;
-      }
-      command = { _tag: 'UpdateClient', id: client.id, patch: changes };
+    const command: CrmCommandInput = {
+      _tag: 'CreateClient',
+      kind: draft.kind,
+      name: draft.name.trim(),
+      ...optionalField('address', draft.address),
+      ...optionalField('email', draft.email),
+      ...optionalField('note', draft.note),
+      ...optionalField('phone', draft.phone),
+      ...optionalField('website', draft.website),
+      ...optionalField('segment', segment),
+    };
+    if (organization) {
+      Object.assign(command, optionalField('regNo', draft.regNo), optionalField('vatNo', draft.vatNo));
+    }
+    if (viewer.assign && draft.owner !== NONE) {
+      Object.assign(command, { ownerSalespersonId: draft.owner });
+    }
+    if (filledContacts.length > 0) {
+      const proposedContacts = filledContacts.map((entry, index) => {
+        const contact: NonNullable<Extract<CrmCommandInput, { readonly _tag: 'CreateClient' }>['contacts']>[number] = {
+          name: entry.name.trim(),
+          ...optionalField('role', entry.role),
+          ...optionalField('phone', entry.phone),
+          ...optionalField('email', entry.email),
+        };
+        if (index === 0) {
+          Object.assign(contact, { primary: true });
+        }
+        return contact;
+      });
+      Object.assign(command, { contacts: proposedContacts });
     }
     // CRM.md §3: the server creates (or reuses by IČO / name) the Party Registry identity of a new client through
     // its governed intake, for a salesperson too; the browser never writes the registry nor sends a registry claim.
@@ -346,8 +293,15 @@ const useClientForm = ({
     { label: 'Zatím bez obchodníka', value: NONE },
   ];
 
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+
   return {
+    autosave,
     busy,
+    close,
     contactEmailError,
     contacts,
     draft,
@@ -376,7 +330,9 @@ const useClientForm = ({
 export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => {
   const { t } = useModernI18n();
   const {
+    autosave,
     busy,
+    close,
     contactEmailError,
     contacts,
     draft,
@@ -400,33 +356,39 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     touched,
     viewer,
   } = useClientForm(props);
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
 
   return (
     <SidePanel
       actions={
-        <>
-          <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={mode === 'create' ? 'Zakládám klienta…' : 'Ukládám…'}
-            onClick={save}
-            variant="primary"
-          >
-            {mode === 'create' ? 'Založit klienta' : 'Uložit změny'}
-          </Button>
-        </>
+        mode === 'create' ? (
+          <>
+            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+              Zrušit
+            </Button>
+            <Button isLoading={busy} loadingText="Zakládám klienta…" onClick={save} variant="primary">
+              Založit klienta
+            </Button>
+          </>
+        ) : (
+          <>
+            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+            <Button onClick={close} theme="outlined" variant="secondary">
+              Zavřít
+            </Button>
+          </>
+        )
       }
       closeLabel={dialogCloseLabel}
       description={
         mode === 'create'
           ? 'Neuvedené údaje zůstanou prázdné. Kontaktní osoby můžete doplnit i později na kartě klienta.'
-          : 'Změna se zapíše do historie klienta.'
+          : 'Změny se ukládají samy a zapisují se do historie klienta.'
       }
       onOpenChange={(open) => {
         if (!open) {
-          onClose();
+          close();
         }
       }}
       open
@@ -622,7 +584,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
             {failure}
           </StatusText>
         )}
-        <button aria-label={mode === 'create' ? 'Založit klienta' : 'Uložit změny'} className="hidden" type="submit" />
+        <button aria-label={mode === 'create' ? 'Založit klienta' : 'Uložit'} className="hidden" type="submit" />
       </form>
     </SidePanel>
   );
