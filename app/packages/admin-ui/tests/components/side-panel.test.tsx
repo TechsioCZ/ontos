@@ -117,6 +117,7 @@ it.effect('does not close for interactions inside the panel', () =>
 
 const editDraft = () => {
   const input = screen.getByRole('textbox', { name: 'Draft' });
+  input.focus();
   fireEvent.input(input, { target: { value: 'Unsaved draft' } });
   fireEvent.change(input, { target: { value: 'Unsaved draft' } });
   return input;
@@ -132,6 +133,10 @@ it.effect('keeps an edited draft open on the backdrop and closes it only on requ
     expect(dialog.isConnected).toBe(true);
     expect(dialog.dataset['state']).toBe('open');
     expect(input).toHaveProperty('value', 'Unsaved draft');
+    // The outside press may move focus away; the panel puts it back on the edited field.
+    trigger.focus();
+    clickBackdrop(dialog);
+    yield* Effect.promise(() => waitFor(() => expect(document.activeElement).toBe(input)));
     fireEvent.click(screen.getByRole('button', { name: 'Zavřít bez uložení' }));
     yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
     yield* Effect.promise(() => waitFor(() => expect(document.activeElement).toBe(trigger)));

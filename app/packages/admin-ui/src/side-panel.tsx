@@ -61,6 +61,7 @@ const draftFieldSelector =
 const useEditedDraft = (open: boolean, contentId: string) => {
   const edited = useRef(new Set<EventTarget>());
   const lastIntent = useRef<'escape' | 'other'>('other');
+  const lastFocused = useRef<EventTarget | null>(null);
   useEffect(() => {
     edited.current.clear();
     const doc = globalThis.document;
@@ -69,6 +70,12 @@ const useEditedDraft = (open: boolean, contentId: string) => {
       const { target } = event;
       if (content !== null && target !== null && event.composedPath().includes(content)) {
         edited.current.add(target);
+      }
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const content = doc.querySelector(`[id="${contentId}"]`);
+      if (content !== null && event.composedPath().includes(content)) {
+        lastFocused.current = event.target;
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -81,12 +88,14 @@ const useEditedDraft = (open: boolean, contentId: string) => {
     if (open) {
       doc.addEventListener('input', onEdit, true);
       doc.addEventListener('change', onEdit, true);
+      doc.addEventListener('focusin', onFocusIn, true);
       globalThis.addEventListener('keydown', onKeyDown, { capture: true });
       globalThis.addEventListener('pointerdown', onPointerDown, { capture: true });
     }
     return () => {
       doc.removeEventListener('input', onEdit, true);
       doc.removeEventListener('change', onEdit, true);
+      doc.removeEventListener('focusin', onFocusIn, true);
       globalThis.removeEventListener('keydown', onKeyDown, { capture: true });
       globalThis.removeEventListener('pointerdown', onPointerDown, { capture: true });
     };
@@ -110,7 +119,17 @@ const useEditedDraft = (open: boolean, contentId: string) => {
     }
     return [...content.querySelectorAll(draftFieldSelector)].some((field) => edited.current.has(field));
   };
-  return keepsDraft;
+
+  /** The outside press moved focus out of the kept panel; put it back on the field the user was in. */
+  const refocusDraft = (): void => {
+    globalThis.requestAnimationFrame(() => {
+      const content = globalThis.document.querySelector(`[id="${contentId}"]`);
+      const focusable =
+        content?.querySelectorAll<HTMLElement>(`${draftFieldSelector}, button, a[href], [tabindex]`) ?? [];
+      [...focusable].find((candidate) => candidate === lastFocused.current)?.focus();
+    });
+  };
+  return { keepsDraft, refocusDraft };
 };
 
 /**
@@ -179,7 +198,7 @@ export const SidePanel = ({
   const id = useId();
   const resize = useSidePanelResize();
   useEscapeFallback(open, panelContentId(id), onOpenChange);
-  const keepsDraft = useEditedDraft(open, panelContentId(id));
+  const { keepsDraft, refocusDraft } = useEditedDraft(open, panelContentId(id));
   const [draftKept, setDraftKept] = useState(false);
   const [shownOpen, setShownOpen] = useState(open);
   if (shownOpen !== open) {
@@ -204,6 +223,7 @@ export const SidePanel = ({
       onOpenChange={(details) => {
         if (!details.open && keepsDraft()) {
           setDraftKept(true);
+          refocusDraft();
           return;
         }
         onOpenChange(details.open);
@@ -233,21 +253,20 @@ export const SidePanel = ({
         size="sm"
         tone="neutral"
       />
+      {/* Above the scrolling body, so the notice stays visible however far the form is scrolled. */}
+      {draftKept && (
+        <div className="flex flex-wrap items-center gap-100">
+          <StatusText showIcon size="sm" status="warning">
+            {keptDraftLabels.message}
+          </StatusText>
+          <Button onClick={() => onOpenChange(false)} size="sm" theme="borderless" variant="secondary">
+            {keptDraftLabels.close}
+          </Button>
+        </div>
+      )}
       {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The
           inline padding pair keeps focus rings from being clipped by the scroll edge. */}
-      <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">
-        {draftKept && (
-          <div className="flex flex-wrap items-center gap-100">
-            <StatusText showIcon size="sm" status="warning">
-              {keptDraftLabels.message}
-            </StatusText>
-            <Button onClick={() => onOpenChange(false)} size="sm" theme="borderless" variant="secondary">
-              {keptDraftLabels.close}
-            </Button>
-          </div>
-        )}
-        {children}
-      </div>
+      <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">{children}</div>
     </Dialog>
   );
 };
