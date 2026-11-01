@@ -25,8 +25,15 @@ export const escapeHtml = (value: string): string =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
-export const formatCzk = (minor: number): string =>
-  `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} Kč`;
+const currencySymbols = { CZK: 'Kč', EUR: '€', PLN: 'zł' } as const;
+
+/** Amounts of one order in the currency of the Market it was placed in (CZK for orders without a Market). */
+export const formatOrderMoney =
+  (order: AkrosOrderInput) =>
+  (minor: number): string =>
+    `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} ${
+      currencySymbols[order.market?.currency ?? 'CZK']
+    }`;
 
 export const lineGrossMinor = (order: AkrosOrderInput, line: AkrosOrderInput['lines'][number]): number =>
   Math.round(line.quantity * line.unitPriceMinor * (order.pricesIncludeVat === true ? 1 : 1 + line.vatRate / 100));
@@ -117,17 +124,18 @@ export const akrosOrderEmail = (
   const reasonSuffix = event === 'CANCELLED' && reason !== undefined && reason !== '' ? ` Důvod: ${reason}` : '';
   const lead = `${leadOf(event, number, shippingLabel, pickup)}${reasonSuffix}`;
   const status = event === 'SHIPPED' && pickup ? 'Připraveno k vyzvednutí' : statusLabels[event];
+  const money = formatOrderMoney(order);
   const lines = order.lines.map((line) => {
     const hasVariant = line.variantName !== undefined && line.variantName !== '';
     return {
       name: hasVariant ? `${line.productName} – ${line.variantName}` : line.productName,
-      price: formatCzk(lineGrossMinor(order, line)),
+      price: money(lineGrossMinor(order, line)),
       quantity: line.quantity.toLocaleString('cs-CZ'),
     };
   });
-  const shippingPrice = formatCzk(order.shipping?.priceMinor ?? 0);
-  const total = formatCzk(order.totalMinor);
-  const vat = formatCzk(order.totalVatMinor);
+  const shippingPrice = money(order.shipping?.priceMinor ?? 0);
+  const total = money(order.totalMinor);
+  const vat = money(order.totalVatMinor);
   const address = order.deliveryAddress;
   const { storefrontUrl } = options;
 

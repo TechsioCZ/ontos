@@ -11,7 +11,7 @@ import {
 } from '../../src/dispatcher/plan.ts';
 import { isTestRecipient, testCaptureFromEnvironment } from '../../src/dispatcher/recipients.ts';
 import { addressOf, agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
-import { akrosOrderEmail, formatCzk } from '../../src/dispatcher/templates.ts';
+import { akrosOrderEmail, formatOrderMoney } from '../../src/dispatcher/templates.ts';
 
 const orderId = 'e8747ac9-8730-4fc5-b7ba-8ae9f9daade1';
 const enabledSince = '2026-10-21T07:00:00.000Z';
@@ -144,7 +144,15 @@ describe('AKROS order e-mail planning', () => {
   });
 
   test('formats minor units as Czech koruna with decimals', () => {
-    expect(formatCzk(54_000).replaceAll(/\s/gu, ' ')).toBe('540,00 Kč');
+    expect(formatOrderMoney(baseOrder)(54_000).replaceAll(/\s/gu, ' ')).toBe('540,00 Kč');
+  });
+
+  test('an order placed in a euro Market is e-mailed in euros', () => {
+    const order = { ...baseOrder, market: { currency: 'EUR' as const, marketCode: 'AKROS-SK', marketId: 'sk' } };
+    expect(formatOrderMoney(order)(1160).replaceAll(/\s/gu, ' ')).toBe('11,60 €');
+    const rendered = akrosOrderEmail(order, 'ORDER_CREATED', { storefrontUrl: 'http://localhost:3070' });
+    expect(rendered.text.includes('Kč')).toBe(false);
+    expect(rendered.text.includes('€')).toBe(true);
   });
 
   test('renders the order e-mail directly with the storefront link in the footer', () => {

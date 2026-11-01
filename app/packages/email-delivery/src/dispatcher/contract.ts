@@ -177,6 +177,14 @@ export const AkrosOrderInputSchema = Schema.Struct({
       vatRate: Schema.Finite,
     }),
   ),
+  /** The Commerce Market the storefront order was placed in; its prices and totals are in this currency. */
+  market: Schema.optionalKey(
+    Schema.Struct({
+      currency: Schema.Literals(['CZK', 'EUR', 'PLN']),
+      marketCode: Schema.String,
+      marketId: Schema.String.pipe(Schema.brand('EmailMarketId')),
+    }),
+  ),
   number: Schema.String,
   pricesIncludeVat: Schema.optionalKey(Schema.Boolean),
   shipping: Schema.optionalKey(
