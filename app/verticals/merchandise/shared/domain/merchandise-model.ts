@@ -3,6 +3,8 @@
 // re-read the current product afterwards (brief requirement 7d).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
+import { currencyOf, OrderMarketSchema } from './market-offers.ts';
+import type { MarketCurrency } from './market-offers.ts';
 
 const identifierLengthChecks = [Schema.isMinLength(1), Schema.isMaxLength(300)] as const;
 
@@ -414,6 +416,8 @@ export const OrderSchema = Schema.Struct({
   history: Schema.optionalKey(Schema.Array(OrderHistoryEntrySchema)),
   id: OrderIdSchema,
   lines: Schema.Array(OrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  /** Storefront market of the order: every amount of the order is in its currency. Absent = CZK. */
+  market: Schema.optionalKey(OrderMarketSchema),
   note: Schema.optionalKey(Schema.String),
   number: TextSchema(40),
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
@@ -427,3 +431,6 @@ export const OrderSchema = Schema.Struct({
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type Order = typeof OrderSchema.Type;
+
+/** Currency of every amount of an order; orders without a market are CZK. */
+export const orderCurrency = (order: Pick<Order, 'market'>): MarketCurrency => currencyOf(order.market);

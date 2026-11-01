@@ -26,6 +26,12 @@ import {
   StockMovementSchema,
   ShippingMethodSchema,
 } from '../domain/merchandise-model.ts';
+import {
+  MarketIdSchema,
+  MarketSettingsSchema,
+  ProductMarketSchema,
+  StorefrontMarketSchema,
+} from '../domain/market-offers.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export { OrderSchema, ProductRecordSchema, ProductSchema, StockMovementSchema } from '../domain/merchandise-model.ts';
@@ -40,6 +46,9 @@ export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '..
  * product carries `variantSummary`. A `full` page holds at most 2 products unless `variantIds` narrows the variants.
  * `mode: 'categories'` skips product reads/counts and returns `products: []` without product paging/featured metadata;
  * category selection, publication visibility and ordering are unchanged. Default mode: `products`.
+ * `marketId` (commerce market): every mode returns only the products offered in that market (unknown market: none),
+ * every price field is in the market currency, `minMinor`/`maxMinor` are market-currency bounds, and the response
+ * carries `market`. With `storefrontCheckout` it also converts the shipping prices.
  */
 export const StorefrontCatalogQuerySchema = Schema.Struct({
   availability: Schema.optionalKey(Schema.Literals(['in-stock', 'out-of-stock'])),
@@ -47,6 +56,7 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
   featured: Schema.optionalKey(Schema.Boolean),
   fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
   label: Schema.optionalKey(Schema.Literals(['action', 'recommended', 'sale', 'new'])),
+  marketId: Schema.optionalKey(MarketIdSchema),
   maxMinor: Schema.optionalKey(MinorAmountSchema),
   minMinor: Schema.optionalKey(MinorAmountSchema),
   mode: Schema.optionalKey(Schema.Literals(['products', 'categories'])),
@@ -101,6 +111,22 @@ export const ProductCategoryCountSchema = Schema.Struct({
   productCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ProductCategoryCount = typeof ProductCategoryCountSchema.Type;
+
+/** One product exception of a market (staff list). */
+export const MarketExceptionItemSchema = Schema.Struct({
+  name: Schema.String,
+  offered: Schema.Boolean,
+  productId: ProductIdReferenceSchema,
+  sku: Schema.String,
+});
+export type MarketExceptionItem = typeof MarketExceptionItemSchema.Type;
+
+export const MarketExceptionPageSchema = Schema.Struct({
+  items: Schema.Array(MarketExceptionItemSchema),
+  marketId: MarketIdSchema,
+  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type MarketExceptionPage = typeof MarketExceptionPageSchema.Type;
 
 /**
  * Optional filters. Every collection is bounded: no read returns the whole catalog.
@@ -188,6 +214,16 @@ export const RecordsViewSchema = Schema.Struct({
   taggedOrderIds: Schema.optionalKey(TaggedOrderIdListSchema),
   /** Customer projection: only published, active products; no movements; orders only by `orderClientRequestId`. */
   storefront: Schema.optionalKey(Schema.Boolean),
+  /** Staff reads: every configured market of the company with its exception counts, as `markets`. */
+  markets: Schema.optionalKey(Schema.Boolean),
+  /** Staff reads: one page of a market's product exceptions (ordered by product name), as `marketExceptions`. */
+  marketExceptions: Schema.optionalKey(
+    Schema.Struct({
+      limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 250, minimum: 1 }))),
+      marketId: MarketIdSchema,
+      offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    }),
+  ),
 });
 export type RecordsView = typeof RecordsViewSchema.Type;
 export type RecordsViewEncoded = typeof RecordsViewSchema.Encoded;
@@ -227,7 +263,7 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
  * by the view (see `RecordsViewSchema`). `indicators` are computed over the whole company, not the view filter:
  * - productCount: all products; lowStockCount: products at or below their threshold
  * - stockValueMinor: sum of stockOnHand * currentPriceMinor across all products (signed)
- * - orderCount: all orders; openOrderValueMinor: totalMinor of NEW, CONFIRMED and SHIPPED orders
+ * - orderCount: all orders; openOrderValueMinor: totalMinor of open CZK orders (market orders in another currency excluded)
  */
 export const RecordsResponseSchema = Schema.Struct({
   checkout: Schema.optionalKey(
@@ -278,6 +314,14 @@ export const RecordsResponseSchema = Schema.Struct({
   orders: Schema.Array(OrderSchema),
   products: Schema.Array(ProductRecordSchema),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** Storefront reads with `storefrontCatalog.marketId`: the market every returned price is in. */
+  market: Schema.optionalKey(StorefrontMarketSchema),
+  /** Staff `markets: true`: the company's configured markets. */
+  markets: Schema.optionalKey(Schema.Array(MarketSettingsSchema)),
+  /** Staff `marketExceptions`: one page of the market's product exceptions. */
+  marketExceptions: Schema.optionalKey(MarketExceptionPageSchema),
+  /** Staff product detail (`productId`): the product's offer and price in every configured market. */
+  productMarkets: Schema.optionalKey(Schema.Array(ProductMarketSchema)),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;
 

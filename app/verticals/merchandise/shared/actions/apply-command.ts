@@ -41,6 +41,15 @@ import {
   VariantIdSchema,
   VatRateSchema,
 } from '../domain/merchandise-model.ts';
+import {
+  ExchangeRateSchema,
+  MarketCodeSchema,
+  MarketCurrencySchema,
+  MarketIdSchema,
+  MarketOfferModeSchema,
+  RoundingMinorSchema,
+  StorefrontMarketSchema,
+} from '../domain/market-offers.ts';
 
 export const ProductPatchSchema = Schema.Struct({
   ...ProductMetadataSchema.fields,
@@ -175,6 +184,37 @@ export const merchandiseAiCommandSchemas = [
   }),
 ] as const;
 
+/**
+ * Market offer and price list commands (owner-local stand-in for Assortment/Pricing per commerce market). They ignore
+ * the payload's catalog `expectedRevision` and never advance it: ConfigureMarket guards the market's own revision,
+ * offer changes are idempotent set operations.
+ */
+export const merchandiseMarketCommandSchemas = [
+  /** Creates or replaces the market's offer mode and price list. `expectedRevision`: 0 = must not exist yet. */
+  Schema.TaggedStruct('ConfigureMarket', {
+    currency: MarketCurrencySchema,
+    exchangeRate: ExchangeRateSchema,
+    expectedRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    marketCode: MarketCodeSchema,
+    marketId: MarketIdSchema,
+    offerMode: MarketOfferModeSchema,
+    roundingMinor: RoundingMinorSchema,
+  }),
+  /** Offers or withdraws one product in a market; stored only when it differs from the market's offer mode. */
+  Schema.TaggedStruct('SetProductMarketOffer', {
+    marketId: MarketIdSchema,
+    offered: Schema.Boolean,
+    productId: ProductIdSchema,
+  }),
+  Schema.TaggedStruct('SetMarketProductOffers', {
+    marketId: MarketIdSchema,
+    offered: Schema.Boolean,
+    productIds: Schema.Array(ProductIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(250)),
+  }),
+  /** Deletes the market's settings and every product exception of it. */
+  Schema.TaggedStruct('RemoveMarket', { marketId: MarketIdSchema }),
+] as const;
+
 export const VersionedEditOrderCommandSchema = Schema.Struct({
   ...EditOrderCommandSchema.fields,
   expectedUpdatedAt: Schema.DateTimeUtcFromString,
@@ -272,6 +312,11 @@ export const MerchandiseCommandSchema = Schema.Union([
     dryRun: Schema.optionalKey(Schema.Boolean),
     expectedShippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
     lines: Schema.Array(StorefrontOrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+    /**
+     * Storefront market: only products offered there are accepted, every expected price (lines, shipping) is in the
+     * market currency and the order is repriced and stored in it (see `market` on the order).
+     */
+    marketId: Schema.optionalKey(MarketIdSchema),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
     partyId: Schema.optionalKey(PartyIdSchema),
     shippingMethod: ShippingMethodSchema,
@@ -298,6 +343,7 @@ export const MerchandiseCommandSchema = Schema.Union([
     reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
     shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
   }),
+  ...merchandiseMarketCommandSchemas,
   ...merchandiseAiCommandSchemas,
 ]);
 export type MerchandiseCommand = typeof MerchandiseCommandSchema.Type;
@@ -319,6 +365,10 @@ export const StorefrontIssueCodeSchema = Schema.Literals([
   'PRICE_CHANGED',
   'PRICE_UNAVAILABLE',
   'SHIPPING_PRICE_CHANGED',
+  /** The order names a market that has no offer/price list configured (no product is offered there). */
+  'MARKET_UNAVAILABLE',
+  /** The product (or variant) is not offered in the order's market. */
+  'NOT_OFFERED_IN_MARKET',
 ]);
 export type StorefrontIssueCode = typeof StorefrontIssueCodeSchema.Type;
 
@@ -348,6 +398,8 @@ export const StorefrontOrderLineResultSchema = Schema.Struct({
 export const StorefrontOrderResultSchema = Schema.Struct({
   issues: Schema.Array(StorefrontIssueSchema),
   lines: Schema.Array(StorefrontOrderLineResultSchema),
+  /** With `marketId`: the market every amount of this result is in. */
+  market: Schema.optionalKey(StorefrontMarketSchema),
   orderId: Schema.optionalKey(OrderIdReferenceSchema),
   orderNumber: Schema.optionalKey(Schema.String),
   outcome: Schema.Literals(['PLACED', 'REPLAYED', 'REJECTED', 'VALID']),
@@ -363,6 +415,8 @@ export const ApplyCommandResultSchema = Schema.Struct({
   entityIds: Schema.Array(EntityIdSchema),
   /** The gallery reference of an image a ChangeProductImages upload stored. */
   image: Schema.optionalKey(ImageRefSchema),
+  /** ConfigureMarket: the market's revision after the change. */
+  marketRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   revision: Schema.Int,
   storefrontOrder: Schema.optionalKey(StorefrontOrderResultSchema),
 });

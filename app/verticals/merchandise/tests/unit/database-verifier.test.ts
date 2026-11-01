@@ -2,7 +2,17 @@ import { expect, it } from 'effect-rstest';
 import { Effect, Exit } from 'effect';
 import { verifySnapshot } from '../../scripts/verify-db-schema.mts';
 
-const empty = { categories: [], heads: [], movements: [], orders: [], products: [], tiers: [], variants: [] };
+const empty = {
+  categories: [],
+  heads: [],
+  marketOffers: [],
+  markets: [],
+  movements: [],
+  orders: [],
+  products: [],
+  tiers: [],
+  variants: [],
+};
 const catalog = { ...empty, heads: [{ revision: 0 }], products: [{ id: 'product-1' }] };
 it.effect('accepts empty migration readiness but requires products for explicit seeded acceptance', () =>
   Effect.gen(function* verifyPredicate() {
@@ -46,6 +56,21 @@ it.effect('validates product references even when seed presence is optional', ()
         ),
       ).toBe(true);
     }
+  }),
+);
+it.effect('rejects market product exceptions without their market settings', () =>
+  Effect.gen(function* verifyMarketReferences() {
+    const marketId = '6a000000-0000-4000-8000-0000000000a1';
+    const offer = { marketId };
+    expect(
+      Exit.isSuccess(
+        yield* Effect.exit(verifySnapshot({ ...catalog, marketOffers: [offer], markets: [{ marketId }] }, false)),
+      ),
+    ).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(verifySnapshot({ ...catalog, marketOffers: [offer] }, false)))).toBe(true);
+    expect(
+      Exit.isFailure(yield* Effect.exit(verifySnapshot({ ...catalog, markets: [{ marketId: 'AKROS-SK' }] }, false))),
+    ).toBe(true);
   }),
 );
 it.effect('does not silently accept malformed existing orders', () =>

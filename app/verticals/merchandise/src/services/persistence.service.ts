@@ -71,6 +71,37 @@ import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
 import { isMediaImageReference } from '../../shared/domain/product-images.ts';
 import { galleryAfterChange, readProductImage } from './product-media.ts';
+import {
+  convertGrossMinor,
+  currencyOf,
+  formatMarketMoney,
+  isOfferedInMarket,
+} from '../../shared/domain/market-offers.ts';
+import type { MarketCurrency, MarketId, OrderMarket } from '../../shared/domain/market-offers.ts';
+import { applyMarketCommand, isMarketCommand } from './market-commands.ts';
+import type { MarketCommand } from './market-commands.ts';
+import {
+  catalogMarketScope,
+  listMarkets,
+  loadMarket,
+  loadOrderMarketContext,
+  NO_CATALOG_MARKET,
+  marketExceptionPage,
+  orderMarketOf,
+  productMarketRows,
+} from './market-store.ts';
+import type { StoredMarket } from './market-store.ts';
+import {
+  offeredInOrderMarket,
+  pricedMarketOf,
+  productGrossCzk,
+  storefrontMarketField,
+  storefrontMarketFor,
+  storefrontMarketOf,
+  storefrontOrderMarketOf,
+  unconfiguredStorefrontMarket,
+} from './market-pricing.ts';
+import type { OrderMarketContext } from './market-pricing.ts';
 
 const MERCHANDISE_MODULE_ID = 'demo.merchandise';
 
@@ -116,6 +147,8 @@ export type MerchandiseCommandError = MerchandiseLifecycleConflict | Merchandise
 
 export interface MerchandiseCommandInput {
   readonly actor: PrincipalRef;
+  /** PlaceStorefrontOrder with `marketId`: the market's price list and offer, resolved by persistence. */
+  readonly market?: OrderMarketContext;
   readonly now: DateTime.Utc;
   /** Server-minted identity for commands that create a record (invocation id). */
   readonly resourceId: string;
@@ -171,8 +204,7 @@ const historyEntry = (
   entry: Omit<OrderHistoryEntry, 'actor' | 'at'>,
 ): OrderHistoryEntry => ({ actor: input.actor, at: input.now, ...entry });
 
-const czk = (minor: number) =>
-  `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
+const money = (minor: number, currency: MarketCurrency = 'CZK') => formatMarketMoney(minor, currency);
 
 export const orderStatusLabels = {
   CANCELLED: 'Stornovaná',
@@ -793,6 +825,9 @@ const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): Store
   if (order.shipping !== undefined) {
     result.shippingPriceMinor = order.shipping.priceMinor;
   }
+  if (order.market !== undefined) {
+    result.market = storefrontMarketOf(order.market);
+  }
   return result;
 };
 
@@ -877,11 +912,21 @@ const checkedStorefrontUnit = (
   state: MerchandiseState,
   line: StorefrontLineRequest,
   requested: Map<string, number>,
+  market: OrderMarket | undefined,
 ): ReturnType<typeof sellableUnitOf> => {
-  const resolved = sellableUnitOf(state.products, state.movements, line);
-  if ('issue' in resolved) {
-    return resolved;
+  const sellable = sellableUnitOf(state.products, state.movements, line);
+  if ('issue' in sellable) {
+    return sellable;
   }
+  // Market orders are priced in the market currency: the same conversion the storefront catalog shows.
+  const resolved =
+    market === undefined
+      ? sellable
+      : {
+          ...sellable,
+          unit: { ...sellable.unit, grossPriceMinor: convertGrossMinor(sellable.unit.grossPriceMinor, market) },
+        };
+  const currency = currencyOf(market);
   const { product, unit } = resolved;
   const ids = { productId: product.id, ...stockVariantFields(unit.variantId) };
   const key = `${product.id}|${unit.variantId ?? ''}`;
@@ -959,12 +1004,71 @@ const checkedStorefrontUnit = (
         code: 'PRICE_CHANGED',
         currentUnitPriceMinor: unit.grossPriceMinor,
         expectedUnitPriceMinor: line.expectedUnitPriceMinor,
-        message: `${label}: cena se změnila z ${czk(line.expectedUnitPriceMinor)} na ${czk(unit.grossPriceMinor)}. Potvrďte prosím novou cenu.`,
+        message: `${label}: cena se změnila z ${money(line.expectedUnitPriceMinor, currency)} na ${money(unit.grossPriceMinor, currency)}. Potvrďte prosím novou cenu.`,
       },
     };
   }
   return resolved;
 };
+
+/** Checkout shipping methods, priced in the catalog market's currency when the read names a market. */
+const checkoutShippingMethods = (pricing: Option.Option<StoredMarket>) =>
+  // No pickup-point registry exists. Do not offer a pickup method without real locations.
+  (['PPL', 'CESKA_POSTA'] as const).map((id) => ({
+    id,
+    priceMinor: Option.match(pricing, {
+      onNone: () => shippingMethods[id].grossPriceMinor,
+      onSome: (market) => convertGrossMinor(shippingMethods[id].grossPriceMinor, market),
+    }),
+    title: shippingMethods[id].label,
+  }));
+
+/** A storefront order naming a market without settings: rejected before any line is priced. */
+const marketUnavailableResult = (marketId: MarketId): StorefrontOrderResult => ({
+  issues: [{ code: 'MARKET_UNAVAILABLE', message: 'V tomto trhu nyní nelze objednávat.' }],
+  lines: [],
+  market: unconfiguredStorefrontMarket(marketId),
+  outcome: 'REJECTED',
+});
+
+const notOfferedIssue = (state: MerchandiseState, line: StorefrontLineRequest): StorefrontIssue => {
+  const product = state.products.find((entry) => entry.id === line.productId);
+  return {
+    code: 'NOT_OFFERED_IN_MARKET',
+    message: `${product === undefined ? 'Produkt' : product.name}: v tomto trhu není v nabídce.`,
+    productId: line.productId,
+    ...stockVariantFields(line.variantId),
+  };
+};
+
+/** The order's shipping, priced in the market currency for market orders. */
+const storefrontShippingOf = (
+  value: CommandOf<'PlaceStorefrontOrder'>,
+  state: MerchandiseState,
+  market: OrderMarket | undefined,
+) => {
+  const method = shippingMethodFor(value.shippingMethod, isSourceCatalog(state));
+  return {
+    label: method.label,
+    method: value.shippingMethod,
+    priceMinor: market === undefined ? method.grossPriceMinor : convertGrossMinor(method.grossPriceMinor, market),
+    vatRate: 21,
+  } as const;
+};
+
+const shippingIssueOf = (
+  value: CommandOf<'PlaceStorefrontOrder'>,
+  priceMinor: number,
+  market: OrderMarket | undefined,
+): StorefrontIssue | undefined =>
+  value.expectedShippingPriceMinor === undefined || value.expectedShippingPriceMinor === priceMinor
+    ? undefined
+    : {
+        code: 'SHIPPING_PRICE_CHANGED',
+        currentUnitPriceMinor: priceMinor,
+        expectedUnitPriceMinor: value.expectedShippingPriceMinor,
+        message: `Cena dopravy se změnila na ${money(priceMinor, currencyOf(market))}.`,
+      };
 
 const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(function* placeStorefrontOrder(
   state: MerchandiseState,
@@ -979,13 +1083,22 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     const entity = yield* entityIdOf(replay.id);
     return { entityIds: [entity], state, storefrontOrder: storefrontResultOf(replay, 'REPLAYED') };
   }
+  const orderMarket = storefrontOrderMarketOf(value.marketId, input.market);
+  if (orderMarket.kind === 'unavailable') {
+    return { entityIds: [], state, storefrontOrder: marketUnavailableResult(orderMarket.marketId) };
+  }
+  const market = pricedMarketOf(orderMarket);
   const issues: StorefrontIssue[] = [];
   const lines: OrderLine[] = [];
   const requested = new Map<string, number>();
   yield* Effect.forEach(
     value.lines,
     Effect.fn('Merchandise.storefrontLine')(function* storefrontLine(line: StorefrontLineRequest) {
-      const resolved = checkedStorefrontUnit(state, line, requested);
+      if (!offeredInOrderMarket(orderMarket, line.productId)) {
+        issues.push(notOfferedIssue(state, line));
+        return;
+      }
+      const resolved = checkedStorefrontUnit(state, line, requested, market);
       if ('issue' in resolved) {
         issues.push(resolved.issue);
         return;
@@ -1009,21 +1122,11 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     }),
     { concurrency: 1, discard: true },
   );
-  const method = shippingMethodFor(value.shippingMethod, isSourceCatalog(state));
-  if (value.expectedShippingPriceMinor !== undefined && value.expectedShippingPriceMinor !== method.grossPriceMinor) {
-    issues.push({
-      code: 'SHIPPING_PRICE_CHANGED',
-      currentUnitPriceMinor: method.grossPriceMinor,
-      expectedUnitPriceMinor: value.expectedShippingPriceMinor,
-      message: `Cena dopravy se změnila na ${czk(method.grossPriceMinor)}.`,
-    });
+  const shipping = storefrontShippingOf(value, state, market);
+  const shippingIssue = shippingIssueOf(value, shipping.priceMinor, market);
+  if (shippingIssue !== undefined) {
+    issues.push(shippingIssue);
   }
-  const shipping = {
-    label: method.label,
-    method: value.shippingMethod,
-    priceMinor: method.grossPriceMinor,
-    vatRate: 21,
-  } as const;
   const draftTotals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const draftLines = storefrontLines({ lines, pricesIncludeVat: true });
   if (issues.length > 0 || value.dryRun === true) {
@@ -1031,8 +1134,9 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       issues,
       lines: draftLines,
       outcome: issues.length > 0 ? 'REJECTED' : 'VALID',
-      shippingPriceMinor: method.grossPriceMinor,
+      shippingPriceMinor: shipping.priceMinor,
       ...draftTotals,
+      ...storefrontMarketField(market),
     };
     return { entityIds: [], state, storefrontOrder };
   }
@@ -1072,6 +1176,9 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   if (value.billingAddress !== undefined) {
     order.billingAddress = value.billingAddress;
   }
+  if (market !== undefined) {
+    order.market = market;
+  }
   if (value.customerAccountId !== undefined) {
     order.customerAccountId = value.customerAccountId;
   }
@@ -1107,15 +1214,17 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   };
 });
 
-const describeLine = (line: OrderLine, pricesIncludeVat = false) => {
+const describeLine = (line: OrderLine, pricesIncludeVat: boolean, currency: MarketCurrency) => {
   const variant = line.variantName === undefined ? '' : ` (${line.variantName})`;
   const net = pricesIncludeVat ? '' : ' bez DPH';
-  return `${line.quantity}× ${line.productName}${variant} á ${czk(line.unitPriceMinor)}${net}`;
+  return `${line.quantity}× ${line.productName}${variant} á ${money(line.unitPriceMinor, currency)}${net}`;
 };
 export const describeLines = (order: {
   readonly lines: readonly OrderLine[];
+  readonly market?: OrderMarket | undefined;
   readonly pricesIncludeVat?: boolean | undefined;
-}) => order.lines.map((line) => describeLine(line, order.pricesIncludeVat)).join('; ');
+}) =>
+  order.lines.map((line) => describeLine(line, order.pricesIncludeVat === true, currencyOf(order.market))).join('; ');
 export const describeAddress = (address: Order['deliveryAddress']) => {
   if (address === undefined) {
     return 'bez adresy';
@@ -1129,8 +1238,8 @@ export const describeContact = (contact: Order['contact']) =>
     ? 'bez kontaktu'
     : [contact.name, contact.email, contact.phone].filter((part) => part !== undefined && part !== '').join(', ');
 
-export const describeShipping = (shipping: Order['shipping']) =>
-  shipping === undefined ? 'bez dopravy' : `${shipping.label}, ${czk(shipping.priceMinor)}`;
+export const describeShipping = (shipping: Order['shipping'], currency: MarketCurrency = 'CZK') =>
+  shipping === undefined ? 'bez dopravy' : `${shipping.label}, ${money(shipping.priceMinor, currency)}`;
 
 const lineKey = (line: { readonly productId: string; readonly variantId?: string | undefined }) =>
   `${line.productId}|${line.variantId ?? ''}`;
@@ -1193,8 +1302,9 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
         return yield* conflict(`Choose a variant of ${product.sku}`);
       }
       const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-      const currentPrice =
-        existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
+      const czkPrice = existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
+      // A market order keeps its own price list (snapshot on the order) for lines added later.
+      const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);
       return {
         productId: product.id,
         productName: product.name,
@@ -1272,8 +1382,9 @@ const editedOrderDetails = (
       priceMinor: value.shipping.priceMinor,
       vatRate: 21,
     } as const;
-    const before = describeShipping(existing.shipping);
-    const after = describeShipping(shipping);
+    const currency = currencyOf(existing.market);
+    const before = describeShipping(existing.shipping, currency);
+    const after = describeShipping(shipping, currency);
     if (before !== after) {
       order = { ...order, shipping };
       history.push(historyEntry(input, { after, before, kind: 'SHIPPING', ...reason }));
@@ -1333,7 +1444,11 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   if (value.lines !== undefined) {
     const nextLines = yield* editedOrderLines(state, existing, value.lines);
     const before = describeLines(existing);
-    const after = describeLines({ lines: nextLines, pricesIncludeVat: existing.pricesIncludeVat });
+    const after = describeLines({
+      lines: nextLines,
+      market: existing.market,
+      pricesIncludeVat: existing.pricesIncludeVat,
+    });
     if (before !== after) {
       if (orderMovesStock(state, existing)) {
         movements = yield* reconciledOrderMovements(state, existing, nextLines, input);
@@ -1527,6 +1642,10 @@ export const evolveMerchandiseState = (
         };
       }),
     ),
+    // Market commands write the market tables only; persistence runs them without a catalog working set.
+    Match.tag('ConfigureMarket', 'RemoveMarket', 'SetMarketProductOffers', 'SetProductMarketOffer', () =>
+      Effect.fail(conflict('Market commands run only through persistence')),
+    ),
     // AI approval commands need the caller's identity and permission checks, so persistence runs them.
     Match.tag('AiProposeChanges', 'AiDecideChanges', 'AiRevertBatch', () =>
       Effect.fail(conflict('AI approval commands run only through persistence')),
@@ -1599,7 +1718,7 @@ const aiWorkingSetRequest = (command: AiCommand, slice: MerchandiseState['aiChan
 
 /** The rows one command reads and may change; nothing else of the company is loaded. */
 export const workingSetRequestOf = (
-  command: Exclude<MerchandiseCommand, AiCommand | { readonly _tag: 'ResetDemoData' }>,
+  command: Exclude<MerchandiseCommand, AiCommand | MarketCommand | { readonly _tag: 'ResetDemoData' }>,
   resourceId: string,
 ): WorkingSetRequest =>
   Match.value(command).pipe(
@@ -1839,8 +1958,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       // Storefront guests cannot know the revision; their command re-validates against the current rows.
       // An order edit carrying the order's own updatedAt conflicts only when that order changed.
       // A gallery change re-validates against the product's current gallery, so uploads never wait for a revision.
+      // Market commands never touch catalog rows and guard their own market revision.
       if (
         !isOrderScopedEdit(command) &&
+        !isMarketCommand(command) &&
         !Predicate.isTagged(command, 'PlaceStorefrontOrder') &&
         !Predicate.isTagged(command, 'ChangeProductImages') &&
         head.revision !== expectedRevision
@@ -1851,6 +1972,15 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         // Scoped by tenant + legal entity: no other company's rows are read or written.
         const revision = yield* resetToAkrosBaseline(transaction, store).pipe(Effect.mapError(unavailable));
         return { entityIds: [], revision };
+      }
+      if (isMarketCommand(command)) {
+        const now = yield* DateTime.now;
+        const outcome = yield* applyMarketCommand(transaction, store, command, now).pipe(
+          Effect.catchTag('MerchandiseStoreFailure', (failure) => Effect.fail(unavailable(failure))),
+        );
+        return outcome.marketRevision === undefined
+          ? { entityIds: [...outcome.entityIds], revision: head.revision }
+          : { entityIds: [...outcome.entityIds], marketRevision: outcome.marketRevision, revision: head.revision };
       }
       const working = yield* loadWorkingSet(transaction, store, head, workingSetRequestOf(command, resourceId)).pipe(
         Effect.mapError(unavailable),
@@ -1885,7 +2015,20 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? { entityIds: [...gallery.entityIds], image: uploaded, revision }
           : { entityIds: [...gallery.entityIds], revision };
       }
-      const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId });
+      const market =
+        Predicate.isTagged(command, 'PlaceStorefrontOrder') && command.marketId !== undefined
+          ? yield* loadOrderMarketContext(
+              transaction,
+              store,
+              command.marketId,
+              command.lines.map((line) => line.productId),
+            ).pipe(Effect.mapError(unavailable))
+          : undefined;
+      const change = yield* evolveMerchandiseState(
+        working.state,
+        command,
+        market === undefined ? { actor, now, resourceId } : { actor, market, now, resourceId },
+      );
       const revision = yield* persist(working, change.state, now);
       return change.storefrontOrder === undefined
         ? { entityIds: [...change.entityIds], revision }
@@ -1979,14 +2122,28 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return yield* applyOnce(command, expectedRevision, resourceId);
     });
+    /** The storefront catalog's market: its offer filter, price list and response field (none without `marketId`). */
+    const catalogMarket = Effect.fn('Merchandise.catalogMarket')(function* catalogMarket(
+      catalogQuery: RecordsView['storefrontCatalog'],
+    ) {
+      if (catalogQuery?.marketId === undefined) {
+        return { field: {}, scope: NO_CATALOG_MARKET };
+      }
+      const stored = yield* loadMarket(transaction, store, catalogQuery.marketId);
+      return {
+        field: { market: storefrontMarketFor(catalogQuery.marketId, stored.pipe(Option.map(orderMarketOf))) },
+        scope: catalogMarketScope(store, stored),
+      };
+    });
     const storefrontRecords = Effect.fn('Merchandise.storefrontRecords')(function* storefrontRecords(
       view: RecordsView,
     ) {
       const catalogQuery = view.storefrontCatalog;
+      const market = yield* catalogMarket(catalogQuery);
       const page =
         catalogQuery === undefined || catalogQuery.mode === 'categories'
           ? undefined
-          : yield* storefrontProducts(transaction, store, { query: catalogQuery });
+          : yield* storefrontProducts(transaction, store, { market: market.scope, query: catalogQuery });
       // Product pages carry their head in the same statement; category/order-only reads still need their revision.
       const head = page?.head ?? (yield* loadHead(transaction, store));
       if (head === undefined) {
@@ -2036,12 +2193,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         response.checkout = {
           carrierTrackingAvailable: false,
           paymentAvailable: false,
-          // No pickup-point registry exists. Do not offer a pickup method without real locations.
-          shippingMethods: (['PPL', 'CESKA_POSTA'] as const).map((id) => ({
-            id,
-            priceMinor: shippingMethods[id].grossPriceMinor,
-            title: shippingMethods[id].label,
-          })),
+          shippingMethods: checkoutShippingMethods(market.scope.pricing),
         };
       }
       if (page !== undefined) {
@@ -2057,7 +2209,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (status !== undefined) {
         response.orderStatus = Option.fromNullishOr(status);
       }
-      return response;
+      return { ...response, ...market.field };
     });
     const readOrderPage = Effect.fn('Merchandise.readOrderPage')(function* readOrderPage(
       view: RecordsView,
@@ -2120,6 +2272,42 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return metadata;
     });
+    /** Staff market data a read asks for: the company's markets, one market's exceptions, a product's markets. */
+    const readMarketMetadata = Effect.fn('Merchandise.readMarketMetadata')(function* readMarketMetadata(
+      view: RecordsView,
+      staff: boolean,
+      pageProducts: RecordsResponse['products'],
+    ) {
+      const metadata: Mutable<Pick<RecordsResponse, 'marketExceptions' | 'markets' | 'productMarkets'>> = {};
+      if (!staff) {
+        return metadata;
+      }
+      if (view.markets === true) {
+        metadata.markets = [...(yield* listMarkets(transaction, store))];
+      }
+      if (view.marketExceptions !== undefined) {
+        metadata.marketExceptions = yield* marketExceptionPage(transaction, store, view.marketExceptions);
+      }
+      if (view.productId !== undefined) {
+        const gross = Option.fromUndefinedOr(pageProducts.find((entry) => entry.id === view.productId)).pipe(
+          Option.flatMap(productGrossCzk),
+        );
+        const rows = yield* productMarketRows(transaction, store, view.productId);
+        metadata.productMarkets = rows.map(({ exception, market }) => {
+          const row = {
+            currency: market.currency,
+            marketCode: market.marketCode,
+            marketId: market.marketId,
+            offered: isOfferedInMarket(market.offerMode, exception),
+          };
+          return Option.match(gross, {
+            onNone: () => row,
+            onSome: (price) => ({ ...row, grossPriceMinor: convertGrossMinor(price, market) }),
+          });
+        });
+      }
+      return metadata;
+    });
     /** `detailLimit` lifts the 2-product cap of variant-carrying pages for in-process callers (agent review). */
     /** The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}. */
     const records = Effect.fn('Merchandise.records')(function* records(
@@ -2166,8 +2354,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         staff && view.productId !== undefined
           ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))
           : [];
-      const [orderList, catalogMetadata] = yield* Effect.all(
-        [readOrderPage(view, storefront), readCatalogMetadata(view, staff, page.products)],
+      const [orderList, catalogMetadata, marketMetadata] = yield* Effect.all(
+        [
+          readOrderPage(view, storefront),
+          readCatalogMetadata(view, staff, page.products),
+          readMarketMetadata(view, staff, page.products).pipe(Effect.mapError(unavailable)),
+        ],
         { concurrency: 1 },
       );
       // The storefront view never reveals staff totals: its indicators cover only what the view returns.
@@ -2183,6 +2375,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : undefined;
       const response: Mutable<RecordsResponse> = {
         ...catalogMetadata,
+        ...marketMetadata,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         ...recordCapabilities(legalEntityId, storefront, grants, canWrite),
         canWrite,

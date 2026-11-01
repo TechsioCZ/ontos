@@ -9,6 +9,7 @@
     "./clients/records": "./src/api/records-consumer.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
+    "./domain/market-offers": "./shared/domain/market-offers.ts",
     "./domain/merchandise-model": "./shared/domain/merchandise-model.ts",
     "./permissions/demo.merchandise.read_all": "./shared/permissions/merchandise-read-all.ts",
     "./permissions/demo.merchandise.write_all": "./shared/permissions/merchandise-write-all.ts",

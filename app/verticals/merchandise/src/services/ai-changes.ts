@@ -27,7 +27,13 @@ import type { DateTime } from 'effect';
 import { merchandiseAiCommandSchemas, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseAiOperation } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { OrderSchema, StockMovementIdSchema, StockMovementSchema } from '../../shared/domain/merchandise-model.ts';
+import { formatMarketMoney } from '../../shared/domain/market-offers.ts';
+import {
+  OrderSchema,
+  StockMovementIdSchema,
+  StockMovementSchema,
+  orderCurrency,
+} from '../../shared/domain/merchandise-model.ts';
 import type { Order, OrderHistoryEntry, StockMovement } from '../../shared/domain/merchandise-model.ts';
 import type {
   describeAddress,
@@ -61,9 +67,6 @@ interface AiOrderHelpers {
 export const isMerchandiseAiCommand = Schema.is(AiCommandSchema);
 
 const NO_NOTE = 'bez poznámky';
-
-const czk = (minor: number) =>
-  `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
 
 /** Reducer reasons are English contract texts; the approver and the agent read Czech. */
 const czechReason = (reason: string): string => {
@@ -101,12 +104,17 @@ const diffLine = (field: string, label: string, before: string, after: string): 
 const orderDiff = (before: Order, after: Order, helpers: AiOrderHelpers): readonly AiDiffLine[] => [
   ...diffLine('status', 'Stav', helpers.orderStatusLabels[before.status], helpers.orderStatusLabels[after.status]),
   ...diffLine('lines', 'Položky', helpers.describeLines(before), helpers.describeLines(after)),
-  ...diffLine('total', 'Celkem s DPH', czk(before.totalMinor), czk(after.totalMinor)),
+  ...diffLine(
+    'total',
+    'Celkem s DPH',
+    formatMarketMoney(before.totalMinor, orderCurrency(before)),
+    formatMarketMoney(after.totalMinor, orderCurrency(after)),
+  ),
   ...diffLine(
     'shipping',
     'Doprava',
-    helpers.describeShipping(before.shipping),
-    helpers.describeShipping(after.shipping),
+    helpers.describeShipping(before.shipping, orderCurrency(before)),
+    helpers.describeShipping(after.shipping, orderCurrency(after)),
   ),
   ...diffLine(
     'deliveryAddress',
@@ -263,7 +271,7 @@ const adapterFor = (
       const aspects: readonly [OrderHistoryEntry['kind'], (order: Order) => string][] = [
         ['STATUS', (order) => helpers.orderStatusLabels[order.status]],
         ['LINES', (order) => helpers.describeLines(order)],
-        ['SHIPPING', (order) => helpers.describeShipping(order.shipping)],
+        ['SHIPPING', (order) => helpers.describeShipping(order.shipping, orderCurrency(order))],
         ['ADDRESS', (order) => helpers.describeAddress(order.deliveryAddress)],
         ['CONTACT', (order) => helpers.describeContact(order.contact)],
         ['NOTE', (order) => order.note ?? NO_NOTE],

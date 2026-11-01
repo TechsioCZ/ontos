@@ -13,6 +13,8 @@ import type { MerchandiseState } from '../../../shared/apis/records.ts';
 import {
   catalogHeads,
   categories,
+  marketProductOffers,
+  marketSettings,
   merchandiseRelations,
   orders,
   priceTiers,
@@ -38,6 +40,8 @@ export const encodeState = Schema.encodeSync(MerchandiseStateSchema);
 const deleteScope = (db: MerchandiseTestDatabase, scope: StoreScope) =>
   db.transaction((transaction) =>
     Effect.gen(function* deleteMerchandiseScope() {
+      yield* transaction.delete(marketProductOffers).where(whereScope(marketProductOffers, scope));
+      yield* transaction.delete(marketSettings).where(whereScope(marketSettings, scope));
       yield* transaction.delete(priceTiers).where(whereScope(priceTiers, scope));
       yield* transaction.delete(productVariants).where(whereScope(productVariants, scope));
       yield* transaction.delete(products).where(whereScope(products, scope));

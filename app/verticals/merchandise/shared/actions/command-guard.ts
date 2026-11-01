@@ -40,6 +40,10 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'ResetDemoData',
   'ArchiveDemoProduct',
   'UpdateCategory',
+  // Market price lists and bulk market assortment change money and the whole offer of a market.
+  'ConfigureMarket',
+  'RemoveMarket',
+  'SetMarketProductOffers',
   // AI level C: an agent may only propose; a person approves or reverts in the app.
   'AiDecideChanges',
   'AiRevertBatch',

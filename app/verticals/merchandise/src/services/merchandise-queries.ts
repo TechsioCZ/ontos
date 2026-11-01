@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, like, mapColumnsInSQLToAlias, or, sql } fr
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import type {
   CategoryTrail,
   RecordsView,
@@ -44,6 +44,10 @@ import {
 } from './merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
 import { toProductRecord } from './stock-levels.ts';
+import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
+import { NO_CATALOG_MARKET } from './market-store.ts';
+import type { CatalogMarketScope, StoredMarket } from './market-store.ts';
+import { productInMarketCurrency } from './market-pricing.ts';
 import {
   DEFAULT_STOREFRONT_PAGE_SIZE,
   normalizeSearchText,
@@ -461,22 +465,32 @@ const storefrontFilters = (
   catalog.availability === 'out-of-stock' ? sql`${products.availability} not in ('IN_STOCK', 'LOW_STOCK')` : undefined,
 ];
 
+/** Market-currency price bounds as the equivalent CZK bounds of the stored gross prices. */
+const catalogInCzk = (catalog: StorefrontCatalogQuery, pricing: Option.Option<StoredMarket>): StorefrontCatalogQuery =>
+  Option.match(pricing, {
+    onNone: () => catalog,
+    onSome: (market) => ({ ...catalog, ...czkBoundsForMarket(catalog, market) }),
+  });
+
 /**
  * Storefront catalog page: visible products (active, published, not archived), filters AND-ed, relevance or price
  * order, one page. Listing cards (`fields: 'card'`) never load variants; every product carries `variantSummary`.
+ * With `market` (the catalog's resolved `marketId`) only that market's offer is listed and every price is in its
+ * currency.
  */
 export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProducts')(function* storefrontProducts(
   db: MerchandiseDb,
   scope: StoreScope,
-  input: { readonly query: StorefrontCatalogQuery },
+  input: { readonly market?: CatalogMarketScope; readonly query: StorefrontCatalogQuery },
 ) {
-  const catalog = input.query;
+  const { offer, pricing } = input.market ?? NO_CATALOG_MARKET;
+  const catalog = catalogInCzk(input.query, pricing);
   const featuredIds = sql`((select h.homepage_featured_product_ids from ${catalogHeads} h
     where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid))::text[]`;
   const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
-  const filters = storefrontFilters(catalog, featuredIds, categoryId, words);
+  const filters = [...storefrontFilters(catalog, featuredIds, categoryId, words), Option.getOrUndefined(offer)];
   const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
   const relevance =
     words.length === 0
@@ -517,14 +531,18 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     head: result.head,
     page,
     pageSize,
-    products: result.products.map((record) =>
-      toStorefrontProduct(
+    products: result.products.map((record) => {
+      const product = toStorefrontProduct(
         variantIds === undefined || record.variantRecords === undefined
           ? record
           : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
         fields,
-      ),
-    ),
+      );
+      return Option.match(pricing, {
+        onNone: () => product,
+        onSome: (market) => productInMarketCurrency(product, market),
+      });
+    }),
     total: result.total,
   };
 });
@@ -969,7 +987,7 @@ export const productMovements = Effect.fn('MerchandiseQueries.productMovements')
   );
 });
 
-/** Company-wide indicators in two aggregate queries. The bigint sums arrive as strings and are mapped to numbers. */
+/** Company-wide indicators in two aggregate queries; open order value counts CZK orders only (no currency mix). The bigint sums arrive as strings and are mapped to numbers. */
 export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* indicators(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -990,9 +1008,8 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
         db
           .select({
             openOrderValueMinor:
-              sql`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}), 0)::bigint`.mapWith(
-                Number,
-              ),
+              sql`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}
+                and coalesce(${orders.document}->'market'->>'currency', 'CZK') = 'CZK'), 0)::bigint`.mapWith(Number),
             orderCount: sql<number>`count(*)::int`,
           })
           .from(orders)
