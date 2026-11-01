@@ -116,6 +116,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
         'shell.dashboard.tenant.pending': 'Switching tenant…',
         'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
+        'shell.modules.deploymentEntry': 'Unavailable agenda',
         'shell.modules.discovery.incompatible': 'Incompatible module deployment',
         'shell.modules.discovery.revoked': 'Module revoked',
         'shell.modules.discovery.timeout': 'Module deployment timed out',
@@ -353,15 +354,15 @@ test('shows failed installed deployments as disabled identities with typed reaso
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(screen.getByText('property-registry')).toBeTruthy();
+  // Each failed deployment stays visible with its reason, under a neutral name instead of its technical app id.
+  expect(screen.getAllByText('Unavailable agenda')).toHaveLength(3);
   expect(screen.getByText('Module deployment timed out')).toBeTruthy();
-  expect(screen.getByText('reporting-center')).toBeTruthy();
   expect(screen.getByText('Incompatible module deployment')).toBeTruthy();
-  expect(screen.getByText('legacy-center')).toBeTruthy();
   expect(screen.getByText('Module revoked')).toBeTruthy();
-  expect(screen.queryByRole('link', { name: 'property-registry' })).toBeNull();
-  expect(screen.queryByRole('link', { name: 'reporting-center' })).toBeNull();
-  expect(screen.queryByRole('link', { name: 'legacy-center' })).toBeNull();
+  for (const appId of ['property-registry', 'reporting-center', 'legacy-center']) {
+    expect(screen.queryByText(appId)).toBeNull();
+  }
+  expect(screen.queryByRole('link', { name: 'Unavailable agenda' })).toBeNull();
 });
 
 it.effect('renders the account Menu last and dispatches only the logout command by keyboard', () =>
@@ -726,6 +727,20 @@ test('shows the Czech label a module declares for a Czech page', () => {
     (key) => key,
   );
   expect(model.groups.flatMap(({ links }) => links.map(({ label }) => label))).toEqual(['Properties (cs)']);
+});
+
+test('names an unavailable deployment neutrally instead of by its technical app id', () => {
+  const model = buildShellNavigation(
+    {
+      language: 'cs',
+      navigation: [],
+      unavailableDeployments: [{ appId: AppIdSchema.make('work-tasks'), status: 'revoked' }],
+    },
+    (key) => key,
+  );
+  expect(model.groups.flatMap(({ links }) => links.map(({ label, notice }) => [label, notice]))).toEqual([
+    ['shell.modules.deploymentEntry', 'shell.modules.discovery.revoked'],
+  ]);
 });
 
 const navigationText = () => screen.getByRole('navigation', { name: 'Dashboard navigation' }).textContent;

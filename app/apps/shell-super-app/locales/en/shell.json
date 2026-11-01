@@ -262,6 +262,7 @@
         "label": "Active MicroVerticals",
         "unavailable": "Active MicroVerticals are temporarily unavailable. Reload the page to try again."
       },
+      "deploymentEntry": "Unavailable agenda",
       "discovery": {
         "disabled": "The module is disabled.",
         "incompatible": "The deployed module contract is incompatible.",
@@ -329,7 +330,7 @@
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
       "clear": "Clear search",
-      "placeholder": "Search customers and contacts…"
+      "placeholder": "Search customers and suppliers…"
     },
     "resource": {
       "open_in_agenda": "Open in its agenda",

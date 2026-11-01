@@ -314,7 +314,7 @@ it.effect('search filters resource denials and reports partial provider failure'
 );
 
 it.effect(
-  'tenant-scoped Party search needs no Legal Entity, forwards declared filters and preserves identity metadata',
+  'tenant-scoped Party search answers only in tenant context, forwards declared filters and preserves identity metadata',
   () =>
     Effect.gen(function* tenantScopedPartySearchNeedsNo() {
       const installed = yield* catalog();
@@ -449,6 +449,20 @@ it.effect(
           },
         ],
       });
+
+      // With a company selected the tenant-wide provider is not asked: results never come from another company.
+      const callsBeforeCompanySearch = calls.length;
+      const inCompany = yield* makeShellSearch(
+        { ...baseline, catalog: Effect.succeed(partyCatalog) },
+        {
+          search: (input) => {
+            calls.push(input);
+            return Effect.succeed([]);
+          },
+        },
+      ).search(context, 'party');
+      expect(inCompany).toEqual({ partial: false, results: [] });
+      expect(calls).toHaveLength(callsBeforeCompanySearch);
     }),
 );
 

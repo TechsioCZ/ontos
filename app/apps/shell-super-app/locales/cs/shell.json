@@ -262,6 +262,7 @@
         "label": "Aktivní MicroVerticaly",
         "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
       },
+      "deploymentEntry": "Nedostupná agenda",
       "discovery": {
         "disabled": "Modul je deaktivovaný.",
         "incompatible": "Smlouva nasazeného modulu není kompatibilní.",
@@ -329,7 +330,7 @@
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
       "clear": "Vymazat hledání",
-      "placeholder": "Hledat zákazníky a kontakty…"
+      "placeholder": "Hledat zákazníky a dodavatele…"
     },
     "resource": {
       "open_in_agenda": "Otevřít v agendě",

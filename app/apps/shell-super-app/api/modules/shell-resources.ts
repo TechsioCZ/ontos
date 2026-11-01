@@ -403,9 +403,14 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       return yield* unavailable();
     }
     const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
-    const stateEligible = providers.filter(({ contribution, moduleId }) => {
+    const stateEligible = providers.filter(({ contribution, descriptor, moduleId }) => {
       const state = stateByModule.get(moduleId);
-      return state !== undefined && decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow';
+      // With a company selected, results stay inside it: tenant-wide providers answer only in tenant context.
+      return (
+        state !== undefined &&
+        decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow' &&
+        (descriptor.accessFiltering !== 'tenant_scope' || context.legalEntityId === undefined)
+      );
     });
     const permissionOutcomes = yield* Effect.forEach(
       stateEligible,

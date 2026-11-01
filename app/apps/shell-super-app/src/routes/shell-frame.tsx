@@ -305,7 +305,8 @@ export const buildShellNavigation = (
     href: null,
     icon: 'icon-[mdi--cloud-off-outline]',
     key: `deployment:${deployment.appId}`,
-    label: deployment.appId,
+    // The deployment carries no display name; its technical id never reaches the menu.
+    label: t('shell.modules.deploymentEntry'),
     moduleMatch: false,
     notice: t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`),
     state: 'active',

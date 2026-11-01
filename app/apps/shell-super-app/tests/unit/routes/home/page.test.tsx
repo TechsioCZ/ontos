@@ -102,7 +102,7 @@ const translations = new Map(
     'shell.search.groups.counterparty': 'Customers and suppliers',
     'shell.search.groups.party': 'Contacts',
     'shell.search.label': 'Search',
-    'shell.search.placeholder': 'Search customers and contacts…',
+    'shell.search.placeholder': 'Search customers and suppliers…',
     'shell.search.roles.CUSTOMER': 'Customer',
     'shell.search.suggestions.all': 'Show all results',
     'shell.search.suggestions.label': 'Search suggestions',
@@ -359,7 +359,7 @@ it.live('top-bar search submits on Enter to the localized Shell search route', (
     render(<HomeView initialModel={authenticatedModel()} />);
     const header = screen.getByRole('banner', { name: 'Dashboard header' });
     const searchbox = within(header).getByRole('searchbox', { name: 'Search' });
-    expect(searchbox.getAttribute('placeholder')).toBe('Search customers and contacts…');
+    expect(searchbox.getAttribute('placeholder')).toBe('Search customers and suppliers…');
     expect(
       within(screen.getByRole('complementary', { name: 'Dashboard sidebar' })).queryByRole('searchbox'),
     ).toBeNull();
