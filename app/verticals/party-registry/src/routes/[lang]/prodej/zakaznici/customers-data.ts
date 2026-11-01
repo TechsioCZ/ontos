@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Schema } from 'effect';
 
-import { definePageData, modulePagePreload } from '@app/shared-contracts/page-data';
+import {
+  definePageData,
+  moduleChangeEvent,
+  modulePagePreload,
+  moduleWriteEvent,
+} from '@app/shared-contracts/page-data';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
 import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
@@ -719,7 +724,11 @@ const duplicateReadState = <Value, Failure extends DuplicateFailure>(operation: 
     }),
   );
 
-/** User-opened review state. Request generations prevent an old selection from replacing the current case. */
+/**
+ * User-opened review state. Request generations prevent an old selection from replacing the current case. While the
+ * panel is open, the shown queue page and case follow every module write and live change, so nobody reloads them by
+ * hand; a rejected resolution reloads them by itself.
+ */
 export const useCustomerIdentityReview = (onResolved: () => void) => {
   const [open, setOpen] = useState(false);
   const [queue, setQueue] = useState<DuplicateRead<DuplicateCandidateListResponse>>({ status: 'idle' });
@@ -734,6 +743,8 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
   const queueRequest = useRef(0);
   const detailRequest = useRef(0);
   const caseSelection = useRef<DuplicateCandidateCaseRef | null>(null);
+  /** Page of the queue on screen; the first page is null. */
+  const queueCursor = useRef<DuplicateCandidateCaseRef | null>(null);
   const writing = useRef(false);
   const pending = useRef<CustomerDuplicateAttempt | null>(null);
 
@@ -755,15 +766,19 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
     [],
   );
 
-  const loadQueue = (afterCaseRef?: DuplicateCandidateCaseRef) => {
+  /** A background read keeps the current page on screen until the new one arrives. */
+  const readQueue = (afterCaseRef: DuplicateCandidateCaseRef | null, background: boolean) => {
     if (writing.current || pending.current !== null) {
       return;
     }
     queueRequest.current += 1;
     const request = queueRequest.current;
-    setQueue({ status: 'loading' });
+    queueCursor.current = afterCaseRef;
+    if (!background) {
+      setQueue({ status: 'loading' });
+    }
     void browserRuntime.runPromise(
-      loadCustomerDuplicateQueue(afterCaseRef).pipe(
+      (afterCaseRef === null ? loadCustomerDuplicateQueue() : loadCustomerDuplicateQueue(afterCaseRef)).pipe(
         Effect.match({
           onFailure: (failure) => {
             if (queueRequest.current === request) {
@@ -779,6 +794,53 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
       ),
     );
   };
+  const loadQueue = (afterCaseRef?: DuplicateCandidateCaseRef) => readQueue(afterCaseRef ?? null, false);
+  /** Re-reads the shown case in place: the reason stays, a subject that is no longer a candidate is unselected. */
+  const revalidateDetail = (caseRef: DuplicateCandidateCaseRef) => {
+    detailRequest.current += 1;
+    const request = detailRequest.current;
+    void browserRuntime.runPromise(
+      duplicateReadState(loadCustomerDuplicateDetail(caseRef)).pipe(
+        Effect.flatMap((next) =>
+          Effect.sync(() => {
+            if (detailRequest.current !== request || writing.current || pending.current !== null) {
+              return;
+            }
+            setDetail(next);
+            if (next.status === 'ready') {
+              // Current evidence is on screen again, so a reviewer blocked by a failed reload may decide.
+              setStale(false);
+              setSelectedPartyId((selected) =>
+                next.value.parties.some((item) => item.partyRef.resourceId === selected) ? selected : '',
+              );
+            }
+          }),
+        ),
+      ),
+    );
+  };
+  const revalidate = () => {
+    if (writing.current || pending.current !== null) {
+      return;
+    }
+    readQueue(queueCursor.current, true);
+    if (caseSelection.current !== null) {
+      revalidateDetail(caseSelection.current);
+    }
+  };
+  const follow = useEffectEvent(revalidate);
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    globalThis.addEventListener(moduleWriteEvent, follow);
+    globalThis.addEventListener(moduleChangeEvent, follow);
+    return () => {
+      globalThis.removeEventListener(moduleWriteEvent, follow);
+      globalThis.removeEventListener(moduleChangeEvent, follow);
+    };
+  }, [open]);
+
   const selectCase = (caseRef: DuplicateCandidateCaseRef) => {
     if (writing.current || pending.current !== null) {
       return;
@@ -810,17 +872,17 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
     );
   };
 
-  const refreshAfterSaved = () =>
+  /**
+   * Reloads the first queue page and the selected case after a write settled. Each governed read keeps its own
+   * outcome: a denied queue must not leave old rows visible, and a failed detail read must not discard a
+   * successfully refreshed queue. Returns whether either read failed.
+   */
+  const reloadAfterWrite = () =>
     Effect.sync(() => {
-      pending.current = null;
-      setUncertain(false);
-      setCommitted(true);
-      setQueue({ status: 'loading' });
-      setDetail({ status: 'loading' });
-      onResolved();
+      queueRequest.current += 1;
+      detailRequest.current += 1;
+      queueCursor.current = null;
     }).pipe(
-      // Each governed read keeps its own outcome: a denied queue must not leave old rows visible,
-      // and a failed detail read must not discard a successfully refreshed queue.
       Effect.andThen(
         Effect.all(
           {
@@ -833,15 +895,38 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
           { concurrency: 2 },
         ),
       ),
-      Effect.flatMap((next) =>
+      Effect.map((next) => {
+        setQueue(next.queue);
+        setDetail(next.detail);
+        return next.queue.status === 'failed' || next.detail.status === 'failed';
+      }),
+    );
+  const refreshAfterSaved = () =>
+    Effect.sync(() => {
+      pending.current = null;
+      setUncertain(false);
+      setCommitted(true);
+      setQueue({ status: 'loading' });
+      setDetail({ status: 'loading' });
+      onResolved();
+    }).pipe(
+      Effect.andThen(reloadAfterWrite()),
+      Effect.flatMap((failed) =>
         Effect.sync(() => {
-          setQueue(next.queue);
-          setDetail(next.detail);
-          const failed = next.queue.status === 'failed' || next.detail.status === 'failed';
           setStale(failed);
           setNotice({ key: failed ? 'savedReloadFailed' : 'saved', success: true });
         }),
       ),
+    );
+  /** A changed or vanished case reloads at once; the reviewer then decides again on the current evidence. */
+  const reloadAfterRejection = (key: 'conflict' | 'notFound') =>
+    Effect.sync(() => {
+      setStale(true);
+      setSelectedPartyId('');
+      setNotice({ key, success: false });
+    }).pipe(
+      Effect.andThen(reloadAfterWrite()),
+      Effect.flatMap((failed) => Effect.sync(() => setStale(failed))),
     );
   const executeAttempt = (attempt: CustomerDuplicateAttempt) =>
     resolveCustomerDuplicate(attempt).pipe(
@@ -851,19 +936,24 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
           if (Predicate.isTagged(failure, 'PartyCommandAlreadyCommittedProblem')) {
             return refreshAfterSaved();
           }
-          return Effect.sync(() => {
-            const key = customerDuplicateFailureKey(failure);
-            if (key === 'unavailable') {
-              // A lost acknowledgement is not permission to issue a fresh command.
+          const key = customerDuplicateFailureKey(failure);
+          if (key === 'unavailable') {
+            // A lost acknowledgement is not permission to issue a fresh command.
+            return Effect.sync(() => {
               setUncertain(true);
               setNotice({ key: 'uncertain', success: false });
-            } else {
-              pending.current = null;
-              setUncertain(false);
-              setStale(key === 'conflict' || key === 'notFound');
-              setNotice({ key, success: false });
-            }
-          });
+            });
+          }
+          return Effect.sync(() => {
+            pending.current = null;
+            setUncertain(false);
+          }).pipe(
+            Effect.andThen(
+              key === 'conflict' || key === 'notFound'
+                ? reloadAfterRejection(key)
+                : Effect.sync(() => setNotice({ key, success: false })),
+            ),
+          );
         },
       }),
     );
@@ -987,7 +1077,10 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
       }
     },
     selectCase,
-    refreshDetail: () => {
+    /** Error-state retry of the shown queue page. */
+    retryQueue: () => readQueue(queueCursor.current, false),
+    /** Error-state retry of the selected case. */
+    retryDetail: () => {
       if (caseSelection.current !== null) {
         selectCase(caseSelection.current);
       }

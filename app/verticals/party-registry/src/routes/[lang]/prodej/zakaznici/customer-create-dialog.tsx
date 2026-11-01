@@ -1,6 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Effect, Option } from 'effect';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Effect, Fiber, Option } from 'effect';
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -28,6 +28,18 @@ import {
 import type { AresPrefill, CreateDraft } from './customers-model.ts';
 
 const KEY = 'party-registry.pages.customers.create';
+
+/** Pause after the last IČO keystroke before ARES is asked, so pasting or fixing a digit sends one lookup. */
+const ARES_LOOKUP_DELAY = '600 millis';
+
+/** Fields ARES may fill in. */
+const prefillFields = [
+  'city',
+  'name',
+  'postalCode',
+  'street',
+  'vatId',
+] as const satisfies readonly (keyof AresPrefill)[];
 
 /** Validated fields in visual order, with the DOM ids of their inputs. */
 const fieldIdsInOrder = [
@@ -105,25 +117,15 @@ interface FieldMessage {
 }
 
 interface CreateFormFieldsProps {
-  readonly aresBusy: boolean;
   readonly draft: CreateDraft;
   readonly fieldProps: (key: keyof CreateDraft, help?: string) => FieldMessage;
   readonly notice: Notice | null;
   readonly noticeRef: RefObject<HTMLDivElement | null>;
-  readonly onLoadFromAres: () => void;
   readonly set: (patch: Partial<CreateDraft>) => void;
 }
 
 /** The notice and every input of the create form, in visual order. The dialog owns the state behind them. */
-const CreateFormFields = ({
-  aresBusy,
-  draft,
-  fieldProps,
-  notice,
-  noticeRef,
-  onLoadFromAres,
-  set,
-}: CreateFormFieldsProps) => {
+const CreateFormFields = ({ draft, fieldProps, notice, noticeRef, set }: CreateFormFieldsProps) => {
   const { t } = useModernI18n();
   return (
     <>
@@ -134,33 +136,17 @@ const CreateFormFields = ({
           </StatusText>
         </div>
       )}
-      <div className="flex items-end gap-150">
-        <div className="min-w-0 flex-1">
-          <FormInput
-            autoComplete="off"
-            id="customer-ico"
-            inputMode="numeric"
-            label={t(`${KEY}.ico`)}
-            maxLength={8}
-            name="ico"
-            onChange={(event) => set({ ico: event.target.value })}
-            value={draft.ico}
-            {...fieldProps('ico', t(`${KEY}.icoHelp`))}
-          />
-        </div>
-        {/* ui-kit Button sets no type, so inside the form it would be the submit button Enter clicks. */}
-        <Button
-          isLoading={aresBusy}
-          loadingText={t(`${KEY}.aresLoading`)}
-          onClick={onLoadFromAres}
-          size="sm"
-          theme="outlined"
-          type="button"
-          variant="secondary"
-        >
-          {t(`${KEY}.aresLoad`)}
-        </Button>
-      </div>
+      <FormInput
+        autoComplete="off"
+        id="customer-ico"
+        inputMode="numeric"
+        label={t(`${KEY}.ico`)}
+        maxLength={8}
+        name="ico"
+        onChange={(event) => set({ ico: event.target.value })}
+        value={draft.ico}
+        {...fieldProps('ico', t(`${KEY}.icoHelp`))}
+      />
       <FormInput
         autoComplete="off"
         id="customer-name"
@@ -264,7 +250,14 @@ export const CustomerCreateDialog = ({
   const [fieldNotices, setFieldNotices] = useState<FieldNotices>(NO_FIELD_NOTICES);
   const [discardOpen, setDiscardOpen] = useState(false);
   const noticeRef = useRef<HTMLDivElement>(null);
+  /** Fields the user typed into. ARES never overwrites them; it may replace what an earlier lookup filled in. */
+  const typedFields = useRef(new Set<keyof CreateDraft>());
+  /** IČO already sent to ARES in this form, so each IČO is looked up once. */
+  const lookedUpIco = useRef<string | null>(null);
   const errors = validateCreateDraft(draft);
+  const ico = draft.ico.trim();
+  /** A complete IČO with a valid checksum; only such an IČO reaches ARES. */
+  const lookupIco = ico.length === 8 && errors.ico === undefined ? ico : null;
 
   // The notice sits above the fields, so a message raised from the footer button is scrolled into view.
   useEffect(() => {
@@ -275,6 +268,11 @@ export const CustomerCreateDialog = ({
 
   // Editing a field retires an error or warning, because it describes the values it was raised for.
   const set = (patch: Partial<CreateDraft>) => {
+    for (const field of draftFields) {
+      if (patch[field] !== undefined) {
+        typedFields.current.add(field);
+      }
+    }
     setDraft((current) => ({ ...current, ...patch }));
     setNotice((current) => (current?.status === 'success' ? current : null));
     setFieldNotices((current) => ({
@@ -285,6 +283,8 @@ export const CustomerCreateDialog = ({
 
   const close = (next: boolean) => {
     if (!next) {
+      typedFields.current.clear();
+      lookedUpIco.current = null;
       setDraft(EMPTY_DRAFT);
       setSubmitted(false);
       setNotice(null);
@@ -309,9 +309,13 @@ export const CustomerCreateDialog = ({
   };
 
   const fieldProps = (key: keyof CreateDraft, help?: string): FieldMessage => {
-    const error = submitted ? errors[key] : undefined;
+    // A complete IČO is checked at once, because a valid one starts the ARES lookup.
+    const error = submitted || (key === 'ico' && ico.length === 8) ? errors[key] : undefined;
     if (error !== undefined) {
       return { helpText: t(`${KEY}.validation.${error}`), validateStatus: 'error' };
+    }
+    if (key === 'ico' && aresBusy) {
+      return { helpText: t(`${KEY}.aresLoading`) };
     }
     const fieldNotice = key === 'ico' || key === 'name' ? fieldNotices[key] : null;
     if (fieldNotice !== null) {
@@ -326,18 +330,22 @@ export const CustomerCreateDialog = ({
   const duplicateText = (displayName: string | null) =>
     displayName === null ? t(`${KEY}.duplicate`) : t(`${KEY}.duplicateNamed`, { name: displayName });
 
-  const applyPrefill = (prefill: AresPrefill, ico: string) => {
-    setDraft((current) => ({
-      ...current,
-      city: prefill.city ?? current.city,
-      name: prefill.name ?? current.name,
-      postalCode: prefill.postalCode ?? current.postalCode,
-      street: prefill.street ?? current.street,
-      vatId: prefill.vatId ?? current.vatId,
-    }));
+  const applyPrefill = (prefill: AresPrefill, lookedUp: string) => {
+    setDraft((current) => {
+      const next = { ...current };
+      for (const field of prefillFields) {
+        const value = prefill[field];
+        // A field the user typed into keeps its text unless it is empty again.
+        if (value !== undefined && (!typedFields.current.has(field) || current[field].trim() === '')) {
+          next[field] = value;
+          typedFields.current.delete(field);
+        }
+      }
+      return next;
+    });
     setNotice({ status: 'success', text: t(`${KEY}.aresDone`) });
     // The lookup succeeded, but the IČO is already on record: warn under the IČO before the user fills the rest.
-    const listed = Option.getOrUndefined(existingCustomerWithCompanyId(existing, ico));
+    const listed = Option.getOrUndefined(existingCustomerWithCompanyId(existing, lookedUp));
     if (listed !== undefined) {
       setFieldNotices({
         ico: {
@@ -368,30 +376,49 @@ export const CustomerCreateDialog = ({
     onCreated();
   };
 
-  const loadFromAres = () => {
-    const ico = draft.ico.trim();
-    // The same format and checksum checks as submit, so a mistyped IČO never reaches ARES.
-    const icoError = ico.length === 0 ? 'icoInvalid' : errors.ico;
-    if (icoError !== undefined) {
-      setFieldNotices({ ico: { status: 'error', text: t(`${KEY}.validation.${icoError}`) }, name: null });
-      return;
-    }
-    setAresBusy(true);
-    setNotice(null);
-    setFieldNotices(NO_FIELD_NOTICES);
-    void browserRuntime.runPromise(
-      lookupAres(ico).pipe(
+  // A complete, valid IČO is looked up in ARES once, after a short pause; a newer IČO or closing the form cancels it.
+  const startLookup = useEffectEvent((target: string) =>
+    browserRuntime.runFork(
+      Effect.sleep(ARES_LOOKUP_DELAY).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            lookedUpIco.current = target;
+            setAresBusy(true);
+            setNotice(null);
+            setFieldNotices(NO_FIELD_NOTICES);
+          }),
+        ),
+        Effect.andThen(lookupAres(target)),
         Effect.matchEffect({
           onFailure: (error) =>
             Effect.sync(() =>
               setFieldNotices({ ico: { status: 'error', text: t(`${KEY}.${aresFailureKey(error)}`) }, name: null }),
             ),
-          onSuccess: (evidence) => Effect.sync(() => applyPrefill(prefillFromAres(evidence), ico)),
+          onSuccess: (evidence) => Effect.sync(() => applyPrefill(prefillFromAres(evidence), target)),
         }),
+        // An interrupted lookup did not answer, so the same IČO may be looked up again later.
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            if (lookedUpIco.current === target) {
+              lookedUpIco.current = null;
+            }
+          }),
+        ),
         Effect.ensuring(Effect.sync(() => setAresBusy(false))),
       ),
-    );
-  };
+    ),
+  );
+  useEffect(() => {
+    const lookup =
+      open && lookupIco !== null && lookedUpIco.current !== lookupIco
+        ? Option.some(startLookup(lookupIco))
+        : Option.none();
+    return () => {
+      if (Option.isSome(lookup)) {
+        browserRuntime.runFork(Fiber.interrupt(lookup.value));
+      }
+    };
+  }, [open, lookupIco]);
 
   /**
    * Duplicates the page already knows about: a current customer with this IČO, or any listed customer with the
@@ -477,15 +504,7 @@ export const CustomerCreateDialog = ({
             submit();
           }}
         >
-          <CreateFormFields
-            aresBusy={aresBusy}
-            draft={draft}
-            fieldProps={fieldProps}
-            notice={notice}
-            noticeRef={noticeRef}
-            onLoadFromAres={loadFromAres}
-            set={set}
-          />
+          <CreateFormFields draft={draft} fieldProps={fieldProps} notice={notice} noticeRef={noticeRef} set={set} />
         </form>
       </SidePanel>
       <DiscardDialog

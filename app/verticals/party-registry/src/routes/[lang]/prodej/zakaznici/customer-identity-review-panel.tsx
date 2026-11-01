@@ -198,17 +198,8 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
             {t(`${reviewKey}.${review.notice.key}`)}
           </StatusText>
         )}
-        <div className="flex flex-wrap gap-150">
-          <Button
-            disabled={review.busy || review.uncertain}
-            onClick={() => review.loadQueue()}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {t(`${reviewKey}.reloadQueue`)}
-          </Button>
-          {review.queue.status === 'ready' && review.queue.value.nextCaseRef !== null && (
+        {review.queue.status === 'ready' && review.queue.value.nextCaseRef !== null && (
+          <div className="flex flex-wrap gap-150">
             <Button
               disabled={review.busy || review.uncertain}
               onClick={() => {
@@ -222,11 +213,22 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
             >
               {t(`${reviewKey}.next`)}
             </Button>
-          )}
-        </div>
+          </div>
+        )}
         {review.queue.status === 'loading' && <StatusText aria-live="polite">{t(`${reviewKey}.loading`)}</StatusText>}
         {review.queue.status === 'failed' && (
-          <StatusText status="error">{t(`${reviewKey}.${review.queue.failure}`)}</StatusText>
+          <div className="flex flex-wrap items-center gap-150">
+            <StatusText status="error">{t(`${reviewKey}.${review.queue.failure}`)}</StatusText>
+            <Button
+              disabled={review.busy || review.uncertain}
+              onClick={() => review.retryQueue()}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(`${reviewKey}.retryQueue`)}
+            </Button>
+          </div>
         )}
         {review.queue.status === 'ready' && (
           <>
@@ -253,18 +255,18 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
           <StatusText aria-live="polite">{t(`${reviewKey}.loadingDetail`)}</StatusText>
         )}
         {review.detail.status === 'failed' && (
-          <StatusText status="error">{t(`${reviewKey}.${review.detail.failure}`)}</StatusText>
-        )}
-        {review.detail.status !== 'idle' && (
-          <Button
-            disabled={review.busy || review.uncertain}
-            onClick={() => review.refreshDetail()}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {t(`${reviewKey}.reloadDetail`)}
-          </Button>
+          <div className="flex flex-wrap items-center gap-150">
+            <StatusText status="error">{t(`${reviewKey}.${review.detail.failure}`)}</StatusText>
+            <Button
+              disabled={review.busy || review.uncertain}
+              onClick={() => review.retryDetail()}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(`${reviewKey}.retryDetail`)}
+            </Button>
+          </div>
         )}
         {duplicate !== undefined && <ReviewCaseDetail duplicate={duplicate} review={review} />}
         {review.busy && <StatusText aria-live="polite">{t(`${reviewKey}.saving`)}</StatusText>}

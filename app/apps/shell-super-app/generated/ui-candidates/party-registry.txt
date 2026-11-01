@@ -11,7 +11,6 @@ break-words
 filter
 fixed
 flex
-flex-1
 flex-col
 flex-wrap
 font-medium
@@ -27,6 +26,7 @@ icon-[mdi--file-delimited-outline]
 icon-[mdi--plus]
 icon-[mdi--square-edit-outline]
 icon-[mdi--tag-multiple-outline]
+items-center
 items-end
 md:grid-cols-2
 min-w-0
