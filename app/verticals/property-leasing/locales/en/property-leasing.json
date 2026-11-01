@@ -28,11 +28,11 @@
         "loading": "Loading…",
         "saving": "Saving…",
         "forbidden": "You do not have permission for this area.",
-        "conflict": "The state has changed. Refresh data and try the operation again.",
+        "conflict": "The state changed in the meantime. The current data is shown; try the operation again.",
         "validation": "Check the input and the allowed state transition.",
-        "unavailable": "The service is temporarily unavailable. Refresh and try again."
+        "unavailable": "The service is temporarily unavailable."
       },
-      "refresh": "Refresh",
+      "retry": "Try again",
       "empty": "No records match the filter.",
       "unit": "Unit",
       "period": "Period",

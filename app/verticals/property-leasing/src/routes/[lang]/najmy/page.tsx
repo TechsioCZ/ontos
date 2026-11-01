@@ -265,7 +265,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     cancellation.current = controller;
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
-  /** Set when a read refused this role: the loaded records stay hidden until the next refresh. */
+  /** Set when a read refused this role: the loaded records stay hidden until the person retries. */
   const [cleared, setCleared] = useState(false);
   const {
     agreements,
@@ -333,6 +333,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     dispatchEditor(occupancyEditorActions.CLEAR({ startDate: DEFAULT_START_DATE }));
     setRelated({ invoices: Option.none(), tasks: Option.none() });
   };
+  /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
+  const reload = () =>
+    Effect.all(
+      [leaseRecords.refresh(leaseInput), detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput)],
+      { concurrency: 2, discard: true },
+    );
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     const nextFeedback = failureFeedback(failure);
     if (nextFeedback === 'forbidden' || nextFeedback === 'unavailable') {
@@ -342,6 +348,10 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       setCleared(true);
     }
     setActionFeedback(nextFeedback);
+    if (nextFeedback === 'conflict') {
+      // Someone changed the leases meanwhile: show their version before the person tries again.
+      run(reload());
+    }
   };
   const loadRelated = (record: Occupancy) =>
     Effect.all(
@@ -369,13 +379,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
         Effect.sync(() => setRelated({ invoices: Option.some(value.invoices), tasks: Option.some(value.tasks) })),
       ),
     );
-  /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
-  const reload = () =>
-    Effect.all(
-      [leaseRecords.refresh(leaseInput), detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput)],
-      { concurrency: 2, discard: true },
-    );
-  const refresh = () => {
+  /** Retries after a refused or failed read: clears the hidden state and reads again. */
+  const retry = () => {
     cancellation.current?.abort();
     cancellation.current = new AbortController();
     clearSensitiveState();
@@ -397,7 +402,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     () => () => {
       cancellation.current?.abort();
     },
-    [],
+    [cancellation],
   );
   /** S10-01: names the confirmed stay or lease that blocks the second confirmation of the same unit. */
   const collisionFor = (command: OccupancyCommand): { readonly href: string; readonly text: string } | undefined => {
@@ -864,12 +869,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     peopleCount,
     properties,
     propertyOf,
-    refresh,
     related,
     rentEditorOpen,
     rentMonthly,
     rentPaymentDay,
     rentService,
+    retry,
     runCommand,
     saveDraft,
     saveRentTerms,
@@ -1677,6 +1682,24 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
     </div>
   );
 };
+/** Only a refused or failed read offers a retry; everything else updates by itself. */
+const RetryAfterFailure = ({
+  busy,
+  feedback,
+  label,
+  onRetry,
+}: {
+  readonly busy: boolean;
+  readonly feedback: Feedback;
+  readonly label: string;
+  readonly onRetry: () => void;
+}) =>
+  feedback === 'unavailable' || feedback === 'forbidden' ? (
+    <Button disabled={busy} onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+      {label}
+    </Button>
+  ) : null;
+
 const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['context'] }) => {
   const state = useRecordsPage(context);
   const [calendarMonth, setCalendarMonth] = useState('');
@@ -1684,7 +1707,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
     busy,
     feedback,
     kindFilter,
-    refresh,
+    retry,
 
     setKindFilter,
     snapshot,
@@ -1817,9 +1840,12 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                     Zobrazit zrušené ({state.cancelledCount})
                   </label>
                 )}
-                <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-                  {t('property-leasing.demo.refresh')}
-                </Button>
+                <RetryAfterFailure
+                  busy={busy}
+                  feedback={feedback}
+                  label={t('property-leasing.demo.retry')}
+                  onRetry={retry}
+                />
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (

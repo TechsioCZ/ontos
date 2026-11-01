@@ -28,11 +28,11 @@
         "loading": "Načítání…",
         "saving": "Ukládání…",
         "forbidden": "Pro tuto oblast nemáte oprávnění.",
-        "conflict": "Stav se změnil. Obnovte data a zkuste operaci znovu.",
+        "conflict": "Stav se mezitím změnil. Zobrazujeme aktuální údaje, zkuste operaci znovu.",
         "validation": "Zkontrolujte vstupní údaje a povolený přechod stavu.",
-        "unavailable": "Služba je dočasně nedostupná. Zkuste obnovit data."
+        "unavailable": "Služba je dočasně nedostupná."
       },
-      "refresh": "Obnovit",
+      "retry": "Zkusit znovu",
       "empty": "Žádné záznamy pro zvolený filtr.",
       "unit": "Jednotka",
       "period": "Období",
