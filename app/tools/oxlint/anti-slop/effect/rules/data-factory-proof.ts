@@ -639,7 +639,7 @@ class DataFactoryProof {
         result = native(`drizzle:${imported.imported}`);
       else if (imported.source === 'drizzle-orm/pg-core' &&
         ['pgPolicy', 'pgTable', 'pgSchema', 'pgSequence', 'check', 'foreignKey', 'primaryKey', 'index', 'uniqueIndex',
-          'text', 'uuid', 'integer', 'boolean', 'bigint', 'timestamp', 'jsonb'].includes(imported.imported))
+          'text', 'uuid', 'integer', 'boolean', 'bigint', 'bytea', 'timestamp', 'jsonb'].includes(imported.imported))
         result = native(`drizzle:${imported.imported}`);
       else if (effectImport !== null) {
         result = this.normalizeNative(native(effectImport));
@@ -1277,7 +1277,7 @@ class DataFactoryProof {
       return args.length === 1 && tables.kind === 'record' && !tables.open && tables.element === undefined &&
         [...(tables.fields?.values() ?? [])].every((table) => table.kind === 'table') ? { kind: 'relations' } : BAD;
     }
-    if (/^drizzle:(text|uuid|integer|boolean|bigint|timestamp|jsonb)$/u.test(name))
+    if (/^drizzle:(text|uuid|integer|boolean|bigint|bytea|timestamp|jsonb)$/u.test(name))
       return args.length <= 2 && args.every(isClosedData) ? { kind: 'column-builder', fresh: true } : BAD;
     if (name.startsWith('drizzle:column.')) {
       const operation = name.slice('drizzle:column.'.length);
