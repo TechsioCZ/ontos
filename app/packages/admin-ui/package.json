@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./side-panel": "./src/side-panel.tsx"
+    "./side-panel": "./src/side-panel.tsx",
+    "./visible-text": "./src/visible-text.ts"
   },
   "scripts": {
     "test:unit": "rstest --project unit",

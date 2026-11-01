@@ -37,11 +37,10 @@ const ReviewParty = ({
         {t(`${reviewKey}.selectParty`, {
           name:
             identity.status === 'ready'
-              ? Option.getOrElse(identity.value.party.displayName, () => partyRef.resourceId)
-              : partyRef.resourceId,
+              ? Option.getOrElse(identity.value.party.displayName, () => t(`${reviewKey}.unnamed`))
+              : t(`${reviewKey}.unnamed`),
         })}
       </Button>
-      <p className="break-words text-sm">{partyRef.resourceId}</p>
       {identity.status === 'ready' ? (
         <>
           <p className="text-sm">{t(`${reviewKey}.types.${identity.value.party.partyType}`)}</p>
@@ -79,7 +78,6 @@ const ReviewCaseDetail = ({
     <>
       <DetailList
         items={[
-          { label: t(`${reviewKey}.caseId`), value: duplicate.candidateCase.caseRef.resourceId },
           {
             label: t(`${reviewKey}.candidateName`),
             value: duplicate.candidateCase.candidate.displayName ?? t(`${reviewKey}.unnamed`),
@@ -92,8 +90,6 @@ const ReviewCaseDetail = ({
             label: t(`${reviewKey}.state`),
             value: t(`${reviewKey}.states.${duplicate.candidateCase.lifecycleState}`),
           },
-          { label: t(`${reviewKey}.source`), value: duplicate.candidateCase.candidate.provenance.source },
-          { label: t(`${reviewKey}.rule`), value: duplicate.candidateCase.matchRuleVersion },
           {
             label: t(`${reviewKey}.resolution`),
             value:
@@ -110,11 +106,6 @@ const ReviewCaseDetail = ({
         </p>
       ))}
       <h3 className="font-medium">{t(`${reviewKey}.evidence`)}</h3>
-      {duplicate.candidateCase.candidate.evidenceRefs.map((reference) => (
-        <p className="break-words text-sm" key={reference}>
-          {reference}
-        </p>
-      ))}
       {(duplicate.candidateCase.candidate.subjectEvidence ?? []).map((evidence) => (
         <p className="break-words text-sm" key={evidence.evidenceRef}>
           {evidence.statement}
@@ -251,7 +242,6 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
                 variant="secondary"
               >
                 {t(`${reviewKey}.caseLabel`, {
-                  id: item.caseRef.resourceId,
                   name: item.displayName ?? t(`${reviewKey}.unnamed`),
                   state: t(`${reviewKey}.states.${item.lifecycleState}`),
                 })}

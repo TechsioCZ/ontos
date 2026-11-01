@@ -117,7 +117,7 @@ export const CustomerBulkEditDialog = ({
         continue;
       }
       if (Option.isSome(outcome.failure)) {
-        failures.push(outcome.customer.displayName ?? outcome.customer.counterpartyId);
+        failures.push(outcome.customer.displayName ?? t('party-registry.pages.customers.identityReview.unnamed'));
       } else {
         archived += 1;
       }

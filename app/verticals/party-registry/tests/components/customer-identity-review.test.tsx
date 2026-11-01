@@ -30,6 +30,7 @@ import {
 } from '../../src/api/party-command-client.ts';
 import { useCustomerIdentityReview } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { CustomerIdentityReviewPanel } from '../../src/routes/[lang]/prodej/zakaznici/customer-identity-review-panel.tsx';
+import { expectHumanReadable } from '../support/visible-text.ts';
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -156,6 +157,10 @@ it.effect('the extracted panel presents loading, empty, denied and unavailable q
     const review = renderReview();
     act(() => review.result.current.openReview());
     const panel = render(<CustomerIdentityReviewPanel review={review.result.current} />);
+    expect(document.body.textContent).not.toContain(partyRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
+    expectHumanReadable();
     expect(screen.getByText(`${reviewKey}.loading`)).toBeTruthy();
     expect(screen.queryByText(`${reviewKey}.empty`)).toBeNull();
     yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
@@ -189,6 +194,10 @@ it.effect('the extracted panel requires an explicit subject choice and renders a
     const review = renderReview();
     yield* opened(review);
     const panel = render(<CustomerIdentityReviewPanel review={review.result.current} />);
+    expect(document.body.textContent).not.toContain(partyRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
+    expectHumanReadable();
     const confirm = () => screen.getByRole<HTMLButtonElement>('button', { name: `${reviewKey}.match` });
     expect(confirm().disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: `${reviewKey}.selectParty Existing identity` }));

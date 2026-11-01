@@ -536,7 +536,7 @@ const CustomersContent = () => {
           enableRowSelection
           enableSorting
           getRowId={(row) => row.counterpartyId}
-          getRowLabel={(row) => row.original.displayName ?? row.original.counterpartyId}
+          getRowLabel={(row) => row.original.displayName ?? t('party-registry.pages.customers.identityReview.unnamed')}
           loading={state.status === 'loading' || enrichment.tagFilterLoading}
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
