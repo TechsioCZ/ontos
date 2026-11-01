@@ -164,7 +164,7 @@ const FilterSelect = ({
   readonly onChange: (value: string) => void;
   readonly value: string;
 }) => (
-  <div className="w-44">
+  <div className="min-w-36 flex-1 sm:w-44 sm:flex-none">
     <SelectTemplate
       items={items.map((item) => option(item.value, item.label))}
       label={label}
@@ -206,7 +206,7 @@ export const PeopleToolbar = ({
     <div className="flex flex-wrap items-end gap-150">
       <Input
         aria-label="Hledat podle jména, typu nebo role"
-        className="w-64"
+        className="w-full sm:w-64"
         onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
         placeholder="Hledat jméno, typ nebo roli"
         size="sm"
@@ -323,7 +323,7 @@ const CompactPeopleList = ({
     {people.map((person) => (
       <li className="flex items-start gap-100 py-100" key={person.principalRef.principalId}>
         <Button
-          className="grid min-w-0 flex-1 justify-items-start gap-50 text-start"
+          className="flex min-w-0 flex-1 flex-col items-start justify-start gap-50 text-start"
           onClick={() => onOpen(person)}
           size="current"
           theme="unstyled"
