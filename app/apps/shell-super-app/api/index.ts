@@ -1,3 +1,15 @@
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistryEffect,
+} from '@app/core-runtime/auth/external-identity-admission';
+import { relayUnavailable } from './auth/gateway-relay-errors.ts';
+import { GatewayRelayVerificationLive } from './auth/gateway-relay-verification.ts';
+import {
+  staffAuthenticationNamespaceRegistration,
+  STAFF_AUTHENTICATION_NAMESPACE_ID,
+} from '@app/core-runtime/auth/staff-authentication-namespace';
+import { GatewayRelayExchangeLedgerLive } from './auth/gateway-relay-exchanges.service.ts';
+import { issueRelayedGatewayContextAssertion } from './auth/gateway-relay-issuer.ts';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
@@ -108,7 +120,6 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // legalEntityDetailRead uses the canonical @app/core-runtime import
 // @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
 import {
@@ -1730,6 +1741,69 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           failGatewayProblem(gatewayInternalProblem()),
         ),
       ),
+    )
+    .handle('issueRelayedGatewayContext', ({ headers, payload, request }) =>
+      Effect.gen(function* issueRelayGatewayContextHandler() {
+        yield* requireGatewayRelease(payload.compositionRevision);
+        const keys = yield* ApiKeyService;
+        const resolver = yield* PrincipalResolver;
+        const rawKey = headers['x-api-key'];
+        if (rawKey === undefined || rawKey.trim().length === 0) {
+          return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
+        }
+        const verified = yield* keys
+          .verify(rawKey)
+          .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
+        // Current binding authenticates the workload; its Principal never substitutes for the source actor.
+        yield* resolver
+          .resolveBetterAuthApiKey(verified.providerKeyId)
+          .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
+        const sourceNamespaceRegistry = yield* staffAuthenticationNamespaceRegistration([
+          'catalog',
+          'commerce-customer-context',
+        ]).pipe(
+          Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
+          Effect.mapError(relayUnavailable),
+          Effect.catchTag('GatewayRelayError', () =>
+            failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+          ),
+        );
+        return yield* issueRelayedGatewayContextAssertion({
+          payload,
+          requestCorrelation: correlationFromRequest(request),
+          verifiedProviderKeyId: verified.providerKeyId,
+        }).pipe(
+          Effect.provideService(AuthenticationNamespaceRegistry, sourceNamespaceRegistry),
+          Effect.catchTags({
+            GatewayIssuerError: (error) => pipe(error, gatewayIssuerProblem, failApiKeyGatewayProblem),
+            GatewayRelayError: (error) =>
+              Match.value(error.code).pipe(
+                Match.when('authentication_required', () =>
+                  failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem()),
+                ),
+                Match.when('forbidden', () => failApiKeyGatewayProblem(gatewayForbiddenProblem())),
+                Match.when('unavailable', () => failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem())),
+                Match.when('reload_required', () =>
+                  failApiKeyGatewayProblem(
+                    extendedProblemDetails(
+                      'GatewayReloadRequiredProblem',
+                      'The document release is no longer admitted. Reload to continue.',
+                      409,
+                      'Reload required',
+                      'https://ontos.dev/problems/gateway-reload-required',
+                      { reloadRequired: true as const },
+                    ),
+                  ),
+                ),
+                Match.exhaustive,
+              ),
+          }),
+        );
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected gateway relay defect', () =>
+          failApiKeyGatewayProblem(gatewayInternalProblem()),
+        ),
+      ),
     ),
 );
 
@@ -1956,7 +2030,14 @@ export const makeShellAuthenticationApiRuntime = (
         Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
       )
     : Layer.empty;
+  const relayScopeResolverLayer = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
+  );
+  const relayLedgerLayer = GatewayRelayExchangeLedgerLive.pipe(Layer.provide(authPersistenceLive));
   const handlerDependenciesLive = Layer.mergeAll(
+    relayScopeResolverLayer,
+    relayLedgerLayer,
+    GatewayRelayVerificationLive,
     authenticationLayer,
     authPersistenceLive,
     actionRuntimeLayer,

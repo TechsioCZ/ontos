@@ -760,9 +760,17 @@ const retainedPartyResolverFactoryLive = Layer.effect(
     const authority = yield* ActiveApplicationCompositionService;
     serverPartyObservation.stage = 'FACTORY_BUILT';
     return PartyRegistryRetailPartyResolverFactory.of({
-      make: (input) => {
+      make: ({ scope: currentScope }) => {
         serverPartyObservation.stage = 'FACTORY_MADE';
-        return (request) => resolveRetainedParty(scope, apiKey, shellBaseUrl, authority, input, request);
+        return (request) =>
+          resolveRetainedParty(
+            scope,
+            apiKey,
+            shellBaseUrl,
+            authority,
+            { requestCorrelation: currentScope.correlationId, tenantId: currentScope.tenantId },
+            request,
+          );
       },
     });
   }),

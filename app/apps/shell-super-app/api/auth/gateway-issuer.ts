@@ -65,6 +65,8 @@ export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalC
   readonly audience: string;
   readonly compositionRevision: string;
   readonly principal: Principal;
+  /** Private relay path retains the exact original signing interval. */
+  readonly sourceValidity?: { readonly expiresAt: number; readonly issuedAt: number };
 }
 
 export interface GatewayIssuerLayerOptions {
@@ -224,11 +226,21 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     }
 
     const configuration = yield* Cache.get(configurationCache, 'configuration');
-    const issuedAt = yield* options.currentTimeSeconds;
-    if (!Number.isSafeInteger(issuedAt) || issuedAt < 0) {
+    const now = yield* options.currentTimeSeconds;
+    if (!Number.isSafeInteger(now) || now < 0) {
       return yield* unavailable('clock');
     }
-    const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
+    const issuedAt = input.sourceValidity?.issuedAt ?? now;
+    const expiresAt = input.sourceValidity?.expiresAt ?? now + GATEWAY_ASSERTION_TTL_SECONDS;
+    if (
+      !Number.isSafeInteger(issuedAt) ||
+      !Number.isSafeInteger(expiresAt) ||
+      issuedAt > now ||
+      expiresAt <= now ||
+      expiresAt - issuedAt !== GATEWAY_ASSERTION_TTL_SECONDS
+    ) {
+      return yield* unavailable('clock');
+    }
     const jti = yield* options.generateJti;
     const preparedSigningMaterial: GatewaySigningMaterial = {
       issuer: configuration.issuer,

@@ -1134,7 +1134,14 @@ export const makeCommerceCustomerContextApiRuntime = (
     ),
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    Layer.provide(
+      Layer.mergeAll(
+        runtimeObservabilityLive,
+        RequestSchemaProblemLive,
+        compositionSourceLive,
+        commercePortalAuthPlatformCryptoLive,
+      ),
+    ),
     // The deployment configuration belongs to the whole assembly: source HTTP, admission and
     // gateway verification capture the same configuration and transport references.
     Layer.provide(gatewayVerification),

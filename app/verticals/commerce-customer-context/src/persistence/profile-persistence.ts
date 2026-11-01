@@ -2585,7 +2585,12 @@ const readServices = (
                         status: 'CURRENT',
                       },
                       partyRef: Option.some(partyRef),
-                      profileRef: Option.some(retailRef),
+                      profileRef: Option.some({
+                        moduleId: retailRef.moduleId,
+                        resourceId: retailRef.resourceId,
+                        resourceType: retailRef.resourceType,
+                        tenantId: retailRef.tenantId,
+                      }),
                       provenance: profileProvenance(profile.updatedAt, profile.revision),
                       sellingLegalEntityRef: input.sellingLegalEntityRef,
                     });

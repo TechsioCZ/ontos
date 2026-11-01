@@ -49,6 +49,8 @@ _Avoid_: similarity-based SKU/name/address matching, an external identifier trea
 **Stock Sharing Eligibility** — Inventory-owned positive Current relation between one exact Stock Position and required Selling Legal Entity + Channel, optionally restricted by Commerce Market and/or Storefront. It is distinct from Principal Permission, Assortment, Availability, and Reservation guarantee.
 _Avoid_: a durable Sales Context Resource, customer-specific stock selectors, or an ALLOW/DENY specificity resolver.
 
+**Inventory-qualified Commerce Purchasing Context** — Owner-verified slice of Commerce Purchasing Context required by one exact Inventory operation: Tenant, Customer Configuration, Selling Legal Entity, Channel, Commerce Market, Storefront, and the required owner evidence. It does not redefine the whole purchase context or create a durable aggregate. Its qualification proves neither the acting Principal's Permission nor a Reservation guarantee; those remain independent gates.
+
 ## Reservations and obligations
 
 **Inventory Backend** — Exactly one configured stock/reservation backend selected for the whole Customer Configuration in Launch: either a customer-provided External Business System or the OntOS-provided WMS.
