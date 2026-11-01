@@ -1,4 +1,7 @@
-import { ConfigProvider, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { ActiveApplicationCompositionUnavailableError } from '@app/core-runtime';
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
+import { ConfigProvider, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -15,6 +18,10 @@ import {
 } from '../../shared/domain/catalog-quantity-gateway-credential.ts';
 import { CommerceQuantityCatalogLineRequestSchema } from '../../shared/domain/commerce-quantity-catalog-port.ts';
 import { catalogQuantityPortFromEnvironment } from '../../src/integrations/catalog-quantity.ts';
+import { commerceCustomerContextProductionExternalPortsLive } from '../../api/commerce-customer-context-production-layers.ts';
+import { PaymentTermCatalogGatewayCredentialService } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
+import { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
+import { PurchaseCurrencyPricingGatewayCredentialService } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 
 const { tenantId } = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
 const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
@@ -71,6 +78,62 @@ const expectedFailureCode = (status: 'INVALID' | 'STALE' | 'UNVERIFIABLE') => {
 };
 
 describe('Catalog Quantity production adapter', () => {
+  it.effect('leaves dormant Catalog credentials out of default ports while retaining used owner issuers', () => {
+    let compositionLoads = 0;
+    const unavailableComposition = makeActiveApplicationCompositionLayer(
+      Effect.suspend(() => {
+        compositionLoads += 1;
+        return Effect.fail(
+          new ActiveApplicationCompositionUnavailableError({
+            reason: 'No active Composition snapshot is configured for this default-port construction test',
+          }),
+        );
+      }),
+    );
+    return Effect.gen(function* preservesDefaultPortBoundaries() {
+      expect(Option.isNone(yield* Effect.serviceOption(CatalogQuantityGatewayCredentialService))).toBe(true);
+      expect(Option.isSome(yield* Effect.serviceOption(PaymentTermCatalogGatewayCredentialService))).toBe(true);
+      expect(Option.isSome(yield* Effect.serviceOption(PriceGroupCatalogGatewayCredentialService))).toBe(true);
+      expect(Option.isSome(yield* Effect.serviceOption(PurchaseCurrencyPricingGatewayCredentialService))).toBe(true);
+      expect(compositionLoads).toBe(0);
+      const ready = yield* decodeReady;
+      let ownerReadExecuted = false;
+      const port = yield* catalogQuantityPortFromEnvironment(
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: '20000000-0000-4000-8000-000000000001',
+          requestCorrelation: 'quantity-default-ports',
+        },
+        () => {
+          ownerReadExecuted = true;
+          return Effect.succeed(ready);
+        },
+      );
+      const failure = yield* port
+        .resolveCurrentSelections({
+          lines: [line],
+          observedAt: '2026-09-22T10:00:00.000Z',
+          tenantId,
+        })
+        .pipe(Effect.flip);
+      expect(ownerReadExecuted).toBe(false);
+      expect(compositionLoads).toBe(0);
+      expect(failure).toMatchObject({
+        code: 'catalog_selection_unavailable',
+        reason: 'No server-owned Catalog gateway credential issuer is configured',
+        retryable: true,
+      });
+    }).pipe(
+      Effect.provide(
+        commerceCustomerContextProductionExternalPortsLive.pipe(
+          Layer.provide(unavailableComposition),
+          Layer.provide(NodeCrypto.layer),
+        ),
+      ),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}, { preserveEmptyStrings: true }))),
+    );
+  });
+
   it.effect('keeps the unavailable credential issuer on the typed fail-closed path', () =>
     Effect.gen(function* rejectsUnavailableCredentialIssuer() {
       const failure = yield* unavailableCatalogQuantityGatewayCredentialIssuer
