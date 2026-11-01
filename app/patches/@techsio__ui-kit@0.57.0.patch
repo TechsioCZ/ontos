@@ -1,5 +1,261 @@
+diff --git a/dist/molecules/chart.js b/dist/molecules/chart.js
+index c663b7e..2dfbe7d 100644
+--- a/dist/molecules/chart.js
++++ b/dist/molecules/chart.js
+@@ -50,6 +50,73 @@ function resolveXAxis(data, getX, xLabel) {
+         }
+     };
+ }
++const TOOLTIP_GAP = 12;
++const TOOLTIP_EDGE = 8;
++let tooltipMeasureContext;
++/** Text width in px for the tooltip font; falls back to a generous per-character estimate without canvas. */
++function tooltipTextWidth(text, weight) {
++    if (null == tooltipMeasureContext && "u" > typeof document) tooltipMeasureContext = document.createElement("canvas").getContext?.("2d") ?? false;
++    if (!tooltipMeasureContext) return 8.5 * text.length;
++    tooltipMeasureContext.font = `${weight} 15px system-ui, sans-serif`;
++    return 1.08 * tooltipMeasureContext.measureText(text).width;
++}
++/** Upper-bound size of the structured tooltip, so the anchor can keep it clear of the hovered mark. */
++function estimateTooltipSize(content) {
++    const titleWidth = content.title ? tooltipTextWidth(content.title, 650) : 0;
++    const rowWidth = Math.max(0, ...content.rows.map((row)=>40 + tooltipTextWidth(row.label, 500) + tooltipTextWidth(row.value, 600)));
++    return {
++        width: Math.ceil(Math.max(titleWidth, rowWidth) + 34),
++        height: Math.ceil(30 + (content.title ? 26 : 0) + 24 * content.rows.length)
++    };
++}
++/**
++ * Top-left corner for the tooltip (used with placement "bottom-right" and offset 0): above the hovered column when it
++ * fits, otherwise beside it on the side with room, never on top of the mark. The host clamps it inside the chart.
++ */
++function chartTooltipCorner(content, points, context, horizontal) {
++    if (0 === points.length) return null;
++    const { width, height } = estimateTooltipSize(content);
++    const surface = context.surface;
++    const xs = points.map((point)=>point.x);
++    const ys = points.map((point)=>point.y);
++    const categoryScale = context.scales[horizontal ? "y" : "x"];
++    const band = categoryScale?.bandwidth ?? 0;
++    const bandStart = band > 0 ? categoryScale.map(horizontal ? points[0].yValue : points[0].xValue) : NaN;
++    if (horizontal) {
++        const top = Number.isFinite(bandStart) ? bandStart : Math.min(...ys);
++        const bottom = Number.isFinite(bandStart) ? bandStart + band : Math.max(...ys);
++        const end = Math.max(...xs);
++        if (end + TOOLTIP_GAP + width + TOOLTIP_EDGE <= surface.width) return {
++            x: end + TOOLTIP_GAP,
++            y: (top + bottom - height) / 2
++        };
++        if (top - TOOLTIP_GAP - height >= TOOLTIP_EDGE) return {
++            x: end - width,
++            y: top - TOOLTIP_GAP - height
++        };
++        return {
++            x: end - width,
++            y: bottom + TOOLTIP_GAP
++        };
++    }
++    const left = Number.isFinite(bandStart) ? bandStart : Math.min(...xs);
++    const right = Number.isFinite(bandStart) ? bandStart + band : Math.max(...xs);
++    const top = Math.min(...ys);
++    const center = (left + right) / 2;
++    if (top - TOOLTIP_GAP - height >= TOOLTIP_EDGE) return {
++        x: center - width / 2,
++        y: top - TOOLTIP_GAP - height
++    };
++    const y = Math.max(TOOLTIP_EDGE, top);
++    if (right + TOOLTIP_GAP + width + TOOLTIP_EDGE <= surface.width) return {
++        x: right + TOOLTIP_GAP,
++        y
++    };
++    return {
++        x: left - TOOLTIP_GAP - width,
++        y
++    };
++}
+ function resolveBuild(config) {
+     const getX = toAccessor(config.x);
+     const getY = toAccessor(config.y);
+@@ -65,57 +132,87 @@ function resolveBuild(config) {
+         use: tooltip_tooltip,
+         className: config.tooltipClassName
+     };
+-    const channelName = (accessor, label)=>label ?? ("string" == typeof accessor ? accessor : void 0);
+-    const xName = channelName(config.x, config.xLabel);
+-    const yName = channelName(config.y, config.yLabel);
+-    const formatChannel = (point, channel)=>{
+-        const value = "x" === channel ? point.xValue : point.yValue;
+-        if ("number" == typeof value && formatValue) return formatValue(value);
++    // Local patch: tooltips never show raw field names ("label", "value"). The category is the title, each row is a
++    // series name (or `valueLabel`) with its colour swatch, and the box sits beside or above the hovered mark.
++    const numberFormat = new Intl.NumberFormat(config.locale);
++    const dateFormat = new Intl.DateTimeFormat(config.locale, {
++        dateStyle: "medium",
++        timeZone: "UTC"
++    });
++    const formatCategory = (value)=>{
++        if (config.formatCategory) return config.formatCategory(value);
++        if (value instanceof Date) return dateFormat.format(value);
++        if ("number" == typeof value) return numberFormat.format(value);
+         return String(value ?? "");
+     };
+-    const tooltipFor = (valueChannel, swapped = false)=>{
+-        if (!config.showTooltip) return false;
+-        const dataValueChannel = swapped ? "y" : valueChannel;
+-        const valueName = "x" === dataValueChannel ? xName : yName;
+-        const categoryName = "x" === dataValueChannel ? yName : xName;
+-        const valueItem = {
+-            channel: valueChannel,
+-            label: valueName,
+-            text: formatValue ? (point)=>formatChannel(point, valueChannel) : void 0
+-        };
+-        const categoryChannel = "x" === valueChannel ? "y" : "x";
+-        const categoryItem = {
+-            channel: categoryChannel,
+-            label: categoryName
++    const formatTooltipValue = (value)=>{
++        if ("number" != typeof value) return String(value ?? "");
++        const format = config.formatTooltipValue ?? formatValue;
++        return format ? format(value) : numberFormat.format(value);
++    };
++    const valueName = config.valueLabel ?? config.yLabel ?? "";
++    const rowFor = (row, point, active)=>({
++            label: getSeries ? String(getSeries(row) ?? "") : valueName,
++            value: formatTooltipValue(getY(row)),
++            color: point.color || SERIES_1_PAINT,
++            active
++        });
++    const cartesianContent = (points, context)=>{
++        const first = points[0];
++        if (!first) return {
++            rows: []
+         };
+         return {
+-            ...tooltipBase,
+-            items: "x" === valueChannel ? [
+-                valueItem,
+-                categoryItem
+-            ] : [
+-                categoryItem,
+-                valueItem
++            title: formatCategory(getX(first.datum)),
++            rows: points.map((point)=>rowFor(point.datum, point, points.length > 1 && point === context.primaryPoint))
++        };
++    };
++    const polarContent = (points)=>{
++        const first = points[0];
++        if (!first) return {
++            rows: []
++        };
++        const row = first.datum.data;
++        return {
++            title: formatCategory(getX(row)),
++            rows: [
++                {
++                    label: valueName,
++                    value: formatTooltipValue(getY(row)),
++                    color: first.color || SERIES_1_PAINT
++                }
+             ]
+         };
+     };
++    const tooltipFor = (valueChannel)=>{
++        if (!config.showTooltip) return false;
++        const horizontal = "x" === valueChannel;
++        return {
++            ...tooltipBase,
++            content: cartesianContent,
++            anchor: (points, context)=>chartTooltipCorner(cartesianContent(points, {
++                    primaryPoint: context.focus.primary
++                }), points, context, horizontal),
++            placement: "bottom-right",
++            offset: 0
++        };
++    };
+     const polarTooltip = ()=>{
+         if (!config.showTooltip) return false;
+         return {
+             ...tooltipBase,
+-            items: [
+-                {
+-                    id: "value",
+-                    label: yName,
+-                    text: (point)=>{
+-                        const row = point.datum.data;
+-                        const value = getY(row);
+-                        return formatValue ? formatValue(value) : String(value);
+-                    }
+-                }
+-            ]
++            content: polarContent,
++            anchor: "pointer",
++            placement: [
++                "right",
++                "left",
++                "bottom",
++                "top"
++            ],
++            offset: 16
+         };
+     };
++    const focus = null == getSeries || isPolar ? void 0 : "bar-horizontal" === config.type ? "group-y" : "group-x";
+     const valueAxis = {
+         scale: scaleLinear,
+         nice: true,
+@@ -154,7 +251,10 @@ function resolveBuild(config) {
+                     label: config.legendLabel
+                 })
+             } : void 0,
+-            svgAnimation: config.animate
++            svgAnimation: config.animate,
++            ...focus ? {
++                focus
++            } : {}
+         }
+     };
+ }
+@@ -253,7 +353,7 @@ function buildBars(build, horizontal) {
+             y: build.bandAxis
+         },
+         ...build.shared,
+-        tooltip: build.tooltipFor("x", true)
++        tooltip: build.tooltipFor("x")
+     };
+     return {
+         marks: [
+@@ -390,7 +490,7 @@ function renderCartesianChartSvg(scene, options) {
+         nodes
+     }, options);
+ }
+-function chart_Chart({ type = "line", data, x, y, series, stacked, points = false, smooth = false, grid = true, legend, legendLabel, xLabel, yLabel, formatValue, height, aspectRatio, initialWidth = 640, animate, tooltip = true, ariaLabel, ariaDescription, className, onSelect }) {
++function chart_Chart({ type = "line", data, x, y, series, stacked, points = false, smooth = false, grid = true, legend, legendLabel, xLabel, yLabel, formatValue, valueLabel, formatCategory, formatTooltipValue, locale, height, aspectRatio, initialWidth = 640, animate, tooltip = true, ariaLabel, ariaDescription, className, onSelect }) {
+     const { root, tooltip: tooltipSlot } = chartVariants();
+     const tooltipClassName = tooltipSlot();
+     const prefersReducedMotion = usePrefersReducedMotion();
+@@ -410,6 +510,10 @@ function chart_Chart({ type = "line", data, x, y, series, stacked, points = fals
+             xLabel,
+             yLabel,
+             formatValue,
++            valueLabel,
++            formatCategory,
++            formatTooltipValue,
++            locale,
+             animate: shouldAnimate,
+             showTooltip: tooltip,
+             tooltipClassName
+@@ -428,6 +532,10 @@ function chart_Chart({ type = "line", data, x, y, series, stacked, points = fals
+         xLabel,
+         yLabel,
+         formatValue,
++        valueLabel,
++        formatCategory,
++        formatTooltipValue,
++        locale,
+         shouldAnimate,
+         tooltip,
+         tooltipClassName
 diff --git a/dist/molecules/combobox.js b/dist/molecules/combobox.js
-index a71a2b305cd74656d2da925c36b2e10f4ff2f230..9a25e341522bc608cd90ab8ab8efdba87fdac340 100644
+index a71a2b3..9a25e34 100644
 --- a/dist/molecules/combobox.js
 +++ b/dist/molecules/combobox.js
 @@ -154,7 +154,7 @@ const comboboxVariants = tv({
@@ -21,7 +277,7 @@ index a71a2b305cd74656d2da925c36b2e10f4ff2f230..9a25e341522bc608cd90ab8ab8efdba8
          allowCustomValue: !navigation && allowCustomValue,
          autoFocus,
 diff --git a/dist/molecules/date-picker.js b/dist/molecules/date-picker.js
-index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..f4d5b10c50ab5bd2457a1018b085c20ec3f58ec5 100644
+index 84bc61c..f4d5b10 100644
 --- a/dist/molecules/date-picker.js
 +++ b/dist/molecules/date-picker.js
 @@ -8,6 +8,36 @@ import { Input } from "../atoms/input.js";
@@ -141,7 +397,7 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..f4d5b10c50ab5bd2457a1018b085c20e
          className: styles.trigger({
              className
 diff --git a/dist/molecules/dialog.js b/dist/molecules/dialog.js
-index 676e8e2e61f94e483fcdcce57c530b2d5b1d004a..0605b52ddad0380578c6b1608134bbc3b134d1a7 100644
+index 676e8e2..0605b52 100644
 --- a/dist/molecules/dialog.js
 +++ b/dist/molecules/dialog.js
 @@ -224,7 +224,7 @@ const dialogVariants = tv({
@@ -172,7 +428,7 @@ index 676e8e2e61f94e483fcdcce57c530b2d5b1d004a..0605b52ddad0380578c6b1608134bbc3
                              title && /*#__PURE__*/ jsx("h2", {
                                  className: titleSlot(),
 diff --git a/dist/molecules/switch.js b/dist/molecules/switch.js
-index dc835f307d1c2098f8c3249c284cbfcfa9e16094..a9bb0c34d03607e03cebaabff4dd52ff87af38aa 100644
+index dc835f3..a9bb0c3 100644
 --- a/dist/molecules/switch.js
 +++ b/dist/molecules/switch.js
 @@ -46,7 +46,7 @@ const switchVariants = tv({
@@ -197,7 +453,7 @@ index dc835f307d1c2098f8c3249c284cbfcfa9e16094..a9bb0c34d03607e03cebaabff4dd52ff
                      /*#__PURE__*/ jsx("span", {
                          className: control(),
 diff --git a/dist/molecules/toast.js b/dist/molecules/toast.js
-index 6681008502fd8d24452bd44e550c015a05af9de8..78cd1dbbd3c24362f6d351eaa4120212fd437236 100644
+index 6681008..78cd1db 100644
 --- a/dist/molecules/toast.js
 +++ b/dist/molecules/toast.js
 @@ -44,7 +44,7 @@ const toastVariants = tv({
@@ -252,7 +508,7 @@ index 6681008502fd8d24452bd44e550c015a05af9de8..78cd1dbbd3c24362f6d351eaa4120212
                  }, toast.id))
          })
 diff --git a/dist/organisms/data-table.fields.js b/dist/organisms/data-table.fields.js
-index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..1e2071865cbc42c2b3e105662a3e437295b29b2b 100644
+index 57bef4a..1e20718 100644
 --- a/dist/organisms/data-table.fields.js
 +++ b/dist/organisms/data-table.fields.js
 @@ -130,6 +130,9 @@ function FieldSelect({ items, value, ariaLabel, placeholder, disabled, size = "s
@@ -277,7 +533,7 @@ index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..1e2071865cbc42c2b3e105662a3e4372
                                  item: item,
                                  children: [
 diff --git a/dist/organisms/data-table.js b/dist/organisms/data-table.js
-index 763d1aead36d0d195eb66a1656dc504372fa73e6..805dfcd6a98d4ea8015935e36e2f2e2db8243929 100644
+index 763d1ae..805dfcd 100644
 --- a/dist/organisms/data-table.js
 +++ b/dist/organisms/data-table.js
 @@ -349,7 +349,9 @@ const DEFAULT_TRANSLATIONS = {
@@ -334,8 +590,38 @@ index 763d1aead36d0d195eb66a1656dc504372fa73e6..805dfcd6a98d4ea8015935e36e2f2e2d
                  checked: row.getIsSelected(),
                  disabled: locked || !row.getCanSelect(),
                  indeterminate: row.getIsSomeSelected(),
+diff --git a/dist/src/molecules/chart.d.ts b/dist/src/molecules/chart.d.ts
+index 042f6f0..b05e3c1 100644
+--- a/dist/src/molecules/chart.d.ts
++++ b/dist/src/molecules/chart.d.ts
+@@ -42,6 +42,17 @@ export type ChartProps<TDatum> = {
+     yLabel?: string;
+     /** Formats value-axis tick labels (e.g. currency). */
+     formatValue?: (value: number) => string;
++    /**
++     * Human series name shown in the tooltip row of a single-series chart and pie (e.g. "Tržby"). Falls back to
++     * `yLabel`; the raw `y` field name is never shown. Multi-series rows use the `series` values.
++     */
++    valueLabel?: string;
++    /** Formats the tooltip title from the category / x value. Defaults to locale number and date formatting. */
++    formatCategory?: (value: string | number | Date) => string;
++    /** Formats values in the tooltip. Defaults to `formatValue`, then locale number formatting. */
++    formatTooltipValue?: (value: number) => string;
++    /** BCP 47 locale for the default tooltip number and date formatting (e.g. "cs-CZ"). */
++    locale?: string;
+     /** Fixed pixel height. When omitted, `aspectRatio` controls sizing. */
+     height?: number;
+     /** Width/height ratio used when `height` is omitted. Defaults to 16/9. */
+@@ -63,5 +74,5 @@ export type ChartProps<TDatum> = {
+     /** Fires with the source row of the selected point, or null on deselect. */
+     onSelect?: (datum: TDatum | null) => void;
+ };
+-export declare function Chart<TDatum>({ type, data, x, y, series, stacked, points, smooth, grid, legend, legendLabel, xLabel, yLabel, formatValue, height, aspectRatio, initialWidth, animate, tooltip, ariaLabel, ariaDescription, className, onSelect, }: ChartProps<TDatum>): import("react").JSX.Element;
++export declare function Chart<TDatum>({ type, data, x, y, series, stacked, points, smooth, grid, legend, legendLabel, xLabel, yLabel, formatValue, valueLabel, formatCategory, formatTooltipValue, locale, height, aspectRatio, initialWidth, animate, tooltip, ariaLabel, ariaDescription, className, onSelect, }: ChartProps<TDatum>): import("react").JSX.Element;
+ //# sourceMappingURL=chart.d.ts.map
+\ No newline at end of file
 diff --git a/dist/src/molecules/combobox.d.ts b/dist/src/molecules/combobox.d.ts
-index ccb6c45dc5ffb7f28fc201d83c96757d6040c547..8e0b23d8dc79a69c6b5df078cd27e13bb37c7631 100644
+index ccb6c45..8e0b23d 100644
 --- a/dist/src/molecules/combobox.d.ts
 +++ b/dist/src/molecules/combobox.d.ts
 @@ -204,7 +204,11 @@ export type ComboboxProps<T = unknown> = VariantProps<typeof comboboxVariants> &
@@ -353,7 +639,7 @@ index ccb6c45dc5ffb7f28fc201d83c96757d6040c547..8e0b23d8dc79a69c6b5df078cd27e13b
  //# sourceMappingURL=combobox.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/molecules/date-picker.d.ts b/dist/src/molecules/date-picker.d.ts
-index 837f253c047f25c64b0e2abd9df2889a7702a989..bfd53d379853d0fab4e22902ca938a87b45b4ecf 100644
+index 837f253..bfd53d3 100644
 --- a/dist/src/molecules/date-picker.d.ts
 +++ b/dist/src/molecules/date-picker.d.ts
 @@ -7,7 +7,7 @@
@@ -393,7 +679,7 @@ index 837f253c047f25c64b0e2abd9df2889a7702a989..bfd53d379853d0fab4e22902ca938a87
  };
  type DatePickerSingleRootFields = {
 diff --git a/dist/src/molecules/dialog.d.ts b/dist/src/molecules/dialog.d.ts
-index 7f5627826e740db3de45a4a03c3d2e13fe20c933..568309f671aa150d6b5a0110f9f378b8bc5a36a0 100644
+index 7f56278..568309f 100644
 --- a/dist/src/molecules/dialog.d.ts
 +++ b/dist/src/molecules/dialog.d.ts
 @@ -1,4 +1,4 @@
@@ -422,7 +708,7 @@ index 7f5627826e740db3de45a4a03c3d2e13fe20c933..568309f671aa150d6b5a0110f9f378b8
  //# sourceMappingURL=dialog.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/molecules/switch.d.ts b/dist/src/molecules/switch.d.ts
-index d6a5e65395703f919f8cada94896e9f600acebee..4b980e2e9b33da315cd4440d8c65836b88544531 100644
+index d6a5e65..4b980e2 100644
 --- a/dist/src/molecules/switch.d.ts
 +++ b/dist/src/molecules/switch.d.ts
 @@ -65,7 +65,9 @@ export interface SwitchProps extends VariantProps<typeof switchVariants> {
@@ -438,7 +724,7 @@ index d6a5e65395703f919f8cada94896e9f600acebee..4b980e2e9b33da315cd4440d8c65836b
  //# sourceMappingURL=switch.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/molecules/toast.d.ts b/dist/src/molecules/toast.d.ts
-index c72802bfb19c80d1f2e09a65ad43f12845cb6c2b..c30331b5f3f4eb1afe2596ec6e4b822b270b3a6f 100644
+index c72802b..c30331b 100644
 --- a/dist/src/molecules/toast.d.ts
 +++ b/dist/src/molecules/toast.d.ts
 @@ -67,8 +67,12 @@ interface ToastProps {
@@ -474,7 +760,7 @@ index c72802bfb19c80d1f2e09a65ad43f12845cb6c2b..c30331b5f3f4eb1afe2596ec6e4b822b
  //# sourceMappingURL=toast.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/organisms/data-table.d.ts b/dist/src/organisms/data-table.d.ts
-index 72a946f5aa264ae75ffa34a908ee14602c88a5c2..b89652d1967af307b9596d25321d27c801a73969 100644
+index 72a946f..b89652d 100644
 --- a/dist/src/organisms/data-table.d.ts
 +++ b/dist/src/organisms/data-table.d.ts
 @@ -107,6 +107,10 @@ export type DataTableTranslations = {
@@ -488,3 +774,48 @@ index 72a946f5aa264ae75ffa34a908ee14602c88a5c2..b89652d1967af307b9596d25321d27c8
  };
  export type DataTableProps<T extends RowData> = {
      data: T[];
+diff --git a/src/tokens/components/molecules/_chart.css b/src/tokens/components/molecules/_chart.css
+index 6cdbda5..4160d1b 100644
+--- a/src/tokens/components/molecules/_chart.css
++++ b/src/tokens/components/molecules/_chart.css
+@@ -46,12 +46,17 @@
+    * https://github.com/TechsioCZ/new-engine/issues/608 rather than silently
+    * claimed as passing. */
+   --color-chart-fg: var(--color-fg-primary);
+-  --color-chart-tooltip-bg: var(--color-tooltip-bg);
+-  --color-chart-tooltip-fg: var(--color-tooltip-fg);
+-  --color-chart-tooltip-border: var(--color-tooltip-border-outline);
++  /* Local patch: the chart tooltip is an opaque page-surface card. `--color-tooltip-bg` aliases
++   * `--color-fill-overlay`, which brand themes (akros: black at 15 %) make translucent, so the old card was a grey
++   * veil over the hovered bar. `--color-base` is opaque in every theme (white / gray-950), and primary ink on it
++   * clears WCAG AA in light and dark. */
++  --color-chart-tooltip-bg: var(--color-base);
++  --color-chart-tooltip-fg: var(--color-fg-primary);
++  --color-chart-tooltip-border: var(--color-border-primary);
++  --shadow-chart-tooltip: 0 4px 16px oklch(0% 0 none / 0.16), 0 1px 3px oklch(0% 0 none / 0.12);
+   --radius-chart-tooltip: var(--radius-tooltip);
+-  --text-chart-tooltip: var(--text-tooltip-md);
+-  --padding-chart-tooltip: var(--padding-tooltip-md);
++  --text-chart-tooltip: var(--text-sm);
++  --padding-chart-tooltip: 0.5rem 0.75rem;
+   --border-width-chart-tooltip: var(--border-width-tooltip);
+   --font-chart-tooltip: var(--font-body);
+   --font-weight-chart-tooltip: var(--font-weight-medium);
+@@ -89,6 +94,17 @@
+     var(--color-chart-tooltip-border) !important;
+   border-radius: var(--radius-chart-tooltip) !important;
+   padding: var(--padding-chart-tooltip) !important;
++  box-shadow: var(--shadow-chart-tooltip) !important;
++  line-height: 1.45 !important;
++  min-width: 9rem;
++  /* The hovered series row is bold; no extra tint box inside the card. */
++  --ts-chart-tooltip-active-row-background: transparent;
++  --ts-chart-tooltip-active-row-shadow: none;
++  --ts-chart-tooltip-active-row-font-weight: 700;
++
++  & .ts-chart-tooltip__row {
++    column-gap: 0.75rem !important;
++  }
+   /* The inline `font` shorthand sets family, weight, size and line-height in
+    * one go, so countering only the size would leave the chart tooltip in
+    * system-ui while every other tooltip in the library uses --font-body. */
