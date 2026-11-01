@@ -17,6 +17,8 @@ import type { JsonObject, JsonValue } from '../shared.mts';
 import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
 
+const OWNER_MODULE_REFERENCE = 'id: ownerModuleKey';
+const RUNTIME_MANIFEST_DECLARATION = 'export const propertyRegistryRuntimeManifest';
 const OUTBOX_MESSAGE_COMMAND = 'outbox-message';
 const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
 const PERMISSION_FLAG = '--permission';
@@ -503,6 +505,22 @@ it.live(
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         expect(yield* Effect.promise(() => readFile(after.path, 'utf-8'))).toBe(originalDocument);
+        const constantOwner = split.backend
+          .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+          .replace(
+            RUNTIME_MANIFEST_DECLARATION,
+            `const ownerModuleKey = '${MODULE_ID}';\nexport const propertyRegistryRuntimeManifest`,
+          );
+        expect(constantOwner).not.toBe(split.backend);
+        yield* Effect.promise(() =>
+          writeFile(path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE), constantOwner),
+        );
+        const constantEmission = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        expect(yield* Effect.promise(() => readFile(constantEmission.path, 'utf-8'))).toBe(originalDocument);
         yield* runScaffoldEffect(
           'action',
           [VERTICAL_FLAG, APP_ID, '--action', 'record-summary', ...actionFlags.slice(4)],
@@ -579,6 +597,42 @@ it.live(
         const split = yield* splitFixtureOwner(root);
         const backendPath = path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE);
         const variants = [
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `let ownerModuleKey = '${MODULE_ID}';\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              "import { ownerModuleKey } from './foreign-identity.ts';\nexport const propertyRegistryRuntimeManifest",
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              "const ownerModuleKey = 'foreign.module';\nexport const propertyRegistryRuntimeManifest",
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `const originalModuleKey = '${MODULE_ID}'; const ownerModuleKey = originalModuleKey;\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `const ownerModuleKey = String('${MODULE_ID}');\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `const ownerModuleKey = '${MODULE_ID}'; const ownerModuleKey = 'foreign.module';\nexport const propertyRegistryRuntimeManifest`,
+            ),
           split.backend.replace(
             'defineVerticalRuntimeRegistration(propertyRegistryRuntimeDeclaration)',
             'counterfeitRegistration(propertyRegistryRuntimeDeclaration)',
@@ -591,7 +645,7 @@ it.live(
           split.backend
             .replace('// <generated-module-manifest-actions>', '')
             .replace(
-              'export const propertyRegistryRuntimeManifest',
+              RUNTIME_MANIFEST_DECLARATION,
               '// <generated-module-manifest-actions>\nexport const propertyRegistryRuntimeManifest',
             ),
         ];

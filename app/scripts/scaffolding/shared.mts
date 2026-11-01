@@ -1513,6 +1513,44 @@ const validSharedDeclarationSlots = (
   );
 };
 
+const matchesOwnerModuleIdentity = (
+  source: OwnerSource,
+  expression: Expression | undefined,
+  expected: string | undefined,
+): boolean => {
+  if (expected === undefined) {
+    return false;
+  }
+  if (expression?.type === 'Literal') {
+    return expression.value === expected;
+  }
+  if (
+    expression?.type !== 'Identifier' ||
+    source.program.body.some(
+      (statement) =>
+        statement.type === 'ImportDeclaration' &&
+        statement.specifiers.some((specifier) => specifier.local.name === expression.name),
+    )
+  ) {
+    return false;
+  }
+  const bindings = source.program.body.flatMap((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return declaration?.type === 'VariableDeclaration'
+      ? declaration.declarations
+          .filter((entry) => entry.id.type === 'Identifier' && entry.id.name === expression.name)
+          .map((entry) => ({ expression: entry.init, kind: declaration.kind }))
+      : [];
+  });
+  const [binding] = bindings;
+  return (
+    bindings.length === 1 &&
+    binding?.kind === 'const' &&
+    binding.expression?.type === 'Literal' &&
+    binding.expression.value === expected
+  );
+};
+
 const validRuntimeDeclarationViews = (
   content: string,
   manifestContent: string,
@@ -1540,7 +1578,7 @@ const validRuntimeDeclarationViews = (
     backend.valid,
     manifest.valid,
     registration.valid,
-    moduleIdentity !== undefined && moduleIdentity.type === 'Literal' && moduleIdentity.value === moduleId,
+    matchesOwnerModuleIdentity(backend, moduleIdentity, moduleId),
     ownerKeys(common, ['module', 'publicSurface'], ['requirements']),
     ownerKeys(backendSurface, ['actions', 'api', 'shellContributions'], ['operationContracts']),
     ownerKeys(backendDeclaration, ['actions', 'manifest', 'outboxWorkers'], ['reads']),

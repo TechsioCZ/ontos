@@ -1,4 +1,15 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
+export { defineAction, defineActionResourcePermission } from '../actions/definition.ts';
+export { defineRead } from '../reads/definition.ts';
+export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
+export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
+export {
+  ShellNavigationContributionSchema,
+  ShellPageContributionSchema,
+  ShellSearchContributionSchema,
+} from '../modules/shell-contribution.ts';
+export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
 export { ActiveApplicationCompositionConfigLive } from '../modules/active-application-composition.ts';
 export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
 export { OntosModuleIdSchema } from '../modules/manifest.ts';
