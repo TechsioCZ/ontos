@@ -7,6 +7,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FileUpload } from '@techsio/ui-kit/molecules/file-upload';
 import { SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect, Fiber } from 'effect';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent } from 'react';
 import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
@@ -15,7 +16,7 @@ import type { ProductId } from '../../../../../shared/domain/merchandise-model.t
 import { PRODUCT_GALLERY_LIMIT } from '../../../../../shared/domain/product-images.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { activeUploads, galleryReducer, initialGallery, rejectionMessage } from './product-image-gallery-model.ts';
-import type { GalleryEvent, GalleryState, PendingUpload } from './product-image-gallery-model.ts';
+import type { GalleryEvent, GalleryState, GalleryTranslate, PendingUpload } from './product-image-gallery-model.ts';
 import { ACCEPTED_IMAGE_TYPES, MAX_SOURCE_IMAGE_BYTES, prepareImageUpload } from './product-image-prepare.ts';
 import type { ImagePreparationFailed } from './product-image-prepare.ts';
 import { rememberLocalPreview, useImageSource } from './product-image-source.ts';
@@ -33,35 +34,47 @@ const changeThroughAction =
   (change, onOutcome) =>
     runCommand({ _tag: 'ChangeProductImages', change, id: productId }, 0, onOutcome);
 
-const failureMessage = (outcome: ImageChangeOutcome, action: 'move' | 'remove' | 'restore' | 'upload') => {
+const failureMessage = (
+  t: GalleryTranslate,
+  outcome: ImageChangeOutcome,
+  action: 'move' | 'remove' | 'restore' | 'upload',
+) => {
   if (outcome.ok) {
     return '';
   }
   if (outcome.reason === 'forbidden') {
-    return 'Na změnu obrázků nemáte oprávnění.';
+    return t('merchandise.pages.products.gallery.forbidden');
   }
   if (outcome.reason === 'rejected' || outcome.reason === 'conflict') {
     return action === 'upload'
-      ? 'Obrázek se nepodařilo uložit. Zkuste jiný soubor.'
-      : 'Obrázky produktu se mezitím změnily. Zobrazujeme aktuální pořadí.';
+      ? t('merchandise.pages.products.gallery.uploadRejected')
+      : t('merchandise.pages.products.gallery.conflict');
   }
-  return 'Změnu se nepodařilo uložit, služba je dočasně nedostupná. Zkuste to prosím znovu.';
+  return t('merchandise.pages.products.gallery.unavailable');
 };
 
-const statusText = (state: GalleryState) => {
+const statusText = (t: GalleryTranslate, state: GalleryState) => {
   const uploading = activeUploads(state).length;
   if (uploading > 0) {
-    return uploading === 1 ? 'Nahrávám 1 obrázek…' : `Nahrávám obrázky (${uploading})…`;
+    return uploading === 1
+      ? t('merchandise.pages.products.gallery.uploadingOne')
+      : t('merchandise.pages.products.gallery.uploadingMany', { count: uploading });
   }
   if (state.status === 'saving') {
-    return 'Ukládám…';
+    return t('merchandise.pages.products.gallery.saving');
   }
-  return state.status === 'saved' ? 'Uloženo. E-shop ukazuje obrázky v tomto pořadí.' : undefined;
+  return state.status === 'saved' ? t('merchandise.pages.products.gallery.saved') : undefined;
 };
 
 /** Upload stages a person can follow: waiting, preparing the picture, sending it (then it joins the gallery). */
 const phaseStep = { failed: 0, preparing: 1, uploading: 2, waiting: 0 } as const;
-const phaseText = { failed: 'Nenahráno', preparing: 'Připravuji…', uploading: 'Nahrávám…', waiting: 'Čeká…' } as const;
+const phaseText = (t: GalleryTranslate, phase: PendingUpload['phase']) =>
+  ({
+    failed: t('merchandise.pages.products.gallery.phaseFailed'),
+    preparing: t('merchandise.pages.products.gallery.phasePreparing'),
+    uploading: t('merchandise.pages.products.gallery.phaseUploading'),
+    waiting: t('merchandise.pages.products.gallery.phaseWaiting'),
+  })[phase];
 
 interface TileProps {
   readonly canWrite: boolean;
@@ -94,6 +107,7 @@ const GalleryTile = ({
   productId,
   productName,
 }: TileProps) => {
+  const { t } = useModernI18n();
   const source = useImageSource(productId, image, 'thumbnail');
   const position = index + 1;
   return (
@@ -114,7 +128,7 @@ const GalleryTile = ({
       >
         {source.status === 'ready' ? (
           <img
-            alt={`${productName} – obrázek ${position}`}
+            alt={t('merchandise.pages.products.gallery.imageAlt', { name: productName, position })}
             className="size-full object-cover"
             draggable={false}
             loading="lazy"
@@ -122,13 +136,15 @@ const GalleryTile = ({
           />
         ) : (
           <span className="p-100 text-center text-fg-secondary text-xs">
-            {source.status === 'loading' ? 'Načítám náhled…' : 'Náhled není k dispozici'}
+            {source.status === 'loading'
+              ? t('merchandise.pages.products.gallery.loadingPreview')
+              : t('merchandise.pages.products.gallery.previewUnavailable')}
           </span>
         )}
         {index === 0 && (
           <span className="absolute top-100 left-100">
             <Badge size="sm" variant="info">
-              Hlavní
+              {t('merchandise.pages.products.gallery.main')}
             </Badge>
           </span>
         )}
@@ -137,46 +153,46 @@ const GalleryTile = ({
         <div className="flex flex-wrap items-center gap-50">
           {index > 0 && (
             <Button
-              aria-label={`Nastavit obrázek ${position} jako hlavní`}
+              aria-label={t('merchandise.pages.products.gallery.setMainLabel', { position })}
               icon="icon-[mdi--star-outline]"
               onClick={() => onMove(index, 0)}
               size="sm"
               theme="borderless"
-              title="Nastavit jako hlavní"
+              title={t('merchandise.pages.products.gallery.setMain')}
               type="button"
               variant="secondary"
             />
           )}
           <Button
-            aria-label={`Posunout obrázek ${position} dopředu`}
+            aria-label={t('merchandise.pages.products.gallery.moveEarlierLabel', { position })}
             disabled={index === 0}
             icon="icon-[mdi--arrow-left]"
             onClick={() => onMove(index, index - 1)}
             size="sm"
             theme="borderless"
-            title="Posunout dopředu"
+            title={t('merchandise.pages.products.gallery.moveEarlier')}
             type="button"
             variant="secondary"
           />
           <Button
-            aria-label={`Posunout obrázek ${position} dozadu`}
+            aria-label={t('merchandise.pages.products.gallery.moveLaterLabel', { position })}
             disabled={index === count - 1}
             icon="icon-[mdi--arrow-right]"
             onClick={() => onMove(index, index + 1)}
             size="sm"
             theme="borderless"
-            title="Posunout dozadu"
+            title={t('merchandise.pages.products.gallery.moveLater')}
             type="button"
             variant="secondary"
           />
           <Button
-            aria-label={`Odebrat obrázek ${position}`}
+            aria-label={t('merchandise.pages.products.gallery.removeLabel', { position })}
             className="ml-auto"
             icon="icon-[mdi--delete-outline]"
             onClick={() => onRemove(image)}
             size="sm"
             theme="borderless"
-            title="Odebrat"
+            title={t('merchandise.pages.products.gallery.remove')}
             type="button"
             variant="secondary"
           />
@@ -194,43 +210,49 @@ const UploadTile = ({
   readonly onDismiss: (key: string) => void;
   readonly onRetry: (key: string) => void;
   readonly upload: PendingUpload;
-}) => (
-  <li className="flex flex-col gap-100" data-testid="gallery-upload">
-    <div className={`${surfaceTileClassName} relative flex aspect-square items-center justify-center overflow-hidden`}>
-      {upload.preview !== undefined && (
-        <img
-          alt=""
-          className={`size-full object-cover ${upload.phase === 'failed' ? 'opacity-40' : 'opacity-60'}`}
-          src={upload.preview}
-        />
-      )}
-      <div className="absolute inset-x-100 bottom-100 flex flex-col gap-50">
-        <span className="truncate rounded-sm bg-base/90 px-50 text-xs">{upload.name}</span>
-        {upload.phase !== 'failed' && (
-          <progress
-            aria-label={`${upload.name}: ${phaseText[upload.phase]}`}
-            className="h-1 w-full accent-primary"
-            max={3}
-            value={phaseStep[upload.phase]}
+}) => {
+  const { t } = useModernI18n();
+  const phase = phaseText(t, upload.phase);
+  return (
+    <li className="flex flex-col gap-100" data-testid="gallery-upload">
+      <div
+        className={`${surfaceTileClassName} relative flex aspect-square items-center justify-center overflow-hidden`}
+      >
+        {upload.preview !== undefined && (
+          <img
+            alt=""
+            className={`size-full object-cover ${upload.phase === 'failed' ? 'opacity-40' : 'opacity-60'}`}
+            src={upload.preview}
           />
         )}
+        <div className="absolute inset-x-100 bottom-100 flex flex-col gap-50">
+          <span className="truncate rounded-sm bg-base/90 px-50 text-xs">{upload.name}</span>
+          {upload.phase !== 'failed' && (
+            <progress
+              aria-label={`${upload.name}: ${phase}`}
+              className="h-1 w-full accent-primary"
+              max={3}
+              value={phaseStep[upload.phase]}
+            />
+          )}
+        </div>
       </div>
-    </div>
-    <span className={`text-xs ${upload.phase === 'failed' ? 'text-fg-danger' : 'text-fg-secondary'}`}>
-      {upload.phase === 'failed' ? (upload.message ?? phaseText.failed) : phaseText[upload.phase]}
-    </span>
-    {upload.phase === 'failed' && (
-      <div className="flex gap-50">
-        <Button onClick={() => onRetry(upload.key)} size="sm" theme="outlined" type="button" variant="secondary">
-          Zkusit znovu
-        </Button>
-        <Button onClick={() => onDismiss(upload.key)} size="sm" theme="borderless" type="button" variant="secondary">
-          Zavřít
-        </Button>
-      </div>
-    )}
-  </li>
-);
+      <span className={`text-xs ${upload.phase === 'failed' ? 'text-fg-danger' : 'text-fg-secondary'}`}>
+        {upload.phase === 'failed' ? (upload.message ?? phase) : phase}
+      </span>
+      {upload.phase === 'failed' && (
+        <div className="flex gap-50">
+          <Button onClick={() => onRetry(upload.key)} size="sm" theme="outlined" type="button" variant="secondary">
+            {t('merchandise.pages.products.gallery.retry')}
+          </Button>
+          <Button onClick={() => onDismiss(upload.key)} size="sm" theme="borderless" type="button" variant="secondary">
+            {t('merchandise.pages.products.gallery.dismiss')}
+          </Button>
+        </div>
+      )}
+    </li>
+  );
+};
 
 export interface ProductImageGalleryViewProps {
   readonly canWrite: boolean;
@@ -258,10 +280,11 @@ export const ProductImageGalleryView = ({
   productName,
   state,
 }: ProductImageGalleryViewProps) => {
+  const { t } = useModernI18n();
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const remaining = Math.max(0, PRODUCT_GALLERY_LIMIT - state.images.length - activeUploads(state).length);
   const empty = state.images.length === 0 && state.uploads.length === 0;
-  const status = statusText(state);
+  const status = statusText(t, state);
   const dragOver = (event: DragEvent, index: number) => {
     if (dragFrom !== null && dragFrom !== index) {
       event.preventDefault();
@@ -275,11 +298,11 @@ export const ProductImageGalleryView = ({
     setDragFrom(null);
   };
   return (
-    <SectionCard title={`Obrázky (${state.images.length})`}>
+    <SectionCard title={t('merchandise.pages.products.gallery.title', { count: state.images.length })}>
       <p className="text-fg-secondary text-sm">
         {canWrite
-          ? 'První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením. Každá změna se ukládá hned.'
-          : 'První obrázek je hlavní a e-shop ho ukáže jako první.'}
+          ? t('merchandise.pages.products.gallery.intro')
+          : t('merchandise.pages.products.gallery.introReadOnly')}
       </p>
       {(state.images.length > 0 || state.uploads.length > 0) && (
         <ul className="grid grid-cols-2 gap-200 sm:grid-cols-4" data-testid="gallery-grid">
@@ -312,7 +335,7 @@ export const ProductImageGalleryView = ({
         </ul>
       )}
       {empty && !canWrite && (
-        <p className="text-fg-secondary text-sm">Produkt zatím nemá obrázek. E-shop ukáže obecný obrázek.</p>
+        <p className="text-fg-secondary text-sm">{t('merchandise.pages.products.gallery.empty')}</p>
       )}
       {canWrite && (
         <FileUpload
@@ -327,7 +350,7 @@ export const ProductImageGalleryView = ({
             dispatch({
               notices: files.map(({ errors, file }, index) => ({
                 key: `${file.name}-${file.lastModified}-${index}-${state.notices.length}`,
-                message: rejectionMessage(file.name, errors, remaining),
+                message: rejectionMessage(t, file.name, errors, remaining),
               })),
               type: 'rejected',
             })
@@ -349,13 +372,15 @@ export const ProductImageGalleryView = ({
                 <span aria-hidden="true" className="icon-[mdi--image-plus-outline] size-8 text-fg-secondary" />
                 <span className="font-medium">
                   {remaining === 0
-                    ? 'Produkt má 20 obrázků, víc přidat nelze'
-                    : 'Přetáhněte sem obrázky nebo klikněte pro výběr'}
+                    ? t('merchandise.pages.products.gallery.dropzoneFull', { limit: PRODUCT_GALLERY_LIMIT })
+                    : t('merchandise.pages.products.gallery.dropzonePrompt')}
                 </span>
                 <span className="text-fg-secondary text-sm">
-                  JPG, PNG nebo WebP do 20 MB, i více najednou. Obrázek můžete také vložit ze schránky (Ctrl+V).
+                  {t('merchandise.pages.products.gallery.dropzoneHint')}
                 </span>
-                <FileUpload.Trigger disabled={remaining === 0}>Vybrat obrázky</FileUpload.Trigger>
+                <FileUpload.Trigger disabled={remaining === 0}>
+                  {t('merchandise.pages.products.gallery.pick')}
+                </FileUpload.Trigger>
               </FileUpload.Dropzone>
             )}
           </FileUpload.Context>
@@ -368,7 +393,7 @@ export const ProductImageGalleryView = ({
             {notice.message}
           </StatusText>
           <Button
-            aria-label="Skrýt upozornění"
+            aria-label={t('merchandise.pages.products.gallery.hideNotice')}
             icon="icon-[mdi--close]"
             onClick={() => dispatch({ key: notice.key, type: 'dismissNotice' })}
             size="sm"
@@ -380,9 +405,9 @@ export const ProductImageGalleryView = ({
       ))}
       {state.removed !== undefined && (
         <div className="flex flex-wrap items-center gap-150" data-testid="gallery-undo">
-          <StatusText status="default">Obrázek byl odebrán.</StatusText>
+          <StatusText status="default">{t('merchandise.pages.products.gallery.removed')}</StatusText>
           <Button onClick={onUndo} size="sm" theme="outlined" type="button" variant="secondary">
-            Vrátit zpět
+            {t('merchandise.pages.products.gallery.undo')}
           </Button>
         </div>
       )}
@@ -411,9 +436,6 @@ interface QueuedFile {
   readonly key: string;
 }
 
-const preparationFailed = (name: string) =>
-  `Soubor „${name}“ se nepodařilo načíst. Je poškozený, nebo to není obrázek.`;
-
 /** The gallery editor wired to the merchandise Action; uploads run one after another in the chosen order. */
 export const ProductImageGallery = ({
   canWrite,
@@ -424,6 +446,7 @@ export const ProductImageGallery = ({
   productId,
   productName,
 }: ProductImageGalleryProps) => {
+  const { t } = useModernI18n();
   const [state, dispatch] = useReducer(galleryReducer, images, initialGallery);
   const run = change ?? changeThroughAction(productId);
   const queue = useRef<QueuedFile[]>([]);
@@ -468,7 +491,7 @@ export const ProductImageGallery = ({
       onChanged();
       return;
     }
-    dispatch({ key: next.key, message: failureMessage(outcome, 'upload'), type: 'uploadFailed' });
+    dispatch({ key: next.key, message: failureMessage(t, outcome, 'upload'), type: 'uploadFailed' });
   };
 
   const drain = (): void => {
@@ -486,7 +509,11 @@ export const ProductImageGallery = ({
       prepare(next.file).pipe(
         Effect.match({
           onFailure: (error) => {
-            dispatch({ key: next.key, message: preparationFailed(next.file.name), type: 'uploadFailed' });
+            dispatch({
+              key: next.key,
+              message: t('merchandise.pages.products.gallery.preparationFailed', { name: next.file.name }),
+              type: 'uploadFailed',
+            });
             settle();
             return error;
           },
@@ -528,7 +555,7 @@ export const ProductImageGallery = ({
 
   const save = (action: 'move' | 'remove' | 'restore', imageChange: ProductImageChange) =>
     run(imageChange, (outcome) => {
-      dispatch(outcome.ok ? { type: 'saved' } : { message: failureMessage(outcome, action), type: 'saveFailed' });
+      dispatch(outcome.ok ? { type: 'saved' } : { message: failureMessage(t, outcome, action), type: 'saveFailed' });
       onChanged();
     });
 

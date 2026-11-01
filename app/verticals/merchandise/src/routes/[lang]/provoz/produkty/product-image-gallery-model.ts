@@ -1,7 +1,7 @@
 // State of the product gallery editor: the saved gallery as the server last confirmed it, the order the person sees
 // (optimistic), the uploads in flight and the one removal that can still be undone. Pure, so every state is testable.
 import { Match, Schema } from 'effect';
-import { moveImage } from '../../../../../shared/domain/product-images.ts';
+import { PRODUCT_GALLERY_LIMIT, moveImage } from '../../../../../shared/domain/product-images.ts';
 
 export const UploadPhaseSchema = Schema.Literals(['failed', 'preparing', 'uploading', 'waiting']);
 export type UploadPhase = typeof UploadPhaseSchema.Type;
@@ -140,18 +140,26 @@ export const galleryReducer = (state: GalleryState, event: GalleryEvent): Galler
     }),
   );
 
-/** Czech message for one file the picker refused (Zag file-upload error codes). */
-export const rejectionMessage = (name: string, errors: readonly string[], remaining: number): string => {
+/** Translates a gallery copy key (`merchandise.pages.products.gallery.*`) with its values. */
+export type GalleryTranslate = (key: string, values?: Readonly<Record<string, number | string>>) => string;
+
+/** The person's message for one file the picker refused (Zag file-upload error codes). */
+export const rejectionMessage = (
+  t: GalleryTranslate,
+  name: string,
+  errors: readonly string[],
+  remaining: number,
+): string => {
   if (errors.includes('TOO_MANY_FILES')) {
     return remaining === 0
-      ? 'Produkt už má 20 obrázků, další přidat nelze. Nejdřív některý odeberte.'
-      : `Produkt může mít nejvýše 20 obrázků. Teď můžete přidat ještě ${remaining}.`;
+      ? t('merchandise.pages.products.gallery.galleryFull', { limit: PRODUCT_GALLERY_LIMIT })
+      : t('merchandise.pages.products.gallery.tooManyFiles', { limit: PRODUCT_GALLERY_LIMIT, remaining });
   }
   if (errors.includes('FILE_TOO_LARGE')) {
-    return `Soubor „${name}“ je větší než 20 MB. Zmenšete ho, nebo vyberte jiný.`;
+    return t('merchandise.pages.products.gallery.fileTooLarge', { name });
   }
   if (errors.includes('FILE_INVALID_TYPE')) {
-    return `Soubor „${name}“ není obrázek ve formátu JPG, PNG nebo WebP.`;
+    return t('merchandise.pages.products.gallery.fileInvalidType', { name });
   }
-  return `Soubor „${name}“ nelze nahrát.`;
+  return t('merchandise.pages.products.gallery.fileRejected', { name });
 };

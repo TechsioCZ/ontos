@@ -1,6 +1,7 @@
 import { Option, Schema } from 'effect';
+import csLocale from '../../locales/cs/merchandise.json';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { constVoid } from 'effect/Function';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -20,6 +21,26 @@ import {
   rejectionMessage,
 } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery-model.ts';
 import type { GalleryState } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery-model.ts';
+
+const GALLERY_KEY_PREFIX = 'merchandise.pages.products.gallery.';
+const galleryCopy = new Map(Object.entries(csLocale.merchandise.pages.products.gallery));
+
+/** The gallery's Czech copy straight from the locale resource, with `{{value}}` interpolation. */
+const translate = (key: string, values: Readonly<Record<string, number | string>> = {}): string => {
+  const copy = key.startsWith(GALLERY_KEY_PREFIX) ? galleryCopy.get(key.slice(GALLERY_KEY_PREFIX.length)) : undefined;
+  if (copy === undefined) {
+    throw new Error(`Missing Czech copy for ${key}`);
+  }
+  return copy.replaceAll(/\{\{(?<name>\w+)\}\}/gu, (_match, name: string) => String(values[name]));
+};
+
+// Resolved at render time, after this module has initialised `translate`.
+rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  useModernI18n: () => ({
+    language: 'cs',
+    t: (key: string, values?: Record<string, number | string>) => translate(key, values),
+  }),
+}));
 
 const first = mediaImageReference('0192f3a0-0000-7000-8000-000000000001');
 const second = mediaImageReference('0192f3a0-0000-7000-8000-000000000002');
@@ -117,17 +138,17 @@ it('shows progress while uploading and a Czech error with retry when an upload f
 });
 
 it('explains refused files in Czech', () => {
-  expect(rejectionMessage('scan.pdf', ['FILE_INVALID_TYPE'], 5)).toBe(
+  expect(rejectionMessage(translate, 'scan.pdf', ['FILE_INVALID_TYPE'], 5)).toBe(
     'Soubor „scan.pdf“ není obrázek ve formátu JPG, PNG nebo WebP.',
   );
-  expect(rejectionMessage('raw.png', ['FILE_TOO_LARGE'], 5)).toBe(
+  expect(rejectionMessage(translate, 'raw.png', ['FILE_TOO_LARGE'], 5)).toBe(
     'Soubor „raw.png“ je větší než 20 MB. Zmenšete ho, nebo vyberte jiný.',
   );
-  expect(rejectionMessage('a.jpg', ['TOO_MANY_FILES'], 2)).toBe(
+  expect(rejectionMessage(translate, 'a.jpg', ['TOO_MANY_FILES'], 2)).toBe(
     'Produkt může mít nejvýše 20 obrázků. Teď můžete přidat ještě 2.',
   );
   const state = galleryReducer(initialGallery([]), {
-    notices: [{ key: 'n1', message: rejectionMessage('scan.pdf', ['FILE_INVALID_TYPE'], 5) }],
+    notices: [{ key: 'n1', message: rejectionMessage(translate, 'scan.pdf', ['FILE_INVALID_TYPE'], 5) }],
     type: 'rejected',
   });
   expect(visibleText(render(state))).toContain('není obrázek ve formátu JPG, PNG nebo WebP');
