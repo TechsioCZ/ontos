@@ -3,6 +3,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
+  requireModuleOperation,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   OperationContextUnavailable,
@@ -27,6 +28,7 @@ import type {
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
+import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { resolveCustomerPriceGroupAt } from '../../shared/domain/price-group-resolution.ts';
 import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
 import {
@@ -202,9 +204,26 @@ export const customerPriceGroupResolutionServicesForTransaction = (
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
       compositionRevision,
       requestCorrelation: scope.correlationId,
+      scope,
     });
+    const requiredCatalog: PriceGroupCatalogPort = {
+      resolveCurrent: (...args) =>
+        requireModuleOperation('commerce.customer-context.requirement.price-group-single-assignment').pipe(
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new CustomerPriceGroupCatalogUnavailable({
+                code: 'customer_price_group_catalog_unavailable',
+                reason: 'Required Price Group Catalog operation is unavailable',
+              }),
+              'cause',
+              { configurable: true, value: cause },
+            ),
+          ),
+          Effect.flatMap(() => catalog.resolveCurrent(...args)),
+        ),
+    };
     return {
-      catalog,
+      catalog: requiredCatalog,
       now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
       profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
       store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),

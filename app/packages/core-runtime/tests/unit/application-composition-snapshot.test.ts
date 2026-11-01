@@ -1,12 +1,18 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { DateTime, Effect, Fiber, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
 import { expect, it, rstest } from 'effect-rstest';
 
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
-import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
+import {
+  InstalledModuleCatalogServiceLive,
+  makeActiveApplicationCompositionLayer,
+  validateActiveApplicationCompositionSnapshot,
+} from '../../src/modules/active-application-composition.ts';
+import { TenantModuleStateValidationUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
+import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import {
   ApplicationCompositionSchema,
@@ -248,4 +254,52 @@ it.effect('rejects a legacy schema even when an injected source bypasses its dec
     const error = yield* Effect.flip(validateActiveApplicationCompositionSnapshot(input));
     expect(error).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
   }),
+);
+
+it.effect('loads installed contracts only for the exact trusted live composition revision', () =>
+  Effect.scoped(
+    Effect.gen(function* revisionPinnedCatalog() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      const source = snapshot();
+      const loader = InstalledModuleCatalogServiceLive.pipe(
+        Layer.provide(makeActiveApplicationCompositionLayer(Effect.succeed(source))),
+      );
+      const context = yield* Layer.build(loader);
+      yield* Effect.gen(function* verifyCatalogRevision() {
+        const installed = yield* InstalledModuleCatalogService;
+        expect((yield* installed.loadForRevision(source.composition.revision)).moduleIds).toEqual([]);
+        const mismatch = yield* Effect.flip(installed.loadForRevision('f'.repeat(64)));
+        expect(Schema.is(TenantModuleStateValidationUnavailableError)(mismatch)).toBe(true);
+        yield* TestClock.setTime(Date.parse(validUntil));
+        const expired = yield* Effect.flip(installed.loadForRevision(source.composition.revision));
+        expect(Schema.is(TenantModuleStateValidationUnavailableError)(expired)).toBe(true);
+      }).pipe(Effect.provide(context));
+    }),
+  ),
+);
+
+it.effect('constructs the Core runtime catalog service without reading an unavailable source', () =>
+  Effect.scoped(
+    Effect.gen(function* lazyCoreCatalogAssembly() {
+      let reads = 0;
+      const unavailable = Effect.suspend(() => {
+        reads += 1;
+        return Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Unavailable source fixture' }));
+      });
+      const loader = InstalledModuleCatalogServiceLive.pipe(
+        Layer.provide(makeActiveApplicationCompositionLayer(unavailable)),
+      );
+      const context = yield* Layer.build(loader);
+      yield* Effect.gen(function* unrelatedCoreAdministration() {
+        const installed = yield* InstalledModuleCatalogService;
+        expect(reads).toBe(0);
+        const rejected = yield* Effect.flip(installed.loadForRevision('a'.repeat(64)));
+        expect(Schema.is(TenantModuleStateValidationUnavailableError)(rejected)).toBe(true);
+        expect(reads).toBe(1);
+        expect(
+          yield* Schema.encodeEffect(Schema.fromJsonString(TenantModuleStateValidationUnavailableError))(rejected),
+        ).not.toContain('Unavailable source fixture');
+      }).pipe(Effect.provide(context));
+    }),
+  ),
 );

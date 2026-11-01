@@ -5,7 +5,7 @@
 // @ontos-outbox-worker-topic privacy.measure.dispatched
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
-import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineOutboxWorker, defineTenantModuleEntrypoint, requireModuleOperation } from '@app/core-runtime';
 import type { OutboxPayload } from '@app/privacy/outbox/privacy-measure-dispatched';
 import type { OwnerExecutionOutcome } from '@app/privacy/domain/privacy-measure-handoff';
 import {
@@ -53,12 +53,18 @@ const outcomeMatches = (payload: OutboxPayload, outcome: OwnerExecutionOutcome):
   );
 };
 
-export const handleExecutePrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasureWorker.handle')(function* handle(
+interface PreparedPrivacyMeasure {
+  readonly correlation: string;
+  readonly legalEntityId: string;
+  readonly outcome: OwnerExecutionOutcome;
+}
+
+const preparePrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasureWorker.prepare')(function* prepare(
   payload: OutboxPayload,
   context: OutboxWorkerHandlerContext,
 ) {
   if (payload.handoff.owningCapability !== OWNER) {
-    return yield* Effect.void;
+    return Option.none<PreparedPrivacyMeasure>();
   }
   if (!contextIsExact(payload, context)) {
     return yield* invalid('Core delivery evidence does not match this owner handoff');
@@ -88,16 +94,63 @@ export const handleExecutePrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasure
   if (!outcomeMatches(payload, outcome)) {
     return yield* conflict('The owner outcome does not exactly partition the approved resource scope');
   }
-  yield* gateway.report(outcome, legalEntityId, correlation, context.compositionRevision);
-  // A truthful report does not settle unresolved owner work or its delivery debt.
-  if (outcome.status !== 'SUCCEEDED' && outcome.status !== 'BUSINESS_REJECTED' && outcome.status !== 'NOT_APPLICABLE') {
-    return yield* new ExecutePrivacyMeasureWorkerRejected({
-      code: 'OWNER_COMMIT_INDETERMINATE',
-      reason: 'The reported owner outcome leaves work unresolved; reconcile its durable receipt before completion',
-      retryable: true,
-    });
+  return Option.some({ correlation, legalEntityId, outcome });
+});
+
+const reportPreparedPrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasureWorker.reportPrepared')(
+  function* reportPrepared(prepared: PreparedPrivacyMeasure, context: OutboxWorkerHandlerContext) {
+    const gateway = yield* PrivacyMeasureOwnerGateway;
+    yield* gateway.report(prepared.outcome, prepared.legalEntityId, prepared.correlation, context.compositionRevision);
+    const { outcome } = prepared;
+    // A truthful report does not settle unresolved owner work or its delivery debt.
+    if (
+      outcome.status !== 'SUCCEEDED' &&
+      outcome.status !== 'BUSINESS_REJECTED' &&
+      outcome.status !== 'NOT_APPLICABLE'
+    ) {
+      return yield* new ExecutePrivacyMeasureWorkerRejected({
+        code: 'OWNER_COMMIT_INDETERMINATE',
+        reason: 'The reported owner outcome leaves work unresolved; reconcile its durable receipt before completion',
+        retryable: true,
+      });
+    }
+    return yield* Effect.void;
+  },
+);
+
+export const handleExecutePrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasureWorker.handle')(function* handle(
+  payload: OutboxPayload,
+  context: OutboxWorkerHandlerContext,
+) {
+  const prepared = yield* preparePrivacyMeasure(payload, context);
+  if (Option.isNone(prepared)) {
+    return yield* Effect.void;
   }
-  return yield* Effect.void;
+  return yield* reportPreparedPrivacyMeasure(prepared.value, context);
+});
+
+const registeredPrivacyWorker = Effect.fn('PartyExecutePrivacyMeasureWorker.registered')(function* registered(
+  payload: OutboxPayload,
+  context: OutboxWorkerHandlerContext,
+) {
+  const prepared = yield* preparePrivacyMeasure(payload, context);
+  if (Option.isNone(prepared)) {
+    return yield* Effect.void;
+  }
+  yield* requireModuleOperation('party.registry.requirement.privacy-report-owner-outcome').pipe(
+    Effect.mapError((cause) =>
+      Object.defineProperty(
+        new ExecutePrivacyMeasureWorkerRejected({
+          code: 'OWNER_GATEWAY_UNAVAILABLE',
+          reason: 'Privacy owner-outcome reporting requirement is unavailable',
+          retryable: true,
+        }),
+        'cause',
+        { enumerable: false, value: cause },
+      ),
+    ),
+  );
+  return yield* reportPreparedPrivacyMeasure(prepared.value, context);
 });
 
 export const executePrivacyMeasureWorker = defineOutboxWorker(
@@ -122,5 +175,5 @@ export const executePrivacyMeasureWorker = defineOutboxWorker(
     topic: outboxTopic,
     workerKey: WORKER_KEY,
   },
-  handleExecutePrivacyMeasure,
+  registeredPrivacyWorker,
 );

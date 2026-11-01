@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
   GatewayAssertionRedemptionService,
@@ -121,6 +122,7 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       },
       operationTime: observation.observedAt,
       ownerAuthorizationDecision: 'allowed',
+      ownerRegistration: inventoryRegistration,
       permissionDecision: 'allowed',
       scope,
     });

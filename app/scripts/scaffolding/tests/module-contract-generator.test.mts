@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { parseSync } from 'oxc-parser';
+import type { Program, ObjectExpression, Span } from 'oxc-parser';
 
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Schema } from 'effect';
@@ -9,13 +11,29 @@ import { expect, it } from 'effect-rstest';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
-import { asJsonObject } from '../shared.mts';
+import { asJsonObject, bindSharedRuntimeWorkerEntry, readModuleRuntimeDeclarationEffect } from '../shared.mts';
 import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
 import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
 
-const { checkOntosModuleContracts } = await import(
+const EXPECTED_CHECKER_ERROR = 'Expected the genuine module-contract checker error';
+const OWNER_MODULE_REFERENCE = 'id: ownerModuleKey';
+const RUNTIME_MANIFEST_DECLARATION = 'export const propertyRegistryRuntimeManifest';
+const OUTBOX_MESSAGE_COMMAND = 'outbox-message';
+const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
+const PERMISSION_FLAG = '--permission';
+const MODULE_ACCESS_PERMISSION = 'module.access';
+const RECORD_CHANGE_ACTION = 'record-change';
+const LEGAL_ENTITY_SCOPE_FLAG = '--legal-entity-scope';
+const PROVISIONING_FLAG = '--provisioning';
+const DOCUMENTS_CHANGED_TOPIC = 'documents.center.changed';
+const PRODUCER_FLAG = '--producer';
+const OUTBOX_WORKER_COMMAND = 'outbox-worker';
+const RUNTIME_DECLARATION_FILE = 'vertical.runtime-declaration.ts';
+const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
+
+const { checkOntosModuleContracts, OntosModuleContractCheckError } = await import(
   /* webpackIgnore: true */
   '../../check-ontos-module-contracts.mts'
 );
@@ -39,6 +57,7 @@ const CUSTOM_FEDERATION_EXPOSE = './cards/UnitCard.v2';
 const DOCUMENTS_APP_ID = 'documents-center';
 const DOCUMENTS_MODULE_ID = 'documents.center';
 const MODULE_CONTRACT_COMMAND = 'module-contract';
+const MODULE_API_COMMAND = 'module-api';
 const MODULE_ID = 'property.registry';
 const PROPERTY_MANIFEST_PATH = 'verticals/property-registry/vertical.manifest.ts';
 const PROPERTY_PACKAGE_PATH = 'verticals/property-registry/package.json';
@@ -50,11 +69,14 @@ const PROPERTY_PACKAGE_NAME = '@app/property-registry';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const PROPERTY_BUILD_MARKER = 'property-build';
 const PROPERTY_DIRECTORY = 'verticals/property-registry';
+const DOCUMENTS_DIRECTORY = 'verticals/documents-center';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
 const MfBoundaryIdSchema = Schema.String.pipe(Schema.brand('MfBoundaryId'));
 const OperationKeySchema = Schema.String.pipe(Schema.brand('OperationKey'));
+const PublicApiKeySchema = Schema.String.pipe(Schema.brand('PublicApiKey'));
+const EntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 // The package document is rewritten by the tests, so undeclared owner fields must round-trip.
 const JsonRestSchema = [Schema.Record(Schema.String, Schema.Json)] as const;
@@ -96,6 +118,21 @@ const ModuleContractDocumentSchema = Schema.Struct({
     }),
   }),
   schemaVersion: Schema.String,
+});
+const VersionedOperationDocumentSchema = Schema.Struct({
+  manifest: Schema.Struct({
+    publicSurface: Schema.Struct({
+      operationContracts: Schema.Array(
+        Schema.Struct({
+          apiKey: PublicApiKeySchema,
+          entrypoint: Schema.Struct({ entrypointKey: EntrypointKeySchema }),
+          operationKey: OperationKeySchema,
+          schemaVersion: Schema.String,
+        }),
+      ),
+    }),
+    requirements: Schema.Struct({ schemaVersion: Schema.String }),
+  }),
 });
 const decodeModulePackage = (source: string) => Schema.decodeUnknownEffect(ModulePackageSchema)(JSON.parse(source));
 const decodeModuleContract = (source: string) =>
@@ -228,7 +265,7 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
               role: 'remote',
             },
             package: '@app/documents-center',
-            path: 'verticals/documents-center',
+            path: DOCUMENTS_DIRECTORY,
           },
         ],
       }),
@@ -259,6 +296,603 @@ const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, 
     workspaceRoot: root,
   }).pipe(Effect.provide(NodeServices.layer));
 });
+
+const sourceSpan = (node: Span, source: string): string => source.slice(node.start, node.end);
+const fixtureDeclaration = (source: Program, name: string) => {
+  const statement = source.body.find(
+    (candidate) =>
+      candidate.type === 'ExportNamedDeclaration' &&
+      candidate.declaration?.type === 'VariableDeclaration' &&
+      candidate.declaration.declarations.some((value) => value.id.type === 'Identifier' && value.id.name === name),
+  );
+  if (statement?.type !== 'ExportNamedDeclaration' || statement.declaration?.type !== 'VariableDeclaration') {
+    throw new Error(`Missing genuine fixture declaration ${name}`);
+  }
+  const initializer = statement.declaration.declarations[0]?.init;
+  const argument = initializer?.type === 'CallExpression' ? initializer.arguments[0] : undefined;
+  if (argument?.type !== 'ObjectExpression') {
+    throw new Error(`Invalid fixture declaration ${name}`);
+  }
+  return { argument, statement };
+};
+const fixtureMember = (object: ObjectExpression, key: string) => {
+  const property = object.properties.find(
+    (candidate) => candidate.type === 'Property' && candidate.key.type === 'Identifier' && candidate.key.name === key,
+  );
+  if (property?.type !== 'Property') {
+    throw new Error(`Missing fixture member ${key}`);
+  }
+  return property;
+};
+const splitFixtureOwner = Effect.fn('ModuleContractTest.splitOwner')(function* splitFixtureOwner(root: string) {
+  const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
+  const registrationPath = path.join(root, PROPERTY_DIRECTORY, MODULE_REGISTRATION_FILE);
+  const manifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+  const registration = yield* Effect.promise(() => readFile(registrationPath, 'utf-8'));
+  const manifestAst = parseSync('manifest.ts', manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' }).program;
+  const registrationAst = parseSync('registration.ts', registration, {
+    astType: 'ts',
+    lang: 'ts',
+    sourceType: 'module',
+  }).program;
+  const oldManifest = fixtureDeclaration(manifestAst, 'propertyRegistryManifest');
+  const oldRegistration = fixtureDeclaration(registrationAst, 'propertyRegistryRegistration');
+  const surface = fixtureMember(oldManifest.argument, 'publicSurface').value;
+  if (surface.type !== 'ObjectExpression') {
+    return yield* Effect.die('Fixture public surface must remain an actual authored object');
+  }
+  const prefix = manifest.slice(0, oldManifest.statement.start);
+  const backendPrefix = prefix.replace('defineOntosModuleManifest,', 'defineVerticalRuntimeRegistration,');
+  const commonKeys = ['actions', 'api', 'operationContracts', 'shellContributions'];
+  const common = commonKeys.map((key) => sourceSpan(fixtureMember(surface, key), manifest)).join(',\n');
+  const ui = surface.properties
+    .filter(
+      (property) =>
+        property.type !== 'Property' || property.key.type !== 'Identifier' || !commonKeys.includes(property.key.name),
+    )
+    .map((property) => sourceSpan(property, manifest))
+    .join(',\n');
+  const workerImports = registration
+    .split('\n')
+    .filter((line) => line.startsWith('import ') && line.includes("from './src/workers/"));
+  const optionalRequirements = oldManifest.argument.properties
+    .filter(
+      (property) =>
+        property.type === 'Property' && property.key.type === 'Identifier' && property.key.name === 'requirements',
+    )
+    .map((property) => `${sourceSpan(property, manifest)},`)
+    .join('\n');
+  const backend = `${backendPrefix}import type { VerticalRuntimeRegistrationInput } from '@app/core-runtime';
+// <generated-module-registration-imports>
+${workerImports.join('\n')}
+// </generated-module-registration-imports>
+export const propertyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
+${sourceSpan(fixtureMember(oldManifest.argument, 'module'), manifest)},
+${optionalRequirements}
+publicSurface: { ${common} },
+};
+export const propertyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
+actions: propertyRegistryRuntimeManifest.publicSurface.actions,
+manifest: propertyRegistryRuntimeManifest,
+${sourceSpan(fixtureMember(oldRegistration.argument, 'outboxWorkers'), registration)},
+${sourceSpan(fixtureMember(oldRegistration.argument, 'reads'), registration)},
+};
+export const propertyRegistryBackendRegistration = defineVerticalRuntimeRegistration(propertyRegistryRuntimeDeclaration);
+`;
+  const header =
+    '// @generated by OntOS Codesmith Module Contract v1\n// @ontos-deployment-app-id property-registry\n// @ontos-module-id property.registry\n';
+  const fullManifest = `${header}import { defineOntosModuleManifest } from '@app/core-runtime';
+// <generated-module-manifest-imports>
+// </generated-module-manifest-imports>
+import { propertyRegistryRuntimeManifest } from './vertical.runtime-declaration.ts';
+export const propertyRegistryManifest = defineOntosModuleManifest({
+...propertyRegistryRuntimeManifest,
+${sourceSpan(fixtureMember(oldManifest.argument, 'activation'), manifest)},
+publicSurface: { ...propertyRegistryRuntimeManifest.publicSurface, ${ui} },
+});
+`;
+  const fullRegistration = `${header}import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
+import { propertyRegistryManifest } from './vertical.manifest.ts';
+import { propertyRegistryRuntimeDeclaration } from './vertical.runtime-declaration.ts';
+export const propertyRegistryRegistration = defineVerticalRuntimeRegistration({
+...propertyRegistryRuntimeDeclaration,
+${sourceSpan(fixtureMember(oldRegistration.argument, 'entrypoints'), registration)},
+manifest: propertyRegistryManifest,
+});
+`;
+  yield* write(root, `${PROPERTY_DIRECTORY}/vertical.runtime-declaration.ts`, backend);
+  yield* write(root, PROPERTY_MANIFEST_PATH, fullManifest);
+  yield* write(root, `${PROPERTY_DIRECTORY}/vertical.registration.ts`, fullRegistration);
+  return { backend, fullManifest, fullRegistration };
+});
+
+it.live(
+  'emits identical actual owner contracts across the shared backend split and routes new operations once',
+  Effect.fn(function* sharedOwnerEmission() {
+    yield* withFixture(
+      Effect.fn(function* verifySharedOwner(root) {
+        yield* scaffold(root);
+        yield* linkFixtureDependencies(root, appRoot, { '@app/shared-contracts': 'packages/shared-contracts' });
+        const apiFlags = [
+          VERTICAL_FLAG,
+          APP_ID,
+          '--name',
+          'current-details',
+          AUTHORIZATION_FLAG,
+          'context_permission',
+          PERMISSION_FLAG,
+          MODULE_ACCESS_PERMISSION,
+        ];
+        yield* runScaffoldEffect(MODULE_API_COMMAND, apiFlags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const actionFlags = [
+          VERTICAL_FLAG,
+          APP_ID,
+          '--action',
+          RECORD_CHANGE_ACTION,
+          LEGAL_ENTITY_SCOPE_FLAG,
+          'optional',
+          AUTHORIZATION_FLAG,
+          'action_execution',
+          PROVISIONING_FLAG,
+          'tenant_membership_default',
+        ];
+        yield* runScaffoldEffect('action', actionFlags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const producerPackagePath = path.join(root, DOCUMENTS_DIRECTORY, 'package.json');
+        const producerPackage = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+        )(yield* Effect.promise(() => readFile(producerPackagePath, 'utf-8')));
+        yield* Effect.promise(() =>
+          writeFile(producerPackagePath, JSON.stringify({ ...producerPackage, exports: {} }, null, 2)),
+        );
+        yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
+        yield* runScaffoldEffect('action', [VERTICAL_FLAG, DOCUMENTS_APP_ID, ...actionFlags.slice(2)], {
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          OUTBOX_MESSAGE_COMMAND,
+          [VERTICAL_FLAG, DOCUMENTS_APP_ID, '--action', RECORD_CHANGE_ACTION, '--topic', DOCUMENTS_CHANGED_TOPIC],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        const workerFlags = [
+          VERTICAL_FLAG,
+          APP_ID,
+          '--worker',
+          'observe-document-change',
+          PRODUCER_FLAG,
+          DOCUMENTS_APP_ID,
+          '--topic',
+          DOCUMENTS_CHANGED_TOPIC,
+          AUTHORIZATION_FLAG,
+          'owner_local_background',
+        ];
+        yield* runScaffoldEffect(OUTBOX_WORKER_COMMAND, workerFlags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        yield* linkFixtureDependencies(root, root, { '@app/documents-center': DOCUMENTS_DIRECTORY });
+        const authoredManifest = yield* Effect.promise(() =>
+          readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'),
+        );
+        const authoredProgram = parseSync('manifest.ts', authoredManifest, {
+          astType: 'ts',
+          lang: 'ts',
+          sourceType: 'module',
+        }).program;
+        const requirementsMember = fixtureMember(
+          fixtureDeclaration(authoredProgram, 'propertyRegistryManifest').argument,
+          'requirements',
+        );
+        const requirements = `requirements: {
+          schemaVersion: '1', intrinsic: [], coreCapabilities: [{ id: 'ontos.module-dependency-contracts', version: '1' }],
+          operations: [{ key: 'property.registry.requirement.current-details', entrypointKey: recordChangeAction.descriptor.entrypoint.entrypointKey, condition: 'property.registry.condition.current-owner', evidence: ['property.registry.evidence.current-owner'], provider: { moduleId: 'property.registry', entrypointKey: 'property.registry.api.current-details', schemaVersion: '1' } }],
+        }`;
+        yield* Effect.promise(() =>
+          writeFile(
+            path.join(root, PROPERTY_MANIFEST_PATH),
+            `${authoredManifest.slice(0, requirementsMember.start)}${requirements}${authoredManifest.slice(requirementsMember.end)}`,
+          ),
+        );
+        const before = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        const originalDocument = yield* Effect.promise(() => readFile(before.path, 'utf-8'));
+        const split = yield* splitFixtureOwner(root);
+        const after = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        expect(yield* Effect.promise(() => readFile(after.path, 'utf-8'))).toBe(originalDocument);
+        const constantOwner = split.backend
+          .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+          .replace(
+            RUNTIME_MANIFEST_DECLARATION,
+            `const ownerModuleKey = '${MODULE_ID}';\nexport const propertyRegistryRuntimeManifest`,
+          )
+          .replace('// <generated-module-shell-components>', '')
+          .replace('// </generated-module-shell-components>', '')
+          .replace('// <generated-module-shell-reports>', '')
+          .replace('// </generated-module-shell-reports>', '');
+        expect(constantOwner).not.toBe(split.backend);
+        yield* Effect.promise(() =>
+          writeFile(path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE), constantOwner),
+        );
+        const constantEmission = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        expect(yield* Effect.promise(() => readFile(constantEmission.path, 'utf-8'))).toBe(originalDocument);
+        yield* runScaffoldEffect(
+          'action',
+          [VERTICAL_FLAG, APP_ID, '--action', 'record-summary', ...actionFlags.slice(4)],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          OUTBOX_WORKER_COMMAND,
+          [VERTICAL_FLAG, APP_ID, '--worker', 'observe-document-summary', ...workerFlags.slice(4)],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        const workerEntry = yield* Effect.promise(() =>
+          readFile(path.join(root, PROPERTY_DIRECTORY, 'src/worker-host/entry.ts'), 'utf-8'),
+        );
+        expect(workerEntry.startsWith('// @generated by scaffold:outbox-worker worker-host\n')).toBe(true);
+        expect(workerEntry).toContain('ownerRegistration: propertyRegistryBackendRegistration');
+        expect(workerEntry).not.toContain("from '../../vertical.registration.ts'");
+        for (const invalidEntry of [
+          workerEntry.replace('defineOutboxWorkerEntry({', 'counterfeitWorkerEntry({'),
+          workerEntry.replace(
+            '../../vertical.runtime-declaration.ts',
+            '../../../foreign/vertical.runtime-declaration.ts',
+          ),
+          workerEntry.replace(
+            'ownerRegistration: propertyRegistryBackendRegistration',
+            'ownerRegistration: foreignBackendRegistration',
+          ),
+          workerEntry.replace('expectedDeployment: ultramodernApiMarker', 'expectedDeployment: foreignDeployment'),
+        ]) {
+          expect(() => bindSharedRuntimeWorkerEntry(invalidEntry, 'propertyRegistry')).toThrow(/binding/u);
+        }
+        const nextFlags = [
+          VERTICAL_FLAG,
+          APP_ID,
+          '--name',
+          'current-summary',
+          AUTHORIZATION_FLAG,
+          'context_permission',
+          PERMISSION_FLAG,
+          MODULE_ACCESS_PERMISSION,
+        ];
+        yield* runScaffoldEffect(MODULE_API_COMMAND, nextFlags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const firstTree = yield* snapshotTree(root);
+        yield* runScaffoldEffect(MODULE_API_COMMAND, nextFlags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        expect(yield* snapshotTree(root)).toEqual(firstTree);
+        const source = yield* Effect.promise(() =>
+          readFile(path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE), 'utf-8'),
+        );
+        expect(source.match(/registration: currentSummaryRead/gu)).toHaveLength(1);
+        expect(source.match(/currentSummaryRead,/gu)).toHaveLength(1);
+        expect(yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'))).toBe(
+          split.fullManifest,
+        );
+        const finalEmission = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        expect(finalEmission.bytes).toBeGreaterThan(before.bytes);
+        yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
+      }),
+    );
+  }),
+);
+
+it.live(
+  'rejects foreign, counterfeit and misplaced shared owner sources before any mutation',
+  Effect.fn(function* invalidSharedOwners() {
+    yield* withFixture(
+      Effect.fn(function* verifyInvalidSharedOwners(root) {
+        yield* scaffold(root);
+        yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
+        const split = yield* splitFixtureOwner(root);
+        const backendPath = path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE);
+        const variants = [
+          split.backend.replace('// <generated-module-registration-workers>', ''),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `let ownerModuleKey = '${MODULE_ID}';\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              "import { ownerModuleKey } from './foreign-identity.ts';\nexport const propertyRegistryRuntimeManifest",
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              "const ownerModuleKey = 'foreign.module';\nexport const propertyRegistryRuntimeManifest",
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `const originalModuleKey = '${MODULE_ID}'; const ownerModuleKey = originalModuleKey;\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `const ownerModuleKey = String('${MODULE_ID}');\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend
+            .replace(`id: '${MODULE_ID}'`, OWNER_MODULE_REFERENCE)
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              `const ownerModuleKey = '${MODULE_ID}'; const ownerModuleKey = 'foreign.module';\nexport const propertyRegistryRuntimeManifest`,
+            ),
+          split.backend.replace(
+            'defineVerticalRuntimeRegistration(propertyRegistryRuntimeDeclaration)',
+            'counterfeitRegistration(propertyRegistryRuntimeDeclaration)',
+          ),
+          split.backend.replace("from '@app/core-runtime'", "from '../foreign/private-runtime.ts'"),
+          split.backend.replace(
+            '// <generated-module-manifest-actions>',
+            '// duplicate\n// <generated-module-manifest-actions>\n// <generated-module-manifest-actions>',
+          ),
+          split.backend
+            .replace('// <generated-module-manifest-actions>', '')
+            .replace(
+              RUNTIME_MANIFEST_DECLARATION,
+              '// <generated-module-manifest-actions>\nexport const propertyRegistryRuntimeManifest',
+            ),
+        ];
+        for (const variant of variants) {
+          yield* Effect.promise(() => writeFile(backendPath, variant));
+          const before = yield* snapshotTree(root);
+          yield* expectFailure(
+            runScaffoldEffect(
+              'action',
+              [
+                VERTICAL_FLAG,
+                APP_ID,
+                '--action',
+                'record-failure',
+                LEGAL_ENTITY_SCOPE_FLAG,
+                'optional',
+                AUTHORIZATION_FLAG,
+                'action_execution',
+                PROVISIONING_FLAG,
+                'tenant_membership_default',
+              ],
+              { workspaceRoot: root },
+            ).pipe(Effect.provide(NodeServices.layer)),
+            (error) => expect(String(error)).toMatch(/declaration|slot/u),
+          );
+          expect(yield* snapshotTree(root)).toEqual(before);
+          yield* expectFailure(checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer)), (error) => {
+            if (Schema.is(OntosModuleContractCheckError)(error)) {
+              expect(error.reason).toMatch(/shared|owner|deployment/u);
+            } else {
+              throw new Error(EXPECTED_CHECKER_ERROR);
+            }
+          });
+          expect(yield* snapshotTree(root)).toEqual(before);
+        }
+        yield* Effect.promise(() => writeFile(backendPath, split.backend));
+        yield* Effect.promise(() =>
+          writeFile(
+            backendPath,
+            `${split.backend}\nimport { borrowed } from '../documents-center/vertical.runtime-declaration.ts';\n`,
+          ),
+        );
+        const foreignTree = yield* snapshotTree(root);
+        yield* expectFailure(checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer)), (error) => {
+          if (Schema.is(OntosModuleContractCheckError)(error)) {
+            expect(error.reason).toMatch(/another deployment/u);
+          } else {
+            throw new Error(EXPECTED_CHECKER_ERROR);
+          }
+        });
+        expect(yield* snapshotTree(root)).toEqual(foreignTree);
+        yield* Effect.promise(() => writeFile(backendPath, split.backend));
+        yield* Effect.promise(() =>
+          writeFile(
+            path.join(root, PROPERTY_MANIFEST_PATH),
+            `${split.fullManifest}\n// <generated-module-manifest-actions>\n// </generated-module-manifest-actions>\n`,
+          ),
+        );
+        const misplacedTree = yield* snapshotTree(root);
+        yield* expectFailure(checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer)), (error) => {
+          if (Schema.is(OntosModuleContractCheckError)(error)) {
+            expect(error.reason).toMatch(/authoritative|shared/u);
+          } else {
+            throw new Error(EXPECTED_CHECKER_ERROR);
+          }
+        });
+        expect(yield* snapshotTree(root)).toEqual(misplacedTree);
+        yield* Effect.promise(() => writeFile(path.join(root, PROPERTY_MANIFEST_PATH), split.fullManifest));
+        yield* expectFailure(
+          readModuleRuntimeDeclarationEffect(
+            path.join(root, PROPERTY_DIRECTORY),
+            APP_ID,
+            split.fullManifest.replace(
+              './vertical.runtime-declaration.ts',
+              '../foreign/vertical.runtime-declaration.ts',
+            ),
+            split.fullRegistration,
+          ).pipe(Effect.provide(NodeServices.layer)),
+          (error) => expect(String(error)).toMatch(/declaration|slot/u),
+        );
+      }),
+    );
+  }),
+);
+
+it.live(
+  'generates exact versioned operation claims and safely upgrades missing legacy owner slots without partial writes',
+  Effect.fn(function* versionedOperationProjection() {
+    yield* withFixture(
+      Effect.fn(function* verifyVersionedOperationProjection(root) {
+        yield* scaffold(root);
+        yield* linkFixtureDependencies(root, appRoot, { '@app/shared-contracts': 'packages/shared-contracts' });
+        const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
+        const registrationPath = path.join(root, PROPERTY_DIRECTORY, MODULE_REGISTRATION_FILE);
+        const manifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+        const registration = yield* Effect.promise(() => readFile(registrationPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(
+            manifestPath,
+            manifest.replace(
+              /\s*operationContracts: \[\s*\/\/ <generated-module-manifest-operation-contracts>\s*\/\/ <\/generated-module-manifest-operation-contracts>\s*\],/u,
+              '',
+            ),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            registrationPath,
+            registration.replace(
+              /\s*reads: \[\s*\/\/ <generated-module-registration-reads>\s*\/\/ <\/generated-module-registration-reads>\s*\],/u,
+              '',
+            ),
+          ),
+        );
+        const flags = [
+          VERTICAL_FLAG,
+          APP_ID,
+          '--name',
+          'current-details',
+          AUTHORIZATION_FLAG,
+          'context_permission',
+          PERMISSION_FLAG,
+          MODULE_ACCESS_PERMISSION,
+        ];
+        yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const firstTree = yield* snapshotTree(root);
+        yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        expect(yield* snapshotTree(root)).toEqual(firstTree);
+        const actionFlags = [
+          '--action',
+          RECORD_CHANGE_ACTION,
+          LEGAL_ENTITY_SCOPE_FLAG,
+          'optional',
+          AUTHORIZATION_FLAG,
+          'action_execution',
+          PROVISIONING_FLAG,
+          'tenant_membership_default',
+        ];
+        yield* runScaffoldEffect('action', [VERTICAL_FLAG, APP_ID, ...actionFlags], { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const producerPackagePath = path.join(root, 'verticals/documents-center/package.json');
+        const producerPackage = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+        )(yield* Effect.promise(() => readFile(producerPackagePath, 'utf-8')));
+        yield* Effect.promise(() =>
+          writeFile(producerPackagePath, JSON.stringify({ ...producerPackage, exports: {} }, null, 2)),
+        );
+        yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
+        yield* runScaffoldEffect('action', [VERTICAL_FLAG, DOCUMENTS_APP_ID, ...actionFlags], {
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          OUTBOX_MESSAGE_COMMAND,
+          [VERTICAL_FLAG, DOCUMENTS_APP_ID, '--action', RECORD_CHANGE_ACTION, '--topic', DOCUMENTS_CHANGED_TOPIC],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          OUTBOX_WORKER_COMMAND,
+          [
+            VERTICAL_FLAG,
+            APP_ID,
+            '--worker',
+            'observe-document-change',
+            PRODUCER_FLAG,
+            DOCUMENTS_APP_ID,
+            '--topic',
+            DOCUMENTS_CHANGED_TOPIC,
+            AUTHORIZATION_FLAG,
+            'owner_local_background',
+          ],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        yield* linkFixtureDependencies(root, root, { '@app/documents-center': DOCUMENTS_DIRECTORY });
+        const mixedOwner = yield* snapshotTree(root);
+        yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        expect(yield* snapshotTree(root)).toEqual(mixedOwner);
+        const emitted = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        const text = yield* Effect.promise(() => readFile(emitted.path, 'utf-8'));
+        const document = yield* Schema.decodeUnknownEffect(VersionedOperationDocumentSchema)(JSON.parse(text));
+        expect(document.manifest.requirements.schemaVersion).toBe('1');
+        expect(document.manifest.publicSurface.operationContracts).toEqual([
+          {
+            apiKey: 'property.registry.current-details',
+            entrypoint: { entrypointKey: 'property.registry.api.current-details' },
+            operationKey: 'currentDetails.execute',
+            schemaVersion: '1',
+          },
+        ]);
+        expect(text).not.toMatch(/registration"|inputSchema|serviceFactory|src\/api/u);
+        const mixedRegistration = yield* Effect.promise(() => readFile(registrationPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(
+            registrationPath,
+            mixedRegistration.replace(
+              "from './src/api/current-details.read.ts'",
+              "from '../foreign/src/api/current-details.read.ts'",
+            ),
+          ),
+        );
+        const beforeImportFailure = yield* snapshotTree(root);
+        yield* expectFailure(
+          runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+          (error) => expect(String(error)).toMatch(/Read import conflicts/u),
+        );
+        expect(yield* snapshotTree(root)).toEqual(beforeImportFailure);
+        yield* Effect.promise(() => writeFile(registrationPath, mixedRegistration));
+        const currentManifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(manifestPath, currentManifest.replace('// </generated-module-manifest-operation-contracts>', '')),
+        );
+        const beforeFailure = yield* snapshotTree(root);
+        yield* expectFailure(
+          runScaffoldEffect(
+            MODULE_API_COMMAND,
+            [VERTICAL_FLAG, APP_ID, '--name', 'another-details', AUTHORIZATION_FLAG, 'authenticated_principal'],
+            { workspaceRoot: root },
+          ).pipe(Effect.provide(NodeServices.layer)),
+          (error) => expect(String(error)).toMatch(/conflicting operation binding slot/u),
+        );
+        expect(yield* snapshotTree(root)).toEqual(beforeFailure);
+      }),
+    );
+  }),
+);
 
 it.live(
   'module-contract help is exact and write-free',
@@ -291,11 +925,11 @@ it.live(
               APP_ID,
               '--action',
               'create-property',
-              '--legal-entity-scope',
+              LEGAL_ENTITY_SCOPE_FLAG,
               'optional',
               AUTHORIZATION_FLAG,
               'action_execution',
-              '--provisioning',
+              PROVISIONING_FLAG,
               'tenant_membership_default',
             ],
           ],
@@ -309,19 +943,19 @@ it.live(
               'properties',
               AUTHORIZATION_FLAG,
               'context_permission',
-              '--permission',
-              'module.access',
+              PERMISSION_FLAG,
+              MODULE_ACCESS_PERMISSION,
             ],
           ],
           ['outbox-message', [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created']],
           [
-            'outbox-worker',
+            OUTBOX_WORKER_COMMAND,
             [
               VERTICAL_FLAG,
               APP_ID,
               '--worker',
               'property-projector',
-              '--producer',
+              PRODUCER_FLAG,
               DOCUMENTS_APP_ID,
               '--topic',
               'document.created',
@@ -431,7 +1065,7 @@ it.live(
             ),
           ),
         );
-        expect(tsconfig.include).toEqual(['src', 'shared', 'vertical.manifest.ts', 'vertical.registration.ts']);
+        expect(tsconfig.include).toEqual(['src', 'shared', MODULE_MANIFEST_FILE, MODULE_REGISTRATION_FILE]);
       }),
     );
   }),
@@ -636,6 +1270,27 @@ it.live(
 it('permits owner-local registration imports but rejects cross-deployment owner imports', () => {
   const root = '/workspace/app';
   expect(
+    privateOwnerImportViolation(
+      root,
+      'verticals/billing/src/worker-host/entry.ts',
+      '../../vertical.runtime-declaration.ts',
+    ),
+  ).toBe(undefined);
+  expect(
+    privateOwnerImportViolation(
+      root,
+      'verticals/billing/src/worker-host/entry.ts',
+      '../../../inventory-stock/vertical.runtime-declaration.ts',
+    ) ?? '',
+  ).toMatch(/only its own/u);
+  expect(
+    privateOwnerImportViolation(
+      root,
+      'apps/shell-super-app/api/index.ts',
+      '../../../verticals/billing/vertical.runtime-declaration.ts',
+    ) ?? '',
+  ).toMatch(/may not import/u);
+  expect(
     privateOwnerImportViolation(root, 'verticals/billing/src/worker-host/main.ts', '../../vertical.registration.ts'),
   ).toBe(undefined);
   expect(
@@ -708,6 +1363,50 @@ export default defineEffectBff({ api: fixtureApi, layer });
         expect(generated).toMatch(/GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
         expect(generated).toMatch(/GovernedReadLayer\.orDie/u);
         expect(generated).not.toMatch(/\bLayer\./u);
+        expect(generated).toMatch(
+          /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+        );
+        expect(generated).toContain('GovernedReadLayer.provide(governedActiveApplicationCompositionLive)');
+        expect(generated.match(/const governedApplicationCompositionSourceLive =/gu)).toHaveLength(1);
+        expect(generated.match(/const governedActiveApplicationCompositionLive =/gu)).toHaveLength(1);
+        expect(generated.indexOf('const governedApplicationCompositionSourceLive =')).toBeLessThan(
+          generated.indexOf('const governedReadRuntimeLive ='),
+        );
+        expect(generated).toContain(
+          "propertyRegistryRegistration as governedOwnerRegistration } from '../vertical.registration.ts'",
+        );
+        const shared = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(true);
+        for (const counterfeit of [
+          generated.replace("from '../vertical.registration.ts'", "from '../foreign/vertical.registration.ts'"),
+          generated.replace(
+            "from '@app/core-runtime/modules/active-application-composition'",
+            "from './foreign-composition.ts'",
+          ),
+          generated.replace(
+            'GovernedReadLayer.provide(governedApplicationCompositionSourceLive)',
+            'GovernedReadLayer.provide(foreignCompositionSourceLive)',
+          ),
+          generated.replace('  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),', ''),
+          generated.replace(
+            /governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u,
+            'governedActionDeliveryUnit).pipe(',
+          ),
+          generated.replace(
+            /governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u,
+            'governedOwnerRegistration, governedActionDeliveryUnit).pipe(',
+          ),
+          generated.replace(
+            'const governedReadRuntimeLive =',
+            'const governedOwnerRegistration = {};\nconst governedReadRuntimeLive =',
+          ),
+          generated.replace(
+            'makeReadRuntimeLive as GovernedMakeReadRuntimeLive',
+            'ReadRuntimeLive as GovernedMakeReadRuntimeLive',
+          ),
+        ]) {
+          expect(hasValidGovernedHttpCompositionRoot(shared, counterfeit)).toBe(false);
+        }
       }),
     );
   }),

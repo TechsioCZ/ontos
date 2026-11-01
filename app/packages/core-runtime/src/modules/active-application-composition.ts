@@ -7,6 +7,9 @@ import {
 } from './application-composition.ts';
 import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
 import { ActiveApplicationCompositionUnavailableError } from './active-application-composition-errors.ts';
+import { InstalledModuleCatalogService } from './catalog.ts';
+import type { InstalledModuleCatalogServiceContract } from './catalog.ts';
+import { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 import { ActiveApplicationCompositionSource } from './active-application-composition-source-service.ts';
 
 /**
@@ -123,4 +126,44 @@ export const ActiveApplicationCompositionConfigLive = Layer.effect(ActiveApplica
       ),
     });
   }),
+);
+
+const moduleStateCatalogUnavailable = (cause?: unknown) => {
+  const error = new TenantModuleStateValidationUnavailableError({
+    code: 'tenant_module_state_validation_unavailable',
+    reason: 'Tenant module transition validation is temporarily unavailable',
+  });
+  if (cause !== undefined) {
+    Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+  }
+  return error;
+};
+
+/** The bounded revision load operation, shared without constructing a contextual service in callers. */
+export const loadInstalledModuleCatalogForRevision = Effect.fn('InstalledModuleCatalog.loadForRevision')(
+  function* loadForRevision(authority: ActiveApplicationCompositionServiceContract, compositionRevision: string) {
+    const snapshot = yield* authority.load.pipe(
+      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+      Effect.mapError(moduleStateCatalogUnavailable),
+    );
+    if (snapshot.composition.revision !== compositionRevision) {
+      return yield* moduleStateCatalogUnavailable();
+    }
+    const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
+      Effect.mapError(moduleStateCatalogUnavailable),
+    );
+    if (DateTime.toEpochMillis(snapshot.validUntil) <= (yield* Clock.currentTimeMillis)) {
+      return yield* moduleStateCatalogUnavailable();
+    }
+    return catalog;
+  },
+);
+export const makeInstalledModuleCatalogService = (
+  authority: ActiveApplicationCompositionServiceContract,
+): InstalledModuleCatalogServiceContract =>
+  Object.freeze({ loadForRevision: (revision: string) => loadInstalledModuleCatalogForRevision(authority, revision) });
+
+/** Lazy Core catalog binding: constructing the runtime never reads the composition source. */
+export const InstalledModuleCatalogServiceLive = Layer.effect(InstalledModuleCatalogService)(
+  ActiveApplicationCompositionService.pipe(Effect.map(makeInstalledModuleCatalogService)),
 );

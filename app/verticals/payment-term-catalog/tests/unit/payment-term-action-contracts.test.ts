@@ -1,3 +1,4 @@
+import { paymentTermCatalogRegistration } from '../../vertical.registration.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -323,6 +324,7 @@ describe('Payment Term mutation contracts', () => {
       for (const resourcePermission of ['denied', 'unavailable'] as const) {
         const harness = yield* makeActionTestHarness({
           actionPermission: 'allowed',
+          ownerRegistration: paymentTermCatalogRegistration,
           resourcePermission,
         });
         const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);

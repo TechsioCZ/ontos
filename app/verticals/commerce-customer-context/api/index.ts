@@ -1,3 +1,4 @@
+import { commerceCustomerContextRegistration } from '../vertical.registration.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { HttpServerRequest } from 'effect/http';
 import {
@@ -31,7 +32,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type {
@@ -542,6 +543,12 @@ const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(compositionSourceLive),
 );
+const readRuntimeCoreLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+  ),
+  Layer.provide(activeApplicationCompositionLive),
+);
 
 const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeServicesLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
@@ -569,11 +576,6 @@ const productionPurchaseLimitCurrentnessLive = Layer.mergeAll(
     Layer.provide(activeApplicationCompositionLive),
     Layer.provide(productionOwnerRuntimeServicesLive),
     Layer.provide(ContextAccessLive),
-  ),
-);
-const readRuntimeCoreLive = ReadRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
 );
 
@@ -604,7 +606,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
           yield* Effect.addFinalizer(() => Effect.sync(execution.clear));
           const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
           const runtimeContext = yield* Layer.buildWithScope(
-            Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit)),
+            Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration)),
             scope,
           ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)));
           return yield* Context.get(runtimeContext, ActionRuntime)
@@ -626,7 +628,7 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
   Layer.provide(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive),
   Layer.provide(actionRuntimeDependenciesLive),
 );
@@ -862,6 +864,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
 );
 export const commerceCustomerContextInvitationClaimPreflightLive = invitationClaimPreflightWithOwnerServicesLive.pipe(
   Layer.provide(configuredProductionExternalPortsLive),

@@ -107,9 +107,18 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
         publicContract: { id: contract.manifest.module.id, sha256: digest, version: contract.schemaVersion },
         sha256: digest,
       };
+      const declared =
+        contract.manifest.requirements === undefined
+          ? evidence
+          : { ...evidence, requirements: contract.manifest.requirements };
+      const withOperations =
+        contract.manifest.publicSurface.operationContracts === undefined
+          ? declared
+          : { ...declared, operationContracts: contract.manifest.publicSurface.operationContracts };
       return {
         contract,
-        evidence: component === undefined ? evidence : { ...evidence, mfBoundaryId: component.mfBoundaryId },
+        evidence:
+          component === undefined ? withOperations : { ...withOperations, mfBoundaryId: component.mfBoundaryId },
         module,
       };
     }),

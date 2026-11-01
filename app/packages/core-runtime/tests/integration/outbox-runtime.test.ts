@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Clock, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, pipe } from 'effect';
+import { Clock, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Tracer, pipe } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -22,14 +22,16 @@ import {
   lockApplicationCompositionPublication,
 } from '../../src/modules/application-composition-authority.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
+import { OntosOperationContractSchema } from '../../src/modules/manifest.ts';
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
-import type { AnyOutboxWorkerRegistration, OutboxWorkerSubscription } from '../../src/outbox/definition.ts';
+import type { AnyOutboxWorkerRegistration } from '../../src/outbox/definition.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
-import { makeOutboxRepository } from '../../src/outbox/repository.ts';
+import { makeOutboxRepository as makeNativeOutboxRepository } from '../../src/outbox/repository.ts';
+import { makeNativeOutboxWorkerFixture } from '../support/outbox-worker-native-fixture.ts';
 import { makeOutboxRuntime } from '../../src/outbox/runtime.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
-import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/module-contract.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
 const MessageKeySchema = Schema.String.pipe(Schema.brand('MessageKey'));
@@ -69,25 +71,37 @@ const makeWorker = (
     },
     () => Effect.void,
   );
-const subscriptionOf = (registration: AnyOutboxWorkerRegistration) =>
-  Option.getOrThrow(Option.fromNullishOr(extractOutboxWorkerSubscriptions([registration])[0]));
-const compositionRevision = 'a'.repeat(64);
-const promotedCompositionRevision = 'b'.repeat(64);
+const makeOutboxRepository = (
+  database: CoreDatabaseExecutor,
+  crypto: Crypto.Crypto,
+  fixture?: ReturnType<typeof makeNativeOutboxWorkerFixture>,
+): OutboxRepositoryService => {
+  const repository = makeNativeOutboxRepository(database, crypto);
+  return fixture === undefined
+    ? repository
+    : {
+        ...repository,
+        // These direct repository tests prove native claiming. Handler lease tests hold the entire process binding.
+        claimNext: (registrations, ...claimArguments) =>
+          fixture.bind(registrations, repository.claimNext(registrations, ...claimArguments)),
+      };
+};
 const publishAuthority = Effect.fn(function* publishAuthority(
   database: CoreDatabaseExecutor,
-  subscriptions: readonly OutboxWorkerSubscription[],
+  registrations: readonly AnyOutboxWorkerRegistration[],
   options: {
+    readonly buildSuffix?: string;
     readonly phase?: 'active' | 'draining';
-    readonly revision?: string;
     readonly validUntil?: Date;
   } = {},
 ) {
+  const fixture = makeNativeOutboxWorkerFixture(registrations, options);
   const now = yield* DateTime.nowAsDate;
   const values = {
     authorityKey: 'active',
     phase: options.phase ?? 'active',
-    revision: options.revision ?? compositionRevision,
-    subscriptionsJson: subscriptions,
+    revision: fixture.revision,
+    subscriptionsJson: extractOutboxWorkerSubscriptions(registrations),
     updatedAt: now,
     validUntil: options.validUntil ?? advanceDate(now, 3_600_000),
   };
@@ -95,6 +109,7 @@ const publishAuthority = Effect.fn(function* publishAuthority(
     set: values,
     target: applicationCompositionAuthority.authorityKey,
   });
+  return fixture;
 });
 const insertTenant = (database: CoreDatabaseExecutor) =>
   Effect.gen(function* insertTenantEffect() {
@@ -192,9 +207,6 @@ const tenantFixture = Effect.gen(function* tenantFixture() {
     purpose: 'stabilization-1234-outbox-clock',
   });
   yield* isolated.migrateCoreSchema();
-  yield* isolated.publishInitialComposition(
-    yield* makeApplicationCompositionSnapshotFixture([], 'outbox-clock-fixture'),
-  );
   const configuration = isolated.connections;
   const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
   const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
@@ -231,11 +243,12 @@ const matchedWorker = Effect.fn(function* matchedWorker(
     ),
   );
   const registration = makeWorker(workerKey, options);
-  const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
+  const claimFixture = yield* publishAuthority(adminDatabase, [registration]);
+  const compositionRevision = claimFixture.revision;
+  const repository = makeOutboxRepository(database, yield* Crypto.Crypto, claimFixture);
   const now = advanceDate(yield* DateTime.nowAsDate, 1000);
-  yield* publishAuthority(adminDatabase, [subscriptionOf(registration)]);
   yield* repository.matchUnmatched(compositionRevision, now);
-  return { messages, now, registration, repository };
+  return { claimFixture, compositionRevision, messages, now, registration, repository };
 });
 
 const observeClaims = (
@@ -255,6 +268,197 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
 );
 
 it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite) => {
+  suite.effect(
+    'keeps transitive intrinsic delivery pending in one native claim query and admits the exact live worker revision',
+    () =>
+      Effect.gen(function* nativeIntrinsicClaimAndExecution() {
+        const { adminDatabase, database, tenantId } = yield* tenantFixture;
+        const requirementKey = 'consumer.fixture.require-current-proof';
+        const observed: string[] = [];
+        const worker = defineOutboxWorker(
+          makeWorker('consumer.fixture.intrinsic-proof').descriptor,
+          (_payload, context) =>
+            Effect.gen(function* observeNativeProof() {
+              yield* requireModuleOperation(requirementKey);
+              observed.push(context.compositionRevision);
+              expect(context.actorPrincipalId).toBeUndefined();
+            }),
+        );
+        const operation = yield* Schema.decodeUnknownEffect(OntosOperationContractSchema, {
+          onExcessProperty: 'error',
+        })({
+          apiKey: 'provider.leaf.proof-api',
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'authenticated_principal' },
+            entrypointKey: 'provider.leaf.current-proof',
+            moduleKey: 'provider.leaf',
+            role: 'api',
+          }),
+          operationKey: 'current-proof',
+          schemaVersion: '1',
+        });
+        const claimFixture = makeNativeOutboxWorkerFixture([worker], {
+          additionalModules: [
+            {
+              moduleId: 'provider.middle',
+              requirements: {
+                coreCapabilities: [],
+                intrinsic: [{ moduleId: 'provider.leaf', requiredOperations: [] }],
+                operations: [],
+                schemaVersion: '1',
+              },
+            },
+            { moduleId: 'provider.leaf', operationContracts: [operation] },
+          ],
+          requirements: {
+            'consumer.fixture': {
+              coreCapabilities: [],
+              intrinsic: [{ moduleId: 'provider.middle', requiredOperations: [] }],
+              operations: [
+                {
+                  condition: 'consumer.fixture.report-proof',
+                  entrypointKey: worker.descriptor.entrypoint.entrypointKey,
+                  evidence: ['provider.leaf.current-proof'],
+                  key: requirementKey,
+                  provider: {
+                    entrypointKey: operation.entrypoint.entrypointKey,
+                    moduleId: 'provider.leaf',
+                    schemaVersion: '1',
+                  },
+                },
+              ],
+              schemaVersion: '1',
+            },
+          },
+        });
+        const compositionRevision = claimFixture.revision;
+        yield* activateConsumer(database, tenantId);
+        yield* database.insert(tenantModuleStates).values({ moduleKey: 'provider.middle', state: 'active', tenantId });
+        const { messageId } = yield* insertMessage(database, tenantId);
+        const now = advanceDate(yield* DateTime.nowAsDate, 1000);
+        yield* adminDatabase.insert(applicationCompositionAuthority).values({
+          authorityKey: 'active',
+          phase: 'active',
+          revision: compositionRevision,
+          subscriptionsJson: extractOutboxWorkerSubscriptions([worker]),
+          validUntil: advanceDate(now, 3_600_000),
+        });
+        const repository = makeNativeOutboxRepository(database, yield* Crypto.Crypto);
+        yield* repository.matchUnmatched(compositionRevision, now);
+        for (const leafState of ['missing', 'suspended'] as const) {
+          if (leafState === 'suspended') {
+            yield* database
+              .insert(tenantModuleStates)
+              .values({ moduleKey: 'provider.leaf', state: leafState, tenantId });
+          }
+          const spans: Tracer.Span[] = [];
+          const tracer = Tracer.make({
+            span: (options) => {
+              const span = new Tracer.NativeSpan(options);
+              spans.push(span);
+              return span;
+            },
+          });
+          const claim = yield* claimFixture
+            .bind([worker], repository.claimNext([worker], `blocked-${leafState}`, now, compositionRevision))
+            .pipe(Effect.provideService(Tracer.Tracer, tracer));
+          expect(Option.isNone(claim)).toBe(true);
+          const stateQueries = spans.flatMap((span) => {
+            const statement = Schema.decodeUnknownOption(Schema.String)(span.attributes.get('db.query.text'));
+            return Option.toArray(statement.pipe(Option.filter((text) => text.includes('tenant_module_states'))));
+          });
+          expect(stateQueries).toHaveLength(1);
+          expect(stateQueries[0]).toContain('outbox_deliveries');
+          const [delivery] = yield* database
+            .select()
+            .from(outboxDeliveries)
+            .where(eq(outboxDeliveries.outboxMessageId, messageId));
+          expect(delivery?.status).toBe('pending');
+          expect(delivery?.attemptsCount).toBe(0);
+          expect(
+            yield* database
+              .select()
+              .from(outboxAttempts)
+              .where(
+                eq(outboxAttempts.outboxDeliveryId, Option.getOrThrow(Option.fromNullishOr(delivery)).outboxDeliveryId),
+              ),
+          ).toEqual([]);
+        }
+        yield* database
+          .update(tenantModuleStates)
+          .set({ state: 'active' })
+          .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'provider.leaf')));
+        const callerRevision = makeNativeOutboxWorkerFixture([worker], {
+          buildSuffix: 'different-caller-build',
+        }).revision;
+        const wrongRevision = yield* Effect.exit(
+          claimFixture.bind([worker], repository.claimNext([worker], 'wrong-revision', now, callerRevision)),
+        );
+        expect(Exit.isFailure(wrongRevision)).toBe(true);
+        const result = yield* claimFixture.bind(
+          [worker],
+          makeOutboxRuntime(repository).runCycle({
+            claimOwner: 'genuine-intrinsic-worker',
+            compositionRevision,
+            maxDeliveries: 1,
+            now,
+            registrations: [worker],
+            subscriptions: extractOutboxWorkerSubscriptions([worker]),
+          }),
+        );
+        expect(result.claimed).toBe(1);
+        expect(result.succeeded).toBe(1);
+        expect(observed).toEqual([compositionRevision]);
+        const [done] = yield* database
+          .select()
+          .from(outboxDeliveries)
+          .where(eq(outboxDeliveries.outboxMessageId, messageId));
+        expect(done?.status).toBe('done');
+        expect(done?.attemptsCount).toBe(1);
+      }),
+  );
+  suite.effect('does not accept a copied native claim as operation authority', () =>
+    Effect.gen(function* copiedClaimCannotBorrowExecution() {
+      const { adminDatabase, database, tenantId } = yield* tenantFixture;
+      const failures: string[] = [];
+      const recordFailure = (error: { readonly code: string }) =>
+        Effect.sync(() => {
+          failures.push(error.code);
+        });
+      const worker = defineOutboxWorker(makeWorker('consumer.fixture.copy-proof').descriptor, () =>
+        requireModuleOperation('consumer.fixture.unavailable-copy-proof').pipe(
+          Effect.tapError(recordFailure),
+          Effect.asVoid,
+        ),
+      );
+      const claimFixture = yield* publishAuthority(adminDatabase, [worker]);
+      yield* activateConsumer(database, tenantId);
+      yield* insertMessage(database, tenantId);
+      const repository = makeNativeOutboxRepository(database, yield* Crypto.Crypto);
+      const now = advanceDate(yield* DateTime.nowAsDate, 1000);
+      yield* repository.matchUnmatched(claimFixture.revision, now);
+      const copiedClaims: OutboxRepositoryService = {
+        ...repository,
+        claimNext: (...claimArguments) =>
+          repository.claimNext(...claimArguments).pipe(Effect.map(Option.map((claim) => ({ ...claim })))),
+      };
+      const result = yield* claimFixture.bind(
+        [worker],
+        makeOutboxRuntime(copiedClaims).runCycle({
+          claimOwner: 'copied-native-claim',
+          compositionRevision: claimFixture.revision,
+          maxDeliveries: 1,
+          now,
+          registrations: [worker],
+          subscriptions: extractOutboxWorkerSubscriptions([worker]),
+        }),
+      );
+      expect(result.failed).toBe(1);
+      expect(result.succeeded).toBe(0);
+      expect(failures).toEqual(['module_operation_requirement_unavailable']);
+    }),
+  );
   suite.effect('matches zero, one, or multiple exact workers once without historical backfill', () =>
     Effect.gen(function* matchesZeroOneOrMultiple() {
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
@@ -262,7 +466,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       yield* insertMessage(database, tenantId, 'producer.fixture.unmatched');
       const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
       const workers = [makeWorker('consumer.fixture.alpha'), makeWorker('consumer.fixture.beta')];
-      yield* publishAuthority(adminDatabase, workers.map(subscriptionOf));
+      const claimFixture = yield* publishAuthority(adminDatabase, workers);
+      const compositionRevision = claimFixture.revision;
       const firstMatch = yield* repository.matchUnmatched(compositionRevision, dateAt('2026-08-03T10:00:00Z'));
       expect(
         firstMatch.deliveriesCreated,
@@ -271,9 +476,10 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       expect(firstMatch.messagesMatched >= 2).toBe(true);
       const repeatMatch = yield* repository.matchUnmatched(compositionRevision, dateAt('2026-08-03T10:01:00Z'));
       expect(repeatMatch.deliveriesCreated).toBe(0);
-      yield* publishAuthority(adminDatabase, [...workers, makeWorker('consumer.fixture.late')].map(subscriptionOf), {
-        revision: promotedCompositionRevision,
+      const promoted = yield* publishAuthority(adminDatabase, [...workers, makeWorker('consumer.fixture.late')], {
+        buildSuffix: 'promoted',
       });
+      const promotedCompositionRevision = promoted.revision;
       const lateWorkerMatch = yield* repository.matchUnmatched(
         promotedCompositionRevision,
         dateAt('2026-08-03T10:02:00Z'),
@@ -311,8 +517,9 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         consumerModuleKey: 'reporting.fixture',
       });
       const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
-      const subscriptions = [consumerWorker, reportingWorker].map(subscriptionOf);
-      yield* publishAuthority(adminDatabase, subscriptions);
+      const claimFixture = yield* publishAuthority(adminDatabase, [consumerWorker, reportingWorker]);
+      const compositionRevision = claimFixture.revision;
+      const boundRepository = makeOutboxRepository(database, yield* Crypto.Crypto, claimFixture);
       const matched = yield* repository.matchUnmatched(compositionRevision, dateAt('2026-08-03T10:00:00Z'));
       expect(
         matched.deliveriesCreated,
@@ -327,10 +534,10 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       // PostgreSQL retains sub-millisecond precision beyond the decoded JavaScript Date.
       const claimAt = advanceDate(availableAt, 1);
       const consumerClaim = Option.getOrNull(
-        yield* repository.claimNext([consumerWorker], 'consumer-process', claimAt, compositionRevision),
+        yield* boundRepository.claimNext([consumerWorker], 'consumer-process', claimAt, compositionRevision),
       );
       const reportingClaim = Option.getOrNull(
-        yield* repository.claimNext([reportingWorker], 'reporting-process', claimAt, compositionRevision),
+        yield* boundRepository.claimNext([reportingWorker], 'reporting-process', claimAt, compositionRevision),
       );
       expect(consumerClaim?.workerKey).toBe('consumer.fixture.local');
       expect(reportingClaim?.workerKey).toBe('reporting.fixture.local');
@@ -341,7 +548,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
       const { messageId } = yield* insertMessage(database, tenantId);
       const workers = [makeWorker('consumer.fixture.authority'), makeWorker('consumer.fixture.offline')];
-      const subscriptions = workers.map(subscriptionOf);
+      const compositionRevision = makeNativeOutboxWorkerFixture(workers).revision;
+      const promotedCompositionRevision = makeNativeOutboxWorkerFixture(workers, { buildSuffix: 'promoted' }).revision;
       const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
       yield* adminDatabase
         .delete(applicationCompositionAuthority)
@@ -349,9 +557,9 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const expiredAt = advanceDate(yield* DateTime.nowAsDate, -60_000);
       for (const unavailable of ['missing', 'expired', 'superseded'] as const) {
         if (unavailable === 'expired') {
-          yield* publishAuthority(adminDatabase, subscriptions, { validUntil: expiredAt });
+          yield* publishAuthority(adminDatabase, workers, { validUntil: expiredAt });
         } else if (unavailable === 'superseded') {
-          yield* publishAuthority(adminDatabase, subscriptions, { revision: promotedCompositionRevision });
+          yield* publishAuthority(adminDatabase, workers, { buildSuffix: 'promoted' });
         }
         // The caller's old operation clock must not make an expired authority valid.
         const failure = yield* Effect.flip(
@@ -389,7 +597,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
       const { messageId } = yield* insertMessage(database, tenantId);
       const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
-      yield* publishAuthority(adminDatabase, []);
+      const emptyFixture = yield* publishAuthority(adminDatabase, []);
+      const compositionRevision = emptyFixture.revision;
       const matched = yield* repository.matchUnmatched(compositionRevision, yield* DateTime.nowAsDate);
       expect(matched.messagesMatched).toBe(1);
       expect(matched.deliveriesCreated).toBe(0);
@@ -398,9 +607,10 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         .from(outboxMessages)
         .where(eq(outboxMessages.outboxMessageId, messageId));
       expect(Option.isSome(Option.fromNullishOr(message?.matchedAt))).toBe(true);
-      yield* publishAuthority(adminDatabase, [subscriptionOf(makeWorker('consumer.fixture.late'))], {
-        revision: promotedCompositionRevision,
+      const promoted = yield* publishAuthority(adminDatabase, [makeWorker('consumer.fixture.late')], {
+        buildSuffix: 'promoted',
       });
+      const promotedCompositionRevision = promoted.revision;
       const promotedMatch = yield* repository.matchUnmatched(promotedCompositionRevision, yield* DateTime.nowAsDate);
       expect(promotedMatch.messagesMatched).toBe(0);
       const deliveries = yield* database
@@ -420,7 +630,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         makeWorker('reporting.fixture.draining', { consumerModuleKey: 'reporting.fixture' }),
       ];
       const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
-      yield* publishAuthority(adminDatabase, workers.map(subscriptionOf), { phase: 'draining' });
+      const claimFixture = yield* publishAuthority(adminDatabase, workers, { phase: 'draining' });
+      const compositionRevision = claimFixture.revision;
       const matched = yield* repository.matchUnmatched(compositionRevision, yield* DateTime.nowAsDate);
       expect(matched.deliveriesCreated).toBe(2);
       const deliveries = yield* database
@@ -442,9 +653,10 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       );
       const { availableAt } = Option.getOrThrow(Option.fromNullishOr(deliveries.at(-1)));
       const claimAt = advanceDate(availableAt, 1);
+      const boundRepository = makeOutboxRepository(database, yield* Crypto.Crypto, claimFixture);
       expect(
         Option.isSome(
-          yield* repository.claimNext(
+          yield* boundRepository.claimNext(
             [Option.getOrThrow(Option.fromNullishOr(workers[0]))],
             'draining-consumer',
             claimAt,
@@ -457,7 +669,9 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
   suite.effect('prevents the application runtime from publishing or changing composition authority', () =>
     Effect.gen(function* enforcesAuthorityPublicationOwnership() {
       const { adminDatabase, database } = yield* tenantFixture;
-      yield* publishAuthority(adminDatabase, []);
+      const initial = yield* publishAuthority(adminDatabase, []);
+      const compositionRevision = initial.revision;
+      const promotedCompositionRevision = makeNativeOutboxWorkerFixture([], { buildSuffix: 'promoted' }).revision;
       const attemptedPublication = yield* database
         .insert(applicationCompositionAuthority)
         .values({
@@ -486,8 +700,12 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       yield* activateConsumer(database, tenantId);
       const { messageId } = yield* insertMessage(database, tenantId);
       const registration = makeWorker('consumer.fixture.serialized');
-      yield* publishAuthority(adminDatabase, [subscriptionOf(registration)]);
-      const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
+      const claimFixture = yield* publishAuthority(adminDatabase, [registration]);
+      const compositionRevision = claimFixture.revision;
+      const promoted = makeNativeOutboxWorkerFixture([registration], { buildSuffix: 'promoted' });
+      const promotedCompositionRevision = promoted.revision;
+      const repository = makeOutboxRepository(database, yield* Crypto.Crypto, claimFixture);
+      const promotedRepository = makeOutboxRepository(database, yield* Crypto.Crypto, promoted);
       const startMatcher = yield* Deferred.make<null>();
       // Fork before entering the publisher transaction so the matcher owns a separate connection.
       const matcher = yield* Deferred.await(startMatcher).pipe(
@@ -554,7 +772,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const dueAt = advanceDate(availableAt, 1);
       expect(
         Option.isNone(
-          yield* repository.claimNext(
+          yield* promotedRepository.claimNext(
             [registration],
             'not-yet-due-worker',
             advanceDate(availableAt, -1),
@@ -569,7 +787,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       ).toBe(true);
       expect(
         Option.isSome(
-          yield* repository.claimNext([registration], 'current-worker', dueAt, promotedCompositionRevision),
+          yield* promotedRepository.claimNext([registration], 'current-worker', dueAt, promotedCompositionRevision),
         ),
       ).toBe(true);
     }),
@@ -579,7 +797,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
       const { messageId } = yield* insertMessage(database, tenantId);
       const registration = makeWorker('consumer.fixture.isolation-proof');
-      yield* publishAuthority(adminDatabase, [subscriptionOf(registration)]);
+      const claimFixture = yield* publishAuthority(adminDatabase, [registration]);
+      const compositionRevision = claimFixture.revision;
       for (const isolation of [
         sql`set transaction isolation level repeatable read`,
         sql`set transaction isolation level serializable`,
@@ -631,8 +850,9 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
       yield* insertMessage(database, tenantId);
       const registration = makeWorker('consumer.fixture.module-gated');
-      const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
-      yield* publishAuthority(adminDatabase, [subscriptionOf(registration)]);
+      const claimFixture = yield* publishAuthority(adminDatabase, [registration]);
+      const compositionRevision = claimFixture.revision;
+      const repository = makeOutboxRepository(database, yield* Crypto.Crypto, claimFixture);
       const matched = yield* repository.matchUnmatched(compositionRevision, dateAt('2026-08-03T11:00:00Z'));
       expect(
         matched.deliveriesCreated,
@@ -692,6 +912,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
     Effect.gen(function* reclaimsOnlyExpiredLeasesAbandons() {
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
       const {
+        compositionRevision,
         now: started,
         registration,
         repository,
@@ -728,6 +949,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
     Effect.gen(function* finishesAnAbandonedFinalAttempt() {
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
       const {
+        compositionRevision,
         now: started,
         registration,
         repository,
@@ -763,7 +985,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
   suite.effect('finalizes success atomically and advances only through contiguous done deliveries', () =>
     Effect.gen(function* finalizesSuccessAtomicallyAndAdvances() {
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
-      const { messages, now, registration, repository } = yield* matchedWorker(
+      const { compositionRevision, messages, now, registration, repository } = yield* matchedWorker(
         adminDatabase,
         database,
         tenantId,
@@ -811,7 +1033,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
     () =>
       Effect.gen(function* schedulesBoundedRetryDeadlettersExhaustion() {
         const { adminDatabase, database, tenantId } = yield* tenantFixture;
-        const { now, registration, repository } = yield* matchedWorker(
+        const { compositionRevision, now, registration, repository } = yield* matchedWorker(
           adminDatabase,
           database,
           tenantId,
@@ -859,6 +1081,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
     Effect.gen(function* sequentialNativeClock() {
       const { adminDatabase, configuration, database, tenantId } = yield* tenantFixture;
       const {
+        claimFixture,
+        compositionRevision,
         messages,
         now,
         registration: descriptorWorker,
@@ -867,7 +1091,9 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const clock = yield* TestClock.make();
       yield* clock.setTime(now.getTime());
       const { executor: competitorExecutor } = yield* makeCoreDatabase(configuration.runtime);
-      const competitor = makeOutboxRuntime(makeOutboxRepository(competitorExecutor, yield* Crypto.Crypto));
+      const competitor = makeOutboxRuntime(
+        makeOutboxRepository(competitorExecutor, yield* Crypto.Crypto, claimFixture),
+      );
       const originalMessages = yield* database
         .select()
         .from(outboxMessages)
@@ -949,6 +1175,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       Effect.gen(function* failureNativeClock() {
         const { adminDatabase, database, tenantId } = yield* tenantFixture;
         const {
+          compositionRevision,
           now,
           registration: descriptorWorker,
           repository,
@@ -1032,6 +1259,8 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
     Effect.gen(function* nativeClockRestart() {
       const { adminDatabase, configuration, database, tenantId } = yield* tenantFixture;
       const {
+        claimFixture,
+        compositionRevision,
         now,
         registration: descriptorWorker,
         repository,
@@ -1077,7 +1306,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       const first = yield* Effect.scoped(
         Effect.gen(function* firstRuntimeScope() {
           const { executor } = yield* makeCoreDatabase(configuration.runtime);
-          const originalRepository = makeOutboxRepository(executor, yield* Crypto.Crypto);
+          const originalRepository = makeOutboxRepository(executor, yield* Crypto.Crypto, claimFixture);
           const probeRepository = observeClaims(originalRepository, entered);
           const running = yield* makeOutboxRuntime(probeRepository)
             .runCycle({
@@ -1096,7 +1325,7 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       );
       yield* clock.setTime(now.getTime() + 999);
       const { executor: restartedExecutor } = yield* makeCoreDatabase(configuration.runtime);
-      const restarted = makeOutboxRepository(restartedExecutor, yield* Crypto.Crypto);
+      const restarted = makeOutboxRepository(restartedExecutor, yield* Crypto.Crypto, claimFixture);
       const input = {
         claimOwner: 'after-restart',
         compositionRevision,

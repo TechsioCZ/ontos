@@ -21,6 +21,10 @@ import type { CurrencySupportPersistence } from '../persistence/currency-support
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import { externalPriceSourceAuthorityForScope } from '../persistence/external-price-source-authority-persistence.ts';
 import { catalogSelectionAssessmentPortFromEnvironment } from '../integrations/catalog-selection-evidence.ts';
+import {
+  requirePricingCatalogOperation,
+  requirePricingCommercialContextOperation,
+} from '../integrations/pricing-operation-requirements.ts';
 import type { CatalogSelectionAssessmentPort } from '../integrations/catalog-selection-evidence.ts';
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
 import { PricingCommercialContextUnavailable } from '../../shared/domain/commercial-context-gateway-credential.ts';
@@ -388,8 +392,14 @@ export const definePriceAction = defineAction(
       );
       const externalPriceInputBoundary = externalPriceInputBoundaryFactory.make(authority);
       return {
-        assessCatalogSelection: catalog.assess,
-        assessCommercialContext: commercialContext.assess,
+        assessCatalogSelection: (input) =>
+          requirePricingCatalogOperation('commerce.pricing.requirement.define-price-catalog').pipe(
+            Effect.andThen(() => catalog.assess(input)),
+          ),
+        assessCommercialContext: (input) =>
+          requirePricingCommercialContextOperation('commerce.pricing.requirement.define-price-market').pipe(
+            Effect.andThen(() => commercialContext.assess(input)),
+          ),
         assessExternalPriceInput: externalPriceInputBoundary.assess,
         define: persistence.define,
         loadCurrencySupport: currencySupport.loadCurrent,

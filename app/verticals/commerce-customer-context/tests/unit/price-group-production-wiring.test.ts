@@ -1,4 +1,22 @@
-import { OperationContextUnavailable } from '@app/core-runtime';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '@app/core-runtime/testing/module-contract';
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
+import {
+  OperationContextUnavailable,
+  ModuleOperationRequirementError,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+  applicationCompositionContentRevision,
+  extractVerticalRuntimeSafeDescriptors,
+  validateActiveApplicationCompositionSnapshot,
+} from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -11,7 +29,13 @@ import { assignCounterpartyPriceGroupAction } from '../../src/actions/assign-cou
 import { assignCustomerPriceGroupAction } from '../../src/actions/assign-customer-price-group.action.ts';
 import { migrateCounterpartyPriceGroupAction } from '../../src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from '../../src/actions/migrate-customer-price-group.action.ts';
-import { priceGroupActionServicesForTransaction } from '../../src/actions/price-group-action-services.ts';
+import {
+  priceGroupActionServicesForTransaction,
+  assignCustomerPriceGroupServicesForTransaction,
+  assignCounterpartyPriceGroupServicesForTransaction,
+  migrateCustomerPriceGroupServicesForTransaction,
+  migrateCounterpartyPriceGroupServicesForTransaction,
+} from '../../src/actions/price-group-action-services.ts';
 import { removeCounterpartyPriceGroupAction } from '../../src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerPriceGroupAction } from '../../src/actions/remove-customer-price-group.action.ts';
 import {
@@ -53,10 +77,16 @@ const scopeWithoutLegalEntity: OperationalScope = {
 };
 
 it('attaches every Price Group Action and the governed resolution Read to production catalog wiring', () => {
-  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-  expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-  expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
+  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
+  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+    assignCounterpartyPriceGroupServicesForTransaction,
+  );
+  expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(
+    migrateCustomerPriceGroupServicesForTransaction,
+  );
+  expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(
+    migrateCounterpartyPriceGroupServicesForTransaction,
+  );
 
   expect(getActionServiceFactory(removeCustomerPriceGroupAction).toString()).toContain(
     'priceGroupActionServicesForTransaction',
@@ -167,5 +197,171 @@ it.effect(
       );
       expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
       expect(credentialIssues).toBe(0);
+    }),
+);
+
+// Controlled unit metadata is projected from the real owner. It does not claim a published release.
+const makeMissingPriceGroupComposition = Effect.fn('Test.missingPriceGroupComposition')(function* missingProvider() {
+  const base = yield* makeApplicationCompositionSnapshotFixture(['commerce-customer-context']);
+  const owner = extractVerticalRuntimeSafeDescriptors(commerceCustomerContextRegistration);
+  const fixture = makeModuleContractFixture({
+    appId: 'commerce-customer-context',
+    buildMarker: 'fixture-build',
+    moduleId: owner.moduleId,
+  });
+  const document = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+    ...fixture,
+    manifest: {
+      ...fixture.manifest,
+      publicSurface: {
+        ...fixture.manifest.publicSurface,
+        actions: owner.actions,
+        api: [...new Set(owner.operationContracts.map(({ apiKey }) => apiKey))].map((key) => ({
+          key,
+          operationKeys: owner.operationContracts
+            .filter(({ apiKey }) => apiKey === key)
+            .map(({ operationKey }) => operationKey),
+        })),
+        operationContracts: owner.operationContracts,
+      },
+      requirements: owner.requirements,
+    },
+  });
+  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    document,
+  );
+  const digest = Hex.encode(sha256(utf8ToBytes(contractDocument)));
+  const coreCapabilities = owner.requirements?.coreCapabilities ?? [];
+  const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
+    contributionAbi: base.composition.shell.contributionAbi,
+    coreCapabilities,
+    deployment: base.composition.shell.deployment,
+    schemaVersion: '2',
+  });
+  const candidate = {
+    ...base.composition,
+    modules: base.composition.modules.map((module) => ({
+      ...module,
+      contract: { ...module.contract, sha256: digest },
+      contractDocument,
+      moduleId: owner.moduleId,
+      publicContract: { ...module.publicContract, id: owner.moduleId, sha256: digest },
+      requiredCoreCapabilities: coreCapabilities,
+    })),
+    shell: {
+      ...base.composition.shell,
+      coreCapabilities,
+      runtimeContract: {
+        ...base.composition.shell.runtimeContract,
+        sha256: Hex.encode(sha256(utf8ToBytes(shellDocument))),
+      },
+    },
+  };
+  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
+    ...base,
+    composition: { ...candidate, revision: yield* applicationCompositionContentRevision(candidate) },
+  });
+  return { deployment: document.deployment, snapshot };
+});
+
+it.effect(
+  'keeps the actual default Assign catalog gate inside genuine Action execution before acquisition or mutation',
+  () =>
+    Effect.gen(function* defaultFactoryRequiresOperationClaim() {
+      let credentialIssues = 0;
+      let writes = 0;
+      const requirementFailures: ModuleOperationRequirementError[] = [];
+      const { deployment, snapshot } = yield* makeMissingPriceGroupComposition();
+      const from = '2027-01-01T00:00:00.000Z';
+      const assembled = yield* assignCustomerPriceGroupServicesForTransaction(
+        priceGroupInvoker,
+        scope,
+        snapshot.composition.revision,
+      ).pipe(
+        Effect.provide(
+          Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
+            issue: () =>
+              Effect.sync(() => {
+                credentialIssues += 1;
+                return {
+                  baseUrl: new URL('https://catalog.example.test'),
+                  credential: Redacted.make('Bearer transport-seam'),
+                };
+              }),
+          }),
+        ),
+      );
+      const services = {
+        ...assembled,
+        catalog: {
+          resolveCurrent: (...args: Parameters<typeof assembled.catalog.resolveCurrent>) =>
+            assembled.catalog.resolveCurrent(...args).pipe(
+              Effect.tapError((failure) =>
+                Effect.sync(() => {
+                  if (Schema.is(Schema.Struct({ cause: ModuleOperationRequirementError }))(failure)) {
+                    requirementFailures.push(failure.cause);
+                  }
+                }),
+              ),
+            ),
+        },
+        now: Effect.succeed(from),
+        profileValidation: {
+          inspect: () =>
+            Effect.succeed({ _tag: 'CURRENT' as const, counterpartyRef: null, revision: 1, state: 'ACTIVE' as const }),
+        },
+        store: {
+          ...assembled.store,
+          assign: () => {
+            writes += 1;
+            return Effect.die('Missing operation evidence must prevent persistence');
+          },
+        },
+      };
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: deployment,
+        ownerRegistration: commerceCustomerContextRegistration,
+        resourcePermission: 'allowed',
+        services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
+      });
+      const failure = yield* harness.runtime
+        .runAction({
+          payload: {
+            effectiveFrom: from,
+            expectedProfileRevision: 1,
+            priceGroupRef: {
+              moduleId: 'pricing.price-group-catalog',
+              resourceId: 'closure-group',
+              resourceType: 'pricing.price-group-catalog.price-group',
+              tenantId,
+            },
+            profile: {
+              kind: 'RETAIL',
+              moduleId: 'commerce.customer-context',
+              resourceId: 'closure-profile',
+              resourceType: 'commerce.customer-context.retail-customer-profile',
+              tenantId,
+            },
+            reason: 'Require exact catalog operation before assignment',
+          },
+          principal: scope,
+          registration: assignCustomerPriceGroupAction,
+          transport: { correlationId: scope.correlationId, idempotencyKey: 'price-group-operation-closure-negative' },
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(CustomerPriceGroupCatalogUnavailable)(failure)).toBe(true);
+      expect(requirementFailures).toHaveLength(1);
+      expect(requirementFailures.map(({ code, reason }) => ({ code, reason }))).toEqual([
+        {
+          code: 'module_operation_requirement_unsatisfied',
+          reason: 'The required module operation is not supported by the admitted composition',
+        },
+      ]);
+      expect(credentialIssues).toBe(0);
+      expect(writes).toBe(0);
+      expect(harness.snapshot().committed).toHaveLength(0);
+      expect(harness.snapshot().permissionDenials).toHaveLength(0);
     }),
 );

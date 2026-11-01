@@ -1,10 +1,11 @@
+import { inventoryRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
@@ -104,16 +105,29 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
-const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const inventoryReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+  ),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
+const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -123,13 +137,6 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
     ),
-  ),
-  Layer.provide(DatabaseConfigLive),
-  Layer.provide(nodeCryptoLayer),
-);
-const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),

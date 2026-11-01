@@ -22,6 +22,7 @@ import type {
   ObservedApplicationCompositionContract,
   ObservedModuleFederationManifest,
 } from '../packages/core-runtime/src/index.ts';
+import { deriveModuleIntrinsicRequirements } from '../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import { governedSharedSingletonPackages } from '../module-federation.shared.ts';
 
 /**
@@ -212,8 +213,14 @@ const contractEvidence = (
     },
     sha256: contractSha256,
   };
+  const declared =
+    contract.manifest.requirements === undefined ? base : { ...base, requirements: contract.manifest.requirements };
+  const withOperations =
+    contract.manifest.publicSurface.operationContracts === undefined
+      ? declared
+      : { ...declared, operationContracts: contract.manifest.publicSurface.operationContracts };
   const [component] = components;
-  return component === undefined ? base : { ...base, mfBoundaryId: component.mfBoundaryId };
+  return component === undefined ? withOperations : { ...withOperations, mfBoundaryId: component.mfBoundaryId };
 };
 
 const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(function* deriveModule(
@@ -233,11 +240,12 @@ const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(func
     backend: observed.backend,
     contract: { sha256: contractSha256, url: observed.contract.url },
     contractDocument: yield* artifactText(observed.contract, 'deployment contract'),
-    dependencies: [],
+    dependencies: deriveModuleIntrinsicRequirements(contract.manifest.requirements).dependencies,
     deployment: contract.deployment,
     moduleId: evidence.moduleId,
     publicContract: evidence.publicContract,
-    requiredCoreCapabilities: [],
+    requiredCoreCapabilities: deriveModuleIntrinsicRequirements(contract.manifest.requirements)
+      .requiredCoreCapabilities,
     requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
   };
   const manifestArtifact = observed.federationManifest;

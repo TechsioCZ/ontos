@@ -79,7 +79,9 @@ export interface InstalledModuleCatalog {
 }
 
 export interface InstalledModuleCatalogServiceContract {
-  readonly load: Effect.Effect<InstalledModuleCatalog, TenantModuleStateValidationUnavailableError>;
+  readonly loadForRevision: (
+    compositionRevision: string,
+  ) => Effect.Effect<InstalledModuleCatalog, TenantModuleStateValidationUnavailableError>;
 }
 
 export class InstalledModuleCatalogService extends Context.Service<

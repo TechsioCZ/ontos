@@ -21,6 +21,8 @@ import {
   resolveCurrentSupportedCurrencies,
 } from '../../src/api/current-supported-currencies.read.ts';
 
+import { pricingRegistration } from '../../vertical.registration.ts';
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const foreignTenantId = '22222222-2222-4222-8222-222222222222';
 const legalEntityId = '33333333-3333-4333-8333-333333333333';
@@ -208,6 +210,7 @@ describe('Pricing Currency Support authorization matrix (#799)', () => {
         let ownerCalls = 0;
         const harness = yield* makeActionTestHarness({
           actionPermission: 'denied',
+          ownerRegistration: pricingRegistration,
           services: [
             bindActionTestServices(
               setSupportedCurrenciesAction,
@@ -242,6 +245,7 @@ describe('Pricing Currency Support authorization matrix (#799)', () => {
       let acceptedWrites = 0;
       const allowed = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,
@@ -264,6 +268,7 @@ describe('Pricing Currency Support authorization matrix (#799)', () => {
       let rejectedWrites = 0;
       const launchGate = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,

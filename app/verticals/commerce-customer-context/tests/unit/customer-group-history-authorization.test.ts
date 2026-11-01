@@ -8,6 +8,7 @@ import { makeTestDatabase } from '../../../../packages/core-runtime/tests/suppor
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { customerGroupDetailRead } from '../../src/api/customer-group-detail.read.ts';
 import { customerGroupHistoryRead } from '../../src/api/customer-group-history.read.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -116,6 +117,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
+    { ownerRegistration: commerceCustomerContextRegistration },
   );
   return {
     dataAccessEvidence: () => dataAccessEvidence,

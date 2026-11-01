@@ -42,6 +42,8 @@ import {
 } from '../../src/services/external-price-input-boundary.service.ts';
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
 
+import { pricingRegistration } from '../../vertical.registration.ts';
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
@@ -590,6 +592,7 @@ describe('Pricing management Actions acceptance', () => {
       let writes = 0;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,
@@ -632,6 +635,7 @@ describe('Pricing management Actions acceptance', () => {
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,
@@ -671,6 +675,7 @@ describe('Pricing management Actions acceptance', () => {
       const defineHarness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             definePriceAction,
@@ -766,6 +771,7 @@ describe('Pricing management Actions acceptance', () => {
       const reviseHarness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(revisePriceAction, {
             ...reviseServices((command) => {

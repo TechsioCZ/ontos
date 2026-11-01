@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   ActionTransactionError,
+  ActiveApplicationCompositionUnavailableError,
   ContextAccess,
   GatewayAssertionRedemptionService,
   ReadRuntime,
@@ -95,13 +96,19 @@ import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-princ
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
-import { CapturedShellCompositionCatalog } from '../../api/modules/captured-shell-catalog.ts';
+import { CapturedShellCompositionCatalog, capturedShellCatalog } from '../../api/modules/captured-shell-catalog.ts';
+import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import {
   makeInstalledModuleCatalogLoader,
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
-import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../api/modules/shell-governed-reads.ts';
+import {
+  ShellGovernedReads,
+  createShellGovernedReadDefinitionsLayer,
+  createShellGovernedReadsLayer,
+} from '../../api/modules/shell-governed-reads.ts';
 import {
   ResourceRefSchema,
   ShellProviderUnavailableError,
@@ -632,7 +639,20 @@ it.live(
     const scopeResolver = withNamespaceRegistry(
       yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess),
     );
-    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess);
+    const generatedRegistrationModule: unknown = yield* Effect.tryPromise(
+      () => import(pathToFileURL(`${fixture.verticalRoot}/vertical.registration.ts`).href),
+    );
+    const generatedRegistrationExports =
+      yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(generatedRegistrationModule);
+    const ownerRegistration = yield* Schema.decodeUnknownEffect(VerticalRuntimeRegistrationSchema)(
+      generatedRegistrationExports['isolationOwnerRegistration'],
+    );
+    const ownerAdmission = {
+      applicationComposition: { load: Effect.succeed(approvedSnapshot) },
+      expectedDeployment: contract.deployment,
+      ownerRegistration,
+    };
+    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, ownerAdmission);
     const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.publicKey));
@@ -1101,7 +1121,7 @@ it.live(
       partial: false,
       results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
     });
-    const shellLayer = createShellGovernedReadsLayer(
+    const shellDefinitionsLayer = createShellGovernedReadDefinitionsLayer(
       gateway,
       {
         issueAssertion: Effect.fnUntraced(
@@ -1118,10 +1138,38 @@ it.live(
         ),
       },
       (transaction) => makeTenantModuleStateService({ executor: transaction }),
+    );
+    const shellLayer = Layer.unwrap(
+      Effect.gen(function* makeFixtureShellReads() {
+        const definitions = yield* ShellGovernedReadDefinitions;
+        const shellReadRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+          applicationComposition: {
+            load: capturedShellCatalog.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ActiveApplicationCompositionUnavailableError({
+                    cause,
+                    reason: 'No release was captured for the Shell fixture',
+                  }),
+              ),
+              Effect.filterOrFail(
+                (captured) => captured.composition.revision === approvedSnapshot.composition.revision,
+                () => new ActiveApplicationCompositionUnavailableError({ reason: 'The Shell fixture release changed' }),
+              ),
+              Effect.as(approvedSnapshot),
+            ),
+          },
+          expectedDeployment: ultramodernDeliveryUnit,
+          shellSystemReads: definitions,
+        });
+        return createShellGovernedReadsLayer(definitions).pipe(
+          Layer.provide(Layer.succeed(ReadRuntime, shellReadRuntime)),
+        );
+      }),
     ).pipe(
+      Layer.provide(shellDefinitionsLayer),
       Layer.provide(
         Layer.mergeAll(
-          Layer.succeed(ReadRuntime, readRuntime),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(TenantModuleStateService, moduleStates),
           Layer.succeed(ShellInstalledModuleCatalog, {
@@ -1253,6 +1301,7 @@ it.live(
       moduleGateway,
       unavailableResolver,
       unavailableContextAccess,
+      ownerAdmission,
     );
     const unavailableOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1279,6 +1328,7 @@ it.live(
       moduleGateway,
       scopeResolver,
       contextAccess,
+      ownerAdmission,
     );
     const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1304,6 +1354,7 @@ it.live(
       makeActionPermissionService(permissionClient),
       scopeResolver,
       {
+        ...ownerAdmission,
         moduleEntrypointGateway: moduleGateway,
         moduleStateGate,
         resolveCompositionRevision: (verifiedPrincipal) => {

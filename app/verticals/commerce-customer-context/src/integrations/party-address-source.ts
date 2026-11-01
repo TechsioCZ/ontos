@@ -1,4 +1,5 @@
-import type { OperationalScope } from '@app/core-runtime';
+import { requireModuleOperation } from '@app/core-runtime';
+import type { ModuleOperationRequirementError, OperationalScope } from '@app/core-runtime';
 import type { Crypto } from 'effect';
 import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
 import { GatewayRelaySourceError } from '@app/shared-contracts/gateway-context-server';
@@ -30,7 +31,9 @@ type PartyContactPointDetailExecutor = (
   correlation: string,
 ) => Effect.Effect<
   Effect.Success<ReturnType<typeof executePartyContactPointDetail>>,
-  Effect.Error<ReturnType<typeof executePartyContactPointDetail>> | GatewayRelaySourceError
+  | Effect.Error<ReturnType<typeof executePartyContactPointDetail>>
+  | GatewayRelaySourceError
+  | ModuleOperationRequirementError
 >;
 // A trusted composition may supply an authenticated owner transport explicitly.
 // The default carries no credentials; scope-bound factories acquire their own relay proof.
@@ -247,10 +250,23 @@ export const partyBackedPostalAddressResolver =
     );
   };
 
+const PartyAddressRequirementKeySchema = Schema.Literals([
+  'commerce.customer-context.requirement.add-saved-address-party',
+  'commerce.customer-context.requirement.update-saved-address-party',
+  'commerce.customer-context.requirement.invoice-recipient-resolution-party',
+  'commerce.customer-context.requirement.delivery-destination-resolution-party',
+]);
+type PartyAddressRequirementKey = typeof PartyAddressRequirementKeySchema.Type;
+
 const partyContactPointExecutorForScope =
-  (scope: OperationalScope, crypto: Crypto.Crypto): PartyContactPointDetailExecutor =>
+  (
+    scope: OperationalScope,
+    crypto: Crypto.Crypto,
+    requirementKey?: PartyAddressRequirementKey,
+  ): PartyContactPointDetailExecutor =>
   (payload, correlation) =>
-    PartyAddressSourceExecutor.pipe(
+    (requirementKey === undefined ? Effect.void : requireModuleOperation(requirementKey)).pipe(
+      Effect.andThen(PartyAddressSourceExecutor),
       Effect.flatMap((execute) => {
         if (execute !== undefined) {
           return execute(payload, correlation);
@@ -274,8 +290,22 @@ const partyContactPointExecutorForScope =
       }),
     );
 
-export const partyBackedAddressSourceValidatorForScope = (scope: OperationalScope, crypto: Crypto.Crypto) =>
-  partyBackedAddressSourceValidator(scope.correlationId, partyContactPointExecutorForScope(scope, crypto));
+export const partyBackedAddressSourceValidatorForScope = (
+  scope: OperationalScope,
+  crypto: Crypto.Crypto,
+  requirementKey?: PartyAddressRequirementKey,
+) =>
+  partyBackedAddressSourceValidator(
+    scope.correlationId,
+    partyContactPointExecutorForScope(scope, crypto, requirementKey),
+  );
 
-export const partyBackedPostalAddressResolverForScope = (scope: OperationalScope, crypto: Crypto.Crypto) =>
-  partyBackedPostalAddressResolver(scope.correlationId, partyContactPointExecutorForScope(scope, crypto));
+export const partyBackedPostalAddressResolverForScope = (
+  scope: OperationalScope,
+  crypto: Crypto.Crypto,
+  requirementKey?: PartyAddressRequirementKey,
+) =>
+  partyBackedPostalAddressResolver(
+    scope.correlationId,
+    partyContactPointExecutorForScope(scope, crypto, requirementKey),
+  );

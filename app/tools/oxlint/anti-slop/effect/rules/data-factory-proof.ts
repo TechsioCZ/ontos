@@ -29,6 +29,7 @@ interface Value {
   readonly native?: string;
   readonly apply?: (args: readonly Value[]) => Value;
   readonly literal?: unknown;
+  readonly arrayOwner?: symbol;
 }
 const BAD: Value = { kind: 'bad' };
 const DATA: Value = { kind: 'data' };
@@ -140,7 +141,15 @@ class DataFactoryProof {
   readonly validatedCalls = new Set<Node>();
   readonly values = new Map<string, Value>();
   readonly initialized = new Map<string, boolean>();
+  readonly arrayStates = new Map<Value, Value>();
+  readonly invocations: { readonly node: Node; readonly model: Model; readonly token: symbol }[] = [];
   steps = 0;
+
+  arrayState(value: Value): Value {
+    let current = value;
+    while (this.arrayStates.has(current)) current = this.arrayStates.get(current)!;
+    return current;
+  }
 
   load(filename: string): Model | null {
     if (this.models.has(filename)) return this.models.get(filename) ?? null;
@@ -368,7 +377,7 @@ class DataFactoryProof {
   }
 
   value(name: string, model: Model, env: ReadonlyMap<string, Value>): Value {
-    if (env.has(name)) return env.get(name)!;
+    if (env.has(name)) return this.arrayState(env.get(name)!);
     const id = `${model.filename}:${name}`;
     if (this.values.has(id)) return this.values.get(id)!;
     if (this.resolving.has(id)) return BAD;
@@ -401,6 +410,23 @@ class DataFactoryProof {
     return result;
   }
 
+  typeDeclaration(
+    name: string,
+    model: Model,
+    visited = new Set<string>(),
+  ): { readonly declaration: Node; readonly model: Model } | null {
+    const id = `${model.filename}:${name}`;
+    if (visited.has(id)) return null;
+    visited.add(id);
+    const declaration = model.types.get(name);
+    if (declaration !== undefined) return { declaration, model };
+    const imported = model.imports.get(name);
+    if (imported === undefined) return null;
+    const owner = this.imported(model, imported.source);
+    const exported = owner?.exports.get(imported.imported);
+    return owner === null || exported === undefined ? null : this.typeDeclaration(exported, owner, visited);
+  }
+
   type(node: Node | undefined | null, model: Model, generics = new Map<string, Value>()): Value {
     if (node === undefined || node === null) return BAD;
     if (
@@ -419,8 +445,16 @@ class DataFactoryProof {
     if (['TSTypeOperator', 'TSParenthesizedType', 'TSOptionalType'].includes(node.type))
       return this.type(node.typeAnnotation, model, generics);
     if (node.type === 'TSArrayType') return array(this.type(node.elementType, model, generics));
-    if (node.type === 'TSUnionType')
-      return merge(node.types.map((part: Node) => openData(this.type(part, model, generics))));
+    if (node.type === 'TSUnionType') {
+      const parts: Node[] = node.types;
+      const present = parts.filter((part) => !['TSUndefinedKeyword', 'TSNullKeyword'].includes(part.type));
+      const values = parts.map((part) => openData(this.type(part, model, generics)));
+      const records = present.map((part) => openData(this.type(part, model, generics)));
+      // Nullable input records keep their open shape; only explicit projection or a codec can close it.
+      return present.length > 0 && present.length < parts.length && records.every((value) => value.kind === 'record')
+        ? merge(records)
+        : merge(values);
+    }
     if (node.type === 'TSIntersectionType') {
       const parts = node.types.map((part: Node) => this.type(part, model, generics));
       return parts.every((part: Value) => part.kind === 'record')
@@ -477,16 +511,9 @@ class DataFactoryProof {
         name === 'Pick' ? selected.has(field) : !selected.has(field),
       );
     }
-    let owner = model;
-    let declaration = model.types.get(name);
-    const imported = model.imports.get(name);
-    if (declaration === undefined && imported !== undefined) {
-      const resolved = this.imported(model, imported.source);
-      if (resolved === null) return BAD;
-      owner = resolved;
-      declaration = owner.types.get(owner.exports.get(imported.imported) ?? imported.imported);
-    }
-    if (declaration === undefined) return BAD;
+    const resolved = this.typeDeclaration(name, model);
+    if (resolved === null) return BAD;
+    const { declaration, model: owner } = resolved;
     const id = `${owner.filename}:${declaration.id.name}`;
     if (this.typeResolving.has(id)) return BAD;
     this.typeResolving.add(id);
@@ -513,16 +540,9 @@ class DataFactoryProof {
   ): Value {
     if (node?.type === 'TSTypeReference') {
       const name = named(node.typeName);
-      let owner = model;
-      let declaration = name === undefined ? undefined : model.types.get(name);
-      const imported = name === undefined ? undefined : model.imports.get(name);
-      if (declaration === undefined && imported !== undefined) {
-        const resolved = this.imported(model, imported.source);
-        if (resolved === null) return BAD;
-        owner = resolved;
-        declaration = owner.types.get(owner.exports.get(imported.imported) ?? imported.imported);
-      }
-      if (declaration?.type === 'TSInterfaceDeclaration') {
+      const resolved = name === undefined ? null : this.typeDeclaration(name, model);
+      if (resolved?.declaration.type === 'TSInterfaceDeclaration') {
+        const { declaration, model: owner } = resolved;
         const args = node.typeArguments?.params ?? node.typeParameters?.params ?? [];
         const next = new Map<string, Value>();
         for (const [index, parameter] of (declaration.typeParameters?.params ?? []).entries()) {
@@ -635,11 +655,13 @@ class DataFactoryProof {
       if (!isData(input)) valid = false;
       if (!this.bind(parameter, input, model, env)) valid = false;
     }
+    this.invocations.push({ node, model, token: Symbol() });
     const result = valid
       ? node.body.type === 'BlockStatement'
         ? this.statements(node.body.body, model, env)
         : this.expression(node.body, model, env)
       : BAD;
+    this.invocations.pop();
     if (active === undefined) this.calls.delete(node);
     else this.calls.set(node, active);
     if (!isData(result)) {
@@ -715,7 +737,15 @@ class DataFactoryProof {
     if (node.type === 'ArrayExpression') {
       const elements = node.elements.filter(Boolean).map((part: Node) => this.expression(part, model, env));
       if (elements.some((element: Value) => element.kind === 'bad')) return BAD;
-      return array(merge(elements), node.elements.length === 0);
+      const value = array(merge(elements), node.elements.length === 0);
+      const invocation = this.invocations.at(-1);
+      // Only a literal created in this invocation can be accumulated transiently. Module-level,
+      // captured, parameter and other-function arrays never receive the current ownership token.
+      return invocation?.model === model &&
+        node.start >= invocation.node.body.start &&
+        node.end <= invocation.node.body.end
+        ? { ...value, arrayOwner: invocation.token }
+        : value;
     }
     if (node.type === 'ObjectExpression') {
       const fields = new Map<string, Value>();
@@ -822,6 +852,22 @@ class DataFactoryProof {
     if (name.startsWith('data:')) {
       const operation = name.slice(5);
       const owner = callee.payload ?? BAD;
+      if (
+        operation === 'push' &&
+        owner.kind === 'array' &&
+        owner.arrayOwner !== undefined &&
+        owner.arrayOwner === this.invocations.at(-1)?.token &&
+        isClosedData(owner) &&
+        args.length > 0 &&
+        args.every(isClosedData)
+      ) {
+        this.arrayStates.set(owner, {
+          ...owner,
+          element: merge([...(owner.empty ? [] : [owner.element ?? BAD]), ...args]),
+          empty: false,
+        });
+        return { kind: 'data', native: 'number' };
+      }
       if (operation === 'split' && owner.kind === 'data' && args.every(isData)) return array(DATA);
       if (operation === 'slice' && isData(owner) && args.every(isData)) return owner;
       if (operation === 'flatMap' && owner.kind === 'array' && args.length === 1) {
@@ -956,6 +1002,7 @@ class DataFactoryProof {
   }
 
   normalizeNative(value: Value): Value {
+    value = this.arrayState(value);
     if (value.kind !== 'native') return value;
     const name = value.native ?? '';
     if (name === 'effect:Schema.Unknown') return schema(BAD);

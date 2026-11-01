@@ -123,6 +123,21 @@ const fixtureConfigurationFields = {
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   authenticationSubjectTypes: Schema.optionalKey(Schema.Array(BindingSubjectTypeSchema).check(Schema.isMinLength(1))),
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  /** Read-only executor probes; these keys never participate in grant construction. */
+  executorProbeActionKeys: Schema.optionalKey(
+    Schema.Array(
+      ActionKeySchema.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(200),
+        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+      ),
+    ).check(
+      Schema.isMaxLength(128),
+      Schema.makeFilter((keys) =>
+        new Set(keys).size === keys.length ? undefined : 'Executor probe keys must be unique',
+      ),
+    ),
+  ),
   managerAuthenticationMethod: Schema.optionalKey(FixtureAuthenticationMethodSchema),
   managerIdentityAdmin: Schema.optionalKey(Schema.Boolean),
   managerProviderSubjectId: Schema.optionalKey(ProviderSubjectIdSchema),
@@ -1108,6 +1123,16 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
   const crypto = yield* Crypto.Crypto;
+  const executorProbeActors = new Set([
+    manager.principalId,
+    reader.principalId,
+    denied.principalId,
+    legalEntityOnly.principalId,
+  ]);
+  const executorProbeKeys = new Set<string>([
+    ...(configuration.actionKeys ?? []),
+    ...(configuration.executorProbeActionKeys ?? []),
+  ]);
   const setConfiguredModuleState: FixtureConfiguredModuleStateSetter =
     input.setConfiguredModuleState ??
     (() => Effect.fail(fixtureFailure('Configured module state mutation requires the fixture creator')));
@@ -1270,6 +1295,24 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   }
   return {
     runtimeHandoff,
+    /** Read-only normal fully-consistent executor check for this fixture's known actors and declared probe keys. */
+    verifyActionExecutor: Effect.fn('LiveOperations.verifyActionExecutor')(function* verifyActionExecutor(probe: {
+      readonly actionKey: string;
+      readonly expected: 'allowed' | 'denied';
+      readonly principalId: string;
+    }) {
+      if (!executorProbeActors.has(probe.principalId) || !executorProbeKeys.has(probe.actionKey)) {
+        return yield* fixtureFailure('Executor verification requires a fixture-owned actor and declared action key');
+      }
+      return yield* verifyFixturePermission(
+        spice,
+        probe.principalId,
+        'action',
+        toSpiceDbActionObjectId(probe.actionKey),
+        'execute',
+        probe.expected === 'allowed',
+      );
+    }),
     // Mutate only the accessor tuple this fixture seeded for its exact primary-LE manager.
     changeManagerModuleAccess: Effect.fn('LiveOperations.changeManagerModuleAccess')(
       function* changeManagerModuleAccess(moduleKey: string, operation: 'grant' | 'revoke') {

@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
+import { Cause, Crypto, Deferred, Fiber, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
@@ -28,6 +28,7 @@ import {
 } from '../../src/db/schema.ts';
 import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
+import { TenantModuleStateValidationUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import {
   TenantModuleStateService,
@@ -108,10 +109,10 @@ const installedCatalog: InstalledModuleCatalog = Object.freeze({
   getByModuleId: installedContract,
 });
 
-const withDatabase = <Value, Error>(
+const withDatabase = <Value, Error, Requirements>(
   operation: (
     database: DatabaseService,
-  ) => Effect.Effect<Value, Error, InstalledModuleCatalogService | TenantModuleStateService>,
+  ) => Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService | TenantModuleStateService>,
 ) =>
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
@@ -119,7 +120,7 @@ const withDatabase = <Value, Error>(
       const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database).pipe(
         Effect.provideService(InstalledModuleCatalogService, {
-          load: Effect.succeed(installedCatalog),
+          loadForRevision: (_compositionRevision) => Effect.succeed(installedCatalog),
         }),
         Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
       );
@@ -412,7 +413,7 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
     ) =>
       effect.pipe(
         Effect.provideService(InstalledModuleCatalogService, {
-          load: Effect.succeed(transitionCatalog),
+          loadForRevision: (_compositionRevision) => Effect.succeed(transitionCatalog),
         }),
       );
     const states = ['active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived', 'inactive'] as const;
@@ -676,6 +677,202 @@ const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
     }),
   );
 });
+const intrinsicCatalogFixture = (target: string, provider: string, transitive: string) => {
+  const withDependency = (moduleId: string, dependency: string): OntosModuleDeploymentContract => {
+    const base = installedContract(moduleId);
+    return {
+      ...base,
+      manifest: {
+        ...base.manifest,
+        requirements: {
+          coreCapabilities: [],
+          intrinsic: [{ moduleId: dependency, requiredOperations: [] }],
+          operations: [],
+          schemaVersion: '1',
+        },
+      },
+    };
+  };
+  return catalogFrom(
+    withDependency(target, provider),
+    withDependency(provider, transitive),
+    installedContract(transitive),
+  );
+};
+
+const tenantModuleStateIntrinsicActivation = withDatabase((database) =>
+  Effect.gen(function* intrinsicActivationStateChecks() {
+    const crypto = yield* Crypto.Crypto;
+    const target = testModuleKey('intrinsic-target', tenantOne);
+    const provider = testModuleKey('intrinsic-provider', tenantOne);
+    const transitive = testModuleKey('intrinsic-transitive', tenantOne);
+    const unrelated = testModuleKey('intrinsic-unrelated', tenantOne);
+    const trustedCatalog = intrinsicCatalogFixture(target, provider, transitive);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(crypto),
+      allowedPermission,
+      testOperationalScopeResolver,
+      moduleStateRuntimeOptions,
+    );
+    const run = (moduleKey: string, state: 'active' | 'suspended' | 'inactive', key: string) =>
+      runtime.runAction(actionInput(moduleKey, state, key)).pipe(
+        Effect.provideService(InstalledModuleCatalogService, {
+          loadForRevision: (_revision) => Effect.succeed(trustedCatalog),
+        }),
+      );
+    const assertNoTargetWrites = Effect.gen(function* targetRemainsAbsent() {
+      const state = yield* database.executor
+        .select()
+        .from(tenantModuleStates)
+        .where(eq(tenantModuleStates.moduleKey, target));
+      const history = yield* database.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.moduleKey, target));
+      expect(state).toHaveLength(0);
+      expect(history).toHaveLength(0);
+    });
+    yield* database.executor.insert(tenantModuleStates).values([
+      { moduleKey: provider, state: 'suspended', tenantId: tenantOne },
+      { moduleKey: transitive, state: 'active', tenantId: tenantOne },
+      { moduleKey: unrelated, state: 'active', tenantId: tenantOne },
+    ]);
+    const suspended = yield* Effect.exit(run(target, 'active', 'intrinsic-suspended-provider'));
+    expect(failureTag(suspended)).toBe('TenantModuleStateUnsatisfiedDependencyError');
+    yield* assertNoTargetWrites;
+    yield* database.executor
+      .update(tenantModuleStates)
+      .set({ state: 'active' })
+      .where(eq(tenantModuleStates.moduleKey, provider));
+    yield* database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, transitive));
+    const missing = yield* Effect.exit(run(target, 'active', 'intrinsic-missing-transitive'));
+    expect(failureTag(missing)).toBe('TenantModuleStateUnsatisfiedDependencyError');
+    yield* assertNoTargetWrites;
+    const unavailable = yield* Effect.exit(
+      runtime.runAction(actionInput(target, 'active', 'intrinsic-wrong-revision')).pipe(
+        Effect.provideService(InstalledModuleCatalogService, {
+          loadForRevision: (_revision) =>
+            Effect.fail(
+              new TenantModuleStateValidationUnavailableError({
+                code: 'tenant_module_state_validation_unavailable',
+                reason: 'Exact revision fixture mismatch',
+              }),
+            ),
+        }),
+      ),
+    );
+    expect(failureTag(unavailable)).toBe('TenantModuleStateValidationUnavailableError');
+    yield* assertNoTargetWrites;
+    yield* database.executor
+      .insert(tenantModuleStates)
+      .values({ moduleKey: transitive, state: 'active', tenantId: tenantOne });
+    expect(yield* run(target, 'active', 'intrinsic-active-closure')).toMatchObject({
+      moduleKey: target,
+      newState: 'active',
+    });
+    yield* run(provider, 'suspended', 'intrinsic-provider-suspend-no-cascade');
+    const independentRows = yield* database.executor
+      .select()
+      .from(tenantModuleStates)
+      .where(inArray(tenantModuleStates.moduleKey, [target, unrelated]));
+    expect(independentRows).toHaveLength(2);
+    expect(independentRows.every(({ state }) => state === 'active')).toBe(true);
+    yield* run('uninstalled.cleanup', 'inactive', 'intrinsic-unknown-inactive-cleanup');
+  }),
+);
+
+const tenantModuleStateIntrinsicSerialization = withDatabase((observer) =>
+  Effect.gen(function* serializesIntrinsicActivationWithProviderSuspension() {
+    const crypto = yield* Crypto.Crypto;
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
+    const providerDatabase = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
+    const consumerDatabase = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
+    const target = testModuleKey('serialized-target', tenantOne);
+    const provider = testModuleKey('serialized-provider', tenantOne);
+    const transitive = testModuleKey('serialized-transitive', tenantOne);
+    const trustedCatalog = intrinsicCatalogFixture(target, provider, transitive);
+    yield* observer.executor.insert(tenantModuleStates).values([
+      { moduleKey: provider, state: 'active', tenantId: tenantOne },
+      { moduleKey: transitive, state: 'active', tenantId: tenantOne },
+    ]);
+    const [blocker] = yield* providerDatabase.executor.execute<{ pid: number }>(
+      sql`select pg_backend_pid() as pid`,
+      'objects',
+    );
+    const [waiter] = yield* consumerDatabase.executor.execute<{ pid: number }>(
+      sql`select pg_backend_pid() as pid`,
+      'objects',
+    );
+    expect(blocker).toBeDefined();
+    expect(waiter).toBeDefined();
+    const locked = yield* Deferred.make<boolean>();
+    const release = yield* Deferred.make<boolean>();
+    const run = (database: DatabaseService, moduleKey: string, state: 'suspended' | 'active', key: string) =>
+      makeActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        moduleStateRuntimeOptions,
+      )
+        .runAction(actionInput(moduleKey, state, key))
+        .pipe(
+          Effect.provideService(InstalledModuleCatalogService, {
+            loadForRevision: (_revision) => Effect.succeed(trustedCatalog),
+          }),
+        );
+    // Reach the consumer's actual persistence lock before suspending the provider. This rules out
+    // an earlier Action-invocation foreign-key wait accidentally serving as the serialization proof.
+    const consumerAtLock = yield* Deferred.make<boolean>();
+    const startConsumerLock = yield* Deferred.make<boolean>();
+    const consumerFiber = yield* Effect.exit(
+      run(consumerDatabase, target, 'active', 'intrinsic-serialized-consumer').pipe(
+        injectStatementFaults((statement) =>
+          statement.includes('from "core"."tenants"') && statement.endsWith('for update')
+            ? Deferred.succeed(consumerAtLock, true).pipe(Effect.andThen(Deferred.await(startConsumerLock)))
+            : Effect.void,
+        ),
+      ),
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(consumerAtLock);
+    const providerFiber = yield* run(providerDatabase, provider, 'suspended', 'intrinsic-serialized-provider').pipe(
+      injectStatementFaults((statement) =>
+        statement.startsWith('insert into "core"."tenant_module_state_changes"')
+          ? Deferred.succeed(locked, true).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void,
+      ),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(locked);
+    yield* Deferred.succeed(startConsumerLock, true);
+    let blocked = false;
+    for (let attempt = 0; attempt < 1000 && !blocked; attempt += 1) {
+      const [row] = yield* observer.executor.execute<{ blocked: boolean }>(
+        sql`select ${blocker?.pid}::integer = any(pg_blocking_pids(${waiter?.pid}::integer)) as blocked`,
+        'objects',
+      );
+      blocked = row?.blocked === true;
+      if (!blocked) {
+        yield* Effect.yieldNow;
+      }
+    }
+    expect(blocked).toBe(true);
+    yield* Deferred.succeed(release, true);
+    yield* Fiber.join(providerFiber);
+    expect(failureTag(yield* Fiber.join(consumerFiber))).toBe('TenantModuleStateUnsatisfiedDependencyError');
+    expect(
+      yield* observer.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, target)),
+    ).toHaveLength(0);
+    expect(
+      yield* observer.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.moduleKey, target)),
+    ).toHaveLength(0);
+  }),
+);
+
 it.layer(Fixtures, { excludeTestServices: true })('tenant module state', (suite) => {
   suite.effect(
     'lists exact active rows and all states for one trusted tenant in module-key order',
@@ -705,4 +902,12 @@ it.layer(Fixtures, { excludeTestServices: true })('tenant module state', (suite)
   suite.effect('serializes concurrent transitions into one truthful history chain', () => tenantModuleStateTest6);
 
   suite.effect('derives tenant scope only from the trusted principal', () => tenantModuleStateTest7);
+  suite.effect(
+    'checks transitive intrinsic states without target/history writes on failure or outage cascades',
+    () => tenantModuleStateIntrinsicActivation,
+  );
+  suite.effect(
+    'serializes provider suspension before consumer activation under the existing tenant lock',
+    () => tenantModuleStateIntrinsicSerialization,
+  );
 });

@@ -11,6 +11,7 @@ import type { CustomerPriceGroupAssignment } from '../../shared/domain/price-gro
 import type { CustomerPriceGroupAssignmentStorePort } from '../../shared/domain/price-group-ports.ts';
 import { assignCustomerPriceGroupAction } from '../../src/actions/assign-customer-price-group.action.ts';
 import { removeCustomerPriceGroupAction } from '../../src/actions/remove-customer-price-group.action.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '12480000-0000-4000-8000-000000000001';
 const principal = {
@@ -100,6 +101,7 @@ it.effect('retains the finite request rather than a truncated replay row, and do
       },
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
       services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
     });
@@ -160,6 +162,7 @@ it.effect('collects worst escaped identifiers and open schedules below the actua
       },
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
       services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
     });
@@ -200,6 +203,7 @@ it.effect('records exact cancellation instants without imposing a nonempty inter
       },
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
       services: [bindActionTestServices(removeCustomerPriceGroupAction, services)],
     });

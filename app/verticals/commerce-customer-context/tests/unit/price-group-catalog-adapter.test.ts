@@ -1,3 +1,5 @@
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import {
   PriceGroupCompatibilityDecisionSchema,
   PriceGroupCompatibilityEvidenceSchema,
@@ -18,6 +20,18 @@ import {
 import type { PriceGroupCompatibilityExecutor } from '../../src/integrations/price-group-catalog.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+// Adapter-seam codec input only; the real credential issuer must reject its missing provenance.
+const scope: OperationalScope = {
+  ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    authBindingId: '30000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:price-group-adapter-unit',
+    authMethod: 'session',
+    legalEntityId: '20000000-0000-4000-8000-000000000001',
+    principalId: '40000000-0000-4000-8000-000000000001',
+    tenantId,
+  }),
+  correlationId: 'price-group-correlation',
+};
 const otherTenantId = '10000000-0000-4000-8000-000000000002';
 const trustedOperationAt = Schema.decodeSync(PriceGroupInstantSchema)('2026-09-23T10:00:00.000Z');
 const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
@@ -259,17 +273,18 @@ it.effect('rejects stale expected evidence even when the provider returns a succ
   }),
 );
 
-it.effect('obtains a fresh server-owned assertion for every provider attempt', () =>
+it.effect('passes the original scope to the private issuer for every adapter provider attempt', () =>
   Effect.gen(function* freshAssertion() {
     const issuanceRequests: {
       readonly audience: 'price-group-catalog';
       readonly requestCorrelation: string;
+      readonly scope: OperationalScope;
     }[] = [];
     const authorizations: string[] = [];
     const destinations: (string | URL | undefined)[] = [];
     const selectedRevisions: (string | undefined)[] = [];
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation' },
+      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation', scope },
       (_payload, credential, _correlation, options) => {
         authorizations.push(Redacted.value(credential));
         destinations.push(options.baseUrl);
@@ -294,6 +309,7 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
     yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
     yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
 
+    expect(issuanceRequests.every((request) => request.scope === scope)).toBe(true);
     expect(authorizations).toEqual(['Bearer fresh-price-group-assertion-1', 'Bearer fresh-price-group-assertion-2']);
     expect(selectedRevisions).toEqual(['a'.repeat(64), 'a'.repeat(64)]);
     expect(destinations.map(String)).toEqual([
@@ -305,11 +321,13 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
         audience: 'price-group-catalog',
         compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'price-group-correlation',
+        scope,
       },
       {
         audience: 'price-group-catalog',
         compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'price-group-correlation',
+        scope,
       },
     ]);
   }),
@@ -320,7 +338,7 @@ it.effect('fails closed before provider execution when the selected connection c
     let executionCount = 0;
     let issuanceCount = 0;
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation' },
+      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation', scope },
       () => {
         executionCount += 1;
         return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));

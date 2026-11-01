@@ -15,6 +15,8 @@ import {
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
   MODULE_MANIFEST_API_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -31,6 +33,11 @@ import {
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
   MODULE_REGISTRATION_API_SLOT_END,
   MODULE_REGISTRATION_API_SLOT_START,
+  MODULE_REGISTRATION_IMPORT_SLOT_START,
+  MODULE_REGISTRATION_IMPORT_SLOT_END,
+  MODULE_REGISTRATION_READ_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_END,
+  MODULE_REGISTRATION_WORKER_SLOT_START,
   MODULE_REGISTRATION_COMPONENT_SLOT_END,
   MODULE_REGISTRATION_COMPONENT_SLOT_START,
   MODULE_REGISTRATION_REPORT_SLOT_END,
@@ -46,6 +53,8 @@ import {
   insertSortedSlot,
   insertModuleFederationExposure,
   isModuleManifestImport,
+  isModuleRegistrationImport,
+  maskNonCode,
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
   requireCanonicalSlug,
@@ -195,6 +204,18 @@ const slotEntryIdentity = (source: string): string | undefined => {
   }
   const tokens = tokenizeGovernedClient(source);
   const [registrationProperty, registrationColon] = tokens;
+  if (
+    tokens.length === 2 &&
+    registrationProperty?.kind === SyntaxKind.Identifier &&
+    registrationColon?.kind === SyntaxKind.CommaToken
+  ) {
+    return `read:${registrationProperty.value}`;
+  }
+  const operationApiKey = directTokenStringProperty(tokens, 'apiKey');
+  const operationKey = directTokenStringProperty(tokens, 'operationKey');
+  if (operationApiKey !== undefined && operationKey !== undefined) {
+    return `operation:${operationApiKey}:${operationKey}`;
+  }
   if (
     registrationColon?.kind === SyntaxKind.ColonToken &&
     registrationProperty !== undefined &&
@@ -963,6 +984,7 @@ interface GovernedContributionSlots {
 
 const manifestOwnerSlots = [
   [MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END],
+  [MODULE_MANIFEST_OPERATION_SLOT_START, MODULE_MANIFEST_OPERATION_SLOT_END],
   [MODULE_MANIFEST_COMPONENT_SLOT_START, MODULE_MANIFEST_COMPONENT_SLOT_END],
   [MODULE_MANIFEST_REPORT_SLOT_START, MODULE_MANIFEST_REPORT_SLOT_END],
   [MODULE_MANIFEST_SEARCH_SLOT_START, MODULE_MANIFEST_SEARCH_SLOT_END],
@@ -973,6 +995,7 @@ const manifestOwnerSlots = [
 
 const registrationOwnerSlots = [
   [MODULE_REGISTRATION_API_SLOT_START, MODULE_REGISTRATION_API_SLOT_END],
+  [MODULE_REGISTRATION_READ_SLOT_START, MODULE_REGISTRATION_READ_SLOT_END],
   [MODULE_REGISTRATION_COMPONENT_SLOT_START, MODULE_REGISTRATION_COMPONENT_SLOT_END],
   [MODULE_REGISTRATION_REPORT_SLOT_START, MODULE_REGISTRATION_REPORT_SLOT_END],
   [MODULE_REGISTRATION_SEARCH_SLOT_START, MODULE_REGISTRATION_SEARCH_SLOT_END],
@@ -1009,8 +1032,14 @@ const slotLine = (
     return {
       manifest: [
         [MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END, `'${name}': ${toPascalCase(name)}Api,`],
+        [
+          MODULE_MANIFEST_OPERATION_SLOT_START,
+          MODULE_MANIFEST_OPERATION_SLOT_END,
+          `{ apiKey: '${name}', operationKey: '${toCamelCase(name)}.execute', registration: ${toCamelCase(name)}Read },`,
+        ],
       ],
       registration: [
+        [MODULE_REGISTRATION_READ_SLOT_START, MODULE_REGISTRATION_READ_SLOT_END, `${toCamelCase(name)}Read,`],
         [
           MODULE_REGISTRATION_API_SLOT_START,
           MODULE_REGISTRATION_API_SLOT_END,
@@ -1524,6 +1553,132 @@ const patchGovernedManifestImport = Effect.fn('GovernedContributionScaffold.mani
   },
 );
 
+const ensureOperationBindingSlot = (
+  source: string,
+  property: string,
+  start: string,
+  end: string,
+  anchor: string,
+  anchorProperty: string,
+): string => {
+  if (source.includes(start) && source.includes(end)) {
+    return source;
+  }
+  const structure = maskNonCode(source);
+  if (source.includes(start) || source.includes(end) || new RegExp(`\\b${property}\\s*:`, 'u').test(structure)) {
+    return raiseScaffoldFailure(`cannot initialize conflicting operation binding slot ${property}`);
+  }
+  const anchorIndex = source.indexOf(anchor);
+  const prefix = structure.slice(0, anchorIndex);
+  const match = new RegExp(`\\b${anchorProperty}\\s*:\\s*[\\[{]\\s*$`, 'u').exec(prefix);
+  if (anchorIndex === -1 || match === null) {
+    return raiseScaffoldFailure(
+      `cannot initialize operation binding slot ${property} without its generated owner anchor`,
+    );
+  }
+  const insertion = match.index;
+  return `${source.slice(0, insertion)}${property}: [\n${start}\n${end}\n],\n${source.slice(insertion)}`;
+};
+
+const patchOperationReadImport = (source: string, start: string, end: string, name: string): string => {
+  const binding = `${toCamelCase(name)}Read`;
+  const specifier = `./src/api/${name}.read.ts`;
+  if (hasUniqueExactNamedImport(source, binding, specifier)) {
+    return source;
+  }
+  if (hasNamedImportBinding(source, binding)) {
+    return raiseScaffoldFailure(`generated operation Read import conflicts with ${binding}`);
+  }
+  return insertSortedSlotIdempotently(
+    source,
+    start,
+    end,
+    `import { ${binding} } from '${specifier}';`,
+    start === MODULE_REGISTRATION_IMPORT_SLOT_START ? isModuleRegistrationImport : isModuleManifestImport,
+  );
+};
+
+const patchSharedDeclarationOwners = Effect.fn('GovernedContributionScaffold.sharedOwners')(
+  function* patchSharedDeclarationOwners(
+    vertical: OntosVerticalMetadata,
+    kind: GovernedContributionKind,
+    name: string,
+    slots: GovernedContributionSlots,
+  ) {
+    const owner = vertical.runtimeDeclaration;
+    if (owner === undefined) {
+      return yield* scaffoldFailure('A shared declaration is required for shared owner mutation');
+    }
+    const isApi = kind === MODULE_API_KIND;
+    let declaration = owner.content;
+    let manifest = vertical.manifestContent;
+    let registration = vertical.registrationContent;
+    if (isApi) {
+      declaration = yield* tryScaffold('failed to initialize shared operation slots', () =>
+        ensureOperationBindingSlot(
+          ensureOperationBindingSlot(
+            declaration,
+            'operationContracts',
+            MODULE_MANIFEST_OPERATION_SLOT_START,
+            MODULE_MANIFEST_OPERATION_SLOT_END,
+            MODULE_MANIFEST_API_SLOT_START,
+            'api',
+          ),
+          'reads',
+          MODULE_REGISTRATION_READ_SLOT_START,
+          MODULE_REGISTRATION_READ_SLOT_END,
+          MODULE_REGISTRATION_WORKER_SLOT_START,
+          'outboxWorkers',
+        ),
+      );
+      declaration = yield* patchGovernedManifestImport(declaration, kind, name);
+      declaration = yield* tryScaffold('failed to patch shared operation Read import', () =>
+        patchOperationReadImport(declaration, MODULE_MANIFEST_IMPORT_SLOT_START, MODULE_MANIFEST_IMPORT_SLOT_END, name),
+      );
+    } else {
+      manifest = yield* patchGovernedManifestImport(manifest, kind, name);
+    }
+    const route = (
+      source: string,
+      other: string,
+      start: string,
+      end: string,
+      line: string,
+      ownerSlots: readonly (readonly [string, string])[],
+    ) => {
+      if (source.includes(start) === other.includes(start)) {
+        return raiseScaffoldFailure(`shared owner slot must have exactly one authoritative source: ${start}`);
+      }
+      return source.includes(start) ? patchSlots(source, [[start, end, line]], ownerSlots) : source;
+    };
+    for (const [start, end, line] of slots.manifest) {
+      const originalManifest = manifest;
+      const originalDeclaration = declaration;
+      manifest = yield* tryScaffold('failed to patch full UI manifest slot', () =>
+        route(originalManifest, originalDeclaration, start, end, line, manifestOwnerSlots),
+      );
+      declaration = yield* tryScaffold('failed to patch shared manifest slot', () =>
+        route(originalDeclaration, originalManifest, start, end, line, manifestOwnerSlots),
+      );
+    }
+    for (const [start, end, line] of slots.registration) {
+      const originalRegistration = registration;
+      const originalDeclaration = declaration;
+      registration = yield* tryScaffold('failed to patch full UI runtime slot', () =>
+        route(originalRegistration, originalDeclaration, start, end, line, registrationOwnerSlots),
+      );
+      declaration = yield* tryScaffold('failed to patch shared runtime slot', () =>
+        route(originalDeclaration, originalRegistration, start, end, line, registrationOwnerSlots),
+      );
+    }
+    return [
+      updateMutation(owner.path, owner.content, declaration),
+      updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
+      updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
+    ].filter((mutation) => mutation !== undefined);
+  },
+);
+
 export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
   function* planGovernedContributionScaffold(
     workspaceRoot: string,
@@ -1594,21 +1749,61 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name, publicContractPackage);
     const { clientPath, serverPath } = transport;
     mutations.push(...transport.mutations);
-    let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
-    const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
-      slotLine(kind, vertical, name, resource, config),
-    );
-    const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
-      manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
-      return patchSlots(vertical.registrationContent, slots.registration, registrationOwnerSlots);
-    });
-    const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
-      updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
-    );
-    const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
-      updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
-    );
-    mutations.push(...[manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined));
+    if (vertical.runtimeDeclaration === undefined) {
+      let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
+      let registrationSource = vertical.registrationContent;
+      if (isApi) {
+        manifest = yield* tryScaffold('failed to initialize operation contract bindings', () =>
+          patchOperationReadImport(
+            ensureOperationBindingSlot(
+              manifest,
+              'operationContracts',
+              MODULE_MANIFEST_OPERATION_SLOT_START,
+              MODULE_MANIFEST_OPERATION_SLOT_END,
+              MODULE_MANIFEST_REPORT_SLOT_START,
+              'reports',
+            ),
+            MODULE_MANIFEST_IMPORT_SLOT_START,
+            MODULE_MANIFEST_IMPORT_SLOT_END,
+            name,
+          ),
+        );
+        registrationSource = yield* tryScaffold('failed to initialize runtime Read bindings', () =>
+          patchOperationReadImport(
+            ensureOperationBindingSlot(
+              registrationSource,
+              'reads',
+              MODULE_REGISTRATION_READ_SLOT_START,
+              MODULE_REGISTRATION_READ_SLOT_END,
+              MODULE_REGISTRATION_WORKER_SLOT_START,
+              'outboxWorkers',
+            ),
+            MODULE_REGISTRATION_IMPORT_SLOT_START,
+            MODULE_REGISTRATION_IMPORT_SLOT_END,
+            name,
+          ),
+        );
+      }
+      const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
+        slotLine(kind, vertical, name, resource, config),
+      );
+      const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
+        manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
+        return patchSlots(registrationSource, slots.registration, registrationOwnerSlots);
+      });
+      const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
+        updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
+      );
+      const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
+        updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
+      );
+      mutations.push(...[manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined));
+    } else {
+      const slots = yield* tryScaffold('failed to plan shared contribution slots', () =>
+        slotLine(kind, vertical, name, resource, config),
+      );
+      mutations.push(...(yield* patchSharedDeclarationOwners(vertical, kind, name, slots)));
+    }
     if (isComponent) {
       mutations.push(yield* patchFederationExposure(vertical, name));
     }

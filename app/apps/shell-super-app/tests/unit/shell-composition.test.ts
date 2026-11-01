@@ -1,8 +1,14 @@
-import type { ContextAccessDecision, ContextAccessService, TenantModuleState } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
+import type {
+  ApplicationComposition,
+  ContextAccessDecision,
+  ContextAccessService,
+  TenantModuleState,
+} from '@app/core-runtime';
+import { Cause, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { contentDigest, makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import {
   InstalledModuleCatalogUnavailableError,
   makeInstalledModuleCatalogLoader,
@@ -783,4 +789,38 @@ it.effect.each(['active', 'read_only', 'deprecated'] as const)(
       });
       expect(crossOwnedPage.outcome).toBe('not_found');
     }),
+);
+
+it.effect('pins published fixture bytes to its receiver and rejects a different receiver', () =>
+  Effect.gen(function* verifyPublishedFixtureReceiver() {
+    const receiverDeployment: ApplicationComposition['shell']['deployment'] = {
+      appId: 'shell-super-app',
+      buildMarker: 'compiled-fixture-shell-release',
+    };
+    const document = JSON.stringify(
+      {
+        contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+        coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+        deployment: receiverDeployment,
+        schemaVersion: '2',
+      },
+      null,
+      2,
+    );
+    const snapshot = yield* makeCompositionSnapshot([], 60_000, { document, receiverDeployment });
+    expect(snapshot.composition.shell.deployment).toEqual(receiverDeployment);
+    expect(snapshot.composition.shell.coreCapabilities).toEqual([ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY]);
+    expect(snapshot.composition.shell.runtimeContract.sha256).toBe(contentDigest(document));
+    expect(snapshot.composition.shell.runtimeContract.url).toContain('/releases/compiled-fixture-shell-release/');
+    const mismatch = yield* makeCompositionSnapshot([], 60_000, {
+      document,
+      receiverDeployment: { appId: 'shell-super-app', buildMarker: 'different-compiled-fixture-shell-release' },
+    }).pipe(Effect.exit);
+    expect(Exit.isFailure(mismatch)).toBe(true);
+    if (Exit.isFailure(mismatch)) {
+      expect(Cause.pretty(mismatch.cause)).toContain(
+        'The actual Shell runtime document must match the compiled fixture receiver',
+      );
+    }
+  }),
 );

@@ -86,6 +86,8 @@ it.live('stamps both deployment targets with the actual immutable Shell release 
     expect(first.deployment.appId).toBe('shell-super-app');
     expect(first.deployment.buildMarker).not.toBe(topology.shell.deliveryUnit.buildMarker);
     expect(cloudflare.deployment).toEqual(first.deployment);
+    expect(first.coreCapabilities).toEqual([{ id: 'ontos.module-dependency-contracts', version: '1' }]);
+    expect(cloudflare.coreCapabilities).toEqual(first.coreCapabilities);
 
     yield* Effect.tryPromise(() => writeFile(path.join(shellDirectory, 'source.ts'), 'export const release = 2;\n'));
     yield* git(root, 'add', '.');
@@ -102,6 +104,7 @@ it.live('stamps both deployment targets with the actual immutable Shell release 
     );
     const second = yield* readContract(yield* generate('dist'));
     expect(second.deployment.buildMarker).not.toBe(first.deployment.buildMarker);
+    expect(second.coreCapabilities).toEqual(first.coreCapabilities);
   }),
 );
 

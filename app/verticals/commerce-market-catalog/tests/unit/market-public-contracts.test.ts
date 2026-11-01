@@ -346,12 +346,20 @@ describe('Commerce Market public contracts', () => {
       'commerce.market-catalog.storefront-association',
     ]);
     expect(Object.keys(commerceMarketCatalogManifest.publicSurface.api)).toEqual([
+      'activate-market-action',
+      'associate-storefront-action',
+      'create-market-action',
       'current-market-catalog',
       'eligible-market-tuples',
       'market-history',
       'market-retirement-effect-recovery',
       'pricing-current-market-evidence',
+      'remove-storefront-association-action',
       'resolve-commerce-market',
+      'retire-market-action',
+      'revise-market-definition-action',
+      'revise-storefront-association-action',
+      'suspend-market-action',
       'verify-market-eligibility-v1',
     ]);
     expect(commerceMarketCatalogManifest.publicSurface.businessPermissions).toEqual([]);

@@ -72,6 +72,12 @@ import type {
   CurrentPricingDecisionPromotionEvidenceRead,
 } from './current-pricing-decision-external-owner-evidence.ts';
 import { makePromotionModuleNotInstalledFinalFenceGateway } from './promotion-module-not-installed-final-fence.ts';
+import {
+  requirePricingCatalogOperation,
+  requirePricingMarketFenceOperation,
+  requirePricingPriceGroupOperation,
+} from './pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from './pricing-operation-requirements.ts';
 
 const CATALOG_OWNER = 'commerce.catalog';
 const CUSTOMER_CONTEXT_OWNER = 'commerce.customer-context';
@@ -82,6 +88,7 @@ export interface CurrentPricingDecisionExternalOwnerEvidenceEnvironment {
   readonly compositionRevision: string;
   readonly legalEntityId: string;
   readonly requestCorrelation: string;
+  readonly requirements?: PricingWholeEvaluationRequirements;
   readonly tenantId: string;
 }
 
@@ -280,6 +287,11 @@ const makeCatalogReader = (
           effectiveAt: context.effectiveAt,
           members: [{ handoff: firstLine.catalog, occurrenceId: firstLine.occurrenceId }],
         }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence request is invalid')));
+        if (environment.requirements !== undefined) {
+          yield* requirePricingCatalogOperation(environment.requirements.purposeEquivalence).pipe(
+            Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence operation is unavailable')),
+          );
+        }
         const { baseUrl, credential } = yield* dependencies.issuer
           .issue({
             audience: 'catalog',
@@ -362,6 +374,11 @@ const makeCatalogReader = (
             quantityBasis: { ...handoff.quantityBasis, targetRef, unitRef: line.pricingBasis.unitRef },
           },
         }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility request is invalid')));
+        if (environment.requirements !== undefined) {
+          yield* requirePricingCatalogOperation(environment.requirements.quantityBasis).pipe(
+            Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog quantity operation is unavailable')),
+          );
+        }
         const compatibilityCredential = yield* dependencies.issuer
           .issue({
             audience: 'catalog',
@@ -529,6 +546,11 @@ const makeMarketReader = (
       effectiveAt: context.effectiveAt,
       requestedAt: context.requestedAt,
     }).pipe(Effect.mapError(mapFailure(MARKET_OWNER, 'Market evidence request is invalid')));
+    if (environment.requirements !== undefined) {
+      yield* requirePricingMarketFenceOperation(environment.requirements.marketFinalFence).pipe(
+        Effect.mapError(mapFailure(MARKET_OWNER, 'Market final-fence operation is unavailable')),
+      );
+    }
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'commerce-market-catalog',
@@ -722,6 +744,11 @@ const makeCustomerContextReader = (
     const request = yield* Schema.decodeUnknownEffect(CustomerPriceGroupResolutionRequestSchema)(group.request).pipe(
       Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Price Group request is invalid')),
     );
+    if (environment.requirements !== undefined) {
+      yield* requirePricingPriceGroupOperation(environment.requirements.profilePriceGroup, 'COMMERCE_ASSIGNMENT').pipe(
+        Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Price Group operation is unavailable')),
+      );
+    }
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'commerce-customer-context',
@@ -848,6 +875,7 @@ export const makeCurrentPricingDecisionExternalOwnerEvidenceLivePort = (
 
 export const currentPricingDecisionExternalOwnerEvidencePortFromEnvironment = (
   environment: CurrentPricingDecisionExternalOwnerEvidenceEnvironment,
+  requirements?: PricingWholeEvaluationRequirements,
 ) =>
   Effect.all(
     {
@@ -883,7 +911,7 @@ export const currentPricingDecisionExternalOwnerEvidencePortFromEnvironment = (
         validation,
       } satisfies Omit<LiveDependencies, 'applicationComposition'>;
       return makeCurrentPricingDecisionExternalOwnerEvidenceLivePort(
-        environment,
+        requirements === undefined ? environment : { ...environment, requirements },
         Option.isSome(applicationComposition)
           ? { ...common, applicationComposition: applicationComposition.value }
           : common,

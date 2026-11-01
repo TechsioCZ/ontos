@@ -26,6 +26,15 @@ export const loadGatewayRelaySourceBindings = Config.schema(
   'ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS',
 ).pipe(Effect.mapError((cause) => new GatewayRelayPolicyUnavailable({ cause })));
 
+/** The approved tenant-only target; callers cannot request scope projection. */
+export const isCustomerContextPriceGroupCompatibilityRelay = (
+  source: { readonly aud: string },
+  target: { readonly audience: string; readonly operationKey: string },
+): boolean =>
+  source.aud === customerContextApp &&
+  target.audience === 'price-group-catalog' &&
+  target.operationKey === 'pricing.price-group-catalog.api.validate-price-group-compatibility';
+
 export const permitsGatewayRelay = (
   verifiedProviderKeyId: string,
   binding: {
@@ -57,6 +66,7 @@ export const permitsGatewayRelay = (
       target.audience === customerContextApp &&
       [
         'commerce.customer-context.api.market-affected-use-assessment',
+        'commerce.customer-context.api.market-subject-restrictions-current',
         'commerce.customer-context.reserve-market-retirement',
         'commerce.customer-context.api.market-retirement-reservation-recovery',
       ].includes(target.operationKey)
@@ -64,6 +74,9 @@ export const permitsGatewayRelay = (
   }
   if (source.aud !== customerContextApp) {
     return false;
+  }
+  if (isCustomerContextPriceGroupCompatibilityRelay(source, target)) {
+    return true;
   }
   if (target.audience === 'party-registry') {
     return [

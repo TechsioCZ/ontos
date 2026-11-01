@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -141,6 +142,7 @@ describe('Product Unit governed Actions', () => {
       };
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [bindActionTestServices(createProductUnitAction, services)],
       });
       const request = {
@@ -163,6 +165,7 @@ describe('Product Unit governed Actions', () => {
 
       const failed = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createProductUnitAction, {
             ...services,

@@ -17,7 +17,8 @@
     "./resources/price-group": "./shared/resources/price-group.ts",
     "./resources/price-group-catalog-root": "./shared/resources/price-group-catalog-root.ts",
     "./outbox-worker-host": "./src/worker-host/entry.ts",
-    "./testing/price-group-current-receiver": "./tests/support/price-group-current-receiver.fixture.ts"
+    "./testing/price-group-current-receiver": "./tests/support/price-group-current-receiver.fixture.ts",
+    "./testing/server-owner-native": "./tests/support/server-owner-native.fixture.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",

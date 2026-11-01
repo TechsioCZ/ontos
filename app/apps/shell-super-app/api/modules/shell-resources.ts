@@ -99,7 +99,7 @@ export class ShellProviderUnavailableError extends Schema.TaggedError<ShellProvi
   { cause: Schema.optionalKey(ProviderFailureCauseSchema) },
 ) {}
 
-interface ShellResourceRequest extends TrustedPrincipalContext {
+export interface ShellResourceRequest extends TrustedPrincipalContext {
   readonly correlationId: string;
   readonly legalEntityId?: string;
 }

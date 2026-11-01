@@ -1,9 +1,10 @@
-import { OperationContextUnavailable } from '@app/core-runtime';
+import { requireModuleOperation, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Crypto, Effect } from 'effect';
 
 import { ProfileReactivationEligibilityEvaluatorFactory } from './integrations/profile-reactivation-eligibility.ts';
 import {
+  ProfilePersistenceDependencyFailure,
   profilePersistenceServicesForTransaction,
   profileReconciliationOwnerVerifierForTransaction,
 } from './persistence/profile-persistence.ts';
@@ -72,8 +73,30 @@ export const profileServicesForVerifiedScope = (
       principalId: verifiedScope.principalId,
       tenantId: verifiedScope.tenantId,
     });
-    const resolveGuestParty = guestResolverFactory.make({ crypto, scope });
-    const resolveRetailParty = retailPartyResolverFactory.make({ crypto, scope });
+    const guestParty = guestResolverFactory.make({ crypto, scope });
+    const retailParty = retailPartyResolverFactory.make({ crypto, scope });
+    const resolveGuestParty: typeof guestParty = (input) =>
+      requireModuleOperation('commerce.customer-context.requirement.attribute-guest-retail-customer-party').pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new ProfilePersistenceDependencyFailure({ reason: 'Required Party guest resolution is unavailable' }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        ),
+        Effect.flatMap(() => guestParty(input)),
+      );
+    const resolveRetailParty: typeof retailParty = (input) =>
+      requireModuleOperation('commerce.customer-context.requirement.ensure-retail-customer-profile-party').pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new ProfilePersistenceDependencyFailure({ reason: 'Required Party identity resolution is unavailable' }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        ),
+        Effect.flatMap(() => retailParty(input)),
+      );
     const profileOwnerVerifier = profileReconciliationOwnerVerifierForTransaction(transaction, verifiedScope);
     const paymentTermsOwnerVerifier = paymentTermsReconciliationOwnerEvidenceVerifierForTransaction(transaction);
     const addressBookOwnerVerifier = addressBookReconciliationOwnerVerifierForTransaction(transaction, scope);

@@ -6,6 +6,7 @@ import type {
   ResolvedReadPermissionTarget,
 } from '@app/core-runtime';
 import {
+  requireModuleOperation,
   OperationContextUnavailable,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -18,6 +19,7 @@ import {
   PaymentTermsResolutionResponseSchema,
 } from '../../shared/apis/payment-terms-resolution.ts';
 import { customerCommercePaymentTermsPolicyResolver } from '../integrations/customer-commerce-payment-terms-policy.ts';
+import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
 import { paymentTermsPersistenceForTransaction } from '../persistence/payment-term-persistence.ts';
 import { customerCommercePolicyAdministrationServiceFactory } from '../services/customer-commerce-policy-administration.service.ts';
@@ -119,7 +121,26 @@ export const paymentTermsResolutionRead = defineRead(
         legalEntityId,
         requestCorrelation: scope.correlationId,
       });
-      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
+      const requiredCatalog: typeof catalog = {
+        resolveDefinitions: (requests) =>
+          (requests.length === 0
+            ? Effect.void
+            : requireModuleOperation('commerce.customer-context.requirement.payment-terms-resolution-definitions')
+          ).pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new PaymentTermsDependencyUnavailable({
+                  code: 'payment_terms_dependency_unavailable',
+                  dependency: 'PAYMENT_TERM_CATALOG',
+                  reason: 'Required Payment Term Catalog operation is unavailable',
+                }),
+                'cause',
+                { configurable: true, value: cause },
+              ),
+            ),
+            Effect.flatMap(() => catalog.resolveDefinitions(requests)),
+          ),
+      };
       const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
         transaction,
         scope,
@@ -138,7 +159,7 @@ export const paymentTermsResolutionRead = defineRead(
           invoker: transaction,
           scope: { ...scope, legalEntityId },
         },
-        { catalog, policy },
+        { catalog: requiredCatalog, policy },
       );
       return {
         resolve: (input) =>

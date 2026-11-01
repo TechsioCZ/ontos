@@ -119,7 +119,11 @@ export const addSavedAddressAction = defineAction(
       return addressActionPersistenceForTransaction(
         transaction,
         scope,
-        partyBackedAddressSourceValidatorForScope(scope, crypto),
+        partyBackedAddressSourceValidatorForScope(
+          scope,
+          crypto,
+          'commerce.customer-context.requirement.add-saved-address-party',
+        ),
       );
     },
   ),

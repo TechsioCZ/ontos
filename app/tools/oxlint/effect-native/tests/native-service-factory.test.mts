@@ -165,9 +165,9 @@ it('recognizes the native definition service argument without admitting handlers
     expect(
       diagnostics(`${nativeImports}registerRead({}, handler, ${callback}, resolver, resultResolver, policies, extra);`),
     ).toHaveLength(1);
-    expect(diagnostics(`${nativeImports}defineAction({}, handler, ${callback}, decodedSuccess, extra);`)).toHaveLength(
-      1,
-    );
+    expect(
+      diagnostics(`${nativeImports}defineAction({}, handler, ${callback}, decodedSuccess, postAttempt, extra);`),
+    ).toHaveLength(1);
     expect(diagnostics(`${nativeImports}registerRead({}, handler, serviceFactory, ${callback});`)).toHaveLength(1);
     expect(diagnostics(`${nativeImports}registerRead({}, handler, ${callback}, resolver, ...tail);`)).toHaveLength(1);
     expect(
@@ -185,5 +185,39 @@ it('recognizes the native definition service argument without admitting handlers
         `import type * as Runtime from '@app/core-runtime';\nRuntime.defineRead({}, handler, ${callback}, resolver);`,
       ),
     ).toHaveLength(1);
+  });
+});
+
+it('recognizes the genuine fifth Action callback while keeping only argument three a native service factory', () => {
+  withTemporaryWorkspace((directory) => {
+    const sourceDirectory = nodePath.join(directory, 'verticals', 'module');
+    mkdirSync(sourceDirectory, { recursive: true });
+    const diagnostics = nativeDiagnostics(nodePath.join(sourceDirectory, factoryFilename));
+    const nativeImports = `import { defineAction } from '@app/core-runtime';\n${effectValueImport}`;
+    const postAttempt = 'const onPostAttempt = (attempt) => Effect.void;\n';
+    expect(
+      diagnostics(`${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`),
+    ).toEqual([]);
+    expect(
+      diagnostics(
+        `${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, decodedSuccess, onPostAttempt);`,
+      ),
+    ).toEqual([]);
+    expect(
+      diagnostics(
+        `import { defineAction as registerAction } from '@app/core-runtime';\n${effectValueImport}${postAttempt}registerAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+      ),
+    ).toEqual([]);
+    for (const counterfeit of [
+      `import { defineAction } from './foreign.ts';\n${effectValueImport}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+      `${effectValueImport}const defineAction = (config, handler) => handler;\n${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+      `${nativeImports}${postAttempt}defineAction({}, ${callback}, serviceFactory, undefined, onPostAttempt);`,
+      `${nativeImports}${postAttempt}defineAction({}, handler, serviceFactory, undefined, ${callback});`,
+      `${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt, extra);`,
+      `${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, undefined, ...callbacks);`,
+      `import type { defineAction } from '@app/core-runtime';\n${effectValueImport}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+    ]) {
+      expect(diagnostics(counterfeit)).toHaveLength(1);
+    }
   });
 });

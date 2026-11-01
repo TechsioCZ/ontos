@@ -128,6 +128,8 @@ import { catalogPricingPurposeEquivalencePortFromEnvironment } from './catalog-p
 import { commercePriceGroupResolutionPortFromEnvironment } from './commerce-price-group-resolution.ts';
 import { currentPricingDecisionExternalOwnerEvidencePortFromEnvironment } from './current-pricing-decision-external-owner-evidence-live.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from './price-group-compatibility.ts';
+import { requirePricingCatalogOperation, requirePricingPriceGroupOperation } from './pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from './pricing-operation-requirements.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
@@ -2550,7 +2552,12 @@ const promotionEvaluation = makePricingPromotionCurrentEvaluationService(
   },
 );
 
-const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope, compositionRevision: string) => {
+const scopedAdapters = (
+  transaction: ScopedTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
+) => {
   if (scope.legalEntityId === undefined) {
     return Effect.fail(
       new OperationContextUnavailable({
@@ -2573,7 +2580,7 @@ const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope,
       currency: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
       discount: contractualDiscountPersistenceForScope(transaction, scope),
       exactPrice: exactPriceResolutionServiceForScope(transaction, scope, compositionRevision),
-      externalOwnerEvidence: currentPricingDecisionExternalOwnerEvidencePortFromEnvironment(environment),
+      externalOwnerEvidence: currentPricingDecisionExternalOwnerEvidencePortFromEnvironment(environment, requirements),
       fee: commercialFeePersistenceForScope(transaction, scope),
       floor: zeroFloorAuthorizationPersistenceForScope(transaction, scope),
       price: pricePersistenceForScope(transaction, scope),
@@ -2601,13 +2608,48 @@ const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope,
         priceGroupCompatibility,
         tier,
       }) => {
+        const scopedQuantity: CatalogQuantityBasisCompatibilityPort =
+          requirements === undefined
+            ? catalogQuantity
+            : {
+                assess: (input) =>
+                  requirePricingCatalogOperation(requirements.quantityBasis).pipe(
+                    Effect.andThen(() => catalogQuantity.assess(input)),
+                  ),
+              };
+        const scopedEquivalence: CatalogPricingPurposeEquivalencePort =
+          requirements === undefined
+            ? catalogEquivalence
+            : {
+                resolve: (input) =>
+                  requirePricingCatalogOperation(requirements.purposeEquivalence).pipe(
+                    Effect.andThen(() => catalogEquivalence.resolve(input)),
+                  ),
+              };
         const interpreter = makePriceGroupInterpretationService({
-          commerce: commercePriceGroup,
-          compatibility: priceGroupCompatibility,
+          commerce:
+            requirements === undefined
+              ? commercePriceGroup
+              : {
+                  resolve: (input) =>
+                    requirePricingPriceGroupOperation(requirements.profilePriceGroup, 'COMMERCE_ASSIGNMENT').pipe(
+                      Effect.andThen(() => commercePriceGroup.resolve(input)),
+                    ),
+                },
+          compatibility:
+            requirements === undefined
+              ? priceGroupCompatibility
+              : {
+                  validate: (input) =>
+                    requirePricingPriceGroupOperation(
+                      requirements.assignedGroupCompatibility,
+                      'PRICE_GROUP_COMPATIBILITY',
+                    ).pipe(Effect.andThen(() => priceGroupCompatibility.validate(input))),
+                },
         });
         return {
           attemptSource: makeCurrentPricingDecisionAttemptSource({
-            catalogQuantity,
+            catalogQuantity: scopedQuantity,
             exactPrice,
             interpreter,
             loadCurrencySupport: currency.loadCurrent,
@@ -2620,7 +2662,7 @@ const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope,
           feeReader: makeFeeReader(fee),
           floorReader: makeCurrentPricingDecisionZeroFloorSetReader(floor),
           promotion: promotionEvaluation,
-          tierReader: tierReaderFor(tier, price, catalogEquivalence),
+          tierReader: tierReaderFor(tier, price, scopedEquivalence),
         };
       },
     ),
@@ -2652,8 +2694,9 @@ export const currentPricingDecisionWholeEvaluationForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
   compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
 ) =>
-  scopedAdapters(transaction, scope, compositionRevision).pipe(
+  scopedAdapters(transaction, scope, compositionRevision, requirements).pipe(
     Effect.map((adapters) =>
       makeCurrentPricingDecisionWholeEvaluationService({
         attemptSource: adapters.attemptSource,

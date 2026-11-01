@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   ActionHandlerExecutionError,
   ActionIdempotencyKeyRequired,
@@ -528,7 +529,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.gen(function* rejectInvalidMountedCommands() {
         const assertion = yield* makeAssertion();
-        const harness = yield* makeActionTestHarness();
+        const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
         const app = yield* mountApp(harness, assertion.environment);
 
         expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted()).toEqual(
@@ -612,7 +613,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         ];
         yield* forEachSequential(cases, ({ assertion, token }) =>
           Effect.gen(function* rejectInvalidAssertionCase() {
-            const harness = yield* makeActionTestHarness();
+            const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
             const app = yield* mountApp(harness, assertion.environment);
             const response = yield* handle(
               app,
@@ -649,7 +650,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         ],
         (environment) =>
           Effect.gen(function* rejectInvalidConfigurationCase() {
-            const harness = yield* makeActionTestHarness();
+            const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
             const app = yield* mountApp(harness, environment);
             const response = yield* handle(
               app,
@@ -672,7 +673,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('redemption storage outages return safe retryable problems before Action and Read lifecycles', () =>
     Effect.gen(function* reportRedemptionOutages() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
       const app = yield* mountApp(harness, assertion.environment, readRuntime, {
         consume: () =>
@@ -721,7 +722,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('generated governed reads authenticate through the shared adapter before starting ReadRuntime', () =>
     Effect.gen(function* authenticateGovernedReads() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       let reads = 0;
       const receivedPrincipals: unknown[] = [];
       const readRuntime: ReadRuntimeService = {
@@ -915,7 +916,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           return Effect.fail(failure);
         },
       };
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const app = yield* mountApp(harness, assertion.environment, readRuntime);
       yield* forEachSequential(cases, ([nextFailure, expectedStatus, expectedTag]) =>
         Effect.gen(function* verifyGovernedReadFailure() {
@@ -946,7 +947,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       const readRuntime: ReadRuntimeService = {
         runRead: () => Effect.die('private governed Read defect'),
       };
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const app = yield* mountApp(harness, assertion.environment, readRuntime);
       const response = yield* handle(app, decisionRequest(yield* nextUuid, assertion.token));
       expect(response.status).toBe(500);
@@ -961,7 +962,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('replayed assertions are challenged before a second Action or generated Read lifecycle', () =>
     Effect.gen(function* rejectAssertionReplays() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
       const app = yield* mountApp(harness, assertion.environment, readRuntime, makeSingleUseRedemption());
       const firstAction = yield* handle(
@@ -1000,7 +1001,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('correlation and idempotency are mandatory before the Core Action lifecycle', () =>
     Effect.gen(function* validateActionTransport() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       let runtimeCalls = 0;
       const observingRuntime: ActionRuntimeService = {
         resolveActionCommit: harness.runtime.resolveActionCommit,
@@ -1049,6 +1050,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       const assertion = yield* makeAssertion();
       const correlationId = 'x'.repeat(200);
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
       });
@@ -1079,7 +1081,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('a decoded relationship timestamp reaches the Action runtime exactly once', () =>
     Effect.gen(function* decodeRelationshipTimestampOnce() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const failure = new ActionPayloadValidationError({
         code: 'action_payload_invalid',
         reason: 'runtime observation fixture',
@@ -1109,7 +1111,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('an unexpected runtime defect is sanitized by the governed outer HTTP seam', () =>
     Effect.gen(function* sanitizeActionRuntimeDefect() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const defectiveRuntime: ActionRuntimeService = {
         resolveActionCommit: () => Effect.die('private resolution defect'),
         runAction: () => Effect.die('private governed runner defect'),
@@ -1256,7 +1258,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
       yield* forEachSequential(cases, ([failure, expectedStatus, expectedTag]) =>
         Effect.gen(function* verifyActionFailureMapping() {
-          const harness = yield* makeActionTestHarness();
+          const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
           const failingRuntime: ActionRuntimeService = {
             resolveActionCommit: harness.runtime.resolveActionCommit,
             runAction: () => Effect.fail(failure),
@@ -1328,6 +1330,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* persistPermissionDenial() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'denied',
         tenantPermission: 'allowed',
       });
@@ -1351,6 +1354,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* rollBackDomainConflict() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
         services: [
@@ -1388,6 +1392,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         resourceId: 'a4000000-0000-4000-8000-000000000002',
       };
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
         services: [
@@ -1428,6 +1433,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* rejectCommittedCommandReplay() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
       });
@@ -1499,6 +1505,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         yield* forEachSequential(cases, (item) =>
           Effect.gen(function* verifySafeFailureResponse() {
             const harness = yield* makeActionTestHarness({
+              ownerRegistration: partyRegistryBackendRegistration,
               actionPermission: 'allowed',
               tenantPermission: 'allowed',
               services: [item.service],
@@ -1532,6 +1539,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* rejectInsufficientPartyEvidence() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
         services: [
@@ -1570,6 +1578,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       const assertion = yield* makeAssertion();
       let executions = 0;
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
         services: [
@@ -1623,7 +1632,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('commit resolution requires authentication and a valid invocation without creating an Action', () =>
     Effect.gen(function* validateCommitResolutionRequest() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
       const app = yield* mountApp(harness, assertion.environment);
 
       const missingAuth = yield* handle(app, recoveryRequest(yield* nextUuid));
@@ -1643,6 +1652,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* resolveOpenInvocationWithoutRetry() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         services: [
           bindActionTestServices(archivePartyAction, {
@@ -1684,6 +1694,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const decisionResourceId = yield* nextUuid;
         let executions = 0;
         const harness = yield* makeActionTestHarness({
+          ownerRegistration: partyRegistryBackendRegistration,
           actionPermission: 'allowed',
           tenantPermission: 'allowed',
           commitAcknowledgement: 'indeterminate-once',
@@ -1837,6 +1848,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* acceptBrowserHeaders() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        ownerRegistration: partyRegistryBackendRegistration,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
       });

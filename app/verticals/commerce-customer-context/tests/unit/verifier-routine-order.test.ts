@@ -47,8 +47,9 @@ it('accepts the complete SQL-ordered runtime routine set through the verifier co
   expect(source).toContain('array_agg(routine.proname::text order by routine.proname)');
   expect(source).toContain('!sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES)');
   expect(source).toContain('row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length');
-  expect(expected).toHaveLength(116);
-  expect(new Set(expected).size).toBe(116);
+  expect(expected).toHaveLength(117);
+  expect(new Set(expected).size).toBe(117);
+  expect(expected).toContain('recover_market_retirement_reservation');
   expect(compare(sqlOrdered)).toBe(true);
 });
 

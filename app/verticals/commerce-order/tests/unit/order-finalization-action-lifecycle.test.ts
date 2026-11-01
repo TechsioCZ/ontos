@@ -10,6 +10,8 @@ import { completeOrderPreparationAction } from '../../src/actions/complete-order
 import { recordOrderProofSetAction } from '../../src/actions/record-order-proof-set.action.ts';
 import { completeOrderApprovalConsumptionAction } from '../../src/actions/complete-order-approval-consumption.action.ts';
 
+import { commerceOrderRegistration } from '../../vertical.registration.ts';
+
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:order-stage-authorization',
@@ -85,7 +87,11 @@ describe('Order restricted stage completions', () => {
   for (const completion of completions) {
     it.effect(`denies a buyer without executor permission before ${completion.label} owner work`, () =>
       Effect.gen(function* denyWithoutExecutorPermission() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'denied', tenantPermission: 'allowed' });
+        const harness = yield* makeActionTestHarness({
+          actionPermission: 'denied',
+          ownerRegistration: commerceOrderRegistration,
+          tenantPermission: 'allowed',
+        });
         const failure = yield* completion
           .run(harness, { correlationId: 'order-stage-denied', idempotencyKey: `denied:${completion.label}` })
           .pipe(Effect.flip);
@@ -100,6 +106,7 @@ describe('Order restricted stage completions', () => {
         const harness = yield* makeActionTestHarness({
           actionPermission: 'allowed',
           moduleState: 'suspended',
+          ownerRegistration: commerceOrderRegistration,
           tenantPermission: 'allowed',
         });
         const failure = yield* completion
@@ -112,7 +119,11 @@ describe('Order restricted stage completions', () => {
     );
     it.effect(`requires a stable completion key before ${completion.label} invocation`, () =>
       Effect.gen(function* requireStableCompletionKey() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'allowed' });
+        const harness = yield* makeActionTestHarness({
+          actionPermission: 'allowed',
+          ownerRegistration: commerceOrderRegistration,
+          tenantPermission: 'allowed',
+        });
         const failure = yield* completion.run(harness, { correlationId: 'order-stage-missing-key' }).pipe(Effect.flip);
         expect(Predicate.isTagged(failure, 'ActionIdempotencyKeyRequired')).toBe(true);
         expect(harness.snapshot().invocations).toHaveLength(0);

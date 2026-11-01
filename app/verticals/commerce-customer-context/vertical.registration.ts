@@ -82,6 +82,20 @@ import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
+import { marketSubjectRestrictionsCurrentRead } from './src/api/market-subject-restrictions-current.read.ts';
+import { marketAffectedUseAssessmentRead } from './src/api/market-affected-use-assessment.read.ts';
+import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
+import { customerPriceGroupResolutionRead } from './src/api/customer-price-group-resolution.read.ts';
+import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
+import { effectiveCustomerGroupMembershipSetV1Read } from './src/api/effective-customer-group-membership-set-v1.read.ts';
+import { verifyEffectiveCustomerGroupMembershipSetV1Read } from './src/api/verify-effective-customer-group-membership-set-v1.read.ts';
+import { invoiceRecipientResolutionRead } from './src/api/invoice-recipient-resolution.read.ts';
+import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
+import { marketBootstrapResolutionRead } from './src/api/market-bootstrap-resolution.read.ts';
+import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
+import { guestPaymentTermsResolutionRead } from './src/api/guest-payment-terms-resolution.read.ts';
+import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
+import { marketRetirementReservationRecoveryRead } from './src/api/market-retirement-reservation-recovery.read.ts';
 // </generated-module-registration-imports>
 /* jscpd:ignore-end */
 
@@ -259,6 +273,24 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker,
     reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    marketSubjectRestrictionsCurrentRead,
+    marketAffectedUseAssessmentRead,
+    paymentTermAffectedUseAssessmentRead,
+    customerPriceGroupResolutionRead,
+    pricingPurchaseContextVerificationRead,
+    effectiveCustomerGroupMembershipSetV1Read,
+    verifyEffectiveCustomerGroupMembershipSetV1Read,
+    invoiceRecipientResolutionRead,
+    deliveryDestinationResolutionRead,
+    marketBootstrapResolutionRead,
+    paymentTermsResolutionRead,
+    guestPaymentTermsResolutionRead,
+    purchaseCurrencyResolutionRead,
+    marketRetirementReservationRecoveryRead,
+    // </generated-module-registration-reads>
   ],
 });
 

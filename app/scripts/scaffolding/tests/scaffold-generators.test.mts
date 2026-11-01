@@ -19,7 +19,7 @@ import {
   Layer,
   Schema,
 } from '@modern-js/bff-effect/effect-edge';
-import { Cause, Clock, ConfigProvider, Predicate, Redacted } from 'effect';
+import { Cause, Clock, ConfigProvider, Duration, Predicate, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
@@ -31,7 +31,6 @@ import {
   makeGatewayIssuerLayer,
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import { scopeGrantRegistrarLayer } from '../../../apps/shell-super-app/tests/support/gateway-issuer-layer.ts';
-import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
@@ -39,11 +38,23 @@ import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
 } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
-import type { ActiveApplicationCompositionConfigLive } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import type {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionServiceContract,
+} from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSource } from '../../../packages/core-runtime/src/modules/active-application-composition-source-service.ts';
-import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
-import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
-import { makeApplicationCompositionSnapshotFixture } from '../../../packages/core-runtime/src/testing/module-contract.ts';
+import type { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '../../../packages/core-runtime/src/testing/module-contract.ts';
+import {
+  OntosModuleDeploymentContractSchema,
+  OntosModuleIdSchema,
+  OntosShellRuntimeContractSchema,
+} from '../../../packages/core-runtime/src/index.ts';
+import { deriveActiveApplicationCompositionSnapshot } from '../../active-application-composition.mts';
+import { createSharedRuntimeConfig } from '../../../module-federation.shared.ts';
 import type { staffAuthenticationNamespaceRegistryLayer } from '../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
 import {
@@ -370,36 +381,23 @@ const GeneratedBindingResultSchema = Schema.Struct({
   accepted: Schema.Literal(true),
 });
 
-const generatedBindingAction = defineAction(
-  {
-    accessEvidencePolicy: {
-      captureMode: 'metadata_only',
-      policyKey: 'core.test.generated-action-http.access.v1',
-    },
-    actionKey: 'core.test.generated-action-http',
-    auditProfile: 'standard',
-    domainErrorSchema: Schema.Never,
-    domainEvents: {},
-    entrypoint: defineSystemModuleEntrypoint({
-      access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
-      entrypointKey: 'core.test.generated-action-http',
-      moduleKey: 'core.shell',
-      role: 'action',
-    }),
-    idempotency: 'optional',
-    legalEntityScope: 'optional',
-    owningModuleKey: 'core.shell',
-    payloadSchema: Schema.Struct({}),
-    policies: [],
-    resultSchema: GeneratedBindingResultSchema,
-    schemaVersion: '1',
-  },
-  () => Effect.succeed({ accepted: true as const }),
-);
+type GeneratedOwnerHarnessFactory = (
+  authority: ActiveApplicationCompositionServiceContract,
+) => ReturnType<typeof makeActionTestHarness>;
+type GeneratedOwnerActionHttp = (
+  runner: ReturnType<typeof ActionHttpRunnerBinding>,
+  input: Omit<Parameters<ReturnType<typeof ActionHttpRunnerBinding>>[0], 'registration'>,
+) => Effect.Effect<typeof GeneratedBindingResultSchema.Type, EndpointProblem, unknown>;
+
+const GeneratedOwnerActionHarnessModuleSchema = Schema.Struct({
+  makeHarness: Schema.declare<GeneratedOwnerHarnessFactory>((value): value is GeneratedOwnerHarnessFactory =>
+    Predicate.isFunction(value),
+  ),
+  moduleId: OntosModuleIdSchema,
+  runWithOwnedAction: Schema.declare<GeneratedOwnerActionHttp>((value): value is GeneratedOwnerActionHttp =>
+    Predicate.isFunction(value),
+  ),
+});
 
 const FixtureTsconfigSchema = Schema.Struct({
   references: Schema.Array(Schema.Struct({ path: Schema.String })),
@@ -675,7 +673,7 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
     yield* write(
       root,
       `verticals/${vertical.slug}/shared/ultramodern-build.ts`,
-      `export const ultramodernApiMarker = { appId: '${vertical.appId}', buildMarker: '${fixtureBuildMarker}' } as const;\n`,
+      `export const ultramodernApiMarker = { appId: '${vertical.appId}', buildMarker: '${fixtureBuildMarker}' } as const;\nexport const ultramodernDeliveryUnit = ultramodernApiMarker;\n`,
     );
     yield* write(
       root,
@@ -945,7 +943,7 @@ const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unk
       writeFile(
         manifestPath,
         manifest.replace(
-          '    resourceTypes: [],',
+          '    resourceTypes: [',
           `    resourceTypes: [
       {
         capabilities: {
@@ -959,8 +957,7 @@ const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unk
         key: 'inventory.stock.item',
         label: 'Inventory item',
         owningModuleId: 'inventory.stock',
-      },
-    ],`,
+      },`,
         ),
         'utf-8',
       ),
@@ -1839,7 +1836,20 @@ console.log(
 }).pipe(Effect.scoped, NodeRuntime.runMain);
 `,
         );
-        const execution = spawnSync(process.execPath, [STRIP_TYPES_FLAG, 'execute-generated-governed-reads.mts'], {
+        const governedHttpBundle = spawnSync(
+          esbuildPath,
+          [
+            'execute-generated-governed-reads.mts',
+            '--bundle',
+            '--format=esm',
+            '--platform=node',
+            '--packages=external',
+            '--outfile=execute-generated-governed-reads.mjs',
+          ],
+          { cwd: fixture.root, encoding: 'utf-8' },
+        );
+        expect(governedHttpBundle.status, governedHttpBundle.stderr).toBe(0);
+        const execution = spawnSync(process.execPath, ['execute-generated-governed-reads.mjs'], {
           cwd: fixture.root,
           encoding: 'utf-8',
           env: {
@@ -2874,10 +2884,118 @@ it.live(
         );
         const current = yield* makeGatewayKey('current');
         const retiring = yield* makeGatewayKey('retiring');
-        const approvedSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        yield* run(fixture, 'action', [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          'generated-binding',
+          '--legal-entity-scope',
+          'optional',
+        ]);
+        const generatedActionPath = path.join(
+          fixture.root,
+          'verticals/inventory-stock/src/actions/generated-binding.action.ts',
+        );
+        const generatedActionSource = yield* Effect.promise(() => readFile(generatedActionPath, 'utf-8'));
+        const implementedAction = generatedActionSource
+          .replace(
+            'const GeneratedBindingResultSchema = Schema.Struct({});',
+            'const GeneratedBindingResultSchema = Schema.Struct({ accepted: Schema.Literal(true) });',
+          )
+          .replace(
+            /const handleGeneratedBinding = \(\) =>[\s\S]*?(?=export const generatedBindingAction)/u,
+            'const handleGeneratedBinding = () => Effect.succeed({ accepted: true as const });\n\n',
+          );
+        expect(implementedAction).toContain('Effect.succeed({ accepted: true as const })');
+        yield* Effect.promise(() => writeFile(generatedActionPath, implementedAction));
+        yield* write(
+          fixture.root,
+          'generated-owner-action-harness.mts',
+          `import { getVerticalRuntimeActions, isActionRegistration } from '@app/core-runtime';
+import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { inventoryStockRegistration } from './verticals/inventory-stock/vertical.registration.ts';
+import { ultramodernDeliveryUnit } from './verticals/inventory-stock/shared/ultramodern-build.ts';
+const registration = getVerticalRuntimeActions(inventoryStockRegistration).find(({ descriptor }) => descriptor.actionKey === 'inventory.stock.generated-binding');
+if (registration === undefined || !isActionRegistration(registration)) throw new Error('The generated owner Action is missing or invalid');
+export const moduleId = inventoryStockRegistration.moduleId;
+export const runWithOwnedAction = (runner, input) => runner({ ...input, registration });
+export const makeHarness = (applicationComposition) => makeActionTestHarness({
+  actionPermission: 'allowed', tenantPermission: 'allowed', applicationComposition,
+  expectedDeployment: ultramodernDeliveryUnit, ownerRegistration: inventoryStockRegistration,
+});
+`,
+        );
+        const ownerHarnessModule = yield* Schema.decodeUnknownEffect(GeneratedOwnerActionHarnessModuleSchema)(
+          yield* Effect.promise(
+            () => import(pathToFileURL(path.join(fixture.root, 'generated-owner-action-harness.mts')).href),
+          ),
+        );
+        const historicalSnapshot = yield* makeApplicationCompositionSnapshotFixture(
           [inventorySlug, 'billing'],
           fixtureBuildMarker,
         );
+        const inventoryContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
+          makeModuleContractFixture({
+            appId: inventorySlug,
+            buildMarker: fixtureBuildMarker,
+            moduleId: ownerHarnessModule.moduleId,
+          }),
+        );
+        const inventoryContractDocument = yield* Schema.encodeEffect(
+          Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+        )(inventoryContract);
+        const observedPackageVersion = (packageName: string): string =>
+          Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
+            require(
+              require.resolve(`${packageName}/package.json`, { paths: [path.join(appRoot, 'apps/shell-super-app')] }),
+            ),
+          ).version;
+        const sharedRuntimeConfig = createSharedRuntimeConfig({
+          '@modern-js/plugin-i18n/runtime': observedPackageVersion('@modern-js/plugin-i18n'),
+          '@modern-js/runtime': observedPackageVersion('@modern-js/runtime'),
+          '@tanstack/react-router': observedPackageVersion('@tanstack/react-router'),
+          react: observedPackageVersion('react'),
+          'react-dom': observedPackageVersion('react-dom'),
+        });
+        const observedShared = Object.entries(sharedRuntimeConfig).map(([name, shared]) => ({
+          name,
+          requiredVersion: shared.requiredVersion,
+          singleton: shared.singleton,
+        }));
+        const shellRuntimeDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+          {
+            contributionAbi: historicalSnapshot.composition.shell.contributionAbi,
+            coreCapabilities: historicalSnapshot.composition.shell.coreCapabilities,
+            deployment: historicalSnapshot.composition.shell.deployment,
+            schemaVersion: '2',
+          },
+        );
+        const encoder = new TextEncoder();
+        const approvedSnapshot = yield* deriveActiveApplicationCompositionSnapshot({
+          environment: 'development',
+          modules: historicalSnapshot.composition.modules.map((module) => ({
+            appId: module.deployment.appId,
+            backend: module.backend,
+            contract: {
+              bytes: encoder.encode(
+                module.deployment.appId === inventorySlug ? inventoryContractDocument : module.contractDocument,
+              ),
+              url: module.contract.url,
+            },
+          })),
+          observedAt: historicalSnapshot.observedAt,
+          shell: {
+            federationManifest: {
+              bytes: encoder.encode(JSON.stringify({ exposes: [], name: 'shell', shared: observedShared })),
+              url: historicalSnapshot.composition.shell.federationManifest.url,
+            },
+            runtimeContract: {
+              bytes: encoder.encode(shellRuntimeDocument),
+              url: historicalSnapshot.composition.shell.runtimeContract.url,
+            },
+          },
+          validity: Duration.hours(1),
+        });
         const compositionService = { load: Effect.succeed(approvedSnapshot) };
         const encodedComposition = yield* Schema.encodeEffect(
           Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
@@ -3240,13 +3358,10 @@ it.live(
           authentication: actionAuthenticationProblem,
           unavailable: actionVerificationUnavailableProblem,
         });
-        const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          tenantPermission: 'allowed',
-        });
+        const harness = yield* ownerHarnessModule.makeHarness(compositionService);
         const generatedBindingGroupLive = HttpApiBuilder.group(generatedBindingApi, 'action', (handlers) =>
           handlers.handle('invoke', ({ request }) =>
-            runGeneratedActionHttp({
+            ownerHarnessModule.runWithOwnedAction(runGeneratedActionHttp, {
               endpointHeaders: {
                 idempotencyKey: request.headers['idempotency-key'],
                 traceId: 'generated-trace',
@@ -3255,7 +3370,6 @@ it.live(
               invalidCorrelationProblem: actionAuthenticationProblem,
               mapError: actionVerificationUnavailableProblem,
               payload: {},
-              registration: generatedBindingAction,
               requestHeaders: {
                 authorization: Redacted.make(request.headers['authorization']),
                 'x-correlation-id': request.headers['x-correlation-id'],
@@ -3287,22 +3401,23 @@ it.live(
             new Request('https://inventory.example.test/actions/generated-runner', {
               headers: {
                 authorization: `Bearer ${liveAssertion.token}`,
+                'idempotency-key': 'generated-owner-binding-fixture',
                 'x-correlation-id': 'generated-runner-correlation',
               },
               method: 'POST',
             }),
           ),
         );
-        const generatedBindingBody = yield* Schema.decodeUnknownEffect(GeneratedBindingResultSchema)(
-          yield* Effect.promise(() => generatedBindingResponse.json()),
-        );
+        const generatedBindingRawBody: unknown = yield* Effect.promise(() => generatedBindingResponse.json());
         expect(
           generatedBindingResponse.status,
           JSON.stringify({
-            body: generatedBindingBody,
+            body: generatedBindingRawBody,
             snapshot: harness.snapshot(),
           }),
         ).toBe(200);
+        const generatedBindingBody =
+          yield* Schema.decodeUnknownEffect(GeneratedBindingResultSchema)(generatedBindingRawBody);
         expect(generatedBindingBody).toEqual({ accepted: true });
         expect(harness.snapshot().invocations.length).toBe(1);
         expect(harness.snapshot().transactionCount).toBe(1);
@@ -3638,7 +3753,7 @@ it.live(
             manifest.replace(
               '// <generated-module-manifest-imports>',
               `// <generated-module-manifest-imports>
-import { fakeRead } from './src/api/fake.read.ts';`,
+import { fakeRead } from '../foreign/src/api/fake.read.ts';`,
             ),
             'utf-8',
           ),
@@ -4384,6 +4499,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
+import { billingRegistration } from '../../vertical.registration.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
@@ -4395,6 +4511,7 @@ import {
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: 'billing.core-outbox-worker',
   expectedDeployment: ultramodernApiMarker,
+  ownerRegistration: billingRegistration,
   layer: Layer.merge(
     ActiveApplicationCompositionConfigLive.pipe(
       Layer.provide(

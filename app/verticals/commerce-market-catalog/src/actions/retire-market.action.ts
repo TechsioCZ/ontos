@@ -32,6 +32,8 @@ import {
   marketRetirementRecoveryService,
 } from '../services/market-retirement-admission.service.ts';
 import type { MarketRetirementAdmissionPersistence } from '../services/market-retirement-admission.service.ts';
+import { settleMarketRetirementAttempt } from '../services/market-retirement-post-attempt.ts';
+import type { MarketRetirementPostAttemptHook } from '../services/market-retirement-post-attempt.ts';
 import { MarketRetirementSettlementPending } from '../../shared/market-retirement-admission.ts';
 import { createRetireMarketCommerceMarketCatalogMarketRetiredV1OutboxMessage as createOutboxMessage } from './retire-market-commerce-market-catalog-market-retired-v1.outbox-message.ts';
 import {
@@ -51,7 +53,7 @@ export type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 
 export { MarketRetirementImpactAssessmentUnavailable } from './market-retirement-impact-assessment-unavailable.ts';
 
-const ErrorSchema = Schema.Union([
+export const RetireMarketDomainErrorSchema = Schema.Union([
   MarketCommandRejected,
   MarketAdministrationPersistenceUnavailable,
   MarketRetirementImpactAssessmentRejected,
@@ -303,7 +305,7 @@ export const retireMarketAction = defineAction(
     actionKey: 'commerce.market-catalog.retire-market',
     auditEvidenceSchema: MarketAdministrationAuditEvidenceSchema,
     auditProfile: 'standard',
-    domainErrorSchema: ErrorSchema,
+    domainErrorSchema: RetireMarketDomainErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -326,4 +328,10 @@ export const retireMarketAction = defineAction(
   },
   handleRetireMarket,
   makeRetireMarketServices,
+  undefined,
+  Effect.fn('RetireMarketAction.onPostAttempt')(function* onPostAttempt(
+    attempt: Parameters<MarketRetirementPostAttemptHook>[0],
+  ) {
+    return yield* settleMarketRetirementAttempt(attempt);
+  }),
 );

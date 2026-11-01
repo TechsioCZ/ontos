@@ -11,6 +11,7 @@ import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gatewa
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
 import type {
   BusinessPermissionAccessTarget,
@@ -18,7 +19,7 @@ import type {
   ContextAccessService,
 } from '../permissions/context-access.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
-import type { ReadRuntimeStage } from '../reads/runtime.ts';
+import type { ReadRuntimeOptions, ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
 export interface ReadTestOwnerQuery {
@@ -34,6 +35,7 @@ export interface ReadTestHarnessOptions {
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
   readonly operationTime: Date;
   readonly ownerAuthorizationDecision?: ContextAccessDecision;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly permissionDecision?: ContextAccessDecision;
   readonly scope: OperationalScope;
 }
@@ -199,12 +201,21 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
-  const runtime = makeReadRuntime({ executor }, gateway, scopeResolver, contextAccess, {
+  const runtimeOptions: ReadRuntimeOptions = {
     onStage: (stage) => {
       stages.push(stage);
     },
     ownerAuthorizationOverlay: { authorize: () => Effect.succeed(options.ownerAuthorizationDecision ?? 'denied') },
-  });
+  };
+  const runtime = makeReadRuntime(
+    { executor },
+    gateway,
+    scopeResolver,
+    contextAccess,
+    options.ownerRegistration === undefined
+      ? runtimeOptions
+      : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
+  );
   return {
     layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
     runtime,

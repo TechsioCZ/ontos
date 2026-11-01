@@ -10,10 +10,15 @@ import {
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayRelayExchangeLedgerLive } from './auth/gateway-relay-exchanges.service.ts';
 import { issueRelayedGatewayContextAssertion } from './auth/gateway-relay-issuer.ts';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionConfigLive,
+  InstalledModuleCatalogServiceLive,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
+  ActiveApplicationCompositionServiceContract,
+  DatabaseConnectionPair,
   ContextAccess,
   PrincipalManagementError,
   PrincipalResolutionError,
@@ -22,9 +27,13 @@ import type {
 } from '@app/core-runtime';
 import {
   makeActionRuntimeLive,
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionUnavailableError,
+  makeReadRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  DatabaseConfig,
   GatewayScopeGrantRegistrarLive,
   LegalEntityContextLive,
   legalEntityDetailRead,
@@ -121,7 +130,7 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
-import { AuthConfigLive } from './auth/config.ts';
+import { AuthConfig, AuthConfigLive } from './auth/config.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
   CommerceExternalIdentityDeploymentLive,
@@ -150,15 +159,20 @@ import {
 import type { SupportImpersonationError } from './auth/impersonation-service.ts';
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
-import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
+import { AuthPersistenceFromConfigLive, AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import type { ShellContextResult } from './auth/service.ts';
 import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog, InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
-import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalog.ts';
-import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
+import { CapturedShellCompositionCatalog, capturedShellCatalog } from './modules/captured-shell-catalog.ts';
+import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
+import {
+  ShellGovernedReads,
+  createShellGovernedReadsLayer,
+  createShellGovernedReadDefinitionsLayer,
+} from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import {
   attachShellMedia,
@@ -1898,6 +1912,8 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   resourceGateways?: ShellResourceGateways,
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
   externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
+  shellReadAuthority?: ActiveApplicationCompositionServiceContract,
+  runtimeDatabase?: DatabaseConnectionPair,
 ];
 
 export const makeShellAuthenticationApiRuntime = (
@@ -1906,27 +1922,78 @@ export const makeShellAuthenticationApiRuntime = (
   const [
     authenticationLayer,
     issuerLayer,
-    moduleStateLayer = tenantModuleStateServiceLive,
+    moduleStateLayer,
     loadInstalledModuleCatalog,
     enableInstalledOutboxMatcher = false,
     contextAccessLayer = defaultContextAccessLive,
     resourceGateways = unavailableResourceGateways,
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
     externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
+    shellReadAuthority,
+    runtimeDatabase,
   ] = args;
+  const runtimeCorePersistenceLive =
+    runtimeDatabase === undefined
+      ? corePersistenceLive
+      : CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, runtimeDatabase.runtime)));
+  const runtimeAuthConfigLive =
+    runtimeDatabase === undefined
+      ? AuthConfigLive
+      : Layer.effect(
+          AuthConfig,
+          AuthConfig.pipe(
+            Effect.map((configuration) => ({
+              ...configuration,
+              connectionString: runtimeDatabase.runtime.connectionString,
+            })),
+          ),
+        ).pipe(Layer.provide(AuthConfigLive));
+  const runtimeAuthPersistenceLive =
+    runtimeDatabase === undefined
+      ? authPersistenceLive
+      : AuthPersistenceFromConfigLive.pipe(Layer.provide(runtimeAuthConfigLive));
+  const runtimePrincipalResolverLive =
+    runtimeDatabase === undefined
+      ? principalResolverLive
+      : PrincipalResolverLive({
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+        }).pipe(Layer.provide(runtimeCorePersistenceLive));
+  const runtimeLegalEntityContextLive =
+    runtimeDatabase === undefined
+      ? legalEntityContextLive
+      : LegalEntityContextLive.pipe(Layer.provide(runtimeCorePersistenceLive));
+  const runtimeApiKeyServiceLive =
+    runtimeDatabase === undefined
+      ? apiKeyServiceLive
+      : ApiKeyServiceLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
+  const runtimeSupportRecoveryPrincipalLive =
+    runtimeDatabase === undefined
+      ? supportRecoveryPrincipalLive
+      : SupportRecoveryPrincipalContextResolverLive({
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+        }).pipe(Layer.provide(runtimeCorePersistenceLive));
+  const selectedModuleStateLayer =
+    moduleStateLayer ??
+    (runtimeDatabase === undefined
+      ? tenantModuleStateServiceLive
+      : TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCorePersistenceLive)));
+  const shellReadAuthorityLayer =
+    shellReadAuthority === undefined
+      ? activeApplicationCompositionLive
+      : Layer.succeed(ActiveApplicationCompositionService, shellReadAuthority);
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? approvedModuleCatalogLive
       : Layer.succeed(ShellInstalledModuleCatalog, {
           load: loadInstalledModuleCatalog,
         });
-  const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(moduleStateLayer));
+  const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(selectedModuleStateLayer));
   const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLayer));
   const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer)),
   );
   const sharedOperationLayers = Layer.mergeAll(
-    corePersistenceLive,
+    runtimeCorePersistenceLive,
     contextAccessLayer,
     moduleStateGateLayer,
     moduleEntrypointGatewayLayer,
@@ -1938,13 +2005,14 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.mergeAll(
         sharedOperationLayers,
         activeApplicationCompositionLive,
+        InstalledModuleCatalogServiceLive.pipe(Layer.provide(activeApplicationCompositionLive)),
         ActionRepositoryLive,
         ActionPermissionLive,
       ),
     ),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
-    Layer.provide(Layer.mergeAll(actionRuntimeLayer, apiKeyServiceLive, principalResolverLive)),
+    Layer.provide(Layer.mergeAll(actionRuntimeLayer, runtimeApiKeyServiceLive, runtimePrincipalResolverLive)),
   );
   const shellGovernedReadsLayer = Layer.unwrap(
     GatewayIssuer.pipe(
@@ -1998,15 +2066,56 @@ export const makeShellAuthenticationApiRuntime = (
                 Effect.catchTag('GatewayIssuerError', () => Effect.fail(new ShellProviderUnavailableError())),
               ),
         };
-        return createShellGovernedReadsLayer(resourceGateways, providerAssertionIssuer, scopedModuleStateFactory);
+        const definitionsLayer = createShellGovernedReadDefinitionsLayer(
+          resourceGateways,
+          providerAssertionIssuer,
+          scopedModuleStateFactory,
+        );
+        return Layer.unwrap(
+          Effect.gen(function* makeShellHostedReadRuntime() {
+            const registrations = yield* ShellGovernedReadDefinitions;
+            const authority = yield* ActiveApplicationCompositionService;
+            const capturedAuthority = {
+              load: authority.load.pipe(
+                Effect.flatMap((snapshot) =>
+                  capturedShellCatalog.pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ActiveApplicationCompositionUnavailableError({
+                          cause,
+                          reason: 'The Shell request release is unavailable',
+                        }),
+                    ),
+                    Effect.filterOrFail(
+                      (catalog) => catalog.composition.revision === snapshot.composition.revision,
+                      () =>
+                        new ActiveApplicationCompositionUnavailableError({
+                          reason: 'The Shell request release changed',
+                        }),
+                    ),
+                    Effect.as(snapshot),
+                  ),
+                ),
+              ),
+            };
+            return createShellGovernedReadsLayer(registrations).pipe(
+              Layer.provide(
+                makeReadRuntimeLive(ultramodernDeliveryUnit, { shellSystemReads: registrations }).pipe(
+                  Layer.provide(Layer.succeed(ActiveApplicationCompositionService, capturedAuthority)),
+                ),
+              ),
+            );
+          }),
+        ).pipe(Layer.provide(definitionsLayer));
       }),
     ),
   ).pipe(
     Layer.provide(issuerLayer),
     Layer.provide(
       Layer.mergeAll(
-        readRuntimeLayer,
-        moduleStateLayer,
+        sharedOperationLayers,
+        shellReadAuthorityLayer,
+        selectedModuleStateLayer,
         moduleCatalogLayer,
         contextAccessLayer,
         ShellCompositionFactoryLive,
@@ -2018,37 +2127,39 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(
       Layer.mergeAll(
         authenticationLayer,
-        authPersistenceLive,
+        runtimeAuthPersistenceLive,
         actionRuntimeLayer,
         contextAccessLayer,
-        principalResolverLive,
-        supportRecoveryPrincipalLive,
+        runtimePrincipalResolverLive,
+        runtimeSupportRecoveryPrincipalLive,
       ),
     ),
   );
   const outboxMatcherLayer = enableInstalledOutboxMatcher
     ? InstalledOutboxMatcherLive.pipe(
-        Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
+        Layer.provide(
+          OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(runtimeCorePersistenceLive)),
+        ),
       )
     : Layer.empty;
   const relayScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer)),
   );
-  const relayLedgerLayer = GatewayRelayExchangeLedgerLive.pipe(Layer.provide(authPersistenceLive));
+  const relayLedgerLayer = GatewayRelayExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
   const handlerDependenciesLive = Layer.mergeAll(
     relayScopeResolverLayer,
     relayLedgerLayer,
     GatewayRelayVerificationLive,
     authenticationLayer,
-    authPersistenceLive,
+    runtimeAuthPersistenceLive,
     actionRuntimeLayer,
-    apiKeyServiceLive,
+    runtimeApiKeyServiceLive,
     identityLifecycleLayer,
     supportImpersonationServiceLive,
-    principalResolverLive,
-    legalEntityContextLive,
+    runtimePrincipalResolverLive,
+    runtimeLegalEntityContextLive,
     issuerLayer,
-    moduleStateLayer,
+    selectedModuleStateLayer,
     moduleCatalogLayer,
     contextAccessLayer,
     shellGovernedReadsLayer,

@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 const normalize = (filePath: string): string => filePath.split(path.sep).join('/');
-const privateOwnerSpecifierPattern = /vertical\.(?:manifest|registration)(?:\.ts)?$/u;
+const privateOwnerSpecifierPattern = /vertical\.(?:manifest|registration|runtime-declaration)(?:\.ts)?$/u;
 
 export const privateOwnerImportViolation = (root: string, file: string, specifier: string): string | undefined => {
   if (!privateOwnerSpecifierPattern.test(specifier)) {
@@ -16,7 +16,8 @@ export const privateOwnerImportViolation = (root: string, file: string, specifie
   const resolved = path.resolve(root, path.dirname(file), specifier).replace(/\.ts$/u, '');
   const expectedManifest = path.join(ownerRoot, 'vertical.manifest');
   const expectedRegistration = path.join(ownerRoot, 'vertical.registration');
-  return resolved === expectedManifest || resolved === expectedRegistration
+  const expectedRuntimeDeclaration = path.join(ownerRoot, 'vertical.runtime-declaration');
+  return resolved === expectedManifest || resolved === expectedRegistration || resolved === expectedRuntimeDeclaration
     ? undefined
     : 'a MicroVertical may import only its own deployment owner files';
 };

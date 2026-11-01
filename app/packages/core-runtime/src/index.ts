@@ -492,8 +492,10 @@ export {
   defineRead,
   defineReadConditionalPermission,
   defineReadResourcePermission,
+  isReadRegistration,
 } from './reads/definition.ts';
 export type {
+  AnyReadRegistration,
   AlternativeResolvedReadPermissionTarget,
   AtomicResolvedReadPermissionTarget,
   ReadConditionalPermissionBranch,
@@ -519,7 +521,7 @@ export type {
   ResolvedReadConditionalPermissionRequirement,
 } from './reads/definition.ts';
 export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from './reads/context.ts';
-export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
+export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
@@ -638,6 +640,7 @@ export {
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedStateError,
+  TenantModuleStateUnsatisfiedDependencyError,
   TenantModuleStateValidationUnavailableError,
 } from './modules/tenant-module-state-errors.ts';
 export type { TenantModuleStateTransitionError } from './modules/tenant-module-state-errors.ts';
@@ -682,6 +685,7 @@ export type {
 } from './modules/application-composition.ts';
 export {
   ActiveApplicationCompositionConfigLive,
+  InstalledModuleCatalogServiceLive,
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   makeActiveApplicationCompositionLayer,
@@ -769,6 +773,12 @@ export {
   OntosModuleIdSchema,
   OntosModuleIdentitySchema,
   OntosModuleKindSchema,
+  OntosModuleRequirementsSchema,
+  OntosCoreCapabilityRequirementSchema,
+  OntosIntrinsicModuleRequirementSchema,
+  OntosOperationContractSchema,
+  OntosOperationRequirementSchema,
+  OntosRequiredOperationContractSchema,
   OntosOutboxSubscriptionContractSchema,
   OntosPublicEventContractSchema,
   OntosReportDescriptorSchema,
@@ -778,7 +788,10 @@ export {
   OntosSerializedPublicSurfaceSchema,
   decodeOntosModuleDeploymentContract,
   defineOntosModuleManifest,
+  canonicalOntosPublicApiKey,
+  projectOntosModuleOperationContracts,
 } from './modules/manifest.ts';
+export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
 export {
   OntosShellContributionsSchema,
   ShellMediaAttachmentContributionSchema,
@@ -797,6 +810,7 @@ export type {
   OntosActionContract,
   OntosApiContract,
   OntosAuthoredPublicEvent,
+  OntosAuthoredOperationContract,
   OntosAuthoredPublicSurface,
   OntosComponentContract,
   OntosDeploymentAppId,
@@ -810,6 +824,12 @@ export type {
   OntosManifestComponentValue,
   OntosModuleManifest,
   OntosModuleManifestInput,
+  OntosModuleRequirements,
+  OntosCoreCapabilityRequirement,
+  OntosIntrinsicModuleRequirement,
+  OntosOperationContract,
+  OntosOperationRequirement,
+  OntosRequiredOperationContract,
   OntosOutboxSubscriptionContract,
   OntosPublicEventContract,
   OntosReportDescriptor,
@@ -965,3 +985,8 @@ export type {
   RetainedOwnerHistoryRequest,
   RetainedOwnerHistorySelector,
 } from './actions/retained-owner-history.ts';
+
+export { ModuleOperationRequirementError } from './modules/module-operation-requirement-error.ts';
+export { requireModuleOperation } from './modules/module-operation-requirement.ts';
+
+export type { ActionPostAttemptHook, ActionPostAttemptOutcome, ActionPostAttemptResult } from './actions/definition.ts';

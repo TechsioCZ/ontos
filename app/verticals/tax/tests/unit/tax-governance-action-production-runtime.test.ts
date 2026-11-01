@@ -1,6 +1,12 @@
+import { taxRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+  ApplicationCompositionSingletonSchema,
+  applicationCompositionContentRevision,
+  validateActiveApplicationCompositionSnapshot,
   ContextAccess,
   ModuleEntrypointGateway,
   ModuleStateGate,
@@ -10,9 +16,12 @@ import {
   toBusinessPermissionAccessKey,
   toBusinessPermissionAccessObjectId,
 } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
+import type { ApplicationComposition, ContextAccessService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { Context, Crypto, DateTime, Duration, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { Hex } from 'effect/encoding';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -44,6 +53,102 @@ const principalFor = (legalEntityId: string) =>
     principalId,
     tenantId,
   });
+
+class TaxProductionRuntimeFixtureUnavailable extends Schema.TaggedError<TaxProductionRuntimeFixtureUnavailable>()(
+  'TaxProductionRuntimeFixtureUnavailable',
+  { stage: Schema.Literals(['owner_artifact', 'unit_placement']) },
+) {}
+
+/** Exact published owner/Shell bytes; backend placement remains declared scripted unit infrastructure. */
+const publishedTaxComposition = Effect.gen(function* publishedTaxComposition() {
+  const filesystem = yield* FileSystem.FileSystem;
+  const contractBytes = yield* filesystem.readFile(
+    new URL('../../.output/public/.well-known/ontos-module-manifest.json', import.meta.url).pathname,
+  );
+  const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    new TextDecoder().decode(contractBytes),
+  );
+  if (
+    contract.deployment.appId !== ultramodernDeliveryUnit.appId ||
+    contract.manifest.module.id !== createTaxRuleAction.descriptor.entrypoint.moduleKey
+  ) {
+    return yield* new TaxProductionRuntimeFixtureUnavailable({ stage: 'owner_artifact' });
+  }
+  const infrastructure = yield* makeApplicationCompositionSnapshotFixture(
+    [contract.deployment.appId],
+    contract.deployment.buildMarker,
+  );
+  const [unitPlacement] = infrastructure.composition.modules;
+  if (unitPlacement === undefined) {
+    return yield* new TaxProductionRuntimeFixtureUnavailable({ stage: 'unit_placement' });
+  }
+  const shellRuntimeBytes = yield* filesystem.readFile(
+    new URL('../../../../apps/shell-super-app/.output/public/.well-known/ontos-shell-runtime.json', import.meta.url)
+      .pathname,
+  );
+  const shellFederationBytes = yield* filesystem.readFile(
+    new URL('../../../../apps/shell-super-app/.output/mf-manifest.json', import.meta.url).pathname,
+  );
+  const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    new TextDecoder().decode(shellRuntimeBytes),
+  );
+  const federation = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        shared: Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            requiredVersion: Schema.optionalKey(Schema.String),
+            singleton: Schema.optionalKey(Schema.Boolean),
+          }),
+        ),
+      }),
+    ),
+  )(new TextDecoder().decode(shellFederationBytes));
+  const singletons = yield* Effect.forEach(
+    federation.shared.filter((entry) => entry.singleton === true),
+    (entry) =>
+      Schema.decodeUnknownEffect(ApplicationCompositionSingletonSchema)({
+        packageName: entry.name,
+        version: entry.requiredVersion,
+      }),
+  );
+  const crypto = yield* Crypto.Crypto;
+  const contractDigest = Hex.encode(yield* crypto.digest('SHA-256', contractBytes));
+  const runtimeDigest = Hex.encode(yield* crypto.digest('SHA-256', shellRuntimeBytes));
+  const federationDigest = Hex.encode(yield* crypto.digest('SHA-256', shellFederationBytes));
+  const candidate: ApplicationComposition = {
+    ...infrastructure.composition,
+    modules: [
+      {
+        ...unitPlacement,
+        contract: { sha256: contractDigest, url: unitPlacement.contract.url },
+        contractDocument: new TextDecoder().decode(contractBytes),
+        dependencies: (contract.manifest.requirements?.intrinsic ?? []).map((dependency) => dependency.moduleId),
+        deployment: contract.deployment,
+        moduleId: contract.manifest.module.id,
+        publicContract: { id: contract.manifest.module.id, sha256: contractDigest, version: contract.schemaVersion },
+        requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
+      },
+    ],
+    shell: {
+      ...infrastructure.composition.shell,
+      contributionAbi: shellRuntime.contributionAbi,
+      coreCapabilities: shellRuntime.coreCapabilities,
+      deployment: shellRuntime.deployment,
+      federationManifest: { sha256: federationDigest, url: infrastructure.composition.shell.federationManifest.url },
+      runtimeContract: { sha256: runtimeDigest, url: infrastructure.composition.shell.runtimeContract.url },
+      sharedSingletons: singletons,
+    },
+  };
+  const observedAt = DateTime.makeUnsafe('2027-01-02T00:00:00.000Z');
+  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
+    composition: { ...candidate, revision: yield* applicationCompositionContentRevision(candidate) },
+    observedAt,
+    validUntil: DateTime.addDuration(observedAt, Duration.hours(1)),
+  });
+  return { deployment: contract.deployment, snapshot };
+});
 
 /** SpiceDB stand-in: a principal holds one TAX permission only on the exact Selling Legal Entity objects granted. */
 const spiceDbContextAccess = (
@@ -91,10 +196,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
   grantedSellers: readonly string[],
   grantedPermission = 'tax.rule.manage',
 ) {
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernDeliveryUnit.appId],
-    ultramodernDeliveryUnit.buildMarker,
-  );
+  const { deployment, snapshot } = yield* publishedTaxComposition;
   const ownerStatements: string[] = [];
   const permissionDenials: string[] = [];
   let installed = { legalEntityId: '', tenantId: '' };
@@ -157,7 +259,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
     resolveInvocation: () => Effect.sync(() => invocation),
     transitionInvocationToRunning: () => Effect.sync(() => invocation),
   };
-  const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actionRuntimeLive = makeActionRuntimeLive(deployment, taxRegistration).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
@@ -208,23 +310,25 @@ const createTaxRule = (
     })
     .pipe(Effect.flip);
 
-it.effect(
-  'runs a TAX Action through the production runtime composition only with a seller-bound permission',
-  Effect.fn(function* taxActionThroughProductionComposition() {
-    const permitted = yield* makeProductionComposition([sellerA]);
-    const permittedFailure = yield* createTaxRule(permitted, sellerA);
-    // Authorization passed and the TAX handler reached its owner persistence; the scripted
-    // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
-    expect(permitted.ownerStatements.length).toBeGreaterThan(0);
-    expect(permitted.permissionDenials).toEqual([]);
-    expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production runtime fixture', (suite) => {
+  suite.effect('runs a TAX Action through the production runtime composition only with a seller-bound permission', () =>
+    Effect.gen(function* taxActionThroughProductionComposition() {
+      yield* TestClock.setTime(Date.parse('2027-01-02T00:00:00.000Z'));
+      const permitted = yield* makeProductionComposition([sellerA]);
+      const permittedFailure = yield* createTaxRule(permitted, sellerA);
+      // Authorization passed and the TAX handler reached its owner persistence; the scripted
+      // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
+      expect(permitted.ownerStatements.length).toBeGreaterThan(0);
+      expect(permitted.permissionDenials).toEqual([]);
+      expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
 
-    const ungranted = yield* makeProductionComposition([]);
-    expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
-    expect(ungranted.ownerStatements).toEqual([]);
+      const ungranted = yield* makeProductionComposition([]);
+      expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
+      expect(ungranted.ownerStatements).toEqual([]);
 
-    const otherSeller = yield* makeProductionComposition([sellerA]);
-    expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
-    expect(otherSeller.ownerStatements).toEqual([]);
-  }),
-);
+      const otherSeller = yield* makeProductionComposition([sellerA]);
+      expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
+      expect(otherSeller.ownerStatements).toEqual([]);
+    }),
+  );
+});

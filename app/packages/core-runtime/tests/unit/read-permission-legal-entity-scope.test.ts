@@ -5,6 +5,10 @@ import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineRead } from '../../src/reads/definition.ts';
+import type { AnyReadRegistration } from '../../src/reads/definition.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { ReadPermissionUnavailable } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 
@@ -195,14 +199,29 @@ const makeOptionalModuleAccessRegistration = (onHandler: () => void) =>
     permissionTarget: 'module',
   });
 
+/** Only synthetic probe metadata, retaining the exact private Read value exercised by each case. */
+const probeOwner = (read: AnyReadRegistration) => {
+  const moduleId = read.descriptor.owningModuleKey;
+  const base = makeModuleContractFixture({ appId: 'read-permission-probe', moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [], reads: [read] });
+};
+
 it.layer(NodeCrypto.layer)('read permission targets that need a legal entity', (suite) => {
   suite.effect('denies an optional module.access read when the scope has no legal entity', () =>
     Effect.gen(function* optionalModuleAccessWithoutLegalEntity() {
       let handlerRuns = 0;
+      const read = makeOptionalModuleAccessRegistration(() => {
+        handlerRuns += 1;
+      });
       const harness = yield* makeReadTestHarness({
         executeOwnerQuery: () => Effect.succeed([]),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: probeOwner(read),
         permissionDecision: 'allowed',
         scope: scopeWithoutLegalEntity,
       });
@@ -210,9 +229,7 @@ it.layer(NodeCrypto.layer)('read permission targets that need a legal entity', (
         .runRead({
           input: {},
           principal: scopeWithoutLegalEntity,
-          registration: makeOptionalModuleAccessRegistration(() => {
-            handlerRuns += 1;
-          }),
+          registration: read,
           transport: { correlationId: 'probe-correlation' },
         })
         .pipe(Effect.flip);
@@ -224,10 +241,14 @@ it.layer(NodeCrypto.layer)('read permission targets that need a legal entity', (
   suite.effect('executes the same read for a caller that does carry a legal entity (control)', () =>
     Effect.gen(function* optionalModuleAccessWithLegalEntity() {
       let handlerRuns = 0;
+      const read = makeOptionalModuleAccessRegistration(() => {
+        handlerRuns += 1;
+      });
       const harness = yield* makeReadTestHarness({
         executeOwnerQuery: () => Effect.succeed([]),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: probeOwner(read),
         permissionDecision: 'allowed',
         scope: scopeWithLegalEntity,
       });
@@ -235,9 +256,7 @@ it.layer(NodeCrypto.layer)('read permission targets that need a legal entity', (
         harness.runtime.runRead({
           input: {},
           principal: scopeWithLegalEntity,
-          registration: makeOptionalModuleAccessRegistration(() => {
-            handlerRuns += 1;
-          }),
+          registration: read,
           transport: { correlationId: 'probe-correlation' },
         }),
       );
@@ -250,21 +269,23 @@ it.layer(NodeCrypto.layer)('read permission targets that need a legal entity', (
     Effect.gen(function* directRuntimeCorrelationBound() {
       // Shell routes call ReadRuntime directly with the raw request header, so the transport schema has to
       // bound the identifier itself.
+      let handlerRuns = 0;
+      const read = makeOptionalModuleAccessRegistration(() => {
+        handlerRuns += 1;
+      });
       const harness = yield* makeReadTestHarness({
         executeOwnerQuery: () => Effect.succeed([]),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: probeOwner(read),
         permissionDecision: 'allowed',
         scope: scopeWithLegalEntity,
       });
-      let handlerRuns = 0;
       const exit = yield* Effect.exit(
         harness.runtime.runRead({
           input: {},
           principal: scopeWithLegalEntity,
-          registration: makeOptionalModuleAccessRegistration(() => {
-            handlerRuns += 1;
-          }),
+          registration: read,
           transport: { correlationId: 'c'.repeat(201) },
         }),
       );

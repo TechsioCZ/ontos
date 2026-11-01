@@ -1,3 +1,4 @@
+import { privacyRegistration } from '../vertical.registration.ts';
 import { PrivacySubjectPartyOwnerUnavailableLive } from '../src/persistence/privacy-subject-party-owner.ts';
 import {
   makeActionRuntimeLive,
@@ -5,7 +6,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
@@ -158,12 +159,31 @@ const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
     ),
   ),
 );
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
   Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
+      PrivacyNoticePresentationUnavailableLive,
+      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+    ),
+  ),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
 const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   ConsentSelfServiceAuthorityUnavailableLive,
   PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
@@ -186,20 +206,8 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   ProcessingInterventionAuthorityUnavailableLive,
   PrivacySubjectPartyOwnerUnavailableLive,
 );
-const productionReadRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
-  ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
-      PrivacyNoticePresentationUnavailableLive,
-      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
-    ),
-  ),
-);
-const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+
+const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -210,7 +218,7 @@ const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUni
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
       ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),

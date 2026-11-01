@@ -71,6 +71,11 @@
  *     `secretRef`, `keyId`, `searchKey`, `providerKeyId` are untouched; and
  *     `Config.String('ONTOS_GATEWAY_PUBLIC_JWKS')` / `Config.String('ONTOS_GATEWAY_ISSUER')` — public
  *     verification material, not credentials — do not match `secretConfigKeys`.
+ *   - **Public operation-binding identities**: a closed readonly binding of an API record key,
+ *     operation key and genuine Core Action/Read registration, referenced by the public surface's
+ *     readonly operationContracts array beside a genuine HttpApi.Constraint record. This models
+ *     declaration/import relationships, not credential-shaped names, interface names or file paths.
+ *     Detached, mutable, counterfeit or foreign bindings and neighboring credentials stay checked.
  *   - **Tests** (`ignoreTestFiles: true` by default). The audit's D tier blesses test fixtures that
  *     hand-build credentials and deliberately malformed values; a `readonly connectionString: string`
  *     inside a vertical's `tests/support` directory is fixture plumbing, not a production leak.
@@ -85,8 +90,10 @@
  * are supported. The name regex options and `allowPaths` are the lexical escape hatches. This rule never fixes and never
  * suggests.
  */
+import { posix } from 'node:path';
+
 import { defineRule } from '@oxlint/plugins';
-import type { ESTree } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { parentOf, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable, resolvesToImport as importedReference } from '../shared/bindings.ts';
@@ -315,6 +322,131 @@ function isStringShaped(node: AnyNode, depth: number): boolean {
   }
 }
 
+const readonlyInterfaceFields = (declaration: ESTree.TSInterfaceDeclaration) => {
+  if (declaration.extends.length !== 0 || declaration.typeParameters) return null;
+  const fields = new Map<string, ESTree.TSPropertySignature>();
+  for (const member of declaration.body.body) {
+    if (
+      member.type !== 'TSPropertySignature' ||
+      !member.readonly ||
+      member.computed ||
+      member.key.type !== 'Identifier'
+    )
+      return null;
+    fields.set(member.key.name, member);
+  }
+  return fields.size === declaration.body.body.length ? fields : null;
+};
+
+const singleImport = (context: Context, identifier: IdentifierNode) => {
+  const variable = resolveVariable(context, identifier.name, identifier);
+  const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+  return definition?.type === 'ImportBinding' &&
+    definition.node.type === 'ImportSpecifier' &&
+    definition.parent?.type === 'ImportDeclaration'
+    ? { name: importedName(definition.node), source: definition.parent.source.value }
+    : undefined;
+};
+
+const registrationContract = (context: Context, node: AnyNode): string | null => {
+  if (node.type !== 'TSTypeReference' || node.typeName.type !== 'Identifier' || node.typeArguments) return null;
+  const definition = singleImport(context, node.typeName);
+  if (!definition) return null;
+  const name = definition.name;
+  if (name !== 'AnyActionRegistration' && name !== 'AnyReadRegistration') return null;
+  const source = definition.source;
+  if (source === '@app/core-runtime') return name;
+  const target = name === 'AnyActionRegistration' ? 'actions' : 'reads';
+  return source.startsWith('.') &&
+    posix.normalize(posix.join(posix.dirname(scopePath(context.filename)), source)) ===
+      `packages/core-runtime/src/${target}/definition.ts`
+    ? name
+    : null;
+};
+
+const genuineRegistrationUnion = (context: Context, node: AnyNode | undefined): boolean => {
+  if (node?.type !== 'TSUnionType' || node.types.length !== 2) return false;
+  const names = new Set(node.types.map((member) => registrationContract(context, member)));
+  return names.size === 2 && names.has('AnyActionRegistration') && names.has('AnyReadRegistration');
+};
+
+const genuineHttpApiConstraint = (context: Context, node: AnyNode): boolean => {
+  if (
+    node.type !== 'TSTypeReference' ||
+    node.typeArguments ||
+    node.typeName.type !== 'TSQualifiedName' ||
+    node.typeName.left.type !== 'Identifier' ||
+    node.typeName.right.name !== 'Constraint'
+  )
+    return false;
+  const definition = singleImport(context, node.typeName.left);
+  return definition?.name === 'HttpApi' && definition.source === 'effect/http-api';
+};
+
+const builtinTypeArguments = (context: Context, node: AnyNode | undefined, name: string) => {
+  if (node?.type !== 'TSTypeReference' || node.typeName.type !== 'Identifier' || node.typeName.name !== name)
+    return null;
+  const variable = resolveVariable(context, name, node.typeName);
+  return variable && variable.defs.length !== 0 ? null : (node.typeArguments?.params ?? null);
+};
+
+const publicApiRecord = (context: Context, field: ESTree.TSPropertySignature | undefined): boolean => {
+  if (!field || field.optional) return false;
+  const readonly = builtinTypeArguments(context, field.typeAnnotation?.typeAnnotation, 'Readonly');
+  const record = readonly?.length === 1 ? builtinTypeArguments(context, readonly[0], 'Record') : null;
+  return record?.length === 2 && record[0]?.type === 'TSStringKeyword' && genuineHttpApiConstraint(context, record[1]);
+};
+
+const referencesOperationBinding = (
+  context: Context,
+  field: ESTree.TSPropertySignature | undefined,
+  declaration: ESTree.TSInterfaceDeclaration,
+): boolean => {
+  const annotation = field?.typeAnnotation?.typeAnnotation;
+  if (annotation?.type !== 'TSTypeOperator' || annotation.operator !== 'readonly') return false;
+  const array = annotation.typeAnnotation;
+  if (array.type !== 'TSArrayType' || array.elementType.type !== 'TSTypeReference') return false;
+  const reference = array.elementType;
+  if (reference.typeName.type !== 'Identifier' || reference.typeArguments) return false;
+  const variable = resolveVariable(context, reference.typeName.name, reference.typeName);
+  return variable?.defs.length === 1 && variable.defs.some((definition) => definition.node === declaration);
+};
+
+/** A public API record identity is not credential material. Its declaration relationship is closed. */
+const publicOperationIdentityFields = (context: Context, program: ESTree.Program): ReadonlySet<AnyNode> => {
+  const declarations = program.body.flatMap((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return declaration?.type === 'TSInterfaceDeclaration' ? [declaration] : [];
+  });
+  const identities = new Set<AnyNode>();
+  for (const declaration of declarations) {
+    const fields = readonlyInterfaceFields(declaration);
+    const apiKey = fields?.get('apiKey');
+    if (
+      fields?.size !== 3 ||
+      !apiKey ||
+      apiKey.optional ||
+      apiKey.typeAnnotation?.typeAnnotation.type !== 'TSStringKeyword' ||
+      fields.get('operationKey')?.optional ||
+      fields.get('operationKey')?.typeAnnotation?.typeAnnotation.type !== 'TSStringKeyword' ||
+      fields.get('registration')?.optional ||
+      !genuineRegistrationUnion(context, fields.get('registration')?.typeAnnotation?.typeAnnotation)
+    )
+      continue;
+    if (
+      declarations.some((surface) => {
+        const surfaceFields = readonlyInterfaceFields(surface);
+        return (
+          publicApiRecord(context, surfaceFields?.get('api')) &&
+          referencesOperationBinding(context, surfaceFields?.get('operationContracts'), declaration)
+        );
+      })
+    )
+      identities.add(apiKey);
+  }
+  return identities;
+};
+
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -392,6 +524,7 @@ export const rule = defineRule({
     let namespaces = new Map<string, string>();
     /** locals bound to the whole `effect` barrel (`import * as Effect from "effect"`). */
     let barrels = new Set<string>();
+    let publicApiIdentities: ReadonlySet<AnyNode> = new Set();
 
     const isSecretName = (name: string): boolean => options.secretNames.test(name);
 
@@ -574,6 +707,7 @@ export const rule = defineRule({
 
     return {
       Program(node) {
+        publicApiIdentities = publicOperationIdentityFields(context, node);
         namespaces = new Map(collectEffectBindings(node).namespaces);
         const isReexport = (source: string) => matchesGlobs(source, options.reexportModules);
         barrels = collectRootNamespaces(node, (source) => source === EFFECT_ROOT_MODULE || isReexport(source), {
@@ -599,6 +733,7 @@ export const rule = defineRule({
             'TSAbstractAccessorProperty',
           ].includes(annotated.type)
         ) {
+          if (publicApiIdentities.has(annotated)) return;
           reportField(annotated as unknown as { key: AnyNode; computed: boolean });
           return;
         }

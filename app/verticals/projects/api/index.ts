@@ -1,10 +1,11 @@
+import { projectsBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
-  ReadRuntimeLive as GovernedReadRuntimeLive,
+  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
@@ -54,9 +55,7 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
     GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive)),
   ),
 );
-const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(
-  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
-);
+
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
     GovernedFetchHttpClient.layer.pipe(
@@ -66,8 +65,15 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
     ),
   ),
 );
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+);
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provide(activeApplicationCompositionLive),
+);
 
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       GovernedCorePersistenceLive,
@@ -80,7 +86,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
         GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive)),
       ),
       ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(GovernedCorePersistenceLive)),
-      ActiveApplicationCompositionConfigLive.pipe(GovernedReadLayer.provide(governedApplicationCompositionSourceLive)),
+      activeApplicationCompositionLive,
     ),
   ),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),

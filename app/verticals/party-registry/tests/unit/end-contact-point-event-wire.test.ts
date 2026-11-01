@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { DateTime, Effect, Schema } from 'effect';
@@ -96,6 +97,7 @@ for (const target of targets) {
       Effect.gen(function* endEventWireBoundary() {
         const commands: EndContactPointCommand[] = [];
         const harness = yield* makeActionTestHarness({
+          ownerRegistration: partyRegistryBackendRegistration,
           actionPermission: 'allowed',
           services: [
             bindActionTestServices(endContactPointAction, {

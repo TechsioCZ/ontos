@@ -15,10 +15,13 @@ type InvoiceRecipientReadServices = ReturnType<typeof invoiceRecipientPortsForTr
 type AddressExternalResolutionPortsFactory = (
   scope: OperationalScope,
   crypto: Crypto.Crypto,
+  requirementKey:
+    | 'commerce.customer-context.requirement.delivery-destination-resolution-party'
+    | 'commerce.customer-context.requirement.invoice-recipient-resolution-party',
 ) => Partial<AddressExternalResolutionPorts>;
 
-const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope, crypto) => ({
-  resolvePartyPostalAddress: partyBackedPostalAddressResolverForScope(scope, crypto),
+const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope, crypto, requirementKey) => ({
+  resolvePartyPostalAddress: partyBackedPostalAddressResolverForScope(scope, crypto, requirementKey),
 });
 
 const makeDeliveryDestinationReadServiceFactory = (
@@ -30,7 +33,13 @@ const makeDeliveryDestinationReadServiceFactory = (
       return deliveryDestinationPortsForTransaction(
         transaction,
         scope,
-        composeAddressExternalResolutionPorts(externalForScope(scope, crypto)),
+        composeAddressExternalResolutionPorts(
+          externalForScope(
+            scope,
+            crypto,
+            'commerce.customer-context.requirement.delivery-destination-resolution-party',
+          ),
+        ),
       );
     },
   );
@@ -46,7 +55,9 @@ const makeInvoiceRecipientReadServiceFactory = (
       return invoiceRecipientPortsForTransaction(
         transaction,
         scope,
-        composeAddressExternalResolutionPorts(externalForScope(scope, crypto)),
+        composeAddressExternalResolutionPorts(
+          externalForScope(scope, crypto, 'commerce.customer-context.requirement.invoice-recipient-resolution-party'),
+        ),
       );
     },
   );
