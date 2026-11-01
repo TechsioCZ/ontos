@@ -269,7 +269,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       contract.manifest.publicSurface.components.length === 0
         ? undefined
         : {
-            bytes: yield* filesystem.readFile(path.join(input.directory, '.output/public/mf-manifest.json')),
+            bytes: yield* filesystem.readFile(path.join(input.directory, '.output/mf-manifest.json')),
             url: new URL('/mf-manifest.json', input.baseUrl).href,
           };
     const observation = {
@@ -283,9 +283,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     return { ...observation, federationManifest };
   });
   // Observe exact freshly built public artifact bytes on disk. These URL locators do not assert HTTP observation.
-  const shellPublicDirectory = path.resolve(process.cwd(), '../../apps/shell-super-app/.output/public');
+  const shellOutputDirectory = path.resolve(process.cwd(), '../../apps/shell-super-app/.output');
   const shellRuntimeBytes = yield* filesystem.readFile(
-    path.join(shellPublicDirectory, ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)),
+    path.join(shellOutputDirectory, 'public', ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)),
   );
   const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
     new TextDecoder().decode(shellRuntimeBytes),
@@ -321,7 +321,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     observedAt: yield* DateTime.now,
     shell: {
       federationManifest: {
-        bytes: yield* filesystem.readFile(path.join(shellPublicDirectory, 'mf-manifest.json')),
+        bytes: yield* filesystem.readFile(path.join(shellOutputDirectory, 'mf-manifest.json')),
         url: new URL('mf-manifest.json', shellReleaseUrl).href,
       },
       runtimeContract: {
