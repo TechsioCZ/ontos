@@ -35,6 +35,7 @@ const {
   navigateMock,
   resolvedTargetMock,
   resolveModuleTargetMock,
+  searchResourcesMock,
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
@@ -49,6 +50,7 @@ const {
     navigateMock: rstest.fn(),
     resolvedTargetMock: rstest.fn<(props: { readonly model: ModuleTargetPageModel }) => null>(() => null),
     resolveModuleTargetMock: rstest.fn(),
+    searchResourcesMock: rstest.fn(),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
@@ -95,9 +97,16 @@ const translations = new Map(
     'shell.modules.state.readOnly': 'Read only',
     'shell.modules.unavailable': 'Module access unavailable',
     'shell.moduleTarget.reload_required': 'Reload this page to continue',
+    'shell.search.archived': 'Archived',
     'shell.search.clear': 'Clear search',
+    'shell.search.groups.counterparty': 'Customers and suppliers',
+    'shell.search.groups.party': 'Contacts',
     'shell.search.label': 'Search',
     'shell.search.placeholder': 'Search customers and contacts…',
+    'shell.search.roles.CUSTOMER': 'Customer',
+    'shell.search.suggestions.all': 'Show all results',
+    'shell.search.suggestions.label': 'Search suggestions',
+    'shell.search.suggestions.loading': 'Searching…',
   }),
 );
 
@@ -133,6 +142,7 @@ rstest.mock('@tanstack/react-router', () => ({
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
   resolveModuleTarget: resolveModuleTargetMock,
+  searchResources: searchResourcesMock,
   signOut: signOutMock,
   switchLegalEntity: switchLegalEntityMock,
   switchTenant: switchTenantMock,
@@ -355,6 +365,69 @@ it.live('top-bar search submits on Enter to the localized Shell search route', (
     ).toBeNull();
     yield* Effect.promise(() => user.type(searchbox, 'Unit 1{Enter}'));
     expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
+  }),
+);
+
+it.live('top-bar typeahead shows grouped matches after a pause and moves between them by keyboard', () =>
+  Effect.gen(function* topBarTypeahead() {
+    const user = userEvent.setup();
+    const partyRef = {
+      moduleId: 'party.registry',
+      resourceId: '00000000-0000-4000-8000-000000000301',
+      resourceType: 'party.registry.party',
+      tenantId: tenantId1,
+    };
+    const counterpartyRef = {
+      ...partyRef,
+      resourceId: '00000000-0000-4000-8000-000000000302',
+      resourceType: 'party.registry.counterparty',
+    };
+    searchResourcesMock.mockReturnValue(
+      Effect.succeed({
+        partial: false,
+        results: [
+          {
+            currentRoles: ['CUSTOMER'],
+            kind: 'counterparty',
+            legalEntity: { legalEntityId: legalEntityId1, tenantId: tenantId1 },
+            party: { archived: false, matchedViaAlias: false, ref: partyRef, title: 'Jana Dvořáková' },
+            ref: counterpartyRef,
+            title: 'Jana Dvořáková',
+          },
+          { archived: false, kind: 'party', matchedViaAlias: false, ref: partyRef, title: 'Jana Dvořáková' },
+          {
+            archived: true,
+            kind: 'party',
+            matchedViaAlias: false,
+            ref: { ...partyRef, resourceId: '00000000-0000-4000-8000-000000000303' },
+            title: 'Dvořák Stavby',
+          },
+        ],
+      }),
+    );
+    render(<HomeView initialModel={authenticatedModel()} />);
+    const searchbox = screen.getByRole('searchbox', { name: 'Search' });
+    yield* Effect.promise(() => user.type(searchbox, 'dvor'));
+    const customers = yield* Effect.promise(() => screen.findByRole('list', { name: 'Customers and suppliers' }));
+    // One request for the whole burst of keystrokes, with the final text.
+    expect(searchResourcesMock.mock.calls.map(([payload]) => payload)).toContainEqual({
+      compositionRevision,
+      query: 'dvor',
+    });
+    const customer = within(customers).getByRole('link', { name: /Jana Dvořáková/u });
+    expect(customer.textContent).toContain('Customer');
+    const contacts = screen.getByRole('list', { name: 'Contacts' });
+    expect(
+      within(contacts)
+        .getAllByRole('link')
+        .map(({ textContent }) => textContent),
+    ).toEqual(['Dvořák StavbyArchived']);
+    yield* Effect.promise(() => user.keyboard('{ArrowDown}'));
+    expect(document.activeElement).toBe(customer);
+    yield* Effect.promise(() => user.keyboard('{ArrowDown}{ArrowDown}'));
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search' }));
+    yield* Effect.promise(() => user.keyboard('{Escape}'));
+    expect(screen.queryByRole('list', { name: 'Contacts' })).toBeNull();
   }),
 );
 

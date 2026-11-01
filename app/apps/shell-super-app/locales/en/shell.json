@@ -298,8 +298,19 @@
       "unavailable": "The module is temporarily unavailable. Try again."
     },
     "search": {
+      "groups": {
+        "counterparty": "Customers and suppliers",
+        "party": "Contacts",
+        "resource": "Other records"
+      },
+      "suggestions": {
+        "all": "Show all results for “{{query}}”",
+        "empty": "Nothing found for “{{query}}”.",
+        "label": "Search suggestions",
+        "loading": "Searching…"
+      },
       "agenda_title": "Search within an agenda",
-      "agenda_hint": "Global search is not part of this demo. Open an authorized agenda and use its search or filters. No record results are simulated here.",
+      "agenda_hint": "Search is unavailable right now. Try again shortly, or open an agenda and search there.",
       "alias_match": "Alias match",
       "archived": "Archived",
       "counterparty": "Counterparty",

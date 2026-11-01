@@ -1,7 +1,7 @@
 import { moduleReleaseFetch } from '@app/core-runtime/unit-service-fetch';
 import { Effect, Schema } from 'effect';
 
-import { ShellProviderUnavailableError } from './shell-resources.ts';
+import { ShellProviderUnavailableError, ShellSearchProviderResultsSchema } from './shell-resources.ts';
 import type { ShellSearchProviderHandler, ShellSearchProviderRequest } from './shell-resources.ts';
 
 type ModuleReleaseTransport = typeof moduleReleaseFetch;
@@ -15,7 +15,7 @@ type ProviderPayload = {
   -readonly [Key in keyof typeof ProviderPayloadSchema.Type]: (typeof ProviderPayloadSchema.Type)[Key];
 };
 const encodeProviderPayload = Schema.encodeEffect(Schema.fromJsonString(ProviderPayloadSchema));
-const decodeProviderResults = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
+const decodeProviderResults = Schema.decodeUnknownEffect(Schema.fromJsonString(ShellSearchProviderResultsSchema));
 
 /**
  * The Codesmith search-provider route inside the owner's own BFF: search key `<module>.<name>` is served at

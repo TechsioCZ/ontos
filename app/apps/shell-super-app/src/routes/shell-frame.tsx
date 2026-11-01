@@ -32,7 +32,7 @@ import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-
 import { StaffRoutePreloadContext, useIdleRoutePreload } from './use-idle-route-preload.ts';
 import { useHydratedMarker } from './use-hydrated.ts';
 import { ShellSearchBar } from './shell-search-bar.tsx';
-import type { ShellSearchBarProps } from './shell-search-bar.tsx';
+import { useShellSearchSuggestions } from './shell-search-suggestions.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -700,15 +700,34 @@ const DashboardNavigationLink = ({
 
 const navigationToggleKey = 'shell.dashboard.navigation.toggle';
 
+interface DashboardHeaderSearchProps {
+  readonly compositionRevision: string | undefined;
+  readonly hidden: boolean;
+  readonly onSearch: (query: string) => void;
+}
+
 /** The global search, centred between the trail and the account; hidden once sign-out has started. */
-const DashboardHeaderSearch = ({ hidden, ...search }: ShellSearchBarProps & { readonly hidden: boolean }) =>
-  hidden ? null : (
+const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch }: DashboardHeaderSearchProps) => {
+  const [value, setValue] = useState('');
+  const suggestions = useShellSearchSuggestions(compositionRevision);
+  return hidden ? null : (
     <Header.Container className="flex w-auto min-w-0 flex-1 justify-center md:flex-[2]" position="center">
       <div className="w-full max-w-xl">
-        <ShellSearchBar {...search} />
+        <ShellSearchBar
+          onDismissSuggestions={suggestions.handleDismiss}
+          onSearch={onSearch}
+          onValueChange={(next) => {
+            setValue(next);
+            suggestions.handleQueryChange(next);
+          }}
+          SuggestionLink={ShellRouteLink}
+          suggestions={suggestions.state}
+          value={value}
+        />
       </div>
     </Header.Container>
   );
+};
 
 /** Grouped navigation panel: labelled groups on desktop, icon rail when collapsed, drawer below lg. */
 const GroupedSidebarPanel = ({
@@ -837,7 +856,6 @@ const useDashboardRoutePreload = (props: AuthenticatedDashboardLayoutProps) =>
  */
 export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
   const { language, t } = useModernI18n();
-  const [searchValue, setSearchValue] = useState('');
   const { tenantSwitchFailed } = props;
   const pageLanguage = language ?? '';
   const pendingHref = usePendingNavigationHref(pageLanguage);
@@ -924,10 +942,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
           <DashboardHeaderSearch
+            compositionRevision={props.compositionRevision}
             hidden={props.logoutPending}
             onSearch={props.onSearch}
-            onValueChange={setSearchValue}
-            value={searchValue}
           />
           <Header.Container className="flex w-auto shrink-0 justify-end md:flex-1 md:basis-0" position="end">
             <Header.Actions>

@@ -75,6 +75,9 @@ const RawShellSearchResultSchema = Schema.Union([
 ]);
 export type ShellSearchResult = SharedShellSearchResult;
 
+/** A provider's response as it crosses the wire, before the Shell decodes and authorizes each result. */
+export const ShellSearchProviderResultsSchema = Schema.Array(Schema.toEncoded(RawShellSearchResultSchema));
+
 export interface ShellSearchRequest {
   readonly includeArchived?: boolean;
   readonly query: string;

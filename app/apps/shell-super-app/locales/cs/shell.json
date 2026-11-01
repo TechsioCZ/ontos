@@ -298,8 +298,19 @@
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
     },
     "search": {
+      "groups": {
+        "counterparty": "Zákazníci a dodavatelé",
+        "party": "Kontakty",
+        "resource": "Další záznamy"
+      },
+      "suggestions": {
+        "all": "Zobrazit všechny výsledky pro „{{query}}“",
+        "empty": "Pro „{{query}}“ jsme nic nenašli.",
+        "label": "Návrhy hledání",
+        "loading": "Hledám…"
+      },
       "agenda_title": "Vyhledávání v agendách",
-      "agenda_hint": "Společné vyhledávání není součástí této ukázky. Otevřete povolenou agendu a použijte její hledání nebo filtry. Výsledky záznamů zde nepředstíráme.",
+      "agenda_hint": "Hledání je teď nedostupné. Zkuste to za chvíli znovu, nebo otevřete agendu a hledejte přímo v ní.",
       "alias_match": "Shoda přes alias",
       "archived": "Archivováno",
       "counterparty": "Obchodní protistrana",
