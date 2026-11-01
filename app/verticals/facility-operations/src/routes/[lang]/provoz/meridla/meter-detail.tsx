@@ -492,6 +492,7 @@ export const MeterDetail = ({
             formatValue={(value) => formatQuantity(value, meter.unit)}
             height={200}
             legend={hasAnomaly}
+            locale={language}
             series="series"
             stacked
             type="bar"
