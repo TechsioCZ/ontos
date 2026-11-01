@@ -2,6 +2,25 @@
   "reports": {
     "customPeriod": "Vlastní období",
     "dateFrom": "Od",
-    "dateTo": "Do"
+    "dateTo": "Do",
+    "chart": {
+      "boundaryFailed": "Graf se nepodařilo vykreslit; čísla najdete v datové tabulce níže.",
+      "countsAria": "Počet objednávek po měsících",
+      "countsDescription": "Počet objednávek od {{from}} do {{to}}. Přesná čísla včetně stavů jsou v datové tabulce pod grafy.",
+      "countsNote": "Spárované objednávky bez duplicit. Podrobné rozdělení podle stavů je v datové tabulce a souhrnu.",
+      "emptyDescription": "Pro zvolené filtry neexistuje žádná započtená objednávka.",
+      "month": "Měsíc",
+      "noAmount": "Zdroj u započtených objednávek neposkytl částku a měnu.",
+      "orderCount": "Počet objednávek",
+      "orders": "Objednávky",
+      "tableCaption": "Přesná měsíční data obou grafů a stavy objednávek",
+      "tableToggle": "Zobrazit datovou tabulku grafů (měsíce, stavy, měny)",
+      "valueAria": "Hodnota objednávek v {{currency}} po měsících",
+      "valueDescription": "Hodnota objednávek v {{currency}} od {{from}} do {{to}}. Přesné částky jsou v datové tabulce pod grafy.",
+      "valueIn": "Hodnota {{currency}}",
+      "valueNote": "Součet importovaných částek jen v {{currency}}; ostatní měny se nikdy nepřičítají. Nejde o tržbu. Měsíce bez poskytnuté částky v této měně se nevykreslují.",
+      "valueTitle": "Hodnota objednávek",
+      "valueTitleIn": "Hodnota objednávek v {{currency}}"
+    }
   }
 }

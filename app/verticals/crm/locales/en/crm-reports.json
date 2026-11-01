@@ -2,6 +2,25 @@
   "reports": {
     "customPeriod": "Custom period",
     "dateFrom": "From",
-    "dateTo": "To"
+    "dateTo": "To",
+    "chart": {
+      "boundaryFailed": "The chart could not be drawn; the numbers are in the data table below.",
+      "countsAria": "Number of orders by month",
+      "countsDescription": "Number of orders from {{from}} to {{to}}. Exact figures including statuses are in the data table below the charts.",
+      "countsNote": "Paired orders without duplicates. The breakdown by status is in the data table and the summary.",
+      "emptyDescription": "No counted order matches the selected filters.",
+      "month": "Month",
+      "noAmount": "The source did not provide an amount and currency for the counted orders.",
+      "orderCount": "Number of orders",
+      "orders": "Orders",
+      "tableCaption": "Exact monthly data of both charts and order statuses",
+      "tableToggle": "Show the chart data table (months, statuses, currencies)",
+      "valueAria": "Order value in {{currency}} by month",
+      "valueDescription": "Order value in {{currency}} from {{from}} to {{to}}. Exact amounts are in the data table below the charts.",
+      "valueIn": "Value {{currency}}",
+      "valueNote": "Sum of imported amounts in {{currency}} only; other currencies are never added. This is not revenue. Months without an amount in this currency are not drawn.",
+      "valueTitle": "Order value",
+      "valueTitleIn": "Order value in {{currency}}"
+    }
   }
 }
