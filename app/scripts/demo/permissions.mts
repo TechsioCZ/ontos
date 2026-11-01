@@ -44,6 +44,8 @@ const commercialAdministratorLabel = 'Vedoucí obchodu';
 const partyModule = 'party.registry';
 const workforceModule = 'demo.workforce';
 const operationsModule = 'facility.operations';
+const marketModule = 'commerce.market-catalog';
+const storefrontRegistryModule = 'commerce.storefront-registry';
 const tenantSuperadminRole = 'superadmin';
 const principalResource = 'core.principal';
 const crmReadAll = 'demo.crm.read_all';
@@ -72,6 +74,8 @@ export const demoModuleIds = [
   'demo.crm',
   'crm.activities',
   operationsModule,
+  marketModule,
+  storefrontRegistryModule,
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
@@ -728,8 +732,11 @@ export const eshopDemoRoles = {
       [commerceModule]: 'read',
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
+      // E-shops and their markets: the company administrator manages markets, associations and registrations.
+      [marketModule]: 'write',
       [partyModule]: 'write',
       'privacy.core': 'read',
+      [storefrontRegistryModule]: 'write',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
@@ -751,7 +758,8 @@ export const eshopDemoRoles = {
       ],
     },
     label: 'AKROS storefront (API)',
-    modules: { [commerceModule]: 'read', 'demo.merchandise': 'write', 'work.tasks': 'write' },
+    // Market resolution for the locale paths (current-market-catalog, resolve-commerce-market).
+    modules: { [commerceModule]: 'read', 'demo.merchandise': 'write', [marketModule]: 'read', 'work.tasks': 'write' },
     restrictedModules: [commerceModule],
   },
   eshopAdmin: {
@@ -761,13 +769,20 @@ export const eshopDemoRoles = {
       [commerceModule]: 'read',
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
+      [marketModule]: 'write',
       [partyModule]: 'write',
+      [storefrontRegistryModule]: 'write',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
     proposalReview: true,
   },
-  fulfilment: { label: 'Expedice', modules: { 'demo.merchandise': 'write' }, proposalReview: true },
+  fulfilment: {
+    label: 'Expedice',
+    // Read-only view of the e-shops and markets the orders come from.
+    modules: { 'demo.merchandise': 'write', [marketModule]: 'read', [storefrontRegistryModule]: 'read' },
+    proposalReview: true,
+  },
   /** Non-human storefront BFF: merchandise reads and the apply-command Action (PlaceStorefrontOrder). */
   storefront: { label: 'Storefront (API)', modules: { 'demo.merchandise': 'write' } },
 } as const satisfies Readonly<Record<string, DemoRole>>;
@@ -1001,7 +1016,8 @@ export const marketRetirementActionKeys: readonly string[] = ['commerce.customer
 /** Market reads share one permission; retirement execution is restricted to exact company-scoped descriptors. */
 export const marketRetirementRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const { legalEntityId, principalId } = marketRetirementPrincipal;
-  const marketModule = toModuleAccessObjectId(demoTenantId, legalEntityId, 'commerce.market-catalog') ?? '';
+  const marketModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, marketModule) ?? '';
+  const storefrontModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, storefrontRegistryModule) ?? '';
   const roleId = toScopedRoleObjectId({
     legalEntityId,
     roleKey: demoPrincipalRoleKey(principalId),
@@ -1028,14 +1044,23 @@ export const marketRetirementRelationships = (actions: readonly DemoAction[]): r
     ),
     {
       relation: 'legal_entity',
-      resourceId: marketModule,
+      resourceId: marketModuleAccess,
       resourceType: 'module_access',
       subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
       subjectType: 'legal_entity',
     },
     // Both CCC reads check resource#read on a Market-owner resource linked to this exact company module.
     // reader_role supplies module->read_all and module->access, never resource#write or Market Actions.
-    roleRelationship('module_access', marketModule, 'reader_role', roleId),
+    roleRelationship('module_access', marketModuleAccess, 'reader_role', roleId),
+    // The same Market owner gateway validates Storefront Application currentness before an association.
+    {
+      relation: 'legal_entity',
+      resourceId: storefrontModuleAccess,
+      resourceType: 'module_access',
+      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      subjectType: 'legal_entity',
+    },
+    roleRelationship('module_access', storefrontModuleAccess, 'reader_role', roleId),
   ];
 };
 

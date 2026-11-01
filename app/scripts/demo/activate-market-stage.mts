@@ -21,8 +21,10 @@ import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './ag
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
 import { demoTenantId } from './fixture-ids.mts';
 
-export const stageMarketModuleKey = 'commerce.market-catalog';
-const activationReason = 'Operator-approved tenant-wide Market activation for the sales demo';
+/** The e-shop market modules this operator may activate tenant-wide; nothing else. */
+export const stageMarketModuleKeys = ['commerce.market-catalog', 'commerce.storefront-registry'] as const;
+export type StageMarketModuleKey = (typeof stageMarketModuleKeys)[number];
+const activationReason = 'Operator-approved tenant-wide e-shop market activation for the sales demo';
 const modes = ['dry-run', 'apply', 'verify'] as const;
 const sameContracts = Schema.toEquivalence(Schema.Array(OntosModuleDeploymentContractSchema));
 
@@ -38,7 +40,7 @@ export const marketActivationScopeAllowed = (tenantId: string, authMethod: strin
 export const ReviewedMarketActivationPlanSchema = Schema.Struct({
   actionKey: Schema.Literal('core.modules.change-tenant-module-state'),
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
-  moduleKey: Schema.Literal(stageMarketModuleKey),
+  moduleKey: Schema.Literals(stageMarketModuleKeys),
   operatorPrincipalId: Schema.String.check(Schema.isUUID()).pipe(
     Schema.brand('MarketActivationOperatorPrincipalId'),
     Schema.decodeTo(Schema.String.check(Schema.isUUID())),
@@ -47,7 +49,12 @@ export const ReviewedMarketActivationPlanSchema = Schema.Struct({
 });
 export const marketActivationPlanFingerprint = (text: string) => createHash('sha256').update(text).digest('hex');
 
-const main = (mode: (typeof modes)[number], planPath: string, reviewed: Option.Option<string>) =>
+const main = (
+  mode: (typeof modes)[number],
+  stageMarketModuleKey: StageMarketModuleKey,
+  planPath: string,
+  reviewed: Option.Option<string>,
+) =>
   Effect.gen(function* activateStageMarket() {
     const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
     const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
@@ -73,7 +80,7 @@ const main = (mode: (typeof modes)[number], planPath: string, reviewed: Option.O
       return yield* fail('The approved composition changed after operator preparation; restart with a fresh plan');
     }
     if (catalog.getByModuleId(stageMarketModuleKey) === undefined) {
-      return yield* fail('The active composition does not publish Market');
+      return yield* fail('The active composition does not publish the requested module');
     }
     const plan = yield* Schema.decodeUnknownEffect(ReviewedMarketActivationPlanSchema)({
       actionKey: changeTenantModuleStateAction.descriptor.actionKey,
@@ -94,7 +101,7 @@ const main = (mode: (typeof modes)[number], planPath: string, reviewed: Option.O
       .pipe(Effect.map((rows) => rows.at(0)?.state ?? 'inactive'));
     const state = yield* readState;
     if (state !== 'inactive' && state !== 'active') {
-      return yield* fail('Market has an explicit non-active lifecycle state; this installer will not replace it');
+      return yield* fail('The module has an explicit non-active lifecycle state; this installer will not replace it');
     }
     if (mode === 'dry-run') {
       yield* filesystem.writeFileString(planPath, text, { flag: 'wx', mode: 0o600 });
@@ -115,7 +122,7 @@ const main = (mode: (typeof modes)[number], planPath: string, reviewed: Option.O
       return yield* fail('The exact owner-only activation plan and its reviewed fingerprint are required');
     }
     if (mode === 'verify' && state !== 'active') {
-      return yield* fail('Market is not activated');
+      return yield* fail('The module is not activated');
     }
     if (mode === 'apply' && state !== 'active') {
       const runtime = yield* ActionRuntime;
@@ -135,7 +142,7 @@ const main = (mode: (typeof modes)[number], planPath: string, reviewed: Option.O
       });
     }
     if ((yield* readState) !== 'active') {
-      return yield* fail('The governed activation did not persist an active Market module state');
+      return yield* fail('The governed activation did not persist an active module state');
     }
     return yield* Console.log({ mode, moduleKey: stageMarketModuleKey, state: 'active', tenantId: demoTenantId });
   }).pipe(Effect.scoped);
@@ -166,11 +173,12 @@ const command = Command.make(
   'activate-market-stage',
   {
     mode: Flag.Literals('mode', modes).pipe(Flag.withDefault('dry-run')),
+    module: Flag.Literals('module', stageMarketModuleKeys),
     plan: Flag.String('plan'),
     reviewed: Flag.String('reviewed-plan-sha256').pipe(Flag.optional),
   },
-  ({ mode, plan, reviewed }) =>
-    main(mode, plan, reviewed).pipe(
+  ({ mode, module, plan, reviewed }) =>
+    main(mode, module, plan, reviewed).pipe(
       Effect.tapError((failure) =>
         Console.error(`Market activation stopped (${failure._tag}); credentials and provider details withheld`),
       ),

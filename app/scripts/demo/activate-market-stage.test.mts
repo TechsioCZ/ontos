@@ -29,8 +29,10 @@ it('accepts only tenant-only session scope in the approved demo tenant', () => {
   expect(marketActivationScopeAllowed('70000000-0000-4000-8000-000000000010', 'session')).toBe(false);
 });
 
-it('the reviewed plan names only Market, its genuine Core activation Action, and the exact demo tenant', () => {
+it('the reviewed plan names only an e-shop market module, its Core activation Action, and the demo tenant', () => {
   expect(validPlan(plan)).toBe(true);
+  expect(validPlan({ ...plan, moduleKey: 'commerce.storefront-registry' })).toBe(true);
+  expect(validPlan({ ...plan, moduleKey: 'commerce.assortment' })).toBe(false);
   expect(validPlan({ ...plan, moduleKey: 'privacy.core' })).toBe(false);
   expect(validPlan({ ...plan, actionKey: 'commerce.market-catalog.retire-market' })).toBe(false);
   expect(validPlan({ ...plan, tenantId: '70000000-0000-4000-8000-000000000010' })).toBe(false);
