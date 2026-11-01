@@ -2098,10 +2098,11 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
         issuer: input.fixture.origin,
       }),
     );
+    const expiredAt = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
     const expiredClaims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)({
       ...verifiedExpirySource.payload,
-      exp: Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1,
-      iat: Math.floor((yield* Clock.currentTimeMillis) / 1000) - 30,
+      exp: expiredAt,
+      iat: expiredAt - 300,
       jti: yield* crypto.randomUUIDv4(),
     });
     // Negative-only signed fixture: this expired assertion is never accepted as authority.
