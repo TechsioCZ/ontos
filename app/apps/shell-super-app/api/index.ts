@@ -131,7 +131,6 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfig, AuthConfigLive } from './auth/config.ts';
-import { AuthDatabaseFromDatabaseConfigLive } from './auth/db/client.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
   CommerceExternalIdentityDeploymentLive,
@@ -160,7 +159,7 @@ import {
 import type { SupportImpersonationError } from './auth/impersonation-service.ts';
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
-import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
+import { AuthPersistenceFromConfigLive, AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import type { ShellContextResult } from './auth/service.ts';
 import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
@@ -1952,12 +1951,7 @@ export const makeShellAuthenticationApiRuntime = (
   const runtimeAuthPersistenceLive =
     runtimeDatabase === undefined
       ? authPersistenceLive
-      : Layer.mergeAll(
-          runtimeAuthConfigLive,
-          AuthDatabaseFromDatabaseConfigLive.pipe(
-            Layer.provide(Layer.succeed(DatabaseConfig, runtimeDatabase.runtime)),
-          ),
-        );
+      : AuthPersistenceFromConfigLive.pipe(Layer.provide(runtimeAuthConfigLive));
   const runtimePrincipalResolverLive =
     runtimeDatabase === undefined
       ? principalResolverLive
