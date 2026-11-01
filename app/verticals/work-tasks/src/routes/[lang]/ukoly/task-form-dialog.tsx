@@ -1,11 +1,15 @@
 import {
+  AutosaveStatus,
   SidePanel,
   comboboxTranslations,
   datePickerTranslations,
   dialogCloseLabel,
   surfaceTileClassName,
+  useAutosaveDraft,
 } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { assignmentLabel, principalKey } from '../../../../shared/assignment.ts';
 import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
 import { CalendarDate } from '@internationalized/date';
@@ -17,9 +21,9 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { DateTime, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
-import type { FocusEvent, KeyboardEvent } from 'react';
+import type { Dispatch, FocusEvent, KeyboardEvent, ReactNode, SetStateAction } from 'react';
 import { OpportunityIdSchema, PartyIdSchema, TaskPrioritySchema } from '../../../../shared/apis/records.ts';
 import { TaskContextPickers } from './task-context-pickers.tsx';
 import { ChangeHistory } from './change-history.tsx';
@@ -40,7 +44,7 @@ import {
   taskContextHref,
 } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
-import { hasUnsavedInput, initialValues, taskFormSubmission } from './task-form-values.ts';
+import { hasUnsavedInput, initialValues, sameFormValues, taskFormSubmission } from './task-form-values.ts';
 import type { Decoded, FormValues, TaskFormSubmission } from './task-form-values.ts';
 
 export type { TaskFormSubmission } from './task-form-values.ts';
@@ -162,13 +166,11 @@ const DiscardDialog = ({
   onDiscard,
   onKeep,
   open,
-  task,
 }: {
   readonly finalFocusEl: () => HTMLElement | null;
   readonly onDiscard: () => void;
   readonly onKeep: () => void;
   readonly open: boolean;
-  readonly task: Task | undefined;
 }) => {
   const { t } = useModernI18n();
   return (
@@ -197,9 +199,7 @@ const DiscardDialog = ({
       open={open}
       role="alertdialog"
       size="sm"
-      title={
-        task === undefined ? t(`${key}.discard.createTitle`) : t(`${key}.discard.editTitle`, { title: task.title })
-      }
+      title={t(`${key}.discard.createTitle`)}
     />
   );
 };
@@ -344,8 +344,14 @@ interface TaskFormDialogProps {
   readonly lookupAccess: LookupAccess | undefined;
   /** Hides a closed task from the lists (true) or lists it again (false); absent without write access. */
   readonly onArchive?: ((archived: boolean) => void) | undefined;
+  /** Saves an edit of an existing task against the revision its draft builds on. */
+  readonly onAutosave: (
+    submission: TaskFormSubmission,
+    expectedRevision: number,
+  ) => Effect.Effect<RevisionedSaveResult>;
   readonly onClose: () => void;
   readonly onComment?: (text: string) => void;
+  /** Creates the task on "Vytvořit úkol". */
   readonly onSubmit: (submission: TaskFormSubmission) => void;
   readonly opportunities: readonly OpportunityOption[];
   readonly opportunitiesLoading: boolean;
@@ -353,6 +359,8 @@ interface TaskFormDialogProps {
   readonly principals: readonly AssignmentPrincipal[];
   readonly projects?: readonly WorkProject[];
   readonly readOnly?: boolean;
+  /** Revision of the task list the panel's task comes from. */
+  readonly revision: number;
   /** `undefined` creates a task. Mount this component only while it is open. */
   readonly task: Task | undefined;
 }
@@ -381,10 +389,48 @@ const contextLinkKey = (ref: ContextRef) => {
   return 'openProperty';
 };
 
-const useTaskForm = ({ busy, onClose, onSubmit, opportunities, principals, readOnly, task }: ResolvedTaskFormProps) => {
+/** The decoded references and field errors of one draft. */
+const assess = (
+  values: FormValues,
+  { opportunities, principals, task }: Pick<ResolvedTaskFormProps, 'opportunities' | 'principals' | 'task'>,
+) => {
+  const decoded: Decoded = {
+    dueDate: values.dueDate,
+    opportunityId: decodeOptional(OpportunityIdSchema, values.opportunityId),
+    ownerPrincipalRef:
+      selectedPrincipal(principals, values.assigneeId) ??
+      (task?.ownerPrincipalRef !== undefined && principalKey(task.ownerPrincipalRef) === values.assigneeId
+        ? task.ownerPrincipalRef
+        : undefined),
+    partyId: decodeOptional(PartyIdSchema, values.partyId),
+  };
+  const opportunityOwner = opportunities.find((opportunity) => opportunity.id === values.opportunityId)?.partyId;
+  const errors = validate(values, task, decoded, opportunityOwner);
+  return { decoded, errors, hasErrors: Object.values(errors).some((code) => code !== undefined) };
+};
+
+/** What the form sends for a draft; None while a field is invalid. */
+const submissionOf = (values: FormValues, props: ResolvedTaskFormProps) => {
+  const { decoded, hasErrors } = assess(values, props);
+  return hasErrors ? Option.none() : taskFormSubmission(values, decoded);
+};
+
+interface TaskDraftState {
+  readonly markSubmitted: () => void;
+  /** Asks to close the panel: a create draft confirms first, an edit sends what is pending. */
+  readonly requestClose: (form: { readonly openDiscard: () => void }) => void;
+  /** Sends a valid draft: creates the task, or saves the edit now. */
+  readonly send: (submission: TaskFormSubmission) => void;
+  readonly setValues: Dispatch<SetStateAction<FormValues>>;
+  /** Field errors show after the first create attempt and always while editing. */
+  readonly showErrors: boolean;
+  readonly values: FormValues;
+}
+
+const useTaskForm = (props: ResolvedTaskFormProps, draft: TaskDraftState) => {
+  const { busy, readOnly, task } = props;
   const { t } = useModernI18n();
-  const [values, setValues] = useState(() => initialValues(task));
-  const [submitted, setSubmitted] = useState(false);
+  const { setValues, showErrors, values } = draft;
   const [comment, setComment] = useState('');
   const [submitAttempts, setSubmitAttempts] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -405,15 +451,13 @@ const useTaskForm = ({ busy, onClose, onSubmit, opportunities, principals, readO
   // The field focused when closing was asked for (the Řešitel trigger after Escape); "keep editing" returns there.
   const closeRequester = useRef<HTMLElement | null>(null);
   const set = (patch: Partial<FormValues>) => setValues((current) => ({ ...current, ...patch }));
-  // Escape, the close button and Zrušit keep the draft behind a confirmation while it holds unsaved input.
-  const requestClose = () => {
-    if (hasUnsavedInput(values, task)) {
-      closeRequester.current = globalThis.document.querySelector<HTMLElement>(':focus');
-      setConfirmDiscard(true);
-    } else {
-      onClose();
-    }
-  };
+  const requestClose = () =>
+    draft.requestClose({
+      openDiscard: () => {
+        closeRequester.current = globalThis.document.querySelector<HTMLElement>(':focus');
+        setConfirmDiscard(true);
+      },
+    });
 
   // A failed submit moves focus to the first invalid field. The error state renders after this submit, so the
   // effect waits for it.
@@ -423,39 +467,25 @@ const useTaskForm = ({ busy, onClose, onSubmit, opportunities, principals, readO
     }
   }, [submitAttempts]);
 
-  const decoded: Decoded = {
-    dueDate: values.dueDate,
-    opportunityId: decodeOptional(OpportunityIdSchema, values.opportunityId),
-    ownerPrincipalRef:
-      selectedPrincipal(principals, values.assigneeId) ??
-      (task?.ownerPrincipalRef !== undefined && principalKey(task.ownerPrincipalRef) === values.assigneeId
-        ? task.ownerPrincipalRef
-        : undefined),
-    partyId: decodeOptional(PartyIdSchema, values.partyId),
-  };
-  const opportunityOwner = opportunities.find((opportunity) => opportunity.id === values.opportunityId)?.partyId;
-  const errors = validate(values, task, decoded, opportunityOwner);
+  const { decoded, errors, hasErrors } = assess(values, props);
   const message = (field: FieldName) => {
     const code = errors[field];
-    return submitted && code !== undefined ? t(`${key}.errors.${code}`) : undefined;
+    return showErrors && code !== undefined ? t(`${key}.errors.${code}`) : undefined;
   };
-  const hasErrors = Object.values(errors).some((code) => code !== undefined);
 
   const submit = () => {
     if (locked) {
       return;
     }
-    setSubmitted(true);
+    draft.markSubmitted();
     if (hasErrors) {
       setSubmitAttempts((count) => count + 1);
       return;
     }
     const submission = taskFormSubmission(values, decoded);
-    if (Option.isNone(submission)) {
-      setSubmitted(true);
-      return;
+    if (Option.isSome(submission)) {
+      draft.send(submission.value);
     }
-    onSubmit(submission.value);
   };
 
   return {
@@ -692,7 +722,8 @@ const TaskFormFields = ({
       {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
       <div onFocus={rememberListField}>
         <DatePicker.Root
-          defaultValue={toCalendarDate(values.dueDate)}
+          // An edit follows its draft, which live rereads and "Načíst aktuální verzi" replace; a new task starts empty.
+          {...(isEdit ? { value: toCalendarDate(values.dueDate) } : { defaultValue: toCalendarDate(values.dueDate) })}
           disabled={fieldsDisabled}
           invalid={dueDateMessage !== undefined}
           locale="cs-CZ"
@@ -825,12 +856,73 @@ const TaskArchiveControl = ({ busy, onArchive, task }: ResolvedTaskFormProps) =>
   );
 };
 
-export const TaskFormDialog = (input: TaskFormDialogProps) => {
-  const { contextLabels = emptyContextLabels, projects = emptyProjects, readOnly = false } = input;
-  const props = { ...input, contextLabels, projects, readOnly };
-  const { busy, error, onClose, task } = props;
+/** A new task's draft: sent once on "Vytvořit úkol"; closing asks before it drops typed input. */
+const useCreateDraft = ({ onClose, onSubmit }: ResolvedTaskFormProps): TaskDraftState => {
+  const [values, setValues] = useState(() => initialValues());
+  const [submitted, setSubmitted] = useState(false);
+  return {
+    markSubmitted: () => setSubmitted(true),
+    requestClose: ({ openDiscard }) => {
+      if (hasUnsavedInput(values)) {
+        openDiscard();
+      } else {
+        onClose();
+      }
+    },
+    send: onSubmit,
+    setValues,
+    showErrors: submitted,
+    values,
+  };
+};
+
+/**
+ * An existing task's draft saves itself (debounced, on Enter and on closing) against the revision it builds on; a
+ * task that someone else changed meanwhile ends in a conflict that offers the current version.
+ */
+const useEditDraft = (props: ResolvedTaskFormProps & { readonly task: Task }) => {
+  const { onAutosave, onClose, revision, task } = props;
+  const autosave = useAutosaveDraft<FormValues, never>({
+    equals: sameFormValues,
+    isValid: (value) => Option.isSome(submissionOf(value, props)),
+    revision,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) =>
+      Option.match(submissionOf(value, props), {
+        onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
+        onSome: (submission) => onAutosave(submission, expectedRevision),
+      }),
+    server: initialValues(task),
+  });
+  const draft: TaskDraftState = {
+    markSubmitted: () => {
+      // Edit errors always show.
+    },
+    requestClose: () => {
+      autosave.flush();
+      onClose();
+    },
+    send: () => autosave.flush(),
+    setValues: autosave.setDraft,
+    showErrors: true,
+    values: autosave.draft,
+  };
+  return { autosave, draft };
+};
+
+/** The task panel around a draft; `status` is the edit panel's autosave line. */
+const TaskPanel = ({
+  draft,
+  props,
+  status,
+}: {
+  readonly draft: TaskDraftState;
+  readonly props: ResolvedTaskFormProps;
+  readonly status?: ReactNode;
+}) => {
+  const { busy, error, onClose, readOnly, task } = props;
   const { t } = useModernI18n();
-  const form = useTaskForm(props);
+  const form = useTaskForm(props, draft);
   const history = useTaskHistory(props);
   const {
     closeRequester,
@@ -843,26 +935,36 @@ export const TaskFormDialog = (input: TaskFormDialogProps) => {
     setConfirmDiscard,
     submit,
   } = form;
+  const createActions = (
+    <>
+      <Button onClick={requestClose} theme="outlined" variant="secondary">
+        {t(`${key}.cancel`)}
+      </Button>
+      <Button
+        disabled={fieldsDisabled}
+        isLoading={busy}
+        loadingText={t(`${key}.saving`)}
+        onClick={submit}
+        variant="primary"
+      >
+        {t(`${key}.submitCreate`)}
+      </Button>
+    </>
+  );
   return (
     <>
       <SidePanel
         actions={
-          <>
-            <Button onClick={requestClose} theme="outlined" variant="secondary">
-              {t(locked ? `${key}.close` : `${key}.cancel`)}
-            </Button>
-            {!locked && (
-              <Button
-                disabled={fieldsDisabled}
-                isLoading={busy}
-                loadingText={t(`${key}.saving`)}
-                onClick={submit}
-                variant="primary"
-              >
-                {t(isEdit ? `${key}.submitEdit` : `${key}.submitCreate`)}
+          isEdit || locked ? (
+            <>
+              {!locked && status}
+              <Button onClick={requestClose} theme="outlined" variant="secondary">
+                {t(`${key}.close`)}
               </Button>
-            )}
-          </>
+            </>
+          ) : (
+            createActions
+          )
         }
         // The first field takes focus, so typing starts at once.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#task-title')}
@@ -899,13 +1001,38 @@ export const TaskFormDialog = (input: TaskFormDialogProps) => {
           )}
         </div>
       </SidePanel>
-      <DiscardDialog
-        finalFocusEl={() => (closeRequester.current?.isConnected === true ? closeRequester.current : null)}
-        onDiscard={onClose}
-        onKeep={() => setConfirmDiscard(false)}
-        open={confirmDiscard}
-        task={task}
-      />
+      {!isEdit && (
+        <DiscardDialog
+          finalFocusEl={() => (closeRequester.current?.isConnected === true ? closeRequester.current : null)}
+          onDiscard={onClose}
+          onKeep={() => setConfirmDiscard(false)}
+          open={confirmDiscard}
+        />
+      )}
     </>
   );
+};
+
+const TaskCreatePanel = ({ props }: { readonly props: ResolvedTaskFormProps }) => (
+  <TaskPanel draft={useCreateDraft(props)} props={props} />
+);
+
+const TaskEditPanel = ({ props }: { readonly props: ResolvedTaskFormProps & { readonly task: Task } }) => {
+  const { autosave, draft } = useEditDraft(props);
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
+  return (
+    <TaskPanel
+      draft={draft}
+      props={props}
+      status={<AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />}
+    />
+  );
+};
+
+/** Create (`task` undefined) or edit one task in a right-hand panel; an edit saves itself. */
+export const TaskFormDialog = (input: TaskFormDialogProps) => {
+  const { contextLabels = emptyContextLabels, projects = emptyProjects, readOnly = false, task } = input;
+  const props = { ...input, contextLabels, projects, readOnly };
+  return task === undefined ? <TaskCreatePanel props={props} /> : <TaskEditPanel props={{ ...props, task }} />;
 };

@@ -25,7 +25,6 @@
         "newTask": "Nový úkol",
         "create": "Nový úkol",
         "edit": "Upravit úkol",
-        "saved": "Úkol uložen.",
         "created": "Úkol vytvořen.",
         "started": "Úkol zahájen.",
         "completed": "Úkol dokončen.",
@@ -36,7 +35,6 @@
         "cancel": "Zrušit",
         "saving": "Ukládám…",
         "submitCreate": "Vytvořit úkol",
-        "submitEdit": "Uložit změny",
         "taskTitle": "Název",
         "titleLength": "{{length}} z {{max}} znaků",
         "description": "Popis",
@@ -118,7 +116,6 @@
         },
         "discard": {
           "createTitle": "Zahodit nový úkol?",
-          "editTitle": "Zahodit změny v úkolu „{{title}}“?",
           "description": "Neuložené údaje se ztratí.",
           "keep": "Pokračovat v úpravách",
           "confirm": "Zahodit"

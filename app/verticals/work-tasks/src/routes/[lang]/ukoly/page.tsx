@@ -1,4 +1,5 @@
 import { EmptyState, PageHeader, StatCard, StatRow, Toaster, dataTableRowLabels } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
@@ -43,6 +44,7 @@ import { WorkPlanning } from './work-planning.tsx';
 import { principalKey } from '../../../../shared/assignment.ts';
 import { assignmentPatch, selectedPrincipal } from './assignment-options.ts';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
+import { taskAutosaveOutcome } from './task-form-values.ts';
 import {
   TaskTabSchema,
   commonTransitionTargets,
@@ -618,52 +620,54 @@ const useTasksPage = (
     refreshInBackground();
   };
 
-  // Runs one command against the revision the user saw. The result shows as soon as the command answers, and the
-  // list reloads behind it, since each reload costs a gateway round trip. Failures become messages.
+  // One command against the given revision. The result shows as soon as the command answers, and the list reloads
+  // behind it, since each reload costs a gateway round trip.
+  const commandEffect = (command: WorkCommand, revision: number) =>
+    Effect.all(
+      {
+        id: requestId,
+        referenceCredentials: makeReferenceGatewayCredentials(
+          Predicate.isTagged('CreateTask')(command) || Predicate.isTagged('UpdateTask')(command)
+            ? (command.contextRefs ?? []).map((ref) =>
+                ref.moduleId === 'legal.agreements' ? 'legal-agreements' : 'property-portfolio',
+              )
+            : [],
+        ),
+      },
+      { concurrency: 1 },
+    ).pipe(
+      Effect.flatMap(({ id, referenceCredentials }) =>
+        executeApplyCommand({ command, expectedRevision: revision }, id, {
+          idempotencyKey: id,
+          referenceCredentials,
+        }),
+      ),
+      Effect.tap((outcome) => Effect.sync(() => showCommandResult(command, outcome))),
+    );
+  type CommandError = Effect.Error<ReturnType<typeof commandEffect>>;
+  const failureMessage = (error: CommandError) =>
+    Match.value(error).pipe(
+      // A closed task never changes, so a retry cannot help; the lifecycle conflict gets its own message.
+      Match.tag('ApplyCommandActionConflictProblem', (conflict) =>
+        t(conflict.code === 'work_lifecycle_conflict' ? `${key}.closedTask` : `${key}.conflict`),
+      ),
+      Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
+      Match.orElse(() => t(`${key}.invalid`)),
+    );
+
+  // Runs one command against the revision the user saw. Failures become messages.
   const runCommand = (command: WorkCommand, revision: number, onDone: (outcome: CommandOutcome) => void) =>
     browserRuntime.runFork(
-      Effect.all(
-        {
-          id: requestId,
-          referenceCredentials: makeReferenceGatewayCredentials(
-            Predicate.isTagged('CreateTask')(command) || Predicate.isTagged('UpdateTask')(command)
-              ? (command.contextRefs ?? []).map((ref) =>
-                  ref.moduleId === 'legal.agreements' ? 'legal-agreements' : 'property-portfolio',
-                )
-              : [],
-          ),
-        },
-        { concurrency: 1 },
-      ).pipe(
-        Effect.flatMap(({ id, referenceCredentials }) =>
-          executeApplyCommand({ command, expectedRevision: revision }, id, {
-            idempotencyKey: id,
-            referenceCredentials,
-          }),
-        ),
-        Effect.tap((outcome) => Effect.sync(() => showCommandResult(command, outcome))),
+      commandEffect(command, revision).pipe(
         Effect.match({
-          onFailure: (error): CommandOutcome => ({
-            message: Match.value(error).pipe(
-              // A closed task never changes, so a retry cannot help; the lifecycle conflict gets its own message.
-              Match.tag('ApplyCommandActionConflictProblem', (conflict) =>
-                t(conflict.code === 'work_lifecycle_conflict' ? `${key}.closedTask` : `${key}.conflict`),
-              ),
-              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
-              Match.orElse(() => t(`${key}.invalid`)),
-            ),
-            ok: false,
-          }),
+          onFailure: (error): CommandOutcome => ({ message: failureMessage(error), ok: false }),
           onSuccess: (outcome): CommandOutcome => ({ ok: true, results: outcome.results ?? [] }),
         }),
         Effect.map(onDone),
       ),
     );
 
-  const save = (submission: TaskFormSubmission) => {
-    if (records === undefined || editor === undefined) {
-      return;
-    }
+  const commandOf = (submission: TaskFormSubmission, target: Editor): WorkCommand => {
     const draft: Partial<EditFields> = {};
     if (lookupAccess?.properties === 'allowed' || lookupAccess?.contracts === 'allowed') {
       draft.contextRefs = submission.contextRefs;
@@ -692,20 +696,27 @@ const useTasksPage = (
     if (lookupAccess?.customers === 'allowed' && submission.partyId !== undefined) {
       fields.partyId = submission.partyId;
     }
-    const command: WorkCommand =
-      editor.mode === 'create'
-        ? { _tag: 'CreateTask', ...fields }
-        : {
-            _tag: 'UpdateTask',
-            ...Struct.omit(fields, ['ownerPrincipalRef']),
-            ...assignmentPatch(editor.task.ownerPrincipalRef, submission.ownerPrincipalRef),
-            // An edit always sends the due date, replacing the create-shaped one: None removes a saved date.
-            dueDate: Option.fromUndefinedOr(submission.dueDate),
-            plannedHours: Option.fromUndefinedOr(submission.plannedHours),
-            projectId: Option.fromUndefinedOr(submission.projectId),
-            taskRef: editor.task.ref,
-          };
-    const successKey = editor.mode === 'create' ? `${key}.created` : `${key}.saved`;
+    return target.mode === 'create'
+      ? { _tag: 'CreateTask', ...fields }
+      : {
+          _tag: 'UpdateTask',
+          ...Struct.omit(fields, ['ownerPrincipalRef']),
+          ...assignmentPatch(target.task.ownerPrincipalRef, submission.ownerPrincipalRef),
+          // An edit always sends the due date, replacing the create-shaped one: None removes a saved date.
+          dueDate: Option.fromUndefinedOr(submission.dueDate),
+          plannedHours: Option.fromUndefinedOr(submission.plannedHours),
+          projectId: Option.fromUndefinedOr(submission.projectId),
+          taskRef: target.task.ref,
+        };
+  };
+
+  /** Creates a task on "Vytvořit úkol". */
+  const save = (submission: TaskFormSubmission) => {
+    if (records === undefined || editor === undefined) {
+      return;
+    }
+    const command = commandOf(submission, editor);
+    const successKey = `${key}.created`;
     setSaving(true);
     setFormError(undefined);
     runCommand(command, records.revision, (result) => {
@@ -832,6 +843,29 @@ const useTasksPage = (
     openEditor({ mode: 'edit', task });
   };
 
+  /**
+   * Autosave of the edit panel against the revision its draft builds on. The saved task shows at once; a revision
+   * conflict goes to the panel's status line, any other failure to its message.
+   */
+  const handleAutosave = (submission: TaskFormSubmission, expectedRevision: number) =>
+    editor?.mode === 'edit'
+      ? commandEffect(commandOf(submission, editor), expectedRevision).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.sync((): RevisionedSaveResult => {
+                const outcome = taskAutosaveOutcome(error);
+                setFormError(outcome === 'conflict' ? undefined : failureMessage(error));
+                return outcome;
+              }),
+            onSuccess: ({ revision }) =>
+              Effect.sync((): RevisionedSaveResult => {
+                setFormError(undefined);
+                return revision;
+              }),
+          }),
+        )
+      : Effect.succeed<RevisionedSaveResult>('failed');
+
   const handleCloseEditor = () => {
     closeEditor();
     setFormError(undefined);
@@ -869,6 +903,7 @@ const useTasksPage = (
         }
       });
     },
+    handleAutosave,
     handleBulkAssign,
     handleBulkChangeState,
     handleChangeRowState,
@@ -928,10 +963,15 @@ const useTasksPage = (
 const taskStatCount = (records: RecordsResponse | undefined, countRows: (items: readonly Task[]) => number) =>
   records === undefined ? undefined : countRows(records.items);
 
+/** The edited task as the list has it now, so live rereads reach the open panel. */
+const currentTask = (records: RecordsResponse | undefined, task: Task) =>
+  records?.items.find(({ ref }) => ref.resourceId === task.ref.resourceId) ?? task;
+
 const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage> }) => {
   if (model.editor === undefined) {
     return null;
   }
+  const editing = model.editor.mode === 'edit' ? model.editor.task : undefined;
   return (
     <TaskFormDialog
       actorName={model.actorName}
@@ -943,6 +983,7 @@ const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage>
       error={model.formError}
       lookupAccess={model.lookupAccess}
       onArchive={model.canWrite ? model.handleArchive : undefined}
+      onAutosave={model.handleAutosave}
       onClose={model.handleCloseEditor}
       onComment={model.handleComment}
       onSubmit={model.handleSave}
@@ -952,7 +993,9 @@ const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage>
       principals={model.principals}
       projects={model.records?.projects ?? []}
       readOnly={!model.canWrite}
-      task={model.editor.mode === 'edit' ? model.editor.task : undefined}
+      revision={model.records?.revision ?? 0}
+      // The panel follows live rereads of its task, so an unrelated change elsewhere never leaves it stale.
+      task={editing === undefined ? undefined : currentTask(model.records, editing)}
     />
   );
 };
