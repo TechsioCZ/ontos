@@ -1,4 +1,4 @@
-import { partyRegistryRegistration } from '../vertical.registration.ts';
+import { partyRegistryBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   ContextAccessLive,
   CorePersistenceLive,
@@ -45,7 +45,7 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
 );
 export const partyRegistryReadRuntimeLive = makeReadRuntimeLive(
   ultramodernDeliveryUnit,
-  partyRegistryRegistration,
+  partyRegistryBackendRegistration,
 ).pipe(Layer.provide(readRuntimeDependenciesLive), Layer.provide(activeApplicationCompositionLive));
 
 const actionRuntimeDependenciesLive = Layer.mergeAll(
@@ -60,7 +60,7 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
 );
 export const partyRegistryActionRuntimeLive = makeActionRuntimeLive(
   ultramodernDeliveryUnit,
-  partyRegistryRegistration,
+  partyRegistryBackendRegistration,
 ).pipe(Layer.provide(actionRuntimeDependenciesLive));
 
 export const partyRegistryAresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
