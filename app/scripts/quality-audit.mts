@@ -827,6 +827,8 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
   };
 });
 
+const AUDIT_STEP_CONCURRENCY = 2;
+
 export const auditSteps = (root: string, runDirectory: string, tool: AuditTool): readonly AuditStep[] => {
   const config = `${runDirectory}/configs`;
   const common = [
@@ -1135,10 +1137,12 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
         path: files.map((file) => path.resolve(root, file)),
       });
     }
+    // Analyzers read the source tree and write only into their own step directory, so they can run side by side.
+    // Two at a time keeps peak memory modest under `pnpm check`; results keep step order either way.
     const stepResults = yield* Effect.forEach(
       auditSteps(root, runDirectory, tool),
       (step) => executeStep(root, path.join(runDirectory, step.name), step),
-      { concurrency: 1 },
+      { concurrency: AUDIT_STEP_CONCURRENCY },
     );
     return yield* reconcileCoverage(root, runDirectory, files, stepResults).pipe(
       Effect.match({
