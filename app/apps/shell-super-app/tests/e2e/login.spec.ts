@@ -396,6 +396,27 @@ test('persists an English session, logs out, invalidates the session, and stays 
       await expect(page.getByRole('button', { name: 'E2E user' })).toHaveCount(0);
     }));
 
+test('ends the Home another tab of the same browser shows when the account signs out', async ({
+  authentication,
+  context,
+  page,
+}) => {
+  await login(page, 'en', authentication.credentials);
+  const otherTab = await context.newPage();
+  await otherTab.goto('/en/');
+  await expect(otherTab.getByRole('button', { name: 'E2E user' })).toBeVisible();
+
+  await waitForInteractiveAccountMenu(page);
+  await page.getByRole('button', { name: 'E2E user' }).click();
+  await page.getByRole('menuitem', { name: 'Logout' }).click();
+  await expect(page).toHaveURL(/\/en\/login\/?$/u);
+
+  // The open tab reloads to the sign-in page: it never keeps showing the account that just signed out.
+  await expect(otherTab).toHaveURL(/\/en\/login(?:\?.*)?$/u);
+  await expect(otherTab.getByRole('button', { name: 'E2E user' })).toHaveCount(0);
+  await otherTab.close();
+});
+
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   authentication,
   page,
