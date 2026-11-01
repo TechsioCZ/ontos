@@ -2,7 +2,7 @@
 // decoded here before the generated client sends it.
 import { Effect, Random, Schema } from 'effect';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
-import type { RecordsRequestEncoded, Subject, SubjectKind, TagId } from '../../shared/apis/records.ts';
+import type { RecordsRequestEncoded, RecordsResponse, Subject, SubjectKind, TagId } from '../../shared/apis/records.ts';
 import type { TaggingCommand } from '../../shared/actions/apply-command.ts';
 import { executeApplyCommand } from './apply-command-action-client.ts';
 import {
@@ -140,6 +140,28 @@ export const applyTaggingCommand = (command: TaggingCommand) =>
           executeApplyCommand({ command, expectedRevision: current.revision }, id, { idempotencyKey: id }),
         ),
       ),
+    ),
+  );
+
+/**
+ * Runs one command only while `unchanged` holds for the records read immediately before the write, against that read's
+ * revision: `stale` when the caller's version is outdated, so nothing is overwritten.
+ */
+export const applyTaggingCommandIfUnchanged = (
+  command: TaggingCommand,
+  unchanged: (current: RecordsResponse) => boolean,
+) =>
+  freshCorrelation.pipe(
+    Effect.flatMap((readId) => executeRecords({}, readId)),
+    Effect.flatMap((current) =>
+      unchanged(current)
+        ? freshCorrelation.pipe(
+            Effect.flatMap((id) =>
+              executeApplyCommand({ command, expectedRevision: current.revision }, id, { idempotencyKey: id }),
+            ),
+            Effect.as('applied' as const),
+          )
+        : Effect.succeed('stale' as const),
     ),
   );
 
