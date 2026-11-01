@@ -1,3 +1,4 @@
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
 import type { MarketRevisionNativeCustomerContextState } from '../support/market-revision-native-protocol.ts';
 import {
   DatabaseConfig,
@@ -13,7 +14,7 @@ import {
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   makeActionRuntimeLive,
   OperationalScopeResolver,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -523,7 +524,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     'writer',
   );
   // Build scoped Core clients once; retained Registry callbacks use this same live context.
-  const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(authorization)));
+  const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
   const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
   if (retirementManagementExecutor === 'denied') {
@@ -647,12 +648,16 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
         Layer.provide(Layer.mergeAll(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration), NodeCrypto.layer)),
       ),
     ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configuration));
-    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
       Layer.provide(Layer.succeedContext(dependencies)),
     );
     const base = Context.get(yield* Layer.build(coreFactory), ActionRuntime);
     const readRuntime = Context.get(
-      yield* Layer.build(ReadRuntimeLive.pipe(Layer.provide(Layer.succeedContext(dependencies)))),
+      yield* Layer.build(
+        makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+          Layer.provide(Layer.succeedContext(dependencies)),
+        ),
+      ),
       ReadRuntime,
     );
     const crypto = yield* Crypto.Crypto;

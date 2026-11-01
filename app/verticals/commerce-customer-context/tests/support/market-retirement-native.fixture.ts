@@ -3,7 +3,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
   parseDatabaseConfig,
@@ -54,6 +54,7 @@ import {
 import { marketAffectedUseAssessmentReadApiLive } from '../../api/market-affected-use-assessment-read-server.ts';
 import { marketRetirementReservationRecoveryReadApiLive } from '../../api/market-retirement-reservation-recovery-read-server.ts';
 import { reserveMarketRetirementActionApiLive } from '../../api/reserve-market-retirement-action-server.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { commerceCustomerContextApi, commerceCustomerContextApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
@@ -200,10 +201,12 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
           composition,
           overlay,
         );
-        const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+        const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
           Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
         );
-        const reads = ReadRuntimeLive.pipe(Layer.provide(common));
+        const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+          Layer.provide(common),
+        );
         const redemptionDatabase = GatewayAssertionRedemptionDatabaseLive.pipe(
           Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
           Layer.provide(Reactivity.layer),
