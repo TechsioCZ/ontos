@@ -5,13 +5,15 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
-  ReviseStorefrontApplicationPayloadSchema,
-  ReviseStorefrontApplicationResultSchema,
   StorefrontApplicationCommandRejected,
   StorefrontApplicationEffectiveIntervalSchema,
   StorefrontApplicationLifecycleSchema,
 } from '../../shared/action-contracts.ts';
-import type { ReviseStorefrontApplicationPayload } from '../../shared/action-contracts.ts';
+import {
+  ReviseStorefrontApplicationPayloadSchema,
+  ReviseStorefrontApplicationResultSchema,
+} from '../../shared/actions/revise-storefront-application.ts';
+import type { ReviseStorefrontApplicationPayload } from '../../shared/actions/revise-storefront-application.ts';
 import { StorefrontApplicationRefSchema } from '../../shared/resources/storefront-application.ts';
 import type { StorefrontAdministrationService } from '../services/storefront-administration.service.ts';
 import { storefrontAdministrationService } from '../services/storefront-administration.service.ts';
@@ -26,8 +28,8 @@ import {
   storefrontRecordedAt,
 } from './storefront-action-support.ts';
 
-export { ReviseStorefrontApplicationPayloadSchema } from '../../shared/action-contracts.ts';
-export type { ReviseStorefrontApplicationPayload } from '../../shared/action-contracts.ts';
+export { ReviseStorefrontApplicationPayloadSchema } from '../../shared/actions/revise-storefront-application.ts';
+export type { ReviseStorefrontApplicationPayload } from '../../shared/actions/revise-storefront-application.ts';
 
 const RevisedEventSchema = Schema.Struct({
   allowedChannels: ReviseStorefrontApplicationPayloadSchema.fields.allowedChannels,

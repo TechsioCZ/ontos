@@ -28,7 +28,7 @@ import { storefrontRegistryApiRuntimeFromContext } from '../../api/index.ts';
 import { storefrontRegistryApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
-import type { RegisterStorefrontApplicationPayloadSchema } from '../../shared/action-contracts.ts';
+import type { RegisterStorefrontApplicationPayloadSchema } from '../../shared/actions/register-storefront-application.ts';
 import { registerStorefrontApplicationAction } from '../../src/actions/register-storefront-application.action.ts';
 
 export class CurrentStorefrontNativeFixtureError extends Schema.TaggedError<CurrentStorefrontNativeFixtureError>()(
@@ -78,6 +78,7 @@ export const makeCurrentStorefrontNativeFixture = Effect.fn('CurrentStorefrontNa
     // Static imports describe the owner runtime; acquire it only after validated fixture setup.
     const runtime = yield* storefrontRegistryApiRuntimeFromContext.pipe(
       Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(ActionRuntime, actionRuntime),
       Effect.provideContext(redemption),
       Effect.catchDefect((cause) => Effect.fail(unavailable(cause))),
       Effect.timeoutOrElse({ duration: Duration.seconds(10), orElse: () => Effect.fail(unavailable()) }),

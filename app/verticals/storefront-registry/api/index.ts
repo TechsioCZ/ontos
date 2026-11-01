@@ -3,6 +3,8 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
+  makeActionRuntimeLive,
+  ActionRuntime,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -11,8 +13,11 @@ import {
   GatewayAssertionRedemptionService,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
+  ActionPermissionLive,
+  ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
@@ -25,7 +30,7 @@ import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from '
 import { FetchHttpClient } from 'effect/http';
 
 import { storefrontRegistryApi, storefrontRegistryOperationContexts } from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
@@ -35,6 +40,8 @@ import {
 // </generated-governed-http-handler-support-imports>
 // <generated-governed-http-handler-imports>
 import { currentStorefrontApplicationReadApiLive } from './current-storefront-application-read-server.ts';
+import { registerStorefrontApplicationActionApiLive } from './register-storefront-application-action-server.ts';
+import { reviseStorefrontApplicationActionApiLive } from './revise-storefront-application-action-server.ts';
 import { storefrontApplicationsReadApiLive } from './storefront-applications-read-server.ts';
 import { verifyCurrentStorefrontApplicationV1ReadApiLive } from './verify-current-storefront-application-v1-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -88,12 +95,35 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
+const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
+  Layer.provide(
+    FetchHttpClient.layer.pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+    ),
+  ),
+);
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+);
 const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
@@ -109,6 +139,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type StorefrontRegistryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -118,29 +149,23 @@ type StorefrontRegistryApiRuntimeArguments = readonly [
 export const makeStorefrontRegistryApiRuntime = (
   ...args: StorefrontRegistryApiRuntimeArguments
 ): EffectBffDefinition<typeof storefrontRegistryApi> & EffectBffRuntime<typeof storefrontRegistryApi> => {
-  const [governedReadRuntimeLive, gatewayAssertionRedemption] = args;
+  const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption] = args;
+  const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
+    Layer.provide(governedActionRuntimeLive),
+  );
   const apiHandlersLive = Layer.mergeAll(
     storefrontRegistryReadinessLayer,
     // <generated-governed-http-handler-layers>
     currentStorefrontApplicationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    registerStorefrontApplicationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    reviseStorefrontApplicationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     storefrontApplicationsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     verifyCurrentStorefrontApplicationV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(
-      Layer.mergeAll(
-        runtimeObservabilityLive,
-        RequestSchemaProblemLive,
-        databaseIdentitiesLive,
-        ActiveApplicationCompositionSourceLive.pipe(
-          Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
-            ),
-          ),
-        ),
-      ),
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, databaseIdentitiesLive, compositionSourceLive),
     ),
     Layer.orDie,
   );
@@ -161,15 +186,18 @@ export const makeStorefrontRegistryApiRuntime = (
 /** Explicit owner assembly from already verified caller-owned test/runtime services. */
 export const storefrontRegistryApiRuntimeFromContext = Effect.gen(function* assembleStorefrontRegistryApiRuntime() {
   const readRuntime = yield* ReadRuntime;
+  const actionRuntime = yield* ActionRuntime;
   const redemption = yield* GatewayAssertionRedemptionService;
   return makeStorefrontRegistryApiRuntime(
     Layer.succeed(ReadRuntime, readRuntime),
+    Layer.succeed(ActionRuntime, actionRuntime),
     Layer.succeed(GatewayAssertionRedemptionService, redemption),
   );
 });
 
 const apiRuntime = makeStorefrontRegistryApiRuntime(
   productionReadRuntimeLive,
+  productionActionRuntimeLive,
   productionGatewayAssertionRedemptionLive,
 );
 

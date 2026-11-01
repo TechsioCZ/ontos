@@ -8,6 +8,8 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { CurrentStorefrontApplicationApi } from './apis/current-storefront-application.ts';
+import { RegisterStorefrontApplicationActionApi } from './apis/register-storefront-application-action.ts';
+import { ReviseStorefrontApplicationActionApi } from './apis/revise-storefront-application-action.ts';
 import { StorefrontApplicationsApi } from './apis/storefront-applications.ts';
 import { VerifyCurrentStorefrontApplicationV1Api } from './apis/verify-current-storefront-application-v1.ts';
 // </generated-governed-http-api-imports>
@@ -39,6 +41,8 @@ export const storefrontRegistryApi = HttpApi.make('StorefrontRegistryApi')
   .addHttpApi(storefrontRegistryFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CurrentStorefrontApplicationApi)
+  .addHttpApi(RegisterStorefrontApplicationActionApi)
+  .addHttpApi(ReviseStorefrontApplicationActionApi)
   .addHttpApi(StorefrontApplicationsApi)
   .addHttpApi(VerifyCurrentStorefrontApplicationV1Api)
   // </generated-governed-http-api-additions>

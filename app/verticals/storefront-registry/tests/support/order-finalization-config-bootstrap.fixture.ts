@@ -35,7 +35,7 @@ import { registerStorefrontApplicationAction } from '../../src/actions/register-
 import {
   RegisterStorefrontApplicationPayloadSchema,
   RegisterStorefrontApplicationResultSchema,
-} from '../../shared/action-contracts.ts';
+} from '../../shared/actions/register-storefront-application.ts';
 
 const bounded = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 const requestContext = {

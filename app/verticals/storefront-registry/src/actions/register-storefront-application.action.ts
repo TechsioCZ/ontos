@@ -5,12 +5,14 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
-  RegisterStorefrontApplicationPayloadSchema,
-  RegisterStorefrontApplicationResultSchema,
   StorefrontApplicationCommandRejected,
   StorefrontApplicationEffectiveIntervalSchema,
 } from '../../shared/action-contracts.ts';
-import type { RegisterStorefrontApplicationPayload } from '../../shared/action-contracts.ts';
+import {
+  RegisterStorefrontApplicationPayloadSchema,
+  RegisterStorefrontApplicationResultSchema,
+} from '../../shared/actions/register-storefront-application.ts';
+import type { RegisterStorefrontApplicationPayload } from '../../shared/actions/register-storefront-application.ts';
 import { StorefrontApplicationRefSchema } from '../../shared/resources/storefront-application.ts';
 import type { StorefrontAdministrationService } from '../services/storefront-administration.service.ts';
 import { storefrontAdministrationService } from '../services/storefront-administration.service.ts';
@@ -26,8 +28,8 @@ import {
   storefrontRecordedAt,
 } from './storefront-action-support.ts';
 
-export { RegisterStorefrontApplicationPayloadSchema } from '../../shared/action-contracts.ts';
-export type { RegisterStorefrontApplicationPayload } from '../../shared/action-contracts.ts';
+export { RegisterStorefrontApplicationPayloadSchema } from '../../shared/actions/register-storefront-application.ts';
+export type { RegisterStorefrontApplicationPayload } from '../../shared/actions/register-storefront-application.ts';
 
 const RegisteredEventSchema = Schema.Struct({
   allowedChannels: RegisterStorefrontApplicationPayloadSchema.fields.allowedChannels,
