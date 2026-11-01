@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import {
   ReadHandlerNotFound,
@@ -346,6 +347,7 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
           stages.push(stage);
         },
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+        ownerRegistration: inventoryRegistration,
       },
     );
     const input = Schema.decodeUnknownSync(InventoryReservationDetailRequestSchema)({ reservationRef });

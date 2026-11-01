@@ -6,7 +6,10 @@ import { Headers, HttpServerRequest } from 'effect/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
-import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { ModuleStateCheckUnavailableError } from '../../src/modules/module-state-check-unavailable-error.ts';
 import { ModuleStateDeniedError } from '../../src/modules/module-state-denied-error.ts';
 import { OperationAuthenticationRequired } from '../../src/operations/operation-authentication-required.ts';
@@ -199,14 +202,20 @@ const timestampInputSchema = Schema.Struct({ requestedAt: Schema.DateTimeUtcFrom
 const timestampRegistration = defineRead(
   {
     accessKind: 'detail',
-    entrypoint: registration.descriptor.entrypoint,
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'authenticated_principal' },
+      entrypointKey: 'test.governed-http.api.timestamp',
+      moduleKey: 'test.governed-http',
+      role: 'api',
+    }),
     evidencePolicy: registration.descriptor.evidencePolicy,
     inputSchema: timestampInputSchema,
     legalEntityScope: 'forbidden',
-    owningModuleKey: 'core.shell',
+    owningModuleKey: 'test.governed-http',
     permissionTarget: 'tenant',
     policies: [],
-    readKey: 'core.shell.governed-http-timestamp-test',
+    readKey: 'test.governed-http.api.timestamp',
     resultSchema: Schema.Struct({ requestedAt: Schema.DateTimeUtc }),
     schemaVersion: '1',
   },
@@ -218,6 +227,20 @@ const timestampRegistration = defineRead(
   () => Effect.succeed({}),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );
+/** Explicit historical metadata belongs only to this synthetic transformed-payload probe. */
+const timestampOwnerBase = makeModuleContractFixture({
+  appId: 'governed-http-test',
+  moduleId: 'test.governed-http',
+}).manifest;
+const timestampOwner = defineVerticalRuntimeRegistration({
+  actions: [],
+  manifest: defineOntosModuleManifest({
+    ...timestampOwnerBase,
+    publicSurface: { ...timestampOwnerBase.publicSurface, actions: [], api: {}, components: {} },
+  }),
+  outboxWorkers: [],
+  reads: [timestampRegistration],
+});
 const timestampText = '2026-10-05T12:00:00.000Z';
 const timestampRequest = {
   headers: Headers.fromInput({ authorization: 'Bearer private', 'x-correlation-id': 'timestamp-read' }),
@@ -227,6 +250,7 @@ const timestampReadHarness = (permissionDecision: 'allowed' | 'denied' = 'allowe
     executeOwnerQuery: () => Effect.die('Unexpected owner SQL in timestamp HTTP test'),
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(timestampText)),
     ownerAuthorizationDecision: 'allowed',
+    ownerRegistration: timestampOwner,
     permissionDecision,
     scope: { ...principal, correlationId: 'timestamp-read' },
   });

@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -92,6 +93,7 @@ const request = (idempotencyKey: string) => ({
 it.effect('denies CUSTOMER onboarding before the owner handler when Action permission is absent', () =>
   Effect.gen(function* deniedOnboarding() {
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'denied',
       legalEntityPermission: 'allowed',
       services: [
@@ -115,6 +117,7 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
   Effect.gen(function* recoverOnboarding() {
     let calls = 0;
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       legalEntityPermission: 'allowed',
       services: [
@@ -150,6 +153,7 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
 it.effect('exact-equivalent onboarding commits no duplicate domain events', () =>
   Effect.gen(function* exactReplay() {
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       legalEntityPermission: 'allowed',
       services: [

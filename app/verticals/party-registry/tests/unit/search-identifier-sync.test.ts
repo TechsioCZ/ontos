@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   CoreSearchProjectionStore,
   makeCoreSearchIngestion,
@@ -212,6 +213,7 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(createPartyAction, {
@@ -266,6 +268,7 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(resolveDuplicateCandidateMatchAction, {
@@ -323,6 +326,7 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     } as const;
     const after = { ...before, state: 'ENDED', validTo } as const;
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(updatePartyOfficialIdentifierAction, {

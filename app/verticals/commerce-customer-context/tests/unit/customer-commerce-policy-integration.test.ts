@@ -151,6 +151,7 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
+    { ownerRegistration: commerceCustomerContextRegistration },
   );
   return {
     businessPermissionCalls: () => businessPermissionCalls,
@@ -741,6 +742,7 @@ describe('Customer Commerce Policy integration', () => {
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
           bindActionTestServices(administerPurchaseCurrencyPolicyAction, service),
@@ -853,6 +855,7 @@ describe('Customer Commerce Policy integration', () => {
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
           bindActionTestServices(administerPurchaseCurrencyPolicyAction, service),
@@ -963,6 +966,7 @@ describe('Customer Commerce Policy integration', () => {
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'denied',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [bindActionTestServices(administerPurchaseCurrencyPolicyAction, service)],
       });
       const failure = yield* harness.runtime

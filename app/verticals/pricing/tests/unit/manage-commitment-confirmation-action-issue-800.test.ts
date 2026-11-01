@@ -37,6 +37,8 @@ import {
   makeIssue788QuotationSource,
 } from './support/issue-788-confirmation.fixture.ts';
 
+import { pricingRegistration } from '../../vertical.registration.ts';
+
 const actionInvocationId = '80000000-0000-4000-8000-000000000001';
 const actorPrincipalId = '80000000-0000-4000-8000-000000000002';
 const legalEntityId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -478,6 +480,7 @@ describe('issue #800 Pricing Commitment Confirmation Action audit', () => {
         actionPermission: 'allowed',
         legalEntityAccess: 'allowed',
         legalEntityPermission: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
       });
       const principal = {
@@ -647,6 +650,7 @@ describe('issue #800 Pricing Commitment Confirmation Action audit', () => {
         actionPermission: 'allowed',
         legalEntityAccess: 'allowed',
         legalEntityPermission: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
       });
       const principal = {

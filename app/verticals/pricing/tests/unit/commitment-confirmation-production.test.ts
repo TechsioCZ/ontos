@@ -2,11 +2,14 @@ import { NodeCrypto } from '@effect/platform-node';
 import {
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
+  defineOntosModuleManifest,
+  defineVerticalRuntimeRegistration,
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 
@@ -58,20 +61,20 @@ const checkFactory = (compositionRevision?: string) =>
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
           authorization: { kind: 'authenticated_principal' },
-          entrypointKey: 'commerce.pricing.production-factory-unit',
-          moduleKey: 'commerce.pricing',
+          entrypointKey: 'test.pricing-production-factory.probe',
+          moduleKey: 'test.pricing-production-factory',
           role: 'api',
         }),
         evidencePolicy: {
           captureMode: 'metadata_only',
-          policyKey: 'commerce.pricing.production-factory-unit.evidence',
+          policyKey: 'test.pricing-production-factory.probe.evidence',
         },
         inputSchema: Schema.Struct({}),
         legalEntityScope: 'forbidden',
-        owningModuleKey: 'commerce.pricing',
+        owningModuleKey: 'test.pricing-production-factory',
         permissionTarget: 'tenant',
         policies: [],
-        readKey: 'commerce.pricing.production-factory-unit',
+        readKey: 'test.pricing-production-factory.probe',
         resultSchema: Schema.Boolean,
         schemaVersion: '1',
       },
@@ -100,10 +103,25 @@ const checkFactory = (compositionRevision?: string) =>
         ),
       () => ({ kind: 'tenant', permission: 'read_party_identity' }),
     );
+    // This factory-only probe is its own test owner, not a production Pricing entrypoint.
+    const ownerBase = makeModuleContractFixture({
+      appId: 'pricing-production-factory-test',
+      moduleId: 'test.pricing-production-factory',
+    }).manifest;
+    const ownerRegistration = defineVerticalRuntimeRegistration({
+      actions: [],
+      manifest: defineOntosModuleManifest({
+        ...ownerBase,
+        publicSurface: { ...ownerBase.publicSurface, actions: [], api: {}, components: {} },
+      }),
+      outboxWorkers: [],
+      reads: [registration],
+    });
     const harness = yield* makeReadTestHarness({
       executeOwnerQuery: () => Effect.die('Pricing persistence must not run'),
       operationTime,
       ownerAuthorizationDecision: 'allowed',
+      ownerRegistration,
       permissionDecision: 'allowed',
       scope,
     });

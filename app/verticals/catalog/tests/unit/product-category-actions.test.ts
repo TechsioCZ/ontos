@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
@@ -126,6 +127,7 @@ describe('Catalog Product Category Actions', () => {
       const captured: { actionInvocationId: string; result: unknown }[] = [];
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createProductCategoryAction, {
             ...defaultServices,
@@ -161,6 +163,7 @@ describe('Catalog Product Category Actions', () => {
     Effect.gen(function* categoryCaptureFailureTest() {
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createProductCategoryAction, {
             ...defaultServices,

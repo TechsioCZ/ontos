@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { ReadPermissionDenied, allowOwnerAuthorizationOverlay, toBusinessPermissionAccessKey } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
@@ -143,6 +144,7 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
           stages.push(stage);
         },
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+        ownerRegistration: inventoryRegistration,
       },
     );
 

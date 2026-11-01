@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
@@ -47,7 +48,10 @@ const unexpected = () => Effect.die('Unexpected persistence method');
 describe('Catalog attribute governance Actions', () => {
   it.effect('denies a Product Editor without the definition Action executor before the definition handler runs', () =>
     Effect.gen(function* deniedDefinitionWrite() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'denied',
+        ownerRegistration: catalogRegistration,
+      });
       const failure = yield* harness.runtime
         .runAction({
           payload: {

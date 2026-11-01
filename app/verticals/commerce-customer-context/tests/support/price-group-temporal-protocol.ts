@@ -7,6 +7,7 @@ import {
 } from '../../shared/domain/profile-contracts.ts';
 import type { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { NodeHttpServer, NodeServices, NodeSocketServer } from '@effect/platform-node';
 import { ChildProcess } from 'effect/process';
 import {
@@ -16,6 +17,7 @@ import {
   BusinessPermissionRelationshipMutationLive,
   parseDatabaseConnectionPair,
   OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
   canonicalizeApplicationComposition,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
@@ -544,6 +546,39 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
       readonly marker: { readonly appId: string; readonly buildMarker: string };
     }[],
   ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const appDirectory = fileURLToPath(new URL('../../../../', import.meta.url));
+    const shellDirectory = path.join(appDirectory, 'apps/shell-super-app');
+    const shellRuntimeDocument = yield* fs.readFileString(
+      path.join(shellDirectory, 'dist/public/.well-known/ontos-shell-runtime.json'),
+    );
+    const shellRuntime = yield* Schema.decodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellRuntimeDocument,
+    );
+    const shellFederationDocument = yield* fs.readFileString(path.join(shellDirectory, '.output/mf-manifest.json'));
+    const shellFederation = yield* Schema.decodeEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          shared: Schema.Array(
+            Schema.Struct({
+              name: Schema.NonEmptyString,
+              requiredVersion: Schema.optionalKey(Schema.NonEmptyString),
+              singleton: Schema.optionalKey(Schema.Boolean),
+            }),
+          ),
+        }),
+      ),
+    )(shellFederationDocument);
+    const shellSingletons = yield* Effect.forEach(
+      shellFederation.shared.filter(({ singleton }) => singleton === true),
+      Effect.fn(function* versionedPublishedSingleton(entry) {
+        if (entry.requiredVersion === undefined) {
+          return yield* failure('actual-shell-singleton-version');
+        }
+        return { packageName: entry.name, version: entry.requiredVersion };
+      }),
+    );
     const documents = yield* Effect.forEach(
       owners,
       ({ contract, marker }) =>
@@ -566,6 +601,12 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
     yield* server.serve(
       Effect.gen(function* serveExactTestMetadata() {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        if (request.url === '/shell-super-app/ontos-shell-runtime.json') {
+          return HttpServerResponse.text(shellRuntimeDocument, { contentType: 'application/json' });
+        }
+        if (request.url === '/shell-super-app/mf-manifest.json') {
+          return HttpServerResponse.text(shellFederationDocument, { contentType: 'application/json' });
+        }
         const document = documents.find(({ appId }) => request.url === `/${appId}/mf-manifest.json`);
         return document === undefined
           ? HttpServerResponse.empty({ status: 404 })
@@ -615,12 +656,31 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
           federation,
           moduleId: contract.manifest.module.id,
           publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
+          requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
         };
       }),
       { concurrency: 1 },
     );
     const initial = yield* makeApplicationCompositionSnapshotFixture([]);
-    const composition = { ...initial.composition, modules, revision: '0'.repeat(64) };
+    const composition = {
+      ...initial.composition,
+      modules,
+      revision: '0'.repeat(64),
+      shell: {
+        contributionAbi: shellRuntime.contributionAbi,
+        coreCapabilities: shellRuntime.coreCapabilities,
+        deployment: shellRuntime.deployment,
+        federationManifest: {
+          sha256: yield* temporalDigest(shellFederationDocument),
+          url: `http://127.0.0.1:${address.port}/shell-super-app/mf-manifest.json`,
+        },
+        runtimeContract: {
+          sha256: yield* temporalDigest(shellRuntimeDocument),
+          url: `http://127.0.0.1:${address.port}/shell-super-app/ontos-shell-runtime.json`,
+        },
+        sharedSingletons: shellSingletons,
+      },
+    };
     return yield* validateActiveApplicationCompositionSnapshot({
       ...initial,
       composition: { ...composition, revision: yield* temporalDigest(canonicalizeApplicationComposition(composition)) },
