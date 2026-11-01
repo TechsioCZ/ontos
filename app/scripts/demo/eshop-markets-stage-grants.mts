@@ -35,6 +35,7 @@ import {
   principalRelationships,
 } from './permissions.mts';
 import { readMissingServiceGrants, reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 class EshopMarketGrantError extends Schema.TaggedError<EshopMarketGrantError>()('EshopMarketGrantError', {
   reason: Schema.String,
@@ -393,6 +394,12 @@ if (import.meta.main) {
     Layer.provide(FetchHttpClient.layer),
     Layer.provideMerge(NodeServices.layer),
   );
-  const exit = await Effect.runPromiseExit(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(services)));
+  const exit = await Effect.runPromiseExit(
+    Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
+      Effect.provide(services),
+    ),
+  );
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

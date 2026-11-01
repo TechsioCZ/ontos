@@ -17,6 +17,7 @@ import { tenantModuleStates } from '../../packages/core-runtime/src/db/schema.ts
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { TenantModuleStateValidationUnavailableError } from '../../packages/core-runtime/src/modules/tenant-module-state-validation-unavailable-error.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
 import { demoTenantId } from './fixture-ids.mts';
@@ -187,7 +188,11 @@ const command = Command.make(
 
 if (import.meta.main) {
   const result = await Effect.runPromiseExit(
-    Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)),
+    Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
+      Effect.provide(NodeServices.layer),
+    ),
   );
   process.exitCode = Exit.isFailure(result) ? 1 : 0;
 }
