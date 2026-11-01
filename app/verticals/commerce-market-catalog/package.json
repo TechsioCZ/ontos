@@ -42,11 +42,14 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/customer-market-retirement-contracts": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/merchandise": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/storefront-registry": "workspace:*",
     "@app/storefront-registry-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
@@ -66,6 +69,7 @@
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@noble/hashes": "2.2.0",
     "@tanstack/react-router": "1.170.39",
+    "@techsio/ui-kit": "catalog:",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
     "i18next": "26.4.2",
@@ -91,7 +95,6 @@
     "typescript": "7.0.2",
     "zephyr-rspack-plugin": "1.2.4",
     "@app/shell-super-app": "workspace:*",
-    "@app/storefront-registry": "workspace:*",
     "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {
