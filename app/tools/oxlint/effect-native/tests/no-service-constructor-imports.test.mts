@@ -281,6 +281,8 @@ describe('accepts literal data factories while preserving dependency, executable
   register();
 });
 
+// provesDataFactoryImport resolves and reads the imported factory module, so the direct proof tests
+// below write real files into a fresh workspace below the ignored `.codex/reports/lint-rule-workspaces/`.
 it('proves closed DTO construction across imports and rejects executable reachable behavior', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
@@ -756,7 +758,7 @@ const inspectProcessCapabilityCases = (cases: readonly ProcessCapabilityCase[]):
       scenario.after ?? '',
     ].join('\n');
   };
-  // All scenarios share one workspace, one owner per scenario.
+  // The rule follows imports into owner files, so all scenarios share one real workspace, one owner per scenario.
   describeWorkspace(
     'process capability workspace',
     cases.flatMap((scenario, index) => [
@@ -1413,7 +1415,7 @@ const inspectBffCases = (cases: readonly BffCase[]): void => {
   const consumerSource = (scenario: BffCase) =>
     scenario.consumer ??
     [processImports, "import { makeRuntime } from '../../api/index.ts'; void makeRuntime;", directRunMain].join('\n');
-  // All scenarios share one workspace, one owner per scenario.
+  // The rule follows imports into owner files, so all scenarios share one real workspace, one owner per scenario.
   describeWorkspace(
     'BFF owner workspace',
     cases.flatMap((scenario) => {

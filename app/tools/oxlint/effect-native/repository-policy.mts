@@ -73,7 +73,7 @@ export const managedSkillAssetPaths = (root: string): string[] => {
 /** Lint the repository; diagnostics, a crashed loader, or an empty run fail the command. */
 export const lintRepositoryPolicy = (root = appRoot) =>
   runOxlint(
-    nodePath.join(pluginDirectory, 'repository-policy.config.ts'),
+    policyConfig,
     [
       '.',
       ignorePatternFlag,
