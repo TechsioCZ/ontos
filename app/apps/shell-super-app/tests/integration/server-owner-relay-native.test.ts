@@ -1988,7 +1988,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       expect(row.principalId).toBe(core.manager.principalId);
       expect(row.authBindingId).toBe(input.personal.authBindingId);
       expect(row.legalEntityId).toBeNull();
-      expect(row.targetResourceId).toBe(firstRef.resourceId);
+      expect(row.targetResourceId).toBe(`${firstTarget.pricingCatalogId}:${firstRef.resourceId}`);
     }
     yield* setRead(core.manager.principalId, firstTarget, 'revoke');
     yield* setRead(input.serviceId, firstTarget, 'grant');
