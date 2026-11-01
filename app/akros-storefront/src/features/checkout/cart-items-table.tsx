@@ -16,11 +16,13 @@ import {
 import { formatCheckoutPrice } from "./checkout-format";
 import { formatCartProductName } from "./cart-product-name";
 import { useCartQuote, type CartQuoteState } from "@/ontos/cart-revalidation";
+import { useMoney } from "@/ontos/market-context";
 
 const blockedLabels: Record<string, string> = {
   AVAILABILITY_UNKNOWN: "Nelze ověřit",
   PRICE_UNAVAILABLE: "Cena není dostupná",
   NOT_AVAILABLE: "Není v nabídce",
+  NOT_OFFERED_IN_MARKET: "Není v nabídce trhu",
   OUT_OF_STOCK: "Není skladem",
   INSUFFICIENT_STOCK: "Nedostatek kusů",
   MINIMUM_QUANTITY: "Upravte množství",
@@ -131,6 +133,7 @@ function CartQuantity({ line }: { line: CartLine }) {
 }
 
 export function CartItemsTable({ showHeader = false }: { showHeader?: boolean }) {
+  const money = useMoney();
   const { cart, dispatch } = useCart();
   const quote = useCartQuote();
 
@@ -228,7 +231,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
               <Table.Cell align="end" style={{ width: "var(--akros-cart-price-width)" }}>
                 <div className="grid min-w-0 justify-items-end gap-1 text-right @max-akros-cart-wide/akros-cart:justify-items-start @max-akros-cart-wide/akros-cart:text-left">
                   <strong className="whitespace-normal font-(weight:--akros-cart-price-weight)">
-                    {formatCheckoutPrice(getLineTotal(line))}
+                    {formatCheckoutPrice(getLineTotal(line), money)}
                   </strong>
                 </div>
               </Table.Cell>

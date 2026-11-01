@@ -2,6 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
@@ -34,6 +35,7 @@ async function submitAccount(
 
 export function LoginForm() {
   const router = useRouter();
+  const storeHref = useStoreHref();
   const [error, setError] = useState("");
   const [verificationRequired, setVerificationRequired] = useState(false);
   const [pending, setPending] = useState(false);
@@ -53,7 +55,7 @@ export function LoginForm() {
       }
       if (result.outcome !== "SESSION_CREATED") throw new Error("Přihlášení nebylo potvrzeno.");
       form.reset();
-      router.push("/dokonceni-registrace");
+      router.push(storeHref("/dokonceni-registrace"));
       router.refresh();
     } catch (cause) {
       setError(isError(cause) ? cause.message : "Přihlášení se nepodařilo.");

@@ -1,3 +1,4 @@
+import type { StoreCurrency } from "@/lib/format";
 import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 
@@ -7,7 +8,7 @@ export interface RemoteSearchSuggestion {
   slug: string;
   name: string;
   imageSrc: string;
-  currency: "CZK";
+  currency: StoreCurrency;
   priceMinor: number;
   priceIsFrom: boolean;
   /** Set when the price is missing, zero or in another currency; the suggestion then shows no amount. */

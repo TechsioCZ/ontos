@@ -4,8 +4,10 @@ import { useCheckout } from "./checkout-provider";
 import { getCheckoutTotals } from "@/features/checkout/checkout-state";
 import { formatCheckoutPrice } from "./checkout-format";
 import { useServerTotals } from "./server-totals";
+import { useMoney } from "@/ontos/market-context";
 
 export function CheckoutSummary() {
+  const money = useMoney();
   const { cart } = useCart();
   const { draft, methods } = useCheckout();
   const server = useServerTotals(getCheckoutTotals(cart, draft, methods));
@@ -25,14 +27,14 @@ export function CheckoutSummary() {
         <div className="grid gap-1 border-b border-(--color-border-primary) pb-4">
           <div className="flex justify-between gap-3">
             <dt>Cena celkem</dt>
-            <dd className="text-right">{formatCheckoutPrice(totals.subtotal)}</dd>
+            <dd className="text-right">{formatCheckoutPrice(totals.subtotal, money)}</dd>
           </div>
           <div className="flex justify-between gap-3">
             <dt>Doprava a platba</dt>
             <dd className="text-right">
               {totals.shipping === null
                 ? "Bude vybráno"
-                : formatCheckoutPrice(totals.shipping + totals.payment)}
+                : formatCheckoutPrice(totals.shipping + totals.payment, money)}
             </dd>
           </div>
         </div>
@@ -40,13 +42,13 @@ export function CheckoutSummary() {
           <div className="flex justify-between gap-3">
             <dt>DPH</dt>
             <dd className="text-right">
-              {totals.vat === null ? "—" : formatCheckoutPrice(totals.vat)}
+              {totals.vat === null ? "—" : formatCheckoutPrice(totals.vat, money)}
             </dd>
           </div>
           <div className="flex justify-between gap-3">
             <dt>Celkem bez daně</dt>
             <dd className="text-right">
-              {totals.net === null ? "—" : formatCheckoutPrice(totals.net)}
+              {totals.net === null ? "—" : formatCheckoutPrice(totals.net, money)}
             </dd>
           </div>
         </div>
@@ -56,7 +58,7 @@ export function CheckoutSummary() {
             className="text-(length:--akros-checkout-total-size) leading-(--akros-checkout-heading-leading) font-extrabold"
             aria-live="polite"
           >
-            {formatCheckoutPrice(totals.total)}
+            {formatCheckoutPrice(totals.total, money)}
           </dd>
         </div>
       </dl>

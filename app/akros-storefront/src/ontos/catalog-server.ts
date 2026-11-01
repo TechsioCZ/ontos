@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
+import { getActiveMarket } from "./active-market";
 import { catalogCache } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
 import { readRecords } from "./gateway";
@@ -64,11 +65,12 @@ const productPages = catalogCache<ProductPage>({
   keepMs: CATALOG_CACHE_MS,
   limit: 100,
 });
+/** One navigation tree per market. */
 const categoryTrees = catalogCache<CatalogCategory[]>({
   freshMs: CATEGORY_CACHE_MS,
   staleMs: CATEGORY_STALE_MS,
   keepMs: CATEGORY_KEEP_MS,
-  limit: 4,
+  limit: 8,
 });
 /** Only price-free active-category/child content is retained for the navigation window. */
 const categoryContent = catalogCache<CatalogCategory[]>({
@@ -85,10 +87,25 @@ const categoryPages = catalogCache<CategoryPage>({
   limit: 60,
 });
 
-const readCatalog = async (storefrontCatalog: Record<string, unknown>) =>
+/**
+ * Every storefront catalog read is answered for one market: its offer and its currency. Without a market id
+ * (no market exists yet, see market.ts) merchandise answers with the whole published CZK catalogue.
+ */
+const readCatalog = async (
+  marketId: string | undefined,
+  storefrontCatalog: Record<string, unknown>,
+) =>
   (await readRecords("merchandise", "records", {
-    view: { storefront: true, storefrontCatalog },
+    view: {
+      storefront: true,
+      storefrontCatalog:
+        marketId === undefined ? storefrontCatalog : { ...storefrontCatalog, marketId },
+    },
   })) as Record<string, unknown>;
+/** The request's market (resolved from the path locale; see active-market.ts). */
+const marketIdOf = async () => (await getActiveMarket()).marketId;
+/** Cache keys of market-dependent entries. */
+const marketKey = (marketId: string | undefined, key: string) => `${marketId ?? ""}\u0000${key}`;
 
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>
@@ -98,11 +115,15 @@ const compact = (query: CatalogQuery): CatalogQuery =>
     ),
   ) as CatalogQuery;
 
-const productKey = (query: CatalogQuery, fields: CatalogFields) =>
-  JSON.stringify({ ...compact(query), fields, includeCategories: false });
+const productKey = (marketId: string | undefined, query: CatalogQuery, fields: CatalogFields) =>
+  JSON.stringify({ ...compact(query), fields, includeCategories: false, marketId });
 
-const loadProducts = (key: string) => async () =>
-  projectProducts(await readCatalog(JSON.parse(key) as Record<string, unknown>));
+const loadProducts = (key: string) => async () => {
+  const { marketId, ...query }: Record<string, unknown> = JSON.parse(key);
+  return projectProducts(
+    await readCatalog(typeof marketId === "string" ? marketId : undefined, query),
+  );
+};
 // One owner read per render for equal queries, keyed by the serialized owner query.
 const cachedProducts = cache((key: string): Promise<ProductPage> =>
   productPages.get(key, loadProducts(key)),
@@ -114,7 +135,7 @@ export async function readProducts(
   fields: CatalogFields,
   fresh = false,
 ): Promise<ProductPage> {
-  const key = productKey(query, fields);
+  const key = productKey(await marketIdOf(), query, fields);
   return fresh ? await loadProducts(key)() : await cachedProducts(key);
 }
 
@@ -127,8 +148,8 @@ export async function readCartProducts(
   return await readProducts({ productIds, variantIds, pageSize: productIds.length }, "full", true);
 }
 
-const loadRootTree = async () =>
-  projectCategories(await readCatalog({ mode: "categories", includeCategories: true }));
+const loadRootTree = (marketId: string | undefined) => async () =>
+  projectCategories(await readCatalog(marketId, { mode: "categories", includeCategories: true }));
 /** The first listing page of a category, sorted by name and unfiltered, as the category page reads it. */
 const firstCategoryPage = (categorySlug: string) => ({
   categorySlug,
@@ -137,33 +158,44 @@ const firstCategoryPage = (categorySlug: string) => ({
   sort: "name" as const,
   fields: "card" as const,
 });
-const loadCategoryPage = (categorySlug: string) => async (): Promise<CategoryPage> => {
-  let firstPage: ProductPage | undefined;
-  const categories = await categoryContent.get(categorySlug, async () => {
-    // On a content miss one bounded read supplies fresh prices and only the active branch's text/images.
-    // Never retain its products in the fifteen-minute content cache.
-    const body = await readCatalog({
-      ...firstCategoryPage(categorySlug),
-      includeCategories: false,
-      includeCategoryContent: true,
+const loadCategoryPage =
+  (marketId: string | undefined, categorySlug: string) => async (): Promise<CategoryPage> => {
+    let firstPage: ProductPage | undefined;
+    const categories = await categoryContent.get(marketKey(marketId, categorySlug), async () => {
+      // On a content miss one bounded read supplies fresh prices and only the active branch's text/images.
+      // Never retain its products in the fifteen-minute content cache.
+      const body = await readCatalog(marketId, {
+        ...firstCategoryPage(categorySlug),
+        includeCategories: false,
+        includeCategoryContent: true,
+      });
+      firstPage = projectProducts(body);
+      return projectCategories(body);
     });
-    firstPage = projectProducts(body);
-    return projectCategories(body);
-  });
-  return {
-    categories,
-    page: firstPage ?? (await readProducts(firstCategoryPage(categorySlug), "card")),
+    return {
+      categories,
+      page:
+        firstPage ??
+        (await cachedProducts(productKey(marketId, firstCategoryPage(categorySlug), "card"))),
+    };
   };
-};
 /** The root tree with one category's own content and its children's content. */
 const withCategoryContent = (tree: CatalogCategory[], content: CatalogCategory[]) => {
   if (content.length === 0) return tree;
   const byId = new Map(content.map((node) => [node.id, node]));
   return tree.map((node) => byId.get(node.id) ?? node);
 };
-const cachedCategoryPage = cache((categorySlug: string): Promise<CategoryPage> =>
-  categoryPages.get(categorySlug, loadCategoryPage(categorySlug)),
-);
+const cachedCategoryPage = cache(async (categorySlug: string): Promise<CategoryPage> => {
+  const marketId = await marketIdOf();
+  return await categoryPages.get(
+    marketKey(marketId, categorySlug),
+    loadCategoryPage(marketId, categorySlug),
+  );
+});
+const rootTree = async () => {
+  const marketId = await marketIdOf();
+  return await categoryTrees.get(marketId ?? "", loadRootTree(marketId));
+};
 
 /**
  * The navigation tree (navigation fields only, root categories with content). With `categorySlug` the
@@ -172,11 +204,10 @@ const cachedCategoryPage = cache((categorySlug: string): Promise<CategoryPage> =
  */
 const cachedCategoryTree = cache(async (categorySlug: string): Promise<CatalogCategory[]> =>
   categorySlug
-    ? await Promise.all([
-        categoryTrees.get("", loadRootTree),
-        cachedCategoryPage(categorySlug),
-      ]).then(([tree, { categories }]) => withCategoryContent(tree, categories))
-    : await categoryTrees.get("", loadRootTree),
+    ? await Promise.all([rootTree(), cachedCategoryPage(categorySlug)]).then(
+        ([tree, { categories }]) => withCategoryContent(tree, categories),
+      )
+    : await rootTree(),
 );
 
 export async function getCategoryTree(categorySlug = ""): Promise<CatalogCategory[]> {

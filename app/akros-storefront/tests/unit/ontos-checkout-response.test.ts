@@ -32,6 +32,20 @@ describe("connected checkout response boundary", () => {
       readOrderResponse(Response.json(body, { status: status as number })),
     ).rejects.toThrow(checkoutSaveError);
   });
+  it.each([
+    ["NOT_OFFERED_IN_MARKET", /není v nabídce tohoto trhu/],
+    ["MARKET_UNAVAILABLE", /nepřijímá/],
+  ])("explains a market rejection %s without placing an order", async (code, message) => {
+    const error = await readOrderResponse(
+      Response.json(
+        { message: "ignored", issues: [{ code, message: "Owner text" }] },
+        { status: 409 },
+      ),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CheckoutRejectionError);
+    expect(error).not.toBeInstanceOf(CheckoutStockError);
+    expect(String(error)).toMatch(message);
+  });
   it.each(["INSUFFICIENT_STOCK", "OUT_OF_STOCK"])(
     "shows the owner %s message when stock ran out after the cart check",
     async (code) => {

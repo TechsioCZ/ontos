@@ -2,7 +2,8 @@
 import StoreLink from "@/components/store-link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { useStoreHref, useStorePathname } from "@/ontos/market-context";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { useCart } from "@/features/cart/cart-provider";
@@ -16,6 +17,7 @@ import { CheckoutSummary } from "./checkout-summary";
 function UnconfirmedOrder() {
   const { completeOrder, storageError } = useCheckout();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   return (
@@ -43,7 +45,9 @@ function UnconfirmedOrder() {
           try {
             const order = await completeOrder();
             if (order)
-              router.push(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`);
+              router.push(
+                storeHref(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`),
+              );
           } finally {
             sendingRef.current = false;
             setSending(false);
@@ -65,8 +69,9 @@ export function CheckoutLayout({
 }) {
   const quote = useCartQuote();
   const pricesVisible = !quote?.enabled || (quote.status === "ready" && !quote.quote?.priceChanged);
-  const pathname = usePathname();
+  const pathname = useStorePathname();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const { cart } = useCart();
   const {
     draft,
@@ -92,14 +97,16 @@ export function CheckoutLayout({
     step,
     onStepChange: ({ step: next }) => {
       router.push(
-        checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, methods) : 0].href,
+        storeHref(
+          checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, methods) : 0].href,
+        ),
       );
     },
   });
   useEffect(() => {
     if (ready && accountReady && !submitted && !hasUnconfirmedOrder && reachable !== step)
-      router.replace(checkoutSteps[reachable].href);
-  }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder]);
+      router.replace(storeHref(checkoutSteps[reachable].href));
+  }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder, storeHref]);
   return (
     <div
       data-akros-checkout
@@ -187,7 +194,7 @@ export function CheckoutLayout({
                       aria-describedby={cartBlocked ? "checkout-choice-blocked" : undefined}
                       onClick={() => {
                         chooseGuestCheckout();
-                        router.push(checkoutSteps[1].href);
+                        router.push(storeHref(checkoutSteps[1].href));
                       }}
                     >
                       Objednat bez registrace

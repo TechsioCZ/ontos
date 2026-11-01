@@ -7,7 +7,7 @@ import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table"
 import { AccountHeading } from "./account-content";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
 import { formatPrice } from "@/lib/format";
-import { orderHref, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
+import { orderHref, orderMoney, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
 
 const columns: ColumnDef<CustomerOrder>[] = [
   {
@@ -28,7 +28,7 @@ const columns: ColumnDef<CustomerOrder>[] = [
   {
     accessorKey: "totalMinor",
     header: "Cena celkem",
-    cell: ({ row }) => formatPrice(row.original.totalMinor),
+    cell: ({ row }) => formatPrice(row.original.totalMinor, orderMoney(row.original)),
   },
   {
     accessorKey: "status",
@@ -120,7 +120,7 @@ export function AccountOrders({
                   </div>
                   <div className="flex justify-between">
                     <dt>Cena celkem</dt>
-                    <dd>{formatPrice(order.totalMinor)}</dd>
+                    <dd>{formatPrice(order.totalMinor, orderMoney(order))}</dd>
                   </div>
                   <div className="flex justify-between">
                     <dt>Stav</dt>

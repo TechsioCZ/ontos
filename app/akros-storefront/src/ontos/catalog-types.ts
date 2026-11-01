@@ -1,3 +1,4 @@
+import type { StoreCurrency } from "@/lib/format";
 import type { ProductStockStatus } from "@/lib/product-stock";
 
 export interface CatalogCategory {
@@ -77,7 +78,8 @@ export interface CatalogProduct {
   description: string;
   priceMinor: number;
   originalPriceMinor?: number;
-  currency: "CZK";
+  /** The market currency every price of this product is in. */
+  currency: StoreCurrency;
   unit: string;
   minimumQuantity: number;
   packageQuantity?: number;

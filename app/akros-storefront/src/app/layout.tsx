@@ -2,12 +2,18 @@ import { getShellSnapshot } from "@/ontos/catalog-server";
 import { CatalogProvider } from "@/ontos/catalog-provider";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
 
 import "./globals.css";
 
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
+import { dictionaryFor, dictionaryLanguage } from "@/i18n";
+import { getMarketResolution, getStorePath, toClientMarket } from "@/ontos/active-market";
+import { MarketProvider } from "@/ontos/market-context";
+import { isCatalogPath } from "@/ontos/market-locale";
+import { MarketGatePage } from "@/ontos/market-pages";
 
 // Inter is split into two pre-built files (see app/scripts/fonts/subset-fonts.mjs): a preloaded core
 // with ASCII, Latin-1, Latin Extended-A and the punctuation Czech copy needs, plus a lazily fetched
@@ -34,28 +40,85 @@ const inter = localFont({
   ],
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: "AKROS | Nerezový a spojovací materiál",
-    template: "%s | AKROS",
-  },
-  robots: { index: false, follow: false, nocache: true },
-  description:
-    "E-shop AKROS s nerezovým, hutním a spojovacím materiálem v prezentačním prostředí OntOS.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const [resolution, path, requestHeaders] = await Promise.all([
+    getMarketResolution(),
+    getStorePath(),
+    headers(),
+  ]);
+  const base: Metadata = {
+    title: {
+      default: "AKROS | Nerezový a spojovací materiál",
+      template: "%s | AKROS",
+    },
+    robots: { index: false, follow: false, nocache: true },
+    description:
+      "E-shop AKROS s nerezovým, hutním a spojovacím materiálem v prezentačním prostředí OntOS.",
+  };
+  if (resolution.kind !== "live") {
+    const dictionary = dictionaryFor(resolution.locale);
+    return {
+      ...base,
+      title:
+        resolution.kind === "unknown"
+          ? dictionary.market.unknownTitle
+          : dictionary.market.unavailableTitle,
+    };
+  }
+  const protocol = requestHeaders.get("x-forwarded-proto")?.split(",")[0]?.trim() || "http";
+  const host = requestHeaders.get("host");
+  const href = (locale: string) => `/${locale}${path === "/" ? "" : path}`;
+  return {
+    ...base,
+    ...(host ? { metadataBase: new URL(`${protocol}://${host}`) } : {}),
+    // Catalog pages carry hreflang alternates for every live market (same path, other market).
+    alternates: {
+      canonical: href(resolution.market.locale),
+      ...(isCatalogPath(path)
+        ? {
+            languages: Object.fromEntries(
+              resolution.live.map((market) => [market.locale, href(market.locale)]),
+            ),
+          }
+        : {}),
+    },
+  };
+}
 
 export const dynamic = "force-dynamic";
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  const resolution = await getMarketResolution();
+  if (resolution.kind !== "live")
+    // Unknown locale (root 404 status) or an inactive market: no catalog, cart or market data.
+    return (
+      <html
+        lang={dictionaryLanguage(resolution.locale)}
+        className={`${inter.variable} light`}
+        data-scroll-behavior="smooth"
+      >
+        <body>
+          <MarketGatePage
+            dictionary={dictionaryFor(resolution.locale)}
+            kind={resolution.kind}
+            live={resolution.live}
+          />
+        </body>
+      </html>
+    );
   const snapshot = await getShellSnapshot();
+  const market = toClientMarket(resolution);
   return (
-    <html lang="cs" className={`${inter.variable} light`} data-scroll-behavior="smooth">
+    <html lang={market.locale} className={`${inter.variable} light`} data-scroll-behavior="smooth">
       <body>
-        <CatalogProvider snapshot={snapshot}>
-          <CartProvider>
-            {children}
-            <CartNotifications />
-          </CartProvider>
-        </CatalogProvider>
+        <MarketProvider market={market}>
+          <CatalogProvider snapshot={snapshot}>
+            {/* Each market keeps its own carts: prices and currency differ between markets. */}
+            <CartProvider storageScope={market.marketCode}>
+              {children}
+              <CartNotifications />
+            </CartProvider>
+          </CatalogProvider>
+        </MarketProvider>
       </body>
     </html>
   );

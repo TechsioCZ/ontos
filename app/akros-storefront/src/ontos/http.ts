@@ -10,7 +10,7 @@ export class RequestError extends Error {
   }
 
   constructor(
-    readonly status: 400 | 403 | 404 | 413 | 415,
+    readonly status: 400 | 403 | 404 | 409 | 413 | 415,
     message: string,
   ) {
     super(message);

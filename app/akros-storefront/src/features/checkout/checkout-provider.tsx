@@ -24,6 +24,7 @@ import {
   getDeliveryAddress,
   parseCheckoutDraft,
 } from "@/features/checkout/checkout-state";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 import { guestOrderKey } from "./guest-order-confirmation";
 
 const isError = (value: unknown): value is Error =>
@@ -96,8 +97,11 @@ function CheckoutCartProvider({
   children: ReactNode;
   storage?: CheckoutStorage;
 }) {
-  const { cart, clearCart, ready: cartReady, activeCartId } = useCart();
-  const draftStorageKey = activeCartId === "default" ? draftKey : `${draftKey}:${activeCartId}`;
+  const { cart, clearCart, ready: cartReady, activeCartId, storageScope } = useCart();
+  // Cart ids repeat in every market (each has a "default" cart): checkout state is scoped by market too.
+  const cartStorageId = storageScope ? `${storageScope}:${activeCartId}` : activeCartId;
+  const draftStorageKey = cartStorageId === "default" ? draftKey : `${draftKey}:${cartStorageId}`;
+  const pendingKey = `akros-ontos-pending:${cartStorageId}`;
   const [{ draft, hydrated, storageError, submitError, submitted }, checkoutDispatch] = useReducer(
     checkoutReducer,
     undefined,
@@ -128,6 +132,7 @@ function CheckoutCartProvider({
       try {
         const response = await fetch("/api/ontos/checkout", {
           cache: "no-store",
+          headers: marketRequestHeaders(),
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
         });
         const body = await response.json();
@@ -193,8 +198,7 @@ function CheckoutCartProvider({
     try {
       storageRef.current = storage ?? window.sessionStorage;
       setHasUnconfirmedOrder(
-        JSON.parse(storageRef.current.getItem(`akros-ontos-pending:${activeCartId}`) ?? "null")
-          ?.sent === true,
+        JSON.parse(storageRef.current.getItem(pendingKey) ?? "null")?.sent === true,
       );
       setGuestCheckout(storageRef.current.getItem(guestCheckoutKey) === "true");
       checkoutDispatch({
@@ -209,7 +213,7 @@ function CheckoutCartProvider({
         error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
       });
     }
-  }, [storage, draftStorageKey, activeCartId]);
+  }, [storage, draftStorageKey, pendingKey]);
 
   useEffect(() => {
     if (!hydrated || !storageRef.current) return;
@@ -234,7 +238,7 @@ function CheckoutCartProvider({
     submitting.current = true;
     try {
       if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
-      const key = `akros-ontos-pending:${activeCartId}`;
+      const key = pendingKey;
       // Match the order route's inputs, not refreshed catalog/display metadata or unused draft fields.
       const signature = JSON.stringify({
         lines: cart.lines.map((line) => ({
@@ -283,7 +287,7 @@ function CheckoutCartProvider({
         storageRef.current.setItem(key, JSON.stringify(pending));
         const checkResponse = await fetch("/api/ontos/cart", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...marketRequestHeaders() },
           body: JSON.stringify({ cart, deliveryId: draft.deliveryId }),
         });
         const check = await readCheckoutQuote(checkResponse);
@@ -303,7 +307,7 @@ function CheckoutCartProvider({
       setHasUnconfirmedOrder(true);
       const response = await fetch("/api/ontos/orders", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...marketRequestHeaders() },
         body: pending.body,
       });
       const result = await readOrderResponse(response).catch((error: unknown) => {

@@ -6,7 +6,9 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { Select } from "@techsio/ui-kit/molecules/select";
+import { currencySymbol } from "@/lib/format";
 import type { CategoryFilters as Filters } from "@/ontos/category-filters";
+import { useMoney, useStoreHref } from "@/ontos/market-context";
 
 const availabilityOptions = [
   { value: "all", label: "Všechny produkty" },
@@ -28,6 +30,8 @@ export function CategoryFilters({
   pathname: string;
   count: number;
 }) {
+  const symbol = currencySymbol(useMoney());
+  const href = useStoreHref();
   const [availability, setAvailability] = useState(filters.availability || "all");
   const [sort, setSort] = useState(filters.sort);
   const invalidRange =
@@ -36,7 +40,7 @@ export function CategoryFilters({
     filters.minMinor > filters.maxMinor;
   return (
     <form
-      action={pathname}
+      action={href(pathname)}
       method="get"
       aria-label="Filtrování produktů"
       className="mb-6 grid min-w-0 gap-4 rounded-sm border-(length:--border-sm) border-base-dark bg-base p-4"
@@ -55,7 +59,7 @@ export function CategoryFilters({
           <FormInput
             id="category-min"
             name="min"
-            label="Cena od (Kč)"
+            label={`Cena od (${symbol})`}
             inputMode="decimal"
             pattern="[0-9]+([.,][0-9]{1,2})?"
             defaultValue={filters.min}
@@ -65,7 +69,7 @@ export function CategoryFilters({
           <FormInput
             id="category-max"
             name="max"
-            label="Cena do (Kč)"
+            label={`Cena do (${symbol})`}
             inputMode="decimal"
             pattern="[0-9]+([.,][0-9]{1,2})?"
             defaultValue={filters.max}

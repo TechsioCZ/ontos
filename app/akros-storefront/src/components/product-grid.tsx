@@ -7,7 +7,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
-import { cs } from "@/i18n/cs";
+import { useDictionary, useMoney } from "@/ontos/market-context";
 import { formatPrice } from "@/lib/format";
 import { productStockLabels, productStockTone } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/ontos/catalog-types";
@@ -25,6 +25,8 @@ export function ProductGrid({
   action?: "purchase" | "detail";
   columns?: "catalog" | "checkout" | "featured" | "related";
 }) {
+  const cs = useDictionary();
+  const money = useMoney();
   const isListing = columns === "catalog" || columns === "featured";
   const imageSizes = isListing
     ? "(max-width: 359px) 100vw, (max-width: 1100px) 50vw, 234px"
@@ -50,7 +52,7 @@ export function ProductGrid({
         const priceUnavailable = !!product.priceUnavailableReason || product.priceMinor <= 0;
         const priceLabel = priceUnavailable
           ? "Cena není dostupná"
-          : `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`;
+          : `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, money)}`;
         const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
@@ -165,7 +167,7 @@ export function ProductGrid({
                       <span>{priceLabel}</span>
                       <del className="akros-product-card__original-price">
                         <span className="sr-only">{cs.product.originalPrice}: </span>
-                        {formatPrice(comparisonPrice, product.currency)}
+                        {formatPrice(comparisonPrice, money)}
                       </del>
                     </span>
                   </>

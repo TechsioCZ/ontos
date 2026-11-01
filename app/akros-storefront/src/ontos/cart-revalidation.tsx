@@ -9,7 +9,8 @@ import {
   formatQuantity,
   type CartState,
 } from "@/features/cart/cart-state";
-import { formatPrice } from "@/lib/format";
+import { useFormatPrice } from "./market-context";
+import { marketRequestHeaders } from "./market-locale";
 
 const cartLabel = "Aktuální ceny a dostupnost z OntOS";
 
@@ -77,7 +78,7 @@ export function CartQuoteProvider({ children }: { children: ReactNode }) {
       try {
         const response = await fetch("/api/ontos/cart", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...marketRequestHeaders() },
           body: JSON.stringify({ cart, deliveryId }),
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
           cache: "no-store",
@@ -165,6 +166,7 @@ export function useCartQuote(): CartQuoteState | null {
 
 export function CartRevalidation() {
   const { cart, dispatch } = useCart();
+  const formatPrice = useFormatPrice();
   const state = useCartQuote();
   if (!cart.lines.length || !state) return null;
   const { quote, error, status, retry } = state;

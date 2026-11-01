@@ -2,6 +2,7 @@
 import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
@@ -14,6 +15,7 @@ import { useCartQuote } from "@/ontos/cart-revalidation";
 export function AddressStep() {
   const { draft, updateDraft, accountEmail } = useCheckout();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(true);
   const [attempted, setAttempted] = useState(false);
@@ -50,7 +52,7 @@ export function AddressStep() {
           focusError();
           return;
         }
-        router.push("/kosik/shrnuti");
+        router.push(storeHref("/kosik/shrnuti"));
       }}
     >
       <section

@@ -9,12 +9,12 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { CategoryBranch } from "@/ontos/category-branch";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
-import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
+import { getDictionary, getMoney } from "@/ontos/active-market";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
 import { purchaseProductOf, purchaseVariantOf } from "@/ontos/catalog-projection";
 
@@ -43,7 +43,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const [
     featuredCatalog,
     { getCategoryById, getCategoryTrail, getProductBySlug, toProductSummary },
-  ] = await Promise.all([getCatalog(), getProductDetail(slug)]);
+    cs,
+    money,
+  ] = await Promise.all([getCatalog(), getProductDetail(slug), getDictionary(), getMoney()]);
   const { variant: requestedVariantSearch } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
@@ -276,7 +278,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                           <dt>
                             od {tier.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
                           </dt>
-                          <dd>{formatPrice(tier.priceMinor, product.currency)}</dd>
+                          <dd>{formatPrice(tier.priceMinor, money)}</dd>
                         </div>
                       ))}
                     </dl>
@@ -297,12 +299,14 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                       {basePriceTier && (
                         <p className="akros-product-detail__price-row">
                           <span>Cena bez DPH</span>
-                          <strong>{formatPrice(basePriceTier.priceExcludingVatMinor)}</strong>
+                          <strong>
+                            {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
+                          </strong>
                         </p>
                       )}
                       <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
                         <span>Cena s DPH</span>
-                        <strong>{formatPrice(purchaseItem.priceMinor, product.currency)}</strong>
+                        <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
                       </p>
                     </>
                   )}

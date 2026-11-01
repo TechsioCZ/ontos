@@ -3,11 +3,12 @@
 import StoreLink from "@/components/store-link";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { AccountHeading, AccountPanel } from "./account-content";
-import { orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
+import { orderMoney, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
 import { formatPrice } from "@/lib/format";
 
 export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
   const address = order.deliveryAddress;
+  const money = orderMoney(order);
   return (
     <>
       <AccountHeading
@@ -58,16 +59,16 @@ export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
             {order.shipping && (
               <div className="flex justify-between gap-4">
                 <dt>{order.shipping.label}</dt>
-                <dd>{formatPrice(order.shipping.priceMinor)}</dd>
+                <dd>{formatPrice(order.shipping.priceMinor, money)}</dd>
               </div>
             )}
             <div className="flex justify-between gap-4">
               <dt>DPH</dt>
-              <dd>{formatPrice(order.totalVatMinor)}</dd>
+              <dd>{formatPrice(order.totalVatMinor, money)}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt>Celkem s DPH</dt>
-              <dd className="font-bold">{formatPrice(order.totalMinor)}</dd>
+              <dd className="font-bold">{formatPrice(order.totalMinor, money)}</dd>
             </div>
           </dl>
           <p className="mt-4 text-sm">
@@ -101,9 +102,9 @@ export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
                     <p className="text-sm">Kód: {line.sku}</p>
                   </Table.Cell>
                   <Table.Cell numeric>{line.quantity}</Table.Cell>
-                  <Table.Cell numeric>{formatPrice(line.unitPriceMinor)}</Table.Cell>
+                  <Table.Cell numeric>{formatPrice(line.unitPriceMinor, money)}</Table.Cell>
                   <Table.Cell numeric>
-                    {formatPrice(Math.round(line.unitPriceMinor * line.quantity))}
+                    {formatPrice(Math.round(line.unitPriceMinor * line.quantity), money)}
                   </Table.Cell>
                 </Table.Row>
               ))}
@@ -128,11 +129,11 @@ export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
                 </div>
                 <div className="flex justify-between">
                   <dt>Cena za kus</dt>
-                  <dd>{formatPrice(line.unitPriceMinor)}</dd>
+                  <dd>{formatPrice(line.unitPriceMinor, money)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt>Celkem</dt>
-                  <dd>{formatPrice(Math.round(line.unitPriceMinor * line.quantity))}</dd>
+                  <dd>{formatPrice(Math.round(line.unitPriceMinor * line.quantity), money)}</dd>
                 </div>
               </dl>
             </li>

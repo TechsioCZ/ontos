@@ -4,7 +4,8 @@ import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { Footer } from "@techsio/ui-kit/organisms/footer";
 
-import { cs } from "@/i18n/cs";
+import type { Dictionary } from "@/i18n";
+import { useDictionary } from "@/ontos/market-context";
 
 type FooterAsset = {
   alt: string;
@@ -28,19 +29,21 @@ function FooterAssetImage({ asset }: { asset: FooterAsset }) {
   );
 }
 
-const customerLinks = [
-  { href: "/doprava-a-platba", label: cs.footer.delivery },
-  { href: "/kontakty", label: cs.footer.pickup },
-  { href: "/doprava-a-platba", label: cs.footer.paymentOptions },
-  { href: "/o-nas", label: cs.footer.shoppingBenefits },
-  { href: "/obchodni-podminky", label: cs.header.terms },
-  { href: "/reklamace", label: cs.footer.claims },
-  { href: "/gdpr", label: cs.footer.privacy },
-  { href: "/faq", label: cs.footer.downloads },
-  { href: "/kontakty", label: cs.footer.substitutePerformance },
-] as const;
+const customerLinks = (cs: Dictionary) =>
+  [
+    { href: "/doprava-a-platba", label: cs.footer.delivery },
+    { href: "/kontakty", label: cs.footer.pickup },
+    { href: "/doprava-a-platba", label: cs.footer.paymentOptions },
+    { href: "/o-nas", label: cs.footer.shoppingBenefits },
+    { href: "/obchodni-podminky", label: cs.header.terms },
+    { href: "/reklamace", label: cs.footer.claims },
+    { href: "/gdpr", label: cs.footer.privacy },
+    { href: "/faq", label: cs.footer.downloads },
+    { href: "/kontakty", label: cs.footer.substitutePerformance },
+  ] as const;
 
 export function SiteFooter() {
+  const cs = useDictionary();
   return (
     <Footer className="akros-footer" direction="vertical" layout="col" sectionFlow="col" size="sm">
       <div className="akros-footer__inner" id="footer">
@@ -83,7 +86,7 @@ export function SiteFooter() {
             <Footer.Title>{cs.footer.customerInformation}</Footer.Title>
             <nav aria-label={cs.footer.customerInformation}>
               <Footer.List>
-                {customerLinks.map((item) => (
+                {customerLinks(cs).map((item) => (
                   <li key={`${item.href}-${item.label}`}>
                     <Footer.Link
                       as={StoreLink}

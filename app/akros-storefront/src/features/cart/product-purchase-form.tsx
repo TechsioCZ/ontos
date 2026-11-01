@@ -9,8 +9,8 @@ import { Slider } from "@techsio/ui-kit/molecules/slider";
 import { Table } from "@techsio/ui-kit/organisms/table";
 
 import { useCart } from "@/features/cart/cart-provider";
-import { cs } from "@/i18n/cs";
-import { formatPrice } from "@/lib/format";
+import { useDictionary, useFormatPrice, useMoney } from "@/ontos/market-context";
+import { currencySymbol } from "@/lib/format";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
@@ -87,6 +87,7 @@ function VariantRangeFilter({
   step,
   value,
 }: VariantRangeFilterProps) {
+  const formatPrice = useFormatPrice();
   const scale = price ? 100 : 1;
   const priceInputStyle: CSSProperties & {
     "--akros-variant-filter-price-characters"?: number;
@@ -323,6 +324,9 @@ export function ProductPurchaseForm({
   initialVariantSearch,
 }: ProductPurchaseFormProps) {
   const { addItem, adding } = useCart();
+  const cs = useDictionary();
+  const money = useMoney();
+  const formatPrice = useFormatPrice();
   const sourceVariants = variants ?? noVariants;
   const variantDimensions = useMemo(
     () => new Map(sourceVariants.map((item) => [item.id, parseVariantDimensions(item.label)])),
@@ -589,7 +593,7 @@ export function ProductPurchaseForm({
             {priceBounds && priceBounds[0] < priceBounds[1] && (
               <VariantRangeFilter
                 bounds={priceBounds}
-                label={`Cena (Kč/${product.unit})`}
+                label={`Cena (${currencySymbol(money)}/${product.unit})`}
                 onChange={setPriceRange}
                 price
                 step={1}

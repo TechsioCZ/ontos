@@ -2,7 +2,6 @@
 
 import StoreLink from "@/components/store-link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Drawer } from "@techsio/ui-kit/molecules/drawer";
@@ -10,12 +9,14 @@ import { CatalogHelpNavigation, CatalogNavigation } from "@/components/catalog-s
 import { HeaderSearch } from "@/components/header-search";
 
 import { MiniCart } from "@/features/cart/mini-cart";
-import { cs } from "@/i18n/cs";
+import type { Dictionary } from "@/i18n";
 import { useCatalog } from "@/ontos/catalog-provider";
+import { useDictionary, useStorePathname } from "@/ontos/market-context";
+import { MarketSwitcher } from "@/ontos/market-switcher";
 
 const isElement = (value: EventTarget): value is Element => Element.prototype.isPrototypeOf(value);
 
-const utilityLinks = [
+const utilityLinks = (cs: Dictionary) => [
   { href: "/", label: cs.header.home },
   { href: "/obchodni-podminky", label: cs.header.terms },
   { href: "/o-nas", label: cs.header.about },
@@ -33,6 +34,7 @@ const utilityLinks = [
 
 function MobileNavigation({ pathname }: { pathname: string }) {
   const { getSidebarCategories } = useCatalog();
+  const cs = useDictionary();
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const activeSlug = pathname.startsWith("/kategorie/") ? pathname.split("/")[2] : undefined;
@@ -147,7 +149,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                 <section>
                   <h3 className="akros-mobile-menu__section-title">{cs.header.information}</h3>
                   <nav aria-label="Mobilní navigace" className="akros-mobile-menu__links">
-                    {utilityLinks.map((item) => (
+                    {utilityLinks(cs).map((item) => (
                       <LinkButton
                         key={item.href}
                         as={StoreLink}
@@ -174,14 +176,16 @@ function MobileNavigation({ pathname }: { pathname: string }) {
 }
 
 export function SiteHeader() {
-  const pathname = usePathname();
+  // Without the market prefix, so current-page state matches Kai's unprefixed routes.
+  const pathname = useStorePathname();
+  const cs = useDictionary();
 
   return (
     <header className="akros-header">
       <div className="akros-header__utility-bar">
         <div className="akros-header__utility">
           <nav className="akros-header__utility-links" aria-label="Pomocná navigace">
-            {utilityLinks.map((item) => (
+            {utilityLinks(cs).map((item) => (
               <LinkButton
                 key={item.href}
                 as={StoreLink}
@@ -196,6 +200,7 @@ export function SiteHeader() {
               </LinkButton>
             ))}
           </nav>
+          <MarketSwitcher />
           <LinkButton
             as={StoreLink}
             data-akros-header-login
@@ -213,7 +218,7 @@ export function SiteHeader() {
       <div className="akros-header__main">
         <div className="akros-header__top-row">
           <MobileNavigation key={pathname} pathname={pathname} />
-          <StoreLink className="akros-brand" href="/" aria-label="AKROS – domovská stránka">
+          <StoreLink className="akros-brand" href="/" aria-label={cs.footer.homeLinkLabel}>
             <Image
               alt=""
               className="akros-brand__logo"

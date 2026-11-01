@@ -10,10 +10,11 @@ import { Popover } from "@techsio/ui-kit/molecules/popover";
 
 import { useCart } from "./cart-provider";
 
-import { cs } from "@/i18n/cs";
+import type { Dictionary } from "@/i18n";
+import { useDictionary } from "@/ontos/market-context";
 import { formatQuantity } from "@/features/cart/cart-state";
 
-const getItemCountLabel = (count: number) => {
+const getItemCountLabel = (cs: Dictionary, count: number) => {
   const lastDigit = count % 10;
   const lastTwoDigits = count % 100;
 
@@ -33,7 +34,8 @@ export function MiniCart() {
   const contentRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { cart, itemCount, ready } = useCart();
-  const itemCountLabel = getItemCountLabel(itemCount);
+  const cs = useDictionary();
+  const itemCountLabel = getItemCountLabel(cs, itemCount);
   const triggerLabel = ready
     ? `${cs.header.cart}, ${itemCountLabel}`
     : `${cs.header.cart}, ${cs.cart.loading}`;

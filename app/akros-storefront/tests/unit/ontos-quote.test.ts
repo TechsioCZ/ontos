@@ -3,6 +3,7 @@ import { projectProducts as project } from "@/ontos/catalog-projection";
 import { readCartProducts } from "@/ontos/catalog-server";
 import { callAction } from "@/ontos/gateway";
 import { quoteCart } from "@/ontos/quote";
+import { testMarket } from "../support/market-fixture";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/ontos/catalog-server", () => ({ readCartProducts: vi.fn() }));
@@ -131,5 +132,29 @@ describe("server cart quote", () => {
     expect(quote.canCheckout).toBe(false);
     expect(quote.totals).toBeNull();
     expect(quote.lineIssues[0]?.code).toBe("AVAILABILITY_UNKNOWN");
+  });
+  it("asks the owner for the request's market and keeps a not-offered line blocked", async () => {
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({ revision: 3, products: [product({})] }),
+    );
+    vi.mocked(callAction).mockResolvedValue({
+      storefrontOrder: {
+        outcome: "REJECTED",
+        issues: [
+          {
+            code: "NOT_OFFERED_IN_MARKET",
+            productId: "p",
+            variantId: "v",
+            message: "Vruty (3,5 × 16) není v nabídce tohoto trhu.",
+          },
+        ],
+      },
+    });
+    const quote = await quoteCart(cart(10, 121));
+    expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
+      command: { dryRun: true, marketId: testMarket.marketId },
+    });
+    expect(quote.canCheckout).toBe(false);
+    expect(quote.lineIssues[0]?.code).toBe("NOT_OFFERED_IN_MARKET");
   });
 });

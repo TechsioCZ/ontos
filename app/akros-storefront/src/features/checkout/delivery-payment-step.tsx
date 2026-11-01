@@ -2,6 +2,7 @@
 import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
@@ -11,8 +12,10 @@ import { formatCheckoutPrice } from "./checkout-format";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function DeliveryPaymentStep() {
+  const money = useMoney();
   const { draft, methods, methodsError, updateDraft } = useCheckout();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const formRef = useRef<HTMLFormElement>(null);
   const [attempted, setAttempted] = useState(false);
   const errors = attempted ? validateMethods(draft, methods) : {};
@@ -34,7 +37,7 @@ export function DeliveryPaymentStep() {
           );
           return;
         }
-        router.push("/kosik/dodaci-udaje");
+        router.push(storeHref("/kosik/dodaci-udaje"));
       }}
     >
       <div
@@ -80,7 +83,7 @@ export function DeliveryPaymentStep() {
                     <span
                       className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
                     >
-                      {price === 0 ? "Zdarma" : formatCheckoutPrice(price)}
+                      {price === 0 ? "Zdarma" : formatCheckoutPrice(price, money)}
                     </span>
                   </RadioGroup.Item>
                 );

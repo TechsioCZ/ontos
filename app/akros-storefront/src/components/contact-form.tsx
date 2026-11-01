@@ -5,6 +5,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
 import type { InquiryKind } from "@/ontos/inquiry-model";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -50,7 +51,7 @@ export function ContactForm({
     try {
       const response = await fetch("/api/ontos/inquiries", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...marketRequestHeaders() },
         body: JSON.stringify({ ...fields, requestId: submission.current.requestId }),
       });
       const body: unknown = await response.json();

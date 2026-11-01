@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
-export default function CheckoutPage() {
-  redirect("/kosik/doprava-platba");
+import { marketHref } from "@/ontos/active-market";
+export default async function CheckoutPage() {
+  redirect(await marketHref("/kosik/doprava-platba"));
 }

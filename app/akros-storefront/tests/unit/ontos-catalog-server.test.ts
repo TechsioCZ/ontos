@@ -30,10 +30,22 @@ vi.mock("next/server", () => ({
   },
 }));
 vi.mock("@/ontos/gateway", () => ({ readRecords: vi.fn() }));
+// The request's market (normally resolved from the path locale); switchable per test.
+const czMarketId = "0b3d6c1e-2f4a-4c5b-8d6e-7f8091a2b3c4";
+const skMarketId = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
+const requestMarket = vi.hoisted((): { id: string | undefined } => ({ id: "" }));
+vi.mock("@/ontos/active-market", () => ({
+  getActiveMarket: async () => ({ marketId: requestMarket.id }),
+}));
 
 type Server = typeof import("@/ontos/catalog-server");
 type Query = { view: { storefrontCatalog: Record<string, unknown> } };
-const catalogOf = (call: unknown[]) => (call[2] as Query).view.storefrontCatalog;
+/** The owner query without its market (every read is asserted to carry the request's market). */
+const catalogOf = (call: unknown[]) => {
+  const { marketId, ...query } = (call[2] as Query).view.storefrontCatalog;
+  expect(marketId).toBe(requestMarket.id);
+  return query;
+};
 
 const category = (id: string, parentId: string | null, slug: string, content = false) => ({
   id,
@@ -76,6 +88,7 @@ let server: Server;
 beforeEach(async () => {
   // Fresh module per test: the product and navigation caches are process-local.
   vi.resetModules();
+  requestMarket.id = czMarketId;
   server = await vi.importActual<Server>("@/ontos/catalog-server");
   vi.mocked(readRecords).mockReset();
   vi.mocked(readRecords).mockImplementation(async (_vertical, _read, query) => {
@@ -194,9 +207,34 @@ describe("OntOS catalog server reads", () => {
           pageSize: 24,
           fields: "card",
           includeCategories: false,
+          marketId: czMarketId,
         },
       },
     });
+  });
+  it("answers every read for the request's market and keys the caches by market", async () => {
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");
+    await server.getCategoryTree();
+    requestMarket.id = skMarketId;
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");
+    await server.getCategoryTree();
+    expect(
+      vi
+        .mocked(readRecords)
+        .mock.calls.map((call) => (call[2] as Query).view.storefrontCatalog.marketId),
+    ).toEqual([czMarketId, czMarketId, skMarketId, skMarketId]);
+    requestMarket.id = czMarketId;
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");
+    await server.getCategoryTree();
+    expect(readRecords).toHaveBeenCalledTimes(4);
+  });
+  it("sends no market before any market exists (the whole CZK catalogue)", async () => {
+    requestMarket.id = undefined;
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");
+    await server.getCategoryTree();
+    for (const call of vi.mocked(readRecords).mock.calls)
+      expect((call[2] as Query).view.storefrontCatalog).not.toHaveProperty("marketId");
+    expect(readRecords).toHaveBeenCalledTimes(2);
   });
   it("caches equal product queries briefly and bypasses the cache for fresh reads", async () => {
     await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");

@@ -3,7 +3,7 @@
 import StoreLink from "@/components/store-link";
 import { createPaginationGetPageUrl, Pagination } from "@techsio/ui-kit/molecules/pagination";
 
-import { cs } from "@/i18n/cs";
+import { useDictionary } from "@/ontos/market-context";
 
 export function CatalogPagination({
   currentPage,
@@ -18,6 +18,7 @@ export function CatalogPagination({
   pathname: string;
   searchParams?: Record<string, string>;
 }) {
+  const cs = useDictionary();
   const totalPages = Math.ceil(itemCount / pageSize);
   if (totalPages <= 1) return null;
 

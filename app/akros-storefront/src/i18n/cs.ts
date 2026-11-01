@@ -197,4 +197,22 @@ export const cs = {
     cookies: "Cookies",
     personalDataProtection: "Ochrana osobních údajů",
   },
+  /** Banner on every live page (prototype boundary). */
+  demoBanner:
+    "DEMO – objednávky se ukládají do OntOS, ale v tomto prostředí se neplatí ani nedoručují.",
+  market: {
+    switcherLabel: "Trh a jazyk",
+    notConfiguredTitle: "Sortiment pro tento trh zatím není nastaven",
+    notConfiguredDescription:
+      "Na tomto trhu zatím neprodáváme žádné zboží. Zkuste prosím jiný trh nebo se vraťte později.",
+    unavailableTitle: "Tento trh je dočasně nedostupný",
+    unavailableDescription:
+      "Nákup na tomto trhu je momentálně pozastavený. Vyberte si prosím jeden z dostupných trhů.",
+    unknownTitle: "Tento trh neexistuje",
+    unknownDescription:
+      "Pro zadanou adresu jsme nenašli žádný trh. Vyberte si prosím jeden z dostupných trhů.",
+    liveMarkets: "Dostupné trhy",
+    noLiveMarkets: "Momentálně není dostupný žádný trh.",
+    notOffered: "Tento produkt se na zvoleném trhu neprodává.",
+  },
 } as const;

@@ -2,6 +2,7 @@
 
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
+import { useStoreHref } from "@/ontos/market-context";
 import type { FormEvent } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
@@ -10,12 +11,13 @@ import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export default function NotFoundPage() {
   const router = useRouter();
+  const storeHref = useStoreHref();
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     const query = new FormData(event.currentTarget).get("q");
 
     if (typeof query === "string" && query.trim()) {
-      router.push(`/vyhledavani?q=${encodeURIComponent(query.trim())}`);
+      router.push(storeHref(`/vyhledavani?q=${encodeURIComponent(query.trim())}`));
     }
   };
 
@@ -38,7 +40,12 @@ export default function NotFoundPage() {
         </div>
         <div className="akros-not-found__search">
           <strong>Zkuste vyhledat materiál znovu:</strong>
-          <SearchForm action="/vyhledavani" method="get" onSubmit={handleSearch} size="sm">
+          <SearchForm
+            action={storeHref("/vyhledavani")}
+            method="get"
+            onSubmit={handleSearch}
+            size="sm"
+          >
             <SearchForm.Control>
               <SearchForm.Input name="q" placeholder="Hledat matici, šroub…" />
               <SearchForm.Button>Hledat</SearchForm.Button>

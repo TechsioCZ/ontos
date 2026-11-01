@@ -24,6 +24,7 @@ import {
 } from "@/features/cart/cart-state";
 
 import { parseStoredCart } from "@/features/cart/cart-storage";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 import type { CatalogPriceTier } from "@/ontos/catalog-types";
 import {
   type CartCollection,
@@ -37,6 +38,9 @@ const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
 
 const storageKey = "akros-demo-cart-v3";
+/** Browser storage key of one market's carts (`akros-demo-carts-v1:AKROS-SK`); unscoped outside a market. */
+export const marketStorageKey = (key: string, scope: string | undefined) =>
+  scope ? `${key}:${scope}` : key;
 
 interface CartContextValue {
   addItem: (
@@ -60,6 +64,8 @@ interface CartContextValue {
   removedItem: RemovedCartItem | null;
   undoRemove: (id: number) => void;
   dismissRemove: (id: number) => void;
+  /** Market whose carts these are (scopes checkout storage too); "" outside a market. */
+  storageScope: string;
 }
 
 interface CartFeedback {
@@ -267,10 +273,15 @@ const providerReducer = (
 export function CartProvider({
   children,
   storage,
+  storageScope = "",
 }: {
   children: ReactNode;
   storage?: Storage | null;
+  /** Market code: carts are stored per market, because prices and currency differ between markets. */
+  storageScope?: string;
 }) {
+  const cartKey = marketStorageKey(storageKey, storageScope);
+  const collectionKey = marketStorageKey(cartCollectionStorageKey, storageScope);
   const [state, providerDispatch] = useReducer(providerReducer, {
     ...createCartCollection(),
     cart: createEmptyCart(),
@@ -320,7 +331,7 @@ export function CartProvider({
         };
         const response = await fetch("/api/ontos/cart", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...marketRequestHeaders() },
           body: JSON.stringify({ cart: proposed }),
           cache: "no-store",
           signal: AbortSignal.timeout(8_000),
@@ -379,28 +390,22 @@ export function CartProvider({
 
   useEffect(() => {
     if (resolvedStorage) {
-      const restored = parseStoredCart(resolvedStorage.getItem(storageKey));
+      const restored = parseStoredCart(resolvedStorage.getItem(cartKey));
       providerDispatch({
         type: "hydrate",
-        collection: parseCartCollection(
-          resolvedStorage.getItem(cartCollectionStorageKey),
-          restored,
-        ),
+        collection: parseCartCollection(resolvedStorage.getItem(collectionKey), restored),
       });
     } else {
       providerDispatch({ type: "hydrate", collection: createCartCollection() });
     }
-  }, [resolvedStorage]);
+  }, [resolvedStorage, cartKey, collectionKey]);
 
   useEffect(() => {
     if (ready && resolvedStorage) {
-      resolvedStorage.setItem(storageKey, JSON.stringify(cart));
-      resolvedStorage.setItem(
-        cartCollectionStorageKey,
-        JSON.stringify({ version: 1, carts, activeCartId }),
-      );
+      resolvedStorage.setItem(cartKey, JSON.stringify(cart));
+      resolvedStorage.setItem(collectionKey, JSON.stringify({ version: 1, carts, activeCartId }));
     }
-  }, [cart, carts, activeCartId, ready, resolvedStorage]);
+  }, [cart, carts, activeCartId, ready, resolvedStorage, cartKey, collectionKey]);
 
   const value = useMemo(
     () => ({
@@ -421,6 +426,7 @@ export function CartProvider({
       removedItem,
       undoRemove,
       dismissRemove,
+      storageScope,
     }),
     [
       cart,
@@ -439,6 +445,7 @@ export function CartProvider({
       removedItem,
       undoRemove,
       dismissRemove,
+      storageScope,
     ],
   );
 

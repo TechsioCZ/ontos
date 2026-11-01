@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
+import { useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Link } from "@techsio/ui-kit/atoms/link";
@@ -20,9 +21,11 @@ import { useCartQuote } from "@/ontos/cart-revalidation";
 import { useServerTotals } from "./server-totals";
 
 export function ReviewStep() {
+  const money = useMoney();
   const { cart } = useCart();
   const { draft, methods, accountEmail, completeOrder, submitted, storageError } = useCheckout();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const server = useServerTotals(getCheckoutTotals(cart, draft, methods));
@@ -41,7 +44,9 @@ export function ReviewStep() {
         try {
           const order = await completeOrder();
           if (order)
-            router.push(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`);
+            router.push(
+              storeHref(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`),
+            );
         } finally {
           sendingRef.current = false;
           setSending(false);
@@ -66,7 +71,7 @@ export function ReviewStep() {
               </Link>
             </dt>
             <dd className="whitespace-nowrap">
-              {totals.shipping === 0 ? "Zdarma" : formatPrice(totals.shipping ?? 0)}
+              {totals.shipping === 0 ? "Zdarma" : formatPrice(totals.shipping ?? 0, money)}
             </dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
@@ -76,7 +81,9 @@ export function ReviewStep() {
           <div className="flex justify-between gap-4 py-4">
             <dt>Cena bez DPH</dt>
             <dd>
-              {totals.net !== null ? formatPrice(totals.net) : "Spočítá OntOS po ověření košíku"}
+              {totals.net !== null
+                ? formatPrice(totals.net, money)
+                : "Spočítá OntOS po ověření košíku"}
             </dd>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-4 py-4">
@@ -85,7 +92,7 @@ export function ReviewStep() {
               className="text-(length:--akros-checkout-body-size) font-extrabold"
               aria-live="polite"
             >
-              {formatPrice(totals.total)}
+              {formatPrice(totals.total, money)}
             </dd>
           </div>
         </dl>

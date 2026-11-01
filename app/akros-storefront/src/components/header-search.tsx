@@ -13,8 +13,9 @@ import {
   type SearchSuggestionGroup,
 } from "@techsio/ui-kit/templates/search-suggestions";
 
-import { cs } from "@/i18n/cs";
-import { describeOfferPrice } from "@/lib/format";
+import { describeOfferPrice, type StoreCurrency } from "@/lib/format";
+import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 import type { RemoteCategorySuggestion, RemoteSearchResponse } from "@/ontos/search-suggestions";
 
 const isError = (value: unknown): value is Error =>
@@ -30,11 +31,13 @@ type SuggestionData =
       priceMinor: number;
       priceIsFrom: boolean;
       priceUnavailableReason?: string;
-      currency: "CZK";
+      currency: StoreCurrency;
     };
 
 export function HeaderSearch() {
   const router = useRouter();
+  const cs = useDictionary();
+  const href = useStoreHref();
   const id = useId();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -61,7 +64,7 @@ export function HeaderSearch() {
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...marketRequestHeaders() },
         body: JSON.stringify({ q: trimmedQuery }),
         signal: controller.signal,
       })
@@ -123,7 +126,7 @@ export function HeaderSearch() {
         items: remoteCategories.map((category) => ({
           value: `category:${category.id}`,
           label: category.name,
-          href: `/kategorie/${category.slug}`,
+          href: href(`/kategorie/${category.slug}`),
           data: { kind: "category" as const, trail: category.trail },
         })),
       },
@@ -136,7 +139,7 @@ export function HeaderSearch() {
           return {
             value: `product:${item.productId}`,
             label: item.name,
-            href: `/produkt/${item.slug}${item.hasVariants ? `?${params}` : ""}`,
+            href: href(`/produkt/${item.slug}${item.hasVariants ? `?${params}` : ""}`),
             data: {
               kind: "product",
               imageSrc: item.imageSrc,
@@ -149,9 +152,9 @@ export function HeaderSearch() {
         }),
       },
     ],
-    [remoteCategories, remoteItems, trimmedQuery],
+    [remoteCategories, remoteItems, trimmedQuery, cs, href],
   );
-  const resultsHref = `/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`;
+  const resultsHref = href(`/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`);
 
   const submit = () => {
     if (!trimmedQuery) return;
@@ -173,7 +176,7 @@ export function HeaderSearch() {
 
   return (
     <SearchForm
-      action="/vyhledavani"
+      action={href("/vyhledavani")}
       className="whitespace-normal"
       method="get"
       onKeyDown={handleKeyDown}
@@ -276,7 +279,7 @@ export function HeaderSearch() {
 }
 
 function SuggestionPrice(data: Extract<SuggestionData, { kind: "product" }>) {
-  const price = describeOfferPrice(data);
+  const price = describeOfferPrice(data, useMoney(), useDictionary().product.from);
   return price.available ? (
     <strong className="shrink-0 whitespace-nowrap text-sm">{price.label}</strong>
   ) : (

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import StoreLink from "@/components/store-link";
 
@@ -51,6 +52,7 @@ function waitForProgressRecheck(signal: AbortSignal, delay: number): Promise<voi
 
 export function EnrollmentProgress() {
   const router = useRouter();
+  const storeHref = useStoreHref();
   const [progress, setProgress] = useState<Progress>({});
   const [pending, setPending] = useState(true);
   const [error, setError] = useState("");
@@ -110,7 +112,7 @@ export function EnrollmentProgress() {
             signal.throwIfAborted();
             setProgress(result);
           }
-          if (result.state === "ADMITTED") router.replace("/muj-ucet");
+          if (result.state === "ADMITTED") router.replace(storeHref("/muj-ucet"));
         })
         .catch((cause: unknown) => {
           if (!signal.aborted) {
@@ -124,7 +126,7 @@ export function EnrollmentProgress() {
           }
         });
     },
-    [router],
+    [router, storeHref],
   );
 
   useEffect(() => {
