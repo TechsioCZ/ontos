@@ -178,7 +178,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       return yield* new PackagedOwnerStartupError({ reason: 'Packaged application identity mismatch' });
     }
     const publishedBuild =
-      input.appId === CUSTOMER_CONTEXT_APP_ID
+      input.appId === CUSTOMER_CONTEXT_APP_ID || input.appId === PRICE_GROUP_APP_ID
         ? undefined
         : yield* filesystem
             .readFileString(path.join(directory, '.output', 'public', 'ultramodern-build.json'))
