@@ -36,9 +36,6 @@
     },
     {
       "path": "../../packages/shared-contracts"
-    },
-    {
-      "path": "../../packages/shared-design-tokens"
     }
   ]
 }

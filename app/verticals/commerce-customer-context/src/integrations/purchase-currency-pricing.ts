@@ -1,9 +1,12 @@
 import {
   CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesSuccessSchema,
-  executeCurrentSupportedCurrenciesWithAuthorization,
-} from '@app/pricing-contracts';
-import type { CurrentSupportedCurrenciesRequest, CurrentSupportedCurrenciesResponse } from '@app/pricing-contracts';
+} from '@app/pricing-contracts/current-supported-currencies';
+import type {
+  CurrentSupportedCurrenciesRequest,
+  CurrentSupportedCurrenciesResponse,
+} from '@app/pricing-contracts/current-supported-currencies';
+import { executeCurrentSupportedCurrenciesWithAuthorization } from '@app/pricing-contracts/current-supported-currencies/client';
 import { Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import {
