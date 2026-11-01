@@ -1,5 +1,6 @@
 import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DateTime, Effect, Redacted, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -60,22 +61,27 @@ beforeEach(() => {
   commands.status.mockReturnValue(Effect.succeed(key));
 });
 
-it.live('loads lazily with exact company-agent principal scope, never tenant-wide or prefix-derived ownership', () =>
-  Effect.gen(function* loadScopedKeys() {
-    const user = userEvent.setup();
-    render(<AgentApiKeys agent={agent} />);
-    expect(commands.list).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: `${prefix}.issue` }).hasAttribute('disabled')).toBe(true);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
-    expect(yield* Effect.promise(() => screen.findByText('Automation'))).toBeTruthy();
-    expect(commands.list).toHaveBeenCalledExactlyOnceWith({
-      limit: 100,
-      offset: 0,
-      principalId,
-      scope: 'company-agent',
-    });
-    expect(screen.getByText(`${prefix}.status.active`)).toBeTruthy();
-  }),
+const liveChange = (apps: readonly string[] | 'all') => {
+  act(() => {
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps } }));
+  });
+};
+
+it.live(
+  'loads when shown with exact company-agent principal scope, never tenant-wide or prefix-derived ownership',
+  () =>
+    Effect.gen(function* loadScopedKeys() {
+      render(<AgentApiKeys agent={agent} />);
+      expect(screen.queryByRole('button', { name: /keys\.(?:show|refresh|retry)/u })).toBeNull();
+      expect(yield* Effect.promise(() => screen.findByText('Automation'))).toBeTruthy();
+      expect(commands.list).toHaveBeenCalledExactlyOnceWith({
+        limit: 100,
+        offset: 0,
+        principalId,
+        scope: 'company-agent',
+      });
+      expect(screen.getByText(`${prefix}.status.active`)).toBeTruthy();
+    }),
 );
 
 it.live('issues only after explicit confirmation, displays the secret once and never persists it', () =>
@@ -83,7 +89,6 @@ it.live('issues only after explicit confirmation, displays the secret once and n
     const user = userEvent.setup();
     const storage = rstest.spyOn(Storage.prototype, 'setItem');
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     yield* Effect.promise(() => screen.findByText('Automation'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.issue` })));
     expect(commands.issue).not.toHaveBeenCalled();
@@ -97,7 +102,10 @@ it.live('issues only after explicit confirmation, displays the secret once and n
     expect(storage).not.toHaveBeenCalled();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.hideSecret` })));
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.refresh` })));
+    // Live changes of other apps cost no read; a change of Core-owned data reloads the keys.
+    liveChange(['crm']);
+    expect(commands.list).toHaveBeenCalledTimes(2);
+    liveChange(['shell']);
     yield* Effect.promise(() => waitFor(() => expect(commands.list).toHaveBeenCalledTimes(3)));
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     cleanup();
@@ -111,7 +119,6 @@ it.live('rotates the exact binding with a reason and reports pending cleanup wit
   Effect.gen(function* rotateExactBinding() {
     const user = userEvent.setup();
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     yield* Effect.flatMap(
       Effect.promise(() => screen.findByRole('button', { name: `${prefix}.rotate` })),
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
@@ -139,7 +146,6 @@ it.live('uses the actual binding status to revoke a disabled key, not its provid
       Effect.succeed({ items: [{ ...row, key: { ...key, bindingStatus: 'disabled' } }], nextOffset: null }),
     );
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     expect(yield* Effect.promise(() => screen.findByRole('button', { name: `${prefix}.enable` }))).toBeTruthy();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.revoke` })));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.reason/u), 'Credential retired'));
@@ -161,7 +167,6 @@ it.live('does not retry an ambiguous issuance and requires a fresh list before a
     const user = userEvent.setup();
     commands.issue.mockReturnValue(Effect.fail({ _tag: 'TestTransportFailure', reason: 'Not safe to display' }));
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     yield* Effect.promise(() => screen.findByText('Automation'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.issue` })));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.name/u), 'Worker'));
@@ -177,7 +182,8 @@ it.live('does not retry an ambiguous issuance and requires a fresh list before a
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.cancel` })));
     expect(screen.getByRole('button', { name: `${prefix}.issue` }).hasAttribute('disabled')).toBe(true);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.refresh` })));
+    // The unconfirmed state offers only an error-state retry of the read, never of the command.
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.retry` })));
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(screen.getByRole('button', { name: `${prefix}.issue` }).hasAttribute('disabled')).toBe(false),
@@ -189,7 +195,6 @@ it.live('does not retry an ambiguous issuance and requires a fresh list before a
 
 it.live('rejects an out-of-scope server response without revealing or filtering unrelated key metadata', () =>
   Effect.gen(function* rejectOutOfScopeMetadata() {
-    const user = userEvent.setup();
     commands.list.mockReturnValue(
       Effect.succeed({
         items: [{ ...row, key: { ...key, name: 'Other secret metadata' }, principalId: otherPrincipalId }],
@@ -197,7 +202,6 @@ it.live('rejects an out-of-scope server response without revealing or filtering 
       }),
     );
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     expect(yield* Effect.promise(() => screen.findByText(`${prefix}.failed`))).toBeTruthy();
     expect(screen.queryByText('Other secret metadata')).toBeNull();
     expect(screen.getByRole('button', { name: `${prefix}.issue` }).hasAttribute('disabled')).toBe(true);
@@ -215,7 +219,6 @@ it('does not load or offer key issuance for an unaudited or inactive agent', () 
 
 it.live('interrupts an owned in-flight read when the agent detail closes', () =>
   Effect.gen(function* interruptOwnedRead() {
-    const user = userEvent.setup();
     let interrupted = false;
     commands.list.mockReturnValue(
       Effect.never.pipe(
@@ -227,7 +230,6 @@ it.live('interrupts an owned in-flight read when the agent detail closes', () =>
       ),
     );
     const view = render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     expect(commands.list).toHaveBeenCalledTimes(1);
     view.unmount();
     yield* Effect.promise(() => waitFor(() => expect(interrupted).toBe(true)));
@@ -238,7 +240,6 @@ it.live('disables and re-enables only the exact binding with its current expecte
   Effect.gen(function* changeExactBindingStatus() {
     const user = userEvent.setup();
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     yield* Effect.flatMap(
       Effect.promise(() => screen.findByRole('button', { name: `${prefix}.disable` })),
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
@@ -291,7 +292,6 @@ it.live('keeps principal scope on later pages instead of truncating the key list
       }),
     );
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     yield* Effect.flatMap(
       Effect.promise(() => screen.findByRole('button', { name: `${prefix}.more` })),
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
@@ -306,7 +306,6 @@ it.live('keeps a committed key change pending until the reread confirms the actu
   Effect.gen(function* awaitActualBindingProjection() {
     const user = userEvent.setup();
     render(<AgentApiKeys agent={agent} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.show` })));
     yield* Effect.flatMap(
       Effect.promise(() => screen.findByRole('button', { name: `${prefix}.disable` })),
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
@@ -319,8 +318,10 @@ it.live('keeps a committed key change pending until the reread confirms the actu
     commands.list.mockReturnValue(
       Effect.succeed({ items: [{ ...row, key: { ...key, bindingStatus: 'disabled' } }], nextOffset: null }),
     );
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.refresh` })));
-    expect(yield* Effect.promise(() => screen.findByText(`${prefix}.updated`))).toBeTruthy();
+    // The list re-reads by itself until the projection shows the committed change.
+    expect(
+      yield* Effect.promise(() => screen.findByText(`${prefix}.updated`, undefined, { timeout: 5000 })),
+    ).toBeTruthy();
     expect(commands.status).toHaveBeenCalledTimes(1);
   }),
 );
