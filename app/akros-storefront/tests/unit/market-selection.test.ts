@@ -107,17 +107,6 @@ const catalog = {
   observedAt: "2026-11-02T10:00:00Z",
 };
 
-const resolved = (marketId: string) => ({
-  outcome: "MARKET_RESOLVED",
-  selectedTuple: {
-    associationRef: ref("storefront-association", `${marketId}-a`),
-    associationRevision: 1,
-    channel: "B2C",
-    marketDefinitionRevisionRef: ref("market-definition-revision", `${marketId}-r1`),
-    marketRef: ref("market", marketId),
-    sellingLegalEntityRef: seller(),
-  },
-});
 const currencies: Record<string, string> = { "m-cz": "CZK", "m-sk": "EUR", "m-eu": "EUR" };
 
 let market$: typeof MarketModule;
@@ -126,18 +115,9 @@ beforeEach(async () => {
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   readRecords.mockReset();
   readRecords.mockImplementation(async (audience, readName, query) => {
-    const body = query as {
-      explicitSelection: { marketRef: { resourceId: string } };
-      view: { storefrontCatalog: { marketId: string } };
-    };
+    const body = query as { view: { storefrontCatalog: { marketId: string } } };
     if (audience === "commerce-market-catalog" && readName === "current-market-catalog")
       return catalog;
-    if (audience === "commerce-market-catalog" && readName === "resolve-commerce-market") {
-      const marketId = body.explicitSelection.marketRef.resourceId;
-      return marketId === "m-pl"
-        ? { outcome: "MARKET_NOT_ACTIVE", reason: "Market is suspended" }
-        : resolved(marketId);
-    }
     if (audience === "merchandise") {
       const marketId = body.view.storefrontCatalog.marketId;
       return {
@@ -209,12 +189,9 @@ describe("market resolution", () => {
     expect(readRecords).toHaveBeenCalledWith("commerce-market-catalog", "current-market-catalog", {
       at: "2026-11-02T10:00:00.000Z",
     });
-    expect(readRecords).toHaveBeenCalledWith("commerce-market-catalog", "resolve-commerce-market", {
-      storefrontRef: { appId: "akros-storefront", tenantId: TENANT },
-      channel: "B2C",
-      effectiveAt: "2026-11-02T10:00:00.000Z",
-      explicitSelection: { marketRef: ref("market", "m-sk"), sellingLegalEntityRef: seller() },
-    });
+    expect(
+      readRecords.mock.calls.map(([audience, readName]) => `${audience}/${readName}`),
+    ).not.toContain("commerce-market-catalog/resolve-commerce-market");
   });
 
   it("reports a market without a configured offer", async () => {
@@ -243,17 +220,6 @@ describe("market resolution", () => {
     expect(resolution.live.map((entry) => entry.locale)).toEqual(["cs", "en", "sk"]);
   });
 
-  it("treats a market the owner does not allow for this storefront as unknown", async () => {
-    readRecords.mockImplementation(async (audience, readName) =>
-      readName === "current-market-catalog"
-        ? catalog
-        : audience === "merchandise"
-          ? { market: { marketId: "m-cz", currency: "CZK", configured: true } }
-          : { outcome: "MARKET_NOT_ALLOWED_FOR_STOREFRONT", reason: "No association" },
-    );
-    expect(await market$.storefrontMarketKind("cs")).toBe("unknown");
-  });
-
   it("caches the market catalog for 60 seconds", async () => {
     await market$.resolveStorefrontMarket("cs");
     await market$.resolveStorefrontMarket("sk");
@@ -263,16 +229,6 @@ describe("market resolution", () => {
     vi.setSystemTime(NOW + 61_000);
     await market$.resolveStorefrontMarket("cs");
     expect(catalogReads()).toBe(2);
-  });
-
-  it("rejects an eligibility outage and a resolution of another market", () => {
-    expect(() =>
-      market$.resolutionOutcome(
-        { outcome: "MARKET_ELIGIBILITY_UNAVAILABLE", reason: "down", retryable: true },
-        "m-cz",
-      ),
-    ).toThrow(/unavailable/);
-    expect(() => market$.resolutionOutcome(resolved("m-sk"), "m-cz")).toThrow(/another market/);
   });
 
   it("requires merchandise to answer for the requested market in a supported currency", () => {

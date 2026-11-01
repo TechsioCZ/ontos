@@ -2,8 +2,9 @@ import "server-only";
 // Storefront market resolution (owner: commerce.market-catalog; offer/currency: merchandise).
 //   1. `current-market-catalog {at}` (cached 60 s): associations of this storefront, channel B2C, effective now,
 //      sold by the pinned AKROS legal entity → the market whose primary locale (supportedLocales[0]) is the path.
-//   2. `resolve-commerce-market` with that explicit selection decides: MARKET_RESOLVED = live market,
-//      MARKET_NOT_ACTIVE = „dočasně nedostupný“, anything not associated = unknown (404).
+//   2. The market's own definition decides: ACTIVE and effective now = live market, SUSPENDED or outside its validity =
+//      „dočasně nedostupný“, a locale without an association = unknown (404). (`resolve-commerce-market` needs a
+//      trusted-storefront gateway context that the Shell gateway does not issue to the storefront service key.)
 //   3. merchandise `storefrontCatalog {marketId}` returns the market's currency and whether its offer is configured.
 // Before any market exists (no market of this seller, no association of this storefront, or the market owner not
 // active/granted for this storefront yet), `/cs` serves the Czech CZK catalogue without a market filter; every other
@@ -200,42 +201,10 @@ export interface MarketDirectory {
   unmarketed: boolean;
 }
 
-/** Outcome of `resolve-commerce-market` for one explicitly selected market. */
+/** Whether one associated market is open now, from its definition in the market catalog. */
 export type ResolutionOutcome = "live" | "not-active" | "unknown";
-export function resolutionOutcome(response: unknown, marketId: string): ResolutionOutcome {
-  const body = isRaw(response) ? response : {};
-  switch (body.outcome) {
-    case "MARKET_RESOLVED": {
-      const tuple = isRaw(body.selectedTuple) ? body.selectedTuple : {};
-      const ref = isRaw(tuple.marketRef) ? tuple.marketRef : {};
-      if (text(ref.resourceId) !== marketId || tuple.channel !== CHANNEL)
-        throw new OntosError(
-          "Market resolution selected another market",
-          502,
-          "market_resolution_mismatch",
-        );
-      return "live";
-    }
-    case "MARKET_NOT_ACTIVE":
-    case "MARKET_CONFIGURATION_MISSING_OR_INCONSISTENT":
-      return "not-active";
-    case "MARKET_NOT_ALLOWED_FOR_STOREFRONT":
-    case "MARKET_NOT_ALLOWED_FOR_SUBJECT_OR_CHANNEL":
-      return "unknown";
-    case "MARKET_ELIGIBILITY_UNAVAILABLE":
-      throw new OntosError(
-        "Market eligibility is unavailable",
-        503,
-        "market_eligibility_unavailable",
-      );
-    default:
-      throw new OntosError(
-        "Market resolution response is malformed",
-        502,
-        "market_resolution_malformed",
-      );
-  }
-}
+const outcomeOf = (entry: StorefrontMarketEntry): ResolutionOutcome =>
+  entry.lifecycle === "ACTIVE" && entry.marketEffective ? "live" : "not-active";
 
 /** Merchandise market offer summary (`storefrontCatalog.market`). */
 export interface MarketOffer {
@@ -278,7 +247,6 @@ const ttlCache = <T>(ttlMs: number, limit: number) => {
 };
 
 const directoryCache = ttlCache<MarketDirectory>(MARKET_CACHE_MS, 1);
-const resolutionCache = ttlCache<ResolutionOutcome>(MARKET_CACHE_MS, 20);
 const offerCache = ttlCache<MarketOffer>(MARKET_CACHE_MS, 20);
 
 /** This storefront's associated markets (cached 60 s, also when the market owner is not provisioned). */
@@ -303,22 +271,6 @@ export const readMarketDirectory = (): Promise<MarketDirectory> =>
       unmarketed: !hasMarketData(body, legalEntityId),
     };
   });
-
-const resolveEntry = (entry: StorefrontMarketEntry): Promise<ResolutionOutcome> =>
-  resolutionCache(entry.marketId, async () =>
-    resolutionOutcome(
-      await readRecords(MARKET_CATALOG_AUDIENCE, "resolve-commerce-market", {
-        storefrontRef: { appId: STOREFRONT_APP_ID, tenantId: entry.tenantId },
-        channel: CHANNEL,
-        effectiveAt: new Date().toISOString(),
-        explicitSelection: {
-          marketRef: entry.marketRef,
-          sellingLegalEntityRef: entry.sellingLegalEntityRef,
-        },
-      }),
-      entry.marketId,
-    ),
-  );
 
 /** Currency and offer state of one market (cached 60 s); the smallest product read that carries `market`. */
 export const readMarketOffer = (marketId: string): Promise<MarketOffer> =>
@@ -354,7 +306,7 @@ export async function storefrontMarketKind(locale: string): Promise<ResolutionOu
   const directory = await readMarketDirectory();
   if (directory.unmarketed) return locale === UNMARKETED_LOCALE ? "live" : "unknown";
   const entry = directory.entries.find((candidate) => candidate.locale === locale);
-  return entry === undefined ? "unknown" : await resolveEntry(entry);
+  return entry === undefined ? "unknown" : outcomeOf(entry);
 }
 
 /** Resolves a path locale to the request's market (owner reads cached 60 s). */
@@ -369,9 +321,7 @@ export async function resolveStorefrontMarket(locale: string): Promise<MarketRes
     ? entries.find((candidate) => candidate.locale === locale)
     : undefined;
   if (entry === undefined) return { kind: "unknown", locale, live };
-  const outcome = await resolveEntry(entry);
-  if (outcome === "unknown") return { kind: "unknown", locale, live };
-  if (outcome === "not-active")
+  if (outcomeOf(entry) === "not-active")
     return { kind: "not-active", locale, marketCode: entry.marketCode, live };
   const offer = await readMarketOffer(entry.marketId);
   return {
