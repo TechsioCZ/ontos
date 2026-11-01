@@ -375,7 +375,19 @@
         "asOf": "Ke dni",
         "confirmedOpening": "Počáteční stav (ručně potvrzený)",
         "netPaid": "Uhrazeno v období (netto)",
-        "netExpected": "Očekávané doklady (netto)"
+        "netExpected": "Očekávané doklady (netto)",
+        "chart": {
+          "balanceAria": "Odhad zůstatku po měsících",
+          "balanceTitle": "Odhad zůstatku",
+          "estimateBadge": "odhad",
+          "expenseExpected": "Výdaje očekávané a plán",
+          "expensePaid": "Výdaje uhrazené",
+          "flowAria": "Měsíční příjmy a výdaje: uhrazené, očekávané a plánované",
+          "flowTitle": "Příjmy a výdaje",
+          "incomeExpected": "Příjmy očekávané a plán",
+          "incomePaid": "Příjmy uhrazené",
+          "openingHint": "Zadejte ručně potvrzený počáteční stav."
+        }
       },
       "incoming": {
         "title": "Přijatá faktura",

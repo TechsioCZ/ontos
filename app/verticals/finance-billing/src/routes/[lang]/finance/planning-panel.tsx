@@ -30,7 +30,7 @@ import {
   invoiceActualMinor,
   monthOf,
 } from '../../../../shared/domain/finance-planning.ts';
-import { minorToInput, monthLabel, outcomeMessage, parseAmountMinor, shortMonthLabel } from './finance-ui.tsx';
+import { minorToInput, monthLabel, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { BUDGET_CATEGORIES } from './incoming-invoice-dialog.tsx';
 import { emptyObjectSelection, objectAnchors, ObjectFields, objectSummary } from './object-fields.tsx';
@@ -288,24 +288,15 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
   }
   const budgetMonths = Array.from({ length: 7 }, (_, index) => addMonths(currentMonth, index - 3));
 
+  // Series are chart-text keys (financeUi.planning.chart.*); CashFlowForecast translates them and the month ticks.
   const flowData = months.flatMap((month) => [
-    { label: shortMonthLabel(month.month), series: 'Příjmy uhrazené', value: month.paidInMinor / 100 },
-    {
-      label: shortMonthLabel(month.month),
-      series: 'Příjmy očekávané a plán',
-      value: (month.expectedInMinor + month.planInMinor) / 100,
-    },
-    { label: shortMonthLabel(month.month), series: 'Výdaje uhrazené', value: -month.paidOutMinor / 100 },
-    {
-      label: shortMonthLabel(month.month),
-      series: 'Výdaje očekávané a plán',
-      value: -(month.expectedOutMinor + month.planOutMinor) / 100,
-    },
+    { month: month.month, series: 'incomePaid', value: month.paidInMinor / 100 },
+    { month: month.month, series: 'incomeExpected', value: (month.expectedInMinor + month.planInMinor) / 100 },
+    { month: month.month, series: 'expensePaid', value: -month.paidOutMinor / 100 },
+    { month: month.month, series: 'expenseExpected', value: -(month.expectedOutMinor + month.planOutMinor) / 100 },
   ]);
   const balanceData = months.flatMap((month) =>
-    month.forecastBalanceMinor === undefined
-      ? []
-      : [{ label: shortMonthLabel(month.month), value: month.forecastBalanceMinor / 100 }],
+    month.forecastBalanceMinor === undefined ? [] : [{ month: month.month, value: month.forecastBalanceMinor / 100 }],
   );
 
   const saveBudget = (): void => {
@@ -358,10 +349,34 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
   };
 };
 
+const chartKey = 'finance-billing.financeUi.planning.chart';
+const monthFormats = (locale: string) => ({
+  long: new Intl.DateTimeFormat(locale, { month: 'long', timeZone: 'UTC', year: 'numeric' }),
+  short: new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }),
+});
+const csMonthFormats = monthFormats('cs-CZ');
+const enMonthFormats = monthFormats('en-GB');
+const monthFormatsFor = (language: string) => (language === 'en' ? enMonthFormats : csMonthFormats);
+const monthEpochMillis = (month: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(`${month}-01T00:00:00Z`));
+/** Expenses are drawn below zero; the tooltip names the series and shows the amount without a minus sign. */
+const tooltipKc = (value: number) => formatMoney(Math.round(Math.abs(value) * 100));
+
 const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const { balanceData, currentMonth, flowData, months, opening, setOpeningAmount, setOpeningDate, setOpeningOpen, vm } =
     model;
+  const formats = monthFormatsFor(language);
+  const tick = (month: string) => `${formats.short.format(monthEpochMillis(month))} ${month.slice(2, 4)}`;
+  const monthTitles = new Map(
+    months.map((month) => [tick(month.month), formats.long.format(monthEpochMillis(month.month))]),
+  );
+  const monthTitle = (label: string | number | Date) => monthTitles.get(String(label)) ?? String(label);
+  const flowRows = flowData.map((row) => ({
+    label: tick(row.month),
+    series: t(`${chartKey}.${row.series}`),
+    value: row.value,
+  }));
+  const balanceRows = balanceData.map((row) => ({ label: tick(row.month), value: row.value }));
   return (
     <SectionCard
       actions={
@@ -393,12 +408,15 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
       {months.length > 0 && (
         <div className="grid grid-cols-1 gap-250">
           <div className="flex flex-col gap-100">
-            <span className="font-medium text-sm">Příjmy a výdaje</span>
+            <span className="font-medium text-sm">{t(`${chartKey}.flowTitle`)}</span>
             <Chart
-              ariaLabel="Měsíční příjmy a výdaje: uhrazené, očekávané a plánované"
-              data={flowData}
+              ariaLabel={t(`${chartKey}.flowAria`)}
+              data={flowRows}
+              formatCategory={monthTitle}
+              formatTooltipValue={tooltipKc}
               formatValue={axisKc}
               height={260}
+              locale={language}
               series="series"
               stacked
               type="bar"
@@ -408,24 +426,28 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
           </div>
           <div className="flex flex-col gap-100">
             <span className="font-medium text-sm">
-              Odhad zůstatku{' '}
+              {t(`${chartKey}.balanceTitle`)}{' '}
               <Badge size="sm" variant="warning">
-                odhad
+                {t(`${chartKey}.estimateBadge`)}
               </Badge>
             </span>
-            {balanceData.length === 0 ? (
+            {balanceRows.length === 0 ? (
               <EmptyState
-                description="Zadejte ručně potvrzený počáteční stav."
+                description={t(`${chartKey}.openingHint`)}
                 title={t('finance-billing.financeUi.planning.noOpeningBalance')}
               />
             ) : (
               <Chart
-                ariaLabel="Odhad zůstatku po měsících"
-                data={balanceData}
+                ariaLabel={t(`${chartKey}.balanceAria`)}
+                data={balanceRows}
+                formatCategory={monthTitle}
+                formatTooltipValue={(value) => formatMoney(Math.round(value * 100))}
                 formatValue={axisKc}
                 height={260}
+                locale={language}
                 points
                 type="line"
+                valueLabel={t(`${chartKey}.balanceTitle`)}
                 x="label"
                 y="value"
               />

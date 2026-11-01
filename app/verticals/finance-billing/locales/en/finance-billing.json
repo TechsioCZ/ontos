@@ -375,7 +375,19 @@
         "asOf": "As of",
         "confirmedOpening": "Opening balance (manually confirmed)",
         "netPaid": "Paid in the period (net)",
-        "netExpected": "Expected invoices (net)"
+        "netExpected": "Expected invoices (net)",
+        "chart": {
+          "balanceAria": "Estimated balance by month",
+          "balanceTitle": "Estimated balance",
+          "estimateBadge": "estimate",
+          "expenseExpected": "Expected and planned expenses",
+          "expensePaid": "Expenses paid",
+          "flowAria": "Monthly income and expenses: paid, expected and planned",
+          "flowTitle": "Income and expenses",
+          "incomeExpected": "Expected and planned income",
+          "incomePaid": "Income paid",
+          "openingHint": "Enter a manually confirmed opening balance."
+        }
       },
       "incoming": {
         "title": "Incoming invoice",
