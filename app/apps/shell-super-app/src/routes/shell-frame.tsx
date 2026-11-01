@@ -703,7 +703,7 @@ const navigationToggleKey = 'shell.dashboard.navigation.toggle';
 /** The global search, centred between the trail and the account; hidden once sign-out has started. */
 const DashboardHeaderSearch = ({ hidden, ...search }: ShellSearchBarProps & { readonly hidden: boolean }) =>
   hidden ? null : (
-    <Header.Container className="flex w-auto min-w-0 flex-[2] justify-center" position="center">
+    <Header.Container className="flex w-auto min-w-0 flex-1 justify-center md:flex-[2]" position="center">
       <div className="w-full max-w-xl">
         <ShellSearchBar {...search} />
       </div>
@@ -910,7 +910,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           style={{ height: 'var(--spacing-700)' }}
         >
           <Header.Container
-            className="flex w-auto min-w-0 flex-1 basis-0 flex-nowrap items-center gap-200"
+            className="flex w-auto shrink-0 flex-nowrap items-center gap-200 md:min-w-0 md:flex-1 md:basis-0"
             position="start"
           >
             {/* Once sign-out has started, navigation, search and the page are hidden; only the account stays. */}
@@ -929,7 +929,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             onValueChange={setSearchValue}
             value={searchValue}
           />
-          <Header.Container className="flex w-auto flex-1 basis-0 justify-end" position="end">
+          <Header.Container className="flex w-auto shrink-0 justify-end md:flex-1 md:basis-0" position="end">
             <Header.Actions>
               {guide === undefined || props.logoutPending ? null : (
                 <Header.ActionItem>
