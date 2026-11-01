@@ -3188,14 +3188,21 @@ export const makeShellAuthenticationApiRuntime = (
                   withOptionalProperty(
                     withOptionalProperty(
                       withOptionalProperty(
-                        {
-                          authMethod: context.authMethod,
-                          principalId: context.principalId,
-                          tenantId: context.tenantId,
-                        },
-                        context.legalEntityId !== undefined,
-                        'legalEntityId',
-                        context.legalEntityId,
+                        withOptionalProperty(
+                          {
+                            authMethod: context.authMethod,
+                            principalId: context.principalId,
+                            tenantId: context.tenantId,
+                          },
+                          context.legalEntityId !== undefined,
+                          'legalEntityId',
+                          context.legalEntityId,
+                          {},
+                        ),
+                        // The owner checks the binding against its namespace; without it a staff session reads as revoked.
+                        context.authenticationNamespaceId !== undefined,
+                        'authenticationNamespaceId',
+                        context.authenticationNamespaceId,
                         {},
                       ),
                       context.authBindingId !== undefined,
