@@ -17,6 +17,7 @@ import {
   tenants,
 } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { notifyLiveChange } from '../live/change-notification.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import type { ActionAuditProfile } from './definition.ts';
 import {
@@ -1084,6 +1085,15 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
           }),
         );
       }
+      // Delivered by PostgreSQL only if this transaction commits; open browser sessions then revalidate.
+      yield* notifyLiveChange(transaction, {
+        legalEntityId: input.principal.legalEntityId ?? null,
+        moduleKeys: [
+          ...(input.transport.targetModuleKey === undefined ? [] : [input.transport.targetModuleKey]),
+          ...input.evidence.domainEvents.flatMap((event) => [event.producerModuleKey, event.subjectModuleKey]),
+        ],
+        tenantId: input.principal.tenantId,
+      }).pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
       return yield* Effect.void;
     },
   );

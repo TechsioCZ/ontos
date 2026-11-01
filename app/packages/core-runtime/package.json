@@ -45,6 +45,7 @@
     "./workspace-environment": "./src/environment/workspace-environment.ts",
     "./testing/owner-evidence": "./src/testing/owner-evidence.ts",
     "./legacy-completion-publication": "./src/modules/legacy-completion-publication.ts",
+    "./live/change-notification": "./src/live/change-notification.ts",
     "./auth/assignable-principals": "./src/auth/assignable-principals.ts",
     "./auth/external-identity-provider": "./src/auth/external-identity-provider.ts",
     "./db/database-identity-manifest": "./src/db/database-identity-manifest.ts",

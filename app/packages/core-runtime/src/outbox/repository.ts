@@ -15,6 +15,7 @@ import {
   workerCheckpoints,
 } from '../db/schema.ts';
 import type { CoreTransaction, CoreDbExecutor } from '../db/types.ts';
+import { notifyLiveChange } from '../live/change-notification.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 import {
   ApplicationCompositionAuthorityError,
@@ -456,6 +457,12 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 target: [workerCheckpoints.tenantId, workerCheckpoints.consumerName, workerCheckpoints.streamKey],
               });
           }
+          // A handler may have changed its module's data in any legal entity; sessions of the tenant revalidate.
+          yield* notifyLiveChange(transaction, {
+            legalEntityId: null,
+            moduleKeys: [claim.consumerModuleKey],
+            tenantId: claim.tenantId,
+          });
           return yield* Effect.void;
         }),
       )
