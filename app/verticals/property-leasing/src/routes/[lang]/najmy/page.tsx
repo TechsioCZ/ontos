@@ -801,7 +801,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     );
   };
   const unitName = (resourceId: string) =>
-    properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? resourceId;
+    properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? 'Jednotka bez názvu';
   const [showCancelled, setShowCancelled] = useState(false);
   const cancelledCount = snapshot?.occupancies.filter((record) => record.state === 'CANCELLED').length ?? 0;
   // Cancelled stays and leases keep their audit but do not crowd the working list unless asked for.
@@ -1544,7 +1544,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
                     disabled={busy}
                     footer={state.customersEmpty ? t('property-leasing.demo.customersEmpty') : undefined}
                     items={customers.map((record) => ({
-                      label: record.displayName ?? record.partyId,
+                      label: record.displayName ?? 'Zákazník bez názvu',
                       value: record.counterpartyRef.resourceId,
                     }))}
                     label={t('property-leasing.demo.customer')}

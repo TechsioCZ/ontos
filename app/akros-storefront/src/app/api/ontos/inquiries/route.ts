@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       title: inquiryTaskTitle(inquiry),
       description: [
         `Kontakt: ${inquiry.name} <${inquiry.email}>`,
-        ...(product ? [`Produkt: ${product.productId}`] : []),
+        ...(product ? [`Produkt: ${product.productName}`] : []),
         "",
         inquiry.message,
       ].join("\n"),

@@ -335,7 +335,7 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
     (record) => record.kind === 'LONG_TERM_LEASE' && record.state === 'CONFIRMED',
   );
   const commercialCustomers = state.customers.flatMap((item) =>
-    item.status === 'ACTIVE' ? [{ label: item.displayName ?? item.partyId, value: item.partyId }] : [],
+    item.status === 'ACTIVE' ? [{ label: item.displayName ?? 'Zákazník bez názvu', value: item.partyId }] : [],
   );
   const customerValues = state.customerId.length === 0 ? [] : [state.customerId];
   const formLabel = editingDraft ? 'legal-agreements.demo.editDraft' : LABEL_CREATE;
