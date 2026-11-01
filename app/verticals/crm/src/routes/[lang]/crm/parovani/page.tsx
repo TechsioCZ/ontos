@@ -38,6 +38,7 @@ import {
   useFormatAmount,
   orderDate,
   orderTitle,
+  pairingReason,
   principalLabel,
   reviewSummary,
   sourcesOf,
@@ -221,14 +222,14 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
     meta: { type: 'string', width: 150 },
   },
   {
-    accessorKey: 'reason',
-    cell: (info) => <span className="line-clamp-2 text-sm">{info.row.original.reason}</span>,
+    accessorFn: (change) => pairingReason(change),
+    cell: (info) => <span className="line-clamp-2 text-sm">{pairingReason(info.row.original)}</span>,
     header: 'Důvod',
+    id: 'reason',
     meta: { type: 'string', width: 320 },
   },
 ];
 
-/** Registry name of the Counterparty an approved link correlates to (CRM.md C04), when the client is linked. */
 /** One option per source customer, labelled with what the source says about it, never with its source key. */
 const sourceCustomerOptions = (records: RecordsResponse, source: string) => [
   ...new Map(
@@ -251,6 +252,7 @@ const sourceCustomerOptions = (records: RecordsResponse, source: string) => [
   ).values(),
 ];
 
+/** Registry name of the Counterparty an approved link correlates to (CRM.md C04), when the client is linked. */
 const partyOfLink = (records: RecordsResponse, link: CustomerLink) => {
   const client = records.state.clients.items.find(
     (entry) =>

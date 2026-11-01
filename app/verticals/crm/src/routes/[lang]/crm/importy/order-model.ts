@@ -1,6 +1,6 @@
 import { pipe, DateTime, Schema } from 'effect';
 import { orderDateText, isOpenDuplicate, needsReview, openReviewEvents } from '../../../../../shared/domain/imports.ts';
-import type { ImportRowOutcome, ImportedOrder } from '../../../../../shared/domain/imports.ts';
+import type { ImportRowOutcome, ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
 // AREA: imports — owned by the crm-imports lane. Display helpers shared by /crm/importy, /crm/parovani and the
 // client-card "Objednávky" tab.
 
@@ -101,6 +101,10 @@ export const useFormatAmount = () => {
     return formatImportCurrency(Number(amount), currency);
   };
 };
+
+/** An approved-link assignment carries a generated reason; older ones named the source key, so it is never shown. */
+export const pairingReason = (change: PairingChange) =>
+  change.via === 'customer_link' ? 'Schválená vazba zákazníka ze zdroje' : change.reason;
 
 export const orderTitle = (order: ImportedOrder) => order.number ?? NOT_PROVIDED;
 export const orderDate = (order: ImportedOrder) =>

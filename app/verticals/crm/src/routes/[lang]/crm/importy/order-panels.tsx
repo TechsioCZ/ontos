@@ -33,6 +33,7 @@ import {
   orderQueueState,
   orderTitle,
   pairingMeta,
+  pairingReason,
   principalLabel,
 } from './order-model.ts';
 
@@ -627,7 +628,7 @@ export const OrderDetailPanel = ({
                     {change.via === 'manual' ? 'ručně' : 'schválená vazba zákazníka'}
                   </span>
                   <span className="text-fg-secondary text-xs">
-                    {`${principalLabel(records, change.by)}, ${pipe(change.at, orderDateText, formatDateTime)} – ${change.reason}`}
+                    {`${principalLabel(records, change.by)}, ${pipe(change.at, orderDateText, formatDateTime)} – ${pairingReason(change)}`}
                   </span>
                 </li>
               ))}
