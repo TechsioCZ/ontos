@@ -54,6 +54,11 @@ const principalFor = (legalEntityId: string) =>
     tenantId,
   });
 
+class TaxProductionRuntimeFixtureUnavailable extends Schema.TaggedError<TaxProductionRuntimeFixtureUnavailable>()(
+  'TaxProductionRuntimeFixtureUnavailable',
+  { stage: Schema.Literals(['owner_artifact', 'unit_placement']) },
+) {}
+
 /** Exact published owner/Shell bytes; backend placement remains declared scripted unit infrastructure. */
 const publishedTaxComposition = Effect.gen(function* publishedTaxComposition() {
   const filesystem = yield* FileSystem.FileSystem;
@@ -67,7 +72,7 @@ const publishedTaxComposition = Effect.gen(function* publishedTaxComposition() {
     contract.deployment.appId !== ultramodernDeliveryUnit.appId ||
     contract.manifest.module.id !== createTaxRuleAction.descriptor.entrypoint.moduleKey
   ) {
-    return yield* Effect.fail(new Error('Published TAX artifact must belong to the actual TAX owner'));
+    return yield* new TaxProductionRuntimeFixtureUnavailable({ stage: 'owner_artifact' });
   }
   const infrastructure = yield* makeApplicationCompositionSnapshotFixture(
     [contract.deployment.appId],
@@ -75,7 +80,7 @@ const publishedTaxComposition = Effect.gen(function* publishedTaxComposition() {
   );
   const [unitPlacement] = infrastructure.composition.modules;
   if (unitPlacement === undefined) {
-    return yield* Effect.fail(new Error('The existing unit backend fixture must provide placement'));
+    return yield* new TaxProductionRuntimeFixtureUnavailable({ stage: 'unit_placement' });
   }
   const shellRuntimeBytes = yield* filesystem.readFile(
     new URL('../../../../apps/shell-super-app/.output/public/.well-known/ontos-shell-runtime.json', import.meta.url)
@@ -305,23 +310,25 @@ const createTaxRule = (
     })
     .pipe(Effect.flip);
 
-it.effect('runs a TAX Action through the production runtime composition only with a seller-bound permission', () =>
-  Effect.gen(function* taxActionThroughProductionComposition() {
-    yield* TestClock.setTime(Date.parse('2027-01-02T00:00:00.000Z'));
-    const permitted = yield* makeProductionComposition([sellerA]);
-    const permittedFailure = yield* createTaxRule(permitted, sellerA);
-    // Authorization passed and the TAX handler reached its owner persistence; the scripted
-    // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
-    expect(permitted.ownerStatements.length).toBeGreaterThan(0);
-    expect(permitted.permissionDenials).toEqual([]);
-    expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production runtime fixture', (suite) => {
+  suite.effect('runs a TAX Action through the production runtime composition only with a seller-bound permission', () =>
+    Effect.gen(function* taxActionThroughProductionComposition() {
+      yield* TestClock.setTime(Date.parse('2027-01-02T00:00:00.000Z'));
+      const permitted = yield* makeProductionComposition([sellerA]);
+      const permittedFailure = yield* createTaxRule(permitted, sellerA);
+      // Authorization passed and the TAX handler reached its owner persistence; the scripted
+      // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
+      expect(permitted.ownerStatements.length).toBeGreaterThan(0);
+      expect(permitted.permissionDenials).toEqual([]);
+      expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
 
-    const ungranted = yield* makeProductionComposition([]);
-    expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
-    expect(ungranted.ownerStatements).toEqual([]);
+      const ungranted = yield* makeProductionComposition([]);
+      expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
+      expect(ungranted.ownerStatements).toEqual([]);
 
-    const otherSeller = yield* makeProductionComposition([sellerA]);
-    expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
-    expect(otherSeller.ownerStatements).toEqual([]);
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
+      const otherSeller = yield* makeProductionComposition([sellerA]);
+      expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
+      expect(otherSeller.ownerStatements).toEqual([]);
+    }),
+  );
+});
