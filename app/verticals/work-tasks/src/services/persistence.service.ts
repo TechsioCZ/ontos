@@ -17,6 +17,7 @@ import { Context, DateTime, Effect, Match, Option, Predicate, Result, Schema, St
 import {
   BulkWorkCommandSchema,
   PlanningCommandSchema,
+  WorkCommandSchema,
   WorkLifecycleConflict,
   WorkNotFound,
   WorkPermissionDenied,
@@ -27,6 +28,7 @@ import {
   WorkScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type {
+  ApplyCommandPayload,
   BulkSkipReason,
   BulkTaskResult,
   BulkWorkCommand,
@@ -725,8 +727,79 @@ const validWriteDecision = (
   decisions[0]?.key === `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}` &&
   decisions[0]?.decision !== 'unavailable';
 
+/** All remote mutation checks depend on the decoded command, not on a stored Work snapshot. */
+export const prepareWorkCommand = Effect.fn('Work.prepareCommand')(function* prepareWorkCommand(
+  command: WorkCommand,
+  scope: OperationalScope,
+) {
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
+    return yield* referenceUnavailable();
+  }
+  if (!(yield* contextGrant(scope, 'write_all'))) {
+    if (Schema.is(PlanningCommandSchema)(command) || Predicate.isTagged('CreateTask')(command)) {
+      return yield* new WorkPermissionDenied({
+        code: 'work_permission_denied',
+        reason: 'Creating Tasks and planning changes require Work write permission',
+      });
+    }
+    const targets: readonly TaskRef[] = Schema.is(BulkWorkCommandSchema)(command)
+      ? yield* Effect.forEach(
+          command.ids,
+          (resourceId) =>
+            Schema.decodeEffect(TaskRefSchema)({
+              moduleId: workModuleId,
+              resourceId,
+              resourceType: 'work.tasks.task',
+              tenantId: scope.tenantId,
+            }).pipe(Effect.mapError(invalidTaskIdentity)),
+          { concurrency: 1 },
+        )
+      : [command.taskRef];
+    const access = yield* ContextAccess;
+    const decisions = yield* access.resources({
+      legalEntityId,
+      permission: 'write',
+      principalId: scope.principalId,
+      resources: targets,
+      tenantId: scope.tenantId,
+    });
+    if (
+      !targets.every((ref, index) => validWriteDecision(decisions.slice(index, index + 1), ref)) ||
+      decisions.length !== targets.length
+    ) {
+      return yield* referenceUnavailable();
+    }
+    if (decisions.some(({ decision }) => decision !== 'allowed')) {
+      return yield* new WorkPermissionDenied({
+        code: 'work_permission_denied',
+        reason: 'Task mutation is forbidden',
+      });
+    }
+  }
+  if (
+    (Predicate.isTagged('CreateTask')(command) || Predicate.isTagged('UpdateTask')(command)) &&
+    (command.contextRefs?.length ?? 0) > 0
+  ) {
+    const injected = yield* Effect.serviceOption(WorkReferenceVerifier);
+    const verifier = Option.isSome(injected)
+      ? injected.value
+      : makeWorkReferenceVerifier(
+          yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable)),
+        );
+    yield* verifier.verify(command.contextRefs ?? [], scope);
+  }
+  return yield* Effect.void;
+});
+
+const sameCommand = Schema.toEquivalence(WorkCommandSchema);
+
 export const persistenceService = Effect.fn('Work.persistenceService')(
-  function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* makePersistence(
+    transaction: ScopedTransactionExecutor,
+    options: { readonly prepared?: ApplyCommandPayload; readonly scope: OperationalScope },
+  ) {
+    const { prepared, scope } = options;
     const { legalEntityId } = scope;
     if (
       legalEntityId === undefined ||
@@ -738,10 +811,6 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
-    const access = yield* ContextAccess;
-    const injectedVerifier = yield* Effect.serviceOption(WorkReferenceVerifier);
-    const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
-    const verifier = Option.getOrElse(injectedVerifier, () => makeWorkReferenceVerifier(source));
     const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
     // The Action policy checks target permissions before Core opens the transaction. Recheck
     // mutable lifecycle/company membership here, in the same snapshot that commits the owner state.
@@ -885,44 +954,6 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       command: BulkWorkCommand,
       expectedRevision: number,
     ) {
-      const targets: readonly TaskRef[] = yield* Effect.forEach(
-        command.ids,
-        (resourceId) =>
-          Schema.decodeEffect(TaskRefSchema)({
-            moduleId: workModuleId,
-            resourceId,
-            resourceType: 'work.tasks.task',
-            tenantId: scope.tenantId,
-          }).pipe(Effect.mapError(invalidTaskIdentity)),
-        { concurrency: 1 },
-      );
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        const decisions = yield* access.resources({
-          legalEntityId,
-          permission: 'write',
-          principalId: scope.principalId,
-          resources: targets,
-          tenantId: scope.tenantId,
-        });
-        if (
-          decisions.length !== targets.length ||
-          decisions.some(
-            (decision, index) =>
-              decision.decision === 'unavailable' ||
-              decision.key !==
-                `${targets[index]?.moduleId}:${targets[index]?.resourceType}:${targets[index]?.resourceId}`,
-          )
-        ) {
-          return yield* referenceUnavailable();
-        }
-        // Fail closed: one forbidden id rejects the whole batch so nothing changes silently.
-        if (decisions.some((decision) => decision.decision !== 'allowed')) {
-          return yield* new WorkPermissionDenied({
-            code: 'work_permission_denied',
-            reason: 'Task mutation is forbidden',
-          });
-        }
-      }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkRevisionConflict({
@@ -1047,12 +1078,6 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       expectedRevision: number,
       resourceId: string,
     ) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        return yield* new WorkPermissionDenied({
-          code: 'work_permission_denied',
-          reason: 'Planning changes require Work write permission',
-        });
-      }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkRevisionConflict({ code: 'work_revision_conflict', reason: workChangedReason });
@@ -1062,39 +1087,11 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         ? addComment(command, snapshot, expectedRevision, resourceId, now)
         : applyProject(command, snapshot, expectedRevision, resourceId, now);
     });
-    const authorizeSingle = Effect.fn('Work.authorizeSingle')(function* authorizeSingle(command: SingleWorkCommand) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        if (Predicate.isTagged('CreateTask')(command)) {
-          return yield* new WorkPermissionDenied({
-            code: 'work_permission_denied',
-            reason: 'Creating Tasks requires Work write permission',
-          });
-        }
-        const decisions = yield* access.resources({
-          legalEntityId,
-          permission: 'write',
-          principalId: scope.principalId,
-          resources: [command.taskRef],
-          tenantId: scope.tenantId,
-        });
-        if (!validWriteDecision(decisions, command.taskRef)) {
-          return yield* referenceUnavailable();
-        }
-        if (decisions[0]?.decision !== 'allowed') {
-          return yield* new WorkPermissionDenied({
-            code: 'work_permission_denied',
-            reason: 'Task mutation is forbidden',
-          });
-        }
-      }
-      return yield* Effect.void;
-    });
     const applySingle = Effect.fn('Work.applySingle')(function* applySingle(
       command: SingleWorkCommand,
       expectedRevision: number,
       resourceId: string,
     ) {
-      yield* authorizeSingle(command);
       const snapshot = yield* load();
       if (Predicate.isTagged('CreateTask')(command) && command.storefrontInquiry !== undefined) {
         const inquiry = command.storefrontInquiry;
@@ -1139,12 +1136,6 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       if (owner !== undefined) {
         yield* resolveAssignee(owner);
       }
-      if (
-        (Predicate.isTagged('CreateTask')(command) || Predicate.isTagged('UpdateTask')(command)) &&
-        (command.contextRefs?.length ?? 0) > 0
-      ) {
-        yield* verifier.verify(command.contextRefs ?? [], scope);
-      }
       const now = yield* DateTime.now;
       const change = yield* evolveWorkState(snapshot.state, command, {
         now,
@@ -1163,6 +1154,13 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       expectedRevision: number,
       resourceId: string,
     ) {
+      if (
+        prepared === undefined ||
+        prepared.expectedRevision !== expectedRevision ||
+        !sameCommand(prepared.command, command)
+      ) {
+        return yield* referenceUnavailable();
+      }
       if (Schema.is(BulkWorkCommandSchema)(command)) {
         return yield* applyBulk(command, expectedRevision);
       }
