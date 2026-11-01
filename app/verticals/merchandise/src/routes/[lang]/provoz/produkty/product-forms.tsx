@@ -288,7 +288,6 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             submit={k('create.submit')}
           />
         }
-        closeOnInteractOutside={!dirty}
         onOpenChange={requestClose}
         open={open}
         resizeLabel={t(RESIZE_LABEL_KEY)}
@@ -494,7 +493,6 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
             submit={k('receipt.submit')}
           />
         }
-        closeOnInteractOutside={!dirty}
         description={k('receipt.description')}
         onOpenChange={requestClose}
         open={open}

@@ -824,7 +824,6 @@ const AssetsCreatePanel = ({ vm }: { readonly vm: AssetsViewModel }) => {
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(next) => {
         if (!next) {
           setPanel(undefined);

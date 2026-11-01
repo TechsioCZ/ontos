@@ -192,7 +192,6 @@ export const EmployeeFormDialog = ({
             </Button>
           </div>
         }
-        closeOnInteractOutside={false}
         // The first field takes focus, not the close button the panel renders first.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#employee-full-name')}
         onOpenChange={(next) => {
@@ -397,7 +396,6 @@ export const BulkDepartmentDialog = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={t(`${key}.bulk.description`, { total: ids.length })}
       // The first field takes focus, not the close button the panel renders first.
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#bulk-department')}
@@ -484,7 +482,6 @@ export const BulkRoleDialog = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={t(`${key}.bulk.description`, { total: ids.length })}
       // The first field takes focus. A Select trigger has the DOM id `select:<id>:trigger`.
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="select:bulk-role:trigger"]')}

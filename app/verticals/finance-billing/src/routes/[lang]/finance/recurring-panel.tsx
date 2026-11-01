@@ -682,7 +682,6 @@ const RecurringTemplateEditor = (model: ReturnType<typeof useRecurringPanel>) =>
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description="Pravidelná měsíční faktura, např. nájemné za jednotku."
       onOpenChange={setCreating}
       open={creating}

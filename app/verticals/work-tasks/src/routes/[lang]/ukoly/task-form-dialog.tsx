@@ -864,8 +864,6 @@ export const TaskFormDialog = (input: TaskFormDialogProps) => {
             )}
           </>
         }
-        // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
-        closeOnInteractOutside={false}
         // The first field takes focus, so typing starts at once.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#task-title')}
         onOpenChange={(next) => {

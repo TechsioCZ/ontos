@@ -112,7 +112,6 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={t(`${key}.createDescription`)}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#agent-name')}
       onOpenChange={(open) => {

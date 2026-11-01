@@ -316,7 +316,6 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={t(`${K}.bulkByTag.description`)}
       onOpenChange={onOpenChange}
       open

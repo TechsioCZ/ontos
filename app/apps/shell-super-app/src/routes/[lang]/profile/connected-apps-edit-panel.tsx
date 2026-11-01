@@ -89,7 +89,6 @@ export const ConnectedAppsEditPanel = ({
         </>
       }
       closeLabel="Zavřít"
-      closeOnInteractOutside={false}
       customTrigger
       description={widenHint}
       onOpenChange={(details) => {

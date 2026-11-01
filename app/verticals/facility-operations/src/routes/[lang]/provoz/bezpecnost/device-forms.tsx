@@ -97,7 +97,6 @@ const PanelFrame = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(next) => {
         if (!next) {
           onClose();

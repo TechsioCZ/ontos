@@ -308,7 +308,6 @@ const PairPanel = ({
           Zavřít
         </Button>
       }
-      closeOnInteractOutside={false}
       description={`${order.source} · ID ${order.externalId} · ${orderDate(order)} · ${formatAmount(order.amount, order.currency)}`}
       onOpenChange={(open) => {
         if (!open) {
@@ -411,7 +410,6 @@ const NewLinkPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description="Potvrzená korelace ID zákazníka ze zdroje na klienta CRM. Objednávky s tímto ID se pak přiřadí samy."
       onOpenChange={(open) => {
         if (!open) {

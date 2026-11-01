@@ -419,7 +419,6 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
         </>
       }
       closeLabel={dialogCloseLabel}
-      closeOnInteractOutside={false}
       description={
         mode === 'create'
           ? 'Neuvedené údaje zůstanou prázdné. Kontaktní osoby můžete doplnit i později na kartě klienta.'

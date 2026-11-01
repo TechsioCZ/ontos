@@ -145,7 +145,6 @@ const ProjectEditor = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(open) => {
         if (!open && !busy) {
           close();

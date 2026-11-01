@@ -459,8 +459,6 @@ export const CustomerCreateDialog = ({
             </Button>
           </>
         }
-        // A stray click outside must not drop typed input; Escape, the close button and Zrušit still ask first.
-        closeOnInteractOutside={false}
         description={t(`${KEY}.description`)}
         // The IČO is the first field, so typing starts there at once.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#customer-ico')}

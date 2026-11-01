@@ -314,13 +314,13 @@ const useCreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogP
     setZeroPriceAcknowledged(false);
   };
 
-  /** Zrušit discards the draft; Escape and the close button keep it (see `handleOpenChange`). */
+  /** Zrušit discards the draft; the backdrop, Escape and the close button keep it (see `handleOpenChange`). */
   const discardAndClose = () => {
     resetDraft();
     onOpenChange(false);
   };
 
-  /** Escape and the close button hide the panel but keep an edited draft for the next open. */
+  /** The backdrop, Escape and the close button hide the panel but keep an edited draft for the next open. */
   const handleOpenChange = (next: boolean) => {
     if (!next) {
       setDraft((current) => ({ ...current, resumed: isDraftEdited(current, defaultLineKind) }));
@@ -511,10 +511,8 @@ export const CreateInvoiceDialog = (props: CreateInvoiceDialogProps) => {
           </Button>
         </>
       }
-      // The form holds unsaved input, and the date field opens a picker outside the drawer. A stray pointer or
-      // focus move outside must not discard the draft. Escape and the close button only hide the panel, so the
+      // The form holds unsaved input. The backdrop, Escape and the close button only hide the panel, so the
       // draft is still there when it reopens, with a notice and Začít znovu; Zrušit discards it.
-      closeOnInteractOutside={false}
       onOpenChange={handleOpenChange}
       open={open}
       resizeLabel={t('finance-billing.sidePanel.resize')}

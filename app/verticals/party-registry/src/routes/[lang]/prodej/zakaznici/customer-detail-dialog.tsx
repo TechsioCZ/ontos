@@ -155,7 +155,6 @@ const CustomerDetailView = ({
             {t(`${KEY}.cancel`)}
           </Button>
         }
-        closeOnInteractOutside={false}
         onOpenChange={requestClose}
         open
         resizeLabel={t('party-registry.sidePanel.resize')}

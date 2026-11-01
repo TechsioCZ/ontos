@@ -1008,7 +1008,6 @@ export const OrderPanel = ({
   const capabilities = orderCapabilities(order, supplier, financeLinks, sourceInvoices.length);
   return (
     <SidePanel
-      closeOnInteractOutside={action === undefined}
       description={`${lookup.supplier(order.supplierId)?.name ?? ''} · ${lookup.warehouse(order.warehouseId)?.name ?? ''}`}
       onOpenChange={(open) => {
         if (!open) {

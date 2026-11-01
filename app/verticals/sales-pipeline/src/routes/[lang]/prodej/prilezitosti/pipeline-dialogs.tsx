@@ -256,9 +256,6 @@ export const OpportunityFormDialog = ({
             </Button>
           </>
         }
-        // The form holds unsaved input, and the date control opens a picker layered outside the drawer. A stray
-        // pointer or focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
-        closeOnInteractOutside={false}
         description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
         onOpenChange={requestClose}
         open
@@ -450,7 +447,6 @@ export const StageDialog = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={description}
       onOpenChange={onOpenChange}
       open
@@ -571,7 +567,6 @@ export const OwnerDialog = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={description}
       onOpenChange={onOpenChange}
       open

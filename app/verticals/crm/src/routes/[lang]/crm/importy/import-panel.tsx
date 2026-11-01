@@ -223,7 +223,6 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description="Šablona crm-orders-csv-v1. Objednávky zůstávají v e-shopu a účetním systému; CRM je jen zobrazuje."
       onOpenChange={(open) => {
         if (!open) {

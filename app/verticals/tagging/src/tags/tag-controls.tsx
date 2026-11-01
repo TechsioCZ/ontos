@@ -550,8 +550,6 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
           </Button>
         </>
       }
-      // The picked tag and mode are a draft; Escape, the close button and Zrušit close the panel.
-      closeOnInteractOutside={false}
       description={t('tagging.tags.bulk.description', { total: subjectIds.length })}
       // The first field takes focus, not the close button the panel renders first.
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="combobox:bulk-tag-picker:input"]')}

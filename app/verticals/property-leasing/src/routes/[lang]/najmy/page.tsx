@@ -962,7 +962,6 @@ const RentTermsForm = ({ state }: { readonly state: ReturnType<typeof useRecords
         </>
       }
       closeLabel={t(LABEL_CLOSE)}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-rent-monthly')}
       onOpenChange={(open) => {
         if (!open && !busy) {
@@ -1497,7 +1496,6 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         </div>
       }
       closeLabel={t(LABEL_CLOSE)}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-start-date')}
       onOpenChange={(open) => {
         if (!open && !busy) {

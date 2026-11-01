@@ -17,15 +17,10 @@ export interface SidePanelProps {
   readonly className?: string;
   /** Accessible name of the close button. Defaults to `Zavřít`. */
   readonly closeLabel?: string;
-  /**
-   * Defaults to true. Panels that hold an unsaved draft pass false, so a stray click or focus move
-   * outside keeps the draft. Escape, the close button and Zrušit still close the panel.
-   */
-  readonly closeOnInteractOutside?: boolean;
   readonly description?: ReactNode;
   readonly finalFocusEl?: () => HTMLElement | null;
   readonly initialFocusEl?: () => HTMLElement | null;
-  /** Receives `false` on Escape, the close button or an outside click. The parent owns `open`. */
+  /** Receives `false` for every dismissal. Draft owners confirm discard here; the parent owns `open`. */
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   /** Localized accessible name and keyboard instructions for the resize handle. */
@@ -87,7 +82,6 @@ export const SidePanel = ({
   children,
   className,
   closeLabel = 'Zavřít',
-  closeOnInteractOutside = true,
   description,
   finalFocusEl,
   initialFocusEl,
@@ -107,7 +101,7 @@ export const SidePanel = ({
       {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
       {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
       actions={actions}
-      closeOnInteractOutside={closeOnInteractOutside}
+      closeOnInteractOutside
       contentRef={resize.contentRef}
       contentStyle={{ maxWidth: '100vw', width: resize.width }}
       customTrigger

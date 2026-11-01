@@ -457,7 +457,6 @@ export const SalesQuoteFormPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -1134,7 +1133,6 @@ export const SalesOrderPanel = ({
   const capabilities = salesOrderCapabilities(order, finance, canWrite, remainder.length);
   return (
     <SidePanel
-      closeOnInteractOutside={action === undefined}
       description={order.customer.name}
       onOpenChange={(open) => {
         if (!open) {

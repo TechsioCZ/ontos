@@ -194,7 +194,6 @@ export const CustomerIdentityReviewPanel = ({ review }: { readonly review: Revie
           {t(`${reviewKey}.close`)}
         </Button>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(next) => review.closeReview(next)}
       open={review.open}
       resizeLabel={t('party-registry.sidePanel.resize')}

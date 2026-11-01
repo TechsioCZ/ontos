@@ -754,7 +754,6 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
   const movements = itemMovements(state, item.id).toReversed();
   return (
     <SidePanel
-      closeOnInteractOutside={form === undefined && !editing}
       description={`${item.sku} · ${category}`}
       onOpenChange={(open) => {
         if (!open) {

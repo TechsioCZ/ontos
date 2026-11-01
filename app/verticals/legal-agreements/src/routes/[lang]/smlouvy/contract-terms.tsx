@@ -160,7 +160,6 @@ export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
         </>
       }
       closeLabel={t('legal-agreements.detail.close')}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#contract-terms-subject')}
       onOpenChange={(open) => {
         if (!open && !busy) {

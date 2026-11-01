@@ -357,7 +357,6 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
         </>
       }
       closeLabel={t('legal-agreements.detail.close')}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#contract-start-date')}
       onOpenChange={(open) => {
         if (!open && !busy) {

@@ -733,7 +733,6 @@ const AssetDetailContent = ({
         )
       }
       className="lg:min-w-[62rem]"
-      closeOnInteractOutside={mode.kind === 'view'}
       description={
         <span className="flex flex-wrap items-center gap-100">
           <span className="tabular-nums">{asset.inventoryNumber}</span>

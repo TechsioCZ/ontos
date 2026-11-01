@@ -476,7 +476,6 @@ export const OrderDetailDialog = ({
   return (
     <SidePanel
       actions={actions}
-      closeOnInteractOutside={!editing}
       onOpenChange={(next) => {
         if (!next) {
           setEditingId(null);
