@@ -19,7 +19,6 @@ import {
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -56,7 +55,7 @@ const queueColumns = (
     cell: (info) => (
       <div className="flex min-w-0 flex-col">
         <span className="truncate font-medium">{orderTitle(info.row.original)}</span>
-        <span className="truncate text-fg-secondary text-xs">{`${info.row.original.source} · ID ${info.row.original.externalId}`}</span>
+        <span className="truncate text-fg-secondary text-xs">{info.row.original.source}</span>
       </div>
     ),
     header: orderLabel,
@@ -72,7 +71,6 @@ const queueColumns = (
           <span className="truncate">{order.customerName ?? 'název neposkytnut'}</span>
           <span className="truncate text-fg-secondary text-xs">
             {[
-              order.externalCustomerId,
               order.customerRegNo === undefined || order.customerRegNo === ''
                 ? undefined
                 : `IČO ${order.customerRegNo}`,
@@ -139,7 +137,7 @@ const reviewColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => 
     cell: (info) => (
       <div className="flex min-w-0 flex-col">
         <span className="truncate font-medium">{orderTitle(info.row.original)}</span>
-        <span className="truncate text-fg-secondary text-xs">{`${info.row.original.source} · ID ${info.row.original.externalId}`}</span>
+        <span className="truncate text-fg-secondary text-xs">{info.row.original.source}</span>
       </div>
     ),
     header: orderLabel,
@@ -179,7 +177,7 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
   {
     accessorFn: (change) => {
       const order = records.state.imports.orders.find((entry) => entry.id === change.orderId);
-      return order === undefined ? change.orderId : orderTitle(order);
+      return order === undefined ? '—' : orderTitle(order);
     },
     header: orderLabel,
     id: 'order',
@@ -231,6 +229,28 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
 ];
 
 /** Registry name of the Counterparty an approved link correlates to (CRM.md C04), when the client is linked. */
+/** One option per source customer, labelled with what the source says about it, never with its source key. */
+const sourceCustomerOptions = (records: RecordsResponse, source: string) => [
+  ...new Map(
+    records.state.imports.orders.flatMap((order) =>
+      order.source !== source || order.externalCustomerId === undefined
+        ? []
+        : [
+            [
+              order.externalCustomerId,
+              {
+                label:
+                  [order.customerName, order.customerRegNo, order.customerEmail]
+                    .filter((part) => part !== undefined && part !== '')
+                    .join(' · ') || orderTitle(order),
+                value: order.externalCustomerId,
+              },
+            ] as const,
+          ],
+    ),
+  ).values(),
+];
+
 const partyOfLink = (records: RecordsResponse, link: CustomerLink) => {
   const client = records.state.clients.items.find(
     (entry) =>
@@ -243,9 +263,14 @@ const partyOfLink = (records: RecordsResponse, link: CustomerLink) => {
 const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
   { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 150 } },
   {
-    accessorKey: 'externalCustomerId',
-    cell: (info) => <span className="font-mono text-xs">{info.row.original.externalCustomerId}</span>,
-    header: 'ID zákazníka ve zdroji',
+    accessorFn: (link) =>
+      records.state.imports.orders.find(
+        (order) => order.source === link.source && order.externalCustomerId === link.externalCustomerId,
+      )?.customerName ??
+      clientLabel(records, link.clientId) ??
+      '—',
+    header: 'Zákazník ve zdroji',
+    id: 'sourceCustomer',
     meta: { type: 'string', width: 180 },
   },
   {
@@ -308,7 +333,7 @@ const PairPanel = ({
           Zavřít
         </Button>
       }
-      description={`${order.source} · ID ${order.externalId} · ${orderDate(order)} · ${formatAmount(order.amount, order.currency)}`}
+      description={`${order.source} · ${orderDate(order)} · ${formatAmount(order.amount, order.currency)}`}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -325,9 +350,6 @@ const PairPanel = ({
           <span className="font-medium">{order.customerName ?? 'název neposkytnut'}</span>
           <span className="text-fg-secondary">
             {[
-              order.externalCustomerId === undefined || order.externalCustomerId === ''
-                ? undefined
-                : `ID ${order.externalCustomerId}`,
               order.customerRegNo === undefined || order.customerRegNo === ''
                 ? undefined
                 : `IČO ${order.customerRegNo}`,
@@ -410,7 +432,7 @@ const NewLinkPanel = ({
           </Button>
         </>
       }
-      description="Potvrzená korelace ID zákazníka ze zdroje na klienta CRM. Objednávky s tímto ID se pak přiřadí samy."
+      description="Vyberte zákazníka ze zdroje a odpovídajícího klienta CRM. Jeho další objednávky se pak přiřadí samy."
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -429,19 +451,20 @@ const NewLinkPanel = ({
           }))}
           label={t('crm.ciWorkflow.sourceSystem')}
           name="link-source"
-          onValueChange={(details) => setSource(details.value[0] ?? source)}
+          onValueChange={(details) => {
+            setSource(details.value[0] ?? source);
+            setExternalCustomerId('');
+          }}
           size="sm"
           value={[source]}
         />
-        <FormInput
-          autoComplete="off"
-          id="link-external-id"
+        <SelectTemplate
+          items={sourceCustomerOptions(records, source)}
           label={t('crm.ciWorkflow.sourceCustomerId')}
           name="externalCustomerId"
-          onChange={(event) => setExternalCustomerId(event.target.value)}
-          required
+          onValueChange={(details) => setExternalCustomerId(details.value[0] ?? '')}
           size="sm"
-          value={externalCustomerId}
+          value={externalCustomerId === '' ? [] : [externalCustomerId]}
         />
         <SelectTemplate
           items={records.state.clients.items
@@ -606,7 +629,9 @@ const PairingContent = () => {
                 enablePagination
                 enableSorting
                 getRowId={(row) => row.id}
-                getRowLabel={(row) => `Změna ${row.original.id}`}
+                getRowLabel={(row) =>
+                  records.state.imports.orders.find((order) => order.id === row.original.orderId)?.number ?? '—'
+                }
                 onRowClick={(row) => setDetailId(row.original.orderId)}
                 pageSizeOptions={[10, 50]}
                 paginationProps={crmPaginationProps}
@@ -625,7 +650,7 @@ const PairingContent = () => {
                 data={[...customerLinks]}
                 enableSorting
                 getRowId={(row) => `${row.source}-${row.externalCustomerId}`}
-                getRowLabel={(row) => `Vazba ${row.original.externalCustomerId}`}
+                getRowLabel={(row) => clientLabel(records, row.original.clientId) ?? '—'}
                 size="sm"
                 tableLayout="fixed"
                 translations={crmTableTranslations}

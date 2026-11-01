@@ -226,7 +226,7 @@ export const importOrders = (
         by: meta.by,
         id: meta.newId(`p${row.row}`),
         orderId: id,
-        reason: `Schválená vazba zákaznického ID ${link.externalCustomerId} (${link.source})`,
+        reason: `Schválená vazba zákazníka (${link.source})`,
         toClientId: linkTargetClientId(clients.items, link),
         via: 'customer_link',
       });

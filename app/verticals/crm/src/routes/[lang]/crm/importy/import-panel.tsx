@@ -42,7 +42,6 @@ export const RowResults = ({
       <thead className="sticky top-0 bg-surface text-fg-secondary text-xs">
         <tr>
           <th className="px-150 py-100 text-left font-normal">Řádek</th>
-          <th className="px-150 py-100 text-left font-normal">ID objednávky</th>
           <th className="px-150 py-100 text-left font-normal">Výsledek</th>
           <th className="px-150 py-100 text-left font-normal">Detail</th>
         </tr>
@@ -51,7 +50,6 @@ export const RowResults = ({
         {results.map((result) => (
           <tr className="border-border-primary border-t align-top" key={`${String(result.row)}-${result.outcome}`}>
             <td className="px-150 py-100 tabular-nums">{result.row}</td>
-            <td className="px-150 py-100 font-mono text-xs">{result.externalId ?? '—'}</td>
             <td className="px-150 py-100">
               <Badge size="sm" variant={outcomeMeta[result.outcome].variant}>
                 {outcomeMeta[result.outcome].label}

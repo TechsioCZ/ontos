@@ -659,28 +659,15 @@ const csvDecimal = (value: string | undefined) => value?.replace('.', ',');
 
 export const ordersCsv = (report: SalesReport) =>
   toCsv(
-    [
-      'Datum objednávky',
-      'Číslo objednávky',
-      'Zdroj',
-      'Externí ID',
-      'Klient',
-      'Obchodník',
-      'Surový stav',
-      'Význam stavu',
-      'Částka',
-      'Měna',
-    ],
+    ['Datum objednávky', 'Číslo objednávky', 'Zdroj', 'Klient', 'Obchodník', 'Význam stavu', 'Částka', 'Měna'],
     report.rows.map((row) => {
       const money = orderMoney(row.order);
       return [
         dayOf(row.date),
         row.order.number,
         row.order.source,
-        row.order.externalId,
         row.clientName,
         row.salespersonName ?? 'Nepřiděleno',
-        row.order.rawStatus,
         statusMeaningLabels[row.meaning],
         money === undefined ? 'údaj neposkytnut' : csvDecimal(unitsToDecimal(money.units)),
         money?.currency ?? '',

@@ -73,8 +73,7 @@ const orderColumns = (
     accessorFn: (order) => orderTitle(order),
     cell: (info) => (
       <div className="flex min-w-0 flex-col">
-        <span className="truncate font-medium">{info.row.original.number ?? info.row.original.externalId}</span>
-        <span className="truncate text-fg-secondary text-xs">{`ID ${info.row.original.externalId}`}</span>
+        <span className="truncate font-medium">{orderTitle(info.row.original)}</span>
       </div>
     ),
     header: 'Objednávka',
@@ -96,9 +95,7 @@ const orderColumns = (
       return order.clientId === undefined ? (
         <div className="flex min-w-0 flex-col items-start gap-50">
           <PairingStateBadge order={order} />
-          <span className="truncate text-fg-secondary text-xs">
-            {order.customerName ?? order.externalCustomerId ?? '—'}
-          </span>
+          <span className="truncate text-fg-secondary text-xs">{order.customerName ?? '—'}</span>
         </div>
       ) : (
         <span className="truncate">{clientLabel(records, order.clientId)}</span>
@@ -334,7 +331,6 @@ const TemplateTab = ({
               {ordersCsvColumns.map((column) => (
                 <tr className="border-border-primary border-t align-top" key={column.key}>
                   <td className="px-150 py-100">
-                    <span className="font-mono text-xs">{column.key}</span>
                     {column.required && (
                       <Badge className="ms-100" size="sm" variant="info">
                         povinné

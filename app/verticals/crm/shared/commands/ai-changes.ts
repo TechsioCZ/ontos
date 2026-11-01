@@ -220,7 +220,7 @@ const newValueLines = (state: CrmState, values: AiDisplayFields) =>
     return entry === undefined ? [] : [entry];
   });
 
-const orderLabel = (order: ImportedOrder) => `Objednávka ${order.number ?? order.externalId} (${order.source})`;
+const orderLabel = (order: ImportedOrder) => `Objednávka ${order.number ?? 'bez čísla'} (${order.source})`;
 
 interface Described {
   readonly diff: readonly AiDiffLine[];

@@ -180,7 +180,7 @@ export const PairingForm = ({
                   {clientId === candidate.clientId && (
                     <span aria-hidden="true" className="icon-[mdi--check-circle] size-200 text-success" />
                   )}
-                  {clientLabel(records, candidate.clientId) ?? candidate.clientId}
+                  {clientLabel(records, candidate.clientId) ?? NOT_PROVIDED}
                 </span>
                 <span className="text-fg-secondary text-xs">{candidate.reason}</span>
               </button>
@@ -210,7 +210,7 @@ export const PairingForm = ({
         <FormCheckbox
           checked={approve}
           id={`pairing-approve-${order.id}`}
-          label={`Schválit vazbu: zákazník ${order.externalCustomerId} (${order.source}) je tento klient – další objednávky se napárují samy`}
+          label={`Schválit vazbu: ${order.customerName ?? orderTitle(order)} (${order.source}) patří tomuto klientovi – další objednávky se napárují samy`}
           onCheckedChange={(checked) => setApprove(checked)}
           size="sm"
         />
@@ -330,7 +330,6 @@ const StatusTimeline = ({
                 event.source,
                 batchName(event.batchId),
                 event.row === undefined ? undefined : `řádek ${String(event.row)}`,
-                event.eventId === undefined ? undefined : `událost ${event.eventId}`,
               ]
                 .filter((part) => part !== undefined)
                 .join(' · ')}
@@ -467,7 +466,6 @@ const renderOrderFacts = (
 ) => {
   const customer = [
     order.customerName,
-    order.externalCustomerId,
     order.customerRegNo === undefined || order.customerRegNo === '' ? undefined : `IČO ${order.customerRegNo}`,
     order.customerEmail,
   ]
@@ -497,7 +495,7 @@ const renderOrderFacts = (
           { label: 'Klient v CRM', value: clientLabel(records, order.clientId) ?? 'nenapárováno' },
           { label: 'Datum objednávky', value: orderDate(order) },
           { label: 'Částka', value: formatAmount(order.amount, order.currency) },
-          { label: 'Stav ve zdroji (surový)', value: order.rawStatus },
+          { label: 'Stav ve zdroji', value: orderStatusLabel(order.rawStatus) },
           {
             label: 'Poslední událost ve zdroji',
             value:
@@ -505,7 +503,7 @@ const renderOrderFacts = (
           },
           { label: 'Poprvé načteno do CRM', value: pipe(order.receivedAt, orderDateText, formatDateTime) },
           { label: 'Zákazník podle zdroje', value: customer === '' ? NOT_PROVIDED : customer },
-          { label: 'Číslo / ID ve zdroji', value: `${order.number ?? NOT_PROVIDED} / ${order.externalId}` },
+          { label: 'Číslo objednávky', value: orderTitle(order) },
         ]}
       />
     </>
@@ -546,7 +544,7 @@ export const OrderDetailPanel = ({
           Zavřít
         </Button>
       }
-      description={`${order.source} · ID ve zdroji ${order.externalId}`}
+      description={order.source}
       onOpenChange={(open) => {
         if (!open) {
           setRepairOpen(false);
@@ -564,9 +562,7 @@ export const OrderDetailPanel = ({
           <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
             <span className="text-sm">
               {order.reviewReason ?? 'Stejná objednávka z jiného zdroje.'}
-              {twin === undefined
-                ? null
-                : ` Původní záznam: ${orderTitle(twin)} (${twin.source}, ID ${twin.externalId}).`}
+              {twin === undefined ? null : ` Původní záznam: ${orderTitle(twin)} (${twin.source}).`}
             </span>
             {(order.decisions ?? []).map((decision) => (
               <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
@@ -628,7 +624,7 @@ export const OrderDetailPanel = ({
                   <span>
                     <span className="font-medium">{pairingChangeLabel(records, change)}</span>
                     {' · '}
-                    {change.via === 'manual' ? 'ručně' : 'schválená vazba ID zákazníka'}
+                    {change.via === 'manual' ? 'ručně' : 'schválená vazba zákazníka'}
                   </span>
                   <span className="text-fg-secondary text-xs">
                     {`${principalLabel(records, change.by)}, ${pipe(change.at, orderDateText, formatDateTime)} – ${change.reason}`}

@@ -83,7 +83,7 @@ export const principalLabel = (records: RecordsResponse, principalId: string): s
   if (principalId === records.viewer.principalId) {
     return name === undefined ? 'Vy' : `${name} (vy)`;
   }
-  return name ?? `Uživatel ${principalId.slice(0, 8)}`;
+  return name ?? 'Uživatel';
 };
 
 export const clientLabel = (records: RecordsResponse, clientId: string | undefined) =>
@@ -102,7 +102,7 @@ export const useFormatAmount = () => {
   };
 };
 
-export const orderTitle = (order: ImportedOrder) => order.number ?? order.externalId;
+export const orderTitle = (order: ImportedOrder) => order.number ?? NOT_PROVIDED;
 export const orderDate = (order: ImportedOrder) =>
   order.orderedAt === undefined ? NOT_PROVIDED : pipe(order.orderedAt, orderDateText, formatDate);
 export const lastChange = (order: ImportedOrder) =>
