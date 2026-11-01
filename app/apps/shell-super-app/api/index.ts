@@ -1011,6 +1011,7 @@ const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'au
       'signIn',
       Effect.fn('shell.authentication.signIn')(({ payload, request }) =>
         Effect.gen(function* signInHandler() {
+          yield* noStore;
           const authentication = yield* AuthenticationService;
           const result = yield* authentication
             .signIn(payload.email, Redacted.value(payload.password), requestHeaders(request.headers))
@@ -1026,6 +1027,7 @@ const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'au
     )
     .handle('currentSession', ({ request }) =>
       Effect.gen(function* currentSessionHandler() {
+        yield* noStore;
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .resolveShellContext(requestHeaders(request.headers))
@@ -1052,6 +1054,7 @@ const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'au
       'signOut',
       Effect.fn('shell.authentication.signOut')(({ request }) =>
         Effect.gen(function* signOutHandler() {
+          yield* noStore;
           const authentication = yield* AuthenticationService;
           const result = yield* authentication.signOut(requestHeaders(request.headers));
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
@@ -1067,6 +1070,7 @@ const legalEntityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'legal
   handlers
     .handle('availableLegalEntities', ({ request }) =>
       Effect.gen(function* availableLegalEntitiesHandler() {
+        yield* noStore;
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .resolveShellContext(requestHeaders(request.headers))
@@ -1102,6 +1106,7 @@ const legalEntityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'legal
     .handle(
       'switchToTenantContext',
       Effect.fn('ShellContext.switchToTenantContext')(function* switchToTenantContextHandler({ request }) {
+        yield* noStore;
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .switchToTenantContext(requestHeaders(request.headers))
@@ -1116,6 +1121,7 @@ const legalEntityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'legal
     )
     .handle('switchLegalEntity', ({ payload, request }) =>
       Effect.gen(function* switchLegalEntityHandler() {
+        yield* noStore;
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .switchLegalEntity(payload.legalEntityId, requestHeaders(request.headers))
@@ -1146,6 +1152,7 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
   handlers
     .handle('availableTenants', ({ request }) =>
       Effect.gen(function* availableTenantsHandler() {
+        yield* noStore;
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .availableTenants(requestHeaders(request.headers))
@@ -1164,6 +1171,7 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
     )
     .handle('switchTenant', ({ payload, request }) =>
       Effect.gen(function* switchTenantHandler() {
+        yield* noStore;
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .switchTenant(payload.tenantId, requestHeaders(request.headers))
@@ -1514,6 +1522,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
   handlers
     .handle('shellComposition', ({ query, request }) =>
       Effect.gen(function* shellCompositionHandler() {
+        yield* noStore;
         const session = yield* requireShellSession(request.headers);
         if (session.state === 'access_blocked') {
           return yield* decodeResponse(
@@ -1552,6 +1561,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
     )
     .handle('resolveModuleTarget', ({ payload, request }) =>
       Effect.gen(function* resolveModuleTargetHandler() {
+        yield* noStore;
         const session = yield* requireAuthenticatedShellContext(request.headers);
         const catalog = yield* captureShellRelease(payload.compositionRevision);
         const governedReads = yield* ShellGovernedReads;

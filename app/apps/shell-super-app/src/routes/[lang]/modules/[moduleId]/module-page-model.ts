@@ -16,6 +16,7 @@ import {
   browserStaleWhileRevalidateCache,
   keyPart,
 } from '../../../browser-swr-cache.ts';
+import { registerSessionScopedReset } from '../../../session-scope.ts';
 import { modulePageProps, prepareModulePage } from '../../../remote-page-loader.ts';
 import {
   isServerRender,
@@ -104,6 +105,10 @@ const browserTargetCache = browserStaleWhileRevalidateCache(
   },
   { capacity: 64, immutable: true, keep: () => true },
 );
+
+/** Resolved targets name the destinations of the person who resolved them; a session boundary drops them all. */
+export const resetBrowserTargetCache = browserTargetCache.invalidateAll;
+registerSessionScopedReset(resetBrowserTargetCache);
 
 /** The browser cache key of one target read. */
 const targetCacheKey = (cacheBaseUrl: string, identity: SafeTenantIdentity, payload: ResolveModuleTargetPayload) =>

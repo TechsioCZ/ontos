@@ -10,6 +10,7 @@ import { Clock, Deferred, Effect, Exit, Fiber, Match, MutableRef, Option, Predic
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
+import { onOtherSessionScopeEnded, registerSessionScopedReset, resetSessionScope } from './session-scope.ts';
 import {
   documentGatewayAssertion,
   noteDocumentGatewayAudience,
@@ -609,6 +610,14 @@ export const installBrowserRequestCache = (): void => {
       retainPageDataWork(event.detail);
     }
   });
+  // Another document of this browser signed in, out or switched: what this document shows belongs to the previous
+  // person. It reloads to the current one, except on the sign-in page, which keeps what was typed there.
+  onOtherSessionScopeEnded(() => {
+    browserRuntime.runSync(resetSessionScope);
+    if (!/\/login\/?$/u.test(globalThis.location.pathname)) {
+      globalThis.location.reload();
+    }
+  });
   // eslint-disable-next-line effect-native/no-promise-shaped-port -- This replaces the platform `fetch`, whose contract is a Promise. expires: 2027-03-31.
   const wrapped: typeof globalThis.fetch = async (input, init) => {
     const handled = Match.value(classify(state, input, init)).pipe(
@@ -705,3 +714,7 @@ export const forgetRecordedPageReads = clearBrowserRequestCache.pipe(
   ),
   Effect.ignore,
 );
+
+// Recorded reads, the request cache and warm assertions, and queued prefetches all belong to the session scope.
+registerSessionScopedReset(forgetRecordedPageReads);
+registerSessionScopedReset(staffRoutePreloads.invalidate);

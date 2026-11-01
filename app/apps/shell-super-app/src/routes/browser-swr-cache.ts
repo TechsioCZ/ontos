@@ -22,7 +22,12 @@ interface Stamped<A> {
  */
 export const browserStaleWhileRevalidateCache = <Key, A, E>(
   lookup: (key: Key) => Effect.Effect<A, E>,
-  options: { readonly capacity: number; readonly immutable?: true; readonly keep: (value: A) => boolean },
+  options: {
+    readonly capacity: number;
+    readonly freshMillis?: number;
+    readonly immutable?: true;
+    readonly keep: (value: A) => boolean;
+  },
 ) => {
   const cache = browserRuntime.runSync(
     Cache.makeWith(
@@ -32,7 +37,8 @@ export const browserStaleWhileRevalidateCache = <Key, A, E>(
         ),
       {
         capacity: options.capacity,
-        timeToLive: (exit) => (Exit.isSuccess(exit) && options.keep(exit.value.value) ? MAX_AGE : 0),
+        timeToLive: (exit) =>
+          Exit.isSuccess(exit) && options.keep(exit.value.value) ? (options.freshMillis ?? MAX_AGE) : 0,
       },
     ),
   );
@@ -49,7 +55,10 @@ export const browserStaleWhileRevalidateCache = <Key, A, E>(
   const get = (key: Key): Effect.Effect<A, E> =>
     Effect.all([Cache.get(cache, key), Clock.currentTimeMillis], { concurrency: 1 }).pipe(
       Effect.tap(([{ fetchedAt }, now]) =>
-        options.immutable === true || now - fetchedAt < REVALIDATE_AFTER_MILLIS || refreshing.has(key)
+        options.immutable === true ||
+        options.freshMillis !== undefined ||
+        now - fetchedAt < REVALIDATE_AFTER_MILLIS ||
+        refreshing.has(key)
           ? Effect.void
           : revalidate(key),
       ),
@@ -81,9 +90,18 @@ export const browserStaleWhileRevalidateCache = <Key, A, E>(
 
 export const keyPart = '\n';
 
-/** Cache key of one browser read: base URL, tenant, legal entity and a read-specific part. */
+/**
+ * Cache key of one browser read: base URL, person, tenant, legal entity and a read-specific part. The person is part of
+ * the key, so one person's answer is never served to another person who shares the company.
+ */
 export const browserReadKey = (baseUrl: string, identity: SafeTenantIdentity, extra = '') =>
-  [baseUrl, identity.tenantId, 'legalEntityId' in identity ? String(identity.legalEntityId) : '', extra].join(keyPart);
+  [
+    baseUrl,
+    identity.principalId,
+    identity.tenantId,
+    'legalEntityId' in identity ? String(identity.legalEntityId) : '',
+    extra,
+  ].join(keyPart);
 
 /** The base URL when this read may use the browser caches; `undefined` for server rendering and explicit locales. */
 export const browserBaseUrl = ({ baseUrl, ...rest }: ShellAuthenticationClientOptions) =>

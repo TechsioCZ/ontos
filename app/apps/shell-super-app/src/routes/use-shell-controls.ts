@@ -12,7 +12,7 @@ import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../..
 import { signOut, switchLegalEntity, switchTenant, switchToTenantContext } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { forgetRecordedPageReads } from './browser-request-cache.ts';
+import { endBrowserSession } from './session-scope.ts';
 import { seedDocumentGatewayAssertions, warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
@@ -93,7 +93,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     setLogoutFailed(false);
     void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
-        Effect.andThen(forgetRecordedPageReads),
+        Effect.andThen(endBrowserSession),
         Effect.andThen(
           Effect.tryPromise(() => navigate({ reloadDocument: true, to: `/${language}/login` })).pipe(
             Effect.timeout('10 seconds'),
@@ -127,7 +127,9 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
           onSuccess: () => Effect.succeed('switched' as const),
         }),
         Effect.flatMap((outcome) =>
-          outcome === authenticationRequired || outcome === 'switched' ? reload() : Effect.sync(() => setFailed(true)),
+          outcome === authenticationRequired || outcome === 'switched'
+            ? endBrowserSession.pipe(Effect.andThen(reload()))
+            : Effect.sync(() => setFailed(true)),
         ),
         Effect.matchEffect({
           onFailure: (error) =>

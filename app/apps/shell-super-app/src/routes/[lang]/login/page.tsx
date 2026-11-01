@@ -17,7 +17,7 @@ import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { useBrowserLocationHref } from '../../browser-location.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
+import { endBrowserSession } from '../../session-scope.ts';
 import { openSignedInPage, signInReason, signInReturnPath } from '../../sign-in-return.ts';
 import type { SignInReason } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
@@ -214,7 +214,7 @@ const LoginPage = () => {
           onSuccess: () =>
             oauthRequest === undefined
               ? Effect.andThen(
-                  forgetRecordedPageReads,
+                  endBrowserSession,
                   Effect.tryPromise(() => {
                     // Signed in: what remains is loading the next page, which can take a few seconds.
                     setAttempt('opening');
