@@ -594,9 +594,6 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   const [includeClosed, setIncludeClosed] = useState(false);
   const [selection, setSelection] = useState('');
   const today = pragueToday();
-  const refresh = () => {
-    void browserRuntime.runPromise(overviewData.refresh({ legalEntityId }));
-  };
   const portfolio = overviewPortfolio(sources, today);
   const { agreements, occupancy, property, work } = portfolio;
   const attention = sources === undefined ? [] : attentionItems(sources, today, lang);
@@ -639,9 +636,6 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
               Obsazenost, nájemci a nejbližší kroky na jednom místě. Stav k {formatDay(today)}.
             </p>
           </div>
-          <Button isLoading={loading} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-            Obnovit přehled
-          </Button>
         </header>
         <nav aria-label={t('property-portfolio.overview.propertyAgendas')} className="sp-quicklinks">
           {nav.flatMap((item) =>

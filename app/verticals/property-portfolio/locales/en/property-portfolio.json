@@ -22,7 +22,6 @@
         "title": "Rental overview",
         "referenceDate": "Business reference date",
         "period": "Financial period: year 2026 (confirmed plans starting in this year)",
-        "refresh": "Refresh overview",
         "unavailable": "Overview is unavailable. Check your permissions and try again.",
         "occupied": "Occupied units",
         "available": "Available units",

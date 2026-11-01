@@ -22,7 +22,6 @@
         "title": "Přehled pronájmů",
         "referenceDate": "Referenční den",
         "period": "Finanční období: rok 2026 (součet potvrzených plánů v tomto roce)",
-        "refresh": "Obnovit přehled",
         "unavailable": "Přehled nelze načíst. Zkontrolujte oprávnění a zkuste to znovu.",
         "occupied": "Obsazené jednotky",
         "available": "Dostupné jednotky",
