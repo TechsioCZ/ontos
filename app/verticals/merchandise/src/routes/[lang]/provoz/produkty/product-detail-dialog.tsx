@@ -43,6 +43,7 @@ import {
 } from './product-forms.tsx';
 import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { ProductImageGallery } from './product-image-gallery.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
 import type { MovementDraft } from './product-movements.tsx';
 
@@ -779,7 +780,15 @@ export const ProductDetailView = ({
               revision={revision}
             />
           </Tabs.Content>
-          <Tabs.Content className="py-200" value="eshop">
+          <Tabs.Content className="flex flex-col gap-250 py-200" value="eshop">
+            {/* Every staff writer curates product photos, also where catalog data stays with administrators. */}
+            <ProductImageGallery
+              canWrite={canMoveStock}
+              images={product.images ?? []}
+              onChanged={onReload}
+              productId={product.id}
+              productName={product.name}
+            />
             <EshopPanel
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
               canWrite={canWrite}

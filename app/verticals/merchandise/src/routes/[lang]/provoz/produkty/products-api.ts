@@ -37,7 +37,7 @@ export type LoadOutcome =
   | { readonly ok: false; readonly reason: FailureReason };
 
 export type CommandOutcome =
-  | { readonly ok: true; readonly revision: number }
+  | { readonly image?: string; readonly ok: true; readonly revision: number }
   | { readonly ok: false; readonly reason: FailureReason };
 
 type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
@@ -267,7 +267,10 @@ export const runCommand = (
       ),
       Effect.match({
         onFailure: (error): CommandOutcome => ({ ok: false, reason: commandReason(error) }),
-        onSuccess: (result): CommandOutcome => ({ ok: true, revision: result.revision }),
+        onSuccess: (result): CommandOutcome =>
+          result.image === undefined
+            ? { ok: true, revision: result.revision }
+            : { image: result.image, ok: true, revision: result.revision },
       }),
       Effect.map(onOutcome),
     ),

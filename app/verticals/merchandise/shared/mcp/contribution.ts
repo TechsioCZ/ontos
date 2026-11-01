@@ -32,6 +32,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canManageCatalog',
       title: { cs: 'Změnit cenu', en: 'Change a price' },
     },
+    ChangeProductImages: 'hidden',
     CreateOrder: { title: { cs: 'Vytvořit objednávku', en: 'Create an order' } },
     CreateProduct: {
       liveRight: 'canManageCatalog',

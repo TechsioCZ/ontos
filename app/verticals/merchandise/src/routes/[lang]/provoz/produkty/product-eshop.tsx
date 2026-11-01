@@ -1,18 +1,17 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-// E-shop product administration: real variants (SKU, price, stock, active), images, publication and availability.
+// E-shop product administration: real variants (SKU, price, stock, active), publication and availability.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { selectItem } from '../../../../ui/select-item.ts';
-import { formatDateTime, formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { formatDateTime, formatMoney, ScrollRegion, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -27,19 +26,6 @@ import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
-import { moveImage } from './product-images.ts';
-
-import { AKROS_STOREFRONT_ORIGIN } from '../../../../../shared/storefront-urls.ts';
-
-export const imageUrl = (reference: string): string | undefined => {
-  if (/^https?:\/\//u.test(reference)) {
-    return reference;
-  }
-  const path = reference.startsWith('/') ? reference : `/${reference}`;
-  return path.startsWith('/akros/') && AKROS_STOREFRONT_ORIGIN !== undefined
-    ? `${AKROS_STOREFRONT_ORIGIN}${path}`
-    : undefined;
-};
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -703,12 +689,7 @@ const slugFieldError = (invalid: boolean, taken: boolean) => {
   return {};
 };
 
-interface GalleryImage {
-  readonly id: number;
-  readonly reference: string;
-}
-
-/** Storefront presentation: images, publication, slug and how availability is reported. */
+/** Storefront presentation: publication, slug and how availability is reported. */
 const useEshopPanel = ({
   canWrite,
   onArchived,
@@ -719,18 +700,11 @@ const useEshopPanel = ({
   storefrontOrigin,
 }: PanelProps) => {
   const failure = useCommandFailure();
-  const [images, setImages] = useState<readonly GalleryImage[]>(() =>
-    (product.images ?? []).map((reference, id) => ({ id, reference })),
-  );
-  const nextImageId = useRef(product.images?.length ?? 0);
-  const [newImage, setNewImage] = useState('');
-  const newImageInvalid = newImage.trim() !== '' && !/^(?:\/(?!\/)|https:\/\/)\S+$/u.test(newImage.trim());
   const [slug, setSlug] = useState(product.slug ?? '');
   const [published, setPublished] = useState(product.published !== false);
   const [stockTracked, setStockTracked] = useState(product.stockTracked !== false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
   const storefrontHref =
     storefrontOrigin === undefined ? undefined : `${storefrontOrigin}/produkt/${product.slug ?? product.id}`;
   const [archiveReason, setArchiveReason] = useState('');
@@ -746,7 +720,6 @@ const useEshopPanel = ({
     setBusy(true);
     setServerError(null);
     const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {
-      images: images.map((image) => image.reference),
       published,
       stockTracked,
     };
@@ -765,7 +738,7 @@ const useEshopPanel = ({
         setServerError(failure(outcome.reason, onReload));
         return;
       }
-      onCommitted('Nastavení e-shopu uloženo. Změnu uvidí zákazník po obnovení stránky.');
+      onCommitted('Nastavení e-shopu uloženo.');
     });
   };
 
@@ -782,31 +755,16 @@ const useEshopPanel = ({
     });
   };
 
-  const addImage = () => {
-    const id = nextImageId.current;
-    nextImageId.current += 1;
-    setImages([...images, { id, reference: newImage.trim() }]);
-    setNewImage('');
-  };
-
   return {
-    addImage,
     archive,
     archiveReason,
-    broken,
     busy,
     canWrite,
-    images,
-    newImage,
-    newImageInvalid,
     product,
     published,
     save,
     serverError,
     setArchiveReason,
-    setBroken,
-    setImages,
-    setNewImage,
     setPublished,
     setSlug,
     setStockTracked,
@@ -821,23 +779,15 @@ const useEshopPanel = ({
 export const EshopPanel = (props: PanelProps) => {
   const { t } = useModernI18n();
   const {
-    addImage,
     archive,
     archiveReason,
-    broken,
     busy,
     canWrite,
-    images,
-    newImage,
-    newImageInvalid,
     product,
     published,
     save,
     serverError,
     setArchiveReason,
-    setBroken,
-    setImages,
-    setNewImage,
     setPublished,
     setSlug,
     setStockTracked,
@@ -899,124 +849,6 @@ export const EshopPanel = (props: PanelProps) => {
           </Button>
         </SectionCard>
       )}
-      <SectionCard title={`Obrázky (${images.length})`}>
-        <p className="mb-150 text-fg-secondary text-sm">
-          První obrázek je hlavní. E-shop po uložení a obnovení stránky ukáže všechny obrázky v tomto pořadí.
-        </p>
-        {images.length === 0 ? (
-          <div className="flex h-32 items-center justify-center rounded-md border border-border-primary border-dashed text-fg-secondary text-sm">
-            Produkt nemá obrázek — e-shop zobrazí zástupný obrázek „bez obrázku“.
-          </div>
-        ) : (
-          <ul className="grid grid-cols-2 gap-200 sm:grid-cols-4">
-            {images.map(({ id, reference: image }, index) => (
-              <li className="flex flex-col gap-100" key={id}>
-                <div
-                  className={`${surfaceTileClassName} flex aspect-square items-center justify-center overflow-hidden`}
-                >
-                  {broken.has(image) || imageUrl(image) === undefined ? (
-                    <span className="p-100 text-center text-fg-secondary text-xs">
-                      Náhled se nenačetl (e-shop neběží?)
-                    </span>
-                  ) : (
-                    <img
-                      alt={`${product.name} – obrázek ${index + 1}`}
-                      className="size-full object-cover"
-                      loading="lazy"
-                      onError={() => setBroken((current) => new Set([...current, image]))}
-                      src={imageUrl(image)}
-                    />
-                  )}
-                </div>
-                <Tooltip content={image}>
-                  <span className="truncate text-fg-secondary text-xs">
-                    {index === 0 ? 'Hlavní · ' : ''}
-                    {image}
-                  </span>
-                </Tooltip>
-                {canWrite && (
-                  <div className="flex flex-wrap items-center gap-50">
-                    {index > 0 && (
-                      <Button
-                        aria-label={`Nastavit obrázek ${index + 1} jako hlavní`}
-                        icon="icon-[mdi--star-outline]"
-                        onClick={() => setImages(moveImage(images, index, 0))}
-                        size="sm"
-                        theme="borderless"
-                        title={t('merchandise.ui.setMainImage')}
-                        type="button"
-                        variant="secondary"
-                      />
-                    )}
-                    <Button
-                      aria-label={`Posunout obrázek ${index + 1} dopředu`}
-                      disabled={index === 0}
-                      icon="icon-[mdi--arrow-left]"
-                      onClick={() => setImages(moveImage(images, index, index - 1))}
-                      size="sm"
-                      theme="borderless"
-                      title={t('merchandise.ui.moveImageEarlier')}
-                      type="button"
-                      variant="secondary"
-                    />
-                    <Button
-                      aria-label={`Posunout obrázek ${index + 1} dozadu`}
-                      disabled={index === images.length - 1}
-                      icon="icon-[mdi--arrow-right]"
-                      onClick={() => setImages(moveImage(images, index, index + 1))}
-                      size="sm"
-                      theme="borderless"
-                      title={t('merchandise.ui.moveImageLater')}
-                      type="button"
-                      variant="secondary"
-                    />
-                    <Button
-                      aria-label={`Odebrat obrázek ${index + 1}`}
-                      icon="icon-[mdi--delete-outline]"
-                      onClick={() => setImages(images.filter((_, position) => position !== index))}
-                      size="sm"
-                      theme="borderless"
-                      title={t('merchandise.ui.remove')}
-                      type="button"
-                      variant="secondary"
-                    />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {canWrite && (
-          <div className="mt-200 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
-            <FormInput
-              id="eshop-new-image"
-              label={t('merchandise.ui.addImagePath')}
-              name="newImage"
-              onChange={(event) => setNewImage(event.target.value)}
-              placeholder={`/img/${product.slug ?? 'produkt'}.svg`}
-              size="sm"
-              value={newImage}
-              {...(newImageInvalid
-                ? {
-                    helpText: 'Zadejte cestu začínající „/“ nebo adresu začínající „https://“.',
-                    validateStatus: 'error' as const,
-                  }
-                : {})}
-            />
-            <Button
-              disabled={newImage.trim() === '' || newImageInvalid || images.length >= 20}
-              icon="icon-[mdi--image-plus-outline]"
-              onClick={addImage}
-              theme="outlined"
-              type="button"
-              variant="secondary"
-            >
-              Přidat
-            </Button>
-          </div>
-        )}
-      </SectionCard>
-
       <SectionCard title={t('merchandise.ui.publicationAvailability')}>
         <div className="flex flex-col gap-200">
           <FormInput

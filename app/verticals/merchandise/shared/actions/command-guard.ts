@@ -32,6 +32,8 @@ export const principalKindOf = (
 export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'BulkUpdateProducts',
   'ChangePrice',
+  // Product photos are chosen and arranged by people.
+  'ChangeProductImages',
   'EditOrder',
   'LinkOrderCustomer',
   'RemoveDemoOrder',
@@ -135,6 +137,8 @@ export const staffCommandAllowed = (legalEntityId: string, administrator: boolea
   return (
     legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
     administrator ||
+    // The AKROS e-shop manager curates product photos; prices and catalog data stay with administrators.
+    commandTag === 'ChangeProductImages' ||
     commandTag === 'RecordStockMovement' ||
     commandTag === 'ChangeOrderStatus'
   );

@@ -1,3 +1,4 @@
+import { MediaImageUploadSchema } from '@app/core-runtime';
 import { Schema } from 'effect';
 import {
   AiBatchIdSchema,
@@ -24,6 +25,7 @@ import {
   VariantIdReferenceSchema,
   OrderIdReferenceSchema,
   EntityIdSchema,
+  ImageRefSchema,
   MinorAmountSchema,
   OpportunityIdSchema,
   OrderAddressSchema,
@@ -50,6 +52,21 @@ export const ProductPatchSchema = Schema.Struct({
   vatRate: Schema.optionalKey(VatRateSchema),
 });
 export type ProductPatch = typeof ProductPatchSchema.Type;
+
+/**
+ * One change of a product's gallery, saved on its own: an uploaded picture (stored in Core Media), the whole gallery
+ * in a new order, a removal, or the undo of a removal. Each applies to the current gallery, not to a revision.
+ */
+export const ProductImageChangeSchema = Schema.Union([
+  Schema.TaggedStruct('Upload', { image: MediaImageUploadSchema }),
+  Schema.TaggedStruct('Reorder', { images: Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20)) }),
+  Schema.TaggedStruct('Remove', { image: ImageRefSchema }),
+  Schema.TaggedStruct('Restore', {
+    image: ImageRefSchema,
+    position: Schema.Int.check(Schema.isBetween({ maximum: 19, minimum: 0 })),
+  }),
+]);
+export type ProductImageChange = typeof ProductImageChangeSchema.Type;
 
 export const BulkProductPatchSchema = Schema.Struct({
   active: Schema.optionalKey(Schema.Boolean),
@@ -184,6 +201,10 @@ export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('UpdateProduct', {
     id: ProductIdSchema,
     patch: ProductPatchSchema,
+  }),
+  Schema.TaggedStruct('ChangeProductImages', {
+    change: ProductImageChangeSchema,
+    id: ProductIdSchema,
   }),
   Schema.TaggedStruct('ChangePrice', {
     id: ProductIdSchema,
@@ -340,6 +361,8 @@ export type StorefrontOrderResult = typeof StorefrontOrderResultSchema.Type;
 /** Identifiers of the entities the command created or changed, in command order. */
 export const ApplyCommandResultSchema = Schema.Struct({
   entityIds: Schema.Array(EntityIdSchema),
+  /** The gallery reference of an image a ChangeProductImages upload stored. */
+  image: Schema.optionalKey(ImageRefSchema),
   revision: Schema.Int,
   storefrontOrder: Schema.optionalKey(StorefrontOrderResultSchema),
 });

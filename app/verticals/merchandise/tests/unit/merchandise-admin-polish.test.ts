@@ -4,7 +4,7 @@ import { staffCommandAllowed, AKROS_LEGAL_ENTITY_ID } from '../../shared/actions
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import { rankCategories } from '../../shared/domain/category-search.ts';
 import type { CategoryCandidate } from '../../shared/domain/category-search.ts';
-import { moveImage } from '../../src/routes/[lang]/provoz/produkty/product-images.ts';
+import { moveImage } from '../../shared/domain/product-images.ts';
 import { isOrderScopedEdit } from '../../src/services/persistence.service.ts';
 
 const category = (id: string, name: string, slug: string, trail: string): CategoryCandidate => ({

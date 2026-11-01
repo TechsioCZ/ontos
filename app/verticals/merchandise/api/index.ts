@@ -37,6 +37,7 @@ import type { OperationContext } from '../shared/api.ts';
 // <generated-governed-http-handler-imports>
 import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { mediaReadApiLive } from './media-read-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 // </generated-governed-http-handler-imports>
 
@@ -85,6 +86,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  mediaReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
