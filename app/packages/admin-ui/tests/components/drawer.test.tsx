@@ -8,11 +8,12 @@ const copy = { closeModeless: 'Close panel', closeNavigation: 'Close navigation'
 afterEach(cleanup);
 
 it.effect('keeps the navigation drawer backdrop clickable while the page is pointer-locked', () =>
-  Effect.gen(function* modalBackdrop() {
+  Effect.gen(function* drawerBackdrop() {
     render(
-      <Drawer defaultOpen placement="start">
-        <Drawer.Backdrop />
+      <Drawer>
+        <Drawer.Trigger>Open navigation</Drawer.Trigger>
         <Drawer.Portal>
+          <Drawer.Backdrop />
           <Drawer.Positioner>
             <Drawer.Content>
               <Drawer.Title>Navigation</Drawer.Title>
@@ -22,25 +23,32 @@ it.effect('keeps the navigation drawer backdrop clickable while the page is poin
         </Drawer.Portal>
       </Drawer>,
     );
-    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    const trigger = screen.getByRole('button', { name: 'Open navigation' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Navigation' }));
     yield* Effect.promise(() => waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true)));
     const backdrop = document.querySelector<HTMLElement>('[data-scope="drawer"][data-part="backdrop"]');
     expect(backdrop?.classList.contains('pointer-events-auto')).toBe(true);
+    expect(document.body.style.pointerEvents).toBe('none');
     if (backdrop !== null) {
-      fireEvent.pointerDown(backdrop, { button: 0, clientX: 600, clientY: 200, pointerType: 'mouse' });
-      fireEvent.pointerUp(backdrop, { button: 0, clientX: 600, clientY: 200, pointerType: 'mouse' });
+      fireEvent.pointerDown(backdrop, { button: 0, clientX: 0, clientY: 0, pointerType: 'mouse' });
+      fireEvent.pointerUp(backdrop, { button: 0, clientX: 0, clientY: 0, pointerType: 'mouse' });
       fireEvent.click(backdrop);
     }
-    yield* Effect.promise(() => waitFor(() => expect(dialog.dataset['state']).toBe('closed')));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    yield* Effect.promise(() => waitFor(() => expect(document.activeElement).toBe(trigger)));
+    expect(document.body.style.overflow).toBe('');
+    expect(document.body.style.pointerEvents).toBe('');
   }),
 );
 
 it.effect('does not force pointer capture onto a modeless drawer backdrop', () =>
-  Effect.gen(function* modelessBackdrop() {
+  Effect.gen(function* modelessDrawer() {
     render(
-      <Drawer defaultOpen modal={false} placement="end">
-        <Drawer.Backdrop />
+      <Drawer defaultOpen modal={false}>
         <Drawer.Portal>
+          <Drawer.Backdrop />
           <Drawer.Positioner>
             <Drawer.Content>
               <Drawer.Title>Modeless panel</Drawer.Title>
@@ -50,8 +58,10 @@ it.effect('does not force pointer capture onto a modeless drawer backdrop', () =
         </Drawer.Portal>
       </Drawer>,
     );
-    yield* Effect.promise(() => screen.findByRole('dialog'));
+    yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Modeless panel' }));
     const backdrop = document.querySelector<HTMLElement>('[data-scope="drawer"][data-part="backdrop"]');
-    expect(backdrop?.classList.contains('pointer-events-auto') ?? false).toBe(false);
+    expect(backdrop).not.toBeNull();
+    expect(backdrop?.classList.contains('pointer-events-auto')).toBe(false);
+    expect(document.body.style.pointerEvents).toBe('');
   }),
 );
