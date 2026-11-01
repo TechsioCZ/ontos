@@ -358,8 +358,8 @@ const csMonthFormats = monthFormats('cs-CZ');
 const enMonthFormats = monthFormats('en-GB');
 const monthFormatsFor = (language: string) => (language === 'en' ? enMonthFormats : csMonthFormats);
 const monthEpochMillis = (month: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(`${month}-01T00:00:00Z`));
-/** Expenses are drawn below zero; the tooltip names the series and shows the amount without a minus sign. */
-const tooltipKc = (value: number) => formatMoney(Math.round(Math.abs(value) * 100));
+/** Expenses are drawn below zero; the tooltip names the series and shows whole crowns (as the table) without a minus sign. */
+const tooltipKc = (value: number) => formatMoney(Math.round(Math.abs(value)) * 100);
 
 const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
   const { language, t } = useModernI18n();
@@ -441,7 +441,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
                 ariaLabel={t(`${chartKey}.balanceAria`)}
                 data={balanceRows}
                 formatCategory={monthTitle}
-                formatTooltipValue={(value) => formatMoney(Math.round(value * 100))}
+                formatTooltipValue={(value) => formatMoney(Math.round(value) * 100)}
                 formatValue={axisKc}
                 height={260}
                 locale={language}
