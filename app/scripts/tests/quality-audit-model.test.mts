@@ -1899,7 +1899,7 @@ it.live(
   Effect.fn(function* testConsumerExports() {
     const root = yield* fixture();
     const lintDirectory = 'tools/oxlint/effect-native';
-    const policyTest = `${lintDirectory}/tests/repository-policy.test.mts`;
+    const policyScript = `${lintDirectory}/repository-policy.mts`;
     const helperTest = `${lintDirectory}/tests/shared-helpers.test.mts`;
     const loadedFiles = [
       rstestConfigFile,
@@ -1910,7 +1910,7 @@ it.live(
     for (const file of loadedFiles) {
       write(root, file, 'export default {}; export const unusedNeighbor = 1;');
     }
-    write(root, policyTest, "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);");
+    write(root, policyScript, "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);");
     write(
       root,
       helperTest,
@@ -1923,7 +1923,7 @@ it.live(
     const base = {
       workspaces: {
         '.': {
-          entry: [policyTest, helperTest],
+          entry: [policyScript, helperTest],
           node: false,
           project: [rstestConfigFile, 'src/*.ts', toolsPattern],
           rstest: { config: [] },
@@ -1982,7 +1982,7 @@ it.live(
       '{"name":"consumer-controls","type":"module","scripts":{"test":"rstest --config other.ts"}}',
     );
     write(root, 'tsconfig.json', '{"include":["src"],"exclude":["src/*.type-test.ts"]}');
-    write(root, policyTest, "runOxlint(nodePath.join(pluginDirectory, 'other.config.ts'), []);");
+    write(root, policyScript, "runOxlint(nodePath.join(pluginDirectory, 'other.config.ts'), []);");
     write(
       root,
       helperTest,

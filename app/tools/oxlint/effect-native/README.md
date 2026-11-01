@@ -14,6 +14,9 @@ pnpm test:lint-rules
 # All production lint policies, including scripts; violations exit nonzero.
 pnpm lint
 
+# The Effect discrimination policy over all repository source, tools and root configuration.
+pnpm lint:repository-policy
+
 # Only the Effect-native policies, with exactly the production rule settings.
 pnpm lint:effect
 pnpm lint:effect --json
@@ -25,7 +28,7 @@ RULE=no-nested-effect-run pnpm exec rstest --project lint-rules tools/oxlint/eff
 node tools/oxlint/effect-native/tests/run-on-repo.mts no-nested-effect-run
 ```
 
-`pnpm check` runs the dedicated rule typecheck and tests before linting the application. The CI matrix also runs them independently in **Effect Rule Implementation**, so expected application lint failures do not prevent verification of the detectors. Existing application violations intentionally make `pnpm lint`, `pnpm lint:effect`, and therefore `pnpm check` fail. Do not confuse those diagnostics with a failing rule test or a plugin crash. No new dependency or Effect test harness is installed by this change.
+`pnpm check` runs the dedicated rule typecheck and tests beside application lint. The CI matrix also runs them independently in **Effect Rule Implementation**, so expected application lint failures do not prevent verification of the detectors. Existing application violations intentionally make `pnpm lint`, `pnpm lint:effect`, and therefore `pnpm check` fail. Do not confuse those diagnostics with a failing rule test or a plugin crash. No new dependency or Effect test harness is installed by this change.
 
 Both reporting commands scan `apps verticals packages scripts`. In report totals, test filenames and test directories take precedence over `scripts/`; nested workspace scripts count as scripts. The categories are disjoint. Counts are **diagnostics, not unique audit findings**: multiple rules can identify different concerns at one location. `--json` includes every diagnostic and file count; the text view explicitly limits the top-file list to 20.
 
@@ -47,17 +50,19 @@ These rules cannot prove runtime context propagation, tracer/exporter connectivi
 - `report.config.ts`: selects exactly the root configuration's Effect-native settings.
 - `report.mts`: combined production-policy diagnostic report; never runs `--fix`.
 - `tsconfig.json`: strict, no-emit tooling typecheck; intentionally invalid fixtures are excluded.
+- `tests/rule-tester.mts`: the in-process harness. Rule-behaviour suites run each case through Oxlint's own `RuleTester` (`oxlint/plugins-dev`) against the rule object the production plugin registers, without starting the Oxlint binary. Most cases use virtual absolute filenames because rules scope by filename alone. Rules that read other files (imports, package manifests, Modern and Rstest configurations) get a real workspace below the ignored `.codex/reports/lint-rule-workspaces/`, created before the case and removed after it. No suite writes into the scanned source tree.
 - `tests/fixtures/<name>/`: real Oxlint inputs, positive and negative cases, and one rule config.
-- `tests/fixtures.test.mts`: actual Oxlint execution, exact positive counts where specified, zero negative counts, linted-file coverage, and all failures reported together.
-- `tests/production-options.test.mts`: stages inputs in owned temporary workspaces outside the tooling/test ancestry and requires positive evidence for every rule using production settings. Default-config negatives are checked too; explicitly overridden option fixtures stay in their own suite. Set `EFFECT_NATIVE_TEST_TMPDIR` to choose a temporary root.
-- `tests/paths.test.mts` and `tests/script-scope.test.mts`: verify nested script classification for relative, POSIX, Windows drive-letter and UNC paths, plus real Oxlint default/opt-in behavior for timer, dependency-parameter and factory-signature rules in app, vertical and package scripts.
+- `tests/fixtures.test.mts`: one RuleTester case per fixture file at its real path, with the options its `.oxlintrc.json` selects for that path. Every invalid fixture pins its exact diagnostic count in a leading `// expect-count: N` comment or, where a comment would change the input, in `tests/fixtures/expected-counts.json`. A valid fixture that is clean only because Oxlint applies a blanket disable directive is asserted in process for the rule's report and through the binary for the suppression.
+- `tests/production-options.test.mts`: applies the production settings from `app/oxlint.config.ts` to each rule's fixtures at a neutral path outside the repository. The fixture named per rule in `tests/fixtures/production-positives.json` must report its exact count. Default-config negatives are checked too; explicitly overridden option fixtures stay in their own suite.
+- `tests/production-config.test.mts`: the end-to-end group. It runs the Oxlint binary with the production configuration over staged files to prove the plugins load, the configuration enables their rules, its path overrides (application tests, guarded testing entrypoints, native route filenames) apply, and the SonarJS configuration accepts domain-vocabulary keys.
+- `tests/paths.test.mts` and `tests/script-scope.test.mts`: verify nested script classification for relative, POSIX, Windows drive-letter and UNC paths, plus default/opt-in behavior for timer, dependency-parameter and factory-signature rules in app, vertical and package scripts, under both an absolute and a symlinked spelling.
 - `tests/discover-rules.test.mts`: verifies isolated discovery and file-URL imports, including a real ESM load from a path containing spaces, URL delimiters and Unicode. Path-string coverage does not substitute for a native Windows run of the full harness.
 - `tests/temporary-workspace.test.mts`: verifies cleanup after success and early/partial failures, preserving the original error and caller-owned files.
 - `tests/registration.test.mts`: imports the actual plugin/config and checks exports, error severity, fixture coverage, preserved typed lint options, and absence of fixer/suggestion metadata.
 - `tests/oxlint.test.mts`: regression coverage for loader failures, malformed JSON/diagnostics, inconsistent exits, empty-file runs, and stderr failures.
 - `tests/launcher.test.mts`: observes a real lint process to require Node plus Oxlint's JavaScript entry point rather than platform-specific package-manager shims, and checks that the explicitly opt-in `lint:fix` command covers the same directories as reporting-only `lint`.
 
-Each fixture configuration enables only its owned rule. The child process selects that one module so an unfinished sibling cannot conceal its test results; the separate production registration gate still imports **all** modules. A missing module, failed worker, or stale earlier pass is never a successful verification. Formatting/linting intentionally exclude fixture source so adversarial syntax and positions remain stable.
+Each fixture configuration enables only its owned rule. When the binary runs a fixture configuration, the child process selects that one module so an unfinished sibling cannot conceal its test results; the separate production registration gate still imports **all** modules. A missing module, failed worker, or stale earlier pass is never a successful verification. Formatting/linting intentionally exclude fixture source so adversarial syntax and positions remain stable.
 
 Use Node 26's direct TypeScript execution: sibling imports include `.ts`/`.mts`, and runtime enums, parameter properties, or other transform-required syntax are not supported. Fixture paths should mirror production ownership paths rather than enabling an entire repository through test-only options. Additional option tests must be identified as such.
 
@@ -77,7 +82,7 @@ Place examples under `invalid/` and `valid/`; `// expect-count: N` at the start 
 
 `no-promise-shaped-port` covers application packages, scripts, tests, and TSX. Owned interfaces return Effect, including generic aliases, overloads, and callback parameters. Real SDK and test runner callbacks keep their required Promise boundary. Private helpers qualify only when lexical references establish that boundary; an exported Promise helper remains an owned interface.
 
-`repository-policy.config.ts` checks all repository source for `instanceof` and manual `_tag` comparisons, switches, and assertions. Negative lint fixtures are excluded because they deliberately contain forbidden syntax. Use Schema, native predicates, and Effect failure combinators to inspect values; full serialized-object assertions and diagnostic tag output remain valid.
+`repository-policy.config.ts` checks all repository source for `instanceof` and manual `_tag` comparisons, switches, and assertions. `pnpm lint:repository-policy` (`repository-policy.mts`) runs it; `pnpm check` and the CI Effect Rule Implementation gate both block on it. Negative lint fixtures are excluded because they deliberately contain forbidden syntax. Use Schema, native predicates, and Effect failure combinators to inspect values; full serialized-object assertions and diagnostic tag output remain valid.
 
 ## Test runtime policy
 

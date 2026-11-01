@@ -10,7 +10,7 @@ import { runQualityCli } from './quality-cli-lifecycle.mts';
 const localValidationScripts = {
   full: ['check'],
   generation: ['test:generation'],
-  'lint-rules': ['typecheck:lint-rules', 'test:lint-rules'],
+  'lint-rules': ['typecheck:lint-rules', 'test:lint-rules', 'lint:repository-policy'],
   quality: ['quality:audit:test'],
   scripts: ['test:scripts'],
   tooling: ['test:scripts', 'test:deployment-impact', 'test:generation'],
