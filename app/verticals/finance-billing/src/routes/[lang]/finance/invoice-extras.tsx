@@ -953,7 +953,8 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
             </span>
           )}
           <span className="text-fg-secondary">
-            Balíček {latest.batchNumber} (POHODA XML) · {at(latest.createdAt)} · {actorText(latest.actorLabel)}
+            Balíček {latest.batchNumber} ({latest.format === 'POHODA_XML' ? 'POHODA XML' : latest.format}, verze{' '}
+            {latest.version}) · {at(latest.createdAt)} · {actorText(latest.actorLabel)}
           </span>
           <span className="text-fg-secondary text-xs">
             OntOS nevede účetnictví – stav „zaúčtováno“ eviduje až účetní systém.

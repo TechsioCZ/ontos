@@ -994,7 +994,7 @@ const SalesOrderDetails = ({ lang, onOpenQuote, order }: SalesOrderDetailsProps)
                     }}
                     type="button"
                   >
-                    {order.quoteNumber ?? order.quoteId}
+                    {order.quoteNumber ?? '—'}
                   </button>
                 ),
             },

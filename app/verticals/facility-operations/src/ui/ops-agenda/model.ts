@@ -25,6 +25,10 @@ import { isOpenSalesCase } from './sales-source.ts';
 import { sourceKeys } from './sources.ts';
 import type { RentalOverviewSources, SourceKey, SourceStatus } from './sources.ts';
 
+/** Shown when a referenced record has no readable name; its technical identity is never a label. */
+const UNNAMED_UNIT = 'Jednotka bez názvu';
+const UNNAMED_CONTRACT = 'Smlouva bez názvu';
+
 export const agendaStateOf = (sources: RentalOverviewSources): AgendaState | undefined =>
   sources.ops.data?.agenda?.state;
 
@@ -309,7 +313,7 @@ const propertyKpis = ({ names, sources, today }: KpiInput): Kpi[] => {
         status: `lease.${entry.state}`,
         subtitle:
           entry.customerCounterpartyRef === null ? undefined : names.get(entry.customerCounterpartyRef.resourceId),
-        title: names.get(entry.unitRef.resourceId) ?? entry.unitRef.resourceId,
+        title: names.get(entry.unitRef.resourceId) ?? UNNAMED_UNIT,
         tone: entry.state === 'ACTIVE' ? 'success' : 'warning',
       })),
       secondary: { confirmed: confirmed.length },
@@ -447,7 +451,7 @@ export const buildKpis = (input: KpiInput): Kpi[] => {
         ]
           .filter((part) => part !== undefined)
           .join(' · '),
-        title: names.get(contract.counterpartyRef.resourceId) ?? contract.subject ?? contract.contractRef.resourceId,
+        title: names.get(contract.counterpartyRef.resourceId) ?? contract.subject ?? UNNAMED_CONTRACT,
         tone: 'warning',
       })),
       secondary: { active: agreements.contracts.filter((contract) => contract.lifecycleState === 'ACTIVE').length },
@@ -654,7 +658,7 @@ const propertyAndContractSearchRows = (
           id: contractId,
           kind: 'contract',
           source: 'agreements',
-          title: party ?? contract.subject ?? contractId,
+          title: party ?? contract.subject ?? UNNAMED_CONTRACT,
           ...opt(
             'subtitle',
             [contract.unitRef === null ? undefined : names.get(contract.unitRef.resourceId), contract.subject]
@@ -680,7 +684,7 @@ const occupancySearchRows = (sources: RentalOverviewSources, names: ReadonlyMap<
           id: entry.occupancyRef.resourceId,
           kind: 'lease',
           source: 'occupancy',
-          title: names.get(entry.unitRef.resourceId) ?? entry.unitRef.resourceId,
+          title: names.get(entry.unitRef.resourceId) ?? UNNAMED_UNIT,
           ...opt(
             'subtitle',
             [
@@ -741,7 +745,7 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
           id: customer.counterpartyId,
           kind: 'party',
           source: 'parties',
-          title: customer.displayName ?? customer.counterpartyId,
+          title: customer.displayName ?? 'Zákazník bez názvu',
           ...opt('subtitle', [customer.companyId, customer.city].filter(Boolean).join(' · ')),
         },
         customer.email,

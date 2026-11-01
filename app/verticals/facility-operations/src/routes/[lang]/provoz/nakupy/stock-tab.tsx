@@ -685,7 +685,7 @@ const StockItemDetails = ({ item, me, state }: StockItemDetailsProps) => {
           <ul className="flex flex-col gap-50 text-sm">
             {perWarehouse.map(([warehouseId, quantity]) => (
               <li className="flex justify-between gap-200" key={warehouseId}>
-                <span>{lookup.warehouse(warehouseId)?.name ?? warehouseId}</span>
+                <span>{lookup.warehouse(warehouseId)?.name ?? '—'}</span>
                 <span className="font-medium tabular-nums">{formatQuantity(quantity, item.unit)}</span>
               </li>
             ))}

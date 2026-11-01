@@ -67,7 +67,7 @@ export const historyActorLabel = (entry: OrderHistoryEntry, currentPrincipalId: 
   if (entry.actor.principalId === currentPrincipalId) {
     return known === undefined ? 'Vy' : `${known} (vy)`;
   }
-  return known ?? `Pracovník …${entry.actor.principalId.slice(-6)}`;
+  return known ?? 'Pracovník';
 };
 
 export const shippingOptions = Object.keys(shippingMethods).flatMap((method) => {

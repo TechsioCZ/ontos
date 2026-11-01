@@ -323,12 +323,7 @@ const useAssetsViewModel = () => {
       registered.flatMap((asset) =>
         asset.propertyId === undefined || asset.location === undefined
           ? []
-          : [
-              [
-                asset.propertyId,
-                asset.location.label.split(' › ')[0]?.replace(/ \([^)]*\)$/u, '') ?? asset.propertyId,
-              ] as const,
-            ],
+          : [[asset.propertyId, asset.location.label.split(' › ')[0]?.replace(/ \([^)]*\)$/u, '') ?? '—'] as const],
       ),
     ).entries(),
   ];
