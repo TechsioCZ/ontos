@@ -7,6 +7,7 @@ describe('Storefront Registry module contract', () => {
     expect(storefrontRegistryManifest.module.id).toBe('commerce.storefront-registry');
     expect(Object.keys(storefrontRegistryManifest.publicSurface.api)).toEqual([
       'current-storefront-application',
+      'storefront-applications',
       'verify-current-storefront-application-v1',
     ]);
     expect(storefrontRegistryManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey)).toEqual([

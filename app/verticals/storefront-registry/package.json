@@ -6,6 +6,8 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/storefront-registry-client.ts",
+    "./api/storefront-applications": "./shared/apis/storefront-applications.ts",
+    "./api/storefront-applications-client": "./src/api/storefront-applications-client.ts",
     "./current-storefront-application/read": "./src/api/current-storefront-application.read.ts",
     "./testing/current-storefront-native": "./tests/fixtures/current-storefront-native.ts"
   },
@@ -49,7 +51,7 @@
   },
   "modernjs": {
     "preset": "presetUltramodern",
-    "role": "module-federation-remote",
+    "role": "api-only",
     "appId": "storefront-registry",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",
