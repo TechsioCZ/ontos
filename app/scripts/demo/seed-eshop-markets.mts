@@ -32,7 +32,7 @@ import type { MarketCurrency, MarketOfferMode } from '../../verticals/merchandis
 import {
   RegisterStorefrontApplicationPayloadSchema,
   RegisterStorefrontApplicationResultSchema,
-} from '../../verticals/storefront-registry/shared/action-contracts.ts';
+} from '../../verticals/storefront-registry/shared/actions/register-storefront-application.ts';
 import {
   StorefrontApplicationsRequestSchema,
   StorefrontApplicationsResponseSchema,
