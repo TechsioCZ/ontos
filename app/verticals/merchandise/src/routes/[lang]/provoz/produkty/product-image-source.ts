@@ -5,7 +5,7 @@ import { Cache, Data, Duration, Effect, Exit, Option, Random } from 'effect';
 import { Base64 } from 'effect/encoding';
 import { constVoid } from 'effect/Function';
 import { useEffect, useState } from 'react';
-import type { MediaRendition } from '@app/core-runtime';
+import type { MediaRendition } from '@app/core-runtime/media/image-contract';
 import { executeMedia } from '../../../../api/media-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { mediaAssetIdOf } from '../../../../../shared/domain/product-images.ts';

@@ -1195,18 +1195,14 @@ export {
   MediaImageUploadSchema,
   MediaRenditionSchema,
   detectImageMimeType,
+} from './media/media-image-contract.ts';
+export type { MediaImageMimeType, MediaImageUpload, MediaRendition } from './media/media-image-contract.ts';
+export {
   readLinkedMediaRendition,
   relinkMediaToResource,
   storeLinkedMediaImage,
   unlinkMediaFromResource,
 } from './media/media-image-store.ts';
-export type {
-  MediaImageMimeType,
-  MediaImageUpload,
-  MediaLinkTarget,
-  MediaRendition,
-  MediaRenditionContent,
-  StoredMediaImage,
-} from './media/media-image-store.ts';
+export type { MediaLinkTarget, MediaRenditionContent, StoredMediaImage } from './media/media-image-store.ts';
 export { MediaStoreUnavailable } from './media/media-store-unavailable.ts';
 export { MediaUploadRejected } from './media/media-upload-rejected.ts';

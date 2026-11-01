@@ -1,5 +1,6 @@
 import { expect, it } from 'effect-rstest';
-import { detectImageMimeType, displayFilenameOf } from '../../src/media/media-image-store.ts';
+import { detectImageMimeType } from '../../src/media/media-image-contract.ts';
+import { displayFilenameOf } from '../../src/media/media-image-store.ts';
 
 const bytes = (...values: number[]) => Uint8Array.from(values);
 

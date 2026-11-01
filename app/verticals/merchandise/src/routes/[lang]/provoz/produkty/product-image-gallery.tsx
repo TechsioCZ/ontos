@@ -9,7 +9,7 @@ import { SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect, Fiber } from 'effect';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent } from 'react';
-import type { MediaImageUpload } from '@app/core-runtime';
+import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
 import type { ProductImageChange } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { PRODUCT_GALLERY_LIMIT } from '../../../../../shared/domain/product-images.ts';

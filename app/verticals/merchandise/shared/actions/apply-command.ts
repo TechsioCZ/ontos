@@ -1,4 +1,4 @@
-import { MediaImageUploadSchema } from '@app/core-runtime';
+import { MediaImageUploadSchema } from '@app/core-runtime/media/image-contract';
 import { Schema } from 'effect';
 import {
   AiBatchIdSchema,

@@ -17,6 +17,7 @@
     "./http/principal-authentication": "./src/http/principal-authentication.ts",
     "./install/stage-accounts-file": "./src/install/stage-accounts-file.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./media/image-contract": "./src/media/media-image-contract.ts",
     "./module-entrypoint": "./src/modules/module-entrypoint.ts",
     "./modules/active-application-composition": "./src/modules/active-application-composition.ts",
     "./modules/active-application-composition-source": {

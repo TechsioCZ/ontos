@@ -2,7 +2,7 @@
 // and encodes a full rendition (longest side ≤ 2000 px) and a thumbnail (≤ 480 px). Core re-validates every byte.
 import { Base64 } from 'effect/encoding';
 import { Duration, Effect, Schema } from 'effect';
-import type { MediaImageUpload } from '@app/core-runtime';
+import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
 
 /** What a person may choose; anything else is refused before upload with a Czech message. */
 export const ACCEPTED_IMAGE_TYPES = { 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/webp': ['.webp'] };
