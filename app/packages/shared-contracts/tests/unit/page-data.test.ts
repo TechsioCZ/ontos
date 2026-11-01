@@ -1,5 +1,6 @@
 import {
   definePageData,
+  moduleChangeEvent,
   modulePagePreload,
   moduleWriteEvent,
   pageDataPending,
@@ -150,6 +151,27 @@ it.live('the write event revalidates entries that mounted readers observe', () =
     yield* store.preload({ id: 'unseen' });
     yield* Effect.sleep('10 millis');
     expect(loads()).toBe(4);
+  }),
+);
+
+it.live('a live change revalidates only what mounted readers show and retries a shown failure', () =>
+  Effect.gen(function* liveChangeRevalidates() {
+    let failing = true;
+    const { loads, store } = makeCountingStore({ fail: () => failing });
+    yield* store.preload({ id: 'shown' });
+    expect(store.snapshot({ id: 'shown' })).toMatchObject({ state: 'failed' });
+    failing = false;
+    yield* store.preload({ id: 'hidden' });
+    expect(loads()).toBe(2);
+    const unsubscribe = store.subscribe(() => {
+      store.snapshot({ id: 'shown' });
+    });
+    globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    expect(store.snapshot({ id: 'shown' })).toMatchObject({ state: 'ready', value: 'shown#3' });
+    expect(store.snapshot({ id: 'hidden' })).toMatchObject({ value: 'hidden#2' });
+    unsubscribe();
   }),
 );
 

@@ -544,6 +544,32 @@ export const awaitPrimaryModuleReads = Effect.gen(function* awaitCurrentPagePrim
   return true;
 });
 
+/** The deployment app id of a module read URL (`…/module-api/<appId>/<build>/…`). */
+export const moduleReadAppId = (href: string): string | undefined => {
+  const segments = (URL.parse(href)?.pathname ?? '').split('/');
+  const index = segments.indexOf('module-api');
+  return index === -1 ? undefined : segments[index + 1];
+};
+
+/**
+ * Drops cached module reads after a change committed elsewhere: the reads of the named apps, or every read. Reads in
+ * flight are dropped too, so the stores' revalidation starts fresh requests instead of joining a pre-change answer.
+ */
+export const dropBrowserModuleReads = (apps: ReadonlySet<string> | 'all') =>
+  Effect.sync(() => {
+    const current = MutableRef.get(installed);
+    if (Option.isNone(current)) {
+      return;
+    }
+    const { reads } = current.value;
+    for (const key of reads.keys()) {
+      const appId = moduleReadAppId(key.slice(0, key.indexOf('\n')));
+      if (apps === 'all' || (appId !== undefined && apps.has(appId))) {
+        reads.delete(key);
+      }
+    }
+  });
+
 /** A context boundary invalidates pending answers as well as completed data and gateway assertions. */
 export const clearBrowserRequestCache = Effect.sync(() => {
   const current = MutableRef.get(installed);

@@ -11,6 +11,7 @@ import { isModuleDestination } from '../../shared/shell-platform-navigation.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { prepareCanonicalTargets } from './[lang]/modules/[moduleId]/module-page-model.ts';
 import { awaitPrimaryModuleReads, forgetRecordedPageReads, withoutRecordedPageReads } from './browser-request-cache.ts';
+import { useLiveChanges } from './live-changes.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
 
 export const StaffRoutePreloadContext = createContext({ enabled: false, generation: 0 });
@@ -132,6 +133,8 @@ export const useIdleRoutePreload = (
   const [preparedKey, setPreparedKey] = useState<string>();
   const [generation, setGeneration] = useState(0);
   const previousContext = useRef(contextKey);
+  // Changes committed elsewhere reach the pages shown under this company context without any reload.
+  useLiveChanges(!disabled && navigation.some((item) => item.enabled && isModuleDestination(item)));
   const key = [contextKey, currentHref, generation].join('\n');
   const hrefs = navigation.flatMap((item) => (item.enabled && item.href !== undefined ? [item.href] : [])).join('\n');
   const moduleHrefs = navigation
