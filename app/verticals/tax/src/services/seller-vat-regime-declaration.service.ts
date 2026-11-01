@@ -393,6 +393,21 @@ const insertImport = Effect.fn('sellerVatRegimeDeclaration.insertImport')(functi
   return yield* imported(inserted, true, fingerprint, input.legalEntityId);
 });
 
+// The audit resourceId names the seller the rejection is about, never the action invocation (the established
+// rejection-audit pattern: compare `order-tax-finalization.service.ts`'s `unstored`, which audits its stable
+// domain reference, not the invocation id). No declaration row exists on rejection, so the Selling Legal Entity
+// scope reference is the resource this audit is about.
+const rejected = (reason: 'REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint: string, sellerLegalEntityId: string) =>
+  Effect.succeed<SellerVatRegimeDeclarationOutcome>({
+    audit: {
+      changed: false,
+      meaningFingerprint: fingerprint,
+      resourceId: sellerLegalEntityId,
+      resourceType: DECLARATION_RESOURCE_TYPE,
+    },
+    result: { _tag: 'DECLARATION_REJECTED', reason, scheduledRevisions: [] },
+  });
+
 export const sellerVatRegimeDeclarationsForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
@@ -428,21 +443,6 @@ export const sellerVatRegimeDeclarationsForScope = (
               ),
             ),
         );
-
-  // The audit resourceId names the seller the rejection is about, never the action invocation (the established
-  // rejection-audit pattern: compare `order-tax-finalization.service.ts`'s `unstored`, which audits its stable
-  // domain reference, not the invocation id). No declaration row exists on rejection, so the Selling Legal Entity
-  // scope reference is the resource this audit is about.
-  const rejected = (reason: 'REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint: string, sellerLegalEntityId: string) =>
-    Effect.succeed<SellerVatRegimeDeclarationOutcome>({
-      audit: {
-        changed: false,
-        meaningFingerprint: fingerprint,
-        resourceId: sellerLegalEntityId,
-        resourceType: DECLARATION_RESOURCE_TYPE,
-      },
-      result: { _tag: 'DECLARATION_REJECTED', reason, scheduledRevisions: [] },
-    });
 
   const scheduledConfirmationRequired = Effect.fn('sellerVatRegimeDeclaration.scheduledConfirmationRequired')(
     function* scheduledConfirmationRequiredEffect(

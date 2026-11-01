@@ -1071,27 +1071,27 @@ it('accepts a later unchanged Catalog observation while preserving the original 
   ).toThrow();
 });
 
-describe('exact Price basis quantity compares by decimal value in the final-fence request', () => {
-  const requestWithPriceUnitBasis = (unitBasis: { readonly quantity: string; readonly unitRef: typeof unitRef }) => ({
-    ...request,
-    sources: [
-      catalogSource,
-      marketSource,
-      {
-        ...priceSource,
-        verificationMaterial: {
-          ...priceSource.verificationMaterial,
-          lookupRequest: {
-            ...priceSource.verificationMaterial.lookupRequest,
-            exactKey: { ...priceSource.verificationMaterial.lookupRequest.exactKey, unitBasis },
-          },
+const requestWithPriceUnitBasis = (unitBasis: { readonly quantity: string; readonly unitRef: typeof unitRef }) => ({
+  ...request,
+  sources: [
+    catalogSource,
+    marketSource,
+    {
+      ...priceSource,
+      verificationMaterial: {
+        ...priceSource.verificationMaterial,
+        lookupRequest: {
+          ...priceSource.verificationMaterial.lookupRequest,
+          exactKey: { ...priceSource.verificationMaterial.lookupRequest.exactKey, unitBasis },
         },
       },
-      equivalenceSource,
-      purchaseAuthoritySource,
-    ],
-  });
+    },
+    equivalenceSource,
+    purchaseAuthoritySource,
+  ],
+});
 
+describe('exact Price basis quantity compares by decimal value in the final-fence request', () => {
   it('accepts the stored decimal form of the same decision line quantity', () => {
     expect(line.pricingBasis.quantity).toBe('1');
     for (const quantity of ['1', '1.0', '1.000', '1.000000000']) {

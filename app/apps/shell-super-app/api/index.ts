@@ -1229,6 +1229,32 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     ),
 );
 
+const requiredIdempotencyKey = (headers: RequestHeaders) => {
+  const value = headerValue(headers, 'idempotency-key');
+  return value === undefined ? failIdentityProblem(shellPreconditionRequiredProblem()) : Effect.succeed(value);
+};
+
+const safeIdentity = <Value, Error, Requirements>(
+  request: RequestWithHeaders,
+  effect: Effect.Effect<Value, Error, Requirements>,
+) =>
+  effect.pipe(
+    recoverUnexpectedDefect(request, 'Unexpected Shell identity defect', () =>
+      failIdentityProblem(shellInternalProblem()),
+    ),
+  );
+
+const keyIssuanceResponse = <Value extends object, Requirements>(
+  effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
+) =>
+  Effect.matchEffect(
+    Effect.tap(effect, () => noStore),
+    {
+      onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
+      onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
+    },
+  );
+
 const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity', (handlers) => {
   const authenticated = Effect.fn('shell.identity.authenticated')((request: RequestWithHeaders) =>
     Effect.gen(function* authenticatedIdentity() {
@@ -1243,29 +1269,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       return resolved;
     }),
   );
-  const requiredIdempotencyKey = (headers: RequestHeaders) => {
-    const value = headerValue(headers, 'idempotency-key');
-    return value === undefined ? failIdentityProblem(shellPreconditionRequiredProblem()) : Effect.succeed(value);
-  };
-  const safeIdentity = <Value, Error, Requirements>(
-    request: RequestWithHeaders,
-    effect: Effect.Effect<Value, Error, Requirements>,
-  ) =>
-    effect.pipe(
-      recoverUnexpectedDefect(request, 'Unexpected Shell identity defect', () =>
-        failIdentityProblem(shellInternalProblem()),
-      ),
-    );
-  const keyIssuanceResponse = <Value extends object, Requirements>(
-    effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
-  ) =>
-    Effect.matchEffect(
-      Effect.tap(effect, () => noStore),
-      {
-        onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
-        onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
-      },
-    );
   const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
     request: RequestWithHeaders,
     headers: RequestHeaders,

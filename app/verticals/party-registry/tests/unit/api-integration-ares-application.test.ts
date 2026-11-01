@@ -198,6 +198,26 @@ const makeReads = (displayName: string | null = null): AresApplyReads => ({
       },
     }),
 });
+const historicalEvidence = (fact: 'BUSINESS_NAME' | 'ICO'): AresAppliedEvidence => {
+  const result = deriveAresEvidenceApplication({
+    canonical: {
+      archived: false,
+      displayName: null,
+      icoValues: [],
+      identityAmbiguous: false,
+      partyType: 'ORGANIZATION',
+      registeredAddresses: [],
+    },
+    decidedAt: application.decidedAt,
+    evidence: application.evidence,
+    selectedFacts: [fact],
+    userConfirmed: true,
+  });
+  const decision = Option.getOrThrow(Option.fromNullishOr(result.factDecisions[0]));
+  expect(decision).toBeDefined();
+  return makeAresAppliedEvidence(result, decision);
+};
+
 it.layer(
   Layer.mergeAll(
     Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)),
@@ -468,25 +488,6 @@ it.layer(
       expect(calls).toEqual([]);
     }),
   );
-  const historicalEvidence = (fact: 'BUSINESS_NAME' | 'ICO'): AresAppliedEvidence => {
-    const result = deriveAresEvidenceApplication({
-      canonical: {
-        archived: false,
-        displayName: null,
-        icoValues: [],
-        identityAmbiguous: false,
-        partyType: 'ORGANIZATION',
-        registeredAddresses: [],
-      },
-      decidedAt: application.decidedAt,
-      evidence: application.evidence,
-      selectedFacts: [fact],
-      userConfirmed: true,
-    });
-    const decision = Option.getOrThrow(Option.fromNullishOr(result.factDecisions[0]));
-    expect(decision).toBeDefined();
-    return makeAresAppliedEvidence(result, decision);
-  };
   const correctionSelection: AresApplyRequest['selections'][number] = {
     fact: 'BUSINESS_NAME',
     idempotencyKey: 'review-only',

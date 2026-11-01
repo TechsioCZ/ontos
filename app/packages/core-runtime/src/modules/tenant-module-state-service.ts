@@ -141,20 +141,20 @@ const tenantModuleStateReadUnavailable = (cause?: unknown) =>
     reason: 'Tenant module state is temporarily unavailable',
   });
 
+const decodeRows = (rows: readonly { readonly moduleKey: string; readonly state: unknown }[]) =>
+  Effect.forEach(
+    rows,
+    (row: (typeof rows)[number]) =>
+      Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
+        Effect.map((state) => Object.freeze({ moduleKey: row.moduleKey, state })),
+        Effect.mapError(tenantModuleStateReadUnavailable),
+      ),
+    { concurrency: 1 },
+  ).pipe(Effect.map((records) => Object.freeze(records)));
+
 export const makeTenantModuleStateService = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): TenantModuleStateServiceContract => {
-  const decodeRows = (rows: readonly { readonly moduleKey: string; readonly state: unknown }[]) =>
-    Effect.forEach(
-      rows,
-      (row: (typeof rows)[number]) =>
-        Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
-          Effect.map((state) => Object.freeze({ moduleKey: row.moduleKey, state })),
-          Effect.mapError(tenantModuleStateReadUnavailable),
-        ),
-      { concurrency: 1 },
-    ).pipe(Effect.map((records) => Object.freeze(records)));
-
   const listTenantModuleStates = (tenantId: string) =>
     database.executor
       .select({

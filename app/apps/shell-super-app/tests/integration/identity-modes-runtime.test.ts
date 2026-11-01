@@ -83,6 +83,10 @@ const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
     trustedAttesterPrincipalIds: [],
   }),
 ]);
+const provideAuthenticationNamespaceRegistry = <Success, Failure, Requirements>(
+  effect: Effect.Effect<Success, Failure, Requirements>,
+) => effect.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
+
 it.live.each([
   {
     name: 'finds stale pending API keys with current and legacy metadata orders',
@@ -104,9 +108,6 @@ it.live.each([
       coreDatabase,
       staffAuthenticationNamespaceId,
     );
-    const provideAuthenticationNamespaceRegistry = <Success, Failure, Requirements>(
-      effect: Effect.Effect<Success, Failure, Requirements>,
-    ) => effect.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
     const providePrincipalManagementRepository = <Success, Failure, Requirements>(
       effect: Effect.Effect<Success, Failure, Requirements>,
     ) =>

@@ -196,6 +196,8 @@ const decodeSnapshot = (snapshot: ReservationConfirmation) =>
 export const decodeReservationConfirmationHistoryRows = (rows: readonly HistoryRow[]) =>
   Effect.forEach(rows, ({ snapshot }) => decodeSnapshot(snapshot), { concurrency: 1 });
 
+const decodeRow = (row: ConfirmationRow) => decodeSnapshot(row.snapshot);
+
 export const reservationConfirmationPersistenceForScope = (
   transaction: ScopedTransaction,
   operationScope: OperationalScope,
@@ -207,8 +209,6 @@ export const reservationConfirmationPersistenceForScope = (
     tenantId === operationScope.tenantId
       ? Effect.void
       : Effect.fail(rejected('TENANT_SCOPE_MISMATCH', confirmationRef));
-
-  const decodeRow = (row: ConfirmationRow) => decodeSnapshot(row.snapshot);
 
   const appendHistory = (confirmation: ReservationConfirmation) =>
     transaction

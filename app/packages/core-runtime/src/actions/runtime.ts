@@ -161,20 +161,21 @@ const attachFailureCause = <Failure extends object, FailureCause>(failure: Failu
 // oxlint-disable-next-line effect-native/no-json-schema-as-document-contract
 const DeniedAuditEvidenceJsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
+const invalidEvidence = (reason: string, cause?: unknown) =>
+  attachFailureCause(
+    new ActionPayloadValidationError({
+      code: 'action_payload_invalid',
+      reason,
+    }),
+    cause,
+  );
+
 const resolveDeniedAuditEvidence = <Payload>(
   declaration: ActionDeniedAuditEvidenceDeclaration<Payload>,
   payload: Payload,
   scope: OperationalScope,
-): Effect.Effect<Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>, ActionPayloadValidationError> => {
-  const invalidEvidence = (reason: string, cause?: unknown) =>
-    attachFailureCause(
-      new ActionPayloadValidationError({
-        code: 'action_payload_invalid',
-        reason,
-      }),
-      cause,
-    );
-  return Effect.try({
+): Effect.Effect<Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>, ActionPayloadValidationError> =>
+  Effect.try({
     catch: (cause) => invalidEvidence('The Action denial evidence could not be resolved safely', cause),
     try: () => declaration.resolve(payload, scope),
   }).pipe(
@@ -197,7 +198,6 @@ const resolveDeniedAuditEvidence = <Payload>(
       ),
     ),
   );
-};
 
 export const ACTION_RUNTIME_STAGES = [
   'payload_decoded',
@@ -983,6 +983,54 @@ type ActionRuntimeConstruction = readonly [
   options: ActionRuntimeOptions,
 ];
 
+// oxlint-disable-next-line effect-native/no-wide-factory-signature -- Trusted scope and the four resolved optional permission targets are cohesive authorization data for this Action run.
+const buildOwnerAuthorizationTargets = (
+  scope: OperationalScope,
+  tenantPermission: Option.Option<ActionTenantPermission>,
+  legalEntityPermission: ActionLegalEntityPermission | undefined,
+  businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
+  assortmentPermissionTargets: readonly ActionAssortmentPermissionTarget[],
+  resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
+): readonly OwnerAuthorizationTarget[] => {
+  const targets: OwnerAuthorizationTarget[] = [];
+  if (Option.isSome(tenantPermission)) {
+    targets.push({ kind: 'tenant', permission: tenantPermission.value, tenantId: scope.tenantId });
+  }
+  if (legalEntityPermission !== undefined && scope.legalEntityId !== undefined) {
+    targets.push({ kind: 'legal_entity', legalEntityId: scope.legalEntityId, permission: legalEntityPermission });
+  }
+  if (Option.isSome(businessPermissionTarget)) {
+    const businessTarget = businessPermissionTarget.value;
+    targets.push(
+      withOptionalProperty(
+        {
+          kind: 'business_permission' as const,
+          permission: businessTarget.permission,
+          target: businessTarget.target,
+        },
+        businessTarget.trustedStorefrontId !== undefined,
+        'trustedStorefrontId',
+        businessTarget.trustedStorefrontId,
+        {},
+      ),
+    );
+  }
+  for (const target of assortmentPermissionTargets) {
+    targets.push({
+      kind: 'assortment_permission',
+      target,
+    });
+  }
+  if (Option.isSome(resourcePermissionTarget)) {
+    targets.push({
+      kind: 'resource',
+      permission: resourcePermissionTarget.value.permission,
+      resource: resourcePermissionTarget.value.resource,
+    });
+  }
+  return Object.freeze(targets);
+};
+
 export const makeActionRuntime = (...construction: ActionRuntimeConstruction): ActionRuntimeService => {
   const [database, repository, permission, operationalScopeResolver, options] = construction;
   const {
@@ -1246,54 +1294,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return { deniedAuditEvidence, payload, principal, scope, transport };
       },
     );
-
-    // oxlint-disable-next-line effect-native/no-wide-factory-signature -- Trusted scope and the four resolved optional permission targets are cohesive authorization data for this Action run.
-    const buildOwnerAuthorizationTargets = (
-      scope: OperationalScope,
-      tenantPermission: Option.Option<ActionTenantPermission>,
-      legalEntityPermission: ActionLegalEntityPermission | undefined,
-      businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
-      assortmentPermissionTargets: readonly ActionAssortmentPermissionTarget[],
-      resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
-    ): readonly OwnerAuthorizationTarget[] => {
-      const targets: OwnerAuthorizationTarget[] = [];
-      if (Option.isSome(tenantPermission)) {
-        targets.push({ kind: 'tenant', permission: tenantPermission.value, tenantId: scope.tenantId });
-      }
-      if (legalEntityPermission !== undefined && scope.legalEntityId !== undefined) {
-        targets.push({ kind: 'legal_entity', legalEntityId: scope.legalEntityId, permission: legalEntityPermission });
-      }
-      if (Option.isSome(businessPermissionTarget)) {
-        const businessTarget = businessPermissionTarget.value;
-        targets.push(
-          withOptionalProperty(
-            {
-              kind: 'business_permission' as const,
-              permission: businessTarget.permission,
-              target: businessTarget.target,
-            },
-            businessTarget.trustedStorefrontId !== undefined,
-            'trustedStorefrontId',
-            businessTarget.trustedStorefrontId,
-            {},
-          ),
-        );
-      }
-      for (const target of assortmentPermissionTargets) {
-        targets.push({
-          kind: 'assortment_permission',
-          target,
-        });
-      }
-      if (Option.isSome(resourcePermissionTarget)) {
-        targets.push({
-          kind: 'resource',
-          permission: resourcePermissionTarget.value.permission,
-          resource: resourcePermissionTarget.value.resource,
-        });
-      }
-      return Object.freeze(targets);
-    };
 
     type ActionTransportTarget = Pick<
       ActionTransportMetadata,

@@ -458,6 +458,12 @@ const commandFingerprint = (payload: ManageQuotationPayload) =>
     }),
   );
 
+const onIssuanceRejected = (failure: PricingQuotationIssuanceRejected) =>
+  Effect.fail(issuerMismatch(`Quotation issuance rejected the fresh Current result: ${failure.reason}`));
+
+const onIssuanceUnavailable = (failure: PricingQuotationIssuanceUnavailable) =>
+  Effect.fail(currentAuthorityUnavailable('Quotation issuance authority is unavailable', failure));
+
 export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')(function* applyQuotationManagement(
   payload: ManageQuotationPayload,
   trusted: ManageQuotationTrustedContext,
@@ -509,10 +515,6 @@ export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')
   ) {
     return yield* issuerMismatch('Fresh Current authority did not preserve the exact trusted issuance request');
   }
-  const onIssuanceRejected = (failure: PricingQuotationIssuanceRejected) =>
-    Effect.fail(issuerMismatch(`Quotation issuance rejected the fresh Current result: ${failure.reason}`));
-  const onIssuanceUnavailable = (failure: PricingQuotationIssuanceUnavailable) =>
-    Effect.fail(currentAuthorityUnavailable('Quotation issuance authority is unavailable', failure));
   const quotation = yield* issueCanonicalQuotation(issuanceRequest, trusted).pipe(
     Effect.catchTags({
       PricingQuotationIssuanceRejected: onIssuanceRejected,

@@ -246,6 +246,62 @@ export interface PricingCurrentDecisionPricingOwnerFinalFenceDependencies {
   readonly zeroFloor: Pick<ZeroFloorAuthorizationPersistence, 'readCurrentSet' | 'verifyGeneration'>;
 }
 
+const originalProofDoesNotBind = (
+  expected: PricingMaterialEvidenceFenceExpectation,
+  original: PricingCurrentDecisionResolvedOriginalProof,
+) =>
+  anyMismatch(
+    original.evidenceVerificationRef !== expected.evidenceVerificationRef,
+    original.observedAt !== expected.evidenceObservedAt,
+    original.ownerRootRef !== expected.ownerRootRef,
+    original.ownerSetRevisionRef !== expected.ownerSetRevisionRef,
+    original.predicateRef !== expected.predicateRef,
+    !matchingFacts(expected.currentFacts, original.currentFacts),
+    !Number.isSafeInteger(original.evidenceInvalidationGeneration),
+    original.evidenceInvalidationGeneration < 0,
+  );
+
+const retainedOwnerReadDoesNotBind = (
+  completeness: PricingSetBackedFenceSource['sourceEvidence']['completeness'],
+  material: PricingVerificationMaterial,
+  original: PricingCurrentDecisionResolvedOriginalProof,
+) => {
+  if (
+    material.kind !== 'PRICING_PRICE_AUTHORITY' &&
+    material.kind !== 'PRICING_QUANTITY_TIER_AUTHORITY' &&
+    material.kind !== 'PRICING_COMMERCIAL_FEE_AUTHORITY' &&
+    material.kind !== 'PRICING_ZERO_FLOOR_AUTHORITY'
+  ) {
+    return false;
+  }
+  return anyMismatch(
+    material.ownerReadReceipt.authority.verificationRef !== original.evidenceVerificationRef,
+    material.ownerReadReceipt.authority.observedAt !== original.observedAt,
+    material.ownerReadReceipt.authority.nextApplicabilityBoundary !== completeness.temporal.nextMaterialBoundary,
+    material.ownerReadReceipt.authority.ownerRootRef !== original.ownerRootRef,
+    material.ownerReadReceipt.authority.ownerRevision !== original.ownerSetRevisionRef,
+    material.ownerReadReceipt.authority.predicateRef !== original.predicateRef,
+    material.ownerReadReceipt.authority.generation !== original.evidenceInvalidationGeneration,
+    !matchingFacts(material.ownerReadReceipt.factProofs, original.currentFacts),
+  );
+};
+
+const discountOwnerReadDoesNotBind = (
+  material: PricingAuthorityMaterial<'PRICING_DISCOUNT_AUTHORITY'>,
+  discountProof: DiscountOriginalProof | undefined,
+) =>
+  discountProof === undefined ||
+  anyMismatch(
+    material.ownerReadReceipt.authority.verificationRef !== discountProof.authority.verificationRef,
+    material.ownerReadReceipt.authority.observedAt !== discountProof.authority.observedAt,
+    material.ownerReadReceipt.authority.ownerRootRef !== discountProof.authority.ownerRootRef,
+    material.ownerReadReceipt.authority.ownerRevision !== discountProof.authority.ownerRevision,
+    material.ownerReadReceipt.authority.predicateRef !== discountProof.authority.predicateRef,
+    material.ownerReadReceipt.authority.generation !== discountProof.authority.generation,
+    !sameDiscountPredicate(material.ownerReadReceipt.predicate, discountProof.predicate),
+    !matchingFacts(material.ownerReadReceipt.factProofs, discountProof.currentFacts),
+  );
+
 /** Constructed inside the governed Pricing read scope, where owner persistence is available. */
 export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
   Ports extends PricingCurrentDecisionPricingOwnerFinalFenceDependencies,
@@ -604,62 +660,6 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
     }
     return yield* Effect.void;
   });
-
-  const originalProofDoesNotBind = (
-    expected: PricingMaterialEvidenceFenceExpectation,
-    original: PricingCurrentDecisionResolvedOriginalProof,
-  ) =>
-    anyMismatch(
-      original.evidenceVerificationRef !== expected.evidenceVerificationRef,
-      original.observedAt !== expected.evidenceObservedAt,
-      original.ownerRootRef !== expected.ownerRootRef,
-      original.ownerSetRevisionRef !== expected.ownerSetRevisionRef,
-      original.predicateRef !== expected.predicateRef,
-      !matchingFacts(expected.currentFacts, original.currentFacts),
-      !Number.isSafeInteger(original.evidenceInvalidationGeneration),
-      original.evidenceInvalidationGeneration < 0,
-    );
-
-  const retainedOwnerReadDoesNotBind = (
-    completeness: PricingSetBackedFenceSource['sourceEvidence']['completeness'],
-    material: PricingVerificationMaterial,
-    original: PricingCurrentDecisionResolvedOriginalProof,
-  ) => {
-    if (
-      material.kind !== 'PRICING_PRICE_AUTHORITY' &&
-      material.kind !== 'PRICING_QUANTITY_TIER_AUTHORITY' &&
-      material.kind !== 'PRICING_COMMERCIAL_FEE_AUTHORITY' &&
-      material.kind !== 'PRICING_ZERO_FLOOR_AUTHORITY'
-    ) {
-      return false;
-    }
-    return anyMismatch(
-      material.ownerReadReceipt.authority.verificationRef !== original.evidenceVerificationRef,
-      material.ownerReadReceipt.authority.observedAt !== original.observedAt,
-      material.ownerReadReceipt.authority.nextApplicabilityBoundary !== completeness.temporal.nextMaterialBoundary,
-      material.ownerReadReceipt.authority.ownerRootRef !== original.ownerRootRef,
-      material.ownerReadReceipt.authority.ownerRevision !== original.ownerSetRevisionRef,
-      material.ownerReadReceipt.authority.predicateRef !== original.predicateRef,
-      material.ownerReadReceipt.authority.generation !== original.evidenceInvalidationGeneration,
-      !matchingFacts(material.ownerReadReceipt.factProofs, original.currentFacts),
-    );
-  };
-
-  const discountOwnerReadDoesNotBind = (
-    material: PricingAuthorityMaterial<'PRICING_DISCOUNT_AUTHORITY'>,
-    discountProof: DiscountOriginalProof | undefined,
-  ) =>
-    discountProof === undefined ||
-    anyMismatch(
-      material.ownerReadReceipt.authority.verificationRef !== discountProof.authority.verificationRef,
-      material.ownerReadReceipt.authority.observedAt !== discountProof.authority.observedAt,
-      material.ownerReadReceipt.authority.ownerRootRef !== discountProof.authority.ownerRootRef,
-      material.ownerReadReceipt.authority.ownerRevision !== discountProof.authority.ownerRevision,
-      material.ownerReadReceipt.authority.predicateRef !== discountProof.authority.predicateRef,
-      material.ownerReadReceipt.authority.generation !== discountProof.authority.generation,
-      !sameDiscountPredicate(material.ownerReadReceipt.predicate, discountProof.predicate),
-      !matchingFacts(material.ownerReadReceipt.factProofs, discountProof.currentFacts),
-    );
 
   const verifyPriceSource = Effect.fn('CurrentPricingDecisionOwnerFinalFence.verifyPriceSource')(
     function* verifyPriceSource({

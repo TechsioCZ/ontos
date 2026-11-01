@@ -474,6 +474,15 @@ export interface TaxEvaluationVerdict {
   readonly outcome: TaxOutcome;
 }
 
+const verdictOf = (outcome: TaxOutcome, failure: Option.Option<EvaluationFailure>): TaxEvaluationVerdict => ({
+  notDeterminedBecause: Option.match(failure, {
+    onNone: (): Option.Option<'SELLER_VAT_REGIME_NOT_DECLARED'> => Option.none(),
+    onSome: (reported): Option.Option<'SELLER_VAT_REGIME_NOT_DECLARED'> =>
+      isSellerVatRegimeNotDeclared(reported) ? Option.some('SELLER_VAT_REGIME_NOT_DECLARED') : Option.none(),
+  }),
+  outcome,
+});
+
 /**
  * Prospective Launch Tax evaluation of one structurally bound request over one coherent TAX own state (#942, #937,
  * #941 F6). Evaluated parts, in order: place jurisdiction (scope is decided before the seller prerequisite,
@@ -546,14 +555,6 @@ export const evaluateProspectiveLaunchTax = (
     ...nonPayerMeanings,
     shippingCharge,
   ];
-  const verdictOf = (outcome: TaxOutcome, failure: Option.Option<EvaluationFailure>): TaxEvaluationVerdict => ({
-    notDeterminedBecause: Option.match(failure, {
-      onNone: (): Option.Option<'SELLER_VAT_REGIME_NOT_DECLARED'> => Option.none(),
-      onSome: (reported): Option.Option<'SELLER_VAT_REGIME_NOT_DECLARED'> =>
-        isSellerVatRegimeNotDeclared(reported) ? Option.some('SELLER_VAT_REGIME_NOT_DECLARED') : Option.none(),
-    }),
-    outcome,
-  });
   const reported = reportedFailure(parts);
   const evaluated: Evaluated<TaxOutcomeSuccess> = Option.match(reported, {
     onNone: (): Evaluated<TaxOutcomeSuccess> =>

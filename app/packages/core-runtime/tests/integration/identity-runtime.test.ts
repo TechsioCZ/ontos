@@ -93,6 +93,9 @@ const relationship = (
     }),
   });
 
+const runIdentityRead = <Value, Failure, Requirements>(read: Effect.Effect<Value, Failure, Requirements>) =>
+  read.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (suite) => {
   suite.effect('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', () =>
     Effect.gen(function* identityRuntimeIntegration() {
@@ -117,8 +120,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
           Effect.provideService(PrincipalManagementRepository, principalManagementRepository),
         );
-      const runIdentityRead = <Value, Failure, Requirements>(read: Effect.Effect<Value, Failure, Requirements>) =>
-        read.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
       const tenantId = yield* nextUuid;
       const foreignTenantId = yield* nextUuid;
       const administratorPrincipalId = yield* nextUuid;

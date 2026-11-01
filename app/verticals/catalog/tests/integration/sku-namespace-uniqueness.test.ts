@@ -79,6 +79,13 @@ const expectTagged = (
   expect(outcome).toMatchObject(details);
 };
 
+const sku = (transaction: CatalogTransaction, tenantId: string) =>
+  skuPersistenceForScope(
+    // @ts-expect-error The test transaction intentionally lacks only Core's private scope brand.
+    transaction,
+    scopeFor(tenantId),
+  );
+
 it.live('enforces tenant-wide normalized Current and historical SKU reservations in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* skuNamespacePostgresTest() {
@@ -94,12 +101,6 @@ it.live('enforces tenant-wide normalized Current and historical SKU reservations
             yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
             return yield* operation(transaction);
           }),
-        );
-      const sku = (transaction: CatalogTransaction, tenantId: string) =>
-        skuPersistenceForScope(
-          // @ts-expect-error The test transaction intentionally lacks only Core's private scope brand.
-          transaction,
-          scopeFor(tenantId),
         );
       const assign = (tenantId: string, input: ReturnType<typeof change>) =>
         withTenant(tenantId, (transaction) => sku(transaction, tenantId).assign(input));

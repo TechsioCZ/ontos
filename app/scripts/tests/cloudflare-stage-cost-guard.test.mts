@@ -158,6 +158,19 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
 
 const PEOPLE_POLICY = 'ontos-stage-people';
 
+const accessAppWrite = (name: string, destinations: string[], policies: { id: string; precedence: number }[]) => ({
+  body: {
+    app_launcher_visible: false,
+    destinations: destinations.map((uri) => ({ type: 'public', uri })),
+    name,
+    policies,
+    session_duration: '720h',
+    type: 'self_hosted',
+  },
+  method: 'POST',
+  path: ACCESS_APPS,
+});
+
 it.effect('gates only the Shell ingress even when the cost plan includes retired module hostnames', () =>
   Effect.gen(function* enforcesAccess() {
     const account = fakeCloudflareAccount({});
@@ -169,30 +182,18 @@ it.effect('gates only the Shell ingress even when the cost plan includes retired
       stage,
     });
 
-    const app = (name: string, destinations: string[], policies: { id: string; precedence: number }[]) => ({
-      body: {
-        app_launcher_visible: false,
-        destinations: destinations.map((uri) => ({ type: 'public', uri })),
-        name,
-        policies,
-        session_duration: '720h',
-        type: 'self_hosted',
-      },
-      method: 'POST',
-      path: ACCESS_APPS,
-    });
     expect(writes(account).filter(({ path }) => path === ACCESS_APPS)).toStrictEqual([
-      app(
+      accessAppWrite(
         'ontos-stage-public-paths',
         [`${SHELL_HOSTNAME}/shell-super-app-api/auth/api-key/gateway-context`],
         [{ id: 'policy-3', precedence: 1 }],
       ),
-      app(
+      accessAppWrite(
         'ontos-stage-contracts',
         [`${SHELL_HOSTNAME}/.well-known/ontos-shell-runtime.json`, `${SHELL_HOSTNAME}/mf-manifest.json`],
         [{ id: 'policy-3', precedence: 1 }],
       ),
-      app(
+      accessAppWrite(
         'ontos-stage',
         [SHELL_HOSTNAME],
         [

@@ -106,7 +106,7 @@ const remap = <S extends Schema.ConstraintDecoder<unknown>>(
   identities: ReadonlyMap<string, string>,
 ) =>
   Schema.decodeUnknownEffect(schema)(
-    JSON.parse(JSON.stringify(value).replace(uuidPattern, (source) => identities.get(source) ?? source)),
+    JSON.parse(JSON.stringify(value).replaceAll(uuidPattern, (source) => identities.get(source) ?? source)),
   );
 
 const recoverOriginal = Effect.fn('ProtectionIntentReplay.recoverOriginal')(function* recoverOriginal(

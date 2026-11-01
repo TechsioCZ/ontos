@@ -286,20 +286,21 @@ const journalRow = (transition: JourneyTransitionSpec, status: EnrollmentOwnerOp
   updatedAt: at,
 });
 
+const missing = () =>
+  Effect.fail(
+    new CommerceEnrollmentAttemptNotFound({
+      attemptId,
+      code: 'attempt_not_found',
+      reason: 'The Enrollment Attempt owner transition was not found',
+      retryable: false,
+    }),
+  );
+
 /** A journal that knows only the transitions listed, exactly as PostgreSQL would report it. */
 const journalledPersistence = (
   journal: ReadonlyMap<JourneyTransitionSpec, EnrollmentOwnerOperationSnapshot['status']>,
   read: string[],
 ): CommerceEnrollmentAttemptPersistence => {
-  const missing = () =>
-    Effect.fail(
-      new CommerceEnrollmentAttemptNotFound({
-        attemptId,
-        code: 'attempt_not_found',
-        reason: 'The Enrollment Attempt owner transition was not found',
-        retryable: false,
-      }),
-    );
   const entryFor = (transitionKey: string) =>
     [...journal].find(([transition]) => transition.transitionKey === transitionKey);
   return {

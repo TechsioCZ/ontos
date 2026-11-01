@@ -376,6 +376,10 @@ export const isOpenTaxMigrationOutcome = (outcome: TaxMigrationOutcome): boolean
     Match.orElse(() => false),
   );
 
+const bySource = (left: TaxMigrationSourceRecord, right: TaxMigrationSourceRecord) =>
+  byTaxMigrationText(left.sourceSystemRef, right.sourceSystemRef) ||
+  byTaxMigrationText(left.sourceRecordRef, right.sourceRecordRef);
+
 /**
  * Verifies completeness as a business claim. Every declared record must have an outcome, no outcome may stay open
  * and no unexpected record may appear. The row count is reported for information and never decides (#960 F14, F18).
@@ -400,9 +404,6 @@ export const verifyTaxMigrationCompleteness = (
   );
   const observed = new Map(familyOutcomes.map(({ provenance }) => [sourceKey(provenance), sourceOf(provenance)]));
   const expected = new Map(claim.expectedSourceRecords.map((record) => [sourceKey(record), sourceOf(record)]));
-  const bySource = (left: TaxMigrationSourceRecord, right: TaxMigrationSourceRecord) =>
-    byTaxMigrationText(left.sourceSystemRef, right.sourceSystemRef) ||
-    byTaxMigrationText(left.sourceRecordRef, right.sourceRecordRef);
   const missingSourceRecords = [...expected]
     .flatMap(([key, record]) => (observed.has(key) ? [] : [record]))
     .toSorted(bySource);

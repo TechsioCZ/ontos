@@ -62,6 +62,22 @@ const packageSelection = (pinnedContentRevisionRef: string) => ({
 
 const classified = (overrides: Partial<ClassificationInputEncoded> = {}) => Result.getOrThrow(classify(overrides));
 
+const forSetRevision = (revision: number) =>
+  classified({
+    catalogSelection: {
+      productRef: 'set-product-1',
+      setCompositionRevisionRef: { revision, setCompositionId: 'set-1' },
+      variantRef: 'set-variant-1',
+    },
+    materialCatalogEvidence: [current('set-1:composition', `r${revision}`)],
+  });
+
+const withState = (state: 'STALE' | 'UNAVAILABLE' | 'CONFLICTING' | 'UNVERIFIABLE') =>
+  classify({ materialCatalogEvidence: [{ _tag: 'NOT_USABLE', catalogFactRef: 'variant-1:tax-category', state }] });
+
+const launchClassify = (overrides: Partial<ClassificationInputEncoded> = {}) =>
+  classifyCatalogSelection(classificationInput(overrides), launchTaxClassificationInterpretation);
+
 describe('Tax Classification', () => {
   it('#926 F1 F6 H successful classification identifies the exact Catalog Selection and its owner evidence', () => {
     expect(classify()).toEqual(
@@ -114,16 +130,6 @@ describe('Tax Classification', () => {
   });
 
   it('#926 F9 F12 BDD Set Composition R1 to R2 change is not treated as Current for R2', () => {
-    const forSetRevision = (revision: number) =>
-      classified({
-        catalogSelection: {
-          productRef: 'set-product-1',
-          setCompositionRevisionRef: { revision, setCompositionId: 'set-1' },
-          variantRef: 'set-variant-1',
-        },
-        materialCatalogEvidence: [current('set-1:composition', `r${revision}`)],
-      });
-
     expect(isSameExactTaxClassificationBasis(forSetRevision(1), forSetRevision(2))).toBe(false);
     expect(isSameExactTaxClassificationBasis(forSetRevision(1), forSetRevision(1))).toBe(true);
   });
@@ -161,9 +167,6 @@ describe('Tax Classification', () => {
   });
 
   it('#926 F13 #938 F20-F28 decisive evidence that is stale, unavailable, conflicting or unverifiable fails typed', () => {
-    const withState = (state: 'STALE' | 'UNAVAILABLE' | 'CONFLICTING' | 'UNVERIFIABLE') =>
-      classify({ materialCatalogEvidence: [{ _tag: 'NOT_USABLE', catalogFactRef: 'variant-1:tax-category', state }] });
-
     expect(withState('STALE')).toEqual(Result.fail({ _tag: 'TAX_INPUT_STALE' }));
     expect(withState('UNAVAILABLE')).toEqual(Result.fail({ _tag: 'TAX_DEPENDENCY_UNAVAILABLE' }));
     expect(withState('CONFLICTING')).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
@@ -189,9 +192,6 @@ describe('Tax Classification', () => {
   });
 
   describe('Launch interpretation (PO decision D9 default)', () => {
-    const launchClassify = (overrides: Partial<ClassificationInputEncoded> = {}) =>
-      classifyCatalogSelection(classificationInput(overrides), launchTaxClassificationInterpretation);
-
     it('#926 F1 exactly one Current TAX_CATEGORY fact gives its value as the Tax Classification code', () => {
       const classification = Result.getOrThrow(
         launchClassify({

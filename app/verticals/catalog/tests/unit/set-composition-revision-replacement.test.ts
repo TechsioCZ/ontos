@@ -107,6 +107,9 @@ const proofFor = (
   variantProductRef: component.selection.productRef,
 });
 
+const correction = (provenance: RawChange['provenance'], selection = bracketSelection) =>
+  correctSetComponentEvidence(r1, change({ provenance, quantity: { amount: '3', unitRef }, selection }));
+
 describe('Set composition revision and component replacement', () => {
   it('replaces one named need with an exact new Selection and keeps old R1 distinguishable', () => {
     const outcome = replaceSetComponent(r1, change());
@@ -243,8 +246,6 @@ describe('Set composition revision and component replacement', () => {
   });
 
   it('refuses a correction without original-data-error evidence or with changed goods', () => {
-    const correction = (provenance: RawChange['provenance'], selection = bracketSelection) =>
-      correctSetComponentEvidence(r1, change({ provenance, quantity: { amount: '3', unitRef }, selection }));
     expect(
       correction({ changeKind: 'EVIDENCE_CORRECTION', evidenceRefs: ['source-record-42'], reason: 'Count' }),
     ).toMatchObject({ code: 'SET_REVISION_PROVENANCE_INVALID', status: 'REJECTED' });

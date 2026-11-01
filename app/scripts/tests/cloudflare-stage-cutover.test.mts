@@ -1146,14 +1146,14 @@ it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other d
   }),
 );
 
+const activated = () =>
+  newStage({
+    deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }],
+    variables: { stage: { DEPLOY_TARGET: 'cloudflare' } },
+  });
+
 it.effect('requires the composition snapshot in the composition KV namespace once stage targets Cloudflare', () =>
   Effect.gen(function* requiresCompositionSnapshot() {
-    const activated = () =>
-      newStage({
-        deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }],
-        variables: { stage: { DEPLOY_TARGET: 'cloudflare' } },
-      });
-
     // The first Cloudflare-target deploy has not written the snapshot yet.
     const error = yield* run(verifyCutover, {
       account: yield* provisionedAccount('healthy'),

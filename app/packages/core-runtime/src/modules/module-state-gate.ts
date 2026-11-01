@@ -252,6 +252,11 @@ export interface ModuleStateGateService {
 
 const isModuleStateDenied = Schema.is(ModuleStateDeniedError);
 
+const annotateFailure = (error: ModuleStateGateError) =>
+  annotateCurrentSpan({
+    outcome: isModuleStateDenied(error) ? 'deny' : 'unavailable',
+  });
+
 export const makeModuleStateGate = (stateService: TenantModuleStateServiceContract): ModuleStateGateService => ({
   check: checkModuleEntrypoint,
   prepareSnapshot: (tenantId, entrypoints) => prepareModuleStateSnapshot(stateService, tenantId, entrypoints),
@@ -281,10 +286,6 @@ export const makeModuleStateGate = (stateService: TenantModuleStateServiceContra
         return yield* denied();
       }
     });
-    const annotateFailure = (error: ModuleStateGateError) =>
-      annotateCurrentSpan({
-        outcome: isModuleStateDenied(error) ? 'deny' : 'unavailable',
-      });
     return recheck.pipe(
       Effect.tap(() => annotateCurrentSpan({ outcome: 'allow' })),
       Effect.tapError(annotateFailure),

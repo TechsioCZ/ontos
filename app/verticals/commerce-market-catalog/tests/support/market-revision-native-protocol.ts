@@ -57,27 +57,29 @@ export class MarketRevisionNativeTransportError extends Schema.TaggedError<Marke
 export const marketRevisionNativeSocketEnvironment = 'ONTOS_MARKET_REVISION_NATIVE_SOCKET';
 export const marketRevisionNativeFrameLimit = 262_144;
 
+const privateSocketUnavailable = () =>
+  new MarketRevisionNativeTransportError({ reason: 'Private Market socket is unavailable' });
+
 export const validateMarketRevisionNativeSocket = Effect.fn('MarketRevisionNativeTransport.validateSocket')(
   function* validateMarketRevisionNativeSocket(socketPath: string) {
     const path = yield* Path.Path;
-    const fail = () => new MarketRevisionNativeTransportError({ reason: 'Private Market socket is unavailable' });
     if (
       !path.isAbsolute(socketPath) ||
       socketPath.includes('\0') ||
       new TextEncoder().encode(socketPath).length > 96 ||
       path.basename(socketPath) !== 'market.sock'
     ) {
-      return yield* fail();
+      return yield* privateSocketUnavailable();
     }
     const fs = yield* FileSystem.FileSystem;
     const directory = path.dirname(socketPath);
-    const info = yield* fs.stat(directory).pipe(Effect.mapError(fail));
+    const info = yield* fs.stat(directory).pipe(Effect.mapError(privateSocketUnavailable));
     if (info.type !== 'Directory' || info.mode % 0o1000 !== 0o700 || (yield* fs.realPath(directory)) !== directory) {
-      return yield* fail();
+      return yield* privateSocketUnavailable();
     }
-    const socket = yield* fs.stat(socketPath).pipe(Effect.mapError(fail));
+    const socket = yield* fs.stat(socketPath).pipe(Effect.mapError(privateSocketUnavailable));
     if (socket.type !== 'Socket') {
-      return yield* fail();
+      return yield* privateSocketUnavailable();
     }
     return socketPath;
   },

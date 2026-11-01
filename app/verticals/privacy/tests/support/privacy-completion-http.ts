@@ -191,14 +191,16 @@ const unavailable = () =>
     reason: 'TEST owner receipt authority is unavailable',
   });
 
+const invalidCapabilities = () => new PrivacyCompletionHttpFailure({ reason: 'Invalid TEST runtime capabilities' });
+
+const unavailableProbe = () =>
+  new PrivacyCompletionHttpFailure({ reason: 'TEST native redemption identity is unavailable' });
+
 const verifyRuntimeCapabilities = Effect.fn('PrivacyCompletionTest.verifyRuntimeCapabilities')(
   function* verifyRuntimeCapabilities(
     runtime: PgClient.PgClient,
     settings: { readonly database: string; readonly runtimeUser: string },
   ) {
-    const invalidCapabilities = () => new PrivacyCompletionHttpFailure({ reason: 'Invalid TEST runtime capabilities' });
-    const unavailableProbe = () =>
-      new PrivacyCompletionHttpFailure({ reason: 'TEST native redemption identity is unavailable' });
     const rows = yield* runtime`select current_database() as database, current_user as role,
       session_user as session, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
       from pg_roles where rolname=current_user`.pipe(Effect.mapError(unavailableProbe));

@@ -91,7 +91,7 @@
     "typescript/no-unsafe-type-assertion": 25,
     "typescript/promise-function-async": 9,
     "typescript/switch-exhaustiveness-check": 7,
-    "unicorn/consistent-function-scoping": 3,
+    "unicorn/consistent-function-scoping": 2,
     "unicorn/no-array-method-this-argument": 8,
     "unicorn/no-array-reduce": 2,
     "unicorn/no-array-sort": 2,

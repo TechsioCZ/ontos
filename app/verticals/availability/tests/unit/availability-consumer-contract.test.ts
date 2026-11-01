@@ -480,22 +480,23 @@ describe('Availability public consumer handoff', () => {
     [422, 'CurrentAvailabilityPolicyProblem'],
     [503, 'CurrentAvailabilityUnavailableProblem'],
   ] as const) {
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(
+        Response.json(
+          {
+            _tag: tag,
+            detail: 'Unavailable',
+            retryable: status === 503 ? true : undefined,
+            status,
+            title: 'Request failure',
+            type: 'about:blank',
+          },
+          { headers: { 'content-type': 'application/problem+json' }, status },
+        ),
+      );
+
     it.effect(`generated Effect client retains declared ${status} failure`, () =>
       Effect.gen(function* clientProblem() {
-        const fakeFetch: typeof fetch = () =>
-          Promise.resolve(
-            Response.json(
-              {
-                _tag: tag,
-                detail: 'Unavailable',
-                retryable: status === 503 ? true : undefined,
-                status,
-                title: 'Request failure',
-                type: 'about:blank',
-              },
-              { headers: { 'content-type': 'application/problem+json' }, status },
-            ),
-          );
         const result = yield* executeCurrentAvailabilityWithAuthorization(request, 'Bearer controlled', 'client-test', {
           baseUrl: 'https://availability.example/availability-api',
         }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.result);

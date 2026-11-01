@@ -186,6 +186,12 @@ export const decodeCommitmentProtectionHistoryRows = (
   rows: readonly Pick<HistoryRow, 'snapshot'>[],
 ) => Effect.forEach(rows, ({ snapshot }) => decodeSnapshot(effectId, snapshot), { concurrency: 1 });
 
+const decodeRow = (row: ProtectionRow) =>
+  Schema.decodeEffect(ReservationAuthorityEffectIdSchema)(row.authorityEffectId).pipe(
+    Effect.mapError((cause) => unavailable(persistenceReadEffectId, cause)),
+    Effect.flatMap((effectId) => decodeSnapshot(effectId, row.snapshot)),
+  );
+
 export const commitmentProtectionPersistenceForScope = (
   transaction: ScopedTransaction,
   operationScope: Pick<OperationalScope, 'tenantId'>,
@@ -194,12 +200,6 @@ export const commitmentProtectionPersistenceForScope = (
     protection.ref.tenantId === operationScope.tenantId
       ? Effect.void
       : Effect.fail(rejected(protection.authorityEvidence.effectId, 'TENANT_SCOPE_MISMATCH'));
-
-  const decodeRow = (row: ProtectionRow) =>
-    Schema.decodeEffect(ReservationAuthorityEffectIdSchema)(row.authorityEffectId).pipe(
-      Effect.mapError((cause) => unavailable(persistenceReadEffectId, cause)),
-      Effect.flatMap((effectId) => decodeSnapshot(effectId, row.snapshot)),
-    );
 
   const appendHistory = (protection: CommitmentProtection) =>
     transaction

@@ -165,6 +165,13 @@ const outcomeOf = (
   });
 };
 
+const decodeCommerceProfileResolution = (candidate: OwnerResolutionDraft) =>
+  decodeOwnerResolution(
+    candidate,
+    COMMERCE_PROFILE_UNAVAILABLE_CODE,
+    'The Commerce reconciliation result is not representable',
+  );
+
 const resolutionOf = (
   reconciliation: CommerceEnrollmentOwnerReconciliationInput,
   ownerKey: string,
@@ -176,14 +183,8 @@ const resolutionOf = (
     reconciliation.ownerInvocationId,
     resourceId,
   ]);
-  const decode = (candidate: OwnerResolutionDraft) =>
-    decodeOwnerResolution(
-      candidate,
-      COMMERCE_PROFILE_UNAVAILABLE_CODE,
-      'The Commerce reconciliation result is not representable',
-    );
   if (verdict.kind === 'SUCCEEDED') {
-    return decode({
+    return decodeCommerceProfileResolution({
       actorPrincipalId: reconciliation.actorPrincipalId,
       outcomeCode: verdict.outcomeCode,
       reconciliationRef,
@@ -192,7 +193,7 @@ const resolutionOf = (
     });
   }
   if (verdict.kind === 'RECONCILE') {
-    return decode({
+    return decodeCommerceProfileResolution({
       actorPrincipalId: reconciliation.actorPrincipalId,
       failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
       failureReason: verdict.reason.slice(0, 500),
@@ -202,7 +203,7 @@ const resolutionOf = (
       status: 'FAILED',
     });
   }
-  return decode({
+  return decodeCommerceProfileResolution({
     actorPrincipalId: reconciliation.actorPrincipalId,
     failureCode: 'owner_rejected',
     failureReason: verdict.reason.slice(0, 500),
