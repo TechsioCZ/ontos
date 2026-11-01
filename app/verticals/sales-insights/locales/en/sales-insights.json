@@ -21,7 +21,6 @@
       "records": {
         "title": "Statistics",
         "description": "Sales statistics by selected metrics and period.",
-        "refresh": "Load",
         "empty": "No data yet.",
         "count": "Records: {{total}}",
         "unavailable": "Data could not be loaded.",
@@ -121,14 +120,13 @@
       "title": "Sales overview",
       "description": "Current opportunities, receivables and tasks.",
       "scope": "Values follow the selected tenant, legal entity and your permissions.",
-      "refresh": "Refresh data",
       "currentSnapshot": "Current snapshot",
       "openSource": "Open records: {{metric}}",
       "openRecords": "View records",
       "state": {
         "empty": "This source has no records yet.",
         "forbidden": "You do not have permission to read this source.",
-        "unavailable": "This source is temporarily unavailable. Try refreshing the data."
+        "unavailable": "This source is temporarily unavailable. The data reloads by itself once it is back."
       },
       "metric": {
         "opportunities_open": "Open opportunities",

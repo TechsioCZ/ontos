@@ -6,13 +6,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { modulePagePreload } from '@app/shared-contracts/page-data' with { rstest: 'importActual' };
 
-import { CrmDashboard } from '../../src/components/crm-dashboard.tsx';
+import { CrmDashboard, preloadPage } from '../../src/components/crm-dashboard.tsx';
 
-const { links, snapshot } = rstest.hoisted(() => ({
+const { links, preload, snapshot } = rstest.hoisted(() => ({
   links: (() => {
     const captured: { readonly prefetch?: string; readonly preload?: string | boolean; readonly to: string }[] = [];
     return captured;
   })(),
+  preload: rstest.fn(),
   snapshot: {
     refreshing: false,
     state: 'ready' as const,
@@ -37,8 +38,7 @@ rstest.mock('@app/shared-contracts/page-data', () => ({ modulePagePreload, pageD
 rstest.mock('../../src/dashboard/dashboard-data.ts', () => ({
   dashboardData: {
     ensure: rstest.fn(),
-    preload: () => Effect.void,
-    refresh: () => Effect.void,
+    preload,
     snapshot: () => snapshot,
     subscribe: () => () => {},
   },
@@ -75,3 +75,19 @@ it('leaves Home card preparation to the Shell, which prepares the same menu rout
     expect(html).toContain(`href="${to}"`);
   }
 });
+
+// The cards follow the live module-write signal (page data), so the dashboard offers no manual refresh.
+it('renders no refresh button', () => {
+  rstest.stubGlobal('React', React);
+  const html = renderToStaticMarkup(createElement(CrmDashboard, { routeParams: {}, search: '' }));
+  expect(html).not.toContain('<button');
+  expect(html).not.toContain('.refresh');
+});
+
+it.live('opening Home loads the dashboard of the selected legal entity', () =>
+  Effect.gen(function* opensHome() {
+    preload.mockReturnValue(Effect.void);
+    yield* Effect.promise(() => preloadPage({ routeParams: {}, search: '' }));
+    expect(preload).toHaveBeenCalledWith({ legalEntityId: 'company-a' });
+  }),
+);
