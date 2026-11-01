@@ -85,6 +85,7 @@ import {
 } from 'effect';
 import type { Types } from 'effect';
 import { FetchHttpClient, HttpRouter, UrlParams } from 'effect/http';
+import type { HttpServerRequest } from 'effect/http';
 import { authenticationQueryRedactions } from '@app/shared-contracts/credential-url';
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
@@ -93,6 +94,12 @@ import { dispatchModuleApiRequest } from '../src/module-api/transport.ts';
 import { mcpRequestIdentityMiddleware } from './mcp/request-identity.ts';
 import { McpEndpointTransportLive } from './mcp/transport.ts';
 import { ShellTransportLive } from './shell-transport.ts';
+import { LiveChangeHubLive } from './live-changes/hub.ts';
+import { LiveChangeTailLive } from './live-changes/listener.ts';
+import { LiveScopeResolver, SHELL_APP } from './live-changes/live-scope.ts';
+import type { LiveScope } from './live-changes/live-scope.ts';
+import { LiveScopeUnavailable } from './live-changes/live-scope-unavailable.ts';
+import { LiveChangesRouteLive } from './live-changes/transport.ts';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import { listDeliveries } from '@app/email-delivery/deliveries';
 import { PgClient } from '@effect/sql-pg';
@@ -1287,6 +1294,47 @@ export const moduleTargetsHandler = Effect.fn('shell.composition.moduleTargets')
     { concurrency: 4 },
   );
   return yield* decodeResponse(ResolvedModuleTargetsSchema, { outcomes }, shellInternalProblem);
+});
+
+/**
+ * What one live-changes connection may hear about: the session's tenant and selected legal entity, and the module
+ * APIs its composition admits (the same gateway audiences the document gets). Resolved once per connection; the
+ * connection ends after its maximum age, so a revoked permission stops reaching the browser within minutes.
+ */
+const resolveLiveChangeScopeOrProblem = Effect.fn('Shell.resolveLiveChangeScope')(
+  function* resolveLiveChangeScopeEffect(request: RequestWithHeaders) {
+    const session = yield* requireAuthenticatedShellContext(request.headers);
+    const { principal } = session;
+    if (!hasCompanyScope(principal)) {
+      return Option.none<LiveScope>();
+    }
+    const catalog = yield* captureShellRelease();
+    const governedReads = yield* ShellGovernedReads;
+    const composition = yield* governedReads
+      .composition({ correlationId: correlationFromRequest(request), principal })
+      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
+    if (composition.state !== 'available') {
+      return Option.none<LiveScope>();
+    }
+    return Option.some<LiveScope>({
+      allowedApps: new Set([...composition.gatewayAudiences, SHELL_APP]),
+      legalEntityId: principal.legalEntityId,
+      moduleApps: new Map(
+        catalog.contracts.map((contract) => [contract.manifest.module.id, contract.deployment.appId]),
+      ),
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    });
+  },
+);
+
+const liveScopeFailure = (error: { readonly _tag: string }) =>
+  new LiveScopeUnavailable({ status: Predicate.isTagged(error, 'ShellAuthenticationRequiredProblem') ? 401 : 503 });
+
+/** No company context or no available composition: nothing to subscribe to. */
+const liveScopeOrRefusal = Option.match({
+  onNone: () => Effect.fail(new LiveScopeUnavailable({ status: 409 })),
+  onSome: (scope: LiveScope) => Effect.succeed(scope),
 });
 
 /**
@@ -3265,7 +3313,31 @@ export const makeShellAuthenticationApiRuntime = (
   // Built once with the API: the handlers and the Shell-owned transport routes build in one Layer and share these
   // memoized service instances. A service that cannot be built is logged, and the runtime dies with it.
   // The installed Outbox matcher (or no layer) is built from the same handler dependencies.
-  const apiServicesLive = Layer.mergeAll(outboxMatcherLayer).pipe(
+  // The live-changes route resolves each connection's scope with the handlers' own session and composition services.
+  const liveScopeResolverLive = Layer.effect(
+    LiveScopeResolver,
+    Effect.map(
+      Effect.context<
+        Exclude<
+          Effect.Services<ReturnType<typeof resolveLiveChangeScopeOrProblem>>,
+          HttpServerRequest.HttpServerRequest
+        >
+      >(),
+      (services) => ({
+        resolve: (request: HttpServerRequest.HttpServerRequest) =>
+          resolveLiveChangeScopeOrProblem({ headers: request.headers }).pipe(
+            Effect.mapError(liveScopeFailure),
+            Effect.flatMap(liveScopeOrRefusal),
+            Effect.provideContext(services),
+          ),
+      }),
+    ),
+  );
+  const liveChangesLive = Layer.mergeAll(
+    liveScopeResolverLive,
+    LiveChangeHubLive.pipe(Layer.provide(LiveChangeTailLive), Layer.provide(DatabaseConfigLive)),
+  );
+  const apiServicesLive = Layer.mergeAll(outboxMatcherLayer, liveChangesLive).pipe(
     Layer.provideMerge(handlerDependenciesLive),
     Layer.provideMerge(activeApplicationCompositionLive),
     Layer.provideMerge(compositionSourceLive),
@@ -3323,7 +3395,7 @@ export const makeShellAuthenticationApiRuntime = (
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    transport: ShellTransportLive.pipe(
+    transport: Layer.mergeAll(ShellTransportLive, LiveChangesRouteLive).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
       Layer.provide(mcpEndpointRoutesLive),
       Layer.provide(shellTransportServicesLive),
