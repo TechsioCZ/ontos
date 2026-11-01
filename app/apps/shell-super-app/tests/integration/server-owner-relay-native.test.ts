@@ -1848,6 +1848,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     };
     const createGroup = Effect.fn('ServerOwnerRelayNative.createActualPriceGroup')(function* createActualPriceGroup(
       code: string,
+      classificationPurpose: string,
       expectedCatalogRevision: number,
     ) {
       const { legalEntityId, ...tenantFields } = input.personal;
@@ -1861,7 +1862,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       return yield* executeCreatePriceGroupWithAuthorization(
         {
           businessCode: code,
-          classificationPurpose: 'Native original-actor relay proof',
+          classificationPurpose,
           compatibilityContracts: [{ contractId: 'commerce.customer-price-group-assignment.v1', version: 1 }],
           description: 'Actual native PriceGroup producer',
           displayName: code,
@@ -1884,8 +1885,16 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
         ),
       );
     });
-    const first = yield* createGroup('NATIVE_1287_PGC_FIRST', 0);
-    const second = yield* createGroup('NATIVE_1287_PGC_SECOND', first.acceptance.acceptedCatalogRevision);
+    const first = yield* createGroup(
+      'NATIVE_1287_PGC_FIRST',
+      'Retail assignment classification for the original actor',
+      0,
+    );
+    const second = yield* createGroup(
+      'NATIVE_1287_PGC_SECOND',
+      'Independent alternate-definition classification for the original actor',
+      first.acceptance.acceptedCatalogRevision,
+    );
     yield* Effect.sleep(Duration.seconds(3));
     const firstRef = first.identity.priceGroupRef;
     const secondRef = second.identity.priceGroupRef;
