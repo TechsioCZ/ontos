@@ -1,3 +1,6 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -5,6 +8,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { defineAction } from '../../src/actions/definition.ts';
 import {
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  OntosModuleDeploymentContractSchema,
   decodeOntosModuleDeploymentContract,
   defineOntosModuleManifest,
   projectOntosModuleOperationContracts,
@@ -19,6 +23,16 @@ import {
   getVerticalRuntimeEntrypoints,
 } from '../../src/modules/runtime-registration.ts';
 import { defineRead, isReadRegistration } from '../../src/reads/definition.ts';
+import {
+  applicationCompositionContentRevision,
+  buildApplicationCompositionCatalog,
+} from '../../src/modules/application-composition-catalog.ts';
+import type { ApplicationCompositionModule } from '../../src/modules/application-composition.ts';
+import { ONTOS_SHELL_CONTRIBUTION_ABI } from '../../src/modules/application-composition.ts';
+import { toModuleAccessObjectId, toResourceAccessObjectId } from '../../src/permissions/context-access.ts';
+import { toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
+import { CoreSearchResourceRefSchema } from '../../src/search/projection.ts';
+import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/module-contract.ts';
 
 const componentValue = () => null;
 const UnitId = Schema.String.pipe(Schema.brand('UnitId'));
@@ -166,6 +180,161 @@ it('projects exact genuine Read versions without turning deployment format or bu
   input.requirements.operations[0]?.evidence.push('party.registry.mutated');
   expect(safe.requirements?.operations[0]?.evidence).toEqual(['party.registry.current-profile']);
 });
+
+it.effect('preserves business refs and grant targets across two validated deployment build identities', () =>
+  Effect.gen(function* twoDeploymentIdentities() {
+    // Genuine Core serialization/catalog lifecycle, not two compiled production-owner releases.
+    const action = createAction();
+    const read = createRead();
+    const base = emptyManifestInput();
+    const manifest = defineOntosModuleManifest({
+      ...base,
+      publicSurface: {
+        ...base.publicSurface,
+        actions: [action],
+        api: { records: operationApi() },
+        operationContracts: [{ apiKey: 'records', operationKey: 'property.lookup', registration: read }],
+        resourceTypes: [
+          {
+            capabilities: {
+              graphVisible: false,
+              linkable: true,
+              mediaAttachable: false,
+              searchable: false,
+              timelineVisible: false,
+            },
+            description: 'A unit owned by this test capability.',
+            key: 'property.registry.unit',
+            label: 'Unit',
+            owningModuleId: 'property.registry',
+          },
+        ],
+      },
+    });
+    const runtime = defineVerticalRuntimeRegistration({
+      actions: [action],
+      manifest,
+      outboxWorkers: [],
+      reads: [read],
+    });
+    const safe = extractVerticalRuntimeSafeDescriptors(runtime);
+    const shellOnly = yield* makeApplicationCompositionSnapshotFixture([]);
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const legalEntityId = '20000000-0000-4000-8000-000000000001';
+    const oldRef = yield* Schema.decodeUnknownEffect(CoreSearchResourceRefSchema, { onExcessProperty: 'error' })({
+      moduleId: manifest.module.id,
+      resourceId: 'unit-retained-before-rebuild',
+      resourceType: manifest.publicSurface.resourceTypes[0].key,
+      tenantId,
+    });
+    const builds = yield* Effect.forEach(
+      ['property-build-a', 'property-build-b'],
+      Effect.fn(function* validateBuild(buildMarker) {
+        const document = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+          deployment: { appId: 'property-registry', buildMarker },
+          manifest: {
+            activation: manifest.activation,
+            module: manifest.module,
+            publicSurface: {
+              ...base.publicSurface,
+              actions: safe.actions,
+              api: [{ key: 'property.registry.records', operationKeys: ['property.lookup'] }],
+              components: [],
+              operationContracts: safe.operationContracts,
+              resourceTypes: manifest.publicSurface.resourceTypes,
+            },
+          },
+          runtime: { outboxSubscriptions: safe.outboxSubscriptions },
+          schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+        });
+        const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+          document,
+        );
+        const contractDigest = Hex.encode(sha256(utf8ToBytes(contractDocument)));
+        const module: ApplicationCompositionModule = {
+          allowedContributions: [],
+          backend: { baseUrl: 'https://property-registry.backend.example/', transport: 'node-http' },
+          contract: {
+            sha256: contractDigest,
+            url: 'https://property-registry.example/.well-known/ontos-module-manifest.json',
+          },
+          contractDocument,
+          dependencies: [],
+          deployment: document.deployment,
+          federation: { execution: 'server' },
+          moduleId: document.manifest.module.id,
+          publicContract: { id: document.manifest.module.id, sha256: contractDigest, version: document.schemaVersion },
+          requiredCoreCapabilities: [],
+          requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+          sharedSingletons: [],
+        };
+        const candidate = { ...shellOnly.composition, modules: [module] };
+        const composition = { ...candidate, revision: yield* applicationCompositionContentRevision(candidate) };
+        const catalog = yield* buildApplicationCompositionCatalog(composition);
+        const installed = catalog.getByModuleId(document.manifest.module.id);
+        const installedAction = installed?.manifest.publicSurface.actions[0];
+        const installedResource = installed?.manifest.publicSurface.resourceTypes[0];
+        if (installed === undefined || installedAction === undefined || installedResource === undefined) {
+          return yield* Effect.die('Each actual decoded catalog must contain its genuine Action and owned resource');
+        }
+        expect(installed.manifest.module.id).toBe(oldRef.moduleId);
+        expect(installedResource.key).toBe(oldRef.resourceType);
+        return {
+          catalog,
+          composition,
+          installed,
+          module,
+          targets: {
+            action: toSpiceDbActionObjectId(installedAction.actionKey),
+            module: toModuleAccessObjectId(tenantId, legalEntityId, installed.manifest.module.id),
+            resource: toResourceAccessObjectId(tenantId, legalEntityId, {
+              moduleId: installed.manifest.module.id,
+              resourceId: oldRef.resourceId,
+              resourceType: installedResource.key,
+            }),
+          },
+        };
+      }),
+    );
+    const [before, after] = builds;
+    if (before === undefined || after === undefined) {
+      return yield* Effect.die('Both distinct deployment inputs must produce validated catalogs');
+    }
+    expect(before.installed.deployment.buildMarker).not.toBe(after.installed.deployment.buildMarker);
+    expect(before.module.contractDocument).not.toBe(after.module.contractDocument);
+    expect(before.module.contract.sha256).not.toBe(after.module.contract.sha256);
+    expect(before.module.publicContract.sha256).not.toBe(after.module.publicContract.sha256);
+    expect(before.composition.revision).not.toBe(after.composition.revision);
+    expect(before.module.publicContract.id).toBe(after.module.publicContract.id);
+    expect(before.installed.manifest).toEqual(after.installed.manifest);
+    expect(before.installed.manifest.publicSurface.operationContracts?.[0]?.schemaVersion).toBe('read.v2');
+    expect(before.targets.module).toBeDefined();
+    expect(before.targets.resource).toBeDefined();
+    expect(after.targets).toEqual(before.targets);
+    expect(
+      after.catalog
+        .getByModuleId(before.installed.manifest.module.id)
+        ?.manifest.publicSurface.resourceTypes.some(({ key }) => key === oldRef.resourceType),
+    ).toBe(true);
+    expect(toResourceAccessObjectId(oldRef.tenantId, legalEntityId, oldRef)).toBe(after.targets.resource);
+    const oldRevision = yield* Effect.flip(
+      buildApplicationCompositionCatalog({ ...after.composition, revision: before.composition.revision }),
+    );
+    expect(oldRevision.reason).toMatch(/revision/u);
+    const spliced = {
+      ...after.composition,
+      modules: [{ ...after.module, contract: before.module.contract, publicContract: before.module.publicContract }],
+    };
+    const digestMismatch = yield* Effect.flip(
+      buildApplicationCompositionCatalog({
+        ...spliced,
+        revision: yield* applicationCompositionContentRevision(spliced),
+      }),
+    );
+    expect(digestMismatch.reason).toMatch(/digest|contract/u);
+    return yield* Effect.void;
+  }),
+);
 
 it('requires real private Read storage rather than copied markers, prototypes or descriptors', () => {
   const read = createRead();
