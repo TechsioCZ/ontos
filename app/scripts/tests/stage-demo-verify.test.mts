@@ -18,6 +18,8 @@ const persona = 'management@najempark.demo';
 const SIGN_IN = '/shell-super-app-api/auth/sign-in';
 const SIGN_OUT = '/shell-super-app-api/auth/sign-out';
 const CS = '/cs';
+// The storefront home is its default market; the bare origin redirects there.
+const STOREFRONT_HOME = 'storefront:/cs';
 const SIGN_OUT_LINE = 'sign-out 200';
 const OAUTH_AUTHORIZATION_SERVER = '/.well-known/oauth-authorization-server';
 const OAUTH_PROTECTED_RESOURCE = '/.well-known/oauth-protected-resource';
@@ -26,7 +28,7 @@ const PASS_LINE = 'stage verification PASS';
 
 const pathOf = (url: string) => {
   const parsed = new URL(url);
-  return `${parsed.pathname}${parsed.search}`;
+  return `${parsed.host === new URL(storefrontUrl).host ? 'storefront:' : ''}${parsed.pathname}${parsed.search}`;
 };
 
 const record = (url: string, init: RequestInit) => ({
@@ -85,7 +87,7 @@ it.effect('signs the persona out through the native action after a passing verif
       CS,
       CS,
       CS,
-      '/',
+      STOREFRONT_HOME,
       SIGN_OUT,
     ]);
     const signOutCall = test.calls.at(-1);
@@ -108,7 +110,7 @@ it.effect('still signs the session out when a document probe fails', () =>
           ? Effect.fail(new StageTransportError({ message: 'Error: socket hang up' }))
           : Effect.succeed(response());
       }
-      return path === '/' ? Effect.succeed(response(503)) : defaultTransport(url);
+      return path === STOREFRONT_HOME ? Effect.succeed(response(503)) : defaultTransport(url);
     });
     const { failures } = yield* test.run;
 
@@ -160,7 +162,9 @@ it.effect('includes the complete document body in the page budget and fails on f
       if (path === SIGN_OUT) {
         return Effect.succeed(response(503));
       }
-      return path === '/' ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT))) : defaultTransport(url);
+      return path === STOREFRONT_HOME
+        ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT)))
+        : defaultTransport(url);
     });
     const fiber = yield* Effect.forkChild(test.run);
     yield* TestClock.adjust(SLOW_DOCUMENT);
@@ -176,7 +180,7 @@ it.effect('includes the complete document body in the page budget and fails on f
 it.effect.each([1500, 1501])('warns past the fixed document-body budget at %i milliseconds', (duration) =>
   Effect.gen(function* checksDocumentBoundary() {
     const test = yield* fixture((url) =>
-      pathOf(url) === '/' ? Effect.succeed(response(200, Effect.sleep(duration))) : defaultTransport(url),
+      pathOf(url) === STOREFRONT_HOME ? Effect.succeed(response(200, Effect.sleep(duration))) : defaultTransport(url),
     );
     const fiber = yield* Effect.forkChild(test.run);
     yield* TestClock.adjust(duration);
@@ -257,7 +261,7 @@ it.effect('signs out exactly once when verification is interrupted after sign-in
 it.effect('retains a typed body-consumption failure and still signs out', () =>
   Effect.gen(function* reportsBodyFailure() {
     const test = yield* fixture((url) =>
-      pathOf(url) === '/'
+      pathOf(url) === STOREFRONT_HOME
         ? Effect.succeed(response(200, Effect.fail(new StageTransportError({ message: 'Error: broken stream' }))))
         : defaultTransport(url),
     );
@@ -287,7 +291,7 @@ it.effect.each(['no-cookie', 'transport'] as const)('does not invent a session a
         : 'sign-in failed: Error: connection refused',
     ]);
     expect(test.calls.some((call) => call.path === CS || call.path === SIGN_OUT)).toBe(false);
-    expect(test.calls.at(-1)?.path).toBe('/');
+    expect(test.calls.at(-1)?.path).toBe(STOREFRONT_HOME);
   }),
 );
 
@@ -313,7 +317,7 @@ it.effect('reads CLI configuration and encodes the redacted credentials with the
     expect(payload.email).toBe('configured@najempark.demo');
     expect(Redacted.value(payload.password)).toBe('password1234');
     expect(test.calls[0]?.url).toBe(`${shellUrl}${OAUTH_AUTHORIZATION_SERVER}`);
-    expect(test.calls.find((call) => call.path === '/')?.url).toBe(`${storefrontUrl}/`);
+    expect(test.calls.find((call) => call.path === STOREFRONT_HOME)?.url).toBe(`${storefrontUrl}/cs`);
     expect((yield* test.output).at(-1)).toBe(PASS_LINE);
     expect((yield* test.output).join('\n')).not.toContain('password1234');
     expect((yield* test.output).join('\n')).not.toContain('ontos.session=issued');
@@ -324,7 +328,9 @@ it.effect('reads CLI configuration and encodes the redacted credentials with the
 it.effect('passes the command with a GitHub warning when only the page budget is exceeded', () =>
   Effect.gen(function* warnsWithoutFailing() {
     const test = yield* fixture((url) =>
-      pathOf(url) === '/' ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT))) : defaultTransport(url),
+      pathOf(url) === STOREFRONT_HOME
+        ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT)))
+        : defaultTransport(url),
     );
     const fiber = yield* Effect.forkChild(
       test.command.pipe(
@@ -364,7 +370,7 @@ it.effect('reports a typed failure after native cleanup fails', () =>
     expect(failure).toBeInstanceOf(StageVerificationFailure);
     expect(failure.message).toBe('stage verification FAILED: sign-out answered 503');
     expect(test.calls[0]?.url).toBe(`${shellUrl}${OAUTH_AUTHORIZATION_SERVER}`);
-    expect(test.calls.find((call) => call.path === '/')?.url).toBe(`${storefrontUrl}/`);
+    expect(test.calls.find((call) => call.path === STOREFRONT_HOME)?.url).toBe(`${storefrontUrl}/cs`);
     expect(test.calls.at(-1)?.path).toBe(SIGN_OUT);
     expect(yield* test.output).not.toContain(PASS_LINE);
     expect(yield* test.errors).toEqual(['stage verification FAILED: sign-out answered 503']);
