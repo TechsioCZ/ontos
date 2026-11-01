@@ -1,7 +1,7 @@
-import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import type { Dictionary } from "@/i18n";
 import { currencySymbol } from "@/lib/format";
 import type { LiveMarket } from "./market";
+import { MarketLinkButton } from "./market-link-button";
 
 /** Full page for a market path without a live market: unknown (404) or temporarily unavailable (200, noindex). */
 export function MarketGatePage({
@@ -39,9 +39,7 @@ export function MarketGatePage({
             {live.map((market) => (
               <li key={market.locale}>
                 {/* A market switch is a full page load: another market has its own cart and prices. */}
-                <LinkButton href={`/${market.locale}`} size="sm" theme="outlined" variant="primary">
-                  {marketLabel(market)}
-                </LinkButton>
+                <MarketLinkButton href={`/${market.locale}`} label={marketLabel(market)} />
               </li>
             ))}
           </ul>
