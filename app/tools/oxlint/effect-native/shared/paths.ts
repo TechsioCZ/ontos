@@ -1,5 +1,17 @@
+// Rules match every linted file against the same few option globs, so compile each glob once per
+// Oxlint process. The expressions carry no `g` or `y` flag, so sharing one keeps `test` stateless.
+const compiledGlobs = new Map<string, RegExp>();
+
 /** Minimal glob matcher for rule path options: supports `**`, `*`, `?` and `{a,b}` alternation. */
 export function globToRegExp(glob: string): RegExp {
+  const compiled = compiledGlobs.get(glob);
+  if (compiled !== undefined) return compiled;
+  const expression = compileGlob(glob);
+  compiledGlobs.set(glob, expression);
+  return expression;
+}
+
+function compileGlob(glob: string): RegExp {
   let pattern = '';
   let index = 0;
   while (index < glob.length) {
