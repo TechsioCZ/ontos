@@ -202,6 +202,15 @@ const partyContactPointProviderEntrypoint = 'party.registry.api.party-contact-po
 const partyAddressCurrentEvidence = 'commerce.customer-context.evidence.address.party-origin-current';
 const partyAddressSourceIdentityEvidence = 'commerce.customer-context.evidence.address.source-identity-and-revision';
 
+const priceGroupCompatibilityCondition =
+  'commerce.customer-context.condition.price-group-catalog-compatibility-required';
+const priceGroupRequestedDefinitionEvidence =
+  'commerce.customer-context.evidence.price-group.exact-requested-definition';
+const priceGroupCompatibilityCurrentEvidence =
+  'commerce.customer-context.evidence.price-group.compatibility-contract-current';
+const priceGroupCompatibilityEntrypoint = 'pricing.price-group-catalog.api.validate-price-group-compatibility';
+const priceGroupCatalogModuleId = 'pricing.price-group-catalog';
+
 export const commerceCustomerContextManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -607,6 +616,50 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        condition: priceGroupCompatibilityCondition,
+        entrypointKey: assignCustomerPriceGroupAction.descriptor.entrypoint.entrypointKey,
+        evidence: [priceGroupRequestedDefinitionEvidence, priceGroupCompatibilityCurrentEvidence],
+        key: 'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+        provider: {
+          entrypointKey: priceGroupCompatibilityEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: priceGroupCompatibilityCondition,
+        entrypointKey: assignCounterpartyPriceGroupAction.descriptor.entrypoint.entrypointKey,
+        evidence: [priceGroupRequestedDefinitionEvidence, priceGroupCompatibilityCurrentEvidence],
+        key: 'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
+        provider: {
+          entrypointKey: priceGroupCompatibilityEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: priceGroupCompatibilityCondition,
+        entrypointKey: migrateCustomerPriceGroupAction.descriptor.entrypoint.entrypointKey,
+        evidence: [priceGroupRequestedDefinitionEvidence, priceGroupCompatibilityCurrentEvidence],
+        key: 'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
+        provider: {
+          entrypointKey: priceGroupCompatibilityEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: priceGroupCompatibilityCondition,
+        entrypointKey: migrateCounterpartyPriceGroupAction.descriptor.entrypoint.entrypointKey,
+        evidence: [priceGroupRequestedDefinitionEvidence, priceGroupCompatibilityCurrentEvidence],
+        key: 'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
+        provider: {
+          entrypointKey: priceGroupCompatibilityEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
         condition: 'commerce.customer-context.condition.complete-current-single-price-group-assignment',
         entrypointKey: customerPriceGroupResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [
@@ -615,8 +668,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         ],
         key: 'commerce.customer-context.requirement.price-group-single-assignment',
         provider: {
-          entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
-          moduleId: 'pricing.price-group-catalog',
+          entrypointKey: priceGroupCompatibilityEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
           schemaVersion: '1',
         },
       },

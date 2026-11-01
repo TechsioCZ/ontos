@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   ActiveApplicationCompositionService,
+  ActiveApplicationCompositionUnavailableError,
   PrincipalResolver,
   PrincipalResolverUnavailableError,
   ContextAccess,
@@ -88,11 +89,58 @@ import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.t
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
-import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
+import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeCompositionSnapshot as makeFixtureCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+
+/** Test authority retains the actual validated fixture snapshot, including its original freshness. */
+const fixtureSnapshots = new Map<string, Effect.Success<ReturnType<typeof makeFixtureCompositionSnapshot>>>();
+const makeCompositionSnapshot: typeof makeFixtureCompositionSnapshot = (...args) =>
+  makeFixtureCompositionSnapshot(...args).pipe(
+    Effect.tap((snapshot) =>
+      Effect.sync(() => {
+        fixtureSnapshots.set(snapshot.composition.revision, snapshot);
+      }),
+    ),
+  );
+const makeShellAuthenticationApiRuntime = (...args: Parameters<typeof makeProductionShellAuthenticationApiRuntime>) => {
+  const [authentication, issuer, states, loadCatalog, matcher, access, gateways, scopedStates, external] = args;
+  const load =
+    loadCatalog === undefined
+      ? Effect.fail(
+          new ActiveApplicationCompositionUnavailableError({ reason: 'No test release source was configured' }),
+        )
+      : loadCatalog.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ActiveApplicationCompositionUnavailableError({ cause, reason: 'Test release source is unavailable' }),
+          ),
+          Effect.flatMap((catalog) => {
+            const snapshot = fixtureSnapshots.get(catalog.composition.revision);
+            return snapshot === undefined
+              ? Effect.fail(
+                  new ActiveApplicationCompositionUnavailableError({
+                    reason: 'No actual fixture snapshot matches the captured release',
+                  }),
+                )
+              : Effect.succeed(snapshot);
+          }),
+        );
+  return makeProductionShellAuthenticationApiRuntime(
+    authentication,
+    issuer,
+    states,
+    loadCatalog,
+    matcher,
+    access,
+    gateways,
+    scopedStates,
+    external,
+    { load },
+  );
+};
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -930,6 +978,7 @@ it.live(
         }),
       ),
     );
+    // This is the production Shell wiring and its real dynamically created Core Read, not a ReadRuntime double.
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
@@ -945,6 +994,7 @@ it.live(
         outcomeCode: dataAccessEvents.outcomeCode,
         queryHash: dataAccessEvents.queryHash,
         resultCount: dataAccessEvents.resultCount,
+        servingModuleKey: dataAccessEvents.servingModuleKey,
       })
       .from(dataAccessEvents)
       .where(
@@ -960,6 +1010,7 @@ it.live(
       outcomeCode: 'read_allowed',
       queryHash: null,
       resultCount: 0,
+      servingModuleKey: 'core.shell',
     });
     const refreshingRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {

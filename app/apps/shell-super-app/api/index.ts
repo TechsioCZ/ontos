@@ -17,6 +17,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
+  ActiveApplicationCompositionServiceContract,
   ContextAccess,
   PrincipalManagementError,
   PrincipalResolutionError,
@@ -25,6 +26,9 @@ import type {
 } from '@app/core-runtime';
 import {
   makeActionRuntimeLive,
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionUnavailableError,
+  makeReadRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -160,8 +164,13 @@ import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './
 import type { ShellInstalledCatalog, InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
-import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalog.ts';
-import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
+import { CapturedShellCompositionCatalog, capturedShellCatalog } from './modules/captured-shell-catalog.ts';
+import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
+import {
+  ShellGovernedReads,
+  createShellGovernedReadsLayer,
+  createShellGovernedReadDefinitionsLayer,
+} from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import {
   attachShellMedia,
@@ -1901,6 +1910,7 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   resourceGateways?: ShellResourceGateways,
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
   externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
+  shellReadAuthority?: ActiveApplicationCompositionServiceContract,
 ];
 
 export const makeShellAuthenticationApiRuntime = (
@@ -1916,7 +1926,12 @@ export const makeShellAuthenticationApiRuntime = (
     resourceGateways = unavailableResourceGateways,
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
     externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
+    shellReadAuthority,
   ] = args;
+  const shellReadAuthorityLayer =
+    shellReadAuthority === undefined
+      ? activeApplicationCompositionLive
+      : Layer.succeed(ActiveApplicationCompositionService, shellReadAuthority);
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? approvedModuleCatalogLive
@@ -2002,14 +2017,55 @@ export const makeShellAuthenticationApiRuntime = (
                 Effect.catchTag('GatewayIssuerError', () => Effect.fail(new ShellProviderUnavailableError())),
               ),
         };
-        return createShellGovernedReadsLayer(resourceGateways, providerAssertionIssuer, scopedModuleStateFactory);
+        const definitionsLayer = createShellGovernedReadDefinitionsLayer(
+          resourceGateways,
+          providerAssertionIssuer,
+          scopedModuleStateFactory,
+        );
+        return Layer.unwrap(
+          Effect.gen(function* makeShellHostedReadRuntime() {
+            const registrations = yield* ShellGovernedReadDefinitions;
+            const authority = yield* ActiveApplicationCompositionService;
+            const capturedAuthority = {
+              load: authority.load.pipe(
+                Effect.flatMap((snapshot) =>
+                  capturedShellCatalog.pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ActiveApplicationCompositionUnavailableError({
+                          cause,
+                          reason: 'The Shell request release is unavailable',
+                        }),
+                    ),
+                    Effect.filterOrFail(
+                      (catalog) => catalog.composition.revision === snapshot.composition.revision,
+                      () =>
+                        new ActiveApplicationCompositionUnavailableError({
+                          reason: 'The Shell request release changed',
+                        }),
+                    ),
+                    Effect.as(snapshot),
+                  ),
+                ),
+              ),
+            };
+            return createShellGovernedReadsLayer(registrations).pipe(
+              Layer.provide(
+                makeReadRuntimeLive(ultramodernDeliveryUnit, { shellSystemReads: registrations }).pipe(
+                  Layer.provide(Layer.succeed(ActiveApplicationCompositionService, capturedAuthority)),
+                ),
+              ),
+            );
+          }),
+        ).pipe(Layer.provide(definitionsLayer));
       }),
     ),
   ).pipe(
     Layer.provide(issuerLayer),
     Layer.provide(
       Layer.mergeAll(
-        readRuntimeLayer,
+        sharedOperationLayers,
+        shellReadAuthorityLayer,
         moduleStateLayer,
         moduleCatalogLayer,
         contextAccessLayer,

@@ -32,6 +32,7 @@ import type {
   ShellSearchResponse,
 } from '../../shared/api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
+import { ShellGovernedReadDefinitions } from './shell-governed-read-definitions.ts';
 import { ShellCompositionFactory } from './shell-composition.ts';
 import type { ShellModuleTargetSelector } from './shell-composition.ts';
 import {
@@ -390,19 +391,21 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   return { composition, moduleTarget, resourceDetail, search } as const;
 });
 
-export const createShellGovernedReadsLayer = (
+export type ShellGovernedReadRegistrationSet = Effect.Success<ReturnType<typeof makeRegistrations>>;
+
+export const createShellGovernedReadDefinitionsLayer = (
   ...[gateways, assertionIssuer, scopedModuleStateFactory]: readonly [
     ShellResourceGateways,
     ShellProviderAssertionIssuer,
     ShellScopedModuleStateFactory,
   ]
-) =>
+) => Layer.effect(ShellGovernedReadDefinitions, makeRegistrations(gateways, assertionIssuer, scopedModuleStateFactory));
+
+export const createShellGovernedReadsLayer = (registrations: ShellGovernedReadRegistrationSet) =>
   Layer.effect(
     ShellGovernedReads,
-    Effect.gen(function* makeShellGovernedReads() {
-      const runtime = yield* ReadRuntime;
-      const registrations = yield* makeRegistrations(gateways, assertionIssuer, scopedModuleStateFactory);
-      return {
+    ReadRuntime.pipe(
+      Effect.map((runtime) => ({
         composition: (request) =>
           runtime.runRead({
             input: {},
@@ -465,6 +468,6 @@ export const createShellGovernedReadsLayer = (
             transport: { correlationId: request.correlationId },
           });
         },
-      };
-    }),
+      })),
+    ),
   );

@@ -1,5 +1,7 @@
 import {
   loadModuleOperationAdmission,
+  captureShellSystemReadRegistrations,
+  isBoundShellSystemRead,
   operationCatalogLoader,
   prepareOperationIntrinsicState,
   validateBoundOperationOwner,
@@ -7,6 +9,7 @@ import {
   withoutModuleOperationExecution,
 } from '../modules/module-operation-execution.ts';
 import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
+import type { ShellSystemReadRegistrations } from '../modules/module-operation-execution.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
@@ -64,6 +67,7 @@ import type {
 } from './definition.ts';
 import {
   getReadConditionalPermissionPlan,
+  isReadRegistration,
   getReadDomainErrorSchema,
   getReadHandler,
   getReadPermissionTargetResolver,
@@ -136,6 +140,7 @@ export interface ReadRuntimeOptions {
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
   readonly ownerRegistration?: VerticalRuntimeRegistration;
+  readonly shellSystemReads?: ShellSystemReadRegistrations;
 }
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
@@ -1223,6 +1228,11 @@ const readRuntimeFromDependencies = <
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- Runtime construction keeps the optional owner seam injectable for Core unit and integration harnesses.
   options: ReadRuntimeOptions = {},
 ) => {
+  const shellSystemReads = captureShellSystemReadRegistrations(options.shellSystemReads);
+  const withReadExecution: typeof withModuleOperationExecution = (input, effect) =>
+    isBoundShellSystemRead(input.registration, shellSystemReads)
+      ? withoutModuleOperationExecution(effect)
+      : withModuleOperationExecution(input, effect);
   const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
@@ -1253,6 +1263,12 @@ const readRuntimeFromDependencies = <
     >;
     readonly transport: unknown;
   }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
+    if (!isReadRegistration(input.registration)) {
+      return yield* new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'The Read registration is unavailable',
+      });
+    }
     const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
       onExcessProperty: 'error',
     })(input.input).pipe(
@@ -1356,7 +1372,7 @@ const readRuntimeFromDependencies = <
       const { earlyCompositionRevision, intrinsicDependencies } = yield* prepareOperationIntrinsicState(
         input.registration,
         principal,
-        options,
+        { ...options, shellSystemReads },
       ).pipe(Effect.mapError(unavailableReadComposition));
       const snapshot = yield* gateway.prepareSnapshot(
         scope,
@@ -1446,6 +1462,7 @@ const readRuntimeFromDependencies = <
               input.registration,
               principal,
               options.ownerRegistration,
+              shellSystemReads,
             ).pipe(Effect.mapError(unavailableReadComposition))
           : undefined;
       const admittedCompositionRevision = admission?.revision ?? compositionRevision;
@@ -1459,7 +1476,7 @@ const readRuntimeFromDependencies = <
       }
       const executionRevision = admittedCompositionRevision ?? '';
       const policies = getReadPolicyImplementations(input.registration);
-      yield* withModuleOperationExecution(
+      yield* withReadExecution(
         {
           loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
           ownerRegistration: options.ownerRegistration,
@@ -1673,7 +1690,7 @@ const readRuntimeFromDependencies = <
           ),
         );
       const transactionExit = yield* Effect.exit(
-        withModuleOperationExecution(
+        withReadExecution(
           {
             loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
             ownerRegistration: options.ownerRegistration,
@@ -1817,7 +1834,7 @@ export const ReadRuntimeLive = Layer.effect(
 /** Bind the actual receiving artifact and existing authority without reading the source at startup. */
 export const makeReadRuntimeLive = (
   expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
-  ownerRegistration?: VerticalRuntimeRegistration,
+  hosting?: VerticalRuntimeRegistration | { readonly shellSystemReads: ShellSystemReadRegistrations },
 ) =>
   Layer.effect(
     ReadRuntime,
@@ -1825,10 +1842,19 @@ export const makeReadRuntimeLive = (
       const applicationComposition = yield* ActiveApplicationCompositionService;
       const { contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver } =
         yield* readRuntimeDependencies;
+      const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
+      const shellSystemReads =
+        hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
       const options: ReadRuntimeOptions =
         ownerRegistration === undefined
           ? { applicationComposition, expectedDeployment, ownerAuthorizationOverlay }
           : { applicationComposition, expectedDeployment, ownerAuthorizationOverlay, ownerRegistration };
-      return readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, options);
+      return readRuntimeFromDependencies(
+        database,
+        gateway,
+        scopeResolver,
+        contextAccess,
+        shellSystemReads === undefined ? options : { ...options, shellSystemReads },
+      );
     }),
   );

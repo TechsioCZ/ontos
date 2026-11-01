@@ -242,6 +242,57 @@ const validateOwnerContractProjection = Effect.fn('ModuleOperation.validateOwner
   },
 );
 
+/** Only the four actual Shell definitions may be bound by its trusted runtime constructor. */
+export interface ShellSystemReadRegistrations {
+  readonly composition: AnyReadRegistration;
+  readonly moduleTarget: AnyReadRegistration;
+  readonly resourceDetail: AnyReadRegistration;
+  readonly search: AnyReadRegistration;
+}
+
+export const captureShellSystemReadRegistrations = (
+  registrations: ShellSystemReadRegistrations | undefined,
+): Readonly<ShellSystemReadRegistrations> | undefined => {
+  if (registrations === undefined || Object.keys(registrations).length !== 4) {
+    return undefined;
+  }
+  const { composition, moduleTarget, resourceDetail, search } = registrations;
+  const definitions = [
+    [composition, 'core.shell.composition', 'api'],
+    [moduleTarget, 'core.shell.module-target', 'api'],
+    [resourceDetail, 'core.shell.resource-detail-timeline', 'api'],
+    [search, 'core.shell.search', 'search'],
+  ] as const;
+  if (
+    definitions.some(
+      ([read, key, role]) =>
+        !isReadRegistration(read) ||
+        read.descriptor.owningModuleKey !== 'core.shell' ||
+        read.descriptor.readKey !== key ||
+        read.descriptor.schemaVersion !== '1' ||
+        read.descriptor.entrypoint.moduleKey !== 'core.shell' ||
+        read.descriptor.entrypoint.entrypointKey !== key ||
+        read.descriptor.entrypoint.scope !== 'system' ||
+        read.descriptor.entrypoint.access !== 'read' ||
+        read.descriptor.entrypoint.role !== role,
+    )
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ composition, moduleTarget, resourceDetail, search });
+};
+
+export const isBoundShellSystemRead = (
+  registration: ModuleOperationRegistration,
+  definitions: Readonly<ShellSystemReadRegistrations> | undefined,
+): boolean =>
+  definitions !== undefined &&
+  isReadRegistration(registration) &&
+  (registration === definitions.composition ||
+    registration === definitions.moduleTarget ||
+    registration === definitions.resourceDetail ||
+    registration === definitions.search);
+
 interface ModuleOperationAdmission {
   readonly catalog?: InstalledModuleCatalog;
   readonly revision: string;
@@ -253,12 +304,17 @@ export const loadModuleOperationAdmission = Effect.fn('ModuleOperation.loadAdmis
   registration: ModuleOperationRegistration,
   principal: TrustedPrincipalContext,
   hostRegistration?: VerticalRuntimeRegistration,
+  shellSystemReads?: Readonly<ShellSystemReadRegistrations>,
 ): Effect.fn.Return<ModuleOperationAdmission, ModuleOperationRequirementError> {
   const snapshot = yield* authority.load.pipe(
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
     Effect.mapError(unavailable),
   );
-  const genuineCore = isGenuineCoreOperation(registration);
+  const shellSystemRead = isBoundShellSystemRead(registration, shellSystemReads);
+  if (shellSystemRead && hostRegistration !== undefined) {
+    return yield* unavailable();
+  }
+  const genuineCore = isGenuineCoreOperation(registration) || shellSystemRead;
   const host =
     genuineCore && hostRegistration !== undefined
       ? yield* Effect.try({ catch: unavailable, try: () => extractVerticalRuntimeSafeDescriptors(hostRegistration) })
@@ -279,6 +335,7 @@ export const loadModuleOperationAdmission = Effect.fn('ModuleOperation.loadAdmis
   const requestedRevision = readVerifiedGatewayCompositionRevision(principal);
   if (
     (selected === undefined && !selectedCore) ||
+    (shellSystemRead && !selectedCore) ||
     (requestedRevision !== undefined && requestedRevision !== snapshot.composition.revision)
   ) {
     return yield* unavailable();
@@ -331,6 +388,7 @@ interface OperationRuntimeBinding {
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract | undefined;
   readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type | undefined;
   readonly ownerRegistration?: VerticalRuntimeRegistration | undefined;
+  readonly shellSystemReads?: Readonly<ShellSystemReadRegistrations> | undefined;
 }
 interface OperationIntrinsicState {
   readonly earlyCompositionRevision?: string;
@@ -345,6 +403,16 @@ export const prepareOperationIntrinsicState = Effect.fn('ModuleOperation.prepare
   ): Effect.fn.Return<OperationIntrinsicState, ModuleOperationRequirementError> {
     const empty = { intrinsicDependencies: new Map<string, readonly string[]>() };
     if (isGenuineCoreOperation(registration)) {
+      return empty;
+    }
+    if (isBoundShellSystemRead(registration, binding.shellSystemReads)) {
+      if (
+        binding.applicationComposition === undefined ||
+        binding.expectedDeployment === undefined ||
+        binding.ownerRegistration !== undefined
+      ) {
+        return yield* unavailable();
+      }
       return empty;
     }
     const owner = yield* readBoundOperationOwner(registration, binding.ownerRegistration);

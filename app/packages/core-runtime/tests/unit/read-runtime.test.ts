@@ -151,7 +151,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly runtimeAdmission?: Pick<
       ReadRuntimeOptions,
-      'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
+      'applicationComposition' | 'expectedDeployment' | 'ownerRegistration' | 'shellSystemReads'
     >;
     readonly sqlEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -3190,5 +3190,163 @@ it.effect('rejects recreated Core Reads, wrong receiver builds and every mismatc
       expect(harness.evidence()).toBe(control === 'denied' ? 1 : 0);
     }
     expect(recreatedCalls).toBe(0);
+  }),
+);
+
+/** Controlled constructor definitions; the Shell integration exercises the real production factory. */
+const shellHostDefinitions = (onHandler: () => void, attest = false) => {
+  const make = (key: string, role: 'api' | 'search') =>
+    defineRead(
+      {
+        accessKind: 'detail',
+        domainErrorSchema: ModuleOperationRequirementError,
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'authenticated_principal' },
+          entrypointKey: key,
+          moduleKey: 'core.shell',
+          role,
+        }),
+        evidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.evidence.v1` },
+        inputSchema: Schema.Struct({}),
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'tenant',
+        policies: [],
+        readKey: key,
+        resultSchema: Schema.String,
+        schemaVersion: '1',
+      },
+      () => {
+        onHandler();
+        const result = Effect.succeed({ evidence: { resultCount: 1 }, result: 'shell-host-result' });
+        return attest ? requireModuleOperation('core.shell.unpublished-provider').pipe(Effect.andThen(result)) : result;
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'access' }),
+    );
+  return {
+    composition: make('core.shell.composition', 'api'),
+    moduleTarget: make('core.shell.module-target', 'api'),
+    resourceDetail: make('core.shell.resource-detail-timeline', 'api'),
+    search: make('core.shell.search', 'search'),
+  };
+};
+
+it.effect('admits only captured Shell definitions at the actual authoritative Shell build and revision', () =>
+  Effect.gen(function* closedShellHostBinding() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(makeOutboxWorkerComposition());
+    for (const control of [
+      'allowed',
+      'recreated',
+      'copied',
+      'foreign',
+      'wrong-build',
+      'wrong-revision',
+      'no-authority',
+      'no-receiver',
+      'denied',
+    ] as const) {
+      let handlers = 0;
+      const definitions = shellHostDefinitions(() => {
+        handlers += 1;
+      });
+      const recreated = shellHostDefinitions(() => {
+        handlers += 1;
+      }).composition;
+      const copied = new Proxy(definitions.composition, {});
+      const foreign = defineRead(
+        {
+          ...definitions.composition.descriptor,
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'authenticated_principal' },
+            entrypointKey: 'test.foreign.api.read',
+            moduleKey: 'test.foreign',
+            role: 'api',
+          }),
+          owningModuleKey: 'test.foreign',
+          readKey: 'test.foreign.api.read',
+        },
+        () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'foreign' }),
+        () => Effect.succeed({}),
+        () => ({ kind: 'tenant', permission: 'access' }),
+      );
+      let admission: Pick<
+        ReadRuntimeOptions,
+        'applicationComposition' | 'expectedDeployment' | 'ownerRegistration' | 'shellSystemReads'
+      > = { shellSystemReads: definitions };
+      if (control !== 'no-authority') {
+        admission = { ...admission, applicationComposition: { load: Effect.succeed(snapshot) } };
+      }
+      if (control !== 'no-receiver') {
+        admission = {
+          ...admission,
+          expectedDeployment: {
+            ...snapshot.composition.shell.deployment,
+            buildMarker:
+              control === 'wrong-build' ? 'another-shell-build' : snapshot.composition.shell.deployment.buildMarker,
+          },
+        };
+      }
+      if (control === 'foreign') {
+        admission = { ...admission, shellSystemReads: { ...definitions, composition: foreign } };
+      }
+      const harness = yield* makeHarness({
+        compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+        permissionDecision: control === 'denied' ? 'denied' : 'allowed',
+        runtimeAdmission: admission,
+      });
+      let selectedRegistration = definitions.composition;
+      if (control === 'recreated') {
+        selectedRegistration = recreated;
+      }
+      if (control === 'copied') {
+        selectedRegistration = copied;
+      }
+      const result = harness.runtime.runRead({
+        input: {},
+        principal: control === 'wrong-revision' ? trustVerifiedGatewayPrincipalContext(scope, 'b'.repeat(64)) : scope,
+        registration: selectedRegistration,
+        transport: { correlationId: scope.correlationId },
+      });
+      if (control === 'allowed') {
+        expect(yield* result).toBe('shell-host-result');
+        expect(handlers).toBe(1);
+        expect(harness.evidence()).toBe(1);
+      } else {
+        const failure = yield* Effect.flip(result);
+        expect(
+          Predicate.isTagged(failure, control === 'denied' ? 'ReadPermissionDenied' : 'ReadHandlerUnavailable'),
+        ).toBe(true);
+        expect(handlers).toBe(0);
+      }
+    }
+  }),
+);
+
+it.effect('gives bound Shell system Reads no provider-operation execution lease', () =>
+  Effect.gen(function* shellSystemReadsCannotAttestProviders() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(makeOutboxWorkerComposition());
+    const definitions = shellHostDefinitions(() => {}, true);
+    const harness = yield* makeHarness({
+      compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+      permissionDecision: 'allowed',
+      runtimeAdmission: {
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: snapshot.composition.shell.deployment,
+        shellSystemReads: definitions,
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: definitions.composition,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+    expect(harness.evidence()).toBe(0);
   }),
 );
