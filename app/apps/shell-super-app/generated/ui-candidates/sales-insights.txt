@@ -69,4 +69,5 @@ transition
 visible
 w-48
 w-full
+z
 z-(--z-popup)
