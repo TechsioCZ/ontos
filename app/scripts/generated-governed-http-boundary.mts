@@ -152,7 +152,11 @@ const isWholeCallExpression = (source: string, declaration: RegExp): boolean => 
   return opening !== -1 && closing === source.length - 1;
 };
 
-const wholeCallArguments = (source: string, declaration: RegExp): readonly string[] | undefined => {
+const wholeCallArguments = (
+  source: string,
+  declaration: RegExp,
+  rejectArgumentHoles = false,
+): readonly string[] | undefined => {
   const match = declaration.exec(source);
   if (match?.index === undefined || !isWholeCallExpression(source, declaration)) {
     return undefined;
@@ -162,12 +166,17 @@ const wholeCallArguments = (source: string, declaration: RegExp): readonly strin
   if (opening === -1 || closing === undefined) {
     return undefined;
   }
-  return separatedSource(
+  const argumentsList = separatedSource(
     source,
     topLevelSeparators(maskNonCode(source), ',', opening + 1, closing),
     opening + 1,
     closing,
-  ).filter((argument) => argument !== '');
+  );
+  const explicitArguments = argumentsList.at(-1) === '' ? argumentsList.slice(0, -1) : argumentsList;
+  if (rejectArgumentHoles && explicitArguments.some((argument) => argument === '')) {
+    return undefined;
+  }
+  return argumentsList.filter((argument) => argument !== '');
 };
 
 interface SourceDepthAnalysis {
@@ -2227,7 +2236,7 @@ const localReadFactoryMaker = (source: string, candidate: string): LocalReadFact
   if (initializer === undefined || maker === undefined || makerSource === undefined || !makerSource.startsWith('(')) {
     return undefined;
   }
-  const argumentsList = wholeCallArguments(initializer, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'));
+  const argumentsList = wholeCallArguments(initializer, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'), true);
   const closing = matchingDelimiterEnd(makerSource, 0, '(', ')');
   if (
     argumentsList === undefined ||

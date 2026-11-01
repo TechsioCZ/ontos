@@ -16,6 +16,8 @@ export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-d
 export {
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
+  ShellReportContributionSchema,
   ShellSearchContributionSchema,
 } from '../modules/shell-contribution.ts';
 export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
@@ -28,7 +30,7 @@ export { ApplicationCompositionSchema } from '../modules/application-composition
 export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine } from '../db/scoped-routine.ts';
-export { findPostgresFailure } from '../database/postgres-failure.ts';
+export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
 export { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../database/driver-failure.ts';
 export {
   BusinessPermissionCodeSchema,
