@@ -1796,11 +1796,15 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
 
 const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercisePriceGroupRelay')(
   function* exercisePriceGroupRelay(input: {
+    readonly children: ChildProcessHandle[];
+    readonly compositionUrl: string;
     readonly customerContext: Effect.Success<ReturnType<typeof startPackagedApplication>>;
     readonly database: NativeCoreDatabase;
     readonly fixture: NativeShellUserFixture;
+    readonly gatewayPublicJwks: string;
     readonly personal: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0];
     readonly priceGroupCatalog: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly priceGroupContractSha256: string;
     readonly privateKey: CryptoKey;
     readonly profile: Extract<
       Parameters<typeof executeCustomerPriceGroupResolutionWithAuthorization>[0]['profile'],
@@ -2138,36 +2142,84 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     );
     expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(expiredRead)).toBe(true);
     yield* input.priceGroupCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
-    expect(Exit.isFailure(yield* Effect.exit(resolve()))).toBe(true);
-    const issuerDownProof = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
-    yield* input.shell.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+    yield* input.priceGroupCatalog.child.exitCode;
+    expect(yield* input.priceGroupCatalog.child.isRunning).toBe(false);
+    expect(yield* input.customerContext.child.isRunning).toBe(true);
+    expect(yield* input.shell.isRunning).toBe(true);
+    const providerDownFailure = yield* Effect.flip(resolve());
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(503) }))(providerDownFailure)).toBe(true);
+    const restoredPriceGroupCatalog = yield* startPackagedApplication({
+      appId: 'price-group-catalog',
+      compositionUrl: input.compositionUrl,
+      gateway: { issuer: input.fixture.origin, publicJwks: input.gatewayPublicJwks },
+      port: Number(new URL(input.priceGroupCatalog.origin).port),
+      relativeDirectory: '../../verticals/price-group-catalog',
+    });
+    input.children.push(restoredPriceGroupCatalog.child);
+    expect(restoredPriceGroupCatalog.origin).toBe(input.priceGroupCatalog.origin);
+    expect(restoredPriceGroupCatalog.compiled).toEqual(input.priceGroupCatalog.compiled);
+    const client = yield* HttpClient.HttpClient;
+    const restoredContract = yield* client.get(`${restoredPriceGroupCatalog.origin}${ONTOS_MODULE_CONTRACT_PATH}`);
+    expect(restoredContract.status).toBe(200);
+    expect(bytesToHex(sha256(new Uint8Array(yield* restoredContract.arrayBuffer)))).toBe(
+      input.priceGroupContractSha256,
+    );
+    const restoredResolution = (yield* resolve()).result.resolution;
     expect(
-      Exit.isFailure(
-        yield* Effect.exit(
-          executeCustomerPriceGroupResolutionWithAuthorization(
-            {
-              authorizationSubject: { kind: 'RETAIL' },
-              effectiveAt: DateTime.formatIso(yield* DateTime.now),
-              profile: input.profile,
-            },
-            Redacted.value(issuerDownProof.authorization),
-            yield* crypto.randomUUIDv4(),
-            cccOptions,
-          ),
-        ),
+      Schema.is(Schema.Struct({ _tag: Schema.Literal('ASSIGNED'), priceGroupRef: PriceGroupRefSchema }))(
+        restoredResolution,
       ),
     ).toBe(true);
+    expect(restoredResolution).toMatchObject({ priceGroupRef: firstRef });
+    const { legalEntityId, ...tenantOnlyActor } = input.personal;
+    void legalEntityId;
+    const providerHealthyProof = yield* issueNativeApiKeyGatewayAuthorization({
+      ...tenantOnlyActor,
+      audience: 'price-group-catalog',
+      buildMarker: restoredPriceGroupCatalog.compiled.buildMarker,
+    });
+    const issuerDownProof = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
+    yield* input.shell.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+    yield* input.shell.exitCode;
+    expect(yield* input.shell.isRunning).toBe(false);
+    expect(yield* input.customerContext.child.isRunning).toBe(true);
+    expect(yield* restoredPriceGroupCatalog.child.isRunning).toBe(true);
+    const issuerDownFailure = yield* Effect.flip(
+      executeCustomerPriceGroupResolutionWithAuthorization(
+        {
+          authorizationSubject: { kind: 'RETAIL' },
+          effectiveAt: DateTime.formatIso(yield* DateTime.now),
+          profile: input.profile,
+        },
+        Redacted.value(issuerDownProof.authorization),
+        yield* crypto.randomUUIDv4(),
+        cccOptions,
+      ),
+    );
+    expect(Schema.is(Schema.Struct({ status: Schema.Literal(503) }))(issuerDownFailure)).toBe(true);
     expect(
       yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
         where: { sourceJti: issuerDownProof.sourceJti },
       }),
     ).toBeUndefined();
+    const healthyDefinition = yield* executePriceGroupDefinitionWithAuthorization(
+      { priceGroupRef: firstRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
+      Redacted.value(providerHealthyProof.authorization),
+      yield* crypto.randomUUIDv4(),
+      pgcOptions,
+    );
+    expect(healthyDefinition.identity.priceGroupRef).toEqual(firstRef);
+    expect(healthyDefinition.definition.priceGroupRef).toEqual(firstRef);
+    expect(yield* input.customerContext.child.isRunning).toBe(true);
+    expect(yield* restoredPriceGroupCatalog.child.isRunning).toBe(true);
     yield* Effect.logInfo('Actual CCC PriceGroup relay native matrix', {
       actorPreserved: true,
       audienceWideFirstRedemption: true,
       compositionRevision: input.personal.revision,
       independentTargetPermissions: true,
+      isolatedIssuerOutageWithHealthyProvider: true,
       issuerAndProviderUnavailableNeverNone: true,
+      providerRestoredWithPinnedContract: true,
       sameActualAssignmentAndTarget: true,
       sourceRequiredLegalEntityTargetTenantOnly: true,
     });
@@ -6847,10 +6899,21 @@ it.live(
               workloadKey: marketIssued.secret,
             });
 
+            const priceGroupMember = approved.composition.modules.find(
+              (member) => member.deployment.appId === 'price-group-catalog',
+            );
+            if (priceGroupMember === undefined) {
+              return yield* new PackagedOwnerStartupError({
+                reason: 'Pinned PGC member missing from actual native Composition',
+              });
+            }
             yield* exerciseNativePriceGroupRelay({
+              children,
+              compositionUrl,
               customerContext: enrolledCustomerContext,
               database,
               fixture,
+              gatewayPublicJwks: gatewayMaterial.publicJwks,
               personal: {
                 apiKey: personalKey.secret,
                 audience: 'commerce-customer-context',
@@ -6864,6 +6927,7 @@ it.live(
                 revision: approved.composition.revision,
               },
               priceGroupCatalog,
+              priceGroupContractSha256: priceGroupMember.contract.sha256,
               privateKey: signingKeyPair.privateKey,
               profile: { ...created.result.profileRef, kind: 'RETAIL' },
               profileRevision: created.result.revision,
