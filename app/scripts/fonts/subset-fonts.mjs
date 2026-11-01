@@ -15,8 +15,10 @@
  *
  * The build never runs this; it only consumes the committed files.
  *
- * Tooling: uv (https://docs.astral.sh/uv/) runs the pinned fonttools release in
- * an ephemeral environment, so nothing is added to the workspace manifest.
+ * Tooling: uv (https://docs.astral.sh/uv/) runs the pinned fonttools and
+ * uharfbuzz releases in an ephemeral environment, so nothing is added to the
+ * workspace manifest. HarfBuzz is only used to detect kerning pairs, so no
+ * kerned pair can end up split across the two files.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -45,7 +47,16 @@ if (probe.error || probe.status !== 0) {
 
 const result = spawnSync(
   'uv',
-  ['run', '--no-project', '--with', 'fonttools[woff]==4.59.2', 'python', resolve(pythonScript)],
+  [
+    'run',
+    '--no-project',
+    '--with',
+    'fonttools[woff]==4.59.2',
+    '--with',
+    'uharfbuzz==0.51.1',
+    'python',
+    resolve(pythonScript),
+  ],
   { stdio: 'inherit' },
 );
 

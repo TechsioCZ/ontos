@@ -10,13 +10,13 @@ The input is the upstream ``InterVariable-latin.woff2`` that ships in
 
 * ``InterVariable-core.woff2``   – preloaded, covers everything Czech/Slovak and
   other European copy needs on every page (ASCII, Latin-1, Latin Extended-A,
-  the Latin Extended-B letters the upstream file carries, common punctuation
-  and the euro sign).
+  the Latin Extended-B letters the upstream file carries, common punctuation,
+  the euro sign), the combining marks, and every codepoint that participates in
+  a kerning pair.
 * ``InterVariable-ext.woff2``    – behind ``unicode-range``, covers the rest of
-  the upstream cmap (other currency and letterlike symbols, super/subscripts,
-  number forms, arrows, maths, spacing modifiers, combining marks, rare
-  punctuation). The browser only requests it when a page actually renders one
-  of those characters.
+  the upstream cmap: the characters Inter never kerns (fractions, subscripts,
+  most currency and letterlike symbols, per-mille, rare punctuation). The
+  browser only requests it when a page actually renders one of them.
 
 Together the two files keep the complete non-CJK coverage of the upstream file,
 so any character the current site can render still renders identically.
@@ -36,6 +36,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import uharfbuzz as hb
 from fontTools.ttLib import TTFont
 
 REPO = Path(__file__).resolve().parents[3]
@@ -70,6 +71,7 @@ KEEP_FEATURES = "ccmp,locl,calt,kern,mark,mkmk"
 # Core = what every page already needs. Diacritics belong here: the storefront
 # is Czech, so a Latin-1/Extended-A free core would make every single page pull
 # the extended file as well.
+KERNING_CONNECTED: set[int] = set()
 CORE_EXTRA = [
     0x00A0,  # no-break space (Czech typography, price units)
     0x2010,  # hyphen
@@ -93,6 +95,49 @@ CORE_EXTRA = [
 COMBINING_MARKS = list(range(0x0300, 0x0370))
 
 
+def kerning_connected(source_ttf: Path) -> set[int]:
+    """Codepoints that take part in any GPOS kerning pair.
+
+    A character pair that spans the core and extended files is shaped by two different faces, so
+    the pair adjustment is lost and the text visibly shifts (measured up to +1.4 px at 28 px).
+    Every codepoint that can kern therefore has to live in the core together with its partners.
+    HarfBuzz is used as the authority, since it is the shaper the browser uses too.
+    """
+    blob = hb.Blob.from_file_path(str(source_ttf))
+    face = hb.Face(blob)
+    font = hb.Font(face)
+    codepoints = sorted(TTFont(source_ttf).getBestCmap())
+
+    def advance(text: str, kern: bool) -> int:
+        buffer = hb.Buffer()
+        buffer.add_str(text)
+        buffer.guess_segment_properties()
+        hb.shape(font, buffer, {"kern": kern})
+        return sum(position.x_advance for position in buffer.glyph_positions)
+
+    parent: dict[int, int] = {}
+
+    def find(value: int) -> int:
+        root = value
+        while parent[root] != root:
+            root = parent[root]
+        while parent[value] != root:
+            parent[value], value = root, parent[value]
+        return root
+
+    for first in codepoints:
+        for second in codepoints:
+            text = chr(first) + chr(second)
+            if advance(text, True) == advance(text, False):
+                continue
+            parent.setdefault(first, first)
+            parent.setdefault(second, second)
+            left, right = find(first), find(second)
+            if left != right:
+                parent[right] = left
+    return set(parent)
+
+
 def core_codepoints(available: set[int]) -> list[int]:
     wanted = list(range(0x20, 0x7F))  # printable ASCII
     wanted += list(range(0x00A1, 0x0100))  # Latin-1 supplement (letters + symbols)
@@ -100,6 +145,7 @@ def core_codepoints(available: set[int]) -> list[int]:
     wanted += [0x0192, 0x0218, 0x0219, 0x021A, 0x021B]  # ƒ Ș ș Ț ț
     wanted += COMBINING_MARKS
     wanted += CORE_EXTRA
+    wanted += sorted(KERNING_CONNECTED)
     return sorted({cp for cp in wanted if cp in available})
 
 
@@ -218,19 +264,21 @@ def main() -> None:
     if not SOURCE.exists():
         raise SystemExit(f"missing source font: {SOURCE}")
 
+    global KERNING_CONNECTED
     source = TTFont(SOURCE)
     # Control codepoints (U+0000, U+007F) carry no visible glyph; leave them out
     # so the extended range only describes real text characters.
     available = {cp for cp in source.getBestCmap() if cp >= 0x20 and cp != 0x7F}
-    core = core_codepoints(available)
-    extended = sorted(available - set(core))
-    if not core or not extended:
-        raise SystemExit("core/extended split is empty")
 
     with tempfile.TemporaryDirectory(prefix="ontos-font-subset-") as tmp:
         work = Path(tmp)
         source_ttf = work / "Inter-source.ttf"
         run([sys.executable, "-m", "fontTools.ttLib.woff2", "decompress", str(SOURCE), "-o", str(source_ttf)])
+        KERNING_CONNECTED = kerning_connected(source_ttf)
+        core = core_codepoints(available)
+        extended = sorted(available - set(core))
+        if not core or not extended:
+            raise SystemExit("core/extended split is empty")
         build_pair(source_ttf, work, core, "core", CORE_OUT)
         build_pair(source_ttf, work, extended, "ext", EXT_OUT)
 
@@ -240,9 +288,11 @@ def main() -> None:
         missing = sorted(set(expected) - set(info["codepoints"]))
         if missing:
             raise SystemExit(f"{label}: lost codepoints {[hex(cp) for cp in missing]}")
-        unexpected = sorted(set(info["codepoints"]) - set(expected))
-        if unexpected:
-            raise SystemExit(f"{label}: unexpected codepoints {[hex(cp) for cp in unexpected]}")
+        # Retained layout features legitimately pull in extra glyphs (e.g. superscript
+        # parentheses via ccmp); they stay out of the declared unicode-range.
+        extra = sorted(set(info["codepoints"]) - set(expected))
+        if extra:
+            print(f"{label}: {len(extra)} extra codepoints kept for layout closure: {[hex(cp) for cp in extra]}")
 
     core_range = fmt_unicode_range(core)
     ext_range = fmt_unicode_range(extended)
