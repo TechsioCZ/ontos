@@ -97,11 +97,19 @@ const validateRendition = Effect.fn('CoreMedia.validateRendition')(function* val
   } satisfies ValidatedRendition;
 });
 
+const graphemes = new Intl.Segmenter();
+
 /** Keeps a display name a person recognises; path separators and control characters never reach presentation. */
 export const displayFilenameOf = (filename: string): string => {
   const base = filename.split(/[\\/]/u).at(-1) ?? '';
-  // oxlint-disable-next-line no-control-regex -- control characters are exactly what must be removed
-  const cleaned = base.replaceAll(/[\u0000-\u001F\u007F]/gu, '').trim();
+  // Control characters (C0 and DEL) never reach a display name.
+  const cleaned = Array.from(graphemes.segment(base), ({ segment }) => segment)
+    .filter((segment) => {
+      const code = segment.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join('')
+    .trim();
   return cleaned === '' ? 'obrazek' : cleaned.slice(0, 200);
 };
 
