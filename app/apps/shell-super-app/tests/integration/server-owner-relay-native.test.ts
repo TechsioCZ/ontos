@@ -1474,6 +1474,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
     const { core } = input.fixture;
     const crypto = yield* Crypto.Crypto;
     const access = yield* makeContextAccessLive();
+    const business = yield* makeBusinessPermissionRelationshipMutationLive();
     const checkBusinessPermissions = access.businessPermissions;
     if (checkBusinessPermissions === undefined) {
       return yield* new PackagedOwnerStartupError({ reason: 'Actual subject profile permission reader unavailable' });
@@ -1486,6 +1487,14 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         profileId: input.profile.resourceId,
         tenantId: core.tenantId,
       },
+    };
+    const personalProfilePermission = {
+      ...profileTarget,
+      principal: { principalId: core.manager.principalId, tenantId: core.tenantId },
+    };
+    const serviceProfilePermission = {
+      ...profileTarget,
+      principal: { principalId: input.service.principalId, tenantId: core.tenantId },
     };
     const providerPolicy = 'commerce.customer-context.api.market-subject-restrictions-current.evidence.v1';
     const cccOptions = {
@@ -1512,15 +1521,6 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
     yield* core.grantResourceAccess(input.profile, input.service.principalId, 'reader');
     yield* core.revokeResourceAccess(input.profile, input.service.principalId, 'reader');
     yield* core.grantResourceAccess(input.profile, core.manager.principalId, 'reader');
-    yield* Effect.addFinalizer(() =>
-      Effect.all(
-        [
-          core.grantResourceAccess(input.profile, core.manager.principalId, 'reader'),
-          core.revokeResourceAccess(input.profile, input.service.principalId, 'reader'),
-        ],
-        { concurrency: 1 },
-      ).pipe(Effect.asVoid, Effect.orDie),
-    );
     const assertProfileAccess = Effect.fn('ServerOwnerRelayNative.assertSubjectProfileAccess')(
       function* assertSubjectProfileAccess(principalId: string, expected: 'allowed' | 'denied') {
         const tenants = yield* access.tenants({
@@ -1583,6 +1583,15 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
     );
     yield* assertProfileAccess(core.manager.principalId, 'allowed');
     yield* assertProfileAccess(input.service.principalId, 'denied');
+    yield* Effect.addFinalizer(() =>
+      Effect.all(
+        [
+          business.mutate({ ...personalProfilePermission, operation: 'grant' }),
+          business.mutate({ ...serviceProfilePermission, operation: 'revoke' }),
+        ],
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid, Effect.orDie),
+    );
     const before = yield* core.evidence(input.database);
     const previous = new Set(before.accesses.map((row) => row.dataAccessEventId));
     const allowed = yield* eligible(subject);
@@ -1608,9 +1617,9 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         where: { sourceJti: allowed.proof.sourceJti },
       }),
     ).toBeDefined();
-    // Flip only exact resource permissions, then prove S can read while P's real default Market path cannot.
-    yield* core.revokeResourceAccess(input.profile, core.manager.principalId, 'reader');
-    yield* core.grantResourceAccess(input.profile, input.service.principalId, 'reader');
+    // Flip only the exact profile business permission, preserving Tenant/LE/module and generic resource grants.
+    yield* business.mutate({ ...personalProfilePermission, operation: 'revoke' });
+    yield* business.mutate({ ...serviceProfilePermission, operation: 'grant' });
     yield* assertProfileAccess(core.manager.principalId, 'denied');
     yield* assertProfileAccess(input.service.principalId, 'allowed');
     const serviceProof = yield* issueNativeApiKeyGatewayAuthorization(input.service);
@@ -1657,8 +1666,8 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         ),
       ).toHaveLength(0);
     }
-    yield* core.grantResourceAccess(input.profile, core.manager.principalId, 'reader');
-    yield* core.revokeResourceAccess(input.profile, input.service.principalId, 'reader');
+    yield* business.mutate({ ...personalProfilePermission, operation: 'grant' });
+    yield* business.mutate({ ...serviceProfilePermission, operation: 'revoke' });
     yield* assertProfileAccess(core.manager.principalId, 'allowed');
     yield* assertProfileAccess(input.service.principalId, 'denied');
     const relay = Effect.fn('ServerOwnerRelayNative.issueMarketSubjectRelay')(function* issueMarketSubjectRelay() {
