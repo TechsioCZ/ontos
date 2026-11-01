@@ -1,4 +1,4 @@
-import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
+import { AutosaveStatus, SidePanel, dialogCloseLabel, useAutosaveDraft } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -19,6 +19,7 @@ import {
   emptyDraft,
   employeeRoles,
   errorFieldKey,
+  employeeAutosaveResult,
   isDepartmentName,
   listedFieldsOf,
   newEmployeeId,
@@ -49,6 +50,13 @@ export type CommitCommand = (
   successKey: string,
   shown?: ShownEdit,
 ) => Effect.Effect<CommitOutcome>;
+
+/** Runs one autosave of the edit panel with the draft's base revision: the new revision once saved, else why not. */
+export type AutosaveCommand = (
+  command: WorkforceCommand,
+  expectedRevision: number,
+  shown: ShownEdit,
+) => Effect.Effect<CommitOutcome | number>;
 
 const commitErrorKey = (outcome: CommitOutcome): string => {
   if (outcome === 'conflict') {
@@ -81,36 +89,34 @@ const closeWhenDismissed =
     }
   };
 
-/**
- * Create (employee is null) or edit one Employee in a right-hand dialog. Every dialog on this page holds a draft,
- * so an outside click keeps it open. Escape, the close button and Zrušit close it, after a discard confirmation when
- * the draft has unsaved edits.
- */
-export const EmployeeFormDialog = ({
-  availablePrincipals,
-  commit,
-  employee,
-  onClose,
-}: {
+interface EmployeeFieldsProps {
   readonly availablePrincipals: RecordsResponse['availablePrincipals'];
-  readonly commit: CommitCommand;
-  readonly employee: Employee | null;
-  readonly onClose: () => void;
-}) => {
-  const { language, t } = useModernI18n();
-  const [draft, setDraft] = useState<EmployeeDraft>(() =>
-    employee === null ? emptyDraft : draftFromEmployee(employee),
-  );
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  readonly disabled: boolean;
+  readonly draft: EmployeeDraft;
   /** Set when the server reports that another Employee already uses the typed e-mail. */
-  const [emailTaken, setEmailTaken] = useState(false);
-  const [discardOpen, setDiscardOpen] = useState(false);
+  readonly emailTaken: boolean;
+  readonly employee: Employee | null;
+  readonly onBlur: () => void;
+  readonly onChange: (patch: Partial<EmployeeDraft>) => void;
+  /** Inline field errors are shown (after the first create attempt; always while editing). */
+  readonly showErrors: boolean;
+}
+
+/** The fields of one Employee, shared by the create dialog and the autosaving edit panel. */
+const EmployeeFields = ({
+  availablePrincipals,
+  disabled,
+  draft,
+  emailTaken,
+  employee,
+  onBlur,
+  onChange,
+  showErrors,
+}: EmployeeFieldsProps) => {
+  const { language, t } = useModernI18n();
   const errors = draftErrors(draft);
-  const set = (patch: Partial<EmployeeDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const fieldStatus = (field: DraftField) =>
-    submitted && errors.includes(field)
+    showErrors && errors.includes(field)
       ? { helpText: t(`${key}.errors.${errorFieldKey(draft, field)}`), validateStatus: 'error' as const }
       : {};
   const emailStatus = emailTaken
@@ -122,9 +128,235 @@ export const EmployeeFormDialog = ({
     !availablePrincipals.some(({ principalRef }) => principalRef.principalId === employee.principalRef?.principalId)
       ? [...availablePrincipals, { displayName: employee.fullName, principalRef: employee.principalRef }]
       : availablePrincipals;
+  return (
+    <>
+      <SelectTemplate
+        disabled={disabled}
+        items={principalOptions.map(({ displayName, principalRef }) => ({
+          displayValue: displayName,
+          label: displayName,
+          value: principalRef.principalId,
+        }))}
+        label={t(`${key}.form.principal`)}
+        labelProps={selectLabelProps}
+        name="principalId"
+        onValueChange={({ value }) => {
+          const person = availablePrincipals.find(({ principalRef }) => principalRef.principalId === value[0]);
+          if (person !== undefined) {
+            onChange({
+              fullName: draft.fullName.trim() === '' ? person.displayName : draft.fullName,
+              principalRef: person.principalRef,
+            });
+          }
+        }}
+        placeholder={t(selectPlaceholder)}
+        value={draft.principalRef === undefined ? [] : [draft.principalRef.principalId]}
+      />
+      {showErrors && employee === null && draft.principalRef === undefined && (
+        <StatusText role="alert" status="error">
+          {t(`${key}.errors.principal`)}
+        </StatusText>
+      )}
+      <p className="text-sm text-fg-secondary">{t(`${key}.form.principalHelp`)}</p>
+      <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
+        {t(`${key}.form.managePeople`)}
+      </a>
+      <FormInput
+        autoComplete="off"
+        id="employee-full-name"
+        label={t(`${key}.form.fullName`)}
+        name="fullName"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ fullName: event.target.value })}
+        required
+        value={draft.fullName}
+        {...fieldStatus('fullName')}
+      />
+      <FormInput
+        autoComplete="email"
+        id="employee-email"
+        label={t(`${key}.form.email`)}
+        name="email"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ email: event.target.value })}
+        required
+        type="email"
+        value={draft.email}
+        {...emailStatus}
+      />
+      <FormInput
+        autoComplete="tel"
+        id="employee-phone"
+        label={t(`${key}.form.phone`)}
+        name="phone"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ phone: event.target.value })}
+        type="tel"
+        value={draft.phone}
+        {...fieldStatus('phone')}
+      />
+      <SelectTemplate
+        items={roleItems}
+        label={t(`${key}.form.role`)}
+        labelProps={selectLabelProps}
+        name="role"
+        onValueChange={(details) => {
+          const next = roleFromValue(details.value[0]);
+          if (next !== null) {
+            onChange({ role: next });
+          }
+        }}
+        placeholder={t(selectPlaceholder)}
+        value={[draft.role]}
+      />
+      <FormInput
+        autoComplete="off"
+        id="employee-department"
+        label={t(`${key}.form.department`)}
+        name="department"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ department: event.target.value })}
+        required
+        value={draft.department}
+        {...fieldStatus('department')}
+      />
+      <Switch checked={draft.active} onCheckedChange={(checked) => onChange({ active: checked })}>
+        {t(`${key}.form.active`)}
+      </Switch>
+    </>
+  );
+};
+
+/**
+ * Edit one existing Employee. Changes save themselves (debounced, on blur and on close) with the revision the
+ * draft is based on; a revision conflict offers the current version instead of overwriting it.
+ */
+const EmployeeEditPanel = ({
+  autosaveCommit,
+  availablePrincipals,
+  employee,
+  onClose,
+  revision,
+}: {
+  readonly autosaveCommit: AutosaveCommand;
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
+  readonly employee: Employee;
+  readonly onClose: () => void;
+  readonly revision: number;
+}) => {
+  const { t } = useModernI18n();
+  const [emailTaken, setEmailTaken] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const autosave = useAutosaveDraft<EmployeeDraft, never>({
+    equals: sameDraft,
+    isValid: (value) => draftErrors(value).length === 0,
+    revision,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) =>
+      autosaveCommit(updateCommand(employee, value), expectedRevision, {
+        ids: [employee.id],
+        patch: listedFieldsOf(value),
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            setEmailTaken(result === 'duplicateEmail');
+            setServerError(result === 'forbidden' ? t(commitErrorKey(result)) : null);
+          }),
+        ),
+        Effect.map(employeeAutosaveResult),
+      ),
+    server: draftFromEmployee(employee),
+  });
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
+  return (
+    <SidePanel
+      actions={
+        <div className="workforce-employee-form-actions">
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            {t(`${key}.form.close`)}
+          </Button>
+        </div>
+      }
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#employee-full-name')}
+      onOpenChange={(next) => {
+        if (!next) {
+          close();
+        }
+      }}
+      open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
+      size="md"
+      title={t(`${key}.form.editTitle`)}
+    >
+      <form
+        className="flex flex-col gap-200 py-200"
+        id={employeeFormId}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          autosave.flush();
+        }}
+      >
+        {serverError !== null && (
+          <StatusText showIcon status="error">
+            {serverError}
+          </StatusText>
+        )}
+        <EmployeeFields
+          availablePrincipals={availablePrincipals}
+          disabled={false}
+          draft={autosave.draft}
+          emailTaken={emailTaken}
+          employee={employee}
+          onBlur={handleBlur}
+          onChange={(patch) => {
+            if (patch.email !== undefined) {
+              setEmailTaken(false);
+            }
+            autosave.setDraft((current) => ({ ...current, ...patch }));
+          }}
+          showErrors
+        />
+      </form>
+    </SidePanel>
+  );
+};
+
+const noop = () => {
+  // Creating saves only on "Vytvořit zaměstnance".
+};
+
+/**
+ * Create a new Employee in a right-hand dialog. The dialog holds a draft, so an outside click keeps it open. Escape,
+ * the close button and Zrušit close it, after a discard confirmation when the draft has edits.
+ */
+const EmployeeCreateDialog = ({
+  availablePrincipals,
+  commit,
+  onClose,
+}: {
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
+  readonly commit: CommitCommand;
+  readonly onClose: () => void;
+}) => {
+  const { t } = useModernI18n();
+  const [draft, setDraft] = useState<EmployeeDraft>(emptyDraft);
+  const [submitted, setSubmitted] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [emailTaken, setEmailTaken] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const errors = draftErrors(draft);
 
   /** A dirty draft asks before Escape, the close button or Zrušit drop the typed edits. */
-  const dirty = !sameDraft(draft, employee === null ? emptyDraft : draftFromEmployee(employee));
+  const dirty = !sameDraft(draft, emptyDraft);
   const requestClose = () => {
     if (dirty && !busy) {
       setDiscardOpen(true);
@@ -139,23 +371,14 @@ export const EmployeeFormDialog = ({
       return;
     }
     setSubmitted(true);
-    if (errors.length > 0 || (employee === null && draft.principalRef === undefined)) {
-      return;
-    }
-    // Nothing changed on an existing Employee: there is nothing to save, so the panel just closes.
-    if (employee !== null && sameDraft(draft, draftFromEmployee(employee))) {
-      onClose();
+    if (errors.length > 0 || draft.principalRef === undefined) {
       return;
     }
     setBusy(true);
     setServerError(null);
-    const build =
-      employee === null
-        ? newEmployeeId.pipe(Effect.map((id) => createCommand(id, draft)))
-        : Effect.succeed(updateCommand(employee, draft));
-    const shown = employee === null ? undefined : { ids: [employee.id], patch: listedFieldsOf(draft) };
+    const build = newEmployeeId.pipe(Effect.map((id) => createCommand(id, draft)));
     void browserRuntime.runPromise(
-      commit(build, `${key}.toast.saved`, shown).pipe(
+      commit(build, `${key}.toast.saved`).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -188,7 +411,7 @@ export const EmployeeFormDialog = ({
               type="submit"
               variant="primary"
             >
-              {t(employee === null ? `${key}.form.create` : `${key}.form.save`)}
+              {t(`${key}.form.create`)}
             </Button>
           </div>
         }
@@ -202,7 +425,7 @@ export const EmployeeFormDialog = ({
         open
         resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
-        title={t(employee === null ? `${key}.form.createTitle` : `${key}.form.editTitle`)}
+        title={t(`${key}.form.createTitle`)}
       >
         <form
           className="flex flex-col gap-200 py-200"
@@ -219,98 +442,21 @@ export const EmployeeFormDialog = ({
               {serverError}
             </StatusText>
           )}
-          <SelectTemplate
+          <EmployeeFields
+            availablePrincipals={availablePrincipals}
             disabled={busy}
-            items={principalOptions.map(({ displayName, principalRef }) => ({
-              displayValue: displayName,
-              label: displayName,
-              value: principalRef.principalId,
-            }))}
-            label={t(`${key}.form.principal`)}
-            labelProps={selectLabelProps}
-            name="principalId"
-            onValueChange={({ value }) => {
-              const person = availablePrincipals.find(({ principalRef }) => principalRef.principalId === value[0]);
-              if (person !== undefined) {
-                set({
-                  fullName: draft.fullName.trim() === '' ? person.displayName : draft.fullName,
-                  principalRef: person.principalRef,
-                });
+            draft={draft}
+            emailTaken={emailTaken}
+            employee={null}
+            onBlur={noop}
+            onChange={(patch) => {
+              if (patch.email !== undefined) {
+                setEmailTaken(false);
               }
+              setDraft((current) => ({ ...current, ...patch }));
             }}
-            placeholder={t(selectPlaceholder)}
-            value={draft.principalRef === undefined ? [] : [draft.principalRef.principalId]}
+            showErrors={submitted}
           />
-          {submitted && employee === null && draft.principalRef === undefined && (
-            <StatusText role="alert" status="error">
-              {t(`${key}.errors.principal`)}
-            </StatusText>
-          )}
-          <p className="text-sm text-fg-secondary">{t(`${key}.form.principalHelp`)}</p>
-          <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
-            {t(`${key}.form.managePeople`)}
-          </a>
-          <FormInput
-            autoComplete="off"
-            id="employee-full-name"
-            label={t(`${key}.form.fullName`)}
-            name="fullName"
-            onChange={(event) => set({ fullName: event.target.value })}
-            required
-            value={draft.fullName}
-            {...fieldStatus('fullName')}
-          />
-          <FormInput
-            autoComplete="email"
-            id="employee-email"
-            label={t(`${key}.form.email`)}
-            name="email"
-            onChange={(event) => {
-              setEmailTaken(false);
-              set({ email: event.target.value });
-            }}
-            required
-            type="email"
-            value={draft.email}
-            {...emailStatus}
-          />
-          <FormInput
-            autoComplete="tel"
-            id="employee-phone"
-            label={t(`${key}.form.phone`)}
-            name="phone"
-            onChange={(event) => set({ phone: event.target.value })}
-            type="tel"
-            value={draft.phone}
-            {...fieldStatus('phone')}
-          />
-          <SelectTemplate
-            items={roleItems}
-            label={t(`${key}.form.role`)}
-            labelProps={selectLabelProps}
-            name="role"
-            onValueChange={(details) => {
-              const next = roleFromValue(details.value[0]);
-              if (next !== null) {
-                set({ role: next });
-              }
-            }}
-            placeholder={t(selectPlaceholder)}
-            value={[draft.role]}
-          />
-          <FormInput
-            autoComplete="off"
-            id="employee-department"
-            label={t(`${key}.form.department`)}
-            name="department"
-            onChange={(event) => set({ department: event.target.value })}
-            required
-            value={draft.department}
-            {...fieldStatus('department')}
-          />
-          <Switch checked={draft.active} onCheckedChange={(checked) => set({ active: checked })}>
-            {t(`${key}.form.active`)}
-          </Switch>
         </form>
       </SidePanel>
       <Dialog
@@ -337,6 +483,34 @@ export const EmployeeFormDialog = ({
     </>
   );
 };
+
+/** Create (employee is null) or edit one Employee in a right-hand panel. */
+export const EmployeeFormDialog = ({
+  autosaveCommit,
+  availablePrincipals,
+  commit,
+  employee,
+  onClose,
+  revision,
+}: {
+  readonly autosaveCommit: AutosaveCommand;
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
+  readonly commit: CommitCommand;
+  readonly employee: Employee | null;
+  readonly onClose: () => void;
+  readonly revision: number;
+}) =>
+  employee === null ? (
+    <EmployeeCreateDialog availablePrincipals={availablePrincipals} commit={commit} onClose={onClose} />
+  ) : (
+    <EmployeeEditPanel
+      autosaveCommit={autosaveCommit}
+      availablePrincipals={availablePrincipals}
+      employee={employee}
+      onClose={onClose}
+      revision={revision}
+    />
+  );
 
 /** Bulk department change: one text field applied to every selected Employee. */
 export const BulkDepartmentDialog = ({

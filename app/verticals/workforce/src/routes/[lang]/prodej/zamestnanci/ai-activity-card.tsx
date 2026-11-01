@@ -1,7 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { EmptyState, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { useEffect } from 'react';
 import type { ComponentProps } from 'react';
@@ -63,11 +62,6 @@ const noEntries: readonly AiActivityEntry[] = [];
 export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: string }) => {
   const { language, t } = useModernI18n();
   const feed = usePageData(aiActivityData, legalEntityId);
-  // A refresh keeps the current entries on screen until the new read settles.
-  const refresh = () => {
-    browserRuntime.runFork(aiActivityData.refresh(legalEntityId));
-  };
-
   // Delay the first tick; each later tick starts a read without waiting for the previous read.
   // Page-data owns in-flight reads, so unmount interrupts the ticker while a started read may settle.
   useEffect(() => {
@@ -94,21 +88,16 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
   return (
     <SectionCard
       actions={
-        <>
-          {feed.state === 'ready' && (
-            <>
-              <Badge size="sm" variant="success">
-                {t(`${key}.executed`, { count: executed })}
-              </Badge>
-              <Badge size="sm" variant="danger">
-                {t(`${key}.denied`, { count: denied })}
-              </Badge>
-            </>
-          )}
-          <Button icon="icon-[mdi--refresh]" onClick={refresh} size="sm" theme="outlined" variant="secondary">
-            {t(`${key}.refresh`)}
-          </Button>
-        </>
+        feed.state === 'ready' ? (
+          <>
+            <Badge size="sm" variant="success">
+              {t(`${key}.executed`, { count: executed })}
+            </Badge>
+            <Badge size="sm" variant="danger">
+              {t(`${key}.denied`, { count: denied })}
+            </Badge>
+          </>
+        ) : undefined
       }
       title={t(`${key}.title`)}
     >
