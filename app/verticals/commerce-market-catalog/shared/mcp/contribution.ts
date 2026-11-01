@@ -79,6 +79,7 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
         en: 'Eligible market combinations',
       },
     },
+    'market-administration': 'hidden',
     'market-history': {
       title: {
         cs: 'Historie obchodního trhu',

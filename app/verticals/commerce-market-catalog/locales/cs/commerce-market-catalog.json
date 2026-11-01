@@ -16,6 +16,245 @@
     "role": "commerce-market-catalog",
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
     "title": "Commerce Market Catalog Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu."
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "eshops": {
+        "title": "E-shopy",
+        "description": "Vaše e-shopy a trhy, na kterých prodávají."
+      },
+      "marketDetail": {
+        "title": "Trh",
+        "description": "Definice, e-shopy, sortiment a ceník jednoho trhu."
+      }
+    },
+    "eshops": {
+      "loading": "Načítám e-shopy a trhy…",
+      "loadFailed": "E-shopy a trhy se nepodařilo načíst.",
+      "forbidden": "K e-shopům a trhům nemáte přístup.",
+      "retry": "Zkusit znovu",
+      "unnamed": "E-shop {{position}}",
+      "open": "Otevřít e-shop",
+      "channels": "Kanály: {{channels}}",
+      "noMarkets": "Tento e-shop zatím neprodává na žádném trhu.",
+      "noEshops": "Zatím nemáte žádný registrovaný e-shop.",
+      "storefrontsUnavailable": "Seznam e-shopů je teď nedostupný, trhy proto zobrazujeme bez nich.",
+      "newMarket": "Nový trh",
+      "unassigned": {
+        "title": "Trhy bez e-shopu",
+        "empty": "Všechny trhy už prodávají v některém e-shopu."
+      },
+      "storefrontLifecycle": {
+        "DRAFT": "Rozpracovaný",
+        "ACTIVE": "Aktivní",
+        "SUSPENDED": "Pozastavený",
+        "RETIRED": "Vyřazený"
+      }
+    },
+    "market": {
+      "lifecycle": {
+        "ACTIVE": "Aktivní",
+        "SUSPENDED": "Pozastavený",
+        "RETIRED": "Vyřazený"
+      },
+      "noPriceList": "bez ceníku",
+      "chipLabel": "Trh {{code}}: {{details}}"
+    },
+    "form": {
+      "code": "Kód trhu",
+      "codeHelp": "Velká písmena, číslice a pomlčky, například AKROS-SK.",
+      "codeError": "Zadejte kód o 2 až 64 znacích: velká písmena, číslice, pomlčky.",
+      "purpose": "Název trhu",
+      "purposeError": "Zadejte název trhu (nejvýše 500 znaků).",
+      "seller": "Prodávající",
+      "sellerValue": "Přihlášená společnost",
+      "channels": "Prodejní kanály",
+      "channelB2C": "B2C – koncoví zákazníci",
+      "channelB2B": "B2B – firemní zákazníci",
+      "channelsError": "Vyberte alespoň jeden prodejní kanál.",
+      "jurisdictionKind": "Druh území",
+      "jurisdictionKindCOUNTRY": "Země",
+      "jurisdictionKindREGION": "Region",
+      "jurisdictionKindJURISDICTION": "Jurisdikce",
+      "jurisdictions": "Území",
+      "jurisdictionsHelp": "Kódy oddělené čárkou, například CZ nebo EU.",
+      "jurisdictionsError": "Zadejte alespoň jeden kód území (2 až 40 znaků).",
+      "locales": "Jazyky",
+      "localesHelp": "Kódy jazyků oddělené čárkou; první je hlavní jazyk e-shopu, například sk nebo cs, en.",
+      "localesError": "Zadejte platné kódy jazyků, například cs, sk nebo en-GB.",
+      "validFrom": "Platí od",
+      "validFromHelp": "Nevyplněno = hned.",
+      "validFromError": "Zadejte platné datum.",
+      "validTo": "Platí do",
+      "validToHelp": "Nevyplněno = bez omezení.",
+      "validToError": "Konec platnosti musí být po jejím začátku.",
+      "launchNow": "Spustit trh hned",
+      "pricingTitle": "Sortiment a ceník",
+      "currency": "Měna",
+      "exchangeRate": "Kurz k české koruně",
+      "exchangeRateHelp": "Cena v měně trhu za 1 Kč, například 0,04 pro euro.",
+      "exchangeRateError": "Zadejte kladný kurz s nejvýše 8 desetinnými místy.",
+      "rounding": "Zaokrouhlení cen",
+      "roundingHelp": "V setinách měny: 100 = na celé koruny, 10 = na 0,10 €.",
+      "roundingError": "Zadejte celé číslo od 1 do 100 000.",
+      "offerMode": "Nabídka výrobků",
+      "offerModeWHOLE_CATALOGUE": "Celý katalog kromě vyřazených výrobků",
+      "offerModeSELECTED_PRODUCTS": "Jen vybrané výrobky",
+      "reason": "Důvod změny",
+      "reasonError": "Uveďte důvod (nejvýše 500 znaků).",
+      "cancel": "Zrušit",
+      "saving": "Ukládám…"
+    },
+    "create": {
+      "title": "Nový trh",
+      "description": "Trh určuje, komu, kde, v jakém jazyce a za jaké ceny vaše e-shopy prodávají.",
+      "submit": "Založit trh",
+      "reason": "Založení trhu {{code}} v přehledu e-shopů",
+      "created": "Trh {{code}} je založen.",
+      "createdWithoutPricing": "Trh {{code}} je založen, ceník se ale nepodařilo uložit. Doplňte ho v detailu trhu.",
+      "openMarket": "Otevřít trh"
+    },
+    "failures": {
+      "conflict": "Trh se mezitím změnil. Údaje se načetly znovu, zkuste to prosím ještě jednou.",
+      "forbidden": "K této změně nemáte oprávnění.",
+      "invalid": "Údaje nejsou platné. Zkontrolujte prosím formulář.",
+      "rejected": "Změnu nelze v současném stavu trhu provést.",
+      "unavailable": "Služba je teď nedostupná. Zkuste to prosím za chvíli."
+    },
+    "detail": {
+      "back": "Zpět na e-shopy",
+      "loading": "Načítám trh…",
+      "notFound": "Trh neexistuje nebo k němu nemáte přístup.",
+      "loadFailed": "Trh se nepodařilo načíst.",
+      "edit": "Upravit",
+      "activate": "Aktivovat",
+      "suspend": "Pozastavit",
+      "retire": {
+        "title": "Vyřadit trh {{code}}?",
+        "description": "Vyřazení je nevratné: trh přestane prodávat a nepůjde znovu aktivovat.",
+        "impactLoading": "Ověřuji dopad vyřazení…",
+        "impactClear": "Trh se nikde aktivně nepoužívá. Na trh dál odkazuje {{retained}} historických záznamů.",
+        "impactBlocked": "Trh se stále aktivně používá ({{blocking}}× jako výchozí trh nebo v otevřených nabídkách). Vyřazení selže, dokud tato použití nezměníte.",
+        "impactUnavailable": "Dopad vyřazení teď nelze ověřit. Ověří se během zpracování a pokud trh něco blokuje, vyřazení selže.",
+        "typeCode": "Pro potvrzení napište kód trhu {{code}}",
+        "reason": "Důvod vyřazení",
+        "confirm": "Vyřadit trh",
+        "requested": "Vyřazení trhu {{code}} probíhá.",
+        "pending": "Vyřazení trhu probíhá: {{stage}}. Stav se aktualizuje sám.",
+        "completed": "Trh je vyřazen.",
+        "failed": "Poslední pokus o vyřazení selhal: {{reason}}.",
+        "stage": {
+          "REQUESTED": "čeká na zpracování",
+          "RESERVATION_REQUESTED": "ověřuje se dopad",
+          "RESERVED": "dopad je ověřen",
+          "COMMIT_PENDING": "dokončuje se",
+          "RELEASE_PENDING": "ruší se rozpracované vyřazení"
+        },
+        "reasons": {
+          "replacement_impact_unresolved": "trh se stále používá jako výchozí trh nebo v otevřených nabídkách",
+          "impact_assessment_stale": "dopad vyřazení se mezitím změnil",
+          "impact_assessment_rejected": "kontrola dopadu vyřazení byla odmítnuta",
+          "impact_assessment_unavailable": "dopad vyřazení nebylo možné ověřit",
+          "revision_conflict": "trh se mezitím změnil",
+          "invalid_lifecycle_transition": "trh v tomto stavu vyřadit nelze"
+        }
+      },
+      "purpose": "Název",
+      "channels": "Kanály",
+      "locales": "Jazyky",
+      "jurisdictions": "Území",
+      "period": "Platnost",
+      "periodOpen": "od {{from}}, bez omezení",
+      "periodBounded": "od {{from}} do {{to}}",
+      "notInForce": "Tato definice teď neplatí.",
+      "revisions": {
+        "title": "Revize",
+        "revision": "Revize {{revision}}",
+        "current": "platná",
+        "created": "Založení trhu",
+        "changed": "Změněno: {{changes}}",
+        "unchanged": "Bez změny definice",
+        "change": {
+          "channels": "kanály",
+          "jurisdictions": "území",
+          "lifecycle": "stav",
+          "locales": "jazyky",
+          "period": "platnost",
+          "purpose": "název"
+        }
+      },
+      "storefronts": {
+        "title": "E-shopy",
+        "empty": "Trh zatím neprodává v žádném e-shopu.",
+        "associate": "Přiřadit e-shop",
+        "associateTitle": "Přiřadit trh {{code}} k e-shopu",
+        "storefront": "E-shop",
+        "channel": "Kanál",
+        "since": "Prodává od {{from}}",
+        "until": "do {{to}}",
+        "revise": "Upravit",
+        "reviseTitle": "Upravit přiřazení k e-shopu {{name}}",
+        "remove": "Odebrat",
+        "removeTitle": "Odebrat trh z e-shopu {{name}}?",
+        "removeDescription": "E-shop na tomto trhu přestane prodávat.",
+        "noChoices": "Žádný e-shop nesdílí s tímto trhem prodejní kanál.",
+        "associated": "Trh prodává v e-shopu {{name}}.",
+        "revised": "Přiřazení k e-shopu {{name}} je upraveno.",
+        "removed": "Trh už v e-shopu {{name}} neprodává.",
+        "associateReason": "Přiřazení trhu {{code}} k e-shopu {{name}}",
+        "reviseReason": "Úprava přiřazení trhu {{code}} k e-shopu {{name}}",
+        "removeReason": "Odebrání trhu {{code}} z e-shopu {{name}}",
+        "provenance": "Administrace e-shopů",
+        "save": "Uložit",
+        "submit": "Přiřadit"
+      },
+      "assortment": {
+        "title": "Sortiment a ceník",
+        "notConfigured": "Trh zatím nemá ceník ani sortiment, e-shop na něm proto nic nenabízí.",
+        "configure": "Nastavit ceník",
+        "edit": "Upravit ceník",
+        "save": "Uložit ceník",
+        "saved": "Ceník trhu {{code}} je uložen.",
+        "summary": "{{currency}}, kurz {{rate}}, zaokrouhlení {{rounding}}",
+        "readOnly": "Ceník a sortiment může měnit jen správce katalogu.",
+        "unavailable": "Ceník a sortiment se nepodařilo načíst.",
+        "exceptions": {
+          "title": "Výjimky v sortimentu",
+          "wholeHint": "Trh nabízí celý katalog. Vypnuté výrobky v něm nabízeny nejsou.",
+          "selectedHint": "Trh nabízí jen zapnuté výrobky.",
+          "empty": "Trh nemá žádné výjimky.",
+          "offered": "Nabízen",
+          "notOffered": "Nenabízen",
+          "search": "Najít výrobek",
+          "searchPlaceholder": "Název nebo kód výrobku",
+          "noResults": "Žádný výrobek neodpovídá hledání.",
+          "withdraw": "Vyřadit z trhu",
+          "add": "Nabízet na trhu",
+          "offeredSaved": "{{name}} je na trhu nabízen.",
+          "withdrawnSaved": "{{name}} už na trhu nabízen není.",
+          "previous": "Předchozí",
+          "next": "Další",
+          "page": "{{from}}–{{to}} z {{total}}"
+        }
+      },
+      "lifecycle": {
+        "activateTitle": "Aktivovat trh {{code}}?",
+        "activateDescription": "E-shopy na trhu začnou znovu prodávat.",
+        "activateConfirm": "Aktivovat trh",
+        "activated": "Trh {{code}} je aktivní.",
+        "activateReason": "Aktivace trhu",
+        "suspendTitle": "Pozastavit trh {{code}}?",
+        "suspendDescription": "E-shopy na trhu přestanou prodávat, dokud trh znovu neaktivujete.",
+        "suspendConfirm": "Pozastavit trh",
+        "suspended": "Trh {{code}} je pozastaven.",
+        "suspendReason": "Pozastavení trhu"
+      },
+      "editDialog": {
+        "title": "Upravit trh {{code}}",
+        "description": "Úprava uloží novou revizi definice trhu. Kód trhu a prodávající se nemění.",
+        "save": "Uložit revizi",
+        "saved": "Uložena nová revize trhu {{code}}."
+      }
+    },
+    "dateLocale": "cs-CZ"
   }
 }

@@ -12,7 +12,7 @@ import type {
   MarketAffectedUseAssessmentResponse,
   ReserveMarketRetirementPayload,
 } from '@app/customer-market-retirement-contracts';
-import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import { ActionRuntime, ContextAccess, ReadRuntime } from '@app/core-runtime';
 import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { GatewayContextResponseSchema } from '@app/shared-contracts';
 import { and, eq, sql } from 'drizzle-orm';
@@ -42,10 +42,12 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { allowTenantPermissions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { injectStatementFaults } from '../../../../packages/core-runtime/tests/support/database-faults.ts';
 import type { MarketRetirementOutcome } from '../../shared/domain/market-retirement-intent.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-market-catalog-market-retirement-requested-v1.ts';
 import { retireMarketAction } from '../../src/actions/retire-market.action.ts';
+import { marketAdministrationRead } from '../../src/api/market-administration.read.ts';
 import { marketRetirementStatusRead } from '../../src/api/market-retirement-status.read.ts';
 import { commerceMarketCatalogRelations, marketRetirementIntents } from '../../src/database/schema.ts';
 import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
@@ -497,6 +499,19 @@ it.live(
             });
           }).pipe(Effect.provide(fixture.layer));
 
+        /** The staff screen's view: the aggregate revision and the newest retirement, found without its intent id. */
+        const administration = (marketRef: MarketRef) =>
+          Effect.gen(function* readAdministration() {
+            const runtime = yield* ReadRuntime;
+            const result = yield* runtime.runRead({
+              input: { marketRef },
+              principal,
+              registration: marketAdministrationRead,
+              transport: { correlationId: 'market-administration' },
+            });
+            return result.market;
+          }).pipe(Effect.provideService(ContextAccess, allowTenantPermissions), Effect.provide(fixture.layer));
+
         /** Delivers the exact committed self-outbox request to the owner worker, as Core's claim would. */
         const deliver = Effect.fnUntraced(function* deliver(
           marketId: string,
@@ -589,6 +604,10 @@ it.live(
         const successIntentId = intentIdOf(pending);
         expect(yield* lifecycles(marketAdmin, fixture.tenantId, success.marketId)).toEqual(['ACTIVE']);
         expect(yield* status(success.marketRef, successIntentId)).toMatchObject({ outcome: 'pending' });
+        expect(yield* administration(success.marketRef)).toMatchObject({
+          retirement: { outcome: 'pending', retirementIntentId: successIntentId },
+          revision: 1,
+        });
         const successContext = makeCustomerContext({ assessment: assessment(), gatewayExpiresAt });
         const successWorker = yield* deliver(success.marketId, successContext);
         yield* successWorker;
@@ -600,6 +619,10 @@ it.live(
           lifecycle: 'RETIRED',
           outcome: 'completed',
           retirementIntentId: successIntentId,
+          revision: 2,
+        });
+        expect(yield* administration(success.marketRef)).toMatchObject({
+          retirement: { outcome: 'completed', retirementIntentId: successIntentId },
           revision: 2,
         });
         const [completion] = yield* retiredEvents(success.marketId);

@@ -16,6 +16,245 @@
     "role": "commerce-market-catalog",
     "routeSurface": "Route surface owned by this vertical.",
     "title": "Commerce Market Catalog Vertical",
-    "widgetBody": "Owns a vertical route surface."
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "eshops": {
+        "title": "E-shops",
+        "description": "Your e-shops and the markets they sell in."
+      },
+      "marketDetail": {
+        "title": "Market",
+        "description": "Definition, e-shops, assortment and price list of one market."
+      }
+    },
+    "eshops": {
+      "loading": "Loading e-shops and markets…",
+      "loadFailed": "E-shops and markets could not be loaded.",
+      "forbidden": "You have no access to e-shops and markets.",
+      "retry": "Try again",
+      "unnamed": "E-shop {{position}}",
+      "open": "Open e-shop",
+      "channels": "Channels: {{channels}}",
+      "noMarkets": "This e-shop does not sell in any market yet.",
+      "noEshops": "You have no registered e-shop yet.",
+      "storefrontsUnavailable": "The e-shop list is unavailable right now, so markets are shown without it.",
+      "newMarket": "New market",
+      "unassigned": {
+        "title": "Markets without an e-shop",
+        "empty": "Every market already sells in an e-shop."
+      },
+      "storefrontLifecycle": {
+        "DRAFT": "Draft",
+        "ACTIVE": "Active",
+        "SUSPENDED": "Suspended",
+        "RETIRED": "Retired"
+      }
+    },
+    "market": {
+      "lifecycle": {
+        "ACTIVE": "Active",
+        "SUSPENDED": "Suspended",
+        "RETIRED": "Retired"
+      },
+      "noPriceList": "no price list",
+      "chipLabel": "Market {{code}}: {{details}}"
+    },
+    "form": {
+      "code": "Market code",
+      "codeHelp": "Capital letters, digits and hyphens, for example AKROS-SK.",
+      "codeError": "Enter a code of 2 to 64 characters: capital letters, digits, hyphens.",
+      "purpose": "Market name",
+      "purposeError": "Enter the market name (at most 500 characters).",
+      "seller": "Seller",
+      "sellerValue": "Signed-in company",
+      "channels": "Sales channels",
+      "channelB2C": "B2C – consumers",
+      "channelB2B": "B2B – business customers",
+      "channelsError": "Select at least one sales channel.",
+      "jurisdictionKind": "Territory type",
+      "jurisdictionKindCOUNTRY": "Country",
+      "jurisdictionKindREGION": "Region",
+      "jurisdictionKindJURISDICTION": "Jurisdiction",
+      "jurisdictions": "Territories",
+      "jurisdictionsHelp": "Comma-separated codes, for example CZ or EU.",
+      "jurisdictionsError": "Enter at least one territory code (2 to 40 characters).",
+      "locales": "Languages",
+      "localesHelp": "Comma-separated language codes; the first one is the e-shop's main language, for example sk or cs, en.",
+      "localesError": "Enter valid language codes, for example cs, sk or en-GB.",
+      "validFrom": "Valid from",
+      "validFromHelp": "Empty = now.",
+      "validFromError": "Enter a valid date.",
+      "validTo": "Valid until",
+      "validToHelp": "Empty = open-ended.",
+      "validToError": "The end must be after the start.",
+      "launchNow": "Launch the market now",
+      "pricingTitle": "Assortment and price list",
+      "currency": "Currency",
+      "exchangeRate": "Rate to the Czech koruna",
+      "exchangeRateHelp": "Price in the market currency per CZK 1, for example 0.04 for the euro.",
+      "exchangeRateError": "Enter a positive rate with at most 8 decimal places.",
+      "rounding": "Price rounding",
+      "roundingHelp": "In hundredths of the currency: 100 = whole units, 10 = to €0.10.",
+      "roundingError": "Enter a whole number from 1 to 100,000.",
+      "offerMode": "Product offer",
+      "offerModeWHOLE_CATALOGUE": "Whole catalogue except withdrawn products",
+      "offerModeSELECTED_PRODUCTS": "Selected products only",
+      "reason": "Reason for the change",
+      "reasonError": "Give a reason (at most 500 characters).",
+      "cancel": "Cancel",
+      "saving": "Saving…"
+    },
+    "create": {
+      "title": "New market",
+      "description": "A market defines to whom, where, in which language and at which prices your e-shops sell.",
+      "submit": "Create market",
+      "reason": "Market {{code}} created in the e-shop overview",
+      "created": "Market {{code}} has been created.",
+      "createdWithoutPricing": "Market {{code}} has been created, but its price list could not be saved. Complete it on the market detail.",
+      "openMarket": "Open market"
+    },
+    "failures": {
+      "conflict": "The market changed in the meantime. The data was reloaded, please try again.",
+      "forbidden": "You are not allowed to make this change.",
+      "invalid": "The data is not valid. Please check the form.",
+      "rejected": "This change is not possible in the market's current state.",
+      "unavailable": "The service is unavailable right now. Please try again shortly."
+    },
+    "detail": {
+      "back": "Back to e-shops",
+      "loading": "Loading the market…",
+      "notFound": "The market does not exist or you have no access to it.",
+      "loadFailed": "The market could not be loaded.",
+      "edit": "Edit",
+      "activate": "Activate",
+      "suspend": "Suspend",
+      "retire": {
+        "title": "Retire market {{code}}?",
+        "description": "Retirement cannot be undone: the market stops selling and cannot be activated again.",
+        "impactLoading": "Checking the impact of the retirement…",
+        "impactClear": "The market is not in active use anywhere. {{retained}} historical records keep referring to it.",
+        "impactBlocked": "The market is still in active use ({{blocking}}× as a default market or in open proposals). The retirement fails until these uses change.",
+        "impactUnavailable": "The impact cannot be checked right now. It is checked during processing, and the retirement fails if anything blocks it.",
+        "typeCode": "To confirm, type the market code {{code}}",
+        "reason": "Reason for the retirement",
+        "confirm": "Retire market",
+        "requested": "Market {{code}} is being retired.",
+        "pending": "The market is being retired: {{stage}}. The status updates by itself.",
+        "completed": "The market is retired.",
+        "failed": "The last retirement attempt failed: {{reason}}.",
+        "stage": {
+          "REQUESTED": "waiting to be processed",
+          "RESERVATION_REQUESTED": "checking the impact",
+          "RESERVED": "impact checked",
+          "COMMIT_PENDING": "finishing",
+          "RELEASE_PENDING": "cancelling the unfinished retirement"
+        },
+        "reasons": {
+          "replacement_impact_unresolved": "the market is still used as a default market or in open proposals",
+          "impact_assessment_stale": "the impact changed in the meantime",
+          "impact_assessment_rejected": "the impact check was rejected",
+          "impact_assessment_unavailable": "the impact could not be checked",
+          "revision_conflict": "the market changed in the meantime",
+          "invalid_lifecycle_transition": "the market cannot be retired in its current state"
+        }
+      },
+      "purpose": "Name",
+      "channels": "Channels",
+      "locales": "Languages",
+      "jurisdictions": "Territories",
+      "period": "Validity",
+      "periodOpen": "from {{from}}, open-ended",
+      "periodBounded": "from {{from}} until {{to}}",
+      "notInForce": "This definition is not in force right now.",
+      "revisions": {
+        "title": "Revisions",
+        "revision": "Revision {{revision}}",
+        "current": "in force",
+        "created": "Market created",
+        "changed": "Changed: {{changes}}",
+        "unchanged": "No definition change",
+        "change": {
+          "channels": "channels",
+          "jurisdictions": "territories",
+          "lifecycle": "status",
+          "locales": "languages",
+          "period": "validity",
+          "purpose": "name"
+        }
+      },
+      "storefronts": {
+        "title": "E-shops",
+        "empty": "The market does not sell in any e-shop yet.",
+        "associate": "Assign e-shop",
+        "associateTitle": "Assign market {{code}} to an e-shop",
+        "storefront": "E-shop",
+        "channel": "Channel",
+        "since": "Selling since {{from}}",
+        "until": "until {{to}}",
+        "revise": "Edit",
+        "reviseTitle": "Edit the assignment to {{name}}",
+        "remove": "Remove",
+        "removeTitle": "Remove the market from {{name}}?",
+        "removeDescription": "The e-shop stops selling in this market.",
+        "noChoices": "No e-shop shares a sales channel with this market.",
+        "associated": "The market now sells in {{name}}.",
+        "revised": "The assignment to {{name}} has been updated.",
+        "removed": "The market no longer sells in {{name}}.",
+        "associateReason": "Market {{code}} assigned to {{name}}",
+        "reviseReason": "Assignment of market {{code}} to {{name}} updated",
+        "removeReason": "Market {{code}} removed from {{name}}",
+        "provenance": "E-shop administration",
+        "save": "Save",
+        "submit": "Assign"
+      },
+      "assortment": {
+        "title": "Assortment and price list",
+        "notConfigured": "The market has no price list or assortment yet, so the e-shop offers nothing in it.",
+        "configure": "Set up price list",
+        "edit": "Edit price list",
+        "save": "Save price list",
+        "saved": "The price list of market {{code}} has been saved.",
+        "summary": "{{currency}}, rate {{rate}}, rounding {{rounding}}",
+        "readOnly": "Only a catalogue manager can change the price list and assortment.",
+        "unavailable": "The price list and assortment could not be loaded.",
+        "exceptions": {
+          "title": "Assortment exceptions",
+          "wholeHint": "The market offers the whole catalogue. Products switched off are not offered in it.",
+          "selectedHint": "The market offers only the products switched on.",
+          "empty": "The market has no exceptions.",
+          "offered": "Offered",
+          "notOffered": "Not offered",
+          "search": "Find a product",
+          "searchPlaceholder": "Product name or code",
+          "noResults": "No product matches the search.",
+          "withdraw": "Withdraw from market",
+          "add": "Offer in market",
+          "offeredSaved": "{{name}} is offered in the market.",
+          "withdrawnSaved": "{{name}} is no longer offered in the market.",
+          "previous": "Previous",
+          "next": "Next",
+          "page": "{{from}}–{{to}} of {{total}}"
+        }
+      },
+      "lifecycle": {
+        "activateTitle": "Activate market {{code}}?",
+        "activateDescription": "E-shops start selling in the market again.",
+        "activateConfirm": "Activate market",
+        "activated": "Market {{code}} is active.",
+        "activateReason": "Market activated",
+        "suspendTitle": "Suspend market {{code}}?",
+        "suspendDescription": "E-shops stop selling in the market until you activate it again.",
+        "suspendConfirm": "Suspend market",
+        "suspended": "Market {{code}} is suspended.",
+        "suspendReason": "Market suspended"
+      },
+      "editDialog": {
+        "title": "Edit market {{code}}",
+        "description": "Editing saves a new revision of the market definition. The market code and seller do not change.",
+        "save": "Save revision",
+        "saved": "A new revision of market {{code}} has been saved."
+      }
+    },
+    "dateLocale": "en-GB"
   }
 }

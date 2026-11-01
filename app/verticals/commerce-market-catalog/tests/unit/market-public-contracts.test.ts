@@ -348,6 +348,7 @@ describe('Commerce Market public contracts', () => {
     expect(Object.keys(commerceMarketCatalogManifest.publicSurface.api)).toEqual([
       'current-market-catalog',
       'eligible-market-tuples',
+      'market-administration',
       'market-history',
       'market-retirement-status',
       'pricing-current-market-evidence',
@@ -604,7 +605,10 @@ describe('Commerce Market public contracts', () => {
     expect(commerceMarketCatalogApiContract.ownerId).toBe('commerce-market-catalog');
     expect(commerceMarketCatalogManifest.module.id).toBe('commerce.market-catalog');
     expect(commerceMarketCatalogRegistration.moduleId).toBe(commerceMarketCatalogManifest.module.id);
-    expect(Object.keys(commerceMarketCatalogManifest.publicSurface.components)).toEqual([]);
+    expect(Object.keys(commerceMarketCatalogManifest.publicSurface.components)).toEqual([
+      'page-eshops',
+      'page-market-detail',
+    ]);
     expect(commerceMarketCatalogManifest.publicSurface.shellContributions.publicComponents).toEqual([]);
     for (const action of commerceMarketCatalogManifest.publicSurface.actions) {
       expect('handler' in action).toBe(false);

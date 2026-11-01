@@ -13,6 +13,7 @@ import { AssociateStorefrontActionApi } from './apis/associate-storefront-action
 import { CreateMarketActionApi } from './apis/create-market-action.ts';
 import { CurrentMarketCatalogApi } from './apis/current-market-catalog.ts';
 import { EligibleMarketTuplesApi } from './apis/eligible-market-tuples.ts';
+import { MarketAdministrationApi } from './apis/market-administration.ts';
 import { MarketHistoryApi } from './apis/market-history.ts';
 import { MarketRetirementStatusApi } from './apis/market-retirement-status.ts';
 import { PricingCurrentMarketEvidenceApi } from './apis/pricing-current-market-evidence.ts';
@@ -56,6 +57,7 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(CreateMarketActionApi)
   .addHttpApi(CurrentMarketCatalogApi)
   .addHttpApi(EligibleMarketTuplesApi)
+  .addHttpApi(MarketAdministrationApi)
   .addHttpApi(MarketHistoryApi)
   .addHttpApi(MarketRetirementStatusApi)
   .addHttpApi(PricingCurrentMarketEvidenceApi)

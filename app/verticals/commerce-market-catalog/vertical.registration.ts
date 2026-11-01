@@ -35,6 +35,7 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
       // <generated-module-registration-apis>
       'current-market-catalog': () => import('./src/api/current-market-catalog-client.ts'),
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
+      'market-administration': () => import('./src/api/market-administration-client.ts'),
       'market-history': () => import('./src/api/market-history-client.ts'),
       'market-retirement-status': () => import('./src/api/market-retirement-status-client.ts'),
       'pricing-current-market-evidence': () => import('./src/api/pricing-current-market-evidence-client.ts'),
@@ -48,6 +49,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-eshops': () => import('./src/routes/[lang]/prodej/eshopy/page.tsx'),
+      'page-market-detail': () => import('./src/routes/[lang]/prodej/eshopy/trhy/[marketId]/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {

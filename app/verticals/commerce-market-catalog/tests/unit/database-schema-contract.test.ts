@@ -256,4 +256,21 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain('commerce_market_catalog.transition_market_lifecycle(p_tenant_id, p_legal_entity_id');
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
+
+  it('exposes the Market administration state only through one scoped owner routine', () => {
+    const migration = readFileSync(
+      new URL('../../drizzle/20261101230822_market-administration-state/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const routine = 'commerce_market_catalog.read_market_administration_state(uuid, uuid, jsonb)';
+    expect(migration).toContain('security definer');
+    expect(migration).toContain('set search_path = pg_catalog, pg_temp');
+    expect(migration).toContain(
+      'perform commerce_market_catalog.assert_operation_scope(p_tenant_id, p_legal_entity_id)',
+    );
+    expect(migration).toContain(`revoke all on function ${routine} from public`);
+    expect(migration).toContain(`grant execute on function ${routine} to ontos_runtime`);
+    expect(migration).toContain('market.selling_legal_entity_id = p_legal_entity_id');
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
 });

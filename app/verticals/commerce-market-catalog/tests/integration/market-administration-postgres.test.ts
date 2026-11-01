@@ -556,6 +556,7 @@ it.live('exposes only the governed mutations, retirement-intent routines, and re
           'associate_storefront(uuid, uuid, jsonb)',
           'create_market(uuid, uuid, jsonb)',
           'read_current_market_catalog(uuid, uuid, jsonb)',
+          'read_market_administration_state(uuid, uuid, jsonb)',
           'read_market_eligibility_snapshot(uuid, jsonb)',
           'read_market_history(uuid, uuid, jsonb)',
           'read_market_retirement_intent(uuid, uuid, jsonb)',

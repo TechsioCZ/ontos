@@ -42,6 +42,7 @@ import { associateStorefrontActionApiLive } from './associate-storefront-action-
 import { createMarketActionApiLive } from './create-market-action-server.ts';
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
+import { marketAdministrationReadApiLive } from './market-administration-read-server.ts';
 import { marketHistoryReadApiLive } from './market-history-read-server.ts';
 import { marketRetirementStatusReadApiLive } from './market-retirement-status-read-server.ts';
 import { pricingCurrentMarketEvidenceReadApiLive } from './pricing-current-market-evidence-read-server.ts';
@@ -169,6 +170,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
     createMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketAdministrationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketRetirementStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     pricingCurrentMarketEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -180,7 +182,10 @@ export const makeCommerceMarketCatalogApiRuntime = (
     suspendMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     verifyMarketEligibilityV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  ).pipe(
+    // Reads that decide owner resource permissions before their transaction (market-administration) use SpiceDB.
+    Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption, ContextAccessLive)),
+  );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(
       Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, databaseIdentitiesLive, compositionSourceLive),
