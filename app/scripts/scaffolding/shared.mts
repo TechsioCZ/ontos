@@ -2,10 +2,17 @@ import { NodePath } from '@effect/platform-node';
 import type { GeneratorCore } from '@modern-js/codesmith';
 import { Effect, FileSystem, Option, Path, Predicate, Result, Schema } from 'effect';
 import { format } from 'oxfmt';
+import { parseSync } from 'oxc-parser';
+import type { Expression, Program } from 'oxc-parser';
 import oxfmtConfig from '../../oxfmt.config.ts';
 
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/modules/manifest-constants.ts';
 import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
+
+const CORE_RUNTIME_PACKAGE = '@app/core-runtime';
+const RUNTIME_DECLARATION_FILE = 'vertical.runtime-declaration.ts';
+const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
+const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
 export const ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION = Number.parseInt(ONTOS_MODULE_CONTRACT_SCHEMA_VERSION, 10);
@@ -403,12 +410,18 @@ export interface VerticalMetadata {
   readonly topologyEntry: JsonObject;
 }
 
+export interface ModuleRuntimeDeclarationSource {
+  readonly content: string;
+  readonly path: string;
+}
+
 export interface OntosVerticalMetadata extends VerticalMetadata {
   readonly manifestContent: string;
   readonly manifestPath: string;
   readonly moduleId: string;
   readonly registrationContent: string;
   readonly registrationPath: string;
+  readonly runtimeDeclaration?: ModuleRuntimeDeclarationSource;
 }
 
 const canonicalSlugPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
@@ -1228,6 +1241,398 @@ const readGeneratedModuleOwnerEffect = (
     return { content, moduleId };
   });
 
+interface OwnerSource {
+  readonly program: Program;
+  readonly source: string;
+  readonly valid: boolean;
+}
+const ownerSource = (source: string): OwnerSource => {
+  const parsed = parseSync('owner.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  return { program: parsed.program, source, valid: parsed.errors.length === 0 };
+};
+
+const ownerImport = (source: OwnerSource, binding: string, specifier: string, allowTypeOnly = false): boolean =>
+  source.program.body.filter(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.source.value === specifier &&
+      statement.specifiers.some(
+        (entry) =>
+          entry.type === 'ImportSpecifier' &&
+          entry.local.name === binding &&
+          entry.imported.type === 'Identifier' &&
+          entry.imported.name === binding &&
+          (allowTypeOnly || (statement.importKind !== 'type' && entry.importKind !== 'type')),
+      ),
+  ).length === 1;
+
+const ownerBinding = (source: OwnerSource, name: string) => {
+  const declarations = source.program.body.flatMap((statement) =>
+    statement.type === 'ExportNamedDeclaration' &&
+    statement.declaration?.type === 'VariableDeclaration' &&
+    statement.declaration.kind === 'const'
+      ? statement.declaration.declarations.filter(
+          (declaration) => declaration.id.type === 'Identifier' && declaration.id.name === name,
+        )
+      : [],
+  );
+  return declarations.length === 1 ? declarations[0] : undefined;
+};
+const ownerInitializer = (source: OwnerSource, name: string): Expression | undefined =>
+  ownerBinding(source, name)?.init ?? undefined;
+
+const ownerAnnotation = (source: OwnerSource, name: string, annotation: string): boolean => {
+  const binding = ownerBinding(source, name)?.id;
+  const typed = binding?.type === 'Identifier' ? binding.typeAnnotation : undefined;
+  return (
+    typed !== undefined &&
+    typed !== null &&
+    source.source.slice(typed.start, typed.end).replace(/^:/u, '').replaceAll(/\s+/gu, '').replaceAll('"', "'") ===
+      annotation
+  );
+};
+
+const ownerProperty = (object: Expression | undefined, key: string): Expression | undefined => {
+  if (object?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const properties = object.properties.filter(
+    (property) =>
+      property.type === 'Property' &&
+      !property.computed &&
+      !property.method &&
+      property.kind === 'init' &&
+      property.key.type === 'Identifier' &&
+      property.key.name === key,
+  );
+  const [property] = properties;
+  return properties.length === 1 && property?.type === 'Property' ? property.value : undefined;
+};
+
+const ownerReference = (expression: Expression | undefined, source: OwnerSource, expected: string): boolean =>
+  expression !== undefined &&
+  source.source.slice(expression.start, expression.end).replaceAll(/\s+/gu, '') === expected;
+
+const ownerObjectView = (
+  expression: Expression | undefined,
+  source: OwnerSource,
+  spread: string,
+  keys: readonly string[],
+  optionalKeys: readonly string[] = [],
+): boolean => {
+  if (expression?.type !== 'ObjectExpression') {
+    return false;
+  }
+  const [first, ...properties] = expression.properties;
+  const names = properties.map((property) =>
+    property.type === 'Property' &&
+    !property.computed &&
+    !property.method &&
+    property.kind === 'init' &&
+    property.key.type === 'Identifier'
+      ? property.key.name
+      : undefined,
+  );
+  return (
+    first?.type === 'SpreadElement' &&
+    ownerReference(first.argument, source, spread) &&
+    names.length >= keys.length &&
+    names.every((name) => name !== undefined && [...keys, ...optionalKeys].includes(name)) &&
+    keys.every((key) => names.includes(key)) &&
+    new Set(names).size === names.length
+  );
+};
+
+const ownerCallArgument = (source: OwnerSource, name: string, callee: string): Expression | undefined => {
+  const expression = ownerInitializer(source, name);
+  const first = expression?.type === 'CallExpression' ? expression.arguments[0] : undefined;
+  return expression?.type === 'CallExpression' &&
+    expression.callee.type === 'Identifier' &&
+    expression.callee.name === callee &&
+    expression.arguments.length === 1 &&
+    first?.type !== 'SpreadElement' &&
+    ownerImport(source, callee, CORE_RUNTIME_PACKAGE)
+    ? first
+    : undefined;
+};
+
+/** Upgrades only the genuine generated owner binding; developer layers and handlers remain untouched. */
+export const bindSharedRuntimeWorkerEntry = (source: string, prefix: string): string => {
+  const parsed = ownerSource(source);
+  const expression = ownerInitializer(parsed, 'outboxWorkerEntry');
+  const first = expression?.type === 'CallExpression' ? expression.arguments[0] : undefined;
+  const argument =
+    expression?.type === 'CallExpression' &&
+    expression.callee.type === 'Identifier' &&
+    expression.callee.name === 'defineOutboxWorkerEntry' &&
+    expression.arguments.length === 1 &&
+    first?.type !== 'SpreadElement'
+      ? first
+      : undefined;
+  const full = `${prefix}Registration`;
+  const backend = `${prefix}BackendRegistration`;
+  const owner = ownerProperty(argument, 'ownerRegistration');
+  const genuine = [
+    parsed.valid,
+    ownerImport(parsed, 'defineOutboxWorkerEntry', '@app/core-runtime/outbox/worker'),
+    ownerImport(parsed, 'ultramodernApiMarker', '../../shared/ultramodern-build.ts'),
+    ownerImport(parsed, 'outboxWorkers', '../workers/index.ts'),
+    ownerReference(ownerProperty(argument, 'expectedDeployment'), parsed, 'ultramodernApiMarker'),
+    ownerReference(ownerProperty(argument, 'registrations'), parsed, 'outboxWorkers'),
+  ].every(Boolean);
+  if (!genuine || owner === undefined) {
+    return raiseScaffoldFailure('shared worker entry has no genuine owner constructor binding');
+  }
+  if (ownerReference(owner, parsed, backend) && ownerImport(parsed, backend, '../../vertical.runtime-declaration.ts')) {
+    return source;
+  }
+  if (!ownerReference(owner, parsed, full) || !ownerImport(parsed, full, '../../vertical.registration.ts')) {
+    return raiseScaffoldFailure('shared worker entry has a conflicting owner binding');
+  }
+  const statement = parsed.program.body.find(
+    (candidate) =>
+      candidate.type === 'ImportDeclaration' && candidate.source.value === '../../vertical.registration.ts',
+  );
+  if (statement === undefined) {
+    return raiseScaffoldFailure('shared worker entry is missing its own registration import');
+  }
+  const replacements = [
+    {
+      end: statement.end,
+      start: statement.start,
+      text: `import { ${backend} } from '../../vertical.runtime-declaration.ts';`,
+    },
+    { end: owner.end, start: owner.start, text: backend },
+  ].toSorted((left, right) => right.start - left.start);
+  let result = source;
+  for (const replacement of replacements) {
+    result = `${result.slice(0, replacement.start)}${replacement.text}${result.slice(replacement.end)}`;
+  }
+  return result;
+};
+
+const ownerKeys = (
+  expression: Expression | undefined,
+  keys: readonly string[],
+  optionalKeys: readonly string[] = [],
+): boolean => {
+  if (expression?.type !== 'ObjectExpression') {
+    return false;
+  }
+  const names = expression.properties.map((property) =>
+    property.type === 'Property' &&
+    !property.computed &&
+    !property.method &&
+    property.kind === 'init' &&
+    property.key.type === 'Identifier'
+      ? property.key.name
+      : undefined,
+  );
+  return (
+    names.length >= keys.length &&
+    names.every((name) => name !== undefined && [...keys, ...optionalKeys].includes(name)) &&
+    keys.every((key) => names.includes(key)) &&
+    new Set(names).size === names.length
+  );
+};
+
+const declarationSlot = (content: string, expression: Expression | undefined, start: string, end: string): boolean => {
+  const first = content.indexOf(start);
+  const last = content.indexOf(end);
+  return (
+    expression !== undefined &&
+    first > expression.start &&
+    last > first &&
+    last < expression.end &&
+    first === content.lastIndexOf(start) &&
+    last === content.lastIndexOf(end)
+  );
+};
+
+const validDeclarationImports = (
+  content: string,
+  start: string,
+  end: string,
+  accepts: (entry: string) => boolean,
+): boolean => {
+  const first = content.indexOf(start);
+  const last = content.indexOf(end);
+  if (first === -1 || last < first || first !== content.lastIndexOf(start) || last !== content.lastIndexOf(end)) {
+    return false;
+  }
+  const body = content.slice(first + start.length, last);
+  const parsed = parseSync('imports.ts', body, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  return (
+    parsed.errors.length === 0 &&
+    parsed.program.body.every(
+      (statement) =>
+        statement.type === 'ImportDeclaration' && accepts(body.slice(statement.start, statement.end).trim()),
+    )
+  );
+};
+
+const validSharedDeclarationSlots = (
+  content: string,
+  common: Expression | undefined,
+  declaration: Expression | undefined,
+): boolean => {
+  const surface = ownerProperty(common, 'publicSurface');
+  const slots = [
+    [ownerProperty(surface, 'actions'), MODULE_MANIFEST_ACTION_SLOT_START, MODULE_MANIFEST_ACTION_SLOT_END],
+    [ownerProperty(surface, 'api'), MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END],
+    [
+      ownerProperty(surface, 'operationContracts'),
+      MODULE_MANIFEST_OPERATION_SLOT_START,
+      MODULE_MANIFEST_OPERATION_SLOT_END,
+    ],
+    [
+      ownerProperty(declaration, 'outboxWorkers'),
+      MODULE_REGISTRATION_WORKER_SLOT_START,
+      MODULE_REGISTRATION_WORKER_SLOT_END,
+    ],
+    [ownerProperty(declaration, 'reads'), MODULE_REGISTRATION_READ_SLOT_START, MODULE_REGISTRATION_READ_SLOT_END],
+  ] as const;
+  return (
+    slots.every(([expression, start, end]) =>
+      expression === undefined
+        ? !content.includes(start) && !content.includes(end)
+        : declarationSlot(content, expression, start, end),
+    ) &&
+    validDeclarationImports(
+      content,
+      MODULE_MANIFEST_IMPORT_SLOT_START,
+      MODULE_MANIFEST_IMPORT_SLOT_END,
+      isModuleManifestImport,
+    ) &&
+    validDeclarationImports(
+      content,
+      MODULE_REGISTRATION_IMPORT_SLOT_START,
+      MODULE_REGISTRATION_IMPORT_SLOT_END,
+      isModuleRegistrationImport,
+    )
+  );
+};
+
+const validRuntimeDeclarationViews = (
+  content: string,
+  manifestContent: string,
+  registrationContent: string,
+  prefix: string,
+  moduleId: string | undefined,
+): boolean => {
+  const backend = ownerSource(content);
+  const manifest = ownerSource(manifestContent);
+  const registration = ownerSource(registrationContent);
+  const manifestName = `${prefix}RuntimeManifest`;
+  const declarationName = `${prefix}RuntimeDeclaration`;
+  const fullManifest = ownerCallArgument(manifest, `${prefix}Manifest`, 'defineOntosModuleManifest');
+  const fullRegistration = ownerCallArgument(
+    registration,
+    `${prefix}Registration`,
+    'defineVerticalRuntimeRegistration',
+  );
+  const fullPublicSurface = ownerProperty(fullManifest, 'publicSurface');
+  const backendDeclaration = ownerInitializer(backend, declarationName);
+  const common = ownerInitializer(backend, manifestName);
+  const backendSurface = ownerProperty(common, 'publicSurface');
+  const moduleIdentity = ownerProperty(ownerProperty(common, 'module'), 'id');
+  const facts = [
+    backend.valid,
+    manifest.valid,
+    registration.valid,
+    moduleIdentity !== undefined && moduleIdentity.type === 'Literal' && moduleIdentity.value === moduleId,
+    ownerKeys(common, ['module', 'publicSurface'], ['requirements']),
+    ownerKeys(backendSurface, ['actions', 'api', 'shellContributions'], ['operationContracts']),
+    ownerKeys(backendDeclaration, ['actions', 'manifest', 'outboxWorkers'], ['reads']),
+    validSharedDeclarationSlots(content, common, backendDeclaration),
+    ownerImport(manifest, manifestName, './vertical.runtime-declaration.ts'),
+    ownerImport(registration, declarationName, './vertical.runtime-declaration.ts'),
+    ownerImport(backend, 'VerticalRuntimeRegistrationInput', CORE_RUNTIME_PACKAGE, true),
+    ownerAnnotation(backend, manifestName, "VerticalRuntimeRegistrationInput['manifest']"),
+    ownerAnnotation(backend, declarationName, 'VerticalRuntimeRegistrationInput'),
+    ownerObjectView(fullManifest, manifest, manifestName, ['activation', 'publicSurface']),
+    ownerObjectView(
+      fullPublicSurface,
+      manifest,
+      `${manifestName}.publicSurface`,
+      ['components', 'events', 'reports', 'resourceTypes', 'search'],
+      ['businessPermissions'],
+    ),
+    ownerObjectView(fullRegistration, registration, declarationName, ['entrypoints', 'manifest']),
+    ownerReference(ownerProperty(fullRegistration, 'manifest'), registration, `${prefix}Manifest`),
+    ownerImport(registration, `${prefix}Manifest`, './vertical.manifest.ts'),
+    ownerReference(ownerProperty(backendDeclaration, 'manifest'), backend, manifestName),
+    ownerReference(ownerProperty(backendDeclaration, 'actions'), backend, `${manifestName}.publicSurface.actions`),
+    ownerReference(
+      ownerCallArgument(backend, `${prefix}BackendRegistration`, 'defineVerticalRuntimeRegistration'),
+      backend,
+      declarationName,
+    ),
+    ownerProperty(backendSurface, 'actions') !== undefined,
+    ownerProperty(backendSurface, 'api') !== undefined,
+    ownerProperty(backendSurface, 'shellContributions') !== undefined,
+  ];
+  const mismatch = facts.findIndex((fact) => !fact);
+  if (mismatch !== -1) {
+    return raiseScaffoldFailure(`shared declaration provenance condition ${mismatch} is not satisfied`);
+  }
+  return true;
+};
+
+const moduleOwnerMarker = (source: string, key: string) =>
+  new RegExp(`^// @ontos-${key} ([^\\s]+)$`, 'mu').exec(source)?.[1];
+
+/** Recognizes only the canonical same-owner shared declaration; never trusts a filename alone. */
+export const readModuleRuntimeDeclarationEffect = Effect.fn('Scaffolding.readModuleRuntimeDeclaration')(
+  function* readModuleRuntimeDeclaration(
+    directory: string,
+    slug: string,
+    manifestContent: string,
+    registrationContent: string,
+  ) {
+    const filesystem = yield* FileSystem.FileSystem;
+    const declarationPath = resolveContainedPath(directory, RUNTIME_DECLARATION_FILE);
+    if (
+      !(yield* filesystem
+        .exists(declarationPath)
+        .pipe(Effect.mapError((cause) => scaffoldFailure('failed to inspect runtime declaration', cause))))
+    ) {
+      if ([manifestContent, registrationContent].some((source) => /vertical\.runtime-declaration/u.test(source))) {
+        return yield* scaffoldFailure(`vertical ${slug} has an unresolved runtime declaration`);
+      }
+      return yield* Effect.undefined;
+    }
+    const content = yield* filesystem
+      .readFileString(declarationPath)
+      .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read vertical ${slug} runtime declaration`, cause)));
+
+    const keys = ['deployment-app-id', 'module-id'];
+    if (
+      !content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`) ||
+      !keys.every(
+        (key) =>
+          moduleOwnerMarker(content, key) !== undefined &&
+          moduleOwnerMarker(content, key) === moduleOwnerMarker(manifestContent, key) &&
+          moduleOwnerMarker(content, key) === moduleOwnerMarker(registrationContent, key),
+      ) ||
+      !(yield* tryScaffold('invalid shared declaration provenance', () =>
+        validRuntimeDeclarationViews(
+          content,
+          manifestContent,
+          registrationContent,
+          toCamelCase(slug),
+          moduleOwnerMarker(content, 'module-id'),
+        ),
+      ))
+    ) {
+      return yield* scaffoldFailure(
+        `vertical ${slug} runtime declaration is not the canonical same-owner authoring source`,
+      );
+    }
+    return { content, path: declarationPath };
+  },
+);
+
 /** Discovers a topology deployment paired with its generated OntOS business owner files. */
 export const discoverOntosModuleEffect = (
   workspaceRoot: string,
@@ -1235,8 +1640,8 @@ export const discoverOntosModuleEffect = (
 ): Effect.Effect<OntosVerticalMetadata, ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* discoverOntosModuleProgram() {
     const vertical = yield* discoverVerticalEffect(workspaceRoot, requestedVertical);
-    const manifestPath = resolveContainedPath(vertical.directory, 'vertical.manifest.ts');
-    const registrationPath = resolveContainedPath(vertical.directory, 'vertical.registration.ts');
+    const manifestPath = resolveContainedPath(vertical.directory, MODULE_MANIFEST_FILE);
+    const registrationPath = resolveContainedPath(vertical.directory, MODULE_REGISTRATION_FILE);
     const [manifest, registration] = yield* Effect.all([
       readGeneratedModuleOwnerEffect(manifestPath, vertical, 'manifest'),
       readGeneratedModuleOwnerEffect(registrationPath, vertical, 'registration'),
@@ -1258,7 +1663,13 @@ export const discoverOntosModuleEffect = (
         `vertical ${vertical.slug} package, topology, manifest, and registration identities disagree`,
       );
     }
-    return {
+    const runtimeDeclaration = yield* readModuleRuntimeDeclarationEffect(
+      vertical.directory,
+      vertical.slug,
+      manifest.content,
+      registration.content,
+    );
+    const discovered = {
       ...vertical,
       manifestContent: manifest.content,
       manifestPath,
@@ -1266,6 +1677,7 @@ export const discoverOntosModuleEffect = (
       registrationContent: registration.content,
       registrationPath,
     };
+    return runtimeDeclaration === undefined ? discovered : { ...discovered, runtimeDeclaration };
   });
 
 export const formatGeneratedMutationContent = (
@@ -1364,7 +1776,6 @@ export const deleteMutationEffect = (
     return { kind: 'delete', path: filePath };
   });
 
-const CORE_RUNTIME_PACKAGE = '@app/core-runtime';
 const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
 /** Generated composition roots provide Node platform services, such as `Crypto`, from this exact package. */
 export const PLATFORM_NODE_DEPENDENCY = ['@effect/platform-node', '4.0.7'] as const;

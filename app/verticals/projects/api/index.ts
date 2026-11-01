@@ -1,4 +1,4 @@
-import { projectsRegistration } from '../vertical.registration.ts';
+import { projectsBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
@@ -68,12 +68,12 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
-const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(ultramodernDeliveryUnit, projectsRegistration).pipe(
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(activeApplicationCompositionLive),
 );
 
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, projectsRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       GovernedCorePersistenceLive,

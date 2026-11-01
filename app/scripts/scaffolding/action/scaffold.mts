@@ -292,6 +292,31 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
   );
   const actionValue = `${toCamelCase(action)}Action`;
   const ownerImport = `import { ${actionValue} } from './src/actions/${action}.action.ts';`;
+  if (vertical.runtimeDeclaration !== undefined) {
+    const owner = vertical.runtimeDeclaration;
+    const content = yield* tryScaffold('failed to patch shared Action declaration', () =>
+      insertSortedSlot(
+        insertSortedSlot(
+          owner.content,
+          MODULE_MANIFEST_IMPORT_SLOT_START,
+          MODULE_MANIFEST_IMPORT_SLOT_END,
+          [ownerImport],
+          isModuleManifestImport,
+        ),
+        MODULE_MANIFEST_ACTION_SLOT_START,
+        MODULE_MANIFEST_ACTION_SLOT_END,
+        [`${actionValue},`],
+        (candidate) => /^[a-z][A-Za-z0-9]*Action,$/u.test(candidate),
+      ),
+    );
+    const ownerMutation = updateMutation(owner.path, owner.content, content);
+    const dependencyMutation = yield* tryScaffold('failed to patch the Core dependency', () =>
+      withCoreDependency(vertical),
+    );
+    const mutations = [actionMutation, ownerMutation, dependencyMutation].filter((mutation) => mutation !== undefined);
+    yield* tryScaffold('Action mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
+    return { mutations, result: { actionPath } };
+  }
   const [nextManifest, nextRegistration] = yield* tryScaffold(
     'failed to patch generated Action owner slots',
     () =>

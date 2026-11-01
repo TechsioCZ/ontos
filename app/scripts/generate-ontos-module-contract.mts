@@ -24,6 +24,7 @@ import {
 import type { OntosModuleManifest, VerticalRuntimeRegistration } from '../packages/core-runtime/src/index.ts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
+  readModuleRuntimeDeclarationEffect,
   MODULE_MANIFEST_ACTION_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -38,6 +39,9 @@ import {
   toCamelCase,
   toPascalCase,
 } from './scaffolding/shared.mts';
+
+const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
+const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
 
 export const OntosModuleContractTargetSchema = Schema.Literals(['cloudflare-dist', 'dist']);
 export type OntosModuleContractTarget = typeof OntosModuleContractTargetSchema.Type;
@@ -144,9 +148,21 @@ const assertOwnerSlots = (verticalDirectory: string) =>
   Effect.gen(function* assertOwnerSlotsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
-    const owners = [
+    const manifestPath = platformPath.join(verticalDirectory, MODULE_MANIFEST_FILE);
+    const registrationPath = platformPath.join(verticalDirectory, MODULE_REGISTRATION_FILE);
+    const [manifestContent, registrationContent] = yield* Effect.all([
+      fileSystem.readFileString(manifestPath),
+      fileSystem.readFileString(registrationPath),
+    ]);
+    const runtimeDeclaration = yield* readModuleRuntimeDeclarationEffect(
+      verticalDirectory,
+      platformPath.basename(verticalDirectory),
+      manifestContent,
+      registrationContent,
+    ).pipe(Effect.mapError((cause) => failure('invalid shared owner declaration', cause)));
+    const legacyOwners = [
       {
-        path: platformPath.join(verticalDirectory, 'vertical.manifest.ts'),
+        path: platformPath.join(verticalDirectory, MODULE_MANIFEST_FILE),
         slots: [
           MODULE_MANIFEST_IMPORT_SLOT_START,
           MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -155,7 +171,7 @@ const assertOwnerSlots = (verticalDirectory: string) =>
         ],
       },
       {
-        path: platformPath.join(verticalDirectory, 'vertical.registration.ts'),
+        path: platformPath.join(verticalDirectory, MODULE_REGISTRATION_FILE),
         slots: [
           MODULE_REGISTRATION_IMPORT_SLOT_START,
           MODULE_REGISTRATION_IMPORT_SLOT_END,
@@ -166,6 +182,24 @@ const assertOwnerSlots = (verticalDirectory: string) =>
         ],
       },
     ] as const;
+    const owners =
+      runtimeDeclaration === undefined
+        ? legacyOwners
+        : [
+            {
+              path: runtimeDeclaration.path,
+              slots: [
+                MODULE_MANIFEST_IMPORT_SLOT_START,
+                MODULE_MANIFEST_IMPORT_SLOT_END,
+                MODULE_MANIFEST_ACTION_SLOT_START,
+                MODULE_MANIFEST_ACTION_SLOT_END,
+                MODULE_REGISTRATION_IMPORT_SLOT_START,
+                MODULE_REGISTRATION_IMPORT_SLOT_END,
+                MODULE_REGISTRATION_WORKER_SLOT_START,
+                MODULE_REGISTRATION_WORKER_SLOT_END,
+              ],
+            },
+          ];
     const ownerContents = yield* Effect.forEach(
       owners,
       (owner) =>
@@ -202,8 +236,8 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
         .pipe(Effect.mapError((cause) => failure('unable to create the module contract temporary directory', cause)));
       const entryPath = platformPath.join(temporaryDirectory, 'entry.mts');
       const bundlePath = platformPath.join(temporaryDirectory, 'bundle.mjs');
-      const manifestPath = platformPath.join(verticalDirectory, 'vertical.manifest.ts');
-      const registrationPath = platformPath.join(verticalDirectory, 'vertical.registration.ts');
+      const manifestPath = platformPath.join(verticalDirectory, MODULE_MANIFEST_FILE);
+      const registrationPath = platformPath.join(verticalDirectory, MODULE_REGISTRATION_FILE);
       const prefix = toCamelCase(vertical);
       const encodedManifestPath = yield* Schema.encodeEffect(JsonStringTextSchema)(manifestPath).pipe(
         Effect.mapError((cause) => failure('unable to encode the manifest owner path', cause)),

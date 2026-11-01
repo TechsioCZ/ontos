@@ -16,6 +16,7 @@ import {
   asJsonObject,
   createMutationEffect,
   discoverOntosModuleEffect,
+  bindSharedRuntimeWorkerEntry,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   isModuleRegistrationImport,
@@ -198,7 +199,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
-import { ${toCamelCase(consumer.slug)}Registration } from '../../vertical.registration.ts';
+import { ${toCamelCase(consumer.slug)}${consumer.runtimeDeclaration === undefined ? 'Registration' : 'BackendRegistration'} } from '../../vertical.${consumer.runtimeDeclaration === undefined ? 'registration' : 'runtime-declaration'}.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
@@ -210,7 +211,7 @@ import {
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: '${consumer.moduleId}-outbox-worker',
   expectedDeployment: ultramodernApiMarker,
-  ownerRegistration: ${toCamelCase(consumer.slug)}Registration,
+  ownerRegistration: ${toCamelCase(consumer.slug)}${consumer.runtimeDeclaration === undefined ? 'Registration' : 'BackendRegistration'},
   layer: Layer.merge(
     ActiveApplicationCompositionConfigLive.pipe(
       Layer.provide(
@@ -264,6 +265,10 @@ const planWorkerHostFile = (filePath: string, consumer: OntosVerticalMetadata, c
         cause: existing.value,
         message: `existing Outbox Worker host is not owned by ${consumer.moduleId}`,
       });
+    }
+    if (consumer.runtimeDeclaration !== undefined && filePath.endsWith('/worker-host/entry.ts')) {
+      const updated = yield* trySync(() => bindSharedRuntimeWorkerEntry(existing.value, toCamelCase(consumer.slug)));
+      return Option.fromNullishOr(updateMutation(filePath, existing.value, updated));
     }
     return Option.none<Mutation>();
   });
@@ -558,11 +563,15 @@ const planOutboxWorkerScaffoldEffect = (
       planWorkerHostFile(workerHostMainPath, consumer, renderWorkerHostMain(consumer)),
     ]);
 
+    const ownerSource = consumer.runtimeDeclaration ?? {
+      content: consumer.registrationContent,
+      path: consumer.registrationPath,
+    };
     const registrationImport = `import { ${workerVariable} } from './src/workers/${worker}.worker.ts';`;
     const nextRegistration = yield* trySync(() =>
       insertSortedSlot(
         insertSortedSlot(
-          consumer.registrationContent,
+          ownerSource.content,
           MODULE_REGISTRATION_IMPORT_SLOT_START,
           MODULE_REGISTRATION_IMPORT_SLOT_END,
           [registrationImport],
@@ -575,7 +584,7 @@ const planOutboxWorkerScaffoldEffect = (
       ),
     );
     const ownerRegistrationMutation = yield* trySync(() =>
-      updateMutation(consumer.registrationPath, consumer.registrationContent, nextRegistration),
+      updateMutation(ownerSource.path, ownerSource.content, nextRegistration),
     );
 
     const packageContent = yield* patchConsumerPackage(consumer, producer);
