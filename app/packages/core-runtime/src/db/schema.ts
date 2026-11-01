@@ -47,6 +47,7 @@ export const CORE_TABLE_INVENTORY = [
   'outbox_attempts',
   'outbox_delivery_resolutions',
   'media_assets',
+  'media_asset_renditions',
   'media_links',
   'evidence_references',
   'search_index_entries',
