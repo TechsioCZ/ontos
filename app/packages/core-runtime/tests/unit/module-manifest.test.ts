@@ -264,6 +264,54 @@ it('rejects foreign, duplicate, undeclared API and conflicting versioned operati
   ).toThrow(/conflicting/u);
 });
 
+it('preserves identical genuine runtime projections when backend and UI views share one owner declaration', () => {
+  const action = createAction();
+  const read = createRead();
+  const base = emptyManifestInput();
+  const runtimeManifest = {
+    module: base.module,
+    publicSurface: {
+      actions: [action],
+      api: { records: operationApi() },
+      operationContracts: [{ apiKey: 'records', operationKey: 'property.lookup', registration: read }],
+      shellContributions: base.publicSurface.shellContributions,
+    },
+    requirements: {
+      ...requirements(),
+      intrinsic: [{ moduleId: 'party.registry', requiredOperations: [] }],
+    },
+  };
+  const uiManifest = defineOntosModuleManifest({
+    ...base,
+    ...runtimeManifest,
+    publicSurface: { ...base.publicSurface, ...runtimeManifest.publicSurface, components: { Card: componentValue } },
+  });
+  const backend = defineVerticalRuntimeRegistration({
+    actions: [action],
+    manifest: runtimeManifest,
+    outboxWorkers: [],
+    reads: [read],
+  });
+  const ui = defineVerticalRuntimeRegistration({
+    actions: [action],
+    manifest: uiManifest,
+    outboxWorkers: [],
+    reads: [read],
+  });
+  expect(extractVerticalRuntimeSafeDescriptors(backend)).toEqual(extractVerticalRuntimeSafeDescriptors(ui));
+  expect(extractVerticalRuntimeSafeDescriptors(backend).requirements).toEqual(runtimeManifest.requirements);
+  expect(getVerticalRuntimeActions(backend)[0]).toBe(action);
+  expect(getVerticalRuntimeActions(ui)[0]).toBe(action);
+  expect(() =>
+    defineVerticalRuntimeRegistration({
+      actions: [action],
+      manifest: runtimeManifest,
+      outboxWorkers: [],
+      reads: [createRead()],
+    }),
+  ).toThrow(/same private runtime registration/u);
+});
+
 it('binds public claims and conditional requirements to the exact private runtime registration values', () => {
   const read = createRead();
   const manifest = defineOntosModuleManifest({

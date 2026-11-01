@@ -9,7 +9,7 @@ import type {
   OntosActionContract,
   OntosManifestActionValue,
   OntosModuleId,
-  OntosModuleManifest,
+  OntosRuntimeManifestInput,
   OntosOutboxSubscriptionContract,
   OntosOperationContract,
   OntosModuleRequirements,
@@ -63,7 +63,9 @@ const failRuntimeRegistration = (message: string): never => {
   throw new VerticalRuntimeRegistrationInvariantError({ message });
 };
 
-export interface VerticalRuntimeRegistrationInput<Manifest extends OntosModuleManifest = OntosModuleManifest> {
+export interface VerticalRuntimeRegistrationInput<
+  Manifest extends OntosRuntimeManifestInput = OntosRuntimeManifestInput,
+> {
   readonly actions: readonly OntosManifestActionValue[];
   readonly entrypoints?: VerticalRuntimeEntrypointBindings;
   readonly manifest: Manifest;
@@ -164,7 +166,7 @@ const validateRuntimeEntrypoints = (entrypoints: VerticalRuntimeEntrypointBindin
   }
 };
 
-export const defineVerticalRuntimeRegistration = <const Manifest extends OntosModuleManifest>(
+export const defineVerticalRuntimeRegistration = <const Manifest extends OntosRuntimeManifestInput>(
   input: VerticalRuntimeRegistrationInput<Manifest>,
 ): VerticalRuntimeRegistration<Manifest['module']['id']> => {
   validateRuntimeActions(input);

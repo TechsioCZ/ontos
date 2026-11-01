@@ -269,6 +269,14 @@ export interface OntosModuleManifestInput {
   readonly requirements?: OntosModuleRequirements;
 }
 
+/** Owner-authored backend declaration consumed by the existing runtime registration, without UI values. */
+export type OntosRuntimeManifestInput = Pick<OntosModuleManifestInput, 'module' | 'requirements'> & {
+  readonly publicSurface: Pick<
+    OntosAuthoredPublicSurface,
+    'actions' | 'api' | 'operationContracts' | 'shellContributions'
+  >;
+};
+
 export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> = Readonly<Input>;
 
 class OntosModuleManifestValidationError extends Schema.TaggedError<OntosModuleManifestValidationError>()(
@@ -343,7 +351,7 @@ const apiOperationKeys = (api: HttpApi.Constraint): readonly string[] => {
 
 /** Owner-authored safe claim only; actual handler/default-factory dispatch is independently verified. */
 export const projectOntosModuleOperationContracts = (
-  manifest: OntosModuleManifestInput,
+  manifest: OntosRuntimeManifestInput,
 ): readonly OntosOperationContract[] => {
   const actions = new Set(manifest.publicSurface.actions);
   const contracts = (manifest.publicSurface.operationContracts ?? []).map((binding) => {

@@ -3,98 +3,10 @@
 // @ontos-module-id party.registry
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { partyRegistryManifest } from './vertical.manifest.ts';
-
-// <generated-module-registration-imports>
-import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
-import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
-import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
-import { archivePartyAction } from './src/actions/archive-party.action.ts';
-import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
-import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
-import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
-import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
-import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
-import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
-import { counterpartyCustomerOnboardAction } from './src/actions/counterparty-customer-onboard.action.ts';
-import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
-import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
-import { createPartyAction } from './src/actions/create-party.action.ts';
-import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
-import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
-import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
-import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
-import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
-import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
-import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
-import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
-import { matchPartyAction } from './src/actions/match-party.action.ts';
-import { projectContactPointAddedToSearchWorker } from './src/workers/project-contact-point-added-to-search.worker.ts';
-import { projectContactPointEndedToSearchWorker } from './src/workers/project-contact-point-ended-to-search.worker.ts';
-import { projectContactPointUpdatedToSearchWorker } from './src/workers/project-contact-point-updated-to-search.worker.ts';
-import { projectCounterpartyCreatedToSearchWorker } from './src/workers/project-counterparty-created-to-search.worker.ts';
-import { projectCounterpartyRoleAddedToSearchWorker } from './src/workers/project-counterparty-role-added-to-search.worker.ts';
-import { projectCounterpartyRoleEndedToSearchWorker } from './src/workers/project-counterparty-role-ended-to-search.worker.ts';
-import { projectOfficialIdentifierAddedToSearchWorker } from './src/workers/project-official-identifier-added-to-search.worker.ts';
-import { projectOfficialIdentifierEndedToSearchWorker } from './src/workers/project-official-identifier-ended-to-search.worker.ts';
-import { projectOfficialIdentifierUpdatedToSearchWorker } from './src/workers/project-official-identifier-updated-to-search.worker.ts';
-import { projectPartyArchivedToSearchWorker } from './src/workers/project-party-archived-to-search.worker.ts';
-import { projectPartyCreatedToSearchWorker } from './src/workers/project-party-created-to-search.worker.ts';
-import { projectPartyFactCorrectedToSearchWorker } from './src/workers/project-party-fact-corrected-to-search.worker.ts';
-import { projectPartyUnarchivedToSearchWorker } from './src/workers/project-party-unarchived-to-search.worker.ts';
-import { projectPartyUpdatedToSearchWorker } from './src/workers/project-party-updated-to-search.worker.ts';
-import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
-import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
-import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
-import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
-import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
-import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
-import { updatePartyAction } from './src/actions/update-party.action.ts';
-import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
-import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
-import { guestPartyResolutionRead } from './src/api/guest-party-resolution.read.ts';
-import { partyDetailRead } from './src/api/party-detail.read.ts';
-import { partyContactPointDetailRead } from './src/api/party-contact-point-detail.read.ts';
-// </generated-module-registration-imports>
+import { partyRegistryRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    addContactPointAction,
-    addPartyOfficialIdentifierAction,
-    archiveOrganizationEngagementAction,
-    archivePartyAction,
-    archivePersonEngagementAction,
-    attachOrganizationEngagementAction,
-    attachPersonEngagementAction,
-    confirmDuplicatePartiesAction,
-    correctPartyFactAction,
-    counterpartyCreateAction,
-    counterpartyCustomerOnboardAction,
-    counterpartyRoleAddAction,
-    counterpartyRoleEndAction,
-    createPartyAction,
-    createPartyRelationshipAction,
-    dismissDuplicateCandidateAction,
-    endContactPointAction,
-    endPartyOfficialIdentifierAction,
-    endPartyRelationshipAction,
-    executePrivacyMeasureAction,
-    markDuplicateCandidateNeedsEvidenceAction,
-    matchPartyAction,
-    requestSearchRebuildAction,
-    resolveDuplicateCandidateCreateAction,
-    resolveDuplicateCandidateMatchAction,
-    unarchiveOrganizationEngagementAction,
-    unarchivePartyAction,
-    unarchivePersonEngagementAction,
-    updateContactPointAction,
-    updatePartyAction,
-    updatePartyOfficialIdentifierAction,
-    updatePartyRelationshipAction,
-    // </generated-module-registration-actions>
-  ],
+  ...partyRegistryRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -139,33 +51,6 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: partyRegistryManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    executePrivacyMeasureWorker,
-    projectContactPointAddedToSearchWorker,
-    projectContactPointEndedToSearchWorker,
-    projectContactPointUpdatedToSearchWorker,
-    projectCounterpartyCreatedToSearchWorker,
-    projectCounterpartyRoleAddedToSearchWorker,
-    projectCounterpartyRoleEndedToSearchWorker,
-    projectOfficialIdentifierAddedToSearchWorker,
-    projectOfficialIdentifierEndedToSearchWorker,
-    projectOfficialIdentifierUpdatedToSearchWorker,
-    projectPartyArchivedToSearchWorker,
-    projectPartyCreatedToSearchWorker,
-    projectPartyFactCorrectedToSearchWorker,
-    projectPartyUnarchivedToSearchWorker,
-    projectPartyUpdatedToSearchWorker,
-    rebuildSearchWorker,
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    guestPartyResolutionRead,
-    partyDetailRead,
-    partyContactPointDetailRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

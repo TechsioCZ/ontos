@@ -8,6 +8,9 @@ import {
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
   OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+  ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   makeActionRuntimeLive,
   OperationalScopeResolver,
   ReadRuntimeLive,
@@ -24,6 +27,7 @@ import {
   Context,
   Crypto,
   DateTime,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -37,10 +41,10 @@ import {
 } from 'effect';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import {
-  makeApiKeyGatewayNativeComposition,
   makeApiKeyGatewayNativeFixture,
   sealApiKeyGatewayNativeComposition,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { deriveActiveApplicationCompositionSnapshot } from '../../../../scripts/active-application-composition.mts';
 import { makeCurrentStorefrontNativeReceiver } from '@app/storefront-registry/testing/current-storefront-native';
 import { makeMarketRetirementNativeReceiver } from '@app/commerce-customer-context/testing/market-retirement-native';
 import { ChildProcess } from 'effect/process';
@@ -243,15 +247,16 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   const customerContext = yield* makeMarketRetirementNativeReceiver();
   const readOwnerContract = Effect.fn('MarketRevisionNative.readOwnerContract')(function* readOwnerContract(input: {
     readonly appId: string;
+    readonly baseUrl: string;
     readonly buildMarker: string;
     readonly directory: string;
     readonly moduleId: string;
   }) {
-    const document = yield* filesystem
-      .readFileString(path.join(input.directory, '.output/public/.well-known/ontos-module-manifest.json'))
+    const bytes = yield* filesystem
+      .readFile(path.join(input.directory, '.output/public/.well-known/ontos-module-manifest.json'))
       .pipe(Effect.mapError((cause) => Object.defineProperty(unavailable(), 'cause', { value: cause })));
     const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-      document,
+      new TextDecoder().decode(bytes),
     ).pipe(Effect.mapError((cause) => Object.defineProperty(unavailable(), 'cause', { value: cause })));
     if (
       contract.deployment.appId !== input.appId ||
@@ -260,30 +265,72 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     ) {
       return yield* unavailable();
     }
-    return contract;
+    const federationManifest =
+      contract.manifest.publicSurface.components.length === 0
+        ? undefined
+        : {
+            bytes: yield* filesystem.readFile(path.join(input.directory, '.output/public/mf-manifest.json')),
+            url: new URL('/mf-manifest.json', input.baseUrl).href,
+          };
+    const observation = {
+      appId: input.appId,
+      backend: { baseUrl: input.baseUrl, transport: 'node-http' as const },
+      contract: { bytes, url: new URL(ONTOS_MODULE_CONTRACT_PATH, input.baseUrl).href },
+    };
+    if (federationManifest === undefined) {
+      return observation;
+    }
+    return { ...observation, federationManifest };
   });
-  // Intact owner-emitted public documents, never locally reconstructed owner claims.
-  const baseSnapshot = yield* makeApiKeyGatewayNativeComposition(
-    [
+  // Observe exact freshly built public artifact bytes on disk. These URL locators do not assert HTTP observation.
+  const shellPublicDirectory = path.resolve(process.cwd(), '../../apps/shell-super-app/.output/public');
+  const shellRuntimeBytes = yield* filesystem.readFile(
+    path.join(shellPublicDirectory, ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)),
+  );
+  const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    new TextDecoder().decode(shellRuntimeBytes),
+  );
+  if (shellRuntime.deployment.appId !== 'shell-super-app') {
+    return yield* unavailable();
+  }
+  const shellReleaseUrl = `https://${shellRuntime.deployment.appId}.example.test/releases/${shellRuntime.deployment.buildMarker}/`;
+  // Intact owner-emitted documents and the built Shell observation drive the canonical publisher builder.
+  const baseSnapshot = yield* deriveActiveApplicationCompositionSnapshot({
+    environment: 'development',
+    modules: [
       yield* readOwnerContract({
         appId: marketAppId,
+        baseUrl: marketBaseUrl,
         buildMarker: ultramodernApiMarker.buildMarker,
         directory: process.cwd(),
         moduleId: moduleKey,
       }),
       yield* readOwnerContract({
         ...registry.deployment,
+        baseUrl: registry.baseUrl,
         directory: path.resolve(process.cwd(), '../storefront-registry'),
         moduleId: registryModuleId,
       }),
       yield* readOwnerContract({
         ...customerContext.deployment,
+        baseUrl: customerContext.baseUrl,
         directory: path.resolve(process.cwd(), '../commerce-customer-context'),
         moduleId: customerContextModuleId,
       }),
     ],
-    3_600_000,
-  );
+    observedAt: yield* DateTime.now,
+    shell: {
+      federationManifest: {
+        bytes: yield* filesystem.readFile(path.join(shellPublicDirectory, 'mf-manifest.json')),
+        url: new URL('mf-manifest.json', shellReleaseUrl).href,
+      },
+      runtimeContract: {
+        bytes: shellRuntimeBytes,
+        url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), shellReleaseUrl).href,
+      },
+    },
+    validity: Duration.hours(1),
+  });
   const backends = new Map([
     [marketAppId, marketBaseUrl],
     [registry.deployment.appId, registry.baseUrl],
