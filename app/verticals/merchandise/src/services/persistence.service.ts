@@ -1865,7 +1865,17 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
 });
 
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
-  function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* makePersistence(
+    transaction: ScopedTransactionExecutor,
+    {
+      preparedGrants,
+      scope,
+    }: {
+      /** Write rights resolved before the Action's SQL transaction opened; writes never check remotely from here. */
+      readonly preparedGrants?: MerchandiseRecordsGrants;
+      readonly scope: OperationalScope;
+    },
+  ) {
     const { legalEntityId } = scope;
     if (
       legalEntityId === undefined ||
@@ -1878,37 +1888,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       });
     }
     const store: StoreScope = { legalEntityId, tenantId: scope.tenantId };
-    const access = yield* ContextAccess;
-    const contextGrant = Effect.fn('Merchandise.contextGrant')(function* contextGrant(
-      permission: 'read_all' | 'write_all',
-    ) {
-      if (access.contextPermissions === undefined) {
-        return yield* referenceUnavailable();
-      }
-      const decisions = yield* access.contextPermissions({
-        legalEntityId,
-        principalId: scope.principalId,
-        targets: [{ moduleId: MERCHANDISE_MODULE_ID, permission: `demo.merchandise.${permission}` }],
-        tenantId: scope.tenantId,
-      });
-      if (
-        decisions.length !== 1 ||
-        decisions[0]?.key !== `demo.merchandise:demo.merchandise.${permission}` ||
-        decisions[0]?.decision === 'unavailable'
-      ) {
-        return yield* referenceUnavailable();
-      }
-      return decisions[0]?.decision === 'allowed';
-    });
+    const contextGrant = (permission: 'read_all' | 'write_all') =>
+      preparedGrants === undefined
+        ? Effect.fail(referenceUnavailable())
+        : Effect.succeed(permission === 'read_all' ? preparedGrants.readAll : preparedGrants.writeAll);
     // Existing trusted identity-administrator capability; no email, browser flag or principal-id allowlist.
-    const administrator = Effect.fn('Merchandise.administrator')(function* administrator() {
-      const decisions = yield* access.tenants({
-        permission: IDENTITY_MANAGEMENT_PERMISSION,
-        principalId: scope.principalId,
-        tenantIds: [scope.tenantId],
-      });
-      return decisions.length === 1 && decisions[0]?.key === scope.tenantId && decisions[0]?.decision === 'allowed';
-    });
+    const administrator = () =>
+      preparedGrants === undefined ? Effect.fail(referenceUnavailable()) : Effect.succeed(preparedGrants.administrator);
     const lockedHead = Effect.fn('Merchandise.lockedHead')(function* lockedHead(aiChanges: boolean) {
       const head = yield* loadHead(transaction, store, { aiChanges, lock: true }).pipe(Effect.mapError(unavailable));
       return head ?? (yield* unavailable());

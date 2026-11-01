@@ -38,11 +38,8 @@ const agentReviewEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const makeAgentReviewServices: ReadServiceFactory<Services, Effect.Services<ReturnType<typeof persistenceService>>> = (
-  transaction,
-  scope,
-) =>
-  persistenceService(transaction, scope).pipe(
+const makeAgentReviewServices: ReadServiceFactory<Services> = (transaction, scope) =>
+  persistenceService(transaction, { scope }).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
         new OperationContextUnavailable({

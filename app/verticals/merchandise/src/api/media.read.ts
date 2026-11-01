@@ -35,11 +35,8 @@ const mediaEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const makeMediaServices: ReadServiceFactory<Services, Effect.Services<ReturnType<typeof persistenceService>>> = (
-  transaction,
-  scope,
-) =>
-  persistenceService(transaction, scope).pipe(
+const makeMediaServices: ReadServiceFactory<Services> = (transaction, scope) =>
+  persistenceService(transaction, { scope }).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
         new OperationContextUnavailable({

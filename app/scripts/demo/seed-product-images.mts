@@ -28,6 +28,7 @@ const Query = Schema.Struct({
     offset: Schema.Int,
     ordersLimit: Schema.Int,
     productSort: Schema.Literal('sku'),
+    summary: Schema.Literal(true),
   }),
 });
 const Records = Schema.Struct({
@@ -54,7 +55,8 @@ const allProducts = (client: SeedClient) =>
         'merchandise',
         '/reads/records',
         Query,
-        { view: { limit: PAGE, offset, ordersLimit: 0, productSort: 'sku' } },
+        // Summary pages carry the gallery and slug; full detail pages are capped at a couple of products.
+        { view: { limit: PAGE, offset, ordersLimit: 0, productSort: 'sku', summary: true } },
         Records,
       );
       products.push(...page.products);
@@ -186,6 +188,7 @@ if (import.meta.main) {
   const exit = await Effect.runPromiseExit(
     Command.run(cli, { version: '1.0.0' }).pipe(
       Effect.tapError((failure) => Console.error(`Product image seed stopped (${failure._tag}).`)),
+      Effect.tapErrorTag('DemoSeedError', (failure) => Console.error(failure.reason)),
       Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
     ),
   );
