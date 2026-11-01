@@ -24,6 +24,8 @@ interface PreloadableNavigationItem {
 
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
 const LAZY_WARM_WINDOW = '2 seconds';
+/** How long writes must pause before the menu prefetch starts over. */
+const PREFETCH_RESTART_QUIET = '20 seconds';
 const ignoreRenderError = () => {
   // The warm-up render is expected to fail once the component needs its route context.
 };
@@ -142,13 +144,25 @@ export const useIdleRoutePreload = (
     .join('\n');
 
   useEffect(() => {
+    // A write drops cached reads and the router cache at once, but the menu prefetch starts over only once the
+    // writes are quiet: autosave writes every few seconds while someone types and must not re-read every module.
+    let pending: Fiber.Fiber<void> | undefined;
+    const prefetchAgain = Effect.sync(() => setGeneration((previous) => previous + 1));
     const restart = () => {
       browserRuntime.runSync(staffRoutePreloads.invalidate);
       router.clearCache();
-      setGeneration((previous) => previous + 1);
+      if (pending !== undefined) {
+        browserRuntime.runFork(Fiber.interrupt(pending));
+      }
+      pending = browserRuntime.runFork(Effect.sleep(PREFETCH_RESTART_QUIET).pipe(Effect.andThen(prefetchAgain)));
     };
     globalThis.addEventListener(moduleWriteEvent, restart);
-    return () => globalThis.removeEventListener(moduleWriteEvent, restart);
+    return () => {
+      globalThis.removeEventListener(moduleWriteEvent, restart);
+      if (pending !== undefined) {
+        browserRuntime.runFork(Fiber.interrupt(pending));
+      }
+    };
   }, [router]);
 
   useEffect(() => {

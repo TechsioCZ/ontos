@@ -212,17 +212,20 @@ it.live('settles the preparation key when the router handle changes identity acr
   }),
 );
 
-it.live('restarts preparations after writes and clears native/context caches on a company change', () =>
+it.live('drops caches at once after writes but keeps the menu prefetch quiet while writes go on', () =>
   Effect.gen(function* invalidation() {
     const view = render(<IntentContext />);
     yield* Effect.promise(() => waitFor(() => expect(preloadRoute).toHaveBeenCalledTimes(2)));
     preloadRoute.mockClear();
     globalThis.dispatchEvent(new Event(moduleWriteEvent));
-    yield* Effect.promise(() => waitFor(() => expect(preloadRoute).toHaveBeenCalledWith({ to: '/en/contacts' })));
-    expect(router.clearCache).toHaveBeenCalledTimes(1);
+    yield* Effect.sleep('30 millis');
+    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    yield* Effect.sleep('30 millis');
+    expect(router.clearCache).toHaveBeenCalledTimes(2);
+    expect(preloadRoute).not.toHaveBeenCalled();
     view.rerender(<IntentContext context="company-b" />);
     yield* Effect.promise(() => waitFor(() => expect(forget).toHaveBeenCalledTimes(1)));
-    expect(router.clearCache).toHaveBeenCalledTimes(2);
+    expect(router.clearCache).toHaveBeenCalledTimes(3);
   }),
 );
 

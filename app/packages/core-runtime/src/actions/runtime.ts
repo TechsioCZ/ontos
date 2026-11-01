@@ -2171,6 +2171,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           allowedPolicies,
           auditProfile: input.registration.descriptor.auditProfile,
           evidence: collector.snapshot(),
+          owningModuleKey: input.registration.descriptor.owningModuleKey,
           principal,
           resultHash,
           transport: governedTransport,

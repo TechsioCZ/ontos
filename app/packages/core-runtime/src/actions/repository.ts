@@ -253,6 +253,8 @@ export interface FlushActionSuccessInput {
   readonly allowedPolicies: readonly ActionPolicyEvidence[];
   readonly auditProfile: ActionAuditProfile;
   readonly evidence: ActionEvidenceSnapshot;
+  /** The module whose data the Action wrote; live change notifications name it even when the Action has no target. */
+  readonly owningModuleKey: string;
   readonly principal: TrustedPrincipalContext;
   readonly resultHash: string;
   readonly transport: ActionTransportMetadata;
@@ -1089,6 +1091,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       yield* notifyLiveChange(transaction, {
         legalEntityId: input.principal.legalEntityId ?? null,
         moduleKeys: [
+          input.owningModuleKey,
           ...(input.transport.targetModuleKey === undefined ? [] : [input.transport.targetModuleKey]),
           ...input.evidence.domainEvents.flatMap((event) => [event.producerModuleKey, event.subjectModuleKey]),
         ],
