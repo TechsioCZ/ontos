@@ -44,7 +44,11 @@ import type {
   StockMovement,
 } from '../../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
-import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
+import {
+  AKROS_LEGAL_ENTITY_ID,
+  staffCommandAllowed,
+  staffMarketCommandAllowed,
+} from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
@@ -1778,6 +1782,8 @@ const revisionConflict = (reason = 'Merchandise changed; refresh before another 
 /** Staff rights a records read needs; the public storefront catalog needs none. */
 export interface MerchandiseRecordsGrants {
   readonly administrator: boolean;
+  /** The company's own administrator (Core `legal_entity#manage_people`): manages AKROS markets, not the catalog. */
+  readonly companyAdministrator: boolean;
   readonly readAll: boolean;
   readonly writeAll: boolean;
 }
@@ -1787,7 +1793,10 @@ const recordCapabilities = (
   storefront: boolean,
   grants: MerchandiseRecordsGrants,
   canWrite: boolean,
-): Pick<RecordsResponse, 'canCleanupDemo' | 'canEditOrders' | 'canManageCatalog' | 'canResetDemo'> => {
+): Pick<
+  RecordsResponse,
+  'canCleanupDemo' | 'canEditOrders' | 'canManageCatalog' | 'canManageMarkets' | 'canResetDemo'
+> => {
   const staff = !storefront;
   const isAdministrator = storefront ? false : grants.administrator;
   const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
@@ -1795,6 +1804,13 @@ const recordCapabilities = (
     canCleanupDemo: staff && canWrite && isAdministrator,
     canEditOrders: staff && canManageCatalog,
     canManageCatalog: staff && canManageCatalog,
+    canManageMarkets:
+      staff &&
+      canWrite &&
+      staffMarketCommandAllowed(legalEntityId, {
+        administrator: isAdministrator,
+        companyAdministrator: grants.companyAdministrator,
+      }),
     canResetDemo: staff && canWrite && isAdministrator && legalEntityId === AKROS_LEGAL_ENTITY_ID,
   };
 };
@@ -1815,14 +1831,19 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
   request: RecordsRequest,
 ) {
   if (storefrontCatalogView(request)) {
-    return { administrator: false, readAll: false, writeAll: false } satisfies MerchandiseRecordsGrants;
+    return {
+      administrator: false,
+      companyAdministrator: false,
+      readAll: false,
+      writeAll: false,
+    } satisfies MerchandiseRecordsGrants;
   }
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
     return yield* referenceUnavailable();
   }
   const permissions = ['read_all', 'write_all'] as const;
-  const [decisions, tenantDecisions] = yield* Effect.all(
+  const [decisions, tenantDecisions, companyDecisions] = yield* Effect.all(
     [
       access.contextPermissions({
         legalEntityId: scope.legalEntityId,
@@ -1840,8 +1861,16 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
             principalId: scope.principalId,
             tenantIds: [scope.tenantId],
           }),
+      request.view?.storefront === true
+        ? Effect.succeed([])
+        : access.legalEntities({
+            legalEntityIds: [scope.legalEntityId],
+            permission: 'manage_people',
+            principalId: scope.principalId,
+            tenantId: scope.tenantId,
+          }),
     ],
-    { concurrency: 2 },
+    { concurrency: 3 },
   );
   if (
     decisions.length !== permissions.length ||
@@ -1859,6 +1888,10 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
       tenantDecisions.length === 1 &&
       tenantDecisions[0]?.key === scope.tenantId &&
       tenantDecisions[0]?.decision === 'allowed',
+    companyAdministrator:
+      companyDecisions.length === 1 &&
+      companyDecisions[0]?.key === scope.legalEntityId &&
+      companyDecisions[0]?.decision === 'allowed',
     readAll: decisions[0]?.decision === 'allowed',
     writeAll: decisions[1]?.decision === 'allowed',
   } satisfies MerchandiseRecordsGrants;
@@ -1895,6 +1928,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     // Existing trusted identity-administrator capability; no email, browser flag or principal-id allowlist.
     const administrator = () =>
       preparedGrants === undefined ? Effect.fail(referenceUnavailable()) : Effect.succeed(preparedGrants.administrator);
+    const marketRights = () =>
+      preparedGrants === undefined
+        ? Effect.fail(referenceUnavailable())
+        : Effect.succeed({
+            administrator: preparedGrants.administrator,
+            companyAdministrator: preparedGrants.companyAdministrator,
+          });
     const lockedHead = Effect.fn('Merchandise.lockedHead')(function* lockedHead(aiChanges: boolean) {
       const head = yield* loadHead(transaction, store, { aiChanges, lock: true }).pipe(Effect.mapError(unavailable));
       return head ?? (yield* unavailable());
@@ -2099,7 +2139,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         (scope.authMethod === 'session' ||
           scope.authMethod === 'support_impersonation' ||
           scope.authMethod === 'oauth_connection') &&
-        !staffCommandAllowed(legalEntityId, yield* administrator(), command._tag)
+        !(isMarketCommand(command)
+          ? staffMarketCommandAllowed(legalEntityId, yield* marketRights())
+          : staffCommandAllowed(legalEntityId, yield* administrator(), command._tag))
       ) {
         return yield* new MerchandisePermissionDenied({
           code: 'merchandise_permission_denied',
@@ -2159,6 +2201,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         canCleanupDemo: false,
         canEditOrders: false,
         canManageCatalog: false,
+        canManageMarkets: false,
         canWrite: false,
         indicators: {
           lowStockCount: pageProducts.filter((record) => record.lowStock).length,

@@ -55,8 +55,11 @@ export interface ProductDetailViewProps {
   /** The product's tree category with its path label; null when it has none. */
   readonly category?: CategoryTrail | null;
   readonly hasCategoryTree?: boolean;
-  /** The product's offer and price in every configured market of the company. */
-  readonly markets?: readonly ProductMarket[];
+  /**
+   * The product's offer and price in every configured market of the company, and whether the viewer may switch it
+   * (records `canManageMarkets`).
+   */
+  readonly markets?: ProductMarketsAccess;
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
@@ -73,7 +76,12 @@ type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
  * The page header submits this form by id. Tab contents stay mounted so unsaved fields survive tab switches.
  */
 const DETAIL_FORM_ID = 'product-detail-form';
-const NO_MARKETS: readonly ProductMarket[] = [];
+/** A product's markets on the detail page and whether the viewer may switch its offer in them. */
+export interface ProductMarketsAccess {
+  readonly canManage: boolean;
+  readonly entries: readonly ProductMarket[];
+}
+const NO_MARKETS: ProductMarketsAccess = { canManage: false, entries: [] };
 const REQUIRED_MESSAGE_KEY = 'validation.required';
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
@@ -823,8 +831,8 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="markets">
             <MarketsPanel
-              canManage={canWrite}
-              markets={markets}
+              canManage={markets.canManage}
+              markets={markets.entries}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}

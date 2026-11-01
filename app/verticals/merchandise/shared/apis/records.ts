@@ -288,6 +288,8 @@ export const RecordsResponseSchema = Schema.Struct({
   canCleanupDemo: Schema.optionalKey(Schema.Boolean),
   canEditOrders: Schema.optionalKey(Schema.Boolean),
   canManageCatalog: Schema.optionalKey(Schema.Boolean),
+  /** Staff: may configure market offers and price lists (AKROS: administrators and the company administrator). */
+  canManageMarkets: Schema.optionalKey(Schema.Boolean),
   canWrite: Schema.Boolean,
   categoryMatches: Schema.optionalKey(Schema.Array(CategoryTrailSchema)),
   categoryMatchTotal: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),

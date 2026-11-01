@@ -382,7 +382,7 @@ export const AssortmentSection = ({
   }
   const page: ExceptionsInput = { ...input, offset };
   const settings = records.markets?.find((candidate) => candidate.marketId === input.marketId);
-  const canManage = records.canManageCatalog === true && market.lifecycle !== 'RETIRED';
+  const canManage = records.canManageMarkets === true && market.lifecycle !== 'RETIRED';
   const change: OfferChange = {
     disabled: pendingProduct !== null,
     onSetOffer: (productId, name, offered) => {
@@ -414,7 +414,7 @@ export const AssortmentSection = ({
   return (
     <SectionCard title={text('detail.assortment.title')}>
       <PriceList
-        canManage={records.canManageCatalog === true}
+        canManage={records.canManageMarkets === true}
         market={market}
         onDone={onDone}
         refresh={refreshSettings}

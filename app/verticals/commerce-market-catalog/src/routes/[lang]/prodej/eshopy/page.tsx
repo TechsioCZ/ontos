@@ -179,7 +179,7 @@ const EshopsPageContent = ({ context }: PageContextProps) => {
       </SectionCard>
       {canCreate && creating && (
         <NewMarketDialog
-          canConfigurePricing={settingsValue?.canManageCatalog === true}
+          canConfigurePricing={settingsValue?.canManageMarkets === true}
           legalEntityId={legalEntityId}
           merchandiseRevision={settingsValue?.revision ?? 0}
           onClose={() => setCreating(false)}

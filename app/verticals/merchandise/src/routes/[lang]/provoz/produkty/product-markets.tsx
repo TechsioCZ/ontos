@@ -42,7 +42,7 @@ export const marketPriceText = (market: ProductMarket, missing: string): string 
   market.grossPriceMinor === undefined ? missing : formatMoney(market.grossPriceMinor, market.currency);
 
 export interface MarketsPanelViewProps {
-  /** Catalog managers only (records `canManageCatalog`); everybody else sees the switches disabled. */
+  /** Market managers only (records `canManageMarkets`); everybody else sees the switches disabled. */
   readonly canManage: boolean;
   readonly error: string | null;
   readonly labels: MarketsLabels;

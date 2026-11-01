@@ -130,6 +130,16 @@ export const withCommandGuard =
       Effect.flatMap(() => handler(payload, context)),
     );
 
+/**
+ * AKROS market offers and price lists (ConfigureMarket, SetProductMarketOffer, SetMarketProductOffers, RemoveMarket):
+ * administrators and the company's own administrators (the e-shop manager, Core `legal_entity#manage_people`), never
+ * dispatch. Other companies keep their normal write rights.
+ */
+export const staffMarketCommandAllowed = (
+  legalEntityId: string,
+  rights: { readonly administrator: boolean; readonly companyAdministrator: boolean },
+): boolean => legalEntityId !== AKROS_LEGAL_ENTITY_ID || rights.administrator || rights.companyAdministrator;
+
 /** AKROS dispatch is operational only; catalog and money edits require a trusted administrator decision. */
 export const staffCommandAllowed = (legalEntityId: string, administrator: boolean, commandTag: string): boolean => {
   if (commandTag === 'ResetDemoData') {
