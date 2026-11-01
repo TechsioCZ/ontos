@@ -146,6 +146,7 @@
     "demo:seed:crm": "node --env-file=.env verticals/crm/scripts/reset-demo.mts --sales-demo",
     "demo:seed:akros": "node verticals/merchandise/scripts/seed-akros.mts",
     "demo:seed:eshop": "node verticals/merchandise/scripts/seed-eshop.mts",
+    "demo:seed:product-images": "node scripts/demo/seed-product-images.mts",
     "demo:composition": "node scripts/siampark/development-composition.mts --environment development",
     "demo:serve": "node scripts/siampark/serve-demo.mts",
     "shell:ui-candidates": "node scripts/generate-shell-ui-candidates.mts --all",
