@@ -637,7 +637,7 @@
           "succeeded": "Provedeno",
           "deniedStatus": "Zamítnuto"
         },
-        "loadError": "Agenty se nepodařilo načíst. Zkuste to znovu."
+        "loadError": "Agenty se teď nepodařilo načíst."
       },
       "errors": {
         "forbidden": "Akci smí provést jen správce firmy. Pokus byl zaznamenán v auditu.",

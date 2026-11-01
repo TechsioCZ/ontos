@@ -61,7 +61,7 @@ const fixture = (
         expect(query.params).toContain(company);
         expect(query.params).toContain(principal.tenantId);
         expect(query.params).toContain('ontos.staff.better-auth.v1');
-        expect(query.params).toContain('better-auth');
+        expect(query.params).toContain('better_auth');
         expect(query.params).toContain('user');
         expect(query.params).toContain('human');
         expect(query.params.filter((value) => value === 'active')).toHaveLength(3);

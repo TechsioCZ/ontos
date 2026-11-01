@@ -821,7 +821,7 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
           )}
 
           {state.state === 'failed' && (
-            <div className="flex flex-wrap items-center gap-150">
+            <div className="flex flex-wrap items-center gap-150" role="alert">
               <StatusText showIcon status="error">
                 {state.error.reason === 'error'
                   ? t(`${key}.loadError`)

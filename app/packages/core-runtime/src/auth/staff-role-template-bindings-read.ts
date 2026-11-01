@@ -82,7 +82,7 @@ const bindingsFromTransaction = (transaction: ScopedTransactionExecutor) => ({
         and(
           eq(principalAuthBindings.tenantId, tenantId),
           eq(principalAuthBindings.authenticationNamespaceId, STAFF_AUTHENTICATION_NAMESPACE_ID),
-          eq(principalAuthBindings.provider, 'better-auth'),
+          eq(principalAuthBindings.provider, 'better_auth'),
           eq(principalAuthBindings.subjectType, 'user'),
           eq(principalAuthBindings.status, 'active'),
           inArray(
