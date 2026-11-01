@@ -1,3 +1,18 @@
+export {
+  AUTOSAVE_DELAY_MS,
+  type Autosave,
+  AutosaveController,
+  type AutosaveOptions,
+  type AutosaveOutcome,
+  AutosaveOutcomeSchema,
+  type AutosaveState,
+  AutosaveStateSchema,
+  autosavePending,
+  startAutosave,
+  useAutosave,
+  type UseAutosaveOptions,
+} from './autosave.ts';
+export { AutosaveStatus, type AutosaveStatusProps } from './autosave-status.tsx';
 export { BulkActionBar, type BulkActionBarProps } from './bulk-action-bar.tsx';
 export { DetailList, type DetailListItem } from './detail-list.tsx';
 export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
