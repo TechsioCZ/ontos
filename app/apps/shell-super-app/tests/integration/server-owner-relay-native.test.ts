@@ -1512,7 +1512,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       buildMarker: input.market.compiled.buildMarker,
     };
     yield* core.grantExistingService({
-      actionKeys: [],
+      actionKeys: ['commerce.customer-context.bind-retail-portal-profile'],
       legalEntityId: core.legalEntityId,
       moduleKeys: ['commerce.customer-context'],
       principalId: input.service.principalId,
@@ -6010,8 +6010,22 @@ it.live(
               sourceExchangeCount: 2,
             });
 
+            const personalBindingActor: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0] = {
+              apiKey: personalKey.secret,
+              audience: 'commerce-customer-context',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: customerContext.compiled.buildMarker,
+              legalEntityId: fixture.core.legalEntityId,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            };
             const activateBinding = Effect.fn('ServerOwnerRelayNative.activateRealRetailBinding')(
-              function* activateRealRetailBinding() {
+              function* activateRealRetailBinding(
+                bindingActor: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0] = personalBindingActor,
+              ) {
                 const recordedEnsure = invocations.find((row) => row.correlationId === created.correlationId);
                 if (recordedEnsure === undefined) {
                   return yield* new PackagedOwnerStartupError({
@@ -6022,18 +6036,7 @@ it.live(
                 const bindingCorrelation = yield* crypto.randomUUIDv4();
                 const issueBindingProof = Effect.fn('ServerOwnerRelayNative.issueBindingProof')(
                   function* issueBindingProof() {
-                    return yield* issueNativeApiKeyGatewayAuthorization({
-                      apiKey: personalKey.secret,
-                      audience: 'commerce-customer-context',
-                      authBindingId: personalKey.authBindingId,
-                      authContextRef: personalAuthContextRef,
-                      buildMarker: customerContext.compiled.buildMarker,
-                      legalEntityId: fixture.core.legalEntityId,
-                      origin: fixture.origin,
-                      principalId: fixture.core.manager.principalId,
-                      publicKey: signingKeyPair.publicKey,
-                      revision: approved.composition.revision,
-                    });
+                    return yield* issueNativeApiKeyGatewayAuthorization(bindingActor);
                   },
                 );
                 const bindProof = yield* issueBindingProof();
@@ -6045,9 +6048,7 @@ it.live(
                     expectedState: null,
                     principalRef: {
                       moduleId: 'core.identity',
-                      resourceId: yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(
-                        fixture.core.manager.principalId,
-                      ),
+                      resourceId: yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(bindingActor.principalId),
                       resourceType: 'core.identity.principal',
                       tenantId: yield* Schema.decodeUnknownEffect(TenantIdSchema)(fixture.core.tenantId),
                     },
@@ -6127,7 +6128,7 @@ it.live(
                     bindingRef: Schema.Struct({ resourceId: Schema.Literal(bound.bindingRef.resourceId) }),
                     enrollmentEvidenceRef: Schema.Literal(bindingEvidenceRef),
                     principalRef: Schema.Struct({
-                      resourceId: Schema.Literal(fixture.core.manager.principalId),
+                      resourceId: Schema.Literal(bindingActor.principalId),
                       tenantId: Schema.Literal(fixture.core.tenantId),
                     }),
                     profileRef: Schema.Struct({
@@ -6220,10 +6221,10 @@ it.live(
                   return yield* new PackagedOwnerStartupError({ reason: 'Actual binding canonical invocation absent' });
                 }
                 expect(bindingInvocation.status).toBe('succeeded');
-                expect(bindingInvocation.principalId).toBe(fixture.core.manager.principalId);
-                expect(bindingInvocation.authBindingId).toBe(personalKey.authBindingId);
+                expect(bindingInvocation.principalId).toBe(bindingActor.principalId);
+                expect(bindingInvocation.authBindingId).toBe(bindingActor.authBindingId);
                 expect(bindingInvocation.authMethod).toBe('api_key');
-                expect(bindingInvocation.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                expect(bindingInvocation.authContextRef === Redacted.value(bindingActor.authContextRef)).toBe(true);
                 expect(bindingInvocation.legalEntityId).toBe(fixture.core.legalEntityId);
                 const bindingAudits = bindingEvidence.audits.filter(
                   (row) =>
@@ -6233,10 +6234,10 @@ it.live(
                 expect(bindingAudits).toHaveLength(1);
                 for (const audit of bindingAudits) {
                   expect(audit.outcome).toBe('succeeded');
-                  expect(audit.principalId).toBe(fixture.core.manager.principalId);
-                  expect(audit.authBindingId).toBe(personalKey.authBindingId);
+                  expect(audit.principalId).toBe(bindingActor.principalId);
+                  expect(audit.authBindingId).toBe(bindingActor.authBindingId);
                   expect(audit.authMethod).toBe('api_key');
-                  expect(audit.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(audit.authContextRef === Redacted.value(bindingActor.authContextRef)).toBe(true);
                   expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
                 }
                 const activationTopic =
@@ -6768,6 +6769,37 @@ it.live(
                 revision: approved.composition.revision,
               }),
               serviceId,
+            });
+
+            yield* fixture.core.grantExistingService({
+              actionKeys: ['commerce.customer-context.bind-retail-portal-profile'],
+              legalEntityId: fixture.core.legalEntityId,
+              moduleKeys: ['commerce.customer-context'],
+              principalId: serviceId,
+            });
+            yield* activateBinding({
+              apiKey: marketIssued.secret,
+              audience: 'commerce-customer-context',
+              authBindingId: marketIssued.authBindingId,
+              authContextRef: marketServiceAuthContextRef,
+              buildMarker: enrolledCustomerContext.compiled.buildMarker,
+              legalEntityId: fixture.core.legalEntityId,
+              origin: fixture.origin,
+              principalId: serviceId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const serviceRetailBusiness = yield* makeBusinessPermissionRelationshipMutationLive();
+            yield* serviceRetailBusiness.mutate({
+              operation: 'revoke',
+              permission: 'retail.profile.read',
+              principal: { principalId: serviceId, tenantId: fixture.core.tenantId },
+              target: {
+                kind: 'retail_profile',
+                legalEntityId: fixture.core.legalEntityId,
+                profileId: created.result.profileRef.resourceId,
+                tenantId: fixture.core.tenantId,
+              },
             });
 
             yield* exerciseNativeMarketSubjectRelay({
