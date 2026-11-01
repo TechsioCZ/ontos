@@ -1,6 +1,7 @@
 export {
   AUTOSAVE_DELAY_MS,
   type Autosave,
+  type AutosaveDraft,
   AutosaveController,
   type AutosaveOptions,
   type AutosaveOutcome,
@@ -10,6 +11,8 @@ export {
   autosavePending,
   startAutosave,
   useAutosave,
+  useAutosaveDraft,
+  type UseAutosaveDraftOptions,
   type UseAutosaveOptions,
 } from './autosave.ts';
 export { AutosaveStatus, type AutosaveStatusProps } from './autosave-status.tsx';
